@@ -42,7 +42,8 @@ Default for:
 - Synthetic datasets
 - Multi-turn JSONL
 - ShareGPT
-- Mooncake traces with `hash_ids`
+- Mooncake traces with `input_length` and optional `hash_ids` when no
+  `context_mode` is declared
 
 ### `deltas_with_responses`
 
@@ -92,6 +93,19 @@ Each turn is sent exactly as it appears in the dataset.
 
 Default for:
 - Mooncake traces with pre-built `messages` arrays
+
+Mooncake traces with synthetic prompts can opt into this mode by declaring it
+on every row in a session. In this form, `input_length` and `hash_ids` describe
+the complete prompt for that request rather than a per-turn delta:
+
+```json
+{"session_id":"session-1","context_mode":"message_array_with_responses","input_length":1024,"output_length":64,"hash_ids":[1,2]}
+{"session_id":"session-1","context_mode":"message_array_with_responses","input_length":1536,"output_length":64,"hash_ids":[1,2,3]}
+```
+
+AIPerf still dispatches rows sharing a `session_id` sequentially, but it sends
+only the current row's synthesized prompt and does not merge the live response
+into the next request. Every row in a session must declare the same mode.
 
 ### `message_array_without_responses`
 

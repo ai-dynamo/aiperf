@@ -59,6 +59,25 @@ class TestMooncakeTrace:
 
         assert data.output_length == 50
 
+    def test_create_full_context_hash_trace(self):
+        """Hash rows can explicitly request self-contained replacement semantics."""
+        data = MooncakeTrace(
+            input_length=1024,
+            output_length=50,
+            hash_ids=[123, 456],
+            context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+        )
+
+        assert data.context_mode == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+
+    def test_rejects_unsupported_context_mode(self):
+        """Mooncake rejects modes its row schema cannot represent safely."""
+        with pytest.raises(ValidationError, match="Mooncake context_mode must be"):
+            MooncakeTrace(
+                input_length=100,
+                context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES,
+            )
+
     def test_validation_missing_input_fields_errors(self):
         """Test validation errors when no input mode is provided."""
         from pydantic import ValidationError
@@ -530,6 +549,89 @@ class TestMooncakeTraceDatasetLoader:
             prompt_generator=mock_prompt_generator,
         )
         assert loader._infer_context_mode(traces) is None
+
+    def test_infer_context_mode_full_context_hashes_returns_message_array(
+        self, mock_prompt_generator, default_cfg
+    ) -> None:
+        """Full-context hash rows opt into replacement rather than accumulation."""
+        traces = [
+            MooncakeTrace(
+                input_length=1024,
+                hash_ids=[1, 2],
+                context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+            ),
+            MooncakeTrace(
+                input_length=1536,
+                hash_ids=[1, 2, 3],
+                context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+            ),
+        ]
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            run=make_run_from_cli(default_cfg),
+            prompt_generator=mock_prompt_generator,
+        )
+
+        assert (
+            loader._infer_context_mode(traces)
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
+
+    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    def test_convert_to_conversations_full_context_hashes_sets_context_mode(
+        self, mock_parallel_decode, mock_prompt_generator, default_cfg
+    ) -> None:
+        """The explicit hash mode reaches the runtime Conversation object."""
+        mock_parallel_decode.return_value = ["prompt 1", "prompt 2"]
+        trace_data = {
+            "session1": [
+                MooncakeTrace(
+                    input_length=1024,
+                    output_length=64,
+                    hash_ids=[1, 2],
+                    context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+                ),
+                MooncakeTrace(
+                    input_length=1536,
+                    output_length=64,
+                    hash_ids=[1, 2, 3],
+                    context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+                ),
+            ]
+        }
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            run=make_run_from_cli(default_cfg),
+            prompt_generator=mock_prompt_generator,
+        )
+
+        conversations = loader.convert_to_conversations(trace_data)
+
+        assert (
+            conversations[0].context_mode
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
+
+    def test_infer_context_mode_requires_every_row_to_declare_mode(
+        self, mock_prompt_generator, default_cfg
+    ) -> None:
+        """A session cannot silently mix replacement and accumulation semantics."""
+        traces = [
+            MooncakeTrace(
+                input_length=1024,
+                hash_ids=[1, 2],
+                context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+            ),
+            MooncakeTrace(input_length=1536, hash_ids=[1, 2, 3]),
+        ]
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            run=make_run_from_cli(default_cfg),
+            prompt_generator=mock_prompt_generator,
+        )
+
+        with pytest.raises(ValueError, match="identical and present on every row"):
+            loader._infer_context_mode(traces)
 
     def test_convert_to_conversations_messages_sets_context_mode(
         self, mock_prompt_generator, default_cfg
