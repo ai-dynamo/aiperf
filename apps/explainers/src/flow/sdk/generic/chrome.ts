@@ -43,7 +43,6 @@ import { diagnostic } from "../../schema/index.js";
 import {
   estimateTextWidth,
   INSET,
-  measuredWrappedHeight,
   TITLE_HEIGHT,
 } from "../../../core/diagram/text-metrics.js";
 import { attachSdkOrigin, type SdkOrigin } from "../provenance.js";
@@ -63,8 +62,6 @@ const HEADER_DEFAULT_GEOMETRY = { x: 18, y: 16, width: 664, height: 66 } as cons
 const PANEL_DEFAULT_GEOMETRY = { width: 160, height: 70 } as const;
 const CHIP_DEFAULT_GEOMETRY = { width: 84, height: 26 } as const;
 const NOTE_DEFAULT_GEOMETRY = { width: 160, height: 48 } as const;
-/** Body font size the note caption renders at; drives unauthored height grow. */
-const NOTE_FONT_SIZE = 12;
 const LABEL_DEFAULT_GEOMETRY = { width: 120, height: 22 } as const;
 const CALLOUT_DEFAULT_GEOMETRY = { width: 140, height: 48 } as const;
 const CALLOUT_STEM_DROP = 24;
@@ -761,21 +758,24 @@ const noteFactory: SdkComponentFactory = (props, _slots, context) => {
   }
 
   const rootId = context.instanceId;
-  // Grow the note to fit wrapped text when height is unauthored; an explicit
-  // authored height always wins (unchanged behavior). Single-line notes never
-  // shrink below the default via the max() floor.
+  // NOTE: unlike the five prose primitives (paragraph/richText/quote/text/title)
+  // that grow to fit wrapped content, `sdk.note` does NOT auto-grow its height.
+  // Those primitives paint through the `core.text` renderer branch, which
+  // auto-wraps the text into stacked `<tspan>` lines whose count the box height
+  // must accommodate. `core.note` instead paints through the shared
+  // semantic-chrome branch (SceneRenderer's `hasNativeSemanticChrome` path),
+  // which emits the note text as a SINGLE unwrapped, horizontally- and
+  // vertically-centered `<text>` element at fontSize 14 bold — it never wraps.
+  // A wrapped-line height estimate here would therefore reserve vertical space
+  // for lines that are never drawn while the one real line still overflows
+  // horizontally, misleading authors about the note's true rendered size. So we
+  // keep the fixed single-line default height (authored height still wins).
   const noteWidth = numberProp(props, "width") ?? NOTE_DEFAULT_GEOMETRY.width;
-  const authoredHeight = numberProp(props, "height");
   const geometry: GeometryIr = {
     x: numberProp(props, "x") ?? 0,
     y: numberProp(props, "y") ?? 0,
     width: noteWidth,
-    height:
-      authoredHeight ??
-      Math.max(
-        measuredWrappedHeight(text, noteWidth, NOTE_FONT_SIZE),
-        NOTE_DEFAULT_GEOMETRY.height,
-      ),
+    height: numberProp(props, "height") ?? NOTE_DEFAULT_GEOMETRY.height,
   };
   const surfaceRole = stringProp(props, "surfaceRole") ?? "@theme.surface.elevated";
   const strokeRole = stringProp(props, "strokeRole") ?? "@theme.ink.secondary";
