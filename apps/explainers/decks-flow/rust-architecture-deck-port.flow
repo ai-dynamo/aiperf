@@ -695,5 +695,262 @@ explainer "Rust Architecture — Deck Port" {
     }
   }
 
-  // slides appended by Tasks 8-10
+  slide "G · Dispatch materialization" {
+    eyebrow: "MATERIALIZATION · STEP 3 — ON THE HOT PATH"
+    title: "Materialize = concatenate pre-serialized bytes"
+    lede: "Content is never re-serialized on the request path — dispatch just splices byte spans."
+    narration: "Component G, materialization step 3 — on the hot path. Materialize means concatenate pre-serialized bytes: content is never re-serialized on the request path, dispatch just splices byte spans. Turn::dispatch_body has a precedence — raw, then token-ids, then messages, first present wins. format_prepared_payload walks a BodyPlan, an ordered list of byte spans — static segments interleaved with dynamic splices and media URLs — and concat produces a contiguous request body carried as HttpRequest.request_body_bytes. The byte-exact fast path uses request_body_bytes; request_body as a Value is only kept for accuracy runs. Media resolves through SyntheticMediaPublisher — inline data-URI, or a content-server URL spliced as a dynamic span."
+    caption: "Splice byte spans · BodyPlan concat · never re-serialize."
+    render: @scene {
+      sdk.Shape(id = "dm-badge", variant = "rect", label = "G", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "dm-badge-l", text = "G", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "dm-kicker", text = "MATERIALIZATION · STEP 3 — ON THE HOT PATH", x = 82, y = 20, width = 560, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "dm-title", text = "Materialize = concatenate pre-serialized bytes", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "dm-sub", text = "Content is never re-serialized on the request path — dispatch just splices byte spans", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "dm-prec-label", text = "TURN::DISPATCH_BODY — FIRST PRESENT WINS", x = 40, y = 106, width = 500, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "dm-prec", items = ["raw →", "token-ids →", "messages"], gap = 10, x = 40, y = 124, width = 640, height = 28)
+      sdk.Caption(id = "dm-plan-label", text = "BODYPLAN — ORDERED BYTE SPANS", x = 40, y = 156, width = 400, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "dm-plan", items = ["static seg h0", "dynamic splice", "static seg h2", "media URL"], gap = 8, x = 40, y = 174, width = 640, height = 28)
+      sdk.TagList(id = "dm-concat", items = ["concat → contiguous body (Bytes) →", "HttpRequest.request_body_bytes"], gap = 10, x = 40, y = 206, width = 640, height = 28)
+      sdk.CompareGrid(id = "dm-notes", columns = 2, items = [{ label: "Byte-exact fast path", detail: "request_body_bytes carries the wire; Value only for accuracy" }, { label: "Media publisher", detail: "inline data-URI or content-server URL, spliced as a span" }], x = 4, y = 240)
+      timeline main {
+        at 0 reveal dm-badge duration 160
+        at 0 reveal dm-badge-l duration 160
+        after dm-badge reveal dm-kicker duration 140
+        after dm-kicker reveal dm-title duration 200
+        after dm-title reveal dm-sub duration 160
+        after dm-sub reveal dm-prec-label duration 140
+        after dm-prec-label reveal dm-prec duration 180
+        after dm-prec reveal dm-plan-label duration 140
+        after dm-plan-label reveal dm-plan duration 180
+        after dm-plan reveal dm-concat duration 180
+        after dm-concat reveal dm-notes duration 280
+      }
+    }
+  }
+
+  slide "H · RNG substrate" {
+    eyebrow: "RNG SUBSTRATE"
+    title: "Hash-derived, order-independent randomness"
+    lede: "A stream depends only on (root_seed, identifier) — adding a consumer cannot perturb existing streams."
+    narration: "Component H — the RNG substrate: hash-derived, order-independent randomness. A stream depends only on the pair of root_seed and identifier, so adding a consumer cannot perturb existing streams. derive_seed is BLAKE3 of the string root colon id, truncated to eight bytes, feeding a per-consumer Pcg64 — dataset.sampler, timing.cancel, graph.synth, and roughly forty-four canonical stream names that are sorted, unique, and collision-free. Order independence means adding a consumer Z leaves streams X and Y unchanged; HashIdRandomGenerator reseeds per trace_id and hash_id. Cross-language parity: AIPERF_RNG_BACKEND=rust_parity swaps Python onto a byte-exact port of this Pcg64 plus BLAKE3 substrate."
+    caption: "derive_seed = BLAKE3 · per-stream Pcg64 · order-independent."
+    render: @scene {
+      sdk.Shape(id = "rng-badge", variant = "rect", label = "H", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "rng-badge-l", text = "H", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "rng-kicker", text = "RNG SUBSTRATE", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "rng-title", text = "Hash-derived, order-independent randomness", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "rng-sub", text = "A stream depends only on (root_seed, identifier) — adding a consumer cannot perturb existing streams", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.StepChain(id = "rng-chain", direction = "row", steps = [{ number: "1", label: "root_seed", detail: "run-level entropy" }, { number: "2", label: "derive_seed", detail: "BLAKE3(\"root:id\")[..8]" }, { number: "3", label: "Pcg64 per stream", detail: "~44 canonical names · sorted, unique, collision-free" }], x = 40, y = 108)
+      sdk.CompareGrid(id = "rng-order", columns = 2, items = [{ label: "stream X, stream Y", detail: "independent Pcg64 streams keyed by identifier" }, { label: "+ add consumer Z", detail: "X, Y unchanged · Z is new · reseed per (trace_id, hash_id)" }], x = 4, y = 236)
+      sdk.Caption(id = "rng-parity", text = "AIPERF_RNG_BACKEND=rust_parity — byte-exact Python port of this Pcg64 + BLAKE3 substrate", x = 40, y = 366, width = 640, height = 16, inkRole = theme(ink.secondary))
+      timeline main {
+        at 0 reveal rng-badge duration 160
+        at 0 reveal rng-badge-l duration 160
+        after rng-badge reveal rng-kicker duration 140
+        after rng-kicker reveal rng-title duration 200
+        after rng-title reveal rng-sub duration 160
+        after rng-sub reveal rng-chain duration 320
+        after rng-chain reveal rng-order duration 280
+        after rng-order reveal rng-parity duration 160
+      }
+    }
+  }
+
+  slide "I · Timing and scheduling" {
+    eyebrow: "TIMING AND SCHEDULING"
+    title: "Paced arrivals into a dispatcher"
+    lede: "ScheduledRuntime bridges a Workload schedule generator to a transport-neutral TurnDispatcher."
+    narration: "Component I — timing and scheduling: paced arrivals into a dispatcher. ScheduledRuntime bridges a Workload schedule generator to a transport-neutral TurnDispatcher. The pipeline runs Workload to IntervalGenerator to SlotPool to TurnDispatcher to Observer. The SlotPool does debt-drain: when capacity decreases the effective slots equal available minus debt, an RAII SlotGuard releases prefill at TTFT by dropping the guard. A StopChecker chain runs Lifecycle, RequestCount, SessionCount, Duration, first-no wins. RampStrategy is Linear, Exponential, or Poisson and forces the exact target. BernoulliFixedDelay takes one draw at issuance; warmup draws no RNG. Workloads are RequestRate, UserCentric, FixedSchedule, and SingleTurn."
+    caption: "ScheduledRuntime → SlotPool debt-drain → TurnDispatcher."
+    render: @scene {
+      sdk.Shape(id = "ts-badge", variant = "rect", label = "I", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ts-badge-l", text = "I", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ts-kicker", text = "TIMING AND SCHEDULING", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "ts-title", text = "Paced arrivals into a dispatcher", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ts-sub", text = "ScheduledRuntime bridges a Workload schedule generator to a transport-neutral TurnDispatcher", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.TagList(id = "ts-pipe-1", items = ["Workload →", "IntervalGenerator →", "SlotPool"], gap = 10, x = 40, y = 106, width = 640, height = 28)
+      sdk.TagList(id = "ts-pipe-2", items = ["→ TurnDispatcher →", "Observer · records"], gap = 10, x = 40, y = 136, width = 640, height = 28)
+      sdk.CardGrid(id = "ts-cards", columns = 2, cards = [{ title: "SlotPool · debt-drain", detail: "effective = available − debt · SlotGuard frees prefill at TTFT", accent: "green" }, { title: "StopChecker chain", detail: "Lifecycle→RequestCount→SessionCount→Duration", accent: "green" }, { title: "Ramp · Bernoulli", detail: "Linear/Exp/Poisson exact target · one draw at issuance", accent: "gray" }, { title: "Workloads", detail: "RequestRate · UserCentric · FixedSchedule · SingleTurn", accent: "gray" }], x = 42, y = 170)
+      timeline main {
+        at 0 reveal ts-badge duration 160
+        at 0 reveal ts-badge-l duration 160
+        after ts-badge reveal ts-kicker duration 140
+        after ts-kicker reveal ts-title duration 200
+        after ts-title reveal ts-sub duration 160
+        after ts-sub stagger targets [ts-pipe-1, ts-pipe-2] step 90 duration 180
+        after ts-pipe-2 reveal ts-cards duration 320
+      }
+    }
+  }
+
+  slide "I · Phase lifecycle" {
+    eyebrow: "PHASE STATE MACHINE"
+    title: "Warmup before profiling, one escalation order"
+    lede: "ClockPhaseRunner drives a fixed sequence; the orchestrator enforces ordering and seamless overlap."
+    narration: "Component I, the phase state machine — warmup before profiling, one escalation order. ClockPhaseRunner drives a fixed sequence: configure, setup, start, ramps, issuance, freeze, grace, cancel-inflight, drain, force complete. The orchestrator enforces ordering and seamless overlap. Each PhaseState advances Created, Started, SendingComplete, Complete. PhaseKind is Warmup or Profiling; GracePeriod is Disabled, Finite, or Infinite; CompletionReason is Completed, GraceTimeout, Cancelled, ForceCompleted, or Failed. SIGINT and SIGTERM lower a cancellation latch, and the AIPerf System is PROFILING banner is emitted on stderr."
+    caption: "Fixed escalation order · PhaseState machine · cancellation latch."
+    render: @scene {
+      sdk.Shape(id = "pl-badge", variant = "rect", label = "I", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "pl-badge-l", text = "I", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "pl-kicker", text = "PHASE STATE MACHINE", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "pl-title", text = "Warmup before profiling, one escalation order", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "pl-sub", text = "ClockPhaseRunner drives a fixed sequence; the orchestrator enforces ordering and seamless overlap", x = 40, y = 78, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.TagList(id = "pl-esc-1", items = ["configure →", "setup →", "start →", "ramps →", "issuance"], gap = 8, x = 40, y = 102, width = 640, height = 26)
+      sdk.TagList(id = "pl-esc-2", items = ["→ freeze →", "grace →", "cancel-inflight →", "drain →", "force complete"], gap = 8, x = 40, y = 130, width = 640, height = 26)
+      sdk.Caption(id = "pl-state-label", text = "PHASESTATE", x = 40, y = 160, width = 300, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "pl-state", items = ["Created →", "Started →", "SendingComplete →", "Complete"], gap = 8, x = 40, y = 178, width = 640, height = 26)
+      sdk.CompareGrid(id = "pl-enums", columns = 3, items = [{ label: "PhaseKind", detail: "Warmup · Profiling" }, { label: "GracePeriod", detail: "Disabled · Finite · Infinite" }, { label: "CompletionReason", detail: "Completed · GraceTimeout · Cancelled · ForceCompleted · Failed" }], x = 4, y = 208)
+      sdk.Caption(id = "pl-sig", text = "SIGINT/SIGTERM lower a cancellation latch; the \"AIPerf System is PROFILING\" banner is emitted on stderr", x = 40, y = 336, width = 640, height = 16, inkRole = theme(ink.secondary))
+      timeline main {
+        at 0 reveal pl-badge duration 160
+        at 0 reveal pl-badge-l duration 160
+        after pl-badge reveal pl-kicker duration 140
+        after pl-kicker reveal pl-title duration 200
+        after pl-title reveal pl-sub duration 160
+        after pl-sub stagger targets [pl-esc-1, pl-esc-2] step 90 duration 180
+        after pl-esc-2 reveal pl-state-label duration 140
+        after pl-state-label reveal pl-state duration 180
+        after pl-state reveal pl-enums duration 280
+        after pl-enums reveal pl-sig duration 160
+      }
+    }
+  }
+
+  slide "J · Graph-IR engine" {
+    eyebrow: "GRAPH-IR ENGINE"
+    title: "A DAG of LlmNodes over named channels"
+    lede: "Thread-per-core dataflow — a whole trace is placed on one worker; node turns never cross a boundary."
+    narration: "Component J — the Graph-IR engine: a DAG of LlmNodes over named channels. It is thread-per-core dataflow, a whole trace placed on one worker, so node turns never cross a boundary. A root LlmNode fans out to node A, which FORKs, and node B, which SPAWNs, then both join at an AddMessages node before the output. Each edge carries four firing-gate delays — after-predecessor-completion, min-start, after-predecessor-start, and after-predecessor-first-token. ChannelType is Text or Messages; the Reducer is Overwrite or AddMessages."
+    caption: "DAG of LlmNodes · four firing-gate delays per edge."
+    render: @scene {
+      sdk.Shape(id = "gi-badge", variant = "rect", label = "J", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "gi-badge-l", text = "J", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "gi-kicker", text = "GRAPH-IR ENGINE", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "gi-title", text = "A DAG of LlmNodes over named channels", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "gi-sub", text = "Thread-per-core dataflow — a whole trace is placed on one worker; node turns never cross a boundary", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.NodeTree(id = "gi-graph", root = { label: "root · LlmNode", emphasis: true }, children = [{ label: "node A · FORK" }, { label: "node B · SPAWN" }], orderNote = "both join at join · AddMessages → out", x = 40, y = 118)
+      sdk.Caption(id = "gi-gate-label", text = "FOUR FIRING-GATE DELAYS PER EDGE", x = 360, y = 118, width = 320, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "gi-gates-1", items = ["after-predecessor-completion", "min-start"], gap = 8, x = 360, y = 138, width = 340, height = 26)
+      sdk.TagList(id = "gi-gates-2", items = ["after-predecessor-start", "after-predecessor-first-token"], gap = 8, x = 360, y = 170, width = 340, height = 26)
+      sdk.Caption(id = "gi-chan-label", text = "CHANNELTYPE · REDUCER", x = 360, y = 210, width = 320, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "gi-chan", items = ["Text · Messages", "Overwrite · AddMessages"], gap = 8, x = 360, y = 228, width = 340, height = 26)
+      timeline main {
+        at 0 reveal gi-badge duration 160
+        at 0 reveal gi-badge-l duration 160
+        after gi-badge reveal gi-kicker duration 140
+        after gi-kicker reveal gi-title duration 200
+        after gi-title reveal gi-sub duration 160
+        after gi-sub reveal gi-graph duration 320
+        after gi-graph reveal gi-gate-label duration 140
+        after gi-gate-label stagger targets [gi-gates-1, gi-gates-2] step 90 duration 180
+        after gi-gates-2 reveal gi-chan-label duration 140
+        after gi-chan-label reveal gi-chan duration 200
+      }
+    }
+  }
+
+  slide "J · Lowering and execution" {
+    eyebrow: "LOWERING AND EXECUTION"
+    title: "From authored or recorded, into one executor"
+    lede: "Two lowering paths converge on a single TraceExecutor that fires each node."
+    narration: "Component J, lowering and execution — from authored or recorded, into one executor. Two lowering paths: dag_jsonl goes through GraphBuilder, turning FORK, SPAWN, and JOIN into nodes, edges, and channels; traces go through the LCP-trie lowerer, a content-parent trie with idle-warp and interval-order fan-in. Then one TraceExecutor fires each node: await_inputs as a fan-in gate, gate delay, splice which snapshots channels, materialize the prompt, admission, and dispatch, which publishes and advances to the next. Three trace formats: WEKA is recursive JSON with heuristic boundaries that honors max_osl; Dynamo lowers sessions to chains to trees with a subagent depth guard; aiperf_trace is strict v1 with ground-truth tags and block_lens."
+    caption: "Two lowering paths · one TraceExecutor · three trace formats."
+    render: @scene {
+      sdk.Shape(id = "le-badge", variant = "rect", label = "J", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "le-badge-l", text = "J", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "le-kicker", text = "LOWERING AND EXECUTION", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "le-title", text = "From authored or recorded, into one executor", x = 40, y = 46, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Caption(id = "le-low-label", text = "LOWERING PATHS", x = 40, y = 78, width = 400, height = 16, inkRole = theme(accent.primary))
+      sdk.CompareGrid(id = "le-low", columns = 2, items = [{ label: "dag_jsonl → GraphBuilder", detail: "FORK/SPAWN/JOIN into nodes, edges, channels" }, { label: "traces → LCP-trie lowerer", detail: "content-parent trie, idle-warp, interval-order fan-in" }], x = 4, y = 96)
+      sdk.Caption(id = "le-exec-label", text = "TRACEEXECUTOR FIRES EACH NODE", x = 40, y = 218, width = 500, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "le-exec", items = ["await_inputs →", "gate delay →", "splice →", "materialize →", "admission →", "dispatch"], gap = 8, x = 40, y = 236, width = 660, height = 26)
+      sdk.Caption(id = "le-fmt-label", text = "TRACE FORMATS", x = 40, y = 268, width = 400, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "le-formats-1", items = ["WEKA — recursive JSON · honors max_osl", "Dynamo — sessions→chains→trees · depth guard"], gap = 8, x = 40, y = 286, width = 660, height = 26)
+      sdk.TagList(id = "le-formats-2", items = ["aiperf_trace — strict v1, ground-truth tags + block_lens"], gap = 8, x = 40, y = 316, width = 660, height = 26)
+      timeline main {
+        at 0 reveal le-badge duration 160
+        at 0 reveal le-badge-l duration 160
+        after le-badge reveal le-kicker duration 140
+        after le-kicker reveal le-title duration 200
+        after le-title reveal le-low-label duration 140
+        after le-low-label reveal le-low duration 280
+        after le-low reveal le-exec-label duration 140
+        after le-exec-label reveal le-exec duration 220
+        after le-exec reveal le-fmt-label duration 140
+        after le-fmt-label stagger targets [le-formats-1, le-formats-2] step 90 duration 180
+      }
+    }
+  }
+
+  slide "J · Agentic replay" {
+    eyebrow: "GRAPH · AGENTIC TRACE REPLAY"
+    title: "An agent session replays as a DAG of turns"
+    lede: "The Dynamo adapter lowers JSONL sessions into chains, then trees — replayed node-by-node on one worker."
+    narration: "Component J, agentic trace replay — an agent session replays as a DAG of turns. The Dynamo adapter lowers JSONL sessions into chains, then trees: an orchestrator at depth zero spawns subagents — a researcher and a coder at depth one — which may spawn deeper tools before a final turn joins with AddMessages, all replayed node-by-node on one worker. The whole tree is one GraphTracePlan placed on a single worker, so node turns never cross a boundary. A subagent depth guard caps recursion; deeper spawns are clamped. Virtual negative hashes stand in for non-replay turns so the DAG stays complete. Firing-gate delays fire each node after its predecessor's first token, so replay preserves the original spawn timing."
+    caption: "sessions → chains → trees · one GraphTracePlan · depth guard."
+    render: @scene {
+      sdk.Shape(id = "ar-badge", variant = "rect", label = "J", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ar-badge-l", text = "J", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ar-kicker", text = "GRAPH · AGENTIC TRACE REPLAY", x = 82, y = 20, width = 540, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "ar-title", text = "An agent session replays as a DAG of turns", x = 40, y = 46, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ar-sub", text = "The Dynamo adapter lowers JSONL sessions into chains, then trees — replayed node-by-node on one worker", x = 40, y = 76, width = 640, height = 32, inkRole = theme(ink.secondary))
+      sdk.NodeTree(id = "ar-graph", root = { label: "orchestrator · d0", emphasis: true }, children = [{ label: "researcher · d1" }, { label: "coder · d1" }], orderNote = "d2 web_tool (guard) · final turn JOIN · AddMessages", x = 40, y = 118)
+      sdk.TagList(id = "ar-adapter", items = ["sessions →", "chains →", "trees"], gap = 10, x = 360, y = 118, width = 320, height = 26)
+      sdk.NumberedSequence(id = "ar-notes", items = [{ number: "1", title: "one GraphTracePlan", detail: "placed on a single worker · node turns never cross a boundary" }, { number: "2", title: "subagent depth guard", detail: "caps recursion; deeper spawns are clamped" }, { number: "3", title: "virtual negative hashes", detail: "stand in for non-replay turns so the DAG stays complete" }], x = 360, y = 150)
+      timeline main {
+        at 0 reveal ar-badge duration 160
+        at 0 reveal ar-badge-l duration 160
+        after ar-badge reveal ar-kicker duration 140
+        after ar-kicker reveal ar-title duration 200
+        after ar-title reveal ar-sub duration 160
+        after ar-sub reveal ar-graph duration 320
+        after ar-graph reveal ar-adapter duration 200
+        after ar-adapter reveal ar-notes duration 360
+      }
+    }
+  }
+
+  slide "K · Metrics core" {
+    eyebrow: "METRICS CORE"
+    title: "A declarative catalog into a NaN-sparse store"
+    lede: "Validated for uniqueness, dependency tiering and acyclicity — pinned with a stable catalog fingerprint."
+    narration: "Component K — metrics core: a declarative catalog into a NaN-sparse store. The catalog has 119 rows — 103 Python identities plus 16 native sweep identities — validated for uniqueness, dependency tiering, and acyclicity, then pinned with a stable catalog fingerprint. MetricType is Record, Aggregate, or Derived. The ColumnStore treats NaN as absence, aligned by absolute request index, with CSR ragged series for in-context-learning shots. The ingest-to-derive pipeline runs NativeMetricsObserver, RecordIngest, Accumulator, then derived metrics in topological order. TTFT, ITL, TPOT, end-to-end, and goodput compute Rayon-parallel above 4096 rows; sweep-lines give concurrency and tokens-in-flight curves."
+    caption: "119-row catalog · NaN-sparse ColumnStore · ingest → derive."
+    render: @scene {
+      sdk.Shape(id = "mc-badge", variant = "rect", label = "K", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "mc-badge-l", text = "K", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "mc-kicker", text = "METRICS CORE", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "mc-title", text = "A declarative catalog into a NaN-sparse store", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "mc-sub", text = "Validated for uniqueness, dependency tiering and acyclicity — pinned with a stable catalog fingerprint", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "mc-rows-label", text = "119 CATALOG ROWS", x = 40, y = 110, width = 300, height = 16, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "mc-rows", text = "103 Python identities + 16 native sweep identities", x = 40, y = 130, width = 300, height = 30, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "mc-type-label", text = "METRICTYPE", x = 40, y = 166, width = 300, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "mc-type", items = ["Record", "Aggregate", "Derived"], gap = 8, x = 40, y = 184, width = 300, height = 26)
+      sdk.Caption(id = "mc-store-label", text = "COLUMNSTORE — NaN = ABSENCE", x = 360, y = 110, width = 320, height = 16, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "mc-store", text = "aligned by absolute request index · CSR ragged series for ICL", x = 360, y = 130, width = 320, height = 30, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "mc-pipe-label", text = "INGEST → DERIVE PIPELINE", x = 360, y = 166, width = 320, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "mc-pipe-1", items = ["NativeMetricsObserver →", "RecordIngest →"], gap = 8, x = 360, y = 184, width = 340, height = 26)
+      sdk.TagList(id = "mc-pipe-2", items = ["Accumulator →", "derived (topo)"], gap = 8, x = 360, y = 214, width = 340, height = 26)
+      sdk.TagList(id = "mc-metrics", items = ["TTFT", "ITL", "TPOT", "e2e", "goodput · Rayon > 4096 rows"], gap = 8, x = 40, y = 262, width = 660, height = 26)
+      timeline main {
+        at 0 reveal mc-badge duration 160
+        at 0 reveal mc-badge-l duration 160
+        after mc-badge reveal mc-kicker duration 140
+        after mc-kicker reveal mc-title duration 200
+        after mc-title reveal mc-sub duration 160
+        after mc-sub reveal mc-rows-label duration 140
+        after mc-rows-label reveal mc-rows duration 160
+        after mc-rows reveal mc-type-label duration 140
+        after mc-type-label reveal mc-type duration 160
+        after mc-type reveal mc-store-label duration 140
+        after mc-store-label reveal mc-store duration 160
+        after mc-store reveal mc-pipe-label duration 140
+        after mc-pipe-label stagger targets [mc-pipe-1, mc-pipe-2] step 90 duration 180
+        after mc-pipe-2 reveal mc-metrics duration 220
+      }
+    }
+  }
+
+  // slides appended by Tasks 9-10
 }
