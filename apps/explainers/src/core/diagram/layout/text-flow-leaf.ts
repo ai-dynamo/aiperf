@@ -22,22 +22,27 @@ const DEFAULT_LINE_HEIGHT_RATIO = 1.3;
  * `SceneRenderer` resolves `fontSize = scaledSceneFontSize(node.style?.fontSize)`
  * (already scaled by `SCENE_TEXT_SCALE`), wraps with that SAME scaled font size,
  * and stacks lines at `lineHeight = fontSize * 1.3` on that already-scaled value.
- * So `fontSize` here MUST already be scaled by the caller (Tasks 3-5); this
- * adapter multiplies it by `lineHeightRatio` (default 1.3) exactly as the
- * renderer does — do not pass an unscaled authored font size.
+ *
+ * `scaledFontSize` MUST already be scaled by the caller — pass the result of
+ * `scaledSceneFontSize(authoredFontSize)`, never the raw authored value. This
+ * differs from the sibling `measuredWrappedHeight` helper in `text-metrics.ts`,
+ * which takes an UNSCALED authored font size and scales internally — the two
+ * helpers intentionally have opposite contracts, so the parameter is named
+ * `scaledFontSize` here (not `fontSize`) to make a caller mix-up visible at the
+ * call site rather than a silent measure/paint divergence.
  */
 export function textFlowLeaf(
   text: string,
-  fontSize: number,
+  scaledFontSize: number,
   weight: "normal" | "bold" = "normal",
   lineHeightRatio: number = DEFAULT_LINE_HEIGHT_RATIO,
 ): NonNullable<FlowNode["measure"]> {
   return (constraint: FlowConstraint): FlowSize => {
-    const lines = wrapTextToWidth(text, constraint.maxWidth, fontSize, weight);
+    const lines = wrapTextToWidth(text, constraint.maxWidth, scaledFontSize, weight);
     const lineCount = Math.max(lines.length, 1);
     return {
       width: constraint.maxWidth,
-      height: lineCount * fontSize * lineHeightRatio,
+      height: lineCount * scaledFontSize * lineHeightRatio,
     };
   };
 }
