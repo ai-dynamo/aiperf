@@ -14,7 +14,7 @@ ci:
     - check-ruff-baselined
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0  # Use the latest stable version
+    rev: v6.0.0  # Use the latest stable version
     hooks:
       - id: check-ast
       - id: debug-statements
@@ -37,7 +37,7 @@ repos:
       - id: requirements-txt-fixer
       - id: trailing-whitespace
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.2
+    rev: v2.4.3
     hooks:
     - id: codespell
       additional_dependencies: [tomli]
@@ -114,7 +114,7 @@ repos:
         pass_filenames: false
         args: []
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.14
+    rev: v0.15.22
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
