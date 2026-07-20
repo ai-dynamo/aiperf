@@ -445,16 +445,16 @@ The four issue-named SLA flags are sugar over the generic `--search-sla` syntax.
 | `--ttft-sla-ms` | `time_to_first_token` | `p95` | `lt` | Streaming required |
 | `--tpot-sla-ms` (a.k.a. `--itl-sla-ms`) | `inter_token_latency` | `p95` | `lt` | Streaming required; TPOT == ITL in AIPerf metric tags |
 | `--e2e-sla-ms` | `request_latency` | `p99` | `lt` | |
-| `--error-rate-sla` | `request_error_rate` | `p99` | `lt` | Fraction in `[0, 1]` |
+| `--error-rate-sla` | `request_error_rate` | `avg` | `lt` | Fraction in `[0, 1]`; converted to percentage points for comparison |
 | `--search-sla "TAG:STAT:OP:THRESHOLD"` | any | any of `{avg, p50, p90, p95, p99}` | any of `{lt, le, gt, ge}` | Repeatable; format is strict colon-delimited 4-tuple |
 
 ```bash
-# Compose: TTFT p95 < 200ms AND error rate p99 < 1%, on the explicit
+# Compose: TTFT p95 < 200ms AND average error rate < 1%, on the explicit
 # --search-space path (no recipe).
 aiperf profile --model my-model --streaming \
   --search-space "concurrency:1,1000:int" \
   --search-sla "time_to_first_token:p95:lt:200" \
-  --search-sla "request_error_rate:p99:lt:0.01" \
+  --search-sla "request_error_rate:avg:lt:1" \
   --search-metric output_token_throughput --search-direction maximize \
   --search-max-iterations 30
 ```
