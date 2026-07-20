@@ -16,18 +16,18 @@ explainer "SDK Generic Catalog" {
 
   hub: {
     highlight: "Generic primitives"
-    title: "45 primitives · seven families · one production path"
+    title: "53 primitives · eight families · one production path"
     description: "A chaptered visual reference that teaches every generic Flow SDK primitive through production expansion."
   }
 
   slide "Generic primitives, composed" {
     eyebrow: "SDK · GENERIC CATALOG"
     title: "A visual grammar for believable interfaces"
-    lede: "Forty-five production primitives, taught one at a time and then composed as a coherent interface."
+    lede: "Fifty-three production primitives, taught one at a time and then composed as a coherent interface."
     narration: "Use this deck as both a visual reference and an authoring guide. Every focused page invokes the production SDK primitive it teaches."
     caption: "Reference the contract · study the variants · compose with confidence."
     render: @scene {
-      sdk.Header(id = "open-h", title = "GENERIC SDK CATALOG", caption = "45 primitives · 7 families", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary))
+      sdk.Header(id = "open-h", title = "GENERIC SDK CATALOG", caption = "53 primitives · 8 families", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary))
       sdk.Title(id = "open-title", text = "Small primitives. Clear contracts.", x = 54, y = 105, width = 430, height = 42, inkRole = theme(ink.primary))
       sdk.Paragraph(id = "open-copy", text = "Focused specimen, realistic variants,\nthen confident composition.", x = 54, y = 165, width = 330, height = 76, inkRole = theme(ink.secondary))
       sdk.Badge(id = "open-b1", label = "content", variant = "info", x = 54, y = 270, width = 92, height = 28)
@@ -53,7 +53,7 @@ explainer "SDK Generic Catalog" {
     narration: "The foundations family supplies the raw visual and spatial vocabulary used by every later composition."
     caption: "Nine primitives · form, ink, media, connection, space."
     render: @scene {
-      sdk.Header(id = "c1-h", title = "FOUNDATIONS + SHAPES", caption = "01 / 07", x = 18, y = 16, width = 664, height = 44)
+      sdk.Header(id = "c1-h", title = "FOUNDATIONS + SHAPES", caption = "01 / 08", x = 18, y = 16, width = 664, height = 44)
       sdk.Shape(id = "c1-shape", variant = "rounded", label = "surface", x = 70, y = 120, width = 220, height = 130, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
       sdk.Title(id = "c1-title", text = "FORM · SURFACE", x = 90, y = 270, width = 180, height = 24)
       sdk.Shape(id = "c1-target", variant = "rounded", label = "symbol target", x = 520, y = 130, width = 110, height = 70, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
@@ -68,7 +68,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "FOUNDATIONS · SHAPE"
     title: "Shape defines silhouette and surface"
     lede: "Use semantic variants for rectangles, rounds, circles, ellipses, and authored paths."
-    narration: "Shape is the general-purpose visual surface. The hero is a rounded service tile; smaller specimens compare geometric variants."
+    narration: "Shape is the general-purpose visual surface. A rounded inference-service tile anchors the page; a rectangle and a circle compare basic geometry."
     caption: "Choose geometry deliberately; keep paint semantic."
     render: @scene {
       sdk.Header(id = "shape-h", title = "SDK.SHAPE", caption = "surface primitive", x = 18, y = 16, width = 664, height = 44)
@@ -106,7 +106,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "FOUNDATIONS · RICH TEXT"
     title: "Rich text carries structured prose"
     lede: "Use rich text when hierarchy must live inside one bounded text region."
-    narration: "The hero demonstrates a compact release summary while variants show short instructional and operational copy."
+    narration: "Rich text demonstrates a compact release summary, while a tip and a status note show short instructional and operational copy."
     caption: "Bound the region first; let copy express hierarchy."
     render: @scene {
       sdk.Header(id = "rich-h", title = "SDK.RICHTEXT", caption = "structured prose", x = 18, y = 16, width = 664, height = 44)
@@ -124,7 +124,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "FOUNDATIONS · ICON"
     title: "Icons compress familiar meaning"
     lede: "Use named icons as supporting signals, never as unexplained decoration."
-    narration: "A server icon anchors the hero, while check, warning, and lock variants show the built-in semantic vocabulary."
+    narration: "A server icon anchors the page, while check, warning, and lock icons show the built-in semantic vocabulary."
     caption: "Pair unfamiliar symbols with a visible label."
     render: @scene {
       sdk.Header(id = "icon-h", title = "SDK.ICON", caption = "named symbol", x = 18, y = 16, width = 664, height = 44)
@@ -144,7 +144,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "FOUNDATIONS · IMAGE"
     title: "Images bring trusted media into scene IR"
     lede: "Use package-resolvable repository assets and select contain or cover intentionally."
-    narration: "The NVIDIA symbol is rendered from an existing repository asset served by Vite. The variants compare contain and cover fitting."
+    narration: "The NVIDIA symbol is rendered from an existing repository asset served by Vite, comparing contain and cover fitting side by side."
     caption: "A valid source is required; fitting is an authored choice."
     render: @scene {
       sdk.Header(id = "image-h", title = "SDK.IMAGE", caption = "repository media", x = 18, y = 16, width = 664, height = 44)
@@ -162,7 +162,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "FOUNDATIONS · LINE"
     title: "Lines relate without implying direction"
     lede: "Use a line for association, alignment, and neutral linkage."
-    narration: "The hero connects paired regions neutrally; smaller lines compare restrained and emphasized strokes."
+    narration: "A neutral line connects two paired regions; smaller lines compare restrained and emphasized strokes."
     caption: "If direction matters, choose an arrow."
     render: @scene {
       sdk.Header(id = "line-h", title = "SDK.LINE", caption = "neutral connector", x = 18, y = 16, width = 664, height = 44)
@@ -182,7 +182,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "FOUNDATIONS · ARROW"
     title: "Arrows make direction explicit"
     lede: "Use arrows for handoffs, progression, and one-way dependencies."
-    narration: "The hero shows a request handoff. Variants distinguish forward progress from a descending transition."
+    narration: "An arrow shows a client dispatching a request to a server; smaller arrows distinguish forward progress from a descending transition."
     caption: "Arrowheads encode direction; labels explain intent."
     render: @scene {
       sdk.Header(id = "arrow-h", title = "SDK.ARROW", caption = "directional connector", x = 18, y = 16, width = 664, height = 44)
@@ -224,7 +224,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "FOUNDATIONS · INSET"
     title: "Inset protects content with internal space"
     lede: "Wrap children in a semantic padded region instead of offsetting each child manually."
-    narration: "The hero protects a deployment message; variants compare compact and roomy inset gaps."
+    narration: "An inset protects a deployment-ready message with generous padding; smaller insets compare compact and roomy gaps."
     caption: "Padding belongs to the container contract."
     render: @scene {
       sdk.Header(id = "inset-h", title = "SDK.INSET", caption = "padded container", x = 18, y = 16, width = 664, height = 44)
@@ -245,7 +245,7 @@ explainer "SDK Generic Catalog" {
     narration: "Typography components encode common reading roles so each deck does not reinvent hierarchy."
     caption: "Eight primitives · hierarchy, prose, evidence, structure."
     render: @scene {
-      sdk.Header(id = "c2-h", title = "TYPOGRAPHY + RICH CONTENT", caption = "02 / 07", x = 18, y = 16, width = 664, height = 44)
+      sdk.Header(id = "c2-h", title = "TYPOGRAPHY + RICH CONTENT", caption = "02 / 08", x = 18, y = 16, width = 664, height = 44)
       sdk.Title(id = "c2-title", text = "Readable by design", x = 70, y = 115, width = 400, height = 40)
       sdk.Paragraph(id = "c2-copy", text = "The right text primitive makes purpose visible\nbefore every word is read.", x = 70, y = 175, width = 320, height = 80, inkRole = theme(ink.secondary))
       sdk.CodeBlock(id = "c2-code", text = "sdk.Title(...)", x = 550, y = 115, width = 100, height = 120)
@@ -257,7 +257,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "TYPOGRAPHY · TITLE"
     title: "Title establishes the reading entry point"
     lede: "Use titles for section-level hierarchy, not every label."
-    narration: "A product heading leads the hero while compact variants show page and panel contexts."
+    narration: "A product heading leads an inference overview; smaller titles show a section heading and an attention-drawing heading."
     caption: "One strong title beats a field of competing headings."
     render: @scene {
       sdk.Header(id = "title-h", title = "SDK.TITLE", caption = "hierarchy anchor", x = 18, y = 16, width = 664, height = 44)
@@ -275,7 +275,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "TYPOGRAPHY · PARAGRAPH"
     title: "Paragraph explains in complete thoughts"
     lede: "Use paragraphs for concise prose with enough room to breathe."
-    narration: "The hero explains a routing policy; variants contrast product guidance with subdued supporting context."
+    narration: "A paragraph explains a routing policy; smaller paragraphs contrast product guidance with subdued supporting context."
     caption: "Write for scanning: one idea per paragraph."
     render: @scene {
       sdk.Header(id = "para-h", title = "SDK.PARAGRAPH", caption = "bounded prose", x = 18, y = 16, width = 664, height = 44)
@@ -293,7 +293,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "TYPOGRAPHY · CAPTION"
     title: "Caption supplies quiet context"
     lede: "Use captions for provenance, timestamps, units, and secondary explanation."
-    narration: "The hero anchors a chart timestamp; variants demonstrate source and unit labels."
+    narration: "A caption anchors a sparkline's timestamp; smaller captions demonstrate source and unit labels."
     caption: "Captions support the story without competing with it."
     render: @scene {
       sdk.Header(id = "caption-h", title = "SDK.CAPTION", caption = "secondary context", x = 18, y = 16, width = 664, height = 44)
@@ -312,7 +312,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "TYPOGRAPHY · CODE BLOCK"
     title: "Code block preserves technical syntax"
     lede: "Use code blocks for copyable commands and compact implementation evidence."
-    narration: "The hero presents a production SDK invocation. Variants compare a shell command and configuration fragment."
+    narration: "A code block presents a production SDK invocation; smaller blocks compare a shell command and a configuration fragment."
     caption: "Keep examples short enough to read at presentation scale."
     render: @scene {
       sdk.Header(id = "code-h", title = "SDK.CODEBLOCK", caption = "monospace evidence", x = 18, y = 16, width = 664, height = 44)
@@ -330,7 +330,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "TYPOGRAPHY · QUOTE"
     title: "Quote isolates a meaningful voice"
     lede: "Use quotations for principles and testimony that deserve a deliberate pause."
-    narration: "The hero presents a design principle; variants compare customer feedback and an operational maxim."
+    narration: "A quote presents a design principle; smaller quotes compare customer feedback and an operational maxim."
     caption: "A quote should add authority, not decorative italics."
     render: @scene {
       sdk.Header(id = "quote-h", title = "SDK.QUOTE", caption = "emphasized voice", x = 18, y = 16, width = 664, height = 44)
@@ -348,7 +348,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "TYPOGRAPHY · LIST"
     title: "List turns peers into a scan path"
     lede: "Use lists for ordered attention when each item has equal structural weight."
-    narration: "The hero is a launch checklist; compact variants show two-item guidance and a longer operational set."
+    narration: "A list forms a launch checklist; smaller lists show two-item guidance and a longer operational set."
     caption: "Use parallel phrasing and keep item count intentional."
     render: @scene {
       sdk.Header(id = "list-h", title = "SDK.LIST", caption = "scan-friendly collection", x = 18, y = 16, width = 664, height = 44)
@@ -366,7 +366,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "TYPOGRAPHY · KEY VALUE"
     title: "Key-value pairs make one fact explicit"
     lede: "Use a key-value row for compact metadata with a clear label and answer."
-    narration: "The hero highlights a model revision; variants show region and protocol metadata."
+    narration: "A key-value row highlights a model revision; smaller rows show region and protocol metadata."
     caption: "Keys orient; values carry the decision."
     render: @scene {
       sdk.Header(id = "kv-h", title = "SDK.KEYVALUE", caption = "single metadata fact", x = 18, y = 16, width = 664, height = 44)
@@ -384,7 +384,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "TYPOGRAPHY · PROPERTY LIST"
     title: "Property list groups related metadata"
     lede: "Use a property list when several labeled facts belong to one object."
-    narration: "The hero describes an endpoint profile; variants compare runtime and artifact summaries."
+    narration: "A property list describes an endpoint profile; smaller lists compare runtime and artifact summaries."
     caption: "Group only properties that answer one question."
     render: @scene {
       sdk.Header(id = "props-h", title = "SDK.PROPERTYLIST", caption = "metadata group", x = 18, y = 16, width = 664, height = 44)
@@ -405,7 +405,7 @@ explainer "SDK Generic Catalog" {
     narration: "Status primitives combine restrained color with explicit labels so state remains understandable."
     caption: "Seven primitives · identity, state, attention, recovery."
     render: @scene {
-      sdk.Header(id = "c3-h", title = "STATUS + IDENTITY", caption = "03 / 07", x = 18, y = 16, width = 664, height = 44)
+      sdk.Header(id = "c3-h", title = "STATUS + IDENTITY", caption = "03 / 08", x = 18, y = 16, width = 664, height = 44)
       sdk.StatusCard(id = "c3-card", title = "Gateway healthy", variant = "success", x = 80, y = 120, width = 270, height = 120)
       sdk.Avatar(id = "c3-avatar", label = "operator", icon = "user", variant = "info", x = 420, y = 125, width = 90, height = 90)
       sdk.Badge(id = "c3-badge", label = "ON CALL", variant = "warning", x = 520, y = 155, width = 100, height = 28)
@@ -417,7 +417,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "STATUS · BADGE"
     title: "Badge labels compact state"
     lede: "Use badges for short categorical labels, not sentences."
-    narration: "The hero marks a production release; variants demonstrate neutral, success, warning, and danger states."
+    narration: "A large badge marks a production release in the success color; smaller badges demonstrate info, warning, and danger states."
     caption: "Color reinforces the label; it never replaces it."
     render: @scene {
       sdk.Header(id = "badge-h", title = "SDK.BADGE", caption = "compact category", x = 18, y = 16, width = 664, height = 44)
@@ -437,7 +437,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "STATUS · DOT"
     title: "Status dot adds a minimal live signal"
     lede: "Attach a dot to nearby text when space is tight and the state vocabulary is familiar."
-    narration: "The hero shows a healthy endpoint signal; variants compare warning, danger, and informational states."
+    narration: "A labeled status dot shows a healthy endpoint signal; smaller dots compare warning, danger, and informational states."
     caption: "A dot needs an adjacent label or accessible name."
     render: @scene {
       sdk.Header(id = "dot-h", title = "SDK.STATUSDOT", caption = "minimal state signal", x = 18, y = 16, width = 664, height = 44)
@@ -458,7 +458,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "STATUS · AVATAR"
     title: "Avatar gives a person or agent a stable marker"
     lede: "Use avatars where ownership, authorship, or presence matters."
-    narration: "The hero represents the on-call owner; variants distinguish operator, service, and automated identities."
+    narration: "An avatar represents the on-call owner; smaller avatars distinguish a human operator, a service, and an automated agent."
     caption: "Identity should be recognizable even without a photo."
     render: @scene {
       sdk.Header(id = "avatar-h", title = "SDK.AVATAR", caption = "identity marker", x = 18, y = 16, width = 664, height = 44)
@@ -478,7 +478,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "STATUS · ICON LABEL"
     title: "Icon label binds symbol to meaning"
     lede: "Use icon labels for compact actions and metadata that still require words."
-    narration: "The hero marks a secure endpoint; variants show verified, storage, and cloud contexts."
+    narration: "An icon label marks a private, secure endpoint; smaller labels show verified, storage, and cloud contexts."
     caption: "The label disambiguates the icon."
     render: @scene {
       sdk.Header(id = "il-h", title = "SDK.ICONLABEL", caption = "symbol + words", x = 18, y = 16, width = 664, height = 44)
@@ -498,7 +498,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "STATUS · ALERT"
     title: "Alert interrupts with actionable state"
     lede: "Use alerts for conditions the reader must notice and understand now."
-    narration: "The hero warns about capacity. Variants compare informational, successful, and dangerous outcomes."
+    narration: "An alert warns about capacity below the safety margin; smaller alerts compare informational, successful, and dangerous outcomes."
     caption: "State, message, and next action belong together."
     render: @scene {
       sdk.Header(id = "alert-h", title = "SDK.ALERT", caption = "actionable interruption", x = 18, y = 16, width = 664, height = 44)
@@ -518,7 +518,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "STATUS · STATUS CARD"
     title: "Status card combines state and context"
     lede: "Use status cards for persistent health summaries that need more room than a badge."
-    narration: "The hero summarizes a healthy gateway; variants compare degraded and failed services."
+    narration: "A status card summarizes a healthy gateway; smaller cards compare a degraded tokenizer and a failed exporter."
     caption: "Cards are persistent summaries; alerts are interruptions."
     render: @scene {
       sdk.Header(id = "sc-h", title = "SDK.STATUSCARD", caption = "persistent health summary", x = 18, y = 16, width = 664, height = 44)
@@ -536,7 +536,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "STATUS · EMPTY STATE"
     title: "Empty state explains absence and recovery"
     lede: "Use an empty state to say what is missing and what the reader can do next."
-    narration: "The hero handles a workspace with no runs; variants distinguish no search results and no saved reports."
+    narration: "An empty state handles a workspace with no benchmark runs yet; smaller states distinguish no search results and no saved reports."
     caption: "Absence needs explanation, not a blank panel."
     render: @scene {
       sdk.Header(id = "empty-h", title = "SDK.EMPTYSTATE", caption = "purposeful absence", x = 18, y = 16, width = 664, height = 44)
@@ -557,7 +557,7 @@ explainer "SDK Generic Catalog" {
     narration: "Data display components move from compact summaries to structured comparisons."
     caption: "Six primitives · summary, trend, rows, cells, taxonomy."
     render: @scene {
-      sdk.Header(id = "c4-h", title = "DATA DISPLAY", caption = "04 / 07", x = 18, y = 16, width = 664, height = 44)
+      sdk.Header(id = "c4-h", title = "DATA DISPLAY", caption = "04 / 08", x = 18, y = 16, width = 664, height = 44)
       sdk.Stat(id = "c4-stat", title = "Throughput", items = ["1,284 req/s", "+8.2%"], x = 70, y = 120, width = 180, height = 110)
       sdk.Metric(id = "c4-metric", title = "P95 latency", items = ["18.7 ms", "stable"], x = 270, y = 120, width = 190, height = 110)
       sdk.TagList(id = "c4-tags", items = ["streaming", "h2", "gpu"], x = 480, y = 145, width = 160, height = 48)
@@ -569,7 +569,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "DATA · STAT"
     title: "Stat gives one number immediate hierarchy"
     lede: "Use a stat when the current value matters more than its history."
-    narration: "The hero spotlights throughput; variants compare request count and active workers."
+    narration: "A stat spotlights throughput; smaller stats compare request count and active workers."
     caption: "Label, value, and one supporting fact are enough."
     render: @scene {
       sdk.Header(id = "stat-h", title = "SDK.STAT", caption = "single-number summary", x = 18, y = 16, width = 664, height = 44)
@@ -587,7 +587,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "DATA · METRIC"
     title: "Metric pairs a measure with interpretation"
     lede: "Use metrics for values whose unit and operational meaning must travel together."
-    narration: "The hero frames p95 latency; variants show token rate and error ratio."
+    narration: "A metric frames p95 latency against its SLO; smaller metrics show token rate and error ratio."
     caption: "Units and interpretation are part of the metric."
     render: @scene {
       sdk.Header(id = "metric-h", title = "SDK.METRIC", caption = "measure + meaning", x = 18, y = 16, width = 664, height = 44)
@@ -605,7 +605,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "DATA · TABLE"
     title: "Table aligns comparable records"
     lede: "Use tables when readers must compare the same fields across several entities."
-    narration: "The hero establishes a benchmark comparison header; variants show compact capacity and artifact tables."
+    narration: "A table establishes a benchmark comparison across models; smaller tables show compact capacity and artifact summaries."
     caption: "Columns should support comparison, not merely storage."
     render: @scene {
       sdk.Header(id = "table-h", title = "SDK.TABLE", caption = "structured comparison", x = 18, y = 16, width = 664, height = 44)
@@ -623,7 +623,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "DATA · TABLE ROW"
     title: "Table row keeps cells in one comparison lane"
     lede: "Use row slots to align related cells and expose stable cell ports."
-    narration: "The hero is a benchmark result row; variants compare header and highlighted summary rows."
+    narration: "A table row carries one benchmark result; smaller rows compare a header row and a highlighted summary row."
     caption: "Rows own horizontal alignment; cells own content."
     render: @scene {
       sdk.Header(id = "row-h", title = "SDK.TABLEROW", caption = "horizontal record", x = 18, y = 16, width = 664, height = 44)
@@ -641,7 +641,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "DATA · TABLE CELL"
     title: "Table cell frames one field"
     lede: "Use cells as semantic containers for labels, values, or richer child content."
-    narration: "The hero carries a model name; variants compare numeric and status-bearing cells."
+    narration: "A table cell carries a model's identity; smaller cells compare numeric and status-bearing content."
     caption: "A cell is a content boundary, not a whole table."
     render: @scene {
       sdk.Header(id = "cell-h", title = "SDK.TABLECELL", caption = "single table field", x = 18, y = 16, width = 664, height = 44)
@@ -659,7 +659,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "DATA · TAG LIST"
     title: "Tag list exposes a compact taxonomy"
     lede: "Use tag lists for unordered facets, capabilities, and filters."
-    narration: "The hero summarizes an endpoint profile; variants compare protocol and artifact facets."
+    narration: "A tag list summarizes an endpoint's capabilities; smaller lists compare protocol and artifact facets."
     caption: "Tags classify; they do not narrate."
     render: @scene {
       sdk.Header(id = "tags-h", title = "SDK.TAGLIST", caption = "compact facets", x = 18, y = 16, width = 664, height = 44)
@@ -680,7 +680,7 @@ explainer "SDK Generic Catalog" {
     narration: "Navigation components reveal where the reader is, what alternatives exist, and what happened over time."
     caption: "Five primitives · location, mode, page, sequence, event."
     render: @scene {
-      sdk.Header(id = "c5-h", title = "NAVIGATION + ACTIONS", caption = "05 / 07", x = 18, y = 16, width = 664, height = 44)
+      sdk.Header(id = "c5-h", title = "NAVIGATION + ACTIONS", caption = "05 / 08", x = 18, y = 16, width = 664, height = 44)
       sdk.Breadcrumb(id = "c5-bc", items = ["Workspace", "Benchmarks", "Run 42"], x = 70, y = 110, width = 390, height = 32)
       sdk.Tabs(id = "c5-tabs", items = ["Overview", "Metrics", "Artifacts"], x = 70, y = 175, width = 330, height = 38)
       sdk.Pagination(id = "c5-pages", items = ["1", "2", "3", "…", "12"], x = 70, y = 250, width = 220, height = 32)
@@ -692,7 +692,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "NAVIGATION · BREADCRUMB"
     title: "Breadcrumb preserves hierarchical location"
     lede: "Use breadcrumbs when readers can move back through nested scopes."
-    narration: "The hero locates a benchmark run; variants compare a shallow product path and a deeper artifact path."
+    narration: "A breadcrumb locates a benchmark run; smaller breadcrumbs compare a shallow product path and a deeper artifact path."
     caption: "Show hierarchy, not browser history."
     render: @scene {
       sdk.Header(id = "bc-h", title = "SDK.BREADCRUMB", caption = "hierarchical location", x = 18, y = 16, width = 664, height = 44)
@@ -710,7 +710,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "NAVIGATION · TABS"
     title: "Tabs switch peer views in place"
     lede: "Use tabs for a small set of sibling views with one active context."
-    narration: "The hero switches a run workspace; variants compare compact two-way and broader four-way navigation."
+    narration: "Tabs switch between views in a run workspace; smaller tab sets compare compact two-way and broader four-way navigation."
     caption: "Tabs represent peers, not a workflow."
     render: @scene {
       sdk.Header(id = "tabs-h", title = "SDK.TABS", caption = "peer view switcher", x = 18, y = 16, width = 664, height = 44)
@@ -728,7 +728,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "NAVIGATION · PAGINATION"
     title: "Pagination bounds a long result set"
     lede: "Use pagination when readers need stable position across many result pages."
-    narration: "The hero navigates benchmark history; variants compare short and truncated page ranges."
+    narration: "Pagination navigates benchmark history; smaller controls compare a short page range and a truncated one."
     caption: "Keep the current position and total scope visible."
     render: @scene {
       sdk.Header(id = "pages-h", title = "SDK.PAGINATION", caption = "bounded result navigation", x = 18, y = 16, width = 664, height = 44)
@@ -746,7 +746,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "NAVIGATION · TIMELINE"
     title: "Timeline organizes events as a sequence"
     lede: "Use timelines when order and progression matter more than tabular comparison."
-    narration: "The hero traces a benchmark lifecycle; variants compare deployment and incident sequences."
+    narration: "A timeline traces a benchmark's lifecycle from queued to complete; smaller timelines compare a deployment sequence and an incident sequence."
     caption: "Events should explain change over time."
     render: @scene {
       sdk.Header(id = "timeline-h", title = "SDK.TIMELINE", caption = "ordered events", x = 18, y = 16, width = 664, height = 44)
@@ -764,7 +764,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "NAVIGATION · TIMELINE ITEM"
     title: "Timeline item gives one event context"
     lede: "Use an item for a timestamped milestone with optional child detail."
-    narration: "The hero marks benchmark completion; variants compare an in-progress event and a failure."
+    narration: "A timeline item marks benchmark completion with supporting detail; smaller items compare an in-progress event and a failure."
     caption: "Each item should answer what changed and when."
     render: @scene {
       sdk.Header(id = "ti-h", title = "SDK.TIMELINEITEM", caption = "single milestone", x = 18, y = 16, width = 664, height = 44)
@@ -785,7 +785,7 @@ explainer "SDK Generic Catalog" {
     narration: "Indicators compress numeric state while preserving labels and meaningful ranges."
     caption: "Six primitives · completion, range, level, trend, score, state."
     render: @scene {
-      sdk.Header(id = "c6-h", title = "INDICATORS", caption = "06 / 07", x = 18, y = 16, width = 664, height = 44)
+      sdk.Header(id = "c6-h", title = "INDICATORS", caption = "06 / 08", x = 18, y = 16, width = 664, height = 44)
       sdk.Gauge(id = "c6-g", label = "utilization", value = 0.72, x = 80, y = 115, width = 180, height = 90)
       sdk.Sparkline(id = "c6-s", label = "throughput", values = [3, 4, 5, 4, 7, 8], x = 300, y = 125, width = 220, height = 70)
       sdk.Rating(id = "c6-rating", label = "quality", value = 0.8, x = 535, y = 145, width = 120, height = 30)
@@ -797,7 +797,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "INDICATORS · PROGRESS"
     title: "Progress shows completion toward an end"
     lede: "Use progress when the task has a meaningful start and finish."
-    narration: "The hero tracks artifact export; variants compare early, midpoint, and complete states."
+    narration: "A progress bar tracks artifact export; smaller bars compare early, midpoint, and complete states."
     caption: "Progress implies a destination; do not use it for open-ended load."
     render: @scene {
       sdk.Header(id = "progress-h", title = "SDK.PROGRESS", caption = "completion indicator", x = 18, y = 16, width = 664, height = 44)
@@ -817,7 +817,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "INDICATORS · METER"
     title: "Meter locates a value inside a range"
     lede: "Use meters for bounded quantities such as utilization, quality, or saturation."
-    narration: "The hero shows GPU memory pressure; variants compare low, moderate, and high range positions."
+    narration: "A meter shows GPU memory pressure within its range; smaller meters compare low, moderate, and high positions."
     caption: "Author min and max from the real domain."
     render: @scene {
       sdk.Header(id = "meter-h", title = "SDK.METER", caption = "bounded quantity", x = 18, y = 16, width = 664, height = 44)
@@ -837,7 +837,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "INDICATORS · GAUGE"
     title: "Gauge spotlights one current level"
     lede: "Use a gauge when a bounded value deserves dashboard prominence."
-    narration: "The hero emphasizes accelerator utilization; variants compare idle, nominal, and saturated levels."
+    narration: "A gauge emphasizes accelerator utilization; smaller gauges compare idle, nominal, and saturated levels."
     caption: "Reserve gauges for values worth the visual weight."
     render: @scene {
       sdk.Header(id = "gauge-h", title = "SDK.GAUGE", caption = "dashboard level", x = 18, y = 16, width = 664, height = 44)
@@ -857,7 +857,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "INDICATORS · SPARKLINE"
     title: "Sparkline reveals trend without chart chrome"
     lede: "Use sparklines for compact shape-of-change beside a primary metric."
-    narration: "The hero shows rising throughput; variants compare steady, volatile, and falling series."
+    narration: "A sparkline shows rising throughput; smaller sparklines compare steady, volatile, and falling series."
     caption: "A sparkline supplies trend, not precise lookup."
     render: @scene {
       sdk.Header(id = "spark-h", title = "SDK.SPARKLINE", caption = "compact trend", x = 18, y = 16, width = 664, height = 44)
@@ -877,7 +877,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "INDICATORS · RATING"
     title: "Rating expresses a normalized score"
     lede: "Use ratings where a familiar five-step score helps rapid comparison."
-    narration: "The hero reports response quality; variants compare low, medium, and excellent scores."
+    narration: "A rating reports response quality; smaller ratings compare low, medium, and excellent scores."
     caption: "Always explain what the score evaluates."
     render: @scene {
       sdk.Header(id = "rating-h", title = "SDK.RATING", caption = "five-step score", x = 18, y = 16, width = 664, height = 44)
@@ -897,7 +897,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "INDICATORS · SEMAPHORE"
     title: "Semaphore maps a value to discrete health"
     lede: "Use semaphores for familiar stop, caution, and go conditions."
-    narration: "The hero reports healthy admission; variants compare blocked, caution, and healthy states."
+    narration: "A semaphore reports healthy admission; smaller semaphores compare blocked, caution, and healthy states."
     caption: "Discrete lights suit discrete operational decisions."
     render: @scene {
       sdk.Header(id = "sem-h", title = "SDK.SEMAPHORE", caption = "three-state health", x = 18, y = 16, width = 664, height = 44)
@@ -920,7 +920,7 @@ explainer "SDK Generic Catalog" {
     narration: "Composition primitives own layout relationships so child components remain focused on content."
     caption: "Four primitives · region, actions, panes, media + body."
     render: @scene {
-      sdk.Header(id = "c7-h", title = "CONTAINERS + COMPOSITION", caption = "07 / 07", x = 18, y = 16, width = 664, height = 44)
+      sdk.Header(id = "c7-h", title = "CONTAINERS + COMPOSITION", caption = "07 / 08", x = 18, y = 16, width = 664, height = 44)
       sdk.Section(id = "c7-section", title = "Run workspace", x = 60, y = 100, width = 580, height = 190, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) {
         children {
           sdk.Toolbar(id = "c7-toolbar", label = "actions", width = 520, height = 44) { children { sdk.Badge(id = "c7-b1", label = "RUN", variant = "success") sdk.Badge(id = "c7-b2", label = "EXPORT", variant = "info") } }
@@ -935,7 +935,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "COMPOSITION · SECTION"
     title: "Section gives related content a shared boundary"
     lede: "Use sections to group one coherent topic with its own internal layout."
-    narration: "The hero contains a benchmark summary; variants compare compact filters and a warning region."
+    narration: "A section contains a benchmark summary with its own stats; smaller sections compare a neutral filter region and an emphasized warning region."
     caption: "A section should answer one clear question."
     render: @scene {
       sdk.Header(id = "section-h", title = "SDK.SECTION", caption = "bounded region", x = 18, y = 16, width = 664, height = 44)
@@ -953,7 +953,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "COMPOSITION · TOOLBAR"
     title: "Toolbar aligns related actions"
     lede: "Use toolbars for a compact horizontal set of controls or status actions."
-    narration: "The hero offers run actions; variants compare a minimal two-action bar and a status-oriented bar."
+    narration: "A toolbar offers run, stop, and export actions; smaller toolbars compare a minimal icon bar and a status-oriented bar."
     caption: "Group actions by task, not by available space."
     render: @scene {
       sdk.Header(id = "toolbar-h", title = "SDK.TOOLBAR", caption = "action rail", x = 18, y = 16, width = 664, height = 44)
@@ -971,7 +971,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "COMPOSITION · SPLIT PANE"
     title: "Split pane gives peer regions durable proportion"
     lede: "Use split panes for side-by-side workspaces whose relationship must remain visible."
-    narration: "The hero pairs configuration and results; variants compare compact horizontal and vertical arrangements."
+    narration: "A split pane pairs a configuration region with results; smaller panes compare compact horizontal and vertical arrangements."
     caption: "Use panes for persistent peers, not transient overlays."
     render: @scene {
       sdk.Header(id = "split-h", title = "SDK.SPLITPANE", caption = "paired workspace", x = 18, y = 16, width = 664, height = 44)
@@ -989,7 +989,7 @@ explainer "SDK Generic Catalog" {
     eyebrow: "COMPOSITION · MEDIA OBJECT"
     title: "Media object binds identity and body content"
     lede: "Use named slots to compose a leading visual, body, and trailing context."
-    narration: "The hero presents a benchmark owner and summary; variants compare service and artifact rows."
+    narration: "A media object presents the benchmark owner alongside a run summary; smaller objects compare a service row and an artifact row."
     caption: "Media establishes identity; the body carries meaning."
     render: @scene {
       sdk.Header(id = "media-h", title = "SDK.MEDIAOBJECT", caption = "media + body pattern", x = 18, y = 16, width = 664, height = 44)
@@ -1000,6 +1000,132 @@ explainer "SDK Generic Catalog" {
       sdk.Label(id = "media-v1-l", text = "SERVICE", x = 430, y = 184, width = 220, height = 16)
       sdk.Label(id = "media-v2-l", text = "ARTIFACT", x = 430, y = 307, width = 220, height = 16)
       timeline main { at 0 reveal media-h duration 160 after media-h reveal media-hero duration 240 after media-hero reveal media-hero-l duration 140 after media-hero-l reveal media-v1 duration 160 after media-v1 reveal media-v1-l duration 120 after media-v1-l reveal media-v2 duration 160 after media-v2 reveal media-v2-l duration 120 }
+    }
+  }
+
+  slide "Deck composites" {
+    eyebrow: "CHAPTER 8 · DECK COMPOSITES"
+    title: "Compose whole slide shapes in one call"
+    lede: "Dividers, step chains, big figures, compare and card grids, numbered sequences, timeline axes, and node trees capture recurring reference-deck layouts as single components."
+    narration: "Each deck composite expands into many primitives at once: a takeaway grid of accented cells and an ordered row of arrow-linked step boxes both come from one authored line."
+    caption: "Eight composites · dividers, chains, figures, grids, sequences, axes, trees."
+    render: @scene {
+      sdk.Header(id = "c8-h", title = "DECK COMPOSITES", caption = "08 / 08", x = 18, y = 16, width = 664, height = 44)
+      sdk.CompareGrid(id = "c8-grid", columns = 3, items = [{ label: "One call", detail: "one authored line" }, { label: "Many nodes", detail: "expanded primitives" }, { label: "Deck-ready", detail: "brand layout" }], x = 6, y = 90)
+      sdk.StepChain(id = "c8-chain", steps = [{ number: "01", label: "VALIDATE" }, { number: "02", label: "SCHEDULE" }, { number: "03", label: "EMIT" }], x = 52, y = 248)
+      timeline main { at 0 reveal c8-h duration 180 after c8-h reveal c8-grid duration 240 after c8-grid reveal c8-chain duration 220 }
+    }
+  }
+
+  slide "sdk.sectionDivider" {
+    eyebrow: "DECK COMPOSITES · SDK.SECTIONDIVIDER"
+    title: "Section divider opens a chapter"
+    lede: "Use a section divider for the right-aligned chapter-break block that separates major parts of a deck."
+    narration: "A large green monospace number sits above a bold black title and a gray subtitle, all aligned to the right edge, with a small green kicker above the number."
+    caption: "One number, one title, one subtitle; alignment carries the weight."
+    render: @scene {
+      sdk.Header(id = "divider-h", title = "SDK.SECTIONDIVIDER", caption = "chapter break", x = 18, y = 16, width = 664, height = 44)
+      sdk.SectionDivider(id = "divider-demo", eyebrow = "CHAPTER", number = "03", title = "Crate topology", subtitle = "Three crates share one workspace", x = 20, y = 70, width = 640)
+      sdk.Caption(id = "divider-cap", text = "Right-aligned chapter break · huge number over title and subtitle", x = 18, y = 382, width = 664, height = 16)
+      timeline main { at 0 reveal divider-h duration 180 after divider-h reveal divider-demo duration 280 after divider-demo reveal divider-cap duration 140 }
+    }
+  }
+
+  slide "sdk.stepChain" {
+    eyebrow: "DECK COMPOSITES · SDK.STEPCHAIN"
+    title: "Step chain traces an ordered pipeline"
+    lede: "Use a step chain when a fixed sequence of numbered stages hands off from one to the next."
+    narration: "Three numbered boxes run left to right, each with a green top edge, a green number, a bold label, and a line of detail; a green arrow points from each box into the next."
+    caption: "Direction row or column; every box carries a green accent edge."
+    render: @scene {
+      sdk.Header(id = "chain-h", title = "SDK.STEPCHAIN", caption = "ordered stages", x = 18, y = 16, width = 664, height = 44)
+      sdk.StepChain(id = "chain-demo", steps = [{ number: "01", label: "VALIDATE", detail: "config v2" }, { number: "02", label: "SCHEDULE", detail: "workload" }, { number: "03", label: "EMIT", detail: "records" }], x = 52, y = 120)
+      sdk.Caption(id = "chain-cap", text = "Numbered step boxes linked by green arrows, validate through emit", x = 18, y = 382, width = 664, height = 16)
+      timeline main { at 0 reveal chain-h duration 180 after chain-h reveal chain-demo duration 300 after chain-demo reveal chain-cap duration 140 }
+    }
+  }
+
+  slide "sdk.bigStat" {
+    eyebrow: "DECK COMPOSITES · SDK.BIGSTAT"
+    title: "Big stat headlines one figure"
+    lede: "Use a big stat when a single number is the entire point of the slide."
+    narration: "An oversized green figure fills the upper area, with a bold black title and a gray description stacked directly beneath it."
+    caption: "The value dominates; the title and description explain it."
+    render: @scene {
+      sdk.Header(id = "bigstat-h", title = "SDK.BIGSTAT", caption = "hero figure", x = 18, y = 16, width = 664, height = 44)
+      sdk.BigStat(id = "bigstat-demo", value = "3", title = "execution modes", description = "online · offline replay · dry run", x = 54, y = 64, width = 480)
+      sdk.Caption(id = "bigstat-cap", text = "One giant value over a title and a one-line description", x = 18, y = 382, width = 664, height = 16)
+      timeline main { at 0 reveal bigstat-h duration 180 after bigstat-h reveal bigstat-demo duration 300 after bigstat-demo reveal bigstat-cap duration 140 }
+    }
+  }
+
+  slide "sdk.compareGrid" {
+    eyebrow: "DECK COMPOSITES · SDK.COMPAREGRID"
+    title: "Compare grid lines up peer takeaways"
+    lede: "Use a compare grid for a row of equal-weight cells that should be read side by side."
+    narration: "Three equal cells sit in a row, each with a green top accent, a bold label, and a line of gray detail beneath it."
+    caption: "Columns are configurable; every cell shares the green top accent."
+    render: @scene {
+      sdk.Header(id = "compare-h", title = "SDK.COMPAREGRID", caption = "peer cells", x = 18, y = 16, width = 664, height = 44)
+      sdk.CompareGrid(id = "compare-demo", columns = 3, items = [{ label: "Deterministic", detail: "same seed, same run" }, { label: "Observable", detail: "every record captured" }, { label: "Composable", detail: "seams over monoliths" }], x = 6, y = 130)
+      sdk.Caption(id = "compare-cap", text = "Three green-accented cells compared side by side", x = 18, y = 382, width = 664, height = 16)
+      timeline main { at 0 reveal compare-h duration 180 after compare-h reveal compare-demo duration 300 after compare-demo reveal compare-cap duration 140 }
+    }
+  }
+
+  slide "sdk.numberedSequence" {
+    eyebrow: "DECK COMPOSITES · SDK.NUMBEREDSEQUENCE"
+    title: "Numbered sequence walks an ordered list"
+    lede: "Use a numbered sequence for a vertical list where each step has an index and a short explanation."
+    narration: "Four rows stack vertically. Each has a square index chip on the left, green where the step is emphasized and black otherwise, beside a bordered box naming the callback and what it records."
+    caption: "Chips index the order; emphasis marks the steps that matter."
+    render: @scene {
+      sdk.Header(id = "seq-h", title = "SDK.NUMBEREDSEQUENCE", caption = "indexed rows", x = 18, y = 16, width = 664, height = 44)
+      sdk.NumberedSequence(id = "seq-demo", items = [{ number: "1", title: "on_arrival", detail: "request enters the sink", emphasis: true }, { number: "2", title: "on_admit", detail: "admission gate opens" }, { number: "3", title: "on_token", detail: "first token is TTFT", emphasis: true }, { number: "4", title: "on_usage", detail: "terminal usage recorded" }], x = 54, y = 72)
+      sdk.Caption(id = "seq-cap", text = "Numbered chips beside bordered callback boxes, green where emphasized", x = 18, y = 382, width = 664, height = 16)
+      timeline main { at 0 reveal seq-h duration 180 after seq-h reveal seq-demo duration 300 after seq-demo reveal seq-cap duration 140 }
+    }
+  }
+
+  slide "sdk.timelineAxis" {
+    eyebrow: "DECK COMPOSITES · SDK.TIMELINEAXIS"
+    title: "Timeline axis places events on a scale"
+    lede: "Use a timeline axis to show marks and a target against a labeled numeric range."
+    narration: "A horizontal axis runs from zero to three milliseconds with labeled ticks below it, a filled green marker where a timer fires on time, a hollow gray marker for a late wake, and a dashed green line at the deadline."
+    caption: "Ticks label the scale; filled marks are exact, hollow marks are late."
+    render: @scene {
+      sdk.Header(id = "axis-h", title = "SDK.TIMELINEAXIS", caption = "labeled scale", x = 18, y = 16, width = 664, height = 44)
+      sdk.TimelineAxis(id = "axis-demo", start = 0, end = 3, unit = "ms", ticks = [{ at: 0, label: "0ms" }, { at: 1, label: "1ms" }, { at: 2, label: "2ms" }, { at: 3, label: "3ms" }], markers = [{ at: 1, label: "fire" }, { at: 2.4, label: "late wake", style: "late" }], target = { at: 2, label: "deadline" }, x = 30, y = 150, width = 640)
+      sdk.Caption(id = "axis-cap", text = "Ticks at 0 to 3 ms with on-time and late markers against a deadline", x = 18, y = 382, width = 664, height = 16)
+      timeline main { at 0 reveal axis-h duration 180 after axis-h reveal axis-demo duration 300 after axis-demo reveal axis-cap duration 140 }
+    }
+  }
+
+  slide "sdk.nodeTree" {
+    eyebrow: "DECK COMPOSITES · SDK.NODETREE"
+    title: "Node tree fans a root over its children"
+    lede: "Use a node tree for a single parent joined to a row of child nodes."
+    narration: "A green root box sits above a row of three child boxes, each joined to the root by a thin line, with a caption underneath explaining the ordering."
+    caption: "The root can be filled to mark it; children hang from connecting lines."
+    render: @scene {
+      sdk.Header(id = "tree-h", title = "SDK.NODETREE", caption = "root over children", x = 18, y = 16, width = 664, height = 44)
+      sdk.NodeTree(id = "tree-demo", root = { label: "pop", detail: "min deadline", emphasis: true }, children = [{ label: "t=1ms" }, { label: "t=2ms" }, { label: "t=4ms" }], orderNote = "The heap yields the earliest deadline first", x = 80, y = 76)
+      sdk.Caption(id = "tree-cap", text = "A popped root box above three sleeper children with an order note", x = 18, y = 382, width = 664, height = 16)
+      timeline main { at 0 reveal tree-h duration 180 after tree-h reveal tree-demo duration 300 after tree-demo reveal tree-cap duration 140 }
+    }
+  }
+
+  slide "sdk.cardGrid" {
+    eyebrow: "DECK COMPOSITES · SDK.CARDGRID"
+    title: "Card grid arranges labeled cards"
+    lede: "Use a card grid for a set of titled cards, each with a colored left edge that groups it."
+    narration: "Four bordered cards form a two-by-two grid. Each card carries a colored left edge, a bold monospace title, and a line of gray detail."
+    caption: "Left-edge color groups cards; the grid wraps by column count."
+    render: @scene {
+      sdk.Header(id = "cards-h", title = "SDK.CARDGRID", caption = "titled cards", x = 18, y = 16, width = 664, height = 44)
+      sdk.CardGrid(id = "cards-demo", columns = 2, cards = [{ title: "aiperf-cli", detail: "CLI, routing, self-execution", accent: "green" }, { title: "aiperf-runtime", detail: "clocks, transports, metrics", accent: "green" }, { title: "aiperf-mock-server", detail: "deterministic inference target", accent: "black" }, { title: "pyext", detail: "pyo3 packaging module", accent: "gray" }], x = 80, y = 72)
+      sdk.Caption(id = "cards-cap", text = "A two-by-two grid of crate cards with colored left edges", x = 18, y = 382, width = 664, height = 16)
+      timeline main { at 0 reveal cards-h duration 180 after cards-h reveal cards-demo duration 300 after cards-demo reveal cards-cap duration 140 }
     }
   }
 
@@ -1031,7 +1157,7 @@ explainer "SDK Generic Catalog" {
           }
         }
       }
-      sdk.Caption(id = "final-cap", text = "Seven families · one coherent interface", x = 32, y = 380, width = 636, height = 16)
+      sdk.Caption(id = "final-cap", text = "Eight families · one coherent interface", x = 32, y = 380, width = 636, height = 16)
       timeline main {
         at 0 reveal final-h duration 180
         after final-h reveal final-bc duration 160

@@ -45,7 +45,7 @@ describe("SDK catalog decks", () => {
       name: "generic",
       source: readDeck("sdk-generic-catalog.flow"),
       components: GENERIC_CATALOG_COMPONENTS,
-      slideCount: 54,
+      slideCount: 63,
     },
     {
       name: "diagram",
