@@ -313,6 +313,23 @@ function computeGridCellBoxes(args: {
   return { cellBoxes, detailBoxes, width, height: rootHeight };
 }
 
+/**
+ * Convert a flow-engine box (resolved in the layout root's coordinate space)
+ * into a `GeometryIr` local to a `parent` group box, since the emitted scene
+ * groups use `coordinateSpace: "local"` (children are positioned relative to
+ * their parent). `layoutFlow` returns every node's box relative to the same
+ * root origin, so subtracting the parent's origin yields the child's local
+ * offset.
+ */
+function localGeometry(child: FlowBox, parent: FlowBox): GeometryIr {
+  return {
+    x: child.x - parent.x,
+    y: child.y - parent.y,
+    width: child.width,
+    height: child.height,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Provenance + node builders (children use coordinates local to their parent).
 // ---------------------------------------------------------------------------
@@ -665,42 +682,70 @@ const stepChainFactory: SdkComponentFactory = (props, _slots, context) => {
   const isColumn = stringProp(props, "direction") === "column";
   const boxW = isColumn ? STEP_COL_BOX_W : STEP_ROW_BOX_W;
   const baseBoxH = isColumn ? STEP_COL_BOX_H : STEP_ROW_BOX_H;
+  const arrowGap = isColumn ? STEP_COL_ARROW_GAP : STEP_ROW_ARROW_GAP;
   const originX = numberProp(props, "x") ?? 0;
   const originY = numberProp(props, "y") ?? 0;
 
-  // Per-step box heights grown to fit each step's wrapped detail text. A
-  // `STEP_INSET` bottom pad keeps detail-free / single-line row-mode steps at
-  // the original box height. Column mode stacks with a running y-offset so a
-  // grown step pushes the next step (and its arrow) down; row mode keeps a
-  // fixed horizontal stride (side-by-side steps never shift each other's x).
-  const stepDetailWidth = boxW - STEP_INSET * 2;
-  const stepDetailTopY = STEP_ACCENT_THICKNESS + 70;
-  const stepHeights = steps.map((step) =>
-    step.detail !== undefined
-      ? Math.max(
-          baseBoxH,
-          stepDetailTopY + measuredWrappedHeight(step.detail, stepDetailWidth, 13) + STEP_INSET,
-        )
-      : baseBoxH,
-  );
-  const rowStride = boxW + STEP_ROW_ARROW_GAP;
-  const colOffsets: number[] = [];
-  {
-    let acc = 0;
-    for (let i = 0; i < stepHeights.length; i += 1) {
-      colOffsets.push(acc);
-      acc += stepHeights[i]! + STEP_COL_ARROW_GAP;
+  // Layout is delegated wholesale to the flow engine: one axis-aligned container
+  // of fixed-width step boxes, each a `column` of number/label/detail text
+  // leaves the engine measures (via `textFlowLeaf`) and sizes. This replaces the
+  // former hand-rolled stride/offset/grow arithmetic — box heights (grown to fit
+  // wrapped detail) and inter-box placement now fall out of a single
+  // `layoutFlow` call. Uniform `STEP_INSET` padding gives the accent-clearing
+  // top inset and the left/right text inset in one shot; a `minHeight` keeps
+  // detail-free steps at their original box height.
+  //
+  // Row mode stays a single non-wrapping line: the arrows connect consecutive
+  // steps by node anchor, so letting the engine auto-wrap would draw arrows
+  // across line breaks. A wrapping run is left to the deck author (multiple
+  // stepChain instances) rather than forced here.
+  const stepBoxNodes: FlowNode[] = steps.map((step, index) => {
+    const boxId = `${rootId}__step-${index}`;
+    const inner: FlowNode[] = [
+      { id: `${boxId}__number`, measure: textFlowLeaf(step.number, scaledSceneFontSize(15), "bold") },
+      {
+        id: `${boxId}__label`,
+        measure: textFlowLeaf(step.label, scaledSceneFontSize(18), "bold"),
+        margin: { top: 6 },
+      },
+    ];
+    if (step.detail !== undefined) {
+      inner.push({
+        id: `${boxId}__detail`,
+        measure: textFlowLeaf(step.detail, scaledSceneFontSize(13)),
+        margin: { top: 6 },
+      });
     }
-  }
+    return {
+      id: boxId,
+      direction: "column",
+      padding: STEP_INSET,
+      fixedWidth: boxW,
+      minHeight: baseBoxH,
+      children: inner,
+    };
+  });
+
+  const rootNode: FlowNode = {
+    id: rootId,
+    direction: isColumn ? "column" : "row",
+    gap: arrowGap,
+    align: "start",
+    children: stepBoxNodes,
+  };
+  const constraintWidth = isColumn
+    ? boxW
+    : steps.length * boxW + Math.max(steps.length - 1, 0) * arrowGap;
+  const boxes = layoutFlow(rootNode, { maxWidth: constraintWidth });
+  const rootBox = boxes.get(rootId)!;
 
   const children: RenderNodeIr[] = [];
   const ports: Record<string, ConnectorEndpointIr> = {};
 
   steps.forEach((step, index) => {
-    const boxH = stepHeights[index]!;
-    const boxX = isColumn ? 0 : index * rowStride;
-    const boxY = isColumn ? colOffsets[index]! : 0;
     const boxId = `${rootId}__step-${index}`;
+    const stepBox = boxes.get(boxId)!;
+    const boxH = stepBox.height;
     const boxChildren: RenderNodeIr[] = [];
 
     // Green accent edge: top bar in row mode, left bar in column mode.
@@ -720,12 +765,13 @@ const stepChainFactory: SdkComponentFactory = (props, _slots, context) => {
       ),
     );
 
+    const numberBox = boxes.get(`${boxId}__number`)!;
     boxChildren.push(
       attachSdkOrigin(
         buildText({
           id: `${boxId}__number`,
           text: step.number,
-          geometry: { x: STEP_INSET, y: STEP_ACCENT_THICKNESS + 12, width: boxW - STEP_INSET * 2, height: 22 },
+          geometry: localGeometry(numberBox, stepBox),
           style: { fontSize: 15, fontFamily: MONO_FONT, fontWeight: "bold", fill: COLOR_ACCENT, textAnchor: "start" },
           sourceMap: context.sourceMap,
         }),
@@ -733,12 +779,13 @@ const stepChainFactory: SdkComponentFactory = (props, _slots, context) => {
       ),
     );
 
+    const labelBox = boxes.get(`${boxId}__label`)!;
     boxChildren.push(
       attachSdkOrigin(
         buildText({
           id: `${boxId}__label`,
           text: step.label,
-          geometry: { x: STEP_INSET, y: STEP_ACCENT_THICKNESS + 40, width: boxW - STEP_INSET * 2, height: 26 },
+          geometry: localGeometry(labelBox, stepBox),
           style: { fontSize: 18, fontWeight: "bold", fill: COLOR_INK, textAnchor: "start" },
           sourceMap: context.sourceMap,
         }),
@@ -747,17 +794,13 @@ const stepChainFactory: SdkComponentFactory = (props, _slots, context) => {
     );
 
     if (step.detail !== undefined) {
+      const detailBox = boxes.get(`${boxId}__detail`)!;
       boxChildren.push(
         attachSdkOrigin(
           buildText({
             id: `${boxId}__detail`,
             text: step.detail,
-            geometry: {
-              x: STEP_INSET,
-              y: stepDetailTopY,
-              width: stepDetailWidth,
-              height: grownTextHeight(step.detail, stepDetailWidth, 13, 22),
-            },
+            geometry: localGeometry(detailBox, stepBox),
             style: { fontSize: 13, fill: COLOR_MUTED, textAnchor: "start" },
             sourceMap: context.sourceMap,
           }),
@@ -771,7 +814,7 @@ const stepChainFactory: SdkComponentFactory = (props, _slots, context) => {
         buildGroup({
           id: boxId,
           capabilityId: "core.group",
-          geometry: { x: boxX, y: boxY, width: boxW, height: boxH },
+          geometry: { x: stepBox.x, y: stepBox.y, width: boxW, height: boxH },
           style: {
             coordinateSpace: "local",
             fill: COLOR_SURFACE,
@@ -787,20 +830,23 @@ const stepChainFactory: SdkComponentFactory = (props, _slots, context) => {
     );
     ports[`step[${index}]`] = { nodeId: boxId };
 
-    // Arrow into the next box (green, in the gap between the two boxes).
+    // Arrow into the next box (green, in the gap between the two boxes). The
+    // scene arrow resolves its endpoints from the node anchors below; the
+    // geometry box is a bounding hint computed from the engine-resolved boxes.
     if (index < steps.length - 1) {
+      const nextBox = boxes.get(`${rootId}__step-${index + 1}`)!;
+      const from = isColumn
+        ? { x: boxW / 2, y: stepBox.y + boxH }
+        : { x: stepBox.x + boxW, y: stepBox.y + boxH / 2 };
+      const to = isColumn
+        ? { x: boxW / 2, y: nextBox.y }
+        : { x: nextBox.x, y: nextBox.y + nextBox.height / 2 };
       const arrowId = `${rootId}__arrow-${index}`;
-      const from: ConnectorEndpointIr = isColumn
-        ? { x: boxW / 2, y: boxY + boxH }
-        : { x: boxX + boxW, y: boxH / 2 };
-      const to: ConnectorEndpointIr = isColumn
-        ? { x: boxW / 2, y: colOffsets[index + 1]! }
-        : { x: boxX + rowStride, y: boxH / 2 };
       const arrowGeometry: GeometryIr = {
-        x: Math.min(from.x!, to.x!),
-        y: Math.min(from.y!, to.y!),
-        width: Math.abs(to.x! - from.x!),
-        height: Math.abs(to.y! - from.y!),
+        x: Math.min(from.x, to.x),
+        y: Math.min(from.y, to.y),
+        width: Math.abs(to.x - from.x),
+        height: Math.abs(to.y - from.y),
       };
       children.push(
         attachSdkOrigin(
@@ -820,11 +866,8 @@ const stepChainFactory: SdkComponentFactory = (props, _slots, context) => {
     }
   });
 
-  const lastIndex = steps.length - 1;
-  const width = isColumn ? boxW : lastIndex * rowStride + boxW;
-  const height = isColumn
-    ? colOffsets[lastIndex]! + stepHeights[lastIndex]!
-    : Math.max(...stepHeights);
+  const width = rootBox.width;
+  const height = rootBox.height;
 
   const root = attachSdkOrigin(
     buildGroup({
@@ -1292,27 +1335,73 @@ const numberedSequenceFactory: SdkComponentFactory = (props, _slots, context) =>
   const y = numberProp(props, "y") ?? 0;
   const boxX = SEQ_CHIP + SEQ_CHIP_GAP;
   const seqDetailWidth = SEQ_BOX_W - SEQ_INSET * 2;
-  const seqDetailTopY = 34;
+
+  // Layout is delegated to the flow engine: a `column` of rows, each a `row` of
+  // a fixed-size chip leaf and a bordered box. The box holds an inset content
+  // column of title/detail text leaves the engine measures and sizes, so a
+  // wrapped detail grows its box (and hence the row and the whole stack) with no
+  // running y-offset accumulator. `align: "center"` on each row vertically
+  // centers the shorter chip against the taller box; `justify: "center"` on the
+  // box vertically centers the title/detail block within the (min-`SEQ_ROW_H`)
+  // box. The `SEQ_INSET` horizontal inset is carried by a fixed-width content
+  // node (not box padding) so wrap width stays `seqDetailWidth` WITHOUT adding
+  // vertical padding — this keeps box heights matched to the prior layout.
+  const rowNodes: FlowNode[] = items.map((item, index) => {
+    const rowId = `${rootId}__row-${index}`;
+    const boxInner: FlowNode[] = [
+      { id: `${rowId}__title`, measure: textFlowLeaf(item.title, scaledSceneFontSize(16), "bold") },
+    ];
+    if (item.detail !== undefined) {
+      boxInner.push({
+        id: `${rowId}__detail`,
+        measure: textFlowLeaf(item.detail, scaledSceneFontSize(13)),
+        margin: { top: 4 },
+      });
+    }
+    return {
+      id: rowId,
+      direction: "row",
+      gap: SEQ_CHIP_GAP,
+      align: "center",
+      children: [
+        { id: `${rowId}__chip`, fixedWidth: SEQ_CHIP, fixedHeight: SEQ_CHIP },
+        {
+          id: `${rowId}__box`,
+          direction: "column",
+          fixedWidth: SEQ_BOX_W,
+          minHeight: SEQ_ROW_H,
+          justify: "center",
+          children: [
+            {
+              id: `${rowId}__box-content`,
+              direction: "column",
+              fixedWidth: seqDetailWidth,
+              margin: { left: SEQ_INSET, right: SEQ_INSET },
+              children: boxInner,
+            },
+          ],
+        },
+      ],
+    };
+  });
+
+  const rootNode: FlowNode = {
+    id: rootId,
+    direction: "column",
+    gap: SEQ_ROW_GAP,
+    children: rowNodes,
+  };
+  const boxes = layoutFlow(rootNode, { maxWidth: boxX + SEQ_BOX_W });
+  const rootBox = boxes.get(rootId)!;
 
   const children: RenderNodeIr[] = [];
   const ports: Record<string, ConnectorEndpointIr> = {};
 
-  // Running y-offset so each row starts below the actual (possibly grown)
-  // bottom of the previous row, replacing fixed `stride * index` math.
-  let cursorY = 0;
-
   items.forEach((item, index) => {
-    // Grow this row to fit its wrapped detail text. A small (6px) bottom pad
-    // keeps single-line rows at the original `SEQ_ROW_H` baseline.
-    const rowH =
-      item.detail !== undefined
-        ? Math.max(
-            SEQ_ROW_H,
-            seqDetailTopY + measuredWrappedHeight(item.detail, seqDetailWidth, 13) + 6,
-          )
-        : SEQ_ROW_H;
-    const rowY = cursorY;
     const rowId = `${rootId}__row-${index}`;
+    const rowBox = boxes.get(rowId)!;
+    const chipBox = boxes.get(`${rowId}__chip`)!;
+    const boxBox = boxes.get(`${rowId}__box`)!;
     const rowChildren: RenderNodeIr[] = [];
 
     // Index chip: a filled square (green when emphasized, solid black otherwise)
@@ -1356,7 +1445,7 @@ const numberedSequenceFactory: SdkComponentFactory = (props, _slots, context) =>
         buildGroup({
           id: `${rowId}__chip`,
           capabilityId: "layout.overlay",
-          geometry: { x: 0, y: (rowH - SEQ_CHIP) / 2, width: SEQ_CHIP, height: SEQ_CHIP },
+          geometry: localGeometry(chipBox, rowBox),
           style: { coordinateSpace: "local" },
           children: chipChildren,
           label: `${item.number} chip`,
@@ -1367,17 +1456,13 @@ const numberedSequenceFactory: SdkComponentFactory = (props, _slots, context) =>
     );
 
     // Bordered detail box to the right of the chip.
+    const titleBox = boxes.get(`${rowId}__title`)!;
     const boxChildren: RenderNodeIr[] = [
       attachSdkOrigin(
         buildText({
           id: `${rowId}__title`,
           text: item.title,
-          geometry: {
-            x: SEQ_INSET,
-            y: item.detail !== undefined ? 10 : (SEQ_ROW_H - 22) / 2,
-            width: SEQ_BOX_W - SEQ_INSET * 2,
-            height: 22,
-          },
+          geometry: localGeometry(titleBox, boxBox),
           style: { fontSize: 16, fontFamily: MONO_FONT, fontWeight: "bold", fill: COLOR_INK, textAnchor: "start" },
           sourceMap: context.sourceMap,
         }),
@@ -1385,17 +1470,13 @@ const numberedSequenceFactory: SdkComponentFactory = (props, _slots, context) =>
       ),
     ];
     if (item.detail !== undefined) {
+      const detailBox = boxes.get(`${rowId}__detail`)!;
       boxChildren.push(
         attachSdkOrigin(
           buildText({
             id: `${rowId}__detail`,
             text: item.detail,
-            geometry: {
-              x: SEQ_INSET,
-              y: seqDetailTopY,
-              width: seqDetailWidth,
-              height: grownTextHeight(item.detail, seqDetailWidth, 13, 18),
-            },
+            geometry: localGeometry(detailBox, boxBox),
             style: { fontSize: 13, fill: COLOR_MUTED, textAnchor: "start" },
             sourceMap: context.sourceMap,
           }),
@@ -1408,7 +1489,7 @@ const numberedSequenceFactory: SdkComponentFactory = (props, _slots, context) =>
         buildGroup({
           id: `${rowId}__box`,
           capabilityId: "core.group",
-          geometry: { x: boxX, y: 0, width: SEQ_BOX_W, height: rowH },
+          geometry: { ...localGeometry(boxBox, rowBox), width: SEQ_BOX_W, height: boxBox.height },
           style: { coordinateSpace: "local", fill: COLOR_SURFACE, stroke: COLOR_BORDER, strokeWidth: 1 },
           children: boxChildren,
           label: item.title,
@@ -1423,7 +1504,7 @@ const numberedSequenceFactory: SdkComponentFactory = (props, _slots, context) =>
         buildGroup({
           id: rowId,
           capabilityId: "core.group",
-          geometry: { x: 0, y: rowY, width: boxX + SEQ_BOX_W, height: rowH },
+          geometry: { x: rowBox.x, y: rowBox.y, width: rowBox.width, height: rowBox.height },
           style: { coordinateSpace: "local" },
           children: rowChildren,
           label: `${item.number} ${item.title}`,
@@ -1433,11 +1514,10 @@ const numberedSequenceFactory: SdkComponentFactory = (props, _slots, context) =>
       ),
     );
     ports[`row[${index}]`] = { nodeId: rowId };
-    cursorY += rowH + SEQ_ROW_GAP;
   });
 
-  const width = boxX + SEQ_BOX_W;
-  const height = Math.max(cursorY - SEQ_ROW_GAP, 0);
+  const width = rootBox.width;
+  const height = rootBox.height;
   const root = attachSdkOrigin(
     buildGroup({
       id: rootId,
