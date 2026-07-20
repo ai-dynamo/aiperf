@@ -69,8 +69,8 @@ import {
   type SdkInstanceIndex,
 } from "../sdk/expand.js";
 
-import { asRecord } from "./desugar-scene-primitives.js";
 import { expandSymbolInvocations } from "./expand-symbols.js";
+import { asRecord } from "./package-node-lower.js";
 import { lowerSemanticSceneNode } from "./semantic-scene-node.js";
 import { collectSymbols } from "./symbols.js";
 import {

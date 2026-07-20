@@ -352,18 +352,20 @@ export function markerGeometry(
       };
     }
     case "tee": {
-      // Vertical bar at the path end (perpendicular stop).
-      const thickness = Math.max(0.6, u * 0.2);
+      // Perpendicular bar: visual length from size base; along-path thickness
+      // matches the reduced inset. Center the bar on the path endpoint.
+      const base = TIP_SIZE_UNITS[tip.size];
+      const thickness = tip.insetUnits;
       return {
         markerWidth: thickness + 1,
-        markerHeight: u + 1,
-        refX: 0,
-        refY: midY,
+        markerHeight: base + 1,
+        refX: thickness / 2,
+        refY: base / 2,
         children: createElement("rect", {
           x: 0,
           y: 0,
           width: thickness,
-          height: u,
+          height: base,
           fill: paint.fill === "none" ? "context-stroke" : paint.fill,
           stroke: "none",
           focusable: false,

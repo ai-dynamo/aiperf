@@ -358,6 +358,292 @@ describe("generic SDK catalog", () => {
     }
   });
 
+  it("emits chrome factories directly as semantic roots with stable contracts", () => {
+    const registry = createSdkRegistry();
+    const cases = [
+      {
+        id: "sdk.header",
+        props: { id: "semantic", title: "Profile", caption: "source" },
+        expectedProps: { title: "Profile", caption: "source" },
+        ports: ["title", "caption"],
+      },
+      {
+        id: "sdk.panel",
+        props: { id: "semantic", title: "Profile", detail: "source" },
+        expectedProps: { title: "Profile", detail: "source" },
+        ports: ["title", "detail"],
+      },
+      {
+        id: "sdk.card",
+        props: { id: "semantic", title: "Profile", detail: "source", subtitle: "live" },
+        expectedProps: { title: "Profile", detail: "source", subtitle: "live" },
+        ports: ["title", "detail", "subtitle"],
+      },
+      {
+        id: "sdk.chip",
+        props: { id: "semantic", label: "Profile" },
+        expectedProps: { label: "Profile" },
+        ports: ["label"],
+      },
+      {
+        id: "sdk.note",
+        props: { id: "semantic", text: "Profile" },
+        expectedProps: { text: "Profile" },
+        ports: ["caption"],
+      },
+    ] as const;
+
+    for (const entry of cases) {
+      const result = registry.lookup(entry.id)!.factory(entry.props, {}, {
+        instanceId: "semantic",
+        sourceMap: SOURCE_MAP,
+        themeTokens: new Map(),
+      });
+
+      expect(result.ok, entry.id).toBe(true);
+      if (result.ok) {
+        const root = result.value.roots[0];
+        expect(root, entry.id).toMatchObject({
+          id: "semantic",
+          kind: "group",
+          props: entry.expectedProps,
+          sdkOrigin: {
+            componentId: entry.id,
+            instanceId: "semantic",
+            generatedRole: "root",
+          },
+        });
+        expect(
+          root?.kind === "group"
+            ? root.children.filter(
+                (child) =>
+                  child.sdkOrigin?.generatedRole !== undefined &&
+                  (child.capabilityId === "core.rect" || child.capabilityId === "core.text"),
+              )
+            : [],
+          entry.id,
+        ).toEqual([]);
+        expect(Object.keys(result.value.ports), entry.id).toEqual(entry.ports);
+        expect(result.value.actions, entry.id).toEqual({
+          enter: ["semantic"],
+          emphasis: ["semantic"],
+          exit: ["semantic"],
+        });
+      }
+    }
+  });
+
+  it("uses native semantic roots for catalog badge and panel-like chrome", () => {
+    const registry = createSdkRegistry();
+    const cases = [
+      ["sdk.badge", { id: "badge", label: "Ready" }, "core.chip", { label: "Ready" }],
+      [
+        "sdk.alert",
+        { id: "alert", title: "Warning", detail: "Retry" },
+        "core.panel",
+        { title: "Warning", detail: "Retry" },
+      ],
+      [
+        "sdk.statusCard",
+        { id: "status", title: "Healthy", detail: "12 workers" },
+        "core.panel",
+        { title: "Healthy", detail: "12 workers" },
+      ],
+      [
+        "sdk.emptyState",
+        { id: "empty", title: "No runs", detail: "Start a profile" },
+        "core.panel",
+        { title: "No runs", detail: "Start a profile" },
+      ],
+      [
+        "sdk.codeBlock",
+        { id: "code", text: "const n = 1;" },
+        "core.group",
+        {
+          text: "const n = 1;",
+          presentation: "code-block",
+          inkRole: "@theme.ink.primary",
+        },
+      ],
+      [
+        "sdk.quote",
+        { id: "quote", text: "Measure twice." },
+        "core.group",
+        {
+          text: "Measure twice.",
+          presentation: "quote",
+          inkRole: "@theme.ink.primary",
+        },
+      ],
+      [
+        "sdk.avatar",
+        { id: "avatar", icon: "user" },
+        "core.group",
+        {
+          presentation: "avatar",
+          icon: "user",
+          inkRole: "@theme.ink.primary",
+        },
+      ],
+      [
+        "sdk.iconLabel",
+        { id: "labeled", icon: "check", label: "Ready" },
+        "core.group",
+        {
+          presentation: "icon-label",
+          icon: "check",
+          label: "Ready",
+          inkRole: "@theme.ink.primary",
+        },
+      ],
+    ] as const;
+
+    for (const [componentId, props, capabilityId, expectedProps] of cases) {
+      const instanceId = props.id;
+      const result = registry.lookup(componentId)!.factory(props, {}, {
+        instanceId,
+        sourceMap: SOURCE_MAP,
+        themeTokens: new Map(),
+      });
+
+      expect(result.ok, componentId).toBe(true);
+      if (result.ok) {
+        expect(result.value.roots[0], componentId).toMatchObject({
+          id: instanceId,
+          kind: "group",
+          capabilityId,
+          props: expectedProps,
+        });
+        const root = result.value.roots[0];
+        expect(
+          root?.kind === "group"
+            ? root.children.filter(
+                (child) =>
+                  child.sdkOrigin?.generatedRole !== undefined &&
+                  (child.capabilityId === "core.rect" ||
+                    child.capabilityId === "core.text"),
+              )
+            : [],
+          componentId,
+        ).toEqual([]);
+        expect(result.value.ports.self, componentId).toEqual({ nodeId: instanceId });
+        expect(result.value.actions, componentId).toEqual({
+          enter: [instanceId],
+          emphasis: [instanceId],
+          exit: [instanceId],
+        });
+      }
+    }
+  });
+
+  it("registers managed overlay and frame factories with shared layout props", () => {
+    const registry = createSdkRegistry();
+    const context = {
+      instanceId: "managed",
+      sourceMap: SOURCE_MAP,
+      themeTokens: new Map(),
+    };
+    const overlayDefinition = registry.lookup("sdk.overlay");
+    const frameDefinition = registry.lookup("sdk.frame");
+    const managedDefinitions = [
+      registry.lookup("sdk.stack"),
+      registry.lookup("sdk.grid"),
+      registry.lookup("sdk.rail"),
+      overlayDefinition,
+      frameDefinition,
+    ];
+
+    expect(overlayDefinition?.descriptor.capabilityId).toBe("layout.overlay");
+    expect(frameDefinition?.descriptor.capabilityId).toBe("layout.frame");
+    for (const definition of managedDefinitions) {
+      expect(definition?.descriptor.props).toMatchObject({
+        padding: { type: "number", required: false },
+        align: { type: "string", required: false },
+        justify: { type: "string", required: false },
+        fixedWidth: { type: "boolean", required: false },
+        fixedHeight: { type: "boolean", required: false },
+      });
+    }
+
+    const stack = registry.lookup("sdk.stack")!.factory(
+      {
+        id: "managed",
+        padding: 6,
+        align: "stretch",
+        justify: "space-between",
+        fixedHeight: true,
+      },
+      { children: [CHILD] },
+      context,
+    );
+
+    const overlay = overlayDefinition!.factory(
+      {
+        id: "managed",
+        padding: 8,
+        align: "center",
+        justify: "end",
+        fixedWidth: true,
+      },
+      { children: [CHILD] },
+      context,
+    );
+    const frame = frameDefinition!.factory(
+      {
+        id: "managed",
+        title: "One worker process",
+        detail: "One event loop",
+        padding: 14,
+        gap: 12,
+        fixedWidth: true,
+        width: 640,
+      },
+      { children: [CHILD] },
+      context,
+    );
+
+    expect(overlay.ok).toBe(true);
+    expect(frame.ok).toBe(true);
+    expect(stack.ok).toBe(true);
+    if (overlay.ok && frame.ok && stack.ok) {
+      expect(stack.value.roots[0]?.style).toMatchObject({
+        coordinateSpace: "local",
+        padding: 6,
+        align: "stretch",
+        justify: "space-between",
+        fixedWidth: false,
+        fixedHeight: true,
+      });
+      expect(overlay.value.roots[0]).toMatchObject({
+        capabilityId: "layout.overlay",
+        style: {
+          coordinateSpace: "local",
+          padding: 8,
+          align: "center",
+          justify: "end",
+          fixedWidth: true,
+          fixedHeight: false,
+        },
+      });
+      expect(frame.value.roots[0]).toMatchObject({
+        capabilityId: "layout.frame",
+        geometry: { width: 640 },
+        props: {
+          title: "One worker process",
+          detail: "One event loop",
+        },
+        style: {
+          coordinateSpace: "local",
+          padding: 14,
+          gap: 12,
+          fixedWidth: true,
+        },
+      });
+      expect(overlay.value.ports["child[0]"]).toEqual({ nodeId: "child" });
+      expect(frame.value.ports["child[0]"]).toEqual({ nodeId: "child" });
+    }
+  });
+
   it("publishes strict family-specific descriptors", () => {
     const registry = createSdkRegistry();
     const titleProps = registry.lookup("sdk.title")!.descriptor.props;
@@ -367,6 +653,81 @@ describe("generic SDK catalog", () => {
     expect(titleProps.values).toBeUndefined();
     expect(sparklineProps.values).toBeDefined();
     expect(sparklineProps.src).toBeUndefined();
+  });
+
+  it("emits directed edges by default and preserves explicit opt-out", () => {
+    const edge = createSdkRegistry().lookup("sdk.edge")!;
+    const expand = (props: Parameters<typeof edge.factory>[0]) =>
+      edge.factory(props, {}, {
+        instanceId: "edge",
+        sourceMap: SOURCE_MAP,
+        themeTokens: new Map(),
+      });
+
+    const path = expand({
+      id: "edge",
+      mode: "path",
+      from: { x: 0, y: 0 },
+      to: { x: 100, y: 0 },
+      path: "M0 0 L100 0",
+    });
+    const line = expand({
+      id: "edge",
+      mode: "line",
+      from: { x: 0, y: 0 },
+      to: { x: 100, y: 0 },
+    });
+    const undirected = expand({
+      id: "edge",
+      from: { x: 0, y: 0 },
+      to: { x: 100, y: 0 },
+      arrowhead: false,
+    });
+
+    expect(path.ok && path.value.roots[0]?.style).toMatchObject({
+      markerEnd: "arrow",
+      arrowhead: true,
+    });
+    expect(line.ok && line.value.roots[0]?.style).toMatchObject({
+      markerEnd: "arrow",
+      arrowhead: true,
+    });
+    expect(undirected.ok && undirected.value.roots[0]?.style).toMatchObject({
+      markerEnd: "none",
+      arrowhead: false,
+    });
+  });
+
+  it("binds signals to edges and rejects mixed motion modes", () => {
+    const signal = createSdkRegistry().lookup("sdk.signal")!;
+    const expand = (props: Parameters<typeof signal.factory>[0]) =>
+      signal.factory(props, {}, {
+        instanceId: "motion",
+        sourceMap: SOURCE_MAP,
+        themeTokens: new Map(),
+      });
+
+    const edgeBound = expand({ id: "motion", edge: "request-credit" });
+    expect(edgeBound.ok).toBe(true);
+    if (edgeBound.ok) {
+      expect(edgeBound.value.roots[0]).toMatchObject({
+        capabilityId: "motion.signal",
+        edgeRef: "request-credit",
+      });
+      expect(edgeBound.value.roots[0]).not.toHaveProperty("from");
+      expect(edgeBound.value.roots[0]).not.toHaveProperty("to");
+    }
+
+    for (const conflicting of [
+      { id: "motion", edge: "request-credit", from: { x: 0, y: 0 }, to: { x: 1, y: 1 } },
+      { id: "motion", edge: "request-credit", path: "M0 0 L1 1" },
+      { id: "motion", edge: "request-credit", points: [{ x: 0, y: 0 }, { x: 1, y: 1 }] },
+      { id: "motion", from: { x: 0, y: 0 } },
+    ]) {
+      const result = expand(conflicting);
+      expect(result.ok).toBe(false);
+      expect(!result.ok && result.diagnostics[0]?.code).toBe("SDK_SIGNAL_MODE_CONFLICT");
+    }
   });
 
   it("keeps emitted action bindings within each public action contract", () => {
@@ -407,6 +768,68 @@ describe("generic SDK catalog", () => {
       const icon = root?.kind === "group" ? root.children.find((child) => child.id.endsWith("__icon")) : undefined;
       expect(icon?.geometry.width).toBeGreaterThanOrEqual(0);
       expect(icon?.geometry.height).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("lays rail collection items in a content-sized row", () => {
+    const registry = createSdkRegistry();
+    const railIds = ["sdk.tagList", "sdk.breadcrumb", "sdk.tabs", "sdk.pagination"] as const;
+    const items = ["Alpha", "Beta", "Gamma"];
+    const containerWidth = 260;
+
+    for (const componentId of railIds) {
+      const result = registry.lookup(componentId)!.factory(
+        { id: "rail", items, width: containerWidth, height: 32 },
+        {},
+        {
+          instanceId: componentId.replace(".", "-"),
+          sourceMap: SOURCE_MAP,
+          themeTokens: new Map(),
+        },
+      );
+
+      expect(result.ok, componentId).toBe(true);
+      if (!result.ok) {
+        continue;
+      }
+      const root = result.value.roots[0];
+      expect(root?.capabilityId, componentId).toBe("layout.rail");
+      expect(root?.kind === "group" && root.children.length, componentId).toBe(items.length);
+      if (root?.kind !== "group") {
+        continue;
+      }
+      for (const child of root.children) {
+        expect(child.geometry.y, `${componentId}:${child.id}`).toBe(0);
+        // Rail layout sums child widths; full-bleed items overflow 2–3×.
+        expect(child.geometry.width, `${componentId}:${child.id}`).toBeLessThan(
+          containerWidth / items.length,
+        );
+      }
+      const totalItemWidth = root.children.reduce(
+        (sum, child) => sum + child.geometry.width,
+        0,
+      );
+      expect(totalItemWidth, componentId).toBeLessThanOrEqual(containerWidth);
+    }
+  });
+
+  it("maps sdk.inset gap onto the pad style key layout.pad reads", () => {
+    const result = createSdkRegistry().lookup("sdk.inset")!.factory(
+      { id: "inset", gap: 18, label: "Inset" },
+      { children: [CHILD] },
+      { instanceId: "inset", sourceMap: SOURCE_MAP, themeTokens: new Map() },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const style = result.value.roots[0]?.style ?? {};
+      const inset =
+        typeof style.inset === "number"
+          ? style.inset
+          : typeof style.pad === "number"
+            ? style.pad
+            : undefined;
+      expect(inset).toBe(18);
     }
   });
 });

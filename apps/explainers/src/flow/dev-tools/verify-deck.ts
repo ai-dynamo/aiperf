@@ -37,6 +37,7 @@ import {
   isLegendDot,
   isMotionCompanionDot,
   isMotionSignalNode,
+  indexResolvedWorldGeometry,
   nodeIds,
   pathPoints,
   pointNearBox,
@@ -278,7 +279,14 @@ export function verifyPackageIr(
       );
     }
 
-    const nodes = walkNodes(roots);
+    const authoredNodes = walkNodes(roots);
+    const worldGeometryById = indexResolvedWorldGeometry(roots);
+    const nodes = authoredNodes.map((node) => {
+      const geometry = worldGeometryById.get(node.id);
+      return geometry === undefined
+        ? node
+        : ({ ...node, geometry } as RenderNodeIr);
+    });
     const ids = nodeIds(roots);
     const boxes = boxGeometries(nodes);
     const drawTargets = new Set(
@@ -689,9 +697,9 @@ function hasAbsoluteConnector(roots: readonly RenderNodeIr[]): boolean {
   return walkNodes(roots).some((node) => {
     if (node.kind !== "connector") return false;
     return (
-      typeof node.from.nodeId !== "string" ||
+      typeof node.from?.nodeId !== "string" ||
       node.from.nodeId.length === 0 ||
-      typeof node.to.nodeId !== "string" ||
+      typeof node.to?.nodeId !== "string" ||
       node.to.nodeId.length === 0
     );
   });

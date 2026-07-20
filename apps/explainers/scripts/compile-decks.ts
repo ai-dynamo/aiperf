@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { compileExplainerSource } from "../src/flow/compiler/compile-explainer.js";
 import { validateExplainerSet } from "../src/flow/compiler/validate-explainer-set.js";
 import { formatDiagnostic } from "../src/flow/diagnostics.js";
+import { materializeSceneWorldGeometry } from "../src/core/diagram/capabilities/resolved-geometry.js";
 import {
   FOUNDATION_CAPABILITIES,
   hasErrors,
@@ -93,7 +94,35 @@ async function main(): Promise<void> {
     return;
   }
 
-  process.stdout.write(JSON.stringify(packages));
+  const verifierPackages = packages.map((packageValue) => ({
+    ...packageValue,
+    slides: packageValue.slides.map((slide) => ({
+      ...slide,
+      render:
+        slide.render?.scene === undefined
+          ? slide.render
+          : {
+              ...slide.render,
+              scene: {
+                ...slide.render.scene,
+                roots: materializeSceneWorldGeometry(slide.render.scene.roots),
+              },
+            },
+    })),
+    finalCard:
+      packageValue.finalCard?.scene === undefined
+        ? packageValue.finalCard
+        : {
+            ...packageValue.finalCard,
+            scene: {
+              ...packageValue.finalCard.scene,
+              roots: materializeSceneWorldGeometry(
+                packageValue.finalCard.scene.roots,
+              ),
+            },
+          },
+  }));
+  process.stdout.write(JSON.stringify(verifierPackages));
 }
 
 main().catch((error) => {

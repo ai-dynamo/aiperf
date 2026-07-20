@@ -7,6 +7,8 @@ import type {
   ComponentInvocationAst,
   ConnectorAst,
   DocumentAst,
+  ExplainerAst,
+  ExplainerHubAst,
   ForLoopAst,
   FreeformBlockAst,
   ImportDeclarationAst,
@@ -18,6 +20,7 @@ import type {
   ResponsiveAst,
   SceneAst,
   ScenePrimitiveAst,
+  SlideAst,
   SlotBlockAst,
   SymbolDefinitionAst,
   SymbolBodyStatementAst,
@@ -28,6 +31,7 @@ import type {
   TypeRefAst,
   ValueAst,
 } from "./ast.js";
+import type { EmbeddedSceneSource } from "./embedded-scene.js";
 
 const quote = (value: string): string => JSON.stringify(value);
 const indent = (level: number): string => "  ".repeat(level);
@@ -380,7 +384,149 @@ function formatScene(scene: SceneAst): string {
   );
 }
 
+function isEmbeddedSceneSource(value: unknown): value is EmbeddedSceneSource {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { kind?: unknown }).kind === "embedded-scene-source" &&
+    typeof (value as { body?: unknown }).body === "string"
+  );
+}
+
+function formatPackageLiteral(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "null";
+  }
+  if (typeof value === "string") {
+    return quote(value);
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(formatPackageLiteral).join(", ")}]`;
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) {
+      return "{}";
+    }
+    return `{ ${entries
+      .map(([key, entry]) => `${key}: ${formatPackageLiteral(entry)}`)
+      .join(", ")} }`;
+  }
+  return quote(String(value));
+}
+
+/** Serializes `render: @scene { ... }` / `finalCard: @scene { ... }` bodies. */
+function formatEmbeddedScene(scene: unknown, level: number): string {
+  const prefix = indent(level);
+  const inner = indent(level + 1);
+
+  if (isEmbeddedSceneSource(scene)) {
+    const body = scene.body.trim();
+    if (body.length === 0) {
+      return `${prefix}@scene {\n${prefix}}`;
+    }
+    return `${prefix}@scene {\n${inner}${body}\n${prefix}}`;
+  }
+
+  if (
+    typeof scene === "object" &&
+    scene !== null &&
+    Array.isArray((scene as { roots?: unknown }).roots)
+  ) {
+    const pkg = scene as {
+      roots: readonly unknown[];
+      timeline?: readonly unknown[];
+      camera?: readonly unknown[];
+    };
+    const lines = [`${inner}roots: ${formatPackageLiteral(pkg.roots)}`];
+    if (pkg.timeline !== undefined && pkg.timeline.length > 0) {
+      lines.push(`${inner}timeline: ${formatPackageLiteral(pkg.timeline)}`);
+    }
+    if (pkg.camera !== undefined && pkg.camera.length > 0) {
+      lines.push(`${inner}camera: ${formatPackageLiteral(pkg.camera)}`);
+    }
+    return `${prefix}@scene {\n${lines.join("\n")}\n${prefix}}`;
+  }
+
+  throw new Error(
+    `Unsupported embedded scene for formatting: ${JSON.stringify(scene)?.slice(0, 200)}`,
+  );
+}
+
+function formatHub(hub: ExplainerHubAst, level: number): string {
+  const inner = indent(level + 1);
+  return block(
+    "hub:",
+    [
+      `${inner}highlight: ${quote(hub.highlight)}`,
+      `${inner}title: ${quote(hub.title)}`,
+      `${inner}description: ${quote(hub.description)}`,
+    ],
+    level,
+  );
+}
+
+function formatSlide(slide: SlideAst, level: number): string {
+  const inner = indent(level + 1);
+  const lines = [
+    `${inner}eyebrow: ${quote(slide.eyebrow)}`,
+    `${inner}title: ${quote(slide.title)}`,
+    `${inner}lede: ${quote(slide.lede)}`,
+    `${inner}narration: ${quote(slide.narration)}`,
+  ];
+  if (slide.term !== undefined) {
+    lines.push(
+      `${inner}term: { word: ${quote(slide.term.word)}, meaning: ${quote(slide.term.meaning)} }`,
+    );
+  }
+  if (slide.points.length > 0) {
+    lines.push(
+      `${inner}points: [${slide.points.map((point) => quote(point)).join(", ")}]`,
+    );
+  }
+  lines.push(`${inner}caption: ${quote(slide.caption)}`);
+  if (slide.sceneIr !== undefined) {
+    lines.push(
+      `${inner}render: ${formatEmbeddedScene(slide.sceneIr, level + 1).trimStart()}`,
+    );
+  }
+  return block(`slide ${quote(slide.title)}`, lines, level);
+}
+
+function formatExplainer(explainer: ExplainerAst): string {
+  const meta = explainer.metadata;
+  const lines = [
+    `${indent(1)}id: ${quote(explainer.id)}`,
+    `${indent(1)}route: ${quote(meta.route)}`,
+    `${indent(1)}topic: ${quote(meta.topic)}`,
+    `${indent(1)}storagePrefix: ${quote(meta.storagePrefix)}`,
+    `${indent(1)}classPrefix: ${quote(meta.classPrefix)}`,
+    `${indent(1)}eyebrowLabel: ${quote(meta.eyebrowLabel)}`,
+    `${indent(1)}startGateTitle: ${quote(meta.startGateTitle)}`,
+    ...(meta.css === undefined
+      ? []
+      : [`${indent(1)}css: ${quote(meta.css)}`]),
+    formatHub(meta.hub, 1),
+    ...explainer.slides.map((slide) => formatSlide(slide, 1)),
+    ...(explainer.finalCard === undefined
+      ? []
+      : [
+          `${indent(1)}finalCard: ${formatEmbeddedScene(explainer.finalCard, 1).trimStart()}`,
+        ]),
+  ];
+  return block(`explainer ${quote(explainer.id)}`, lines, 0);
+}
+
 export function formatDocument(document: DocumentAst): string {
+  // Explainer-form decks are top-level `explainer` blocks (parser routes on the
+  // first token). Emitting a `flow { ... }` wrapper would drop slides on reparse.
+  if (document.explainers !== undefined && document.explainers.length > 0) {
+    return `${document.explainers.map(formatExplainer).join("\n\n")}\n`;
+  }
+
   const declarations = [
     `${indent(1)}language ${document.language.version}`,
     ...(document.imports ?? []).map(formatImport),

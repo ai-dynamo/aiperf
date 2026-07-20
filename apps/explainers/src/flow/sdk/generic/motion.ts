@@ -6,9 +6,10 @@
 /**
  * Generic SDK motion factories: `sdk.signal`, `sdk.pulse`, `sdk.flow`.
  *
- * `sdk.signal` emits a `motion.signal` connector, node-anchored (`from`/`to`)
- * or path-anchored (`path`/`points`), with the standard traveling-dot stroke
- * defaults (`opacity: 0.55`, `strokeWidth: 2.4`). `sdk.pulse` emits a
+ * `sdk.signal` emits a `motion.signal` connector bound to an edge (`edge`),
+ * node-anchored (`from`/`to`), or path-anchored (`path`/`points`), with the
+ * standard traveling-dot stroke defaults (`opacity: 0.55`,
+ * `strokeWidth: 2.4`). `sdk.pulse` emits a
  * `motion.pulse` overlay rect — either standalone (explicit geometry, the
  * "hollow rect overlay" replacement) or wrapping a `target` slot fragment
  * (re-emitting its roots alongside a matching halo, the `style.pulse: true`
@@ -256,32 +257,31 @@ function buildSignalNode(
   componentId: string,
   role: string,
 ): Result<RenderNodeIr> {
+  const edgeRef = stringProp(props, "edge");
   const from = endpointFromJson(props.from);
   const to = endpointFromJson(props.to);
   const path = stringProp(props, "path");
   const points = pointsFromJson(props.points);
+  const hasEndpointInput = from !== undefined || to !== undefined;
   const isNodeMode = from !== undefined && to !== undefined;
   const isPathMode = path !== undefined || points !== undefined;
-  if (!isNodeMode && !isPathMode) {
+  const modeCount = [edgeRef !== undefined, hasEndpointInput, isPathMode].filter(Boolean).length;
+  if (modeCount !== 1 || (hasEndpointInput && !isNodeMode)) {
     return {
       ok: false,
       diagnostics: [
         diagnostic(
-          "SDK_SIGNAL_ENDPOINTS_REQUIRED",
+          "SDK_SIGNAL_MODE_CONFLICT",
           "error",
-          `${componentId} "${context.instanceId}" requires from/to endpoints or a path/points geometry.`,
+          `${componentId} "${context.instanceId}" requires exactly one motion mode: edge, from + to, or path/points.`,
           context.sourceMap,
-          "Provide from + to for node-anchored mode, or path/points for path mode.",
+          "Remove conflicting geometry and provide one complete motion mode.",
         ),
       ],
     };
   }
 
   const id = nodeId(context, role);
-  const firstPoint = points === undefined ? undefined : points[0];
-  const lastPoint = points === undefined ? undefined : points[points.length - 1];
-  const resolvedFrom = from ?? firstPoint ?? { x: 0, y: 0 };
-  const resolvedTo = to ?? lastPoint ?? { x: 0, y: 0 };
   const styleOverride = isJsonRecord(props.style) ? scalarStyleFromJson(props.style) : {};
   const authoredGeometry = geometryFromProps(props);
   const geometry = hasExplicitGeometry(authoredGeometry)
@@ -306,8 +306,8 @@ function buildSignalNode(
     accessibility: { label },
     fallback: label,
     sourceMap: context.sourceMap,
-    from: resolvedFrom,
-    to: resolvedTo,
+    ...(edgeRef !== undefined ? { edgeRef } : {}),
+    ...(isNodeMode ? { from, to } : {}),
     ...(path !== undefined ? { path } : {}),
     ...(points !== undefined ? { points } : {}),
   };
@@ -330,6 +330,7 @@ const signalFactory: SdkComponentFactory = (props, _slots, context) => {
 
 const SIGNAL_PROPS: Readonly<Record<string, ComponentPropDescriptor>> = {
   id: { type: "string", required: true },
+  edge: { type: "string", required: false },
   from: { type: "endpoint", required: false },
   to: { type: "endpoint", required: false },
   path: { type: "string", required: false },

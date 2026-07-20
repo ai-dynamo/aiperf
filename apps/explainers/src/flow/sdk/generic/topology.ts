@@ -380,22 +380,19 @@ function buildEdgeFragment(
   const arrowhead = boolPropOrUndefined(props, "arrowhead");
   const styleOverride = isJsonRecord(props.style) ? scalarStyleFromJson(props.style) : {};
 
-  let style: Record<string, StyleValueIr> = {};
+  let style: Record<string, StyleValueIr> = { fill: "none" };
   if (mode === "route") {
     style.route = "elbow";
   }
   if (mode === "curve") {
     style.route = "curve";
   }
-  if (mode === "path" || mode === "line") {
-    style.fill = "none";
+  if (arrowhead === false) {
     style.markerEnd = "none";
-  }
-  if (arrowhead === true) {
+    style.arrowhead = false;
+  } else {
     style.markerEnd = "arrow";
     style.arrowhead = true;
-  } else if (arrowhead === false) {
-    style.markerEnd = "none";
   }
   style = { ...style, ...styleOverride };
 
@@ -555,12 +552,32 @@ const pipelineFactory: SdkComponentFactory = (props, slots, context) => {
     if (root === undefined) {
       continue;
     }
-    const placed = placePipelineNode(root, cursorX, 0);
+    // Shift every stage root by the same delta so secondary roots keep their
+    // offsets relative to the primary while the stage lands at cursorX.
+    const originX = root.geometry?.x ?? 0;
+    const originY = root.geometry?.y ?? 0;
+    const placedStageRoots = fragment.roots.map((node, index) => {
+      if (index === 0) {
+        return placePipelineNode(node, cursorX, 0);
+      }
+      const geometry = node.geometry ?? {
+        x: 0,
+        y: 0,
+        width: PIPELINE_DEFAULT_NODE_WIDTH,
+        height: PIPELINE_DEFAULT_NODE_HEIGHT,
+      };
+      return placePipelineNode(
+        node,
+        cursorX + (geometry.x - originX),
+        0 + (geometry.y - originY),
+      );
+    });
+    const placed = placedStageRoots[0]!;
     const width = placed.geometry?.width ?? PIPELINE_DEFAULT_NODE_WIDTH;
     const height = placed.geometry?.height ?? PIPELINE_DEFAULT_NODE_HEIGHT;
-    placedRoots.push(placed);
+    placedRoots.push(...placedStageRoots);
     placedFragments.push({
-      roots: [placed, ...fragment.roots.slice(1)],
+      roots: placedStageRoots,
       ports: fragment.ports,
       actions: fragment.actions,
     });

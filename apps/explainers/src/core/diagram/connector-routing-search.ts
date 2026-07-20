@@ -23,6 +23,7 @@ import {
   roundCanonical,
   routeBounds,
   segmentIsVisible,
+  shrinkBoundsToExcludePoint,
   simplifyWaypoints,
 } from "./connector-routing-geometry.js";
 import {
@@ -251,12 +252,24 @@ export function resolveWaypoints(
   obstacles: readonly RouteObstacle[],
   clearance: number,
 ): { waypoints: readonly Point2[]; feasible: boolean } {
-  const inflated = obstacles
-    .map((obstacle): RouteObstacle => ({ id: obstacle.id, bounds: inflateBounds(obstacle.bounds, clearance) }))
-    .filter(
-      (obstacle) =>
-        !pointInBounds(start, obstacle.bounds, true) && !pointInBounds(end, obstacle.bounds, true),
-    );
+  // Source/target boxes are excluded upstream. Do not drop third-party
+  // obstacles merely because clearance inflation covers an endpoint — that
+  // removed them for the *entire* path and let curves cut through far away.
+  // Keep the obstacle, but shrink the inflated rect so the endpoint itself is
+  // not treated as blocked. Still skip obstacles whose true (uninflated)
+  // interior contains an endpoint.
+  const inflated = obstacles.flatMap((obstacle): RouteObstacle[] => {
+    if (pointInBounds(start, obstacle.bounds, true) || pointInBounds(end, obstacle.bounds, true)) {
+      return [];
+    }
+    let bounds = inflateBounds(obstacle.bounds, clearance);
+    bounds = shrinkBoundsToExcludePoint(bounds, start);
+    bounds = shrinkBoundsToExcludePoint(bounds, end);
+    if (bounds.width <= 0 || bounds.height <= 0) {
+      return [];
+    }
+    return [{ id: obstacle.id, bounds }];
+  });
   if (inflated.length === 0 || segmentIsVisible(start, end, inflated)) {
     return { waypoints: [start, end], feasible: true };
   }
@@ -510,10 +523,9 @@ export function routeCurve(input: CurveRouteInput): CurveRouteResult {
   const fromDir = endpointExitDirection(input.fromAnchor, end, start);
   const toDir = endpointExitDirection(input.toAnchor, start, end);
 
-  const isSelfLoop =
-    input.sourceId !== undefined &&
-    input.sourceId === input.targetId &&
-    Math.hypot(end.x - start.x, end.y - start.y) < 1e-3 * (options.clearance + 1) + 4;
+  // Same-node edges are self-loops even when anchors are far apart; a distance
+  // gate near 1e-3*clearance made perimeter candidates effectively unreachable.
+  const isSelfLoop = input.sourceId !== undefined && input.sourceId === input.targetId;
 
   let waypoints: readonly Point2[] = [start, end];
   let feasible = true;

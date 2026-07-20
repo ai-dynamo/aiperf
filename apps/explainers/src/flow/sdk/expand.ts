@@ -370,8 +370,12 @@ export function resolveNodeRefs(
   if (node.kind === "connector") {
     return {
       ...node,
-      from: resolveEndpoint(node.from, index, sourceMap, diagnostics),
-      to: resolveEndpoint(node.to, index, sourceMap, diagnostics),
+      ...(node.from !== undefined
+        ? { from: resolveEndpoint(node.from, index, sourceMap, diagnostics) }
+        : {}),
+      ...(node.to !== undefined
+        ? { to: resolveEndpoint(node.to, index, sourceMap, diagnostics) }
+        : {}),
       ...(points !== undefined ? { points } : {}),
     };
   }

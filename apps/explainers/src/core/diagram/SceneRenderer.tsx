@@ -6,6 +6,7 @@
 import {
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -39,138 +40,31 @@ import {
   hasNativeSemanticChrome,
   resolveSemanticChrome,
 } from "./capabilities/chrome.js";
-import { resolveCapabilityLayout } from "./capabilities/registry.js";
+import { resolveScene } from "./resolution/resolve-scene.js";
+import type {
+  SceneCameraKeyframeLike,
+  SceneGeometryLike,
+  SceneIrLike,
+  SceneNodeLike,
+  ScenePointLike,
+  SceneTimelineCueLike,
+  SceneViewportLike,
+} from "./scene-types.js";
+import { scaledSceneFontSize } from "./text-metrics.js";
 
-const SCENE_TEXT_SCALE = 0.9;
-const DEFAULT_SCENE_FONT_SIZE = 14;
-
-function scaledSceneFontSize(
-  value: unknown,
-  fallback = DEFAULT_SCENE_FONT_SIZE,
-): number {
-  const fontSize =
-    typeof value === "number" && Number.isFinite(value) ? value : fallback;
-  return fontSize * SCENE_TEXT_SCALE;
-}
-
-/** Minimal geometry for a scene node. */
-export type SceneGeometryLike = Readonly<{
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}>;
-
-/**
- * Point or connector endpoint.
- * Explicit `x`/`y` win; otherwise `nodeId` resolves to an anchored point on
- * the target node (`anchor`: center|n/s/e/w/ne/nw/se/sw|top/bottom/left/right).
- */
-export type ScenePointLike = Readonly<{
-  x?: number;
-  y?: number;
-  nodeId?: string;
-  anchor?: string;
-}>;
-
-/** Minimal accessibility metadata for a scene node. */
-export type SceneNodeAccessibilityLike = Readonly<{
-  label?: string;
-  description?: string;
-}>;
-
-/** Style values may be scalars or nested objects (e.g. `markerEnd: { kind }`). */
-export type SceneStyleValue =
-  | string
-  | number
-  | boolean
-  | Readonly<Record<string, string | number | boolean>>;
-
-/** Minimal render node supporting rect / text / path / line-like shapes. */
-export type SceneNodeLike = Readonly<{
-  id: string;
-  kind?: string;
-  capabilityId?: string;
-  capability?: string;
-  geometry?: SceneGeometryLike;
-  layout?: SceneGeometryLike;
-  /**
-   * Render-time x/y override resolved against an already-declared sibling's
-   * world geometry (document order); width/height stay as authored.
-   */
-  relativePosition?: Readonly<{
-    nodeId: string;
-    anchor?: string;
-    dx?: number;
-    dy?: number;
-  }>;
-  style?: Readonly<Record<string, SceneStyleValue>>;
-  /** Component capability inputs retained for renderer-backed SDK foundations. */
-  props?: Readonly<Record<string, unknown>>;
-  /** Glyph content for `core.text` / `kind: "text"` nodes. */
-  text?: string;
-  accessibility?: SceneNodeAccessibilityLike;
-  children?: readonly SceneNodeLike[];
-  /** SVG path data for path / arrow nodes (FlowArrow `d`). */
-  d?: string;
-  path?: string;
-  /** Polyline waypoints for path / connector-like nodes. */
-  points?: readonly ScenePointLike[];
-  /** Endpoint coordinates or node refs; fans use an array on their many side. */
-  from?: ScenePointLike | readonly ScenePointLike[];
-  to?: ScenePointLike | readonly ScenePointLike[];
-  /** Optional elbow bend / waypoint (`core.elbow`). */
-  via?: ScenePointLike;
-  /** Preferred first-segment axis for orthogonal elbows (`"x"` | `"y"`). */
-  axis?: "x" | "y" | string;
-  /** Optional stable split / merge point for `core.fan-*`. */
-  junction?: ScenePointLike;
-}>;
-
-/** Minimal timeline cue (enter/reveal/draw/emphasize/pulse/fade/exit/stagger). */
-export type SceneTimelineCueLike = Readonly<{
-  id: string;
-  at: number;
-  duration: number;
-  action: string;
-  /** Primary / group id; may be empty when `targets` identifies members. */
-  target: string;
-  /** Stagger member ids when `action` is `stagger` / `enter-children`. */
-  targets?: readonly string[];
-  /** Delay between successive stagger targets. */
-  step?: number;
-  /** Progress easing for this cue's envelope. */
-  easing?: string;
-}>;
-
-/** Optional logical SVG bounds (defaults to 700×400). */
-export type SceneViewportLike = Readonly<{
-  width: number;
-  height: number;
-}>;
-
-/** Authored camera keyframe: focus point `(x, y)` and zoom. */
-export type SceneCameraKeyframeLike = Readonly<{
-  id?: string;
-  at: number;
-  x: number;
-  y: number;
-  zoom: number;
-}>;
-
-/** Minimal Scene IR shape consumed by ExplainerShell diagrams. */
-export type SceneIrLike = Readonly<{
-  id?: string;
-  title?: string;
-  summary?: string;
-  /** Optional diagram viewport; defaults to 700×400 when omitted. */
-  viewport?: SceneViewportLike;
-  roots: readonly SceneNodeLike[];
-  /** Optional camera track; empty/absent keeps a static `0 0 W H` viewBox. */
-  camera?: readonly SceneCameraKeyframeLike[];
-  timeline: readonly SceneTimelineCueLike[];
-  accessibility?: Readonly<{ label?: string }>;
-}>;
+export type {
+  SceneCameraKeyframeLike,
+  SceneGeometryLike,
+  SceneIrLike,
+  SceneNodeAccessibilityLike,
+  SceneNodeLike,
+  ScenePointLike,
+  SceneRelativePositionLike,
+  SceneSourceRangeLike,
+  SceneStyleValue,
+  SceneTimelineCueLike,
+  SceneViewportLike,
+} from "./scene-types.js";
 
 export type SceneRendererProps = Readonly<{
   scene: SceneIrLike;
@@ -494,211 +388,6 @@ function isGroupLike(node: SceneNodeLike, capability: string): boolean {
     return true;
   }
   return node.kind === "group" || node.kind === "component";
-}
-
-function styleCoordinateSpace(
-  style: SceneNodeLike["style"],
-): "local" | "absolute" | undefined {
-  const value = style?.coordinateSpace;
-  if (value === "absolute" || value === "local") {
-    return value;
-  }
-  return undefined;
-}
-
-/**
- * True when every geometried child fits in the parent's local [0,w]×[0,h] box.
- * Absolute scene children (e.g. y past parent height) return false.
- */
-function childrenFitParentLocalBox(
-  parentGeom: SceneGeometryLike,
-  children: readonly SceneNodeLike[],
-): boolean {
-  if (parentGeom.width <= 0 || parentGeom.height <= 0) {
-    return false;
-  }
-  let sawGeometry = false;
-  for (const child of children) {
-    if (child.geometry === undefined && child.layout === undefined) {
-      continue;
-    }
-    sawGeometry = true;
-    const childGeom = geometryOf(child);
-    if (childGeom.x < -0.5 || childGeom.y < -0.5) {
-      return false;
-    }
-    if (childGeom.x + childGeom.width > parentGeom.width + 0.5) {
-      return false;
-    }
-    if (childGeom.y + childGeom.height > parentGeom.height + 0.5) {
-      return false;
-    }
-  }
-  return sawGeometry;
-}
-
-/**
- * Whether nested children are authored in the parent's local frame so the
- * renderer should apply `translate(parent.x, parent.y)` around them.
- *
- * Rule: children of `core.panel` / `core.header` / `layout.*` / `core.callout`
- * use local coordinates unless `style.coordinateSpace === "absolute"`.
- * Plain `core.group` prefers local when children fit the parent box; otherwise
- * legacy world-absolute nesting is preserved.
- */
-function childrenUseLocalLayout(
-  node: SceneNodeLike,
-  parentGeom: SceneGeometryLike,
-  children: readonly SceneNodeLike[] | undefined,
-): boolean {
-  if (!Array.isArray(children) || children.length === 0) {
-    return false;
-  }
-  const space = styleCoordinateSpace(node.style);
-  if (space === "absolute") {
-    return false;
-  }
-  if (space === "local") {
-    return true;
-  }
-  const capability = capabilityOf(node);
-  if (
-    capability === "core.panel" ||
-    capability === "core.header" ||
-    capability === "core.callout" ||
-    capability === "core.lane" ||
-    capability === "core.band" ||
-    capability === "core.swimlane" ||
-    capability === "core.stepper" ||
-    capability === "layout.stack" ||
-    capability === "layout.grid" ||
-    capability === "layout.pad" ||
-    capability === "layout.rail" ||
-    capability.startsWith("layout.")
-  ) {
-    return true;
-  }
-  if (childrenFitParentLocalBox(parentGeom, children)) {
-    return true;
-  }
-  if (capability !== "core.group" && node.kind !== "group") {
-    return false;
-  }
-  if (parentGeom.width > 0 && parentGeom.height > 0) {
-    return false;
-  }
-  if (parentGeom.x === 0 && parentGeom.y === 0) {
-    return false;
-  }
-  for (const child of children) {
-    if (child.geometry === undefined && child.layout === undefined) {
-      continue;
-    }
-    const childGeom = geometryOf(child);
-    if (
-      childGeom.x >= parentGeom.x - 0.5 &&
-      childGeom.y >= parentGeom.y - 0.5
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Resolve semantic capability geometry once for indexing and rendering.
- */
-function resolveContainerLayout(
-  node: SceneNodeLike,
-  parentGeom: SceneGeometryLike,
-  children: readonly SceneNodeLike[] | undefined,
-): Readonly<{
-  parentGeom: SceneGeometryLike;
-  childGeoms: readonly SceneGeometryLike[] | undefined;
-}> {
-  const members = Array.isArray(children) ? children : [];
-  const layout = resolveCapabilityLayout(
-    { ...node, geometry: parentGeom },
-    members,
-  );
-  return {
-    parentGeom: layout.bounds,
-    childGeoms:
-      members.length > 0 ? layout.childGeometries : undefined,
-  };
-}
-
-/** Flatten scene roots (and nested children) into id → node / world-geometry maps. */
-function indexSceneNodes(roots: readonly SceneNodeLike[]): SceneNodeIndex {
-  const nodesById = new Map<string, SceneNodeLike>();
-  const worldGeometryById = new Map<string, SceneGeometryLike>();
-  const ancestorIdsById = new Map<string, readonly string[]>();
-
-  const visit = (
-    node: SceneNodeLike,
-    originX: number,
-    originY: number,
-    coordsAreLocal: boolean,
-    geometryOverride: SceneGeometryLike | undefined,
-    ancestors: readonly string[],
-  ): void => {
-    let authored = geometryOverride ?? geometryOf(node);
-    const relative = node.relativePosition;
-    if (geometryOverride === undefined && relative !== undefined) {
-      const targetWorldGeom = worldGeometryById.get(relative.nodeId);
-      if (targetWorldGeom !== undefined) {
-        const anchorPoint = nodeAnchorPoint(targetWorldGeom, relative.anchor);
-        const worldX = anchorPoint.x + finiteNumber(relative.dx);
-        const worldY = anchorPoint.y + finiteNumber(relative.dy);
-        authored = {
-          ...authored,
-          x: coordsAreLocal ? worldX - originX : worldX,
-          y: coordsAreLocal ? worldY - originY : worldY,
-        };
-      }
-    }
-    const kids = node.children;
-    const { parentGeom: laidOutParent, childGeoms } = resolveContainerLayout(
-      node,
-      authored,
-      kids,
-    );
-    const worldGeom: SceneGeometryLike = coordsAreLocal
-      ? {
-          x: originX + laidOutParent.x,
-          y: originY + laidOutParent.y,
-          width: laidOutParent.width,
-          height: laidOutParent.height,
-        }
-      : laidOutParent;
-    nodesById.set(node.id, node);
-    worldGeometryById.set(node.id, worldGeom);
-    ancestorIdsById.set(node.id, ancestors);
-
-    if (!Array.isArray(kids) || kids.length === 0) {
-      return;
-    }
-    const childAncestors = [...ancestors, node.id];
-    const local = childrenUseLocalLayout(node, laidOutParent, kids);
-    kids.forEach((child, index) => {
-      const childOverride = childGeoms?.[index];
-      if (local) {
-        visit(child, worldGeom.x, worldGeom.y, true, childOverride, childAncestors);
-      } else {
-        visit(child, 0, 0, false, childOverride, childAncestors);
-      }
-    });
-  };
-
-  for (const root of roots) {
-    visit(root, 0, 0, false, undefined, []);
-  }
-  const curveRoutesById = resolveSceneCurveRoutes(
-    nodesById,
-    worldGeometryById,
-    ancestorIdsById,
-  );
-  return { nodesById, worldGeometryById, ancestorIdsById, curveRoutesById };
 }
 
 /** World-space endpoint of a curved edge when it is anchored to a known node. */
@@ -2276,6 +1965,25 @@ function curveObstacles(
   return obstacles;
 }
 
+/** Rebase world-space route obstacles into a connector's local drawing frame. */
+function frameRouteObstacles(
+  from: ScenePointLike | undefined,
+  to: ScenePointLike | undefined,
+  index: SceneNodeIndex,
+  options: CurveRouteOptions,
+  layoutOrigin: LayoutOrigin,
+): readonly RouteObstacle[] {
+  return curveObstacles(from, to, index, options).map((obstacle) => ({
+    id: obstacle.id,
+    bounds: {
+      x: obstacle.bounds.x - layoutOrigin.x,
+      y: obstacle.bounds.y - layoutOrigin.y,
+      width: obstacle.bounds.width,
+      height: obstacle.bounds.height,
+    },
+  }));
+}
+
 /**
  * Resolve a curved edge into a single canonical route, shared by both the drawn
  * stroke and any motion signal that travels it. Endpoints are lifted to world
@@ -2333,6 +2041,7 @@ function motionConnectorPathData(
     return resolvedCurveRoute(node, from, to, index, layoutOrigin).d;
   }
   if (isElbowRoute(node) || node.via !== undefined || connectorAxisOf(node) !== undefined) {
+    const options = normalizeCurveRouteOptions(node.style);
     return elbowPathData(
       start,
       end,
@@ -2342,6 +2051,8 @@ function motionConnectorPathData(
       connectorAxisOf(node),
       typeof from?.anchor === "string" ? from.anchor : undefined,
       typeof to?.anchor === "string" ? to.anchor : undefined,
+      frameRouteObstacles(from, to, index, options, layoutOrigin),
+      options.clearance,
     );
   }
   return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} L${formatPathNumber(end.x)} ${formatPathNumber(end.y)}`;
@@ -2516,7 +2227,7 @@ function shouldShowArrowhead(node: SceneNodeLike, capability: string): boolean {
   if (/^(split|divider|rule|sep|guide)([-_]|$)/i.test(node.id)) {
     return false;
   }
-  // Braces are undirected geometry (desugar also stamps markerEnd: "none").
+  // Braces are undirected geometry (also stamp markerEnd: "none").
   if (capability === "core.bracket" || node.kind === "bracket") {
     return hasExplicitMarkerEnd(node.style);
   }
@@ -2724,6 +2435,44 @@ function appearanceForNode(
     return { state: "unchanged", opacity: 1 };
   }
   return { state, opacity: enterOpacity };
+}
+
+/**
+ * Cap connector visibility to its node-backed endpoints and their ancestors.
+ * Coordinate-only endpoints have no timeline dependency.
+ */
+function connectorEndpointOpacity(
+  node: SceneNodeLike,
+  timeline: readonly SceneTimelineCueLike[],
+  playbackTimeMs: number,
+  index: SceneNodeIndex,
+): number | undefined {
+  const dependencyIds = new Set<string>();
+  for (const endpoint of [...scenePoints(node.from), ...scenePoints(node.to)]) {
+    const endpointId = endpoint.nodeId;
+    if (
+      typeof endpointId !== "string" ||
+      endpointId.length === 0 ||
+      !index.nodesById.has(endpointId)
+    ) {
+      continue;
+    }
+    dependencyIds.add(endpointId);
+    for (const ancestorId of index.ancestorIdsById.get(endpointId) ?? []) {
+      dependencyIds.add(ancestorId);
+    }
+  }
+  if (dependencyIds.size === 0) {
+    return undefined;
+  }
+  let opacity = 1;
+  for (const dependencyId of dependencyIds) {
+    opacity = Math.min(
+      opacity,
+      appearanceForNode(dependencyId, timeline, playbackTimeMs).opacity,
+    );
+  }
+  return opacity;
 }
 
 /** True once a fade/exit cue window has started for this node. */
@@ -3222,6 +2971,7 @@ function arrowPathData(
     const start = resolveEndpoint(from, index, layoutOrigin);
     const end = resolveEndpoint(to, index, layoutOrigin);
     if (isElbowRoute(node)) {
+      const options = normalizeCurveRouteOptions(node.style);
       const via =
         node.via !== undefined
           ? resolveEndpoint(node.via, index, layoutOrigin)
@@ -3233,6 +2983,8 @@ function arrowPathData(
         connectorAxisOf(node),
         typeof from?.anchor === "string" ? from.anchor : undefined,
         typeof to?.anchor === "string" ? to.anchor : undefined,
+        frameRouteObstacles(from, to, index, options, layoutOrigin),
+        options.clearance,
       );
     }
     return `M${start.x} ${start.y} L${end.x} ${end.y}`;
@@ -3549,14 +3301,7 @@ function cornerRadiusFromStyle(
   return typeof radius === "number" && Number.isFinite(radius) ? radius : fallback;
 }
 
-/**
- * Recursively render nested `children` into sibling `<g>` wrappers.
- * When `layoutOffset` is set, children are parent-local and wrapped in
- * `translate(offset)` so group/container origins shift the subtree.
- * `childGeoms` supplies stack/grid local placements when present.
- * Arrow-like siblings paint after non-arrows so tip heads (which extend
- * past the stroke end) are not buried under destination box fills.
- */
+/** Recursively paint canonical child geometry in stable sibling order. */
 function renderChildren(
   children: readonly SceneNodeLike[] | undefined,
   timeline: readonly SceneTimelineCueLike[],
@@ -3564,51 +3309,23 @@ function renderChildren(
   theme: Theme,
   markerPrefix: string,
   index: SceneNodeIndex,
-  parentLayoutOrigin: LayoutOrigin,
-  layoutOffset: LayoutOrigin | undefined,
   playback: PlaybackContext,
-  childGeoms: readonly SceneGeometryLike[] | undefined,
 ): ReactNode {
   if (!Array.isArray(children) || children.length === 0) {
     return null;
   }
-  const childOrigin: LayoutOrigin =
-    layoutOffset === undefined
-      ? parentLayoutOrigin
-      : {
-          x: parentLayoutOrigin.x + layoutOffset.x,
-          y: parentLayoutOrigin.y + layoutOffset.y,
-        };
   const ordered = orderArrowSiblingsLast(children);
-  const nested = ordered.map((child) => {
-    const authoredIndex = children.indexOf(child);
-    const geometryOverride =
-      authoredIndex >= 0 ? childGeoms?.[authoredIndex] : undefined;
-    return renderNode(
+  return ordered.map((child) =>
+    renderNode(
       child,
       timeline,
       playbackTimeMs,
       theme,
       markerPrefix,
       index,
-      childOrigin,
+      ZERO_ORIGIN,
       playback,
-      geometryOverride,
-    );
-  });
-  if (
-    layoutOffset === undefined ||
-    (layoutOffset.x === 0 && layoutOffset.y === 0)
-  ) {
-    return nested;
-  }
-  return (
-    <g
-      data-flow-layout-offset={`${layoutOffset.x},${layoutOffset.y}`}
-      transform={`translate(${layoutOffset.x} ${layoutOffset.y})`}
-    >
-      {nested}
-    </g>
+    ),
   );
 }
 
@@ -3640,32 +3357,24 @@ function renderNode(
   index: SceneNodeIndex,
   layoutOrigin: LayoutOrigin = ZERO_ORIGIN,
   playback: PlaybackContext,
-  geometryOverride?: SceneGeometryLike,
 ): ReactNode {
   const capability = capabilityOf(node);
-  let authoredGeom = geometryOverride ?? geometryOf(node);
-  const relativePosition = node.relativePosition;
-  if (geometryOverride === undefined && relativePosition !== undefined) {
-    const targetWorldGeom = index.worldGeometryById.get(relativePosition.nodeId);
-    if (targetWorldGeom !== undefined) {
-      const anchorPoint = nodeAnchorPoint(targetWorldGeom, relativePosition.anchor);
-      const worldX = anchorPoint.x + finiteNumber(relativePosition.dx);
-      const worldY = anchorPoint.y + finiteNumber(relativePosition.dy);
-      authoredGeom = {
-        ...authoredGeom,
-        x: worldX - layoutOrigin.x,
-        y: worldY - layoutOrigin.y,
-      };
-    }
-  }
+  const worldGeometry = index.worldGeometryById.get(node.id) ?? geometryOf(node);
+  const geom = {
+    x: worldGeometry.x - layoutOrigin.x,
+    y: worldGeometry.y - layoutOrigin.y,
+    width: worldGeometry.width,
+    height: worldGeometry.height,
+  };
   const kids = node.children;
-  const { parentGeom: geom, childGeoms } = resolveContainerLayout(
-    node,
-    authoredGeom,
-    kids,
-  );
   const appearance = appearanceForNode(node.id, timeline, playbackTimeMs);
   const fanNode = isFanNode(node, capability);
+  const endpointOpacity =
+    fanNode ||
+    isArrowLike(node, capability) ||
+    isMotionSignalNode(node, capability)
+      ? connectorEndpointOpacity(node, timeline, playbackTimeMs, index)
+      : undefined;
   const drawProgress = drawProgressForNode(
     node.id,
     timeline,
@@ -3700,7 +3409,7 @@ function renderNode(
     typeof description === "string" && description.length > 0
       ? `flow-node-${node.id}-desc`
       : undefined;
-  const localChildren = childrenUseLocalLayout(node, geom, kids);
+  const localChildren = false;
   const nested = renderChildren(
     kids,
     timeline,
@@ -3708,10 +3417,7 @@ function renderNode(
     theme,
     markerPrefix,
     index,
-    layoutOrigin,
-    localChildren ? { x: geom.x, y: geom.y } : undefined,
     playback,
-    childGeoms,
   );
 
   const themeBg = theme.bg.elevated;
@@ -3882,6 +3588,10 @@ function renderNode(
         ))}
         {semantic.texts.map((part) => {
           const centered = part.anchor === "middle";
+          const inkFallback =
+            part.tone === "secondary"
+              ? theme.text.secondary
+              : theme.text.primary;
           return (
             <text
               key={part.id}
@@ -3897,12 +3607,19 @@ function renderNode(
               dominantBaseline={centered ? "middle" : "hanging"}
               textAnchor={part.anchor}
               fill={
-                part.tone === "secondary"
-                  ? theme.text.secondary
-                  : theme.text.primary
+                part.inkRole !== undefined
+                  ? resolveThemePaint(part.inkRole, theme, inkFallback)
+                  : inkFallback
               }
               fontSize={scaledSceneFontSize(part.fontSize)}
               fontWeight={part.fontWeight}
+              fontFamily={part.fontFamily}
+              fontStyle={part.fontStyle}
+              style={
+                part.whiteSpace !== undefined
+                  ? { whiteSpace: part.whiteSpace }
+                  : undefined
+              }
               focusable={false}
               aria-hidden="true"
               data-flow-semantic-text={capability}
@@ -4259,7 +3976,10 @@ function renderNode(
       const smilActive =
         playback.playing &&
         !playback.reducedMotion &&
-        appearance.state !== "hidden";
+        appearance.state !== "hidden" &&
+        // Hold the traveler until every node-backed endpoint is on stage, so
+        // the dot never zips across a corridor before its boxes appear.
+        (endpointOpacity === undefined || endpointOpacity > 0);
       // One traveler per inter-box corridor (joined M… paths would teleport).
       const segments = d.match(/M[^M]+/gi) ?? [d];
       body = (
@@ -4391,12 +4111,18 @@ function renderNode(
           : snapEnterOpaque || appearance.state === "unchanged"
             ? undefined
             : appearance.opacity;
+  const endpointBoundOpacity =
+    endpointOpacity !== undefined && endpointOpacity < 1
+      ? (groupOpacity ?? 1) * endpointOpacity
+      : groupOpacity;
   const groupStyle: CSSProperties | undefined =
-    groupOpacity === undefined &&
+    endpointBoundOpacity === undefined &&
     (emphasis === undefined || emphasis.filter === "none")
       ? undefined
       : {
-          ...(groupOpacity !== undefined ? { opacity: groupOpacity } : {}),
+          ...(endpointBoundOpacity !== undefined
+            ? { opacity: endpointBoundOpacity }
+            : {}),
           ...(emphasis !== undefined && emphasis.filter !== "none"
             ? { filter: emphasis.filter }
             : {}),
@@ -4490,14 +4216,33 @@ export function SceneRenderer({
   const theme = useHostTheme();
   const reactId = useId().replaceAll(":", "");
   const markerPrefix = `scene-arrow-${reactId}`;
-  const roots = omitMotionCompanionDots(scene.roots ?? []);
-  const index = indexSceneNodes(roots);
-  const authoredTimeline = Array.isArray(scene.timeline) ? scene.timeline : [];
-  const timeline = expandTimelineCues(
-    omitCompanionTimelineCues(authoredTimeline, index.nodesById),
-    index.nodesById,
-  );
-  const durationMs = timelineDurationMs(timeline);
+  const { roots, index, timeline, durationMs, sceneTips } = useMemo(() => {
+    const nextRoots = omitMotionCompanionDots(scene.roots ?? []);
+    const resolved = resolveScene({ ...scene, roots: nextRoots });
+    const nextIndex: SceneNodeIndex = {
+      nodesById: resolved.nodesById,
+      worldGeometryById: resolved.worldGeometryById,
+      ancestorIdsById: resolved.ancestorIdsById,
+      curveRoutesById: resolveSceneCurveRoutes(
+        resolved.nodesById,
+        resolved.worldGeometryById,
+        resolved.ancestorIdsById,
+      ),
+    };
+    const authoredTimeline = Array.isArray(scene.timeline) ? scene.timeline : [];
+    const nextTimeline = expandTimelineCues(
+      omitCompanionTimelineCues(authoredTimeline, nextIndex.nodesById),
+      nextIndex.nodesById,
+    );
+
+    return {
+      roots: nextRoots,
+      index: nextIndex,
+      timeline: nextTimeline,
+      durationMs: timelineDurationMs(nextTimeline),
+      sceneTips: collectSceneTips(nextRoots),
+    };
+  }, [scene.id, scene.roots, scene.timeline]);
   const [playbackTimeMs, setPlaybackTimeMs] = useState(0);
   const playbackTimeMsRef = useRef(0);
   const rate = playbackRate > 0 ? playbackRate : 1;
@@ -4510,7 +4255,7 @@ export function SceneRenderer({
 
   useEffect(() => {
     commitTime(0);
-  }, [restartKey, scene, durationMs]);
+  }, [restartKey, scene.id, durationMs]);
 
   useEffect(() => {
     if (reducedMotion) {
@@ -4523,29 +4268,26 @@ export function SceneRenderer({
 
     const wallOriginMs = performance.now();
     const playOriginMs = playbackTimeMsRef.current;
-    let intervalId = 0;
+    let animationFrameId = 0;
 
-    const syncFromWallClock = () => {
+    const syncFromWallClock = (wallTimeMs: number) => {
       const elapsed = Math.min(
         durationMs,
-        playOriginMs + Math.max(0, performance.now() - wallOriginMs) * rate,
+        playOriginMs + Math.max(0, wallTimeMs - wallOriginMs) * rate,
       );
       commitTime(elapsed);
-      if (elapsed >= durationMs && intervalId !== 0) {
-        window.clearInterval(intervalId);
-        intervalId = 0;
+      if (elapsed < durationMs) {
+        animationFrameId = window.requestAnimationFrame(syncFromWallClock);
       }
     };
 
-    // 1ms cadence makes `vi.advanceTimersByTime(n)` land on exact cue times.
-    intervalId = window.setInterval(syncFromWallClock, 1);
-    syncFromWallClock();
+    animationFrameId = window.requestAnimationFrame(syncFromWallClock);
     return () => {
-      if (intervalId !== 0) {
-        window.clearInterval(intervalId);
+      if (animationFrameId !== 0) {
+        window.cancelAnimationFrame(animationFrameId);
       }
     };
-  }, [playing, reducedMotion, durationMs, restartKey, scene, rate]);
+  }, [playing, reducedMotion, durationMs, restartKey, scene.id, rate]);
 
   const effectiveTimeMs = reducedMotion ? durationMs : playbackTimeMs;
   const ariaLabel =
@@ -4554,7 +4296,6 @@ export function SceneRenderer({
     typeof scene.summary === "string" && scene.summary.length > 0
       ? `scene-summary-${reactId}`
       : undefined;
-  const sceneTips = collectSceneTips(roots);
   const { width: viewportWidth, height: viewportHeight } = resolveViewportSize(
     scene.viewport,
   );

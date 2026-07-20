@@ -37,6 +37,160 @@ function finding(severity, deck, slide, code, message) {
   return { severity, deck, slide, code, message };
 }
 
+function sceneNodeById(scene, id) {
+  return walkNodes(scene?.roots ?? []).find((node) => node?.id === id);
+}
+
+function capabilityOf(node) {
+  return node?.capabilityId ?? node?.capability ?? node?.kind;
+}
+
+function expectNode(nodes, id, capability, deck, slide, findings) {
+  const node = nodes.get(id);
+  if (node === undefined) {
+    findings.push(
+      finding(
+        "error",
+        deck,
+        slide,
+        "worker-managed-node-missing",
+        `expected managed node "${id}"`,
+      ),
+    );
+    return;
+  }
+  if (capabilityOf(node) !== capability) {
+    findings.push(
+      finding(
+        "error",
+        deck,
+        slide,
+        "worker-managed-capability",
+        `"${id}" must use ${capability}, got ${capabilityOf(node) ?? "unknown"}`,
+      ),
+    );
+  }
+}
+
+function boxesOverlap(left, right) {
+  return (
+    left.x < right.x + right.width &&
+    left.x + left.width > right.x &&
+    left.y < right.y + right.height &&
+    left.y + left.height > right.y
+  );
+}
+
+function verifyManagedChildrenDoNotOverlap(
+  container,
+  deck,
+  slide,
+  findings,
+) {
+  const children = (container?.children ?? [])
+    .filter((child) => isBoxLike(child) && !isArrowLike(child))
+    .map((child) => ({ id: child.id, geometry: geomOf(child) }))
+    .filter((entry) => entry.geometry !== null);
+  for (let left = 0; left < children.length; left += 1) {
+    for (let right = left + 1; right < children.length; right += 1) {
+      if (boxesOverlap(children[left].geometry, children[right].geometry)) {
+        findings.push(
+          finding(
+            "error",
+            deck,
+            slide,
+            "worker-managed-child-overlap",
+            `"${children[left].id}" overlaps "${children[right].id}" inside "${container.id}"`,
+          ),
+        );
+      }
+    }
+  }
+}
+
+function verifyWorkerSlide(pkg, findings) {
+  if (pkg?.id !== "aiperf-vs-locust") return;
+  const slide = (pkg.slides ?? []).find(
+    (candidate) => candidate?.title === "One event loop, one lightweight task per in-flight credit",
+  );
+  const scene = slide?.render?.scene;
+  if (scene === undefined) {
+    findings.push(
+      finding(
+        "error",
+        pkg.id,
+        "worker-process",
+        "worker-slide-missing",
+        'missing slide "AIPerf: inside one worker process"',
+      ),
+    );
+    return;
+  }
+  const slideLabel = slide.id ?? slide.title;
+  const allNodes = walkNodes(scene.roots ?? []);
+  const nodes = new Map(allNodes.map((node) => [node.id, node]));
+  expectNode(nodes, "s10-worker", "layout.frame", pkg.id, slideLabel, findings);
+  expectNode(nodes, "s10-tasks", "layout.stack", pkg.id, slideLabel, findings);
+  expectNode(nodes, "s10-steps", "layout.rail", pkg.id, slideLabel, findings);
+
+  const edge = nodes.get("s10-e8");
+  if (
+    edge?.style?.arrowhead !== true ||
+    edge?.style?.markerEnd !== "arrow"
+  ) {
+    findings.push(
+      finding(
+        "error",
+        pkg.id,
+        slideLabel,
+        "worker-credit-direction",
+        "s10-e8 must resolve as a directed edge with an arrowhead",
+      ),
+    );
+  }
+  if (edge?.path !== undefined || edge?.d !== undefined) {
+    findings.push(
+      finding(
+        "error",
+        pkg.id,
+        slideLabel,
+        "worker-credit-authored-path",
+        "s10-e8 must use automatic routing without an authored path",
+      ),
+    );
+  }
+  if (sceneNodeById(scene, "s10-motion")?.edgeRef !== "s10-e8") {
+    findings.push(
+      finding(
+        "error",
+        pkg.id,
+        slideLabel,
+        "worker-motion-edge",
+        "s10-motion must reference s10-e8",
+      ),
+    );
+  }
+
+  for (const id of ["s10-worker", "s10-worker-flow", "s10-tasks", "s10-steps"]) {
+    verifyManagedChildrenDoNotOverlap(nodes.get(id), pkg.id, slideLabel, findings);
+  }
+  const footerNodes = allNodes.filter((node) => node.id === "s10-note");
+  if (
+    footerNodes.length !== 1 ||
+    capabilityOf(footerNodes[0]) !== "core.text"
+  ) {
+    findings.push(
+      finding(
+        "error",
+        pkg.id,
+        slideLabel,
+        "worker-note-owner",
+        "s10-note must have exactly one semantic label owner",
+      ),
+    );
+  }
+}
+
 /** Timeline cue target ids (`target` and/or stagger `targets`). */
 function cueTargets(cue) {
   const out = [];
@@ -297,7 +451,11 @@ function verifySceneIr(deck, slideLabel, scene, options, findings) {
       }
 
       if (isArrowLike(node)) {
-        const path = arrowPathData(node, nodesById);
+        const referencedEdge =
+          isMotionSignalNode(node) && typeof node.edgeRef === "string"
+            ? nodesById.get(node.edgeRef)
+            : undefined;
+        const path = arrowPathData(referencedEdge ?? node, nodesById);
         if (!path) {
           findings.push(
             finding(
@@ -774,6 +932,78 @@ export function verifyAdvancedCurveRouting() {
       ),
     );
   }
+
+  const obstacleNodes = new Map([
+    [
+      "elbow-source",
+      {
+        id: "elbow-source",
+        kind: "rect",
+        geometry: { x: 0, y: 0, width: 100, height: 50 },
+      },
+    ],
+    [
+      "elbow-blocker",
+      {
+        id: "elbow-blocker",
+        kind: "rect",
+        geometry: { x: 140, y: 10, width: 80, height: 100 },
+      },
+    ],
+    [
+      "elbow-target",
+      {
+        id: "elbow-target",
+        kind: "rect",
+        geometry: { x: 300, y: 100, width: 100, height: 50 },
+      },
+    ],
+  ]);
+  const avoidingElbow = arrowPathData(
+    {
+      id: "obstacle-elbow",
+      kind: "elbow",
+      from: { nodeId: "elbow-source", anchor: "e" },
+      to: { nodeId: "elbow-target", anchor: "w" },
+    },
+    obstacleNodes,
+  );
+  const blocker = { x: 128, y: -2, width: 104, height: 124 };
+  const avoidingPoints = pathPoints(avoidingElbow ?? "");
+  const crossesBlocker = avoidingPoints.slice(1).some((point, index) => {
+    const previous = avoidingPoints[index];
+    if (previous === undefined) return false;
+    const horizontal = Math.abs(previous.y - point.y) <= 1e-6;
+    const vertical = Math.abs(previous.x - point.x) <= 1e-6;
+    if (horizontal) {
+      return (
+        previous.y > blocker.y &&
+        previous.y < blocker.y + blocker.height &&
+        Math.max(previous.x, point.x) > blocker.x &&
+        Math.min(previous.x, point.x) < blocker.x + blocker.width
+      );
+    }
+    if (vertical) {
+      return (
+        previous.x > blocker.x &&
+        previous.x < blocker.x + blocker.width &&
+        Math.max(previous.y, point.y) > blocker.y &&
+        Math.min(previous.y, point.y) < blocker.y + blocker.height
+      );
+    }
+    return true;
+  });
+  if (avoidingPoints.length < 4 || crossesBlocker) {
+    findings.push(
+      finding(
+        "error",
+        deck,
+        "obstacle-elbow",
+        "elbow-crosses-component",
+        `orthogonal route must avoid inflated blocker bounds; got ${avoidingElbow}`,
+      ),
+    );
+  }
   return findings;
 }
 
@@ -873,6 +1103,7 @@ export function verifyPackageIr(pkg, options = {}) {
   }
 
   verifyRoutingSdkExamples(pkg, findings);
+  verifyWorkerSlide(pkg, findings);
 
   slides.forEach((slide, index) => {
     const slideLabel = `${index}:${slide?.id ?? slide?.title ?? "slide"}`;

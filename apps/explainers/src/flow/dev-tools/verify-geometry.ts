@@ -20,6 +20,7 @@ import {
   type CurveRouteResult,
   type RouteObstacle,
 } from "../../core/diagram/connector-routing.js";
+export { resolveSceneWorldGeometry as indexResolvedWorldGeometry } from "../../core/diagram/capabilities/resolved-geometry.js";
 
 /** Default SceneRenderer viewport. */
 export const DEFAULT_VIEWPORT = Object.freeze({
@@ -741,6 +742,27 @@ export function arrowPathData(
           : style.axis === "x" || style.axis === "y"
             ? style.axis
             : undefined;
+      const options = normalizeCurveRouteOptions(style);
+      const fromValue = record(value.from);
+      const toValue = record(value.to);
+      const sourceId =
+        typeof fromValue.nodeId === "string" ? fromValue.nodeId : undefined;
+      const targetId =
+        typeof toValue.nodeId === "string" ? toValue.nodeId : undefined;
+      const obstacles =
+        options.avoidObstacles && nodesById !== undefined
+          ? [...nodesById.entries()].flatMap(([id, candidate]) => {
+              if (id === sourceId || id === targetId || !isBoxLike(candidate)) {
+                return [];
+              }
+              const geometry = geomOf(candidate);
+              return geometry !== null &&
+                geometry.width > 0 &&
+                geometry.height > 0
+                ? [{ id, bounds: geometry }]
+                : [];
+            })
+          : [];
       return elbowPathData(
         start,
         end,
@@ -748,6 +770,8 @@ export function arrowPathData(
         axis,
         endpointAnchor(value.from),
         endpointAnchor(value.to),
+        obstacles,
+        options.clearance,
       );
     }
     return `M${start.x} ${start.y} L${end.x} ${end.y}`;

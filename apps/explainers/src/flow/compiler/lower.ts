@@ -112,6 +112,11 @@ function resolveArgumentValue(
       return resolveLiteralValue(value, tokens);
     case "identifier-reference":
       return value.name;
+    case "array-literal":
+      return value.items.map((item) => resolveArgumentValue(item, tokens));
+    case "ref":
+      // Match expand-sdk: `{ ref: "instance.port" }` for endpoint factories.
+      return { ref: value.target };
     case "object-literal":
       return Object.fromEntries(
         value.properties.map((property) => [

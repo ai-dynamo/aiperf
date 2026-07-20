@@ -61,6 +61,38 @@ export function pointInBounds(point: Point2, bounds: Bounds2, strict = false): b
 }
 
 /**
+ * Shrink an axis-aligned rectangle so `point` is not in its strict interior.
+ * Pushes the nearest edge to the point. Leaves bounds unchanged when the point
+ * is already outside the open interior. Used so clearance inflation around a
+ * third-party obstacle near a connector endpoint does not treat that endpoint
+ * as blocked while still keeping the obstacle for the rest of the path.
+ */
+export function shrinkBoundsToExcludePoint(bounds: Bounds2, point: Point2): Bounds2 {
+  if (!pointInBounds(point, bounds, true)) {
+    return bounds;
+  }
+  const left = bounds.x;
+  const right = bounds.x + bounds.width;
+  const top = bounds.y;
+  const bottom = bounds.y + bounds.height;
+  const distLeft = point.x - left;
+  const distRight = right - point.x;
+  const distTop = point.y - top;
+  const distBottom = bottom - point.y;
+  const minDist = Math.min(distLeft, distRight, distTop, distBottom);
+  if (minDist === distLeft) {
+    return { x: point.x, y: bounds.y, width: right - point.x, height: bounds.height };
+  }
+  if (minDist === distRight) {
+    return { x: bounds.x, y: bounds.y, width: point.x - left, height: bounds.height };
+  }
+  if (minDist === distTop) {
+    return { x: bounds.x, y: point.y, width: bounds.width, height: bottom - point.y };
+  }
+  return { x: bounds.x, y: bounds.y, width: bounds.width, height: point.y - top };
+}
+
+/**
  * Liang–Barsky segment/rectangle overlap.
  *
  * Returns true when the segment shares any interior with the rectangle. When

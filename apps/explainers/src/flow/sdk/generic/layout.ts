@@ -20,8 +20,13 @@ import type {
   ComponentSlotDescriptor,
 } from "../../schema/component-descriptor.js";
 import type { Result } from "../../schema/diagnostic.js";
-import type { ConnectorEndpointIr, GeometryIr, RenderNodeIr } from "../../schema/ir.js";
+import type {
+  ConnectorEndpointIr,
+  GeometryIr,
+  RenderNodeIr,
+} from "../../schema/ir.js";
 import type { JsonValue } from "../../schema/json-value.js";
+import type { StyleValueIr } from "../../schema/theme.js";
 import { attachSdkOrigin } from "../provenance.js";
 import type {
   SceneFragment,
@@ -46,6 +51,11 @@ function numberProp(props: PropRecord, key: string, fallback: number): number {
 function stringProp(props: PropRecord, key: string): string | undefined {
   const value = props[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function booleanProp(props: PropRecord, key: string, fallback = false): boolean {
+  const value = props[key];
+  return typeof value === "boolean" ? value : fallback;
 }
 
 function geometryFromProps(props: PropRecord): GeometryIr {
@@ -144,6 +154,32 @@ const GEOMETRY_PROPS: Readonly<Record<string, ComponentPropDescriptor>> = {
   height: { type: "number", required: false, default: 0 },
 };
 
+const MANAGED_LAYOUT_PROPS: Readonly<Record<
+  string,
+  ComponentPropDescriptor
+>> = {
+  padding: { type: "number", required: false, default: 0 },
+  align: { type: "string", required: false, default: "start" },
+  justify: { type: "string", required: false, default: "start" },
+  fixedWidth: { type: "boolean", required: false, default: false },
+  fixedHeight: { type: "boolean", required: false, default: false },
+};
+
+function managedStyle(
+  props: PropRecord,
+  extras: Readonly<Record<string, StyleValueIr>> = {},
+): Readonly<Record<string, StyleValueIr>> {
+  return {
+    coordinateSpace: "local",
+    padding: Math.max(0, numberProp(props, "padding", 0)),
+    align: stringProp(props, "align") ?? "start",
+    justify: stringProp(props, "justify") ?? "start",
+    fixedWidth: booleanProp(props, "fixedWidth"),
+    fixedHeight: booleanProp(props, "fixedHeight"),
+    ...extras,
+  };
+}
+
 const CHILDREN_SLOT: Readonly<Record<string, ComponentSlotDescriptor>> = {
   children: { accepts: "sdk.*", required: false },
 };
@@ -163,7 +199,7 @@ const stackFactory: SdkComponentFactory = (props, slots, context) => {
       id,
       capabilityId: "layout.stack",
       geometry: geometryFromProps(props),
-      style: { direction, gap },
+      style: managedStyle(props, { direction, gap }),
       accessibility: { label },
       fallback: label,
       sourceMap: context.sourceMap,
@@ -190,6 +226,7 @@ export const SDK_STACK: SdkComponentDefinition = {
       direction: { type: "string", required: false, default: "row" },
       gap: { type: "number", required: false, default: 12 },
       label: { type: "string", required: false },
+      ...MANAGED_LAYOUT_PROPS,
       ...GEOMETRY_PROPS,
     },
     slots: CHILDREN_SLOT,
@@ -222,7 +259,7 @@ const gridFactory: SdkComponentFactory = (props, slots, context) => {
       id,
       capabilityId: "layout.grid",
       geometry: geometryFromProps(props),
-      style: { cols, gap },
+      style: managedStyle(props, { cols, gap }),
       accessibility: { label },
       fallback: label,
       sourceMap: context.sourceMap,
@@ -249,6 +286,7 @@ export const SDK_GRID: SdkComponentDefinition = {
       cols: { type: "number", required: false },
       gap: { type: "number", required: false, default: 12 },
       label: { type: "string", required: false },
+      ...MANAGED_LAYOUT_PROPS,
       ...GEOMETRY_PROPS,
     },
     slots: CHILDREN_SLOT,
@@ -272,7 +310,7 @@ const railFactory: SdkComponentFactory = (props, slots, context) => {
       id,
       capabilityId: "layout.rail",
       geometry: geometryFromProps(props),
-      style: { direction, gap },
+      style: managedStyle(props, { direction, gap }),
       accessibility: { label },
       fallback: label,
       sourceMap: context.sourceMap,
@@ -299,11 +337,103 @@ export const SDK_RAIL: SdkComponentDefinition = {
       direction: { type: "string", required: false, default: "row" },
       gap: { type: "number", required: false, default: 12 },
       label: { type: "string", required: false },
+      ...MANAGED_LAYOUT_PROPS,
       ...GEOMETRY_PROPS,
     },
     slots: CHILDREN_SLOT,
   }),
   factory: railFactory,
+  actions: LAYOUT_ACTIONS,
+};
+
+function managedContainerFactory(
+  capabilityId: "layout.overlay" | "layout.frame",
+  componentId: "sdk.overlay" | "sdk.frame",
+): SdkComponentFactory {
+  return (props, slots, context) => {
+    const children = slotFragments(slots, "children");
+    const roots = flattenRoots(children);
+    const id = nodeId(context);
+    const title = stringProp(props, "title");
+    const detail = stringProp(props, "detail");
+    const label =
+      stringProp(props, "label") ??
+      title ??
+      (capabilityId === "layout.frame" ? "frame" : "overlay");
+    const group: RenderNodeIr = withOrigin(
+      {
+        kind: "group",
+        id,
+        capabilityId,
+        geometry: geometryFromProps(props),
+        style: managedStyle(props, {
+          gap: numberProp(props, "gap", capabilityId === "layout.frame" ? 12 : 0),
+        }),
+        props:
+          capabilityId === "layout.frame"
+            ? {
+                ...(title === undefined ? {} : { title }),
+                ...(detail === undefined ? {} : { detail }),
+              }
+            : {},
+        accessibility: { label },
+        fallback: label,
+        sourceMap: context.sourceMap,
+        children: roots,
+      },
+      context,
+      componentId,
+      "root",
+    );
+    const ports = {
+      self: { nodeId: id },
+      ...mergeChildPorts(children, "child"),
+    };
+    const actions: Partial<Record<SdkActionName, readonly string[]>> = {
+      enter: [id],
+    };
+    if (roots.length > 0) {
+      actions.stagger = roots.map((root) => root.id);
+    }
+    return ok([group], ports, actions);
+  };
+}
+
+/** Intentional-overlap managed container. */
+export const SDK_OVERLAY: SdkComponentDefinition = {
+  descriptor: createDescriptor({
+    id: "sdk.overlay",
+    capabilityId: "layout.overlay",
+    props: {
+      id: { type: "string", required: true },
+      gap: { type: "number", required: false, default: 0 },
+      label: { type: "string", required: false },
+      ...MANAGED_LAYOUT_PROPS,
+      ...GEOMETRY_PROPS,
+    },
+    slots: CHILDREN_SLOT,
+  }),
+  factory: managedContainerFactory("layout.overlay", "sdk.overlay"),
+  actions: LAYOUT_ACTIONS,
+};
+
+/** Titled content-safe managed container. */
+export const SDK_FRAME: SdkComponentDefinition = {
+  descriptor: createDescriptor({
+    id: "sdk.frame",
+    capabilityId: "layout.frame",
+    props: {
+      id: { type: "string", required: true },
+      title: { type: "string", required: true },
+      detail: { type: "string", required: false },
+      gap: { type: "number", required: false, default: 12 },
+      label: { type: "string", required: false },
+      ...MANAGED_LAYOUT_PROPS,
+      ...GEOMETRY_PROPS,
+    },
+    slots: CHILDREN_SLOT,
+  }),
+  factory: managedContainerFactory("layout.frame", "sdk.frame"),
   actions: LAYOUT_ACTIONS,
 };
 
@@ -545,6 +675,8 @@ export const GENERIC_LAYOUT_SDK_COMPONENTS: readonly SdkComponentDefinition[] = 
   SDK_STACK,
   SDK_GRID,
   SDK_RAIL,
+  SDK_OVERLAY,
+  SDK_FRAME,
   SDK_LANE,
   SDK_SWIMLANE,
   SDK_BAND,

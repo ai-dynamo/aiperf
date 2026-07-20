@@ -46,7 +46,7 @@ import {
 import {
   asRecord,
   isSupportedPackageCapability,
-} from "./desugar-scene-primitives.js";
+} from "./package-node-lower.js";
 import { expandSymbolInvocations } from "./expand-symbols.js";
 import { link, type LinkedDocument } from "./link.js";
 import { lower } from "./lower.js";
@@ -348,6 +348,11 @@ function resolveArgumentValue(value: ArgumentValueAst): unknown {
       return `@${value.token}`;
     case "identifier-reference":
       return value.name;
+    case "array-literal":
+      return value.items.map((item) => resolveArgumentValue(item));
+    case "ref":
+      // Match expand-sdk / lower.ts: `{ ref: "instance.port" }`.
+      return { ref: value.target };
     case "object-literal":
       return Object.fromEntries(
         value.properties.map((property) => [
@@ -911,4 +916,4 @@ export function lowerExplainerScene(
 }
 
 /** Re-export for callers / tests that inspect kind mapping. */
-export { capabilityKind } from "./desugar-scene-primitives.js";
+export { capabilityKind } from "./package-node-lower.js";

@@ -13,7 +13,7 @@ import type {
 import {
   capabilityKind,
   lowerFirstClassPackageNode,
-} from "./desugar-scene-primitives.js";
+} from "./package-node-lower.js";
 
 const STRUCTURAL_KEYS = new Set([
   "id",
@@ -34,6 +34,7 @@ const STRUCTURAL_KEYS = new Set([
   "via",
   "axis",
   "junction",
+  "edgeRef",
   "text",
 ]);
 
@@ -121,6 +122,19 @@ export function lowerSemanticSceneNode(
     },
   );
   const props = semanticProps(node);
+  const edgeRef =
+    typeof node.edgeRef === "string" && node.edgeRef.length > 0
+      ? node.edgeRef
+      : undefined;
+  if (lowered.kind === "connector" && edgeRef !== undefined) {
+    const { from: _from, to: _to, ...edgeBoundSignal } = lowered;
+    return {
+      ...edgeBoundSignal,
+      sourceMap: common.sourceMap,
+      edgeRef,
+      ...(Object.keys(props).length > 0 ? { props } : {}),
+    } as RenderNodeIr;
+  }
   return {
     ...lowered,
     sourceMap: common.sourceMap,

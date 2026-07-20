@@ -5,10 +5,8 @@
 
 import type { ReactNode } from "react";
 
-import {
-  SceneRenderer,
-  type SceneIrLike,
-} from "./diagram/SceneRenderer";
+import { SceneRenderer } from "./diagram/SceneRenderer";
+import type { SceneIrLike } from "./diagram/scene-types";
 import type { FinalCardProps } from "./types";
 import { Card, CardBody, CardHeader, Pill, Stack } from "./ui";
 

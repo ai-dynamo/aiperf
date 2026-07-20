@@ -4,10 +4,8 @@
  */
 
 import type { ReactNode } from "react";
-import {
-  SceneRenderer,
-  type SceneIrLike,
-} from "./diagram/SceneRenderer";
+import { SceneRenderer } from "./diagram/SceneRenderer";
+import type { SceneIrLike } from "./diagram/scene-types";
 import {
   finalCardFromScene,
   hasRenderableFinalCard,

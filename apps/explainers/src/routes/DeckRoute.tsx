@@ -16,5 +16,7 @@ export function DeckRoute() {
     return <Navigate to="/" replace />;
   }
 
-  return <ExplainerShell deck={deck} />;
+  // key remounts shell so slide/started/notes state cannot leak across decks
+  // when React Router reuses the DeckRoute element between sibling routes.
+  return <ExplainerShell key={deck.id} deck={deck} />;
 }

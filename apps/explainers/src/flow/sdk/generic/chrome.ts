@@ -50,7 +50,7 @@ import type {
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
-// Shared geometry constants (mirrors compiler/desugar-scene-primitives.ts).
+// Shared geometry constants (kept in sync with diagram text-metrics / chrome layout).
 // ---------------------------------------------------------------------------
 
 const INSET = 8;
@@ -76,9 +76,6 @@ const LEGEND_SWATCH_SIZE = 10;
 const LEGEND_LABEL_GAP = 8;
 const LEGEND_DEFAULT_WIDTH = 180;
 const LEGEND_DEFAULT_SWATCH_ROLE = "@theme.accent.control";
-
-const DETAIL_INK_ROLE = "@theme.ink.secondary";
-const CARD_SUBTITLE_INK_ROLE = "@theme.ink.tertiary";
 
 type CardSizePreset = Readonly<{ width: number; height: number }>;
 
@@ -192,91 +189,10 @@ function requireStringProp(
 // Result helpers.
 // ---------------------------------------------------------------------------
 
-const NATIVE_CHROME_COMPONENTS = new Set([
-  "sdk.header",
-  "sdk.panel",
-  "sdk.card",
-  "sdk.chip",
-  "sdk.note",
-]);
-
-function semanticPortNode(node: RenderNodeIr, role: string): RenderNodeIr {
-  return {
-    kind: "group",
-    id: node.id,
-    capabilityId: "core.semantic-port",
-    geometry: node.geometry,
-    style: {},
-    props: { role },
-    accessibility: node.accessibility,
-    fallback: node.fallback,
-    sourceMap: node.sourceMap,
-    ...(node.sdkOrigin !== undefined ? { sdkOrigin: node.sdkOrigin } : {}),
-    children: [],
-  };
-}
-
-/**
- * Collapse renderer-owned visual descendants into semantic root props while
- * retaining stable port target ids as non-visual semantic children.
- */
-function semanticizeChromeFragment(fragment: SceneFragment): SceneFragment {
-  const root = fragment.roots[0];
-  if (
-    root === undefined ||
-    root.kind !== "group" ||
-    root.sdkOrigin === undefined ||
-    !NATIVE_CHROME_COMPONENTS.has(root.sdkOrigin.componentId)
-  ) {
-    return fragment;
-  }
-
-  const props: Record<string, JsonValue> = {};
-  const semanticChildren: RenderNodeIr[] = [];
-  let rootStyle = root.style;
-  for (const child of root.children) {
-    const role = child.sdkOrigin?.generatedRole;
-    if (role === "chrome") {
-      rootStyle = { ...child.style, ...rootStyle };
-      continue;
-    }
-    if (
-      child.kind === "text" &&
-      (role === "title" ||
-        role === "detail" ||
-        role === "subtitle" ||
-        role === "label" ||
-        role === "caption")
-    ) {
-      if (role === "caption" && root.sdkOrigin.componentId === "sdk.note") {
-        props.text = child.text;
-      } else {
-        props[role === "label" ? "label" : role] = child.text;
-      }
-      semanticChildren.push(semanticPortNode(child, role));
-      continue;
-    }
-    semanticChildren.push(child);
-  }
-
-  return {
-    ...fragment,
-    roots: [
-      {
-        ...root,
-        style: { ...rootStyle, coordinateSpace: "local" },
-        props,
-        children: semanticChildren,
-      },
-      ...fragment.roots.slice(1),
-    ],
-  };
-}
-
 function succeed(fragment: SceneFragment): Result<SceneFragment> {
   return {
     ok: true,
-    value: semanticizeChromeFragment(fragment),
+    value: fragment,
     diagnostics: [],
   };
 }
@@ -305,7 +221,7 @@ function makeOrigin(
 // ---------------------------------------------------------------------------
 // Node builders. Every node carries the fragment's `sourceMap` (the SDK call
 // site) and an accessibility label; children use coordinates local to their
-// parent, matching the desugar macros' `core.panel` / `core.header` /
+// parent, matching native semantic `core.panel` / `core.header` /
 // `core.callout` local-layout convention.
 // ---------------------------------------------------------------------------
 
@@ -358,6 +274,7 @@ function buildGroup(args: {
   geometry: GeometryIr;
   relativePosition?: RelativePositionIr;
   style: Readonly<Record<string, StyleValueIr>>;
+  props?: Readonly<Record<string, JsonValue>>;
   children: readonly RenderNodeIr[];
   label: string;
   sourceMap: SourceRange;
@@ -371,11 +288,35 @@ function buildGroup(args: {
       ? { relativePosition: args.relativePosition }
       : {}),
     style: args.style,
+    ...(args.props !== undefined ? { props: args.props } : {}),
     accessibility: buildAccessibility(args.label),
     fallback: args.label,
     sourceMap: args.sourceMap,
     children: args.children,
   };
+}
+
+function buildSemanticTarget(args: {
+  id: string;
+  geometry: GeometryIr;
+  label: string;
+  componentId: string;
+  role: string;
+  context: SdkExpansionContext;
+}): RenderNodeIr {
+  return attachSdkOrigin(
+    buildGroup({
+      id: args.id,
+      capabilityId: "core.semantic-port",
+      geometry: args.geometry,
+      style: {},
+      props: { role: args.role },
+      children: [],
+      label: args.label,
+      sourceMap: args.context.sourceMap,
+    }),
+    makeOrigin(args.componentId, args.context, args.role),
+  );
 }
 
 function buildConnector(args: {
@@ -432,6 +373,23 @@ function normalizeBracketSide(value: string | undefined): "left" | "right" | "to
   return value === "right" || value === "top" || value === "bottom" ? value : "left";
 }
 
+/** Port anchors for bracePath endpoints on each bracket side. */
+function bracketPortAnchors(
+  side: "left" | "right" | "top" | "bottom",
+): Readonly<{ start: string; end: string }> {
+  switch (side) {
+    case "right":
+      return { start: "nw", end: "sw" };
+    case "top":
+      return { start: "sw", end: "se" };
+    case "bottom":
+      return { start: "nw", end: "ne" };
+    case "left":
+    default:
+      return { start: "ne", end: "se" };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Descriptor helper.
 // ---------------------------------------------------------------------------
@@ -484,7 +442,6 @@ const headerFactory: SdkComponentFactory = (props, _slots, context) => {
   const title = stringProp(props, "title");
   const caption = stringProp(props, "caption");
   const surfaceRole = stringProp(props, "surfaceRole");
-  const inkRole = stringProp(props, "inkRole");
   const relativePosition = relativePositionProp(props);
   const geometry: GeometryIr = {
     x: numberProp(props, "x") ?? HEADER_DEFAULT_GEOMETRY.x,
@@ -500,26 +457,19 @@ const headerFactory: SdkComponentFactory = (props, _slots, context) => {
   if (title !== undefined) {
     const titleId = `${rootId}__title`;
     children.push(
-      attachSdkOrigin(
-        buildText({
-          id: titleId,
-          text: title,
-          geometry: {
-            x: INSET,
-            y: Math.max((geometry.height - HEADER_TEXT_HEIGHT) / 2, 0),
-            width: half,
-            height: HEADER_TEXT_HEIGHT,
-          },
-          style: {
-            fontSize: 14,
-            fontWeight: "bold",
-            textAnchor: "start",
-            ...(inkRole !== undefined ? { fill: inkRole } : {}),
-          },
-          sourceMap: context.sourceMap,
-        }),
-        makeOrigin("sdk.header", context, "title"),
-      ),
+      buildSemanticTarget({
+        id: titleId,
+        geometry: {
+          x: INSET,
+          y: Math.max((geometry.height - HEADER_TEXT_HEIGHT) / 2, 0),
+          width: half,
+          height: HEADER_TEXT_HEIGHT,
+        },
+        label: title,
+        componentId: "sdk.header",
+        role: "title",
+        context,
+      }),
     );
     ports.title = { nodeId: titleId };
   }
@@ -527,25 +477,19 @@ const headerFactory: SdkComponentFactory = (props, _slots, context) => {
   if (caption !== undefined) {
     const captionId = `${rootId}__caption`;
     children.push(
-      attachSdkOrigin(
-        buildText({
-          id: captionId,
-          text: caption,
-          geometry: {
-            x: Math.max(geometry.width - INSET - half, geometry.width / 2),
-            y: Math.max((geometry.height - HEADER_TEXT_HEIGHT) / 2, 0),
-            width: half,
-            height: HEADER_TEXT_HEIGHT,
-          },
-          style: {
-            fontSize: 11,
-            textAnchor: "end",
-            ...(inkRole !== undefined ? { fill: inkRole } : {}),
-          },
-          sourceMap: context.sourceMap,
-        }),
-        makeOrigin("sdk.header", context, "caption"),
-      ),
+      buildSemanticTarget({
+        id: captionId,
+        geometry: {
+          x: Math.max(geometry.width - INSET - half, geometry.width / 2),
+          y: Math.max((geometry.height - HEADER_TEXT_HEIGHT) / 2, 0),
+          width: half,
+          height: HEADER_TEXT_HEIGHT,
+        },
+        label: caption,
+        componentId: "sdk.header",
+        role: "caption",
+        context,
+      }),
     );
     ports.caption = { nodeId: captionId };
   }
@@ -556,7 +500,14 @@ const headerFactory: SdkComponentFactory = (props, _slots, context) => {
       capabilityId: "core.header",
       geometry,
       ...(relativePosition !== undefined ? { relativePosition } : {}),
-      style: surfaceRole !== undefined ? { fill: surfaceRole } : {},
+      style: {
+        coordinateSpace: "local",
+        ...(surfaceRole !== undefined ? { fill: surfaceRole } : {}),
+      },
+      props: {
+        ...(title !== undefined ? { title } : {}),
+        ...(caption !== undefined ? { caption } : {}),
+      },
       children,
       label: title ?? caption ?? "Header",
       sourceMap: context.sourceMap,
@@ -578,8 +529,8 @@ export const HEADER_DEFINITION: SdkComponentDefinition = {
 };
 
 // ---------------------------------------------------------------------------
-// sdk.panel — title + detail (maps to the current `core.panel` desugar
-// output). Exposes `title` / `detail` ports.
+// sdk.panel — title + detail (maps to native semantic `core.panel`).
+// Exposes `title` / `detail` ports.
 // ---------------------------------------------------------------------------
 
 const PANEL_DESCRIPTOR = makeDescriptor("sdk.panel", "Panel", "core.panel", {
@@ -621,16 +572,14 @@ const panelFactory: SdkComponentFactory = (props, _slots, context) => {
   if (title !== undefined) {
     const titleId = `${rootId}__title`;
     children.push(
-      attachSdkOrigin(
-        buildText({
-          id: titleId,
-          text: title,
-          geometry: { x: INSET, y: INSET + 2, width: innerWidth, height: TITLE_HEIGHT },
-          style: { fontSize: 14, fontWeight: "bold", textAnchor: "middle" },
-          sourceMap: context.sourceMap,
-        }),
-        makeOrigin("sdk.panel", context, "title"),
-      ),
+      buildSemanticTarget({
+        id: titleId,
+        geometry: { x: INSET, y: INSET + 2, width: innerWidth, height: TITLE_HEIGHT },
+        label: title,
+        componentId: "sdk.panel",
+        role: "title",
+        context,
+      }),
     );
     ports.title = { nodeId: titleId };
   }
@@ -638,25 +587,19 @@ const panelFactory: SdkComponentFactory = (props, _slots, context) => {
   if (detail !== undefined) {
     const detailId = `${rootId}__detail`;
     children.push(
-      attachSdkOrigin(
-        buildText({
-          id: detailId,
-          text: detail,
-          geometry: {
-            x: INSET,
-            y: INSET + 2 + TITLE_HEIGHT + 2,
-            width: innerWidth,
-            height: DETAIL_HEIGHT,
-          },
-          style: {
-            fontSize: 11.5,
-            textAnchor: "middle",
-            fill: DETAIL_INK_ROLE,
-          },
-          sourceMap: context.sourceMap,
-        }),
-        makeOrigin("sdk.panel", context, "detail"),
-      ),
+      buildSemanticTarget({
+        id: detailId,
+        geometry: {
+          x: INSET,
+          y: INSET + 2 + TITLE_HEIGHT + 2,
+          width: innerWidth,
+          height: DETAIL_HEIGHT,
+        },
+        label: detail,
+        componentId: "sdk.panel",
+        role: "detail",
+        context,
+      }),
     );
     ports.detail = { nodeId: detailId };
   }
@@ -668,8 +611,13 @@ const panelFactory: SdkComponentFactory = (props, _slots, context) => {
       geometry,
       ...(relativePosition !== undefined ? { relativePosition } : {}),
       style: {
+        coordinateSpace: "local",
         ...(surfaceRole !== undefined ? { fill: surfaceRole } : {}),
         ...(strokeRole !== undefined ? { stroke: strokeRole } : {}),
+      },
+      props: {
+        ...(title !== undefined ? { title } : {}),
+        ...(detail !== undefined ? { detail } : {}),
       },
       children,
       label: title ?? detail ?? "Panel",
@@ -740,16 +688,14 @@ const cardFactory: SdkComponentFactory = (props, _slots, context) => {
   if (title !== undefined) {
     const titleId = `${rootId}__title`;
     children.push(
-      attachSdkOrigin(
-        buildText({
-          id: titleId,
-          text: title,
-          geometry: { x: INSET, y: cursorY, width: innerWidth, height: TITLE_HEIGHT },
-          style: { fontSize: 14, fontWeight: "bold", textAnchor: "middle" },
-          sourceMap: context.sourceMap,
-        }),
-        makeOrigin("sdk.card", context, "title"),
-      ),
+      buildSemanticTarget({
+        id: titleId,
+        geometry: { x: INSET, y: cursorY, width: innerWidth, height: TITLE_HEIGHT },
+        label: title,
+        componentId: "sdk.card",
+        role: "title",
+        context,
+      }),
     );
     ports.title = { nodeId: titleId };
     cursorY += TITLE_HEIGHT + 2;
@@ -758,20 +704,14 @@ const cardFactory: SdkComponentFactory = (props, _slots, context) => {
   if (detail !== undefined) {
     const detailId = `${rootId}__detail`;
     children.push(
-      attachSdkOrigin(
-        buildText({
-          id: detailId,
-          text: detail,
-          geometry: { x: INSET, y: cursorY, width: innerWidth, height: DETAIL_HEIGHT },
-          style: {
-            fontSize: 11.5,
-            textAnchor: "middle",
-            fill: DETAIL_INK_ROLE,
-          },
-          sourceMap: context.sourceMap,
-        }),
-        makeOrigin("sdk.card", context, "detail"),
-      ),
+      buildSemanticTarget({
+        id: detailId,
+        geometry: { x: INSET, y: cursorY, width: innerWidth, height: DETAIL_HEIGHT },
+        label: detail,
+        componentId: "sdk.card",
+        role: "detail",
+        context,
+      }),
     );
     ports.detail = { nodeId: detailId };
     cursorY += DETAIL_HEIGHT + 2;
@@ -780,16 +720,14 @@ const cardFactory: SdkComponentFactory = (props, _slots, context) => {
   if (subtitle !== undefined) {
     const subtitleId = `${rootId}__subtitle`;
     children.push(
-      attachSdkOrigin(
-        buildText({
-          id: subtitleId,
-          text: subtitle,
-          geometry: { x: INSET, y: cursorY, width: innerWidth, height: SUBTITLE_HEIGHT },
-          style: { fontSize: 10, textAnchor: "middle", fill: CARD_SUBTITLE_INK_ROLE },
-          sourceMap: context.sourceMap,
-        }),
-        makeOrigin("sdk.card", context, "subtitle"),
-      ),
+      buildSemanticTarget({
+        id: subtitleId,
+        geometry: { x: INSET, y: cursorY, width: innerWidth, height: SUBTITLE_HEIGHT },
+        label: subtitle,
+        componentId: "sdk.card",
+        role: "subtitle",
+        context,
+      }),
     );
     ports.subtitle = { nodeId: subtitleId };
   }
@@ -800,8 +738,14 @@ const cardFactory: SdkComponentFactory = (props, _slots, context) => {
       capabilityId: "core.panel",
       geometry,
       style: {
+        coordinateSpace: "local",
         ...(surfaceRole !== undefined ? { fill: surfaceRole } : {}),
         ...(strokeRole !== undefined ? { stroke: strokeRole } : {}),
+      },
+      props: {
+        ...(title !== undefined ? { title } : {}),
+        ...(detail !== undefined ? { detail } : {}),
+        ...(subtitle !== undefined ? { subtitle } : {}),
       },
       children,
       label: title ?? detail ?? subtitle ?? "Card",
@@ -824,7 +768,7 @@ export const CARD_DEFINITION: SdkComponentDefinition = {
 };
 
 // ---------------------------------------------------------------------------
-// sdk.chip — small rounded label chip (matches `core.chip` desugar geometry).
+// sdk.chip — small rounded label chip (matches `core.chip` semantic geometry).
 // Exposes a `label` port.
 // ---------------------------------------------------------------------------
 
@@ -858,48 +802,36 @@ const chipFactory: SdkComponentFactory = (props, _slots, context) => {
   const surfaceRole = stringProp(props, "surfaceRole");
   const strokeRole = stringProp(props, "strokeRole");
 
-  const chromeId = `${rootId}__chrome`;
   const labelId = `${rootId}__label`;
 
-  const chrome = attachSdkOrigin(
-    buildRect({
-      id: chromeId,
-      geometry: { x: 0, y: 0, width: geometry.width, height: geometry.height },
-      style: {
-        radius,
-        rx: radius,
-        ...(surfaceRole !== undefined ? { fill: surfaceRole } : {}),
-        ...(strokeRole !== undefined ? { stroke: strokeRole } : {}),
-      },
-      label,
-      sourceMap: context.sourceMap,
-    }),
-    makeOrigin("sdk.chip", context, "chrome"),
-  );
-
-  const labelNode = attachSdkOrigin(
-    buildText({
+  const labelTarget = buildSemanticTarget({
       id: labelId,
-      text: label,
       geometry: {
         x: 0,
         y: Math.max((geometry.height - 16) / 2, 0),
         width: geometry.width,
         height: 16,
       },
-      style: { fontSize: 11, fontWeight: "bold", textAnchor: "middle" },
-      sourceMap: context.sourceMap,
-    }),
-    makeOrigin("sdk.chip", context, "label"),
-  );
+      label,
+      componentId: "sdk.chip",
+      role: "label",
+      context,
+    });
 
   const root = attachSdkOrigin(
     buildGroup({
       id: rootId,
       capabilityId: "core.chip",
       geometry,
-      style: {},
-      children: [chrome, labelNode],
+      style: {
+        coordinateSpace: "local",
+        radius,
+        rx: radius,
+        ...(surfaceRole !== undefined ? { fill: surfaceRole } : {}),
+        ...(strokeRole !== undefined ? { stroke: strokeRole } : {}),
+      },
+      props: { label },
+      children: [labelTarget],
       label,
       sourceMap: context.sourceMap,
     }),
@@ -920,7 +852,7 @@ export const CHIP_DEFINITION: SdkComponentDefinition = {
 };
 
 // ---------------------------------------------------------------------------
-// sdk.note — annotation card (matches `core.note` desugar geometry / paint
+// sdk.note — annotation card (matches `core.note` semantic geometry / paint
 // defaults). Exposes a `caption` port.
 // ---------------------------------------------------------------------------
 
@@ -931,6 +863,7 @@ const NOTE_DESCRIPTOR = makeDescriptor("sdk.note", "Note", "core.note", {
   width: { type: "number", required: false, default: NOTE_DEFAULT_GEOMETRY.width },
   height: { type: "number", required: false, default: NOTE_DEFAULT_GEOMETRY.height },
   radius: { type: "number", required: false, default: 6 },
+  strokeWidth: { type: "number", required: false, default: 1 },
   surfaceRole: { type: "string", required: false, default: "@theme.surface.elevated" },
   strokeRole: { type: "string", required: false, default: "@theme.ink.secondary" },
   inkRole: { type: "string", required: false, default: "@theme.ink.secondary" },
@@ -957,43 +890,36 @@ const noteFactory: SdkComponentFactory = (props, _slots, context) => {
   const radius = numberProp(props, "radius") ?? 6;
   const strokeWidth = numberProp(props, "strokeWidth") ?? 1;
 
-  const chromeId = `${rootId}__chrome`;
   const captionId = `${rootId}__caption`;
 
-  const chrome = attachSdkOrigin(
-    buildRect({
-      id: chromeId,
-      geometry: { x: 0, y: 0, width: geometry.width, height: geometry.height },
-      style: { fill: surfaceRole, stroke: strokeRole, strokeWidth, radius },
-      label: text,
-      sourceMap: context.sourceMap,
-    }),
-    makeOrigin("sdk.note", context, "chrome"),
-  );
-
-  const caption = attachSdkOrigin(
-    buildText({
+  const captionTarget = buildSemanticTarget({
       id: captionId,
-      text,
       geometry: {
         x: INSET,
         y: Math.max((geometry.height - 14) / 2, 0),
         width: Math.max(geometry.width - INSET * 2, 0),
         height: 14,
       },
-      style: { fontSize: 11, textAnchor: "middle", fill: inkRole },
-      sourceMap: context.sourceMap,
-    }),
-    makeOrigin("sdk.note", context, "caption"),
-  );
+      label: text,
+      componentId: "sdk.note",
+      role: "caption",
+      context,
+    });
 
   const root = attachSdkOrigin(
     buildGroup({
       id: rootId,
       capabilityId: "core.note",
       geometry,
-      style: {},
-      children: [chrome, caption],
+      style: {
+        coordinateSpace: "local",
+        fill: surfaceRole,
+        stroke: strokeRole,
+        strokeWidth,
+        radius,
+      },
+      props: { text, inkRole },
+      children: [captionTarget],
       label: text,
       sourceMap: context.sourceMap,
     }),
@@ -1274,7 +1200,7 @@ export const LEGEND_DEFINITION: SdkComponentDefinition = {
 
 // ---------------------------------------------------------------------------
 // sdk.callout — label + stem pointing at an absolute target (matches
-// `core.callout` desugar geometry). Exposes `label` / `target` ports.
+// `core.callout` semantic geometry). Exposes `label` / `target` ports.
 // ---------------------------------------------------------------------------
 
 const CALLOUT_DESCRIPTOR = makeDescriptor("sdk.callout", "Callout", "core.callout", {
@@ -1384,7 +1310,7 @@ export const CALLOUT_DEFINITION: SdkComponentDefinition = {
 };
 
 // ---------------------------------------------------------------------------
-// sdk.divider — straight rule along `axis` (matches `core.divider` desugar
+// sdk.divider — straight rule along `axis` (matches `core.divider` semantic
 // geometry). Exposes `start` / `end` ports.
 // ---------------------------------------------------------------------------
 
@@ -1458,7 +1384,7 @@ export const DIVIDER_DEFINITION: SdkComponentDefinition = {
 };
 
 // ---------------------------------------------------------------------------
-// sdk.bracket — curly brace along `side` (matches `core.bracket` desugar
+// sdk.bracket — curly brace along `side` (matches `core.bracket` semantic
 // geometry). Exposes `start` / `end` ports.
 // ---------------------------------------------------------------------------
 
@@ -1492,6 +1418,7 @@ const bracketFactory: SdkComponentFactory = (props, _slots, context) => {
   const strokeRole = stringProp(props, "strokeRole");
   const strokeWidth = numberProp(props, "strokeWidth") ?? 1.5;
   const path = bracePath(geometry, side);
+  const anchors = bracketPortAnchors(side);
 
   const root = attachSdkOrigin(
     buildConnector({
@@ -1516,8 +1443,8 @@ const bracketFactory: SdkComponentFactory = (props, _slots, context) => {
   return succeed({
     roots: [root],
     ports: {
-      start: { nodeId: rootId, anchor: "nw" },
-      end: { nodeId: rootId, anchor: "se" },
+      start: { nodeId: rootId, anchor: anchors.start },
+      end: { nodeId: rootId, anchor: anchors.end },
     },
     actions: { enter: [rootId], emphasis: [rootId], exit: [rootId] },
   });

@@ -111,15 +111,18 @@ export function simulateQueue(
 
     if (capacity !== undefined && waiting.length >= capacity) {
       reject(normalized);
-      continue;
+    } else {
+      enqueue(normalized);
     }
 
-    enqueue(normalized);
-
+    // Match post-loop drain: start when the server frees, not at the current
+    // arrival's timestamp. Also run after rejects so a capacity-full arrival
+    // that coincides with server-free still pulls the next waiter.
     if (serverFreeAt <= normalized.arriveAt) {
       const next = selectNext();
       if (next !== undefined) {
-        startService(next, normalized.arriveAt);
+        const startAt = Math.max(serverFreeAt, next.arriveAt);
+        startService(next, startAt);
       }
     }
   }

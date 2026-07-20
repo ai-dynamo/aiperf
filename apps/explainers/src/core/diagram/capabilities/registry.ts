@@ -5,7 +5,7 @@
 
 //! Explicit native Scene capability registry.
 
-import type { SceneNodeLike } from "../SceneRenderer.js";
+import type { SceneNodeLike } from "../scene-types.js";
 import {
   LAYOUT_CAPABILITIES,
   resolveIdentityLayout,

@@ -9,18 +9,41 @@ import type {
   SceneGeometryLike,
   SceneNodeLike,
   SceneStyleValue,
-} from "../SceneRenderer.js";
-import type { CapabilityLayout, NativeSceneCapability } from "./types.js";
+} from "../scene-types.js";
+import {
+  CHIP_PAD_X,
+  DEFAULT_SCENE_FONT_SIZE,
+  DETAIL_HEIGHT,
+  INSET,
+  STEPPER_CHIP_HEIGHT,
+  STEPPER_MIN_CHIP_WIDTH,
+  TITLE_HEIGHT,
+  estimateTextWidth,
+  scaledSceneFontSize,
+  stepperChipWidth,
+} from "../text-metrics.js";
+import type {
+  CapabilityLayout,
+  CapabilityLayoutDiagnostic,
+  NativeSceneCapability,
+} from "./types.js";
 
 const LANE_TITLE_BAND = 28;
 const LANE_INSET = 10;
 const DEFAULT_CHILD_HEIGHT = 64;
 const DEFAULT_GAP = 8;
 const SWIMLANE_LABEL_WIDTH = 72;
-const STEPPER_CHIP_HEIGHT = 26;
-const STEPPER_MIN_CHIP_WIDTH = 72;
-const STEPPER_CHAR_WIDTH = 6.2;
-const STEPPER_CHIP_PAD = 24;
+const FRAME_TITLE_BAND = 28;
+const FRAME_DETAIL_BAND = 48;
+
+function capabilityLayout(
+  bounds: SceneGeometryLike,
+  childGeometries: readonly SceneGeometryLike[],
+  contentBounds: SceneGeometryLike = bounds,
+  diagnostics: readonly CapabilityLayoutDiagnostic[] = [],
+): CapabilityLayout {
+  return { bounds, contentBounds, childGeometries, diagnostics };
+}
 
 function geometryOf(node: SceneNodeLike): SceneGeometryLike {
   const geometry = node.geometry ?? node.layout;
@@ -66,6 +89,197 @@ function directionOf(node: SceneNodeLike): "row" | "column" {
   return node.style?.direction === "row" ? "row" : "column";
 }
 
+/** Cross-axis alignment shared by opt-in managed containers. */
+export type ManagedAxisAlignment = "start" | "center" | "end" | "stretch";
+
+/** Main-axis distribution shared by opt-in managed containers. */
+export type ManagedMainAlignment =
+  | "start"
+  | "center"
+  | "end"
+  | "space-between";
+
+/** Normalized package-compatible managed layout options. */
+export type ManagedLayoutOptions = Readonly<{
+  padding: number;
+  align: ManagedAxisAlignment;
+  justify: ManagedMainAlignment;
+  fixedWidth: boolean;
+  fixedHeight: boolean;
+}>;
+
+function managedValue(node: SceneNodeLike, key: string): unknown {
+  return node.style?.[key] ?? node.props?.[key];
+}
+
+/** Normalize shared managed inputs while clamping compatibility packages. */
+export function managedLayoutOptions(
+  node: SceneNodeLike,
+): ManagedLayoutOptions {
+  const align = managedValue(node, "align");
+  const justify = managedValue(node, "justify");
+  return {
+    padding: nonnegative(managedValue(node, "padding")),
+    align:
+      align === "center" || align === "end" || align === "stretch"
+        ? align
+        : "start",
+    justify:
+      justify === "center" ||
+      justify === "end" ||
+      justify === "space-between"
+        ? justify
+        : "start",
+    fixedWidth: managedValue(node, "fixedWidth") === true,
+    fixedHeight: managedValue(node, "fixedHeight") === true,
+  };
+}
+
+function isAbsolute(child: SceneNodeLike): boolean {
+  return child.style?.position === "absolute";
+}
+
+function axisSize(
+  geometry: SceneGeometryLike,
+  direction: "row" | "column",
+): number {
+  return direction === "row" ? geometry.width : geometry.height;
+}
+
+function crossSize(
+  geometry: SceneGeometryLike,
+  direction: "row" | "column",
+): number {
+  return direction === "row" ? geometry.height : geometry.width;
+}
+
+function placeOnAxes(
+  geometry: SceneGeometryLike,
+  direction: "row" | "column",
+  main: number,
+  cross: number,
+  mainSize = axisSize(geometry, direction),
+  placedCrossSize = crossSize(geometry, direction),
+): SceneGeometryLike {
+  return direction === "row"
+    ? {
+        x: main,
+        y: cross,
+        width: mainSize,
+        height: placedCrossSize,
+      }
+    : {
+        x: cross,
+        y: main,
+        width: placedCrossSize,
+        height: mainSize,
+      };
+}
+
+function alignedCross(
+  options: ManagedLayoutOptions,
+  contentCross: number,
+  childCross: number,
+): Readonly<{ offset: number; size: number }> {
+  if (options.align === "stretch") {
+    return { offset: 0, size: contentCross };
+  }
+  if (options.align === "center") {
+    return { offset: Math.max((contentCross - childCross) / 2, 0), size: childCross };
+  }
+  if (options.align === "end") {
+    return { offset: Math.max(contentCross - childCross, 0), size: childCross };
+  }
+  return { offset: 0, size: childCross };
+}
+
+function intersects(a: SceneGeometryLike, b: SceneGeometryLike): boolean {
+  return (
+    a.x < b.x + b.width &&
+    a.x + a.width > b.x &&
+    a.y < b.y + b.height &&
+    a.y + a.height > b.y
+  );
+}
+
+function managedDiagnostics(
+  node: SceneNodeLike,
+  children: readonly SceneNodeLike[],
+  geometries: readonly SceneGeometryLike[],
+  contentBounds: SceneGeometryLike,
+  allowOverlap: boolean,
+): readonly CapabilityLayoutDiagnostic[] {
+  const diagnostics: CapabilityLayoutDiagnostic[] = [];
+  const overflowing = geometries
+    .map((geometry, index) => ({ geometry, child: children[index] }))
+    .filter(
+      ({ geometry }) =>
+        geometry.x < contentBounds.x ||
+        geometry.y < contentBounds.y ||
+        geometry.x + geometry.width > contentBounds.x + contentBounds.width ||
+        geometry.y + geometry.height > contentBounds.y + contentBounds.height,
+    )
+    .map(({ child }) => child?.id)
+    .filter((id): id is string => id !== undefined);
+  if (overflowing.length > 0) {
+    diagnostics.push({
+      code: "SCENE_MANAGED_CONTENT_OVERFLOW",
+      severity: "error",
+      message: `Managed content exceeds the bounds of "${node.id}".`,
+      nodeIds: [node.id, ...overflowing],
+    });
+  }
+  if (!allowOverlap) {
+    for (let left = 0; left < geometries.length; left += 1) {
+      for (let right = left + 1; right < geometries.length; right += 1) {
+        if (intersects(geometries[left]!, geometries[right]!)) {
+          diagnostics.push({
+            code: "SCENE_MANAGED_CHILD_OVERLAP",
+            severity: "error",
+            message: `Managed children overlap inside "${node.id}".`,
+            nodeIds: [
+              node.id,
+              children[left]?.id ?? `${left}`,
+              children[right]?.id ?? `${right}`,
+            ],
+          });
+        }
+      }
+    }
+  }
+  return diagnostics;
+}
+
+function managedBounds(
+  authored: SceneGeometryLike,
+  intrinsicWidth: number,
+  intrinsicHeight: number,
+  options: ManagedLayoutOptions,
+): SceneGeometryLike {
+  return {
+    ...authored,
+    width: options.fixedWidth
+      ? authored.width
+      : Math.max(authored.width, intrinsicWidth),
+    height: options.fixedHeight
+      ? authored.height
+      : Math.max(authored.height, intrinsicHeight),
+  };
+}
+
+function paddedContentBounds(
+  bounds: SceneGeometryLike,
+  padding: number,
+  topInset = padding,
+): SceneGeometryLike {
+  return {
+    x: padding,
+    y: topInset,
+    width: Math.max(bounds.width - padding * 2, 0),
+    height: Math.max(bounds.height - topInset - padding, 0),
+  };
+}
+
 function childBounds(children: readonly SceneGeometryLike[]): Readonly<{
   width: number;
   height: number;
@@ -79,6 +293,10 @@ function childBounds(children: readonly SceneGeometryLike[]): Readonly<{
   );
 }
 
+function clipsOverflow(node: SceneNodeLike): boolean {
+  return node.style?.overflow === "hidden" || node.style?.clip === true;
+}
+
 /** Identity layout for leaf capabilities and already-positioned groups. */
 export function resolveIdentityLayout(
   node: SceneNodeLike,
@@ -86,18 +304,149 @@ export function resolveIdentityLayout(
 ): CapabilityLayout {
   const bounds = geometryOf(node);
   const childGeometries = children.map(geometryOf);
-  if (node.style?.overflow === "hidden" || node.style?.clip === true) {
-    return { bounds, childGeometries };
+  if (clipsOverflow(node)) {
+    return capabilityLayout(bounds, childGeometries);
   }
   const extent = childBounds(childGeometries);
-  return {
-    bounds: {
+  return capabilityLayout(
+    {
       ...bounds,
       width: Math.max(bounds.width, extent.width),
       height: Math.max(bounds.height, extent.height),
     },
     childGeometries,
-  };
+  );
+}
+
+/** Intrinsic chip layout with authored dimensions treated as minimums. */
+export function resolveChipLayout(
+  node: SceneNodeLike,
+  children: readonly SceneNodeLike[],
+): CapabilityLayout {
+  const authored = geometryOf(node);
+  const childGeometries = children.map(geometryOf);
+  if (clipsOverflow(node)) {
+    return capabilityLayout(authored, childGeometries);
+  }
+  const label =
+    (typeof node.props?.label === "string" && node.props.label) ||
+    (typeof node.props?.text === "string" && node.props.text) ||
+    node.accessibility?.label ||
+    "";
+  const width = Math.max(
+    authored.width,
+    label.length > 0
+      ? estimateTextWidth(label, 11, "bold") + CHIP_PAD_X
+      : authored.width,
+  );
+  return capabilityLayout(
+    {
+      ...authored,
+      width,
+      height: Math.max(authored.height, STEPPER_CHIP_HEIGHT),
+    },
+    childGeometries,
+  );
+}
+
+/** Intrinsic title/detail chrome layout with authored dimensions as minimums. */
+export function resolvePanelLayout(
+  node: SceneNodeLike,
+  children: readonly SceneNodeLike[],
+): CapabilityLayout {
+  const authored = geometryOf(node);
+  const childGeometries = children.map(geometryOf);
+  if (clipsOverflow(node)) {
+    return capabilityLayout(authored, childGeometries);
+  }
+  const title =
+    (typeof node.props?.title === "string" && node.props.title) ||
+    (typeof node.props?.label === "string" && node.props.label) ||
+    (typeof node.props?.text === "string" && node.props.text) ||
+    "";
+  const detail =
+    (typeof node.props?.detail === "string" && node.props.detail) ||
+    (typeof node.props?.caption === "string" && node.props.caption) ||
+    "";
+  const titleWidth =
+    title.length > 0 ? estimateTextWidth(title, 14, "bold") + INSET * 2 : 0;
+  const detailWidth =
+    detail.length > 0
+      ? estimateTextWidth(detail, 11.5, "normal") + INSET * 2
+      : 0;
+  const contentHeight =
+    INSET * 2 +
+    (title.length > 0 ? TITLE_HEIGHT : 0) +
+    (detail.length > 0 ? DETAIL_HEIGHT + 4 : 0);
+  return capabilityLayout(
+    {
+      ...authored,
+      width: Math.max(authored.width, titleWidth, detailWidth),
+      height: Math.max(authored.height, contentHeight),
+    },
+    childGeometries,
+  );
+}
+
+/** Intrinsic header chrome layout matching its rendered title/caption bands. */
+export function resolveHeaderLayout(
+  node: SceneNodeLike,
+  children: readonly SceneNodeLike[],
+): CapabilityLayout {
+  const authored = geometryOf(node);
+  const childGeometries = children.map(geometryOf);
+  if (clipsOverflow(node)) {
+    return capabilityLayout(authored, childGeometries);
+  }
+  const title =
+    typeof node.props?.title === "string" ? node.props.title : "";
+  const caption =
+    typeof node.props?.caption === "string" ? node.props.caption : "";
+  const titleWidth =
+    title.length > 0 ? estimateTextWidth(title, 13, "bold") + INSET * 2 : 0;
+  const captionWidth =
+    caption.length > 0
+      ? estimateTextWidth(caption, 11.5, "normal") + INSET * 2
+      : 0;
+  const contentHeight =
+    INSET * 2 +
+    (title.length > 0 ? TITLE_HEIGHT : 0) +
+    (caption.length > 0 ? DETAIL_HEIGHT + 4 : 0);
+  return capabilityLayout(
+    {
+      ...authored,
+      width: Math.max(authored.width, titleWidth, captionWidth),
+      height: Math.max(authored.height, contentHeight),
+    },
+    childGeometries,
+  );
+}
+
+/** Intrinsic text layout using the same scale-aware metrics as rendering. */
+export function resolveTextLayout(
+  node: SceneNodeLike,
+  children: readonly SceneNodeLike[],
+): CapabilityLayout {
+  const authored = geometryOf(node);
+  const childGeometries = children.map(geometryOf);
+  if (clipsOverflow(node)) {
+    return capabilityLayout(authored, childGeometries);
+  }
+  const text = node.text ?? "";
+  const fontSize = styleNumber(
+    node.style,
+    "fontSize",
+    DEFAULT_SCENE_FONT_SIZE,
+  );
+  const weight = node.style?.fontWeight === "bold" ? "bold" : "normal";
+  return capabilityLayout(
+    {
+      ...authored,
+      width: Math.max(authored.width, estimateTextWidth(text, fontSize, weight)),
+      height: Math.max(authored.height, scaledSceneFontSize(fontSize)),
+    },
+    childGeometries,
+  );
 }
 
 /** Ordered stack layout with authored dimensions treated as minimums. */
@@ -108,34 +457,74 @@ export function resolveStackLayout(
   const authored = geometryOf(node);
   const direction = directionOf(node);
   const gap = styleNumber(node.style, "gap", 0);
-  let cursor = 0;
-  let cross = 0;
-  const childGeometries = children.map((child) => {
-    const geometry = geometryOf(child);
-    const placed =
-      direction === "row"
-        ? { ...geometry, x: cursor, y: 0 }
-        : { ...geometry, x: 0, y: cursor };
-    cursor += (direction === "row" ? geometry.width : geometry.height) + gap;
-    cross = Math.max(
-      cross,
-      direction === "row" ? geometry.height : geometry.width,
+  const options = managedLayoutOptions(node);
+  const normal = children
+    .map((child, index) => ({ child, index, geometry: geometryOf(child) }))
+    .filter(({ child }) => !isAbsolute(child));
+  const totalMain =
+    normal.reduce(
+      (sum, { geometry }) => sum + axisSize(geometry, direction),
+      0,
+    ) + gap * Math.max(normal.length - 1, 0);
+  const maxCross = normal.reduce(
+    (maximum, { geometry }) =>
+      Math.max(maximum, crossSize(geometry, direction)),
+    0,
+  );
+  const intrinsicWidth =
+    options.padding * 2 + (direction === "row" ? totalMain : maxCross);
+  const intrinsicHeight =
+    options.padding * 2 + (direction === "column" ? totalMain : maxCross);
+  const bounds = managedBounds(
+    authored,
+    intrinsicWidth,
+    intrinsicHeight,
+    options,
+  );
+  const contentBounds = paddedContentBounds(bounds, options.padding);
+  const contentMain =
+    direction === "row" ? contentBounds.width : contentBounds.height;
+  const contentCross =
+    direction === "row" ? contentBounds.height : contentBounds.width;
+  const freeMain = Math.max(contentMain - totalMain, 0);
+  const extraGap =
+    options.justify === "space-between" && normal.length > 1
+      ? freeMain / (normal.length - 1)
+      : 0;
+  let cursor =
+    (direction === "row" ? contentBounds.x : contentBounds.y) +
+    (options.justify === "center"
+      ? freeMain / 2
+      : options.justify === "end"
+        ? freeMain
+        : 0);
+  const placed = new Map<number, SceneGeometryLike>();
+  for (const { index, geometry } of normal) {
+    const aligned = alignedCross(options, contentCross, crossSize(geometry, direction));
+    const crossOrigin =
+      (direction === "row" ? contentBounds.y : contentBounds.x) + aligned.offset;
+    placed.set(
+      index,
+      placeOnAxes(
+        geometry,
+        direction,
+        cursor,
+        crossOrigin,
+        axisSize(geometry, direction),
+        aligned.size,
+      ),
     );
-    return placed;
-  });
-  if (childGeometries.length > 0) {
-    cursor = Math.max(0, cursor - gap);
+    cursor += axisSize(geometry, direction) + gap + extraGap;
   }
-  const contentWidth = direction === "row" ? cursor : cross;
-  const contentHeight = direction === "column" ? cursor : cross;
-  return {
-    bounds: {
-      ...authored,
-      width: Math.max(authored.width, contentWidth),
-      height: Math.max(authored.height, contentHeight),
-    },
+  const childGeometries = children.map((child, index) =>
+    isAbsolute(child) ? geometryOf(child) : placed.get(index)!,
+  );
+  return capabilityLayout(
+    bounds,
     childGeometries,
-  };
+    contentBounds,
+    managedDiagnostics(node, children, childGeometries, contentBounds, false),
+  );
 }
 
 /** Row-major grid layout with per-column and per-row intrinsic dimensions. */
@@ -146,43 +535,80 @@ export function resolveGridLayout(
   const authored = geometryOf(node);
   const cols = Math.max(1, Math.floor(styleNumber(node.style, "cols", 1)));
   const gap = styleNumber(node.style, "gap", 0);
-  const rows = Math.max(1, Math.ceil(children.length / cols));
+  const options = managedLayoutOptions(node);
+  const normal = children
+    .map((child, index) => ({ child, index, geometry: geometryOf(child) }))
+    .filter(({ child }) => !isAbsolute(child));
+  const rows = Math.max(1, Math.ceil(normal.length / cols));
   const widths = Array.from({ length: cols }, () => 0);
   const heights = Array.from({ length: rows }, () => 0);
-  const childAuthored = children.map(geometryOf);
-  childAuthored.forEach((geometry, index) => {
-    const col = index % cols;
-    const row = Math.floor(index / cols);
+  normal.forEach(({ geometry }, flowIndex) => {
+    const col = flowIndex % cols;
+    const row = Math.floor(flowIndex / cols);
     widths[col] = Math.max(widths[col]!, geometry.width);
     heights[row] = Math.max(heights[row]!, geometry.height);
   });
+  const intrinsicContentWidth =
+    widths.reduce((sum, width) => sum + width, 0) +
+    gap * Math.max(cols - 1, 0);
+  const intrinsicContentHeight =
+    heights.reduce((sum, height) => sum + height, 0) +
+    gap * Math.max(rows - 1, 0);
+  const bounds = managedBounds(
+    authored,
+    intrinsicContentWidth + options.padding * 2,
+    intrinsicContentHeight + options.padding * 2,
+    options,
+  );
+  const contentBounds = paddedContentBounds(bounds, options.padding);
+  const freeX = Math.max(contentBounds.width - intrinsicContentWidth, 0);
+  const freeY = Math.max(contentBounds.height - intrinsicContentHeight, 0);
+  const justifyOffset =
+    options.justify === "center"
+      ? freeY / 2
+      : options.justify === "end"
+        ? freeY
+        : 0;
+  const rowGap =
+    gap +
+    (options.justify === "space-between" && rows > 1
+      ? freeY / (rows - 1)
+      : 0);
+  const columnExtra = options.align === "stretch" ? freeX / cols : 0;
   const xOffsets: number[] = [];
   const yOffsets: number[] = [];
-  let x = 0;
-  let y = 0;
+  let x = contentBounds.x;
+  let y = contentBounds.y + justifyOffset;
   widths.forEach((width) => {
     xOffsets.push(x);
-    x += width + gap;
+    x += width + columnExtra + gap;
   });
   heights.forEach((height) => {
     yOffsets.push(y);
-    y += height + gap;
+    y += height + rowGap;
   });
-  const childGeometries = childAuthored.map((geometry, index) => ({
-    ...geometry,
-    x: xOffsets[index % cols]!,
-    y: yOffsets[Math.floor(index / cols)]!,
-  }));
-  const contentWidth = Math.max(0, x - (children.length > 0 ? gap : 0));
-  const contentHeight = Math.max(0, y - (children.length > 0 ? gap : 0));
-  return {
-    bounds: {
-      ...authored,
-      width: Math.max(authored.width, contentWidth),
-      height: Math.max(authored.height, contentHeight),
-    },
+  const placed = new Map<number, SceneGeometryLike>();
+  normal.forEach(({ index, geometry }, flowIndex) => {
+    const col = flowIndex % cols;
+    const row = Math.floor(flowIndex / cols);
+    const cellWidth = widths[col]! + columnExtra;
+    const aligned = alignedCross(options, cellWidth, geometry.width);
+    placed.set(index, {
+      ...geometry,
+      x: xOffsets[col]! + aligned.offset,
+      y: yOffsets[row]!,
+      width: aligned.size,
+    });
+  });
+  const childGeometries = children.map((child, index) =>
+    isAbsolute(child) ? geometryOf(child) : placed.get(index)!,
+  );
+  return capabilityLayout(
+    bounds,
     childGeometries,
-  };
+    contentBounds,
+    managedDiagnostics(node, children, childGeometries, contentBounds, false),
+  );
 }
 
 /** Equal-slot rail that first expands to the children's intrinsic minimum. */
@@ -191,52 +617,226 @@ export function resolveRailLayout(
   children: readonly SceneNodeLike[],
 ): CapabilityLayout {
   const authored = geometryOf(node);
-  if (children.length === 0) {
-    return { bounds: authored, childGeometries: [] };
-  }
   const direction = directionOf(node);
   const gap = styleNumber(node.style, "gap", 0);
-  const childAuthored = children.map(geometryOf);
-  const totalGap = gap * Math.max(children.length - 1, 0);
-  const minWidth =
-    childAuthored.reduce((sum, geometry) => sum + geometry.width, 0) +
-    (direction === "row" ? totalGap : 0);
-  const minHeight =
-    childAuthored.reduce((sum, geometry) => sum + geometry.height, 0) +
-    (direction === "column" ? totalGap : 0);
-  const maxWidth = Math.max(...childAuthored.map((geometry) => geometry.width));
-  const maxHeight = Math.max(...childAuthored.map((geometry) => geometry.height));
-  const width = Math.max(
-    authored.width,
-    direction === "row" ? minWidth : maxWidth,
+  const options = managedLayoutOptions(node);
+  const normal = children
+    .map((child, index) => ({ child, index, geometry: geometryOf(child) }))
+    .filter(({ child }) => !isAbsolute(child));
+  if (normal.length === 0) {
+    const bounds = managedBounds(
+      authored,
+      options.padding * 2,
+      options.padding * 2,
+      options,
+    );
+    const contentBounds = paddedContentBounds(bounds, options.padding);
+    const childGeometries = children.map(geometryOf);
+    return capabilityLayout(
+      bounds,
+      childGeometries,
+      contentBounds,
+      managedDiagnostics(node, children, childGeometries, contentBounds, false),
+    );
+  }
+  const totalGap = gap * Math.max(normal.length - 1, 0);
+  const totalMain =
+    normal.reduce(
+      (sum, { geometry }) => sum + axisSize(geometry, direction),
+      0,
+    ) + totalGap;
+  const maxCross = Math.max(
+    ...normal.map(({ geometry }) => crossSize(geometry, direction)),
   );
-  const height = Math.max(
-    authored.height,
-    direction === "column" ? minHeight : maxHeight,
+  const bounds = managedBounds(
+    authored,
+    options.padding * 2 + (direction === "row" ? totalMain : maxCross),
+    options.padding * 2 + (direction === "column" ? totalMain : maxCross),
+    options,
   );
-  const slot =
-    direction === "row"
-      ? Math.max((width - totalGap) / children.length, 0)
-      : Math.max((height - totalGap) / children.length, 0);
-  const childGeometries = childAuthored.map((geometry, index) =>
-    direction === "row"
-      ? {
-          x: index * (slot + gap),
-          y: 0,
-          width: slot,
-          height: geometry.height > 0 ? geometry.height : height,
-        }
-      : {
-          x: 0,
-          y: index * (slot + gap),
-          width: geometry.width > 0 ? geometry.width : width,
-          height: slot,
-        },
+  const contentBounds = paddedContentBounds(bounds, options.padding);
+  const contentMain =
+    direction === "row" ? contentBounds.width : contentBounds.height;
+  const contentCross =
+    direction === "row" ? contentBounds.height : contentBounds.width;
+  const freeMain = Math.max(contentMain - totalMain, 0);
+  const extraPerChild =
+    options.justify === "start" ? freeMain / normal.length : 0;
+  const remainingMain = freeMain - extraPerChild * normal.length;
+  const extraGap =
+    options.justify === "space-between" && normal.length > 1
+      ? remainingMain / (normal.length - 1)
+      : 0;
+  let cursor =
+    (direction === "row" ? contentBounds.x : contentBounds.y) +
+    (options.justify === "center"
+      ? remainingMain / 2
+      : options.justify === "end"
+        ? remainingMain
+        : 0);
+  const placed = new Map<number, SceneGeometryLike>();
+  for (const { index, geometry } of normal) {
+    const aligned = alignedCross(options, contentCross, crossSize(geometry, direction));
+    const mainSize = axisSize(geometry, direction) + extraPerChild;
+    placed.set(
+      index,
+      placeOnAxes(
+        geometry,
+        direction,
+        cursor,
+        (direction === "row" ? contentBounds.y : contentBounds.x) +
+          aligned.offset,
+        mainSize,
+        aligned.size,
+      ),
+    );
+    cursor += mainSize + gap + extraGap;
+  }
+  const childGeometries = children.map((child, index) =>
+    isAbsolute(child) ? geometryOf(child) : placed.get(index)!,
   );
-  return {
-    bounds: { ...authored, width, height },
+  return capabilityLayout(
+    bounds,
     childGeometries,
-  };
+    contentBounds,
+    managedDiagnostics(node, children, childGeometries, contentBounds, false),
+  );
+}
+
+/** Intentional overlap layout with shared padded alignment. */
+export function resolveOverlayLayout(
+  node: SceneNodeLike,
+  children: readonly SceneNodeLike[],
+): CapabilityLayout {
+  const authored = geometryOf(node);
+  const options = managedLayoutOptions(node);
+  const normal = children
+    .map((child, index) => ({ child, index, geometry: geometryOf(child) }))
+    .filter(({ child }) => !isAbsolute(child));
+  const intrinsicWidth =
+    options.padding * 2 +
+    normal.reduce(
+      (maximum, { geometry }) => Math.max(maximum, geometry.width),
+      0,
+    );
+  const intrinsicHeight =
+    options.padding * 2 +
+    normal.reduce(
+      (maximum, { geometry }) => Math.max(maximum, geometry.height),
+      0,
+    );
+  const bounds = managedBounds(
+    authored,
+    intrinsicWidth,
+    intrinsicHeight,
+    options,
+  );
+  const contentBounds = paddedContentBounds(bounds, options.padding);
+  const placed = new Map<number, SceneGeometryLike>();
+  for (const { index, geometry } of normal) {
+    const horizontal = alignedCross(options, contentBounds.width, geometry.width);
+    const vertical =
+      options.align === "stretch"
+        ? { offset: 0, size: contentBounds.height }
+        : options.justify === "center"
+          ? {
+              offset: Math.max((contentBounds.height - geometry.height) / 2, 0),
+              size: geometry.height,
+            }
+          : options.justify === "end"
+            ? {
+                offset: Math.max(contentBounds.height - geometry.height, 0),
+                size: geometry.height,
+              }
+            : { offset: 0, size: geometry.height };
+    placed.set(index, {
+      x: contentBounds.x + horizontal.offset,
+      y: contentBounds.y + vertical.offset,
+      width: horizontal.size,
+      height: vertical.size,
+    });
+  }
+  const childGeometries = children.map((child, index) =>
+    isAbsolute(child) ? geometryOf(child) : placed.get(index)!,
+  );
+  return capabilityLayout(
+    bounds,
+    childGeometries,
+    contentBounds,
+    managedDiagnostics(node, children, childGeometries, contentBounds, true),
+  );
+}
+
+/** Titled frame that reserves semantic chrome before managed child content. */
+export function resolveFrameLayout(
+  node: SceneNodeLike,
+  children: readonly SceneNodeLike[],
+): CapabilityLayout {
+  const authored = geometryOf(node);
+  const options = managedLayoutOptions(node);
+  const gap = styleNumber(node.style, "gap", 0);
+  const title =
+    typeof node.props?.title === "string" ? node.props.title : "";
+  const detail =
+    typeof node.props?.detail === "string" ? node.props.detail : "";
+  const titleBand = detail.length > 0 ? FRAME_DETAIL_BAND : FRAME_TITLE_BAND;
+  const normal = children
+    .map((child, index) => ({ child, index, geometry: geometryOf(child) }))
+    .filter(({ child }) => !isAbsolute(child));
+  const contentMain =
+    normal.reduce((sum, { geometry }) => sum + geometry.height, 0) +
+    gap * Math.max(normal.length - 1, 0);
+  const contentCross = normal.reduce(
+    (maximum, { geometry }) => Math.max(maximum, geometry.width),
+    0,
+  );
+  const titleWidth =
+    title.length > 0 ? estimateTextWidth(title, 14, "bold") : 0;
+  const detailWidth =
+    detail.length > 0 ? estimateTextWidth(detail, 11.5, "normal") : 0;
+  const bounds = managedBounds(
+    authored,
+    Math.max(contentCross, titleWidth, detailWidth) + options.padding * 2,
+    titleBand + contentMain + options.padding * 2,
+    options,
+  );
+  const contentBounds = paddedContentBounds(
+    bounds,
+    options.padding,
+    titleBand + options.padding,
+  );
+  const freeMain = Math.max(contentBounds.height - contentMain, 0);
+  const extraGap =
+    options.justify === "space-between" && normal.length > 1
+      ? freeMain / (normal.length - 1)
+      : 0;
+  let cursor =
+    contentBounds.y +
+    (options.justify === "center"
+      ? freeMain / 2
+      : options.justify === "end"
+        ? freeMain
+        : 0);
+  const placed = new Map<number, SceneGeometryLike>();
+  for (const { index, geometry } of normal) {
+    const aligned = alignedCross(options, contentBounds.width, geometry.width);
+    placed.set(index, {
+      x: contentBounds.x + aligned.offset,
+      y: cursor,
+      width: aligned.size,
+      height: geometry.height,
+    });
+    cursor += geometry.height + gap + extraGap;
+  }
+  const childGeometries = children.map((child, index) =>
+    isAbsolute(child) ? geometryOf(child) : placed.get(index)!,
+  );
+  return capabilityLayout(
+    bounds,
+    childGeometries,
+    contentBounds,
+    managedDiagnostics(node, children, childGeometries, contentBounds, false),
+  );
 }
 
 /** Titled lane layout with content-aware vertical expansion. */
@@ -266,14 +866,14 @@ export function resolveLaneLayout(
   const contentHeight =
     childGeometries.length > 0 ? cursorY - gap + LANE_INSET : LANE_TITLE_BAND;
   const extent = childBounds(childGeometries);
-  return {
-    bounds: {
+  return capabilityLayout(
+    {
       ...authored,
       width: Math.max(authored.width, extent.width + LANE_INSET),
       height: Math.max(authored.height, contentHeight),
     },
     childGeometries,
-  };
+  );
 }
 
 /** Swimlane rows reserve a label gutter and expand around intrinsic rows. */
@@ -308,14 +908,14 @@ export function resolveSwimlaneLayout(
   const contentHeight =
     childGeometries.length > 0 ? cursorY - gap : DEFAULT_CHILD_HEIGHT;
   const extent = childBounds(childGeometries);
-  return {
-    bounds: {
+  return capabilityLayout(
+    {
       ...authored,
       width: Math.max(authored.width, extent.width),
       height: Math.max(authored.height, contentHeight),
     },
     childGeometries,
-  };
+  );
 }
 
 function stringArrayProp(node: SceneNodeLike, key: string): readonly string[] {
@@ -326,14 +926,6 @@ function stringArrayProp(node: SceneNodeLike, key: string): readonly string[] {
           typeof entry === "string" && entry.length > 0,
       )
     : [];
-}
-
-function stepperChipWidth(label: string, index: number): number {
-  const text = `${index + 1}. ${label}`;
-  return Math.max(
-    STEPPER_MIN_CHIP_WIDTH,
-    Math.ceil(text.length * STEPPER_CHAR_WIDTH) + STEPPER_CHIP_PAD,
-  );
 }
 
 /** Semantic stepper intrinsic width derived from numbered label content. */
@@ -372,14 +964,14 @@ export function resolveStepperLayout(
   const intrinsicWidth =
     widths.reduce((sum, width) => sum + width, 0) +
     gap * Math.max(widths.length - 1, 0);
-  return {
-    bounds: {
+  return capabilityLayout(
+    {
       ...authored,
       width: Math.max(authored.width, intrinsicWidth),
       height: Math.max(authored.height, STEPPER_CHIP_HEIGHT),
     },
     childGeometries,
-  };
+  );
 }
 
 /** Insets authored children and expands around the padded content. */
@@ -398,14 +990,14 @@ export function resolvePadLayout(
     return { ...geometry, x: geometry.x + inset, y: geometry.y + inset };
   });
   const extent = childBounds(childGeometries);
-  return {
-    bounds: {
+  return capabilityLayout(
+    {
       ...authored,
       width: Math.max(authored.width, extent.width + inset),
       height: Math.max(authored.height, extent.height + inset),
     },
     childGeometries,
-  };
+  );
 }
 
 /** Resolve native circle/ellipse center and radii into an SVG layout box. */
@@ -435,22 +1027,29 @@ export function resolveEllipseLayout(
     "ry",
     styleNumber(node.style, "ry", rx),
   );
-  return {
-    bounds: {
+  return capabilityLayout(
+    {
       x: cx - rx,
       y: cy - ry,
       width: rx * 2,
       height: ry * 2,
     },
-    childGeometries: children.map(geometryOf),
-  };
+    children.map(geometryOf),
+  );
 }
 
 export const LAYOUT_CAPABILITIES: readonly NativeSceneCapability[] = [
   { capabilityId: "layout.stack", resolveLayout: resolveStackLayout },
   { capabilityId: "layout.grid", resolveLayout: resolveGridLayout },
   { capabilityId: "layout.rail", resolveLayout: resolveRailLayout },
+  { capabilityId: "layout.overlay", resolveLayout: resolveOverlayLayout },
+  { capabilityId: "layout.frame", resolveLayout: resolveFrameLayout },
   { capabilityId: "layout.pad", resolveLayout: resolvePadLayout },
+  { capabilityId: "core.chip", resolveLayout: resolveChipLayout },
+  { capabilityId: "core.panel", resolveLayout: resolvePanelLayout },
+  { capabilityId: "core.note", resolveLayout: resolvePanelLayout },
+  { capabilityId: "core.header", resolveLayout: resolveHeaderLayout },
+  { capabilityId: "core.text", resolveLayout: resolveTextLayout },
   { capabilityId: "core.lane", resolveLayout: resolveLaneLayout },
   { capabilityId: "core.band", resolveLayout: resolveIdentityLayout },
   { capabilityId: "core.swimlane", resolveLayout: resolveSwimlaneLayout },

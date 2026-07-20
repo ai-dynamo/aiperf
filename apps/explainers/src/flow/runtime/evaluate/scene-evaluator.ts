@@ -6,6 +6,7 @@
 import {
   resolveCapabilityId,
   type ComponentNodeIr,
+  type ConnectorEndpointIr,
   type RenderNodeIr,
   type SceneIr,
   type SourceRange,
@@ -143,6 +144,65 @@ function indexNodes(scene: SceneIr): EvaluationIndex {
   return { nodes, order };
 }
 
+/** Resolve a connector endpoint to a scene point (node center or free x/y). */
+function resolveConnectorEndpointPoint(
+  endpoint: ConnectorEndpointIr | undefined,
+  index: EvaluationIndex,
+  connectorId: string,
+  role: "from" | "to",
+): Readonly<{ x: number; y: number }> {
+  if (endpoint === undefined) {
+    throw new Error(`Connector "${connectorId}" requires a ${role} endpoint.`);
+  }
+  const nodeId = endpoint.nodeId;
+  if (typeof nodeId === "string" && nodeId.length > 0) {
+    const endpointNode = index.nodes.get(nodeId);
+    if (endpointNode === undefined) {
+      throw new Error(
+        `Connector "${connectorId}" references an unknown endpoint.`,
+      );
+    }
+    const bounds = geometry(endpointNode);
+    return {
+      x: bounds.x + bounds.width / 2,
+      y: bounds.y + bounds.height / 2,
+    };
+  }
+  if (typeof endpoint.x === "number" && typeof endpoint.y === "number") {
+    return { x: endpoint.x, y: endpoint.y };
+  }
+  throw new Error(
+    `Connector "${connectorId}" ${role} endpoint requires nodeId or x/y coordinates.`,
+  );
+}
+
+/** Stable semantic id for a free-coordinate endpoint used in relation projection. */
+function coordinateEndpointSemanticId(
+  endpoint: ConnectorEndpointIr,
+): string {
+  return `point:${endpoint.x},${endpoint.y}`;
+}
+
+/** Semantic relation endpoint id: nodeId when present, else coordinate point id. */
+function resolveConnectorEndpointSemanticId(
+  endpoint: ConnectorEndpointIr | undefined,
+  connectorId: string,
+  role: "from" | "to",
+): string {
+  if (endpoint === undefined) {
+    throw new Error(`Connector "${connectorId}" requires a ${role} endpoint.`);
+  }
+  if (typeof endpoint.nodeId === "string" && endpoint.nodeId.length > 0) {
+    return endpoint.nodeId;
+  }
+  if (typeof endpoint.x === "number" && typeof endpoint.y === "number") {
+    return coordinateEndpointSemanticId(endpoint);
+  }
+  throw new Error(
+    `Connector "${connectorId}" ${role} endpoint requires nodeId or x/y coordinates.`,
+  );
+}
+
 function connectorBounds(
   node: Extract<RenderNodeIr, { kind: "connector" }>,
   index: EvaluationIndex,
@@ -151,28 +211,8 @@ function connectorBounds(
   from: Readonly<{ x: number; y: number }>;
   to: Readonly<{ x: number; y: number }>;
 }> {
-  const fromNodeId = node.from.nodeId;
-  const toNodeId = node.to.nodeId;
-  if (fromNodeId === undefined || toNodeId === undefined) {
-    throw new Error(
-      `Connector "${node.id}" requires node-anchored from/to endpoints.`,
-    );
-  }
-  const fromNode = index.nodes.get(fromNodeId);
-  const toNode = index.nodes.get(toNodeId);
-  if (fromNode === undefined || toNode === undefined) {
-    throw new Error(`Connector "${node.id}" references an unknown endpoint.`);
-  }
-  const fromGeometry = geometry(fromNode);
-  const toGeometry = geometry(toNode);
-  const from = {
-    x: fromGeometry.x + fromGeometry.width / 2,
-    y: fromGeometry.y + fromGeometry.height / 2,
-  };
-  const to = {
-    x: toGeometry.x + toGeometry.width / 2,
-    y: toGeometry.y + toGeometry.height / 2,
-  };
+  const from = resolveConnectorEndpointPoint(node.from, index, node.id, "from");
+  const to = resolveConnectorEndpointPoint(node.to, index, node.id, "to");
   return {
     bounds: {
       x: Math.min(from.x, to.x),
@@ -334,17 +374,10 @@ function semanticProjection(
         : { description: node.accessibility.description }),
     };
     if (node.kind === "connector") {
-      const fromId = node.from.nodeId;
-      const toId = node.to.nodeId;
-      if (fromId === undefined || toId === undefined) {
-        throw new Error(
-          `Connector "${node.id}" requires node-anchored from/to endpoints.`,
-        );
-      }
       relations.push({
         id,
-        fromId,
-        toId,
+        fromId: resolveConnectorEndpointSemanticId(node.from, node.id, "from"),
+        toId: resolveConnectorEndpointSemanticId(node.to, node.id, "to"),
         label: node.accessibility.label,
       });
     } else {

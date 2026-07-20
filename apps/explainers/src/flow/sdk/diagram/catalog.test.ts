@@ -127,6 +127,124 @@ describe("diagram SDK catalog", () => {
     expect(network.ok && network.value.ports.outbound).toBeDefined();
   });
 
+  it("emits standard diagram chrome as semantic root props", () => {
+    const result = createSdkRegistry().lookup("sdk.server")!.factory(
+      { id: "server", title: "API", detail: "healthy" },
+      {},
+      {
+        instanceId: "server",
+        sourceMap: SOURCE_MAP,
+        themeTokens: new Map(),
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const root = result.value.roots[0];
+      expect(root).toMatchObject({
+        id: "server",
+        kind: "group",
+        capabilityId: "diagram.compute",
+        props: { title: "API", detail: "healthy" },
+        sdkOrigin: {
+          componentId: "sdk.server",
+          instanceId: "server",
+          generatedRole: "root",
+        },
+      });
+      expect(
+        root?.kind === "group"
+          ? root.children.filter(
+              (child) =>
+                ["chrome", "title", "detail"].includes(
+                  child.sdkOrigin?.generatedRole ?? "",
+                ) &&
+                (child.capabilityId === "core.rect" ||
+                  child.capabilityId === "core.text"),
+            )
+          : [],
+      ).toEqual([]);
+      expect(result.value.ports.icon).toEqual({ nodeId: "server__glyph" });
+      expect(result.value.ports.title).toEqual({ nodeId: "server__title" });
+      expect(result.value.actions).toEqual({
+        enter: ["server"],
+        emphasis: ["server"],
+        exit: ["server"],
+      });
+    }
+
+    const gateway = createSdkRegistry().lookup("sdk.gateway")!.factory(
+      { id: "gateway", title: "Ingress" },
+      {},
+      {
+        instanceId: "gateway",
+        sourceMap: SOURCE_MAP,
+        themeTokens: new Map(),
+      },
+    );
+    expect(gateway.ok).toBe(true);
+    if (gateway.ok) {
+      const emittedIds = new Set<string>();
+      const collectIds = (nodes: typeof gateway.value.roots) => {
+        for (const node of nodes) {
+          emittedIds.add(node.id);
+          if (node.kind === "group") {
+            collectIds(node.children);
+          }
+        }
+      };
+      collectIds(gateway.value.roots);
+      expect(gateway.value.actions).toEqual({
+        enter: ["gateway"],
+        draw: ["gateway"],
+        trace: ["gateway"],
+      });
+      for (const drawId of gateway.value.actions?.draw ?? []) {
+        expect(emittedIds.has(drawId)).toBe(true);
+      }
+    }
+  });
+
+  it("emits boundary chrome semantically while preserving authored children", () => {
+    const result = createSdkRegistry().lookup("sdk.zone")!.factory(
+      { id: "zone", title: "Control plane" },
+      { children: [CHILD] },
+      {
+        instanceId: "zone",
+        sourceMap: SOURCE_MAP,
+        themeTokens: new Map(),
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const root = result.value.roots[0];
+      expect(root).toMatchObject({
+        id: "zone",
+        kind: "group",
+        capabilityId: "diagram.boundary",
+        props: { title: "Control plane" },
+      });
+      expect(
+        root?.kind === "group"
+          ? root.children.filter(
+              (child) =>
+                ["chrome", "title"].includes(
+                  child.sdkOrigin?.generatedRole ?? "",
+                ) &&
+                (child.capabilityId === "core.rect" ||
+                  child.capabilityId === "core.text"),
+            )
+          : [],
+      ).toEqual([]);
+      expect(result.value.ports["child[0]"]).toEqual({ nodeId: "child" });
+      expect(result.value.actions).toEqual({
+        enter: ["zone"],
+        stagger: ["child"],
+      });
+    }
+  });
+
   it("keeps emitted action bindings within each public action contract", () => {
     const registry = createSdkRegistry();
     const mismatches: string[] = [];

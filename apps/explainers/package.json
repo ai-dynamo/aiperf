@@ -12,7 +12,7 @@
     "assert:sdk-authoring": "node scripts/assert-sdk-authoring.mjs",
     "flow-verifier": "node scripts/flow-verifier.mjs --ir-only",
     "flow-verifier:ir": "node scripts/flow-verifier.mjs --ir-only",
-    "flow-verifier:extended": "node scripts/flow-verifier.mjs",
+    "do-not-use-me-extended-flow-verifier": "node scripts/flow-verifier.mjs",
     "deploy:pages": "bash scripts/deploy-pages.sh"
   },
   "dependencies": {
@@ -26,6 +26,7 @@
   "devDependencies": {
     "@playwright/test": "^1.61.1",
     "@testing-library/react": "^16.3.0",
+    "@types/node": "^22.20.1",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^4.4.1",

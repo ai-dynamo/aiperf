@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Exhaustive visual smoke catalog for generic SDK primitives.
+//! Chaptered teaching catalog for every registered generic SDK primitive.
 
 explainer "SDK Generic Catalog" {
   id: "sdk-generic-catalog"
@@ -16,90 +16,972 @@ explainer "SDK Generic Catalog" {
 
   hub: {
     highlight: "Generic primitives"
-    title: "content · status · data · indicators · containers"
-    description: "Visual smoke catalog for every generic Flow SDK primitive."
+    title: "45 primitives · seven families · one production path"
+    description: "A chaptered visual reference that teaches every generic Flow SDK primitive through production expansion."
   }
 
-  slide "Complete generic catalog" {
-    eyebrow: "SDK · GENERIC"
-    title: "Complete generic catalog"
-    lede: "Every generic primitive expands through the production SDK registry into deterministic Scene IR."
-    narration: "This catalog renders every generic SDK primitive in one verified scene."
-    points: [
-      "Foundations, content, status, data display, navigation, indicators, and containers.",
-      "Each component carries stable ids, semantic ports, actions, accessibility, and provenance."
-    ]
-    caption: "The catalog is intentionally dense: it is a smoke test and authoring index."
-
+  slide "Generic primitives, composed" {
+    eyebrow: "SDK · GENERIC CATALOG"
+    title: "A visual grammar for believable interfaces"
+    lede: "Forty-five production primitives, taught one at a time and then composed as a coherent interface."
+    narration: "Use this deck as both a visual reference and an authoring guide. Every focused page invokes the production SDK primitive it teaches."
+    caption: "Reference the contract · study the variants · compose with confidence."
     render: @scene {
-      sdk.Header(
-        id = "generic-header",
-        title = "GENERIC SDK PRIMITIVES",
-        caption = "45 registered components",
-        x = 18, y = 16, width = 664, height = 40
-      )
-      sdk.Grid(
-        id = "generic-grid",
-        cols = 9,
-        gap = 6,
-        x = 18, y = 70, width = 664, height = 300
-      ) {
+      sdk.Header(id = "open-h", title = "GENERIC SDK CATALOG", caption = "45 primitives · 7 families", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary))
+      sdk.Title(id = "open-title", text = "Small primitives. Clear contracts.", x = 54, y = 105, width = 430, height = 42, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "open-copy", text = "Each chapter moves from a focused specimen to realistic variants, then closes with composition.", x = 54, y = 165, width = 420, height = 76, inkRole = theme(ink.secondary))
+      sdk.Badge(id = "open-b1", label = "content", variant = "info", x = 54, y = 270, width = 92, height = 28)
+      sdk.Badge(id = "open-b2", label = "status", variant = "success", x = 158, y = 270, width = 92, height = 28)
+      sdk.Badge(id = "open-b3", label = "data", variant = "warning", x = 262, y = 270, width = 92, height = 28)
+      sdk.Gauge(id = "open-g", label = "coverage", value = 1, x = 520, y = 120, width = 120, height = 72)
+      sdk.Caption(id = "open-cap", text = "100% focused coverage", x = 500, y = 215, width = 160, height = 20)
+      timeline main {
+        at 0 reveal open-h duration 180
+        after open-h reveal open-title duration 220
+        after open-title reveal open-copy duration 220
+        after open-copy stagger targets [open-b1, open-b2, open-b3] step 90 duration 160
+        after open-b3 reveal open-g duration 220
+        after open-g reveal open-cap duration 160
+      }
+    }
+  }
+
+  slide "Foundations and shapes" {
+    eyebrow: "CHAPTER 1 · FOUNDATIONS"
+    title: "Build the visible substrate"
+    lede: "Shapes, text, imagery, connectors, and spacing establish the stage before specialized UI appears."
+    narration: "The foundations family supplies the raw visual and spatial vocabulary used by every later composition."
+    caption: "Nine primitives · form, ink, media, connection, space."
+    render: @scene {
+      sdk.Header(id = "c1-h", title = "FOUNDATIONS + SHAPES", caption = "01 / 07", x = 18, y = 16, width = 664, height = 44)
+      sdk.Shape(id = "c1-shape", variant = "rounded", label = "surface", x = 70, y = 120, width = 220, height = 130, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Title(id = "c1-title", text = "form", x = 110, y = 165, width = 140, height = 32)
+      sdk.Shape(id = "c1-target", variant = "circle", label = "symbol target", x = 540, y = 145, width = 78, height = 78, surfaceRole = theme(surface.elevated))
+      sdk.Arrow(id = "c1-arrow", label = "flow", from = { nodeId: "c1-shape", anchor: "e" }, to = { nodeId: "c1-target", anchor: "w" }, x = 290, y = 185, width = 250, height = 0, strokeRole = theme(accent.primary))
+      sdk.Icon(id = "c1-icon", icon = "code", x = 555, y = 160, width = 48, height = 48, inkRole = theme(accent.primary))
+      timeline main { at 0 reveal c1-h duration 180 after c1-h stagger targets [c1-shape, c1-target] step 80 duration 220 after c1-target reveal c1-title duration 160 after c1-title trace c1-arrow duration 260 after c1-arrow reveal c1-icon duration 180 }
+    }
+  }
+
+  slide "sdk.shape" {
+    eyebrow: "FOUNDATIONS · SHAPE"
+    title: "Shape defines silhouette and surface"
+    lede: "Use semantic variants for rectangles, rounds, circles, ellipses, and authored paths."
+    narration: "Shape is the general-purpose visual surface. The hero is a rounded service tile; smaller specimens compare geometric variants."
+    caption: "Choose geometry deliberately; keep paint semantic."
+    render: @scene {
+      sdk.Header(id = "shape-h", title = "SDK.SHAPE", caption = "surface primitive", x = 18, y = 16, width = 664, height = 44)
+      sdk.Shape(id = "shape-hero", label = "Inference service", variant = "rounded", x = 44, y = 104, width = 350, height = 150, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Label(id = "shape-hero-l", text = "HERO · ROUNDED SERVICE SURFACE", x = 44, y = 270, width = 350, height = 18)
+      sdk.Shape(id = "shape-v1", label = "rect", variant = "rect", x = 440, y = 112, width = 92, height = 70, surfaceRole = theme(surface.secondary))
+      sdk.Shape(id = "shape-v2", label = "circle", variant = "circle", x = 560, y = 112, width = 70, height = 70, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "shape-vl", text = "RECT                         CIRCLE", x = 440, y = 198, width = 210, height = 18)
+      sdk.Note(id = "shape-note", text = "Geometry is authored; theme roles own color.", x = 44, y = 320, width = 606, height = 30)
+      timeline main { at 0 reveal shape-h duration 160 after shape-h reveal shape-hero duration 240 after shape-hero reveal shape-hero-l duration 140 after shape-hero-l stagger targets [shape-v1, shape-v2] step 100 duration 180 after shape-v2 reveal shape-vl duration 140 after shape-vl reveal shape-note duration 160 }
+    }
+  }
+
+  slide "sdk.text" {
+    eyebrow: "FOUNDATIONS · TEXT"
+    title: "Text places direct, unadorned copy"
+    lede: "Use text for short labels and values that need exact authored geometry."
+    narration: "Text is the direct core text primitive. Here it anchors a latency value and compares primary and secondary ink."
+    caption: "Keep direct text short, legible, and purposeful."
+    render: @scene {
+      sdk.Header(id = "text-h", title = "SDK.TEXT", caption = "direct copy", x = 18, y = 16, width = 664, height = 44)
+      sdk.Text(id = "text-hero", text = "18.7 ms", x = 54, y = 120, width = 330, height = 80, inkRole = theme(accent.primary))
+      sdk.Label(id = "text-hero-l", text = "HERO · P95 LATENCY", x = 54, y = 220, width = 330, height = 18)
+      sdk.Text(id = "text-v1", text = "ready", x = 450, y = 125, width = 160, height = 28, inkRole = theme(ink.primary))
+      sdk.Text(id = "text-v2", text = "updated 2m ago", x = 450, y = 180, width = 180, height = 28, inkRole = theme(ink.secondary))
+      sdk.Label(id = "text-vl", text = "PRIMARY                         SECONDARY", x = 450, y = 225, width = 190, height = 18)
+      sdk.Note(id = "text-note", text = "Prefer specialized typography primitives for longer content.", x = 54, y = 310, width = 586, height = 30)
+      timeline main { at 0 reveal text-h duration 160 after text-h reveal text-hero duration 240 after text-hero reveal text-hero-l duration 140 after text-hero-l stagger targets [text-v1, text-v2] step 100 duration 180 after text-v2 reveal text-vl duration 140 after text-vl reveal text-note duration 160 }
+    }
+  }
+
+  slide "sdk.richText" {
+    eyebrow: "FOUNDATIONS · RICH TEXT"
+    title: "Rich text carries structured prose"
+    lede: "Use rich text when hierarchy must live inside one bounded text region."
+    narration: "The hero demonstrates a compact release summary while variants show short instructional and operational copy."
+    caption: "Bound the region first; let copy express hierarchy."
+    render: @scene {
+      sdk.Header(id = "rich-h", title = "SDK.RICHTEXT", caption = "structured prose", x = 18, y = 16, width = 664, height = 44)
+      sdk.RichText(id = "rich-hero", text = "Release 2.4\nFaster routing with deterministic fallback.", x = 44, y = 105, width = 350, height = 120, inkRole = theme(ink.primary))
+      sdk.Label(id = "rich-hero-l", text = "HERO · RELEASE SUMMARY", x = 44, y = 242, width = 350, height = 18)
+      sdk.RichText(id = "rich-v1", text = "Tip\nPin the model revision.", x = 440, y = 108, width = 190, height = 62, inkRole = theme(accent.primary))
+      sdk.RichText(id = "rich-v2", text = "Status\nAll regions healthy.", x = 440, y = 190, width = 190, height = 62, inkRole = theme(ink.secondary))
+      sdk.Label(id = "rich-vl", text = "TIP                                      STATUS", x = 440, y = 270, width = 190, height = 18)
+      timeline main { at 0 reveal rich-h duration 160 after rich-h reveal rich-hero duration 240 after rich-hero reveal rich-hero-l duration 140 after rich-hero-l stagger targets [rich-v1, rich-v2] step 100 duration 180 after rich-v2 reveal rich-vl duration 140 }
+    }
+  }
+
+  slide "sdk.icon" {
+    eyebrow: "FOUNDATIONS · ICON"
+    title: "Icons compress familiar meaning"
+    lede: "Use named icons as supporting signals, never as unexplained decoration."
+    narration: "A server icon anchors the hero, while check, warning, and lock variants show the built-in semantic vocabulary."
+    caption: "Pair unfamiliar symbols with a visible label."
+    render: @scene {
+      sdk.Header(id = "icon-h", title = "SDK.ICON", caption = "named symbol", x = 18, y = 16, width = 664, height = 44)
+      sdk.Icon(id = "icon-hero", icon = "server", x = 120, y = 110, width = 120, height = 120, inkRole = theme(accent.primary))
+      sdk.Label(id = "icon-hero-l", text = "HERO · INFERENCE SERVER", x = 72, y = 250, width = 220, height = 18)
+      sdk.Icon(id = "icon-v1", icon = "check", x = 430, y = 125, width = 42, height = 42, inkRole = theme(accent.green))
+      sdk.Icon(id = "icon-v2", icon = "warning", x = 505, y = 125, width = 42, height = 42, inkRole = theme(accent.warning))
+      sdk.Icon(id = "icon-v3", icon = "lock", x = 580, y = 125, width = 42, height = 42, inkRole = theme(ink.primary))
+      sdk.Label(id = "icon-vl", text = "OK             WARN             SECURE", x = 420, y = 190, width = 220, height = 18)
+      timeline main { at 0 reveal icon-h duration 160 after icon-h reveal icon-hero duration 240 after icon-hero reveal icon-hero-l duration 140 after icon-hero-l stagger targets [icon-v1, icon-v2, icon-v3] step 90 duration 180 after icon-v3 reveal icon-vl duration 140 }
+    }
+  }
+
+  slide "sdk.image" {
+    eyebrow: "FOUNDATIONS · IMAGE"
+    title: "Images bring trusted media into scene IR"
+    lede: "Use package-resolvable repository assets and select contain or cover intentionally."
+    narration: "The AIPerf mark is rendered from an existing public asset. The variants compare contain and cover fitting."
+    caption: "A valid source is required; fitting is an authored choice."
+    render: @scene {
+      sdk.Header(id = "image-h", title = "SDK.IMAGE", caption = "repository media", x = 18, y = 16, width = 664, height = 44)
+      sdk.Image(id = "image-hero", src = "/aiperf-mark.svg", label = "AIPerf mark", variant = "contain", x = 44, y = 100, width = 350, height = 165)
+      sdk.Label(id = "image-hero-l", text = "HERO · CONTAIN", x = 44, y = 280, width = 350, height = 18)
+      sdk.Image(id = "image-v1", src = "/aiperf-mark.svg", label = "contained mark", variant = "contain", x = 440, y = 110, width = 90, height = 90)
+      sdk.Image(id = "image-v2", src = "/aiperf-mark.svg", label = "covered mark", variant = "cover", x = 560, y = 110, width = 90, height = 90)
+      sdk.Label(id = "image-vl", text = "CONTAIN                    COVER", x = 440, y = 218, width = 210, height = 18)
+      timeline main { at 0 reveal image-h duration 160 after image-h reveal image-hero duration 240 after image-hero reveal image-hero-l duration 140 after image-hero-l stagger targets [image-v1, image-v2] step 100 duration 180 after image-v2 reveal image-vl duration 140 }
+    }
+  }
+
+  slide "sdk.line" {
+    eyebrow: "FOUNDATIONS · LINE"
+    title: "Lines relate without implying direction"
+    lede: "Use a line for association, alignment, and neutral linkage."
+    narration: "The hero connects paired regions neutrally; smaller lines compare restrained and emphasized strokes."
+    caption: "If direction matters, choose an arrow."
+    render: @scene {
+      sdk.Header(id = "line-h", title = "SDK.LINE", caption = "neutral connector", x = 18, y = 16, width = 664, height = 44)
+      sdk.Shape(id = "line-a", variant = "rounded", x = 54, y = 125, width = 110, height = 80, surfaceRole = theme(surface.elevated))
+      sdk.Shape(id = "line-b", variant = "rounded", x = 290, y = 125, width = 110, height = 80, surfaceRole = theme(surface.elevated))
+      sdk.Line(id = "line-hero", label = "related services", from = { x: 164, y: 165 }, to = { x: 290, y: 165 }, x = 164, y = 165, width = 126, height = 0, strokeRole = theme(accent.primary))
+      sdk.Label(id = "line-hero-l", text = "HERO · PEER RELATION", x = 120, y = 230, width = 220, height = 18)
+      sdk.Line(id = "line-v1", label = "quiet", from = { x: 450, y: 140 }, to = { x: 630, y: 140 }, x = 450, y = 140, width = 180, height = 0, strokeRole = theme(ink.secondary))
+      sdk.Line(id = "line-v2", label = "active", from = { x: 450, y: 210 }, to = { x: 630, y: 210 }, x = 450, y = 210, width = 180, height = 0, strokeRole = theme(accent.primary))
+      sdk.Label(id = "line-vl", text = "QUIET                              ACTIVE", x = 450, y = 245, width = 180, height = 18)
+      timeline main { at 0 reveal line-h duration 160 after line-h stagger targets [line-a, line-b] step 80 duration 180 after line-b trace line-hero duration 260 after line-hero reveal line-hero-l duration 140 after line-hero-l stagger targets [line-v1, line-v2] step 100 duration 180 after line-v2 reveal line-vl duration 140 }
+    }
+  }
+
+  slide "sdk.arrow" {
+    eyebrow: "FOUNDATIONS · ARROW"
+    title: "Arrows make direction explicit"
+    lede: "Use arrows for handoffs, progression, and one-way dependencies."
+    narration: "The hero shows a request handoff. Variants distinguish forward progress from a descending transition."
+    caption: "Arrowheads encode direction; labels explain intent."
+    render: @scene {
+      sdk.Header(id = "arrow-h", title = "SDK.ARROW", caption = "directional connector", x = 18, y = 16, width = 664, height = 44)
+      sdk.Shape(id = "arrow-ha", variant = "circle", label = "client", x = 48, y = 145, width = 50, height = 50, surfaceRole = theme(surface.elevated))
+      sdk.Shape(id = "arrow-hb", variant = "rounded", label = "server", x = 360, y = 145, width = 70, height = 50, surfaceRole = theme(surface.elevated))
+      sdk.Arrow(id = "arrow-hero", label = "dispatch request", from = { nodeId: "arrow-ha", anchor: "e" }, to = { nodeId: "arrow-hb", anchor: "w" }, x = 98, y = 170, width = 262, height = 0, strokeRole = theme(accent.primary))
+      sdk.Label(id = "arrow-hero-l", text = "HERO · DISPATCH REQUEST", x = 100, y = 205, width = 260, height = 18)
+      sdk.Shape(id = "arrow-v1a", variant = "circle", label = "source", x = 450, y = 110, width = 30, height = 30)
+      sdk.Shape(id = "arrow-v1b", variant = "circle", label = "target", x = 620, y = 110, width = 30, height = 30)
+      sdk.Arrow(id = "arrow-v1", label = "forward", from = { nodeId: "arrow-v1a", anchor: "e" }, to = { nodeId: "arrow-v1b", anchor: "w" }, x = 480, y = 125, width = 140, height = 0, strokeRole = theme(accent.green))
+      sdk.Shape(id = "arrow-v2a", variant = "circle", label = "source", x = 450, y = 180, width = 30, height = 30)
+      sdk.Shape(id = "arrow-v2b", variant = "circle", label = "target", x = 620, y = 225, width = 30, height = 30)
+      sdk.Arrow(id = "arrow-v2", label = "handoff", from = { nodeId: "arrow-v2a", anchor: "e" }, to = { nodeId: "arrow-v2b", anchor: "w" }, x = 480, y = 195, width = 140, height = 45, strokeRole = theme(accent.warning))
+      sdk.Label(id = "arrow-vl", text = "FORWARD                         HANDOFF", x = 450, y = 265, width = 190, height = 18)
+      timeline main { at 0 reveal arrow-h duration 160 after arrow-h stagger targets [arrow-ha, arrow-hb] step 80 duration 160 after arrow-hb trace arrow-hero duration 280 after arrow-hero reveal arrow-hero-l duration 140 after arrow-hero-l stagger targets [arrow-v1a, arrow-v1b, arrow-v2a, arrow-v2b] step 60 duration 140 after arrow-v2b trace arrow-v1 duration 180 after arrow-v1 trace arrow-v2 duration 180 after arrow-v2 reveal arrow-vl duration 140 }
+    }
+  }
+
+  slide "sdk.spacer" {
+    eyebrow: "FOUNDATIONS · SPACER"
+    title: "Spacer reserves rhythm without visible chrome"
+    lede: "Frame spacing specimens so invisible layout intent remains inspectable."
+    narration: "The outlined sections expose three real spacer instances. The primitive remains empty while annotations make its reserved dimensions visible."
+    caption: "Spacing is structure, not decoration."
+    render: @scene {
+      sdk.Header(id = "spacer-h", title = "SDK.SPACER", caption = "visible framing for invisible space", x = 18, y = 16, width = 664, height = 44)
+      sdk.Section(id = "spacer-frame", title = "reserved hero gap", x = 54, y = 100, width = 340, height = 160, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) { children { sdk.Spacer(id = "spacer-hero", label = "96 px gap", width = 96, height = 96) } }
+      sdk.Label(id = "spacer-hero-l", text = "HERO · 96 × 96 RESERVED", x = 54, y = 278, width = 340, height = 18)
+      sdk.Section(id = "spacer-f1", title = "inline", x = 440, y = 110, width = 90, height = 90, strokeRole = theme(ink.secondary)) { children { sdk.Spacer(id = "spacer-v1", label = "24", width = 24, height = 24) } }
+      sdk.Section(id = "spacer-f2", title = "section", x = 560, y = 110, width = 90, height = 90, strokeRole = theme(accent.green)) { children { sdk.Spacer(id = "spacer-v2", label = "48", width = 48, height = 48) } }
+      sdk.Label(id = "spacer-vl", text = "24 PX                         48 PX", x = 440, y = 218, width = 210, height = 18)
+      timeline main { at 0 reveal spacer-h duration 160 after spacer-h reveal spacer-frame duration 220 after spacer-frame reveal spacer-hero-l duration 140 after spacer-hero-l stagger targets [spacer-f1, spacer-f2] step 100 duration 180 after spacer-f2 reveal spacer-vl duration 140 }
+    }
+  }
+
+  slide "sdk.inset" {
+    eyebrow: "FOUNDATIONS · INSET"
+    title: "Inset protects content with internal space"
+    lede: "Wrap children in a semantic padded region instead of offsetting each child manually."
+    narration: "The hero protects a deployment message; variants compare compact and roomy inset gaps."
+    caption: "Padding belongs to the container contract."
+    render: @scene {
+      sdk.Header(id = "inset-h", title = "SDK.INSET", caption = "padded container", x = 18, y = 16, width = 664, height = 44)
+      sdk.Inset(id = "inset-hero", label = "deployment notice", gap = 24, x = 44, y = 100, width = 350, height = 150) { children { sdk.Alert(id = "inset-alert", title = "Deployment ready", variant = "success", width = 290, height = 76) } }
+      sdk.Label(id = "inset-hero-l", text = "HERO · 24 PX INSET", x = 44, y = 268, width = 350, height = 18)
+      sdk.Inset(id = "inset-v1", label = "compact", gap = 8, x = 440, y = 112, width = 90, height = 80) { children { sdk.Badge(id = "inset-b1", label = "8 px", variant = "info") } }
+      sdk.Inset(id = "inset-v2", label = "roomy", gap = 20, x = 560, y = 112, width = 90, height = 80) { children { sdk.Badge(id = "inset-b2", label = "20 px", variant = "success") } }
+      sdk.Label(id = "inset-vl", text = "COMPACT                      ROOMY", x = 440, y = 210, width = 210, height = 18)
+      timeline main { at 0 reveal inset-h duration 160 after inset-h reveal inset-hero duration 240 after inset-hero reveal inset-hero-l duration 140 after inset-hero-l stagger targets [inset-v1, inset-v2] step 100 duration 180 after inset-v2 reveal inset-vl duration 140 }
+    }
+  }
+
+  slide "Typography and rich content" {
+    eyebrow: "CHAPTER 2 · TYPOGRAPHY"
+    title: "Turn information into hierarchy"
+    lede: "Titles, prose, captions, code, quotations, and structured lists make dense ideas scan quickly."
+    narration: "Typography components encode common reading roles so each deck does not reinvent hierarchy."
+    caption: "Eight primitives · hierarchy, prose, evidence, structure."
+    render: @scene {
+      sdk.Header(id = "c2-h", title = "TYPOGRAPHY + RICH CONTENT", caption = "02 / 07", x = 18, y = 16, width = 664, height = 44)
+      sdk.Title(id = "c2-title", text = "Readable by design", x = 70, y = 115, width = 400, height = 40)
+      sdk.Paragraph(id = "c2-copy", text = "The right text primitive makes purpose visible before the reader parses every word.", x = 70, y = 175, width = 410, height = 80, inkRole = theme(ink.secondary))
+      sdk.CodeBlock(id = "c2-code", text = "sdk.Title(...)", x = 505, y = 115, width = 145, height = 120)
+      timeline main { at 0 reveal c2-h duration 180 after c2-h reveal c2-title duration 220 after c2-title reveal c2-copy duration 200 after c2-copy reveal c2-code duration 220 }
+    }
+  }
+
+  slide "sdk.title" {
+    eyebrow: "TYPOGRAPHY · TITLE"
+    title: "Title establishes the reading entry point"
+    lede: "Use titles for section-level hierarchy, not every label."
+    narration: "A product heading leads the hero while compact variants show page and panel contexts."
+    caption: "One strong title beats a field of competing headings."
+    render: @scene {
+      sdk.Header(id = "title-h", title = "SDK.TITLE", caption = "hierarchy anchor", x = 18, y = 16, width = 664, height = 44)
+      sdk.Title(id = "title-hero", text = "Inference overview", x = 54, y = 120, width = 350, height = 52)
+      sdk.Label(id = "title-hero-l", text = "HERO · PRODUCT VIEW", x = 54, y = 195, width = 350, height = 18)
+      sdk.Title(id = "title-v1", text = "Traffic", x = 450, y = 115, width = 180, height = 32)
+      sdk.Title(id = "title-v2", text = "Errors", x = 450, y = 180, width = 180, height = 32, inkRole = theme(accent.warning))
+      sdk.Label(id = "title-vl", text = "SECTION                         ATTENTION", x = 450, y = 230, width = 190, height = 18)
+      timeline main { at 0 reveal title-h duration 160 after title-h reveal title-hero duration 240 after title-hero reveal title-hero-l duration 140 after title-hero-l stagger targets [title-v1, title-v2] step 100 duration 180 after title-v2 reveal title-vl duration 140 }
+    }
+  }
+
+  slide "sdk.paragraph" {
+    eyebrow: "TYPOGRAPHY · PARAGRAPH"
+    title: "Paragraph explains in complete thoughts"
+    lede: "Use paragraphs for concise prose with enough room to breathe."
+    narration: "The hero explains a routing policy; variants contrast product guidance with subdued supporting context."
+    caption: "Write for scanning: one idea per paragraph."
+    render: @scene {
+      sdk.Header(id = "para-h", title = "SDK.PARAGRAPH", caption = "bounded prose", x = 18, y = 16, width = 664, height = 44)
+      sdk.Paragraph(id = "para-hero", text = "Requests stay in-region unless capacity falls below the configured safety margin.", x = 44, y = 108, width = 350, height = 120)
+      sdk.Label(id = "para-hero-l", text = "HERO · POLICY EXPLANATION", x = 44, y = 246, width = 350, height = 18)
+      sdk.Paragraph(id = "para-v1", text = "Pin revisions before comparing runs.", x = 440, y = 110, width = 200, height = 62, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "para-v2", text = "Metrics refresh every 10 seconds.", x = 440, y = 190, width = 200, height = 62, inkRole = theme(ink.secondary))
+      sdk.Label(id = "para-vl", text = "GUIDANCE                         SUPPORTING", x = 440, y = 270, width = 200, height = 18)
+      timeline main { at 0 reveal para-h duration 160 after para-h reveal para-hero duration 240 after para-hero reveal para-hero-l duration 140 after para-hero-l stagger targets [para-v1, para-v2] step 100 duration 180 after para-v2 reveal para-vl duration 140 }
+    }
+  }
+
+  slide "sdk.caption" {
+    eyebrow: "TYPOGRAPHY · CAPTION"
+    title: "Caption supplies quiet context"
+    lede: "Use captions for provenance, timestamps, units, and secondary explanation."
+    narration: "The hero anchors a chart timestamp; variants demonstrate source and unit labels."
+    caption: "Captions support the story without competing with it."
+    render: @scene {
+      sdk.Header(id = "caption-h", title = "SDK.CAPTION", caption = "secondary context", x = 18, y = 16, width = 664, height = 44)
+      sdk.Sparkline(id = "caption-chart", label = "throughput", values = [42, 48, 45, 57, 61, 59], x = 54, y = 105, width = 340, height = 110)
+      sdk.Caption(id = "caption-hero", text = "Last 30 minutes · updated 09:42 UTC", x = 54, y = 232, width = 340, height = 22)
+      sdk.Label(id = "caption-hero-l", text = "HERO · TEMPORAL CONTEXT", x = 54, y = 270, width = 340, height = 18)
+      sdk.Caption(id = "caption-v1", text = "Source: gateway", x = 450, y = 125, width = 180, height = 20)
+      sdk.Caption(id = "caption-v2", text = "Requests / second", x = 450, y = 185, width = 180, height = 20, inkRole = theme(ink.secondary))
+      sdk.Label(id = "caption-vl", text = "SOURCE                           UNIT", x = 450, y = 225, width = 180, height = 18)
+      timeline main { at 0 reveal caption-h duration 160 after caption-h reveal caption-chart duration 220 after caption-chart reveal caption-hero duration 180 after caption-hero reveal caption-hero-l duration 140 after caption-hero-l stagger targets [caption-v1, caption-v2] step 100 duration 180 after caption-v2 reveal caption-vl duration 140 }
+    }
+  }
+
+  slide "sdk.codeBlock" {
+    eyebrow: "TYPOGRAPHY · CODE BLOCK"
+    title: "Code block preserves technical syntax"
+    lede: "Use code blocks for copyable commands and compact implementation evidence."
+    narration: "The hero presents a production SDK invocation. Variants compare a shell command and configuration fragment."
+    caption: "Keep examples short enough to read at presentation scale."
+    render: @scene {
+      sdk.Header(id = "code-h", title = "SDK.CODEBLOCK", caption = "monospace evidence", x = 18, y = 16, width = 664, height = 44)
+      sdk.CodeBlock(id = "code-hero", text = "sdk.Progress(\n  value = 0.72\n)", x = 44, y = 92, width = 350, height = 170, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Label(id = "code-hero-l", text = "HERO · FLOW INVOCATION", x = 44, y = 278, width = 350, height = 18)
+      sdk.CodeBlock(id = "code-v1", text = "npm run verify", x = 435, y = 100, width = 215, height = 70)
+      sdk.CodeBlock(id = "code-v2", text = "workers: 8", x = 435, y = 195, width = 215, height = 70, variant = "info")
+      sdk.Label(id = "code-vl", text = "SHELL                              CONFIG", x = 435, y = 280, width = 215, height = 18)
+      timeline main { at 0 reveal code-h duration 160 after code-h reveal code-hero duration 240 after code-hero reveal code-hero-l duration 140 after code-hero-l stagger targets [code-v1, code-v2] step 100 duration 180 after code-v2 reveal code-vl duration 140 }
+    }
+  }
+
+  slide "sdk.quote" {
+    eyebrow: "TYPOGRAPHY · QUOTE"
+    title: "Quote isolates a meaningful voice"
+    lede: "Use quotations for principles and testimony that deserve a deliberate pause."
+    narration: "The hero presents a design principle; variants compare customer feedback and an operational maxim."
+    caption: "A quote should add authority, not decorative italics."
+    render: @scene {
+      sdk.Header(id = "quote-h", title = "SDK.QUOTE", caption = "emphasized voice", x = 18, y = 16, width = 664, height = 44)
+      sdk.Quote(id = "quote-hero", text = "Measure the system users actually experience.", x = 44, y = 105, width = 350, height = 140, variant = "info")
+      sdk.Label(id = "quote-hero-l", text = "HERO · PRODUCT PRINCIPLE", x = 44, y = 262, width = 350, height = 18)
+      sdk.Quote(id = "quote-v1", text = "The graph made bottlenecks obvious.", x = 435, y = 105, width = 215, height = 80)
+      sdk.Quote(id = "quote-v2", text = "Trust evidence over intuition.", x = 435, y = 205, width = 215, height = 80, variant = "success")
+      sdk.Label(id = "quote-vl", text = "TESTIMONY                         MAXIM", x = 435, y = 302, width = 215, height = 18)
+      timeline main { at 0 reveal quote-h duration 160 after quote-h reveal quote-hero duration 240 after quote-hero reveal quote-hero-l duration 140 after quote-hero-l stagger targets [quote-v1, quote-v2] step 100 duration 180 after quote-v2 reveal quote-vl duration 140 }
+    }
+  }
+
+  slide "sdk.list" {
+    eyebrow: "TYPOGRAPHY · LIST"
+    title: "List turns peers into a scan path"
+    lede: "Use lists for ordered attention when each item has equal structural weight."
+    narration: "The hero is a launch checklist; compact variants show two-item guidance and a longer operational set."
+    caption: "Use parallel phrasing and keep item count intentional."
+    render: @scene {
+      sdk.Header(id = "list-h", title = "SDK.LIST", caption = "scan-friendly collection", x = 18, y = 16, width = 664, height = 44)
+      sdk.List(id = "list-hero", title = "Launch checklist", items = ["Pin model revision", "Warm the endpoint", "Verify artifacts"], gap = 8, x = 44, y = 96, width = 350, height = 170)
+      sdk.Label(id = "list-hero-l", text = "HERO · CHECKLIST", x = 44, y = 282, width = 350, height = 18)
+      sdk.List(id = "list-v1", items = ["Inspect", "Compare"], x = 435, y = 105, width = 215, height = 72)
+      sdk.List(id = "list-v2", items = ["Queue", "Run", "Export"], x = 435, y = 195, width = 215, height = 96)
+      sdk.Label(id = "list-vl", text = "COMPACT                           EXTENDED", x = 435, y = 305, width = 215, height = 18)
+      timeline main { at 0 reveal list-h duration 160 after list-h reveal list-hero duration 240 after list-hero reveal list-hero-l duration 140 after list-hero-l stagger targets [list-v1, list-v2] step 100 duration 180 after list-v2 reveal list-vl duration 140 }
+    }
+  }
+
+  slide "sdk.keyValue" {
+    eyebrow: "TYPOGRAPHY · KEY VALUE"
+    title: "Key-value pairs make one fact explicit"
+    lede: "Use a key-value row for compact metadata with a clear label and answer."
+    narration: "The hero highlights a model revision; variants show region and protocol metadata."
+    caption: "Keys orient; values carry the decision."
+    render: @scene {
+      sdk.Header(id = "kv-h", title = "SDK.KEYVALUE", caption = "single metadata fact", x = 18, y = 16, width = 664, height = 44)
+      sdk.KeyValue(id = "kv-hero", entries = [{ key: "Model", value: "Llama 3.1 70B" }], x = 44, y = 120, width = 350, height = 72)
+      sdk.Label(id = "kv-hero-l", text = "HERO · MODEL IDENTITY", x = 44, y = 215, width = 350, height = 18)
+      sdk.KeyValue(id = "kv-v1", entries = [{ key: "Region", value: "us-west" }], x = 435, y = 115, width = 215, height = 42)
+      sdk.KeyValue(id = "kv-v2", entries = [{ key: "Protocol", value: "HTTP/2" }], x = 435, y = 185, width = 215, height = 42)
+      sdk.Label(id = "kv-vl", text = "LOCATION                         TRANSPORT", x = 435, y = 245, width = 215, height = 18)
+      timeline main { at 0 reveal kv-h duration 160 after kv-h reveal kv-hero duration 240 after kv-hero reveal kv-hero-l duration 140 after kv-hero-l stagger targets [kv-v1, kv-v2] step 100 duration 180 after kv-v2 reveal kv-vl duration 140 }
+    }
+  }
+
+  slide "sdk.propertyList" {
+    eyebrow: "TYPOGRAPHY · PROPERTY LIST"
+    title: "Property list groups related metadata"
+    lede: "Use a property list when several labeled facts belong to one object."
+    narration: "The hero describes an endpoint profile; variants compare runtime and artifact summaries."
+    caption: "Group only properties that answer one question."
+    render: @scene {
+      sdk.Header(id = "props-h", title = "SDK.PROPERTYLIST", caption = "metadata group", x = 18, y = 16, width = 664, height = 44)
+      sdk.PropertyList(id = "props-hero", title = "Endpoint", entries = [{ key: "Model", value: "Nemotron" }, { key: "Region", value: "us-east" }, { key: "Mode", value: "streaming" }], gap = 6, x = 44, y = 90, width = 350, height = 185)
+      sdk.Label(id = "props-hero-l", text = "HERO · ENDPOINT PROFILE", x = 44, y = 290, width = 350, height = 18)
+      sdk.PropertyList(id = "props-v1", items = ["workers: 8", "dispatch: global"], x = 435, y = 100, width = 215, height = 90)
+      sdk.PropertyList(id = "props-v2", items = ["records: jsonl", "summary: json"], x = 435, y = 210, width = 215, height = 90)
+      sdk.Label(id = "props-vl", text = "RUNTIME                         ARTIFACTS", x = 435, y = 315, width = 215, height = 18)
+      timeline main { at 0 reveal props-h duration 160 after props-h reveal props-hero duration 240 after props-hero reveal props-hero-l duration 140 after props-hero-l stagger targets [props-v1, props-v2] step 100 duration 180 after props-v2 reveal props-vl duration 140 }
+    }
+  }
+
+  slide "Status and identity" {
+    eyebrow: "CHAPTER 3 · STATUS"
+    title: "Make state recognizable at a glance"
+    lede: "Badges, dots, avatars, alerts, cards, and empty states communicate identity and operational condition."
+    narration: "Status primitives combine restrained color with explicit labels so state remains understandable."
+    caption: "Seven primitives · identity, state, attention, recovery."
+    render: @scene {
+      sdk.Header(id = "c3-h", title = "STATUS + IDENTITY", caption = "03 / 07", x = 18, y = 16, width = 664, height = 44)
+      sdk.StatusCard(id = "c3-card", title = "Gateway healthy", variant = "success", x = 80, y = 120, width = 270, height = 120)
+      sdk.Avatar(id = "c3-avatar", label = "operator", icon = "user", variant = "info", x = 420, y = 125, width = 90, height = 90)
+      sdk.Badge(id = "c3-badge", label = "ON CALL", variant = "warning", x = 520, y = 155, width = 100, height = 28)
+      timeline main { at 0 reveal c3-h duration 180 after c3-h reveal c3-card duration 220 after c3-card reveal c3-avatar duration 200 after c3-avatar reveal c3-badge duration 180 }
+    }
+  }
+
+  slide "sdk.badge" {
+    eyebrow: "STATUS · BADGE"
+    title: "Badge labels compact state"
+    lede: "Use badges for short categorical labels, not sentences."
+    narration: "The hero marks a production release; variants demonstrate neutral, success, warning, and danger states."
+    caption: "Color reinforces the label; it never replaces it."
+    render: @scene {
+      sdk.Header(id = "badge-h", title = "SDK.BADGE", caption = "compact category", x = 18, y = 16, width = 664, height = 44)
+      sdk.Badge(id = "badge-hero", label = "PRODUCTION", variant = "success", x = 90, y = 130, width = 250, height = 64)
+      sdk.Label(id = "badge-hero-l", text = "HERO · RELEASE CHANNEL", x = 70, y = 220, width = 290, height = 18)
+      sdk.Badge(id = "badge-v1", label = "INFO", variant = "info", x = 430, y = 120, width = 90, height = 28)
+      sdk.Badge(id = "badge-v2", label = "BETA", variant = "warning", x = 540, y = 120, width = 90, height = 28)
+      sdk.Badge(id = "badge-v3", label = "BLOCKED", variant = "danger", x = 485, y = 190, width = 100, height = 28)
+      sdk.Label(id = "badge-vl", text = "INFO · WARNING · DANGER", x = 440, y = 240, width = 190, height = 18)
+      timeline main { at 0 reveal badge-h duration 160 after badge-h reveal badge-hero duration 240 after badge-hero reveal badge-hero-l duration 140 after badge-hero-l stagger targets [badge-v1, badge-v2, badge-v3] step 90 duration 180 after badge-v3 reveal badge-vl duration 140 }
+    }
+  }
+
+  slide "sdk.statusDot" {
+    eyebrow: "STATUS · DOT"
+    title: "Status dot adds a minimal live signal"
+    lede: "Attach a dot to nearby text when space is tight and the state vocabulary is familiar."
+    narration: "The hero shows a healthy endpoint signal; variants compare warning, danger, and informational states."
+    caption: "A dot needs an adjacent label or accessible name."
+    render: @scene {
+      sdk.Header(id = "dot-h", title = "SDK.STATUSDOT", caption = "minimal state signal", x = 18, y = 16, width = 664, height = 44)
+      sdk.StatusDot(id = "dot-hero", label = "endpoint healthy", variant = "success", x = 120, y = 130, width = 70, height = 70)
+      sdk.Title(id = "dot-copy", text = "Endpoint healthy", x = 210, y = 145, width = 190, height = 32)
+      sdk.Label(id = "dot-hero-l", text = "HERO · LABELED HEALTH", x = 90, y = 230, width = 300, height = 18)
+      sdk.StatusDot(id = "dot-v1", label = "warning", variant = "warning", x = 455, y = 130, width = 28, height = 28)
+      sdk.StatusDot(id = "dot-v2", label = "danger", variant = "danger", x = 520, y = 130, width = 28, height = 28)
+      sdk.StatusDot(id = "dot-v3", label = "info", variant = "info", x = 585, y = 130, width = 28, height = 28)
+      sdk.Label(id = "dot-vl", text = "WARN       ERROR       INFO", x = 440, y = 190, width = 200, height = 18)
+      timeline main { at 0 reveal dot-h duration 160 after dot-h reveal dot-hero duration 220 after dot-hero reveal dot-copy duration 160 after dot-copy reveal dot-hero-l duration 140 after dot-hero-l stagger targets [dot-v1, dot-v2, dot-v3] step 90 duration 180 after dot-v3 reveal dot-vl duration 140 }
+    }
+  }
+
+  slide "sdk.avatar" {
+    eyebrow: "STATUS · AVATAR"
+    title: "Avatar gives a person or agent a stable marker"
+    lede: "Use avatars where ownership, authorship, or presence matters."
+    narration: "The hero represents the on-call owner; variants distinguish operator, service, and automated identities."
+    caption: "Identity should be recognizable even without a photo."
+    render: @scene {
+      sdk.Header(id = "avatar-h", title = "SDK.AVATAR", caption = "identity marker", x = 18, y = 16, width = 664, height = 44)
+      sdk.Avatar(id = "avatar-hero", label = "Mina, on call", icon = "user", variant = "info", x = 120, y = 105, width = 130, height = 130)
+      sdk.Label(id = "avatar-hero-l", text = "HERO · ON-CALL OWNER", x = 80, y = 255, width = 220, height = 18)
+      sdk.Avatar(id = "avatar-v1", label = "operator", icon = "user", variant = "neutral", x = 430, y = 120, width = 58, height = 58)
+      sdk.Avatar(id = "avatar-v2", label = "service", icon = "server", variant = "success", x = 515, y = 120, width = 58, height = 58)
+      sdk.Avatar(id = "avatar-v3", label = "automation", icon = "code", variant = "warning", x = 600, y = 120, width = 58, height = 58)
+      sdk.Label(id = "avatar-vl", text = "HUMAN       SERVICE       AGENT", x = 420, y = 205, width = 240, height = 18)
+      timeline main { at 0 reveal avatar-h duration 160 after avatar-h reveal avatar-hero duration 240 after avatar-hero reveal avatar-hero-l duration 140 after avatar-hero-l stagger targets [avatar-v1, avatar-v2, avatar-v3] step 90 duration 180 after avatar-v3 reveal avatar-vl duration 140 }
+    }
+  }
+
+  slide "sdk.iconLabel" {
+    eyebrow: "STATUS · ICON LABEL"
+    title: "Icon label binds symbol to meaning"
+    lede: "Use icon labels for compact actions and metadata that still require words."
+    narration: "The hero marks a secure endpoint; variants show verified, storage, and cloud contexts."
+    caption: "The label disambiguates the icon."
+    render: @scene {
+      sdk.Header(id = "il-h", title = "SDK.ICONLABEL", caption = "symbol + words", x = 18, y = 16, width = 664, height = 44)
+      sdk.IconLabel(id = "il-hero", label = "Private endpoint", icon = "lock", variant = "success", x = 54, y = 125, width = 340, height = 70)
+      sdk.Label(id = "il-hero-l", text = "HERO · SECURITY CONTEXT", x = 54, y = 220, width = 340, height = 18)
+      sdk.IconLabel(id = "il-v1", label = "Verified", icon = "check", x = 430, y = 105, width = 210, height = 42)
+      sdk.IconLabel(id = "il-v2", label = "Vector store", icon = "database", x = 430, y = 170, width = 210, height = 42)
+      sdk.IconLabel(id = "il-v3", label = "Cloud", icon = "cloud", x = 430, y = 235, width = 210, height = 42)
+      sdk.Label(id = "il-vl", text = "STATE · RESOURCE · LOCATION", x = 430, y = 295, width = 210, height = 18)
+      timeline main { at 0 reveal il-h duration 160 after il-h reveal il-hero duration 240 after il-hero reveal il-hero-l duration 140 after il-hero-l stagger targets [il-v1, il-v2, il-v3] step 90 duration 180 after il-v3 reveal il-vl duration 140 }
+    }
+  }
+
+  slide "sdk.alert" {
+    eyebrow: "STATUS · ALERT"
+    title: "Alert interrupts with actionable state"
+    lede: "Use alerts for conditions the reader must notice and understand now."
+    narration: "The hero warns about capacity. Variants compare informational, successful, and dangerous outcomes."
+    caption: "State, message, and next action belong together."
+    render: @scene {
+      sdk.Header(id = "alert-h", title = "SDK.ALERT", caption = "actionable interruption", x = 18, y = 16, width = 664, height = 44)
+      sdk.Alert(id = "alert-hero", title = "Capacity below safety margin", variant = "warning", x = 44, y = 105, width = 350, height = 140)
+      sdk.Label(id = "alert-hero-l", text = "HERO · CAPACITY WARNING", x = 44, y = 265, width = 350, height = 18)
+      sdk.Alert(id = "alert-v1", title = "Run queued", variant = "info", x = 430, y = 95, width = 220, height = 62)
+      sdk.Alert(id = "alert-v2", title = "Export complete", variant = "success", x = 430, y = 175, width = 220, height = 62)
+      sdk.Alert(id = "alert-v3", title = "Connection failed", variant = "danger", x = 430, y = 255, width = 220, height = 62)
+      sdk.Label(id = "alert-vl", text = "INFO · SUCCESS · DANGER", x = 430, y = 330, width = 220, height = 18)
+      timeline main { at 0 reveal alert-h duration 160 after alert-h reveal alert-hero duration 240 after alert-hero reveal alert-hero-l duration 140 after alert-hero-l stagger targets [alert-v1, alert-v2, alert-v3] step 90 duration 180 after alert-v3 reveal alert-vl duration 140 }
+    }
+  }
+
+  slide "sdk.statusCard" {
+    eyebrow: "STATUS · STATUS CARD"
+    title: "Status card combines state and context"
+    lede: "Use status cards for persistent health summaries that need more room than a badge."
+    narration: "The hero summarizes a healthy gateway; variants compare degraded and failed services."
+    caption: "Cards are persistent summaries; alerts are interruptions."
+    render: @scene {
+      sdk.Header(id = "sc-h", title = "SDK.STATUSCARD", caption = "persistent health summary", x = 18, y = 16, width = 664, height = 44)
+      sdk.StatusCard(id = "sc-hero", title = "Gateway · healthy", variant = "success", x = 44, y = 100, width = 350, height = 155)
+      sdk.Label(id = "sc-hero-l", text = "HERO · PRIMARY SERVICE", x = 44, y = 272, width = 350, height = 18)
+      sdk.StatusCard(id = "sc-v1", title = "Tokenizer · degraded", variant = "warning", x = 430, y = 110, width = 220, height = 82)
+      sdk.StatusCard(id = "sc-v2", title = "Exporter · failed", variant = "danger", x = 430, y = 215, width = 220, height = 82)
+      sdk.Label(id = "sc-vl", text = "DEGRADED                         FAILED", x = 430, y = 312, width = 220, height = 18)
+      timeline main { at 0 reveal sc-h duration 160 after sc-h reveal sc-hero duration 240 after sc-hero reveal sc-hero-l duration 140 after sc-hero-l stagger targets [sc-v1, sc-v2] step 100 duration 180 after sc-v2 reveal sc-vl duration 140 }
+    }
+  }
+
+  slide "sdk.emptyState" {
+    eyebrow: "STATUS · EMPTY STATE"
+    title: "Empty state explains absence and recovery"
+    lede: "Use an empty state to say what is missing and what the reader can do next."
+    narration: "The hero handles a workspace with no runs; variants distinguish no search results and no saved reports."
+    caption: "Absence needs explanation, not a blank panel."
+    render: @scene {
+      sdk.Header(id = "empty-h", title = "SDK.EMPTYSTATE", caption = "purposeful absence", x = 18, y = 16, width = 664, height = 44)
+      sdk.EmptyState(id = "empty-hero", title = "No benchmark runs yet", icon = "file", variant = "info", x = 44, y = 85, width = 350, height = 200)
+      sdk.Label(id = "empty-hero-l", text = "HERO · FIRST-RUN STATE", x = 44, y = 300, width = 350, height = 18)
+      sdk.EmptyState(id = "empty-v1", title = "No matches", icon = "file", x = 430, y = 95, width = 220, height = 105)
+      sdk.EmptyState(id = "empty-v2", title = "No reports saved", icon = "database", x = 430, y = 220, width = 220, height = 105)
+      sdk.Label(id = "empty-vl", text = "SEARCH                           LIBRARY", x = 430, y = 338, width = 220, height = 18)
+      timeline main { at 0 reveal empty-h duration 160 after empty-h reveal empty-hero duration 240 after empty-hero reveal empty-hero-l duration 140 after empty-hero-l stagger targets [empty-v1, empty-v2] step 100 duration 180 after empty-v2 reveal empty-vl duration 140 }
+    }
+  }
+
+  slide "Data display" {
+    eyebrow: "CHAPTER 4 · DATA"
+    title: "Turn measurements into decisions"
+    lede: "Stats, metrics, tables, cells, and tags reveal values at the right level of detail."
+    narration: "Data display components move from compact summaries to structured comparisons."
+    caption: "Six primitives · summary, trend, rows, cells, taxonomy."
+    render: @scene {
+      sdk.Header(id = "c4-h", title = "DATA DISPLAY", caption = "04 / 07", x = 18, y = 16, width = 664, height = 44)
+      sdk.Stat(id = "c4-stat", title = "Throughput", items = ["1,284 req/s", "+8.2%"], x = 70, y = 120, width = 180, height = 110)
+      sdk.Metric(id = "c4-metric", title = "P95 latency", items = ["18.7 ms", "stable"], x = 270, y = 120, width = 190, height = 110)
+      sdk.TagList(id = "c4-tags", items = ["streaming", "h2", "gpu"], x = 480, y = 145, width = 52, height = 48)
+      timeline main { at 0 reveal c4-h duration 180 after c4-h reveal c4-stat duration 220 after c4-stat reveal c4-metric duration 200 after c4-metric reveal c4-tags duration 180 }
+    }
+  }
+
+  slide "sdk.stat" {
+    eyebrow: "DATA · STAT"
+    title: "Stat gives one number immediate hierarchy"
+    lede: "Use a stat when the current value matters more than its history."
+    narration: "The hero spotlights throughput; variants compare request count and active workers."
+    caption: "Label, value, and one supporting fact are enough."
+    render: @scene {
+      sdk.Header(id = "stat-h", title = "SDK.STAT", caption = "single-number summary", x = 18, y = 16, width = 664, height = 44)
+      sdk.Stat(id = "stat-hero", title = "Throughput", items = ["1,284 req/s", "+8.2% vs baseline"], x = 44, y = 95, width = 350, height = 165)
+      sdk.Label(id = "stat-hero-l", text = "HERO · PRIMARY KPI", x = 44, y = 278, width = 350, height = 18)
+      sdk.Stat(id = "stat-v1", title = "Requests", items = ["84,211"], x = 430, y = 105, width = 220, height = 82)
+      sdk.Stat(id = "stat-v2", title = "Workers", items = ["8 active"], x = 430, y = 210, width = 220, height = 82)
+      sdk.Label(id = "stat-vl", text = "COUNT                           CAPACITY", x = 430, y = 308, width = 220, height = 18)
+      timeline main { at 0 reveal stat-h duration 160 after stat-h reveal stat-hero duration 240 after stat-hero reveal stat-hero-l duration 140 after stat-hero-l stagger targets [stat-v1, stat-v2] step 100 duration 180 after stat-v2 reveal stat-vl duration 140 }
+    }
+  }
+
+  slide "sdk.metric" {
+    eyebrow: "DATA · METRIC"
+    title: "Metric pairs a measure with interpretation"
+    lede: "Use metrics for values whose unit and operational meaning must travel together."
+    narration: "The hero frames p95 latency; variants show token rate and error ratio."
+    caption: "Units and interpretation are part of the metric."
+    render: @scene {
+      sdk.Header(id = "metric-h", title = "SDK.METRIC", caption = "measure + meaning", x = 18, y = 16, width = 664, height = 44)
+      sdk.Metric(id = "metric-hero", title = "P95 latency", items = ["18.7 ms", "within 25 ms SLO"], x = 44, y = 95, width = 350, height = 165)
+      sdk.Label(id = "metric-hero-l", text = "HERO · LATENCY SLO", x = 44, y = 278, width = 350, height = 18)
+      sdk.Metric(id = "metric-v1", title = "Output rate", items = ["92 tok/s"], x = 430, y = 105, width = 220, height = 82)
+      sdk.Metric(id = "metric-v2", title = "Errors", items = ["0.04%", "low"], x = 430, y = 210, width = 220, height = 82)
+      sdk.Label(id = "metric-vl", text = "RATE                              RATIO", x = 430, y = 308, width = 220, height = 18)
+      timeline main { at 0 reveal metric-h duration 160 after metric-h reveal metric-hero duration 240 after metric-hero reveal metric-hero-l duration 140 after metric-hero-l stagger targets [metric-v1, metric-v2] step 100 duration 180 after metric-v2 reveal metric-vl duration 140 }
+    }
+  }
+
+  slide "sdk.table" {
+    eyebrow: "DATA · TABLE"
+    title: "Table aligns comparable records"
+    lede: "Use tables when readers must compare the same fields across several entities."
+    narration: "The hero establishes a benchmark comparison header; variants show compact capacity and artifact tables."
+    caption: "Columns should support comparison, not merely storage."
+    render: @scene {
+      sdk.Header(id = "table-h", title = "SDK.TABLE", caption = "structured comparison", x = 18, y = 16, width = 664, height = 44)
+      sdk.Table(id = "table-hero", title = "Benchmark comparison", columns = ["Model", "P95", "Req/s"], x = 35, y = 90, width = 390, height = 190)
+      sdk.Label(id = "table-hero-l", text = "HERO · PERFORMANCE MATRIX", x = 35, y = 295, width = 390, height = 18)
+      sdk.Table(id = "table-v1", title = "Capacity", columns = ["GPU", "Load"], x = 450, y = 100, width = 200, height = 90)
+      sdk.Table(id = "table-v2", title = "Artifacts", columns = ["Type", "Size"], x = 450, y = 215, width = 200, height = 90)
+      sdk.Label(id = "table-vl", text = "CAPACITY                        OUTPUTS", x = 450, y = 320, width = 200, height = 18)
+      timeline main { at 0 reveal table-h duration 160 after table-h reveal table-hero duration 240 after table-hero reveal table-hero-l duration 140 after table-hero-l stagger targets [table-v1, table-v2] step 100 duration 180 after table-v2 reveal table-vl duration 140 }
+    }
+  }
+
+  slide "sdk.tableRow" {
+    eyebrow: "DATA · TABLE ROW"
+    title: "Table row keeps cells in one comparison lane"
+    lede: "Use row slots to align related cells and expose stable cell ports."
+    narration: "The hero is a benchmark result row; variants compare header and highlighted summary rows."
+    caption: "Rows own horizontal alignment; cells own content."
+    render: @scene {
+      sdk.Header(id = "row-h", title = "SDK.TABLEROW", caption = "horizontal record", x = 18, y = 16, width = 664, height = 44)
+      sdk.TableRow(id = "row-hero", label = "Llama benchmark row", x = 44, y = 120, width = 350, height = 54) { cells { sdk.TableCell(id = "row-hc1", label = "Llama 70B") sdk.TableCell(id = "row-hc2", label = "18.7 ms") sdk.TableCell(id = "row-hc3", label = "1,284/s") } }
+      sdk.Label(id = "row-hero-l", text = "HERO · RESULT RECORD", x = 44, y = 198, width = 350, height = 18)
+      sdk.TableRow(id = "row-v1", label = "header row", x = 430, y = 110, width = 220, height = 42) { cells { sdk.TableCell(id = "row-v1c1", label = "MODEL") sdk.TableCell(id = "row-v1c2", label = "P95") } }
+      sdk.TableRow(id = "row-v2", label = "summary row", x = 430, y = 185, width = 220, height = 42) { cells { sdk.TableCell(id = "row-v2c1", label = "TOTAL", surfaceRole = theme(accent.green)) sdk.TableCell(id = "row-v2c2", label = "84K", surfaceRole = theme(accent.green)) } }
+      sdk.Label(id = "row-vl", text = "HEADER                           SUMMARY", x = 430, y = 245, width = 220, height = 18)
+      timeline main { at 0 reveal row-h duration 160 after row-h reveal row-hero duration 240 after row-hero reveal row-hero-l duration 140 after row-hero-l stagger targets [row-v1, row-v2] step 100 duration 180 after row-v2 reveal row-vl duration 140 }
+    }
+  }
+
+  slide "sdk.tableCell" {
+    eyebrow: "DATA · TABLE CELL"
+    title: "Table cell frames one field"
+    lede: "Use cells as semantic containers for labels, values, or richer child content."
+    narration: "The hero carries a model name; variants compare numeric and status-bearing cells."
+    caption: "A cell is a content boundary, not a whole table."
+    render: @scene {
+      sdk.Header(id = "cell-h", title = "SDK.TABLECELL", caption = "single table field", x = 18, y = 16, width = 664, height = 44)
+      sdk.TableCell(id = "cell-hero", label = "Model identity", x = 44, y = 110, width = 350, height = 90, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) { children { sdk.Title(id = "cell-title", text = "Llama 3.1 70B", width = 300, height = 36) } }
+      sdk.Label(id = "cell-hero-l", text = "HERO · RICH IDENTITY CELL", x = 44, y = 225, width = 350, height = 18)
+      sdk.TableCell(id = "cell-v1", label = "18.7 ms", x = 430, y = 110, width = 100, height = 54, surfaceRole = theme(surface.elevated))
+      sdk.TableCell(id = "cell-v2", label = "healthy", x = 550, y = 110, width = 100, height = 54, surfaceRole = theme(accent.green))
+      sdk.Label(id = "cell-vl", text = "VALUE                         STATUS", x = 430, y = 185, width = 220, height = 18)
+      timeline main { at 0 reveal cell-h duration 160 after cell-h reveal cell-hero duration 240 after cell-hero reveal cell-hero-l duration 140 after cell-hero-l stagger targets [cell-v1, cell-v2] step 100 duration 180 after cell-v2 reveal cell-vl duration 140 }
+    }
+  }
+
+  slide "sdk.tagList" {
+    eyebrow: "DATA · TAG LIST"
+    title: "Tag list exposes a compact taxonomy"
+    lede: "Use tag lists for unordered facets, capabilities, and filters."
+    narration: "The hero summarizes an endpoint profile; variants compare protocol and artifact facets."
+    caption: "Tags classify; they do not narrate."
+    render: @scene {
+      sdk.Header(id = "tags-h", title = "SDK.TAGLIST", caption = "compact facets", x = 18, y = 16, width = 664, height = 44)
+      sdk.TagList(id = "tags-hero", title = "Endpoint capabilities", items = ["streaming", "tools", "vision", "json"], gap = 10, x = 44, y = 120, width = 82, height = 54)
+      sdk.Label(id = "tags-hero-l", text = "HERO · CAPABILITY TAXONOMY", x = 44, y = 200, width = 350, height = 18)
+      sdk.TagList(id = "tags-v1", items = ["HTTP", "SSE"], gap = 6, x = 430, y = 110, width = 100, height = 42)
+      sdk.TagList(id = "tags-v2", items = ["JSONL", "CSV", "OTLP"], gap = 6, x = 430, y = 185, width = 68, height = 42)
+      sdk.Label(id = "tags-vl", text = "PROTOCOL                         OUTPUTS", x = 430, y = 245, width = 220, height = 18)
+      timeline main { at 0 reveal tags-h duration 160 after tags-h reveal tags-hero duration 240 after tags-hero reveal tags-hero-l duration 140 after tags-hero-l stagger targets [tags-v1, tags-v2] step 100 duration 180 after tags-v2 reveal tags-vl duration 140 }
+    }
+  }
+
+  slide "Navigation and actions" {
+    eyebrow: "CHAPTER 5 · NAVIGATION"
+    title: "Show location and progression"
+    lede: "Breadcrumbs, tabs, pagination, and timelines orient readers across spaces and sequences."
+    narration: "Navigation components reveal where the reader is, what alternatives exist, and what happened over time."
+    caption: "Five primitives · location, mode, page, sequence, event."
+    render: @scene {
+      sdk.Header(id = "c5-h", title = "NAVIGATION + ACTIONS", caption = "05 / 07", x = 18, y = 16, width = 664, height = 44)
+      sdk.Breadcrumb(id = "c5-bc", items = ["Workspace", "Benchmarks", "Run 42"], x = 70, y = 110, width = 150, height = 32)
+      sdk.Tabs(id = "c5-tabs", items = ["Overview", "Metrics", "Artifacts"], x = 70, y = 175, width = 120, height = 38)
+      sdk.Pagination(id = "c5-pages", items = ["1", "2", "3", "…", "12"], x = 70, y = 250, width = 82, height = 32)
+      timeline main { at 0 reveal c5-h duration 180 after c5-h reveal c5-bc duration 220 after c5-bc reveal c5-tabs duration 200 after c5-tabs reveal c5-pages duration 180 }
+    }
+  }
+
+  slide "sdk.breadcrumb" {
+    eyebrow: "NAVIGATION · BREADCRUMB"
+    title: "Breadcrumb preserves hierarchical location"
+    lede: "Use breadcrumbs when readers can move back through nested scopes."
+    narration: "The hero locates a benchmark run; variants compare a shallow product path and a deeper artifact path."
+    caption: "Show hierarchy, not browser history."
+    render: @scene {
+      sdk.Header(id = "bc-h", title = "SDK.BREADCRUMB", caption = "hierarchical location", x = 18, y = 16, width = 664, height = 44)
+      sdk.Breadcrumb(id = "bc-hero", items = ["Workspace", "Benchmarks", "Run 42"], gap = 12, x = 44, y = 130, width = 105, height = 38)
+      sdk.Label(id = "bc-hero-l", text = "HERO · RUN LOCATION", x = 44, y = 195, width = 350, height = 18)
+      sdk.Breadcrumb(id = "bc-v1", items = ["Home", "Models"], x = 430, y = 110, width = 100, height = 30)
+      sdk.Breadcrumb(id = "bc-v2", items = ["Runs", "42", "Artifacts", "records"], x = 430, y = 180, width = 48, height = 30)
+      sdk.Label(id = "bc-vl", text = "SHALLOW                           DEEP", x = 430, y = 230, width = 220, height = 18)
+      timeline main { at 0 reveal bc-h duration 160 after bc-h reveal bc-hero duration 240 after bc-hero reveal bc-hero-l duration 140 after bc-hero-l stagger targets [bc-v1, bc-v2] step 100 duration 180 after bc-v2 reveal bc-vl duration 140 }
+    }
+  }
+
+  slide "sdk.tabs" {
+    eyebrow: "NAVIGATION · TABS"
+    title: "Tabs switch peer views in place"
+    lede: "Use tabs for a small set of sibling views with one active context."
+    narration: "The hero switches a run workspace; variants compare compact two-way and broader four-way navigation."
+    caption: "Tabs represent peers, not a workflow."
+    render: @scene {
+      sdk.Header(id = "tabs-h", title = "SDK.TABS", caption = "peer view switcher", x = 18, y = 16, width = 664, height = 44)
+      sdk.Tabs(id = "tabs-hero", items = ["Overview", "Metrics", "Artifacts"], gap = 16, x = 44, y = 125, width = 100, height = 44)
+      sdk.Label(id = "tabs-hero-l", text = "HERO · RUN WORKSPACE", x = 44, y = 195, width = 350, height = 18)
+      sdk.Tabs(id = "tabs-v1", items = ["Live", "History"], x = 430, y = 110, width = 100, height = 34)
+      sdk.Tabs(id = "tabs-v2", items = ["All", "Healthy", "Warning", "Failed"], x = 430, y = 180, width = 48, height = 34)
+      sdk.Label(id = "tabs-vl", text = "BINARY                           FILTER SET", x = 430, y = 235, width = 220, height = 18)
+      timeline main { at 0 reveal tabs-h duration 160 after tabs-h reveal tabs-hero duration 240 after tabs-hero reveal tabs-hero-l duration 140 after tabs-hero-l stagger targets [tabs-v1, tabs-v2] step 100 duration 180 after tabs-v2 reveal tabs-vl duration 140 }
+    }
+  }
+
+  slide "sdk.pagination" {
+    eyebrow: "NAVIGATION · PAGINATION"
+    title: "Pagination bounds a long result set"
+    lede: "Use pagination when readers need stable position across many result pages."
+    narration: "The hero navigates benchmark history; variants compare short and truncated page ranges."
+    caption: "Keep the current position and total scope visible."
+    render: @scene {
+      sdk.Header(id = "pages-h", title = "SDK.PAGINATION", caption = "bounded result navigation", x = 18, y = 16, width = 664, height = 44)
+      sdk.Pagination(id = "pages-hero", items = ["Prev", "4", "5", "6", "Next"], gap = 12, x = 44, y = 125, width = 60, height = 42)
+      sdk.Label(id = "pages-hero-l", text = "HERO · BENCHMARK HISTORY", x = 44, y = 195, width = 350, height = 18)
+      sdk.Pagination(id = "pages-v1", items = ["1", "2", "3"], x = 430, y = 110, width = 62, height = 32)
+      sdk.Pagination(id = "pages-v2", items = ["1", "…", "12"], x = 430, y = 180, width = 62, height = 32)
+      sdk.Label(id = "pages-vl", text = "SHORT                           TRUNCATED", x = 430, y = 235, width = 220, height = 18)
+      timeline main { at 0 reveal pages-h duration 160 after pages-h reveal pages-hero duration 240 after pages-hero reveal pages-hero-l duration 140 after pages-hero-l stagger targets [pages-v1, pages-v2] step 100 duration 180 after pages-v2 reveal pages-vl duration 140 }
+    }
+  }
+
+  slide "sdk.timeline" {
+    eyebrow: "NAVIGATION · TIMELINE"
+    title: "Timeline organizes events as a sequence"
+    lede: "Use timelines when order and progression matter more than tabular comparison."
+    narration: "The hero traces a benchmark lifecycle; variants compare deployment and incident sequences."
+    caption: "Events should explain change over time."
+    render: @scene {
+      sdk.Header(id = "timeline-h", title = "SDK.TIMELINE", caption = "ordered events", x = 18, y = 16, width = 664, height = 44)
+      sdk.Timeline(id = "timeline-hero", title = "Benchmark lifecycle", items = ["Queued · 09:40", "Running · 09:41", "Complete · 09:47"], gap = 8, x = 44, y = 90, width = 350, height = 195)
+      sdk.Label(id = "timeline-hero-l", text = "HERO · RUN LIFECYCLE", x = 44, y = 300, width = 350, height = 18)
+      sdk.Timeline(id = "timeline-v1", items = ["Build", "Deploy"], x = 430, y = 100, width = 220, height = 90)
+      sdk.Timeline(id = "timeline-v2", items = ["Alert", "Mitigate", "Resolve"], x = 430, y = 210, width = 220, height = 105)
+      sdk.Label(id = "timeline-vl", text = "DEPLOYMENT                     INCIDENT", x = 430, y = 330, width = 220, height = 18)
+      timeline main { at 0 reveal timeline-h duration 160 after timeline-h reveal timeline-hero duration 240 after timeline-hero reveal timeline-hero-l duration 140 after timeline-hero-l stagger targets [timeline-v1, timeline-v2] step 100 duration 180 after timeline-v2 reveal timeline-vl duration 140 }
+    }
+  }
+
+  slide "sdk.timelineItem" {
+    eyebrow: "NAVIGATION · TIMELINE ITEM"
+    title: "Timeline item gives one event context"
+    lede: "Use an item for a timestamped milestone with optional child detail."
+    narration: "The hero marks benchmark completion; variants compare an in-progress event and a failure."
+    caption: "Each item should answer what changed and when."
+    render: @scene {
+      sdk.Header(id = "ti-h", title = "SDK.TIMELINEITEM", caption = "single milestone", x = 18, y = 16, width = 664, height = 44)
+      sdk.TimelineItem(id = "ti-hero", title = "Benchmark complete · 09:47", x = 44, y = 115, width = 350, height = 80) { children { sdk.Caption(id = "ti-cap", text = "84,211 requests · artifacts exported", width = 300, height = 20) } }
+      sdk.Label(id = "ti-hero-l", text = "HERO · COMPLETION EVENT", x = 44, y = 220, width = 350, height = 18)
+      sdk.TimelineItem(id = "ti-v1", title = "Running · 09:41", x = 430, y = 105, width = 220, height = 54)
+      sdk.TimelineItem(id = "ti-v2", title = "Failed · 09:44", x = 430, y = 185, width = 220, height = 54, surfaceRole = theme(accent.red))
+      sdk.Label(id = "ti-vl", text = "ACTIVE                           FAILURE", x = 430, y = 255, width = 220, height = 18)
+      timeline main { at 0 reveal ti-h duration 160 after ti-h reveal ti-hero duration 240 after ti-hero reveal ti-hero-l duration 140 after ti-hero-l stagger targets [ti-v1, ti-v2] step 100 duration 180 after ti-v2 reveal ti-vl duration 140 }
+    }
+  }
+
+  slide "Indicators" {
+    eyebrow: "CHAPTER 6 · INDICATORS"
+    title: "Show magnitude, trend, and health"
+    lede: "Progress, meters, gauges, sparklines, ratings, and semaphores translate numbers into immediate visual signals."
+    narration: "Indicators compress numeric state while preserving labels and meaningful ranges."
+    caption: "Six primitives · completion, range, level, trend, score, state."
+    render: @scene {
+      sdk.Header(id = "c6-h", title = "INDICATORS", caption = "06 / 07", x = 18, y = 16, width = 664, height = 44)
+      sdk.Gauge(id = "c6-g", label = "utilization", value = 0.72, x = 80, y = 115, width = 180, height = 90)
+      sdk.Sparkline(id = "c6-s", label = "throughput", values = [3, 4, 5, 4, 7, 8], x = 300, y = 125, width = 220, height = 70)
+      sdk.Rating(id = "c6-rating", label = "quality", value = 0.8, x = 535, y = 145, width = 120, height = 30)
+      timeline main { at 0 reveal c6-h duration 180 after c6-h reveal c6-g duration 220 after c6-g reveal c6-s duration 200 after c6-s reveal c6-rating duration 180 }
+    }
+  }
+
+  slide "sdk.progress" {
+    eyebrow: "INDICATORS · PROGRESS"
+    title: "Progress shows completion toward an end"
+    lede: "Use progress when the task has a meaningful start and finish."
+    narration: "The hero tracks artifact export; variants compare early, midpoint, and complete states."
+    caption: "Progress implies a destination; do not use it for open-ended load."
+    render: @scene {
+      sdk.Header(id = "progress-h", title = "SDK.PROGRESS", caption = "completion indicator", x = 18, y = 16, width = 664, height = 44)
+      sdk.Progress(id = "progress-hero", label = "Exporting artifacts", value = 0.72, x = 44, y = 135, width = 350, height = 28)
+      sdk.Label(id = "progress-hero-l", text = "HERO · 72% EXPORTED", x = 44, y = 190, width = 350, height = 18)
+      sdk.Progress(id = "progress-v1", label = "started", value = 0.15, x = 430, y = 105, width = 220, height = 16)
+      sdk.Progress(id = "progress-v2", label = "halfway", value = 0.5, x = 430, y = 165, width = 220, height = 16)
+      sdk.Progress(id = "progress-v3", label = "complete", value = 1, x = 430, y = 225, width = 220, height = 16)
+      sdk.Label(id = "progress-vl", text = "EARLY · MIDPOINT · COMPLETE", x = 430, y = 270, width = 220, height = 18)
+      timeline main { at 0 reveal progress-h duration 160 after progress-h reveal progress-hero duration 240 after progress-hero reveal progress-hero-l duration 140 after progress-hero-l stagger targets [progress-v1, progress-v2, progress-v3] step 90 duration 180 after progress-v3 reveal progress-vl duration 140 }
+    }
+  }
+
+  slide "sdk.meter" {
+    eyebrow: "INDICATORS · METER"
+    title: "Meter locates a value inside a range"
+    lede: "Use meters for bounded quantities such as utilization, quality, or saturation."
+    narration: "The hero shows GPU memory pressure; variants compare low, moderate, and high range positions."
+    caption: "Author min and max from the real domain."
+    render: @scene {
+      sdk.Header(id = "meter-h", title = "SDK.METER", caption = "bounded quantity", x = 18, y = 16, width = 664, height = 44)
+      sdk.Meter(id = "meter-hero", label = "GPU memory", value = 76, min = 0, max = 100, x = 44, y = 135, width = 350, height = 30)
+      sdk.Label(id = "meter-hero-l", text = "HERO · 76 / 100 GB", x = 44, y = 192, width = 350, height = 18)
+      sdk.Meter(id = "meter-v1", label = "low", value = 20, min = 0, max = 100, x = 430, y = 105, width = 220, height = 18)
+      sdk.Meter(id = "meter-v2", label = "moderate", value = 55, min = 0, max = 100, x = 430, y = 165, width = 220, height = 18)
+      sdk.Meter(id = "meter-v3", label = "high", value = 90, min = 0, max = 100, x = 430, y = 225, width = 220, height = 18)
+      sdk.Label(id = "meter-vl", text = "LOW · MODERATE · HIGH", x = 430, y = 270, width = 220, height = 18)
+      timeline main { at 0 reveal meter-h duration 160 after meter-h reveal meter-hero duration 240 after meter-hero reveal meter-hero-l duration 140 after meter-hero-l stagger targets [meter-v1, meter-v2, meter-v3] step 90 duration 180 after meter-v3 reveal meter-vl duration 140 }
+    }
+  }
+
+  slide "sdk.gauge" {
+    eyebrow: "INDICATORS · GAUGE"
+    title: "Gauge spotlights one current level"
+    lede: "Use a gauge when a bounded value deserves dashboard prominence."
+    narration: "The hero emphasizes accelerator utilization; variants compare idle, nominal, and saturated levels."
+    caption: "Reserve gauges for values worth the visual weight."
+    render: @scene {
+      sdk.Header(id = "gauge-h", title = "SDK.GAUGE", caption = "dashboard level", x = 18, y = 16, width = 664, height = 44)
+      sdk.Gauge(id = "gauge-hero", label = "GPU utilization", value = 0.82, x = 110, y = 105, width = 180, height = 110)
+      sdk.Label(id = "gauge-hero-l", text = "HERO · 82% UTILIZATION", x = 70, y = 240, width = 260, height = 18)
+      sdk.Gauge(id = "gauge-v1", label = "idle", value = 0.12, x = 420, y = 110, width = 80, height = 58)
+      sdk.Gauge(id = "gauge-v2", label = "nominal", value = 0.58, x = 505, y = 110, width = 80, height = 58)
+      sdk.Gauge(id = "gauge-v3", label = "saturated", value = 0.96, x = 590, y = 110, width = 80, height = 58)
+      sdk.Label(id = "gauge-vl", text = "IDLE        NOMINAL        HIGH", x = 415, y = 195, width = 255, height = 18)
+      timeline main { at 0 reveal gauge-h duration 160 after gauge-h reveal gauge-hero duration 240 after gauge-hero reveal gauge-hero-l duration 140 after gauge-hero-l stagger targets [gauge-v1, gauge-v2, gauge-v3] step 90 duration 180 after gauge-v3 reveal gauge-vl duration 140 }
+    }
+  }
+
+  slide "sdk.sparkline" {
+    eyebrow: "INDICATORS · SPARKLINE"
+    title: "Sparkline reveals trend without chart chrome"
+    lede: "Use sparklines for compact shape-of-change beside a primary metric."
+    narration: "The hero shows rising throughput; variants compare steady, volatile, and falling series."
+    caption: "A sparkline supplies trend, not precise lookup."
+    render: @scene {
+      sdk.Header(id = "spark-h", title = "SDK.SPARKLINE", caption = "compact trend", x = 18, y = 16, width = 664, height = 44)
+      sdk.Sparkline(id = "spark-hero", label = "rising throughput", values = [42, 45, 44, 51, 56, 60, 68], x = 44, y = 105, width = 350, height = 130)
+      sdk.Label(id = "spark-hero-l", text = "HERO · 30-MINUTE TREND", x = 44, y = 255, width = 350, height = 18)
+      sdk.Sparkline(id = "spark-v1", label = "steady", values = [5, 5, 6, 5, 5], x = 430, y = 100, width = 220, height = 45)
+      sdk.Sparkline(id = "spark-v2", label = "volatile", values = [2, 8, 3, 9, 4], x = 430, y = 170, width = 220, height = 45)
+      sdk.Sparkline(id = "spark-v3", label = "falling", values = [9, 8, 6, 4, 2], x = 430, y = 240, width = 220, height = 45)
+      sdk.Label(id = "spark-vl", text = "STEADY · VOLATILE · FALLING", x = 430, y = 300, width = 220, height = 18)
+      timeline main { at 0 reveal spark-h duration 160 after spark-h reveal spark-hero duration 240 after spark-hero reveal spark-hero-l duration 140 after spark-hero-l stagger targets [spark-v1, spark-v2, spark-v3] step 90 duration 180 after spark-v3 reveal spark-vl duration 140 }
+    }
+  }
+
+  slide "sdk.rating" {
+    eyebrow: "INDICATORS · RATING"
+    title: "Rating expresses a normalized score"
+    lede: "Use ratings where a familiar five-step score helps rapid comparison."
+    narration: "The hero reports response quality; variants compare low, medium, and excellent scores."
+    caption: "Always explain what the score evaluates."
+    render: @scene {
+      sdk.Header(id = "rating-h", title = "SDK.RATING", caption = "five-step score", x = 18, y = 16, width = 664, height = 44)
+      sdk.Rating(id = "rating-hero", label = "response quality", value = 0.8, x = 100, y = 125, width = 240, height = 48)
+      sdk.Label(id = "rating-hero-l", text = "HERO · 4 / 5 QUALITY", x = 70, y = 205, width = 300, height = 18)
+      sdk.Rating(id = "rating-v1", label = "low", value = 0.2, x = 430, y = 105, width = 180, height = 24)
+      sdk.Rating(id = "rating-v2", label = "medium", value = 0.6, x = 430, y = 165, width = 180, height = 24)
+      sdk.Rating(id = "rating-v3", label = "excellent", value = 1, x = 430, y = 225, width = 180, height = 24)
+      sdk.Label(id = "rating-vl", text = "LOW · MEDIUM · EXCELLENT", x = 430, y = 270, width = 200, height = 18)
+      timeline main { at 0 reveal rating-h duration 160 after rating-h reveal rating-hero duration 240 after rating-hero reveal rating-hero-l duration 140 after rating-hero-l stagger targets [rating-v1, rating-v2, rating-v3] step 90 duration 180 after rating-v3 reveal rating-vl duration 140 }
+    }
+  }
+
+  slide "sdk.semaphore" {
+    eyebrow: "INDICATORS · SEMAPHORE"
+    title: "Semaphore maps a value to discrete health"
+    lede: "Use semaphores for familiar stop, caution, and go conditions."
+    narration: "The hero reports healthy admission; variants compare blocked, caution, and healthy states."
+    caption: "Discrete lights suit discrete operational decisions."
+    render: @scene {
+      sdk.Header(id = "sem-h", title = "SDK.SEMAPHORE", caption = "three-state health", x = 18, y = 16, width = 664, height = 44)
+      sdk.Semaphore(id = "sem-hero", label = "admission healthy", value = 1, x = 120, y = 125, width = 180, height = 60)
+      sdk.Label(id = "sem-hero-l", text = "HERO · ADMISSION OPEN", x = 70, y = 215, width = 280, height = 18)
+      sdk.Semaphore(id = "sem-v1", label = "blocked", value = 0, x = 430, y = 110, width = 90, height = 30)
+      sdk.Semaphore(id = "sem-v2", label = "caution", value = 0.5, x = 430, y = 175, width = 90, height = 30)
+      sdk.Semaphore(id = "sem-v3", label = "healthy", value = 1, x = 430, y = 240, width = 90, height = 30)
+      sdk.Label(id = "sem-vl", text = "BLOCKED · CAUTION · HEALTHY", x = 540, y = 175, width = 120, height = 36)
+      timeline main { at 0 reveal sem-h duration 160 after sem-h reveal sem-hero duration 240 after sem-hero reveal sem-hero-l duration 140 after sem-hero-l stagger targets [sem-v1, sem-v2, sem-v3] step 90 duration 180 after sem-v3 reveal sem-vl duration 140 }
+    }
+  }
+
+  slide "Containers and composition" {
+    eyebrow: "CHAPTER 7 · COMPOSITION"
+    title: "Let structure hold the interface together"
+    lede: "Sections, toolbars, split panes, and media objects organize child primitives into durable patterns."
+    narration: "Composition primitives own layout relationships so child components remain focused on content."
+    caption: "Four primitives · region, actions, panes, media + body."
+    render: @scene {
+      sdk.Header(id = "c7-h", title = "CONTAINERS + COMPOSITION", caption = "07 / 07", x = 18, y = 16, width = 664, height = 44)
+      sdk.Section(id = "c7-section", title = "Run workspace", x = 60, y = 100, width = 580, height = 190, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) {
         children {
-          sdk.Shape(id = "g-shape", label = "shape", width = 64, height = 42)
-          sdk.Text(id = "g-text", text = "text", width = 64, height = 42)
-          sdk.RichText(id = "g-rich", text = "rich\ntext", width = 64, height = 42)
-          sdk.Icon(id = "g-icon", icon = "check", width = 64, height = 42)
-          sdk.Image(id = "g-image", src = "/aiperf-mark.svg", label = "image", width = 64, height = 42)
-          sdk.Line(id = "g-line", label = "line", width = 64, height = 42)
-          sdk.Arrow(id = "g-arrow", label = "arrow", width = 64, height = 42)
-          sdk.Spacer(id = "g-spacer", label = "spacer", width = 64, height = 42)
-          sdk.Inset(id = "g-inset", label = "inset", width = 64, height = 42)
-
-          sdk.Title(id = "g-title", text = "title", width = 64, height = 42)
-          sdk.Paragraph(id = "g-paragraph", text = "paragraph", width = 64, height = 42)
-          sdk.Caption(id = "g-caption", text = "caption", width = 64, height = 42)
-          sdk.CodeBlock(id = "g-code", text = "fn main()", width = 64, height = 42)
-          sdk.Quote(id = "g-quote", text = "quote", width = 64, height = 42)
-          sdk.List(id = "g-list", items = ["one", "two"], width = 64, height = 42)
-          sdk.KeyValue(id = "g-kv", items = ["key: value"], width = 64, height = 42)
-          sdk.PropertyList(id = "g-properties", items = ["a: 1", "b: 2"], width = 64, height = 42)
-          sdk.Badge(id = "g-badge", label = "badge", variant = "info", width = 64, height = 42)
-
-          sdk.StatusDot(id = "g-dot", label = "dot", variant = "success", width = 64, height = 42)
-          sdk.Avatar(id = "g-avatar", label = "avatar", icon = "user", width = 64, height = 42)
-          sdk.IconLabel(id = "g-icon-label", label = "label", icon = "check", width = 64, height = 42)
-          sdk.Alert(id = "g-alert", title = "alert", variant = "warning", width = 64, height = 42)
-          sdk.StatusCard(id = "g-status-card", title = "status", variant = "success", width = 64, height = 42)
-          sdk.EmptyState(id = "g-empty", title = "empty", icon = "file", width = 64, height = 42)
-          sdk.Stat(id = "g-stat", title = "stat", items = ["42"], width = 64, height = 42)
-          sdk.Metric(id = "g-metric", title = "metric", items = ["12 ms"], width = 64, height = 42)
-          sdk.Table(id = "g-table", items = ["name", "value"], width = 64, height = 42)
-
-          sdk.TableRow(id = "g-row", label = "row", width = 64, height = 42)
-          sdk.TableCell(id = "g-cell", label = "cell", width = 64, height = 42)
-          sdk.TagList(id = "g-tags", items = ["A", "B"], width = 64, height = 42)
-          sdk.Breadcrumb(id = "g-breadcrumb", items = ["root", "leaf"], width = 64, height = 42)
-          sdk.Tabs(id = "g-tabs", items = ["one", "two"], width = 64, height = 42)
-          sdk.Pagination(id = "g-pages", items = ["1", "2", "3"], width = 64, height = 42)
-          sdk.Timeline(id = "g-timeline", items = ["start", "end"], width = 64, height = 42)
-          sdk.TimelineItem(id = "g-timeline-item", title = "event", width = 64, height = 42)
-          sdk.Progress(id = "g-progress", label = "progress", value = 0.7, width = 64, height = 42)
-
-          sdk.Meter(id = "g-meter", label = "meter", value = 0.6, width = 64, height = 42)
-          sdk.Gauge(id = "g-gauge", label = "gauge", value = 0.8, width = 64, height = 42)
-          sdk.Sparkline(id = "g-spark", label = "spark", values = [1, 4, 2, 5], width = 64, height = 42)
-          sdk.Rating(id = "g-rating", label = "rating", value = 0.8, width = 64, height = 42)
-          sdk.Semaphore(id = "g-semaphore", label = "semaphore", value = 0.5, width = 64, height = 42)
-          sdk.Section(id = "g-section", title = "section", width = 64, height = 42)
-          sdk.Toolbar(id = "g-toolbar", label = "toolbar", width = 64, height = 42)
-          sdk.SplitPane(id = "g-split", label = "split", width = 64, height = 42)
-          sdk.MediaObject(id = "g-media", label = "media", width = 64, height = 42)
+          sdk.Toolbar(id = "c7-toolbar", label = "actions", width = 520, height = 44) { children { sdk.Badge(id = "c7-b1", label = "RUN", variant = "success") sdk.Badge(id = "c7-b2", label = "EXPORT", variant = "info") } }
+          sdk.MediaObject(id = "c7-media", label = "latest result", width = 520, height = 90) { media { sdk.Avatar(id = "c7-av", label = "run", icon = "server") } body { sdk.Metric(id = "c7-m", title = "P95 latency", items = ["18.7 ms"]) } }
         }
       }
+      timeline main { at 0 reveal c7-h duration 180 after c7-h reveal c7-section duration 240 after c7-section reveal c7-toolbar duration 200 after c7-toolbar reveal c7-media duration 220 }
+    }
+  }
 
+  slide "sdk.section" {
+    eyebrow: "COMPOSITION · SECTION"
+    title: "Section gives related content a shared boundary"
+    lede: "Use sections to group one coherent topic with its own internal layout."
+    narration: "The hero contains a benchmark summary; variants compare compact filters and a warning region."
+    caption: "A section should answer one clear question."
+    render: @scene {
+      sdk.Header(id = "section-h", title = "SDK.SECTION", caption = "bounded region", x = 18, y = 16, width = 664, height = 44)
+      sdk.Section(id = "section-hero", title = "Benchmark summary", x = 44, y = 85, width = 350, height = 205, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) { children { sdk.Stat(id = "section-stat", title = "Requests", items = ["84,211"]) sdk.Metric(id = "section-metric", title = "P95", items = ["18.7 ms"]) } }
+      sdk.Label(id = "section-hero-l", text = "HERO · SUMMARY REGION", x = 44, y = 305, width = 350, height = 18)
+      sdk.Section(id = "section-v1", title = "Filters", x = 430, y = 95, width = 220, height = 90, surfaceRole = theme(surface.elevated))
+      sdk.Section(id = "section-v2", title = "Attention", x = 430, y = 210, width = 220, height = 90, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.warning))
+      sdk.Label(id = "section-vl", text = "NEUTRAL                         EMPHASIZED", x = 430, y = 315, width = 220, height = 18)
+      timeline main { at 0 reveal section-h duration 160 after section-h reveal section-hero duration 240 after section-hero reveal section-hero-l duration 140 after section-hero-l stagger targets [section-v1, section-v2] step 100 duration 180 after section-v2 reveal section-vl duration 140 }
+    }
+  }
+
+  slide "sdk.toolbar" {
+    eyebrow: "COMPOSITION · TOOLBAR"
+    title: "Toolbar aligns related actions"
+    lede: "Use toolbars for a compact horizontal set of controls or status actions."
+    narration: "The hero offers run actions; variants compare a minimal two-action bar and a status-oriented bar."
+    caption: "Group actions by task, not by available space."
+    render: @scene {
+      sdk.Header(id = "toolbar-h", title = "SDK.TOOLBAR", caption = "action rail", x = 18, y = 16, width = 664, height = 44)
+      sdk.Toolbar(id = "toolbar-hero", label = "run actions", gap = 14, x = 44, y = 115, width = 350, height = 64) { children { sdk.Badge(id = "toolbar-run", label = "RUN", variant = "success") sdk.Badge(id = "toolbar-stop", label = "STOP", variant = "danger") sdk.Badge(id = "toolbar-export", label = "EXPORT", variant = "info") } }
+      sdk.Label(id = "toolbar-hero-l", text = "HERO · RUN ACTIONS", x = 44, y = 205, width = 350, height = 18)
+      sdk.Toolbar(id = "toolbar-v1", label = "compact", gap = 8, x = 430, y = 105, width = 220, height = 46) { children { sdk.Icon(id = "toolbar-i1", icon = "check") sdk.Icon(id = "toolbar-i2", icon = "file") } }
+      sdk.Toolbar(id = "toolbar-v2", label = "status", gap = 8, x = 430, y = 180, width = 220, height = 46) { children { sdk.Badge(id = "toolbar-d", label = "HEALTHY", variant = "success") sdk.Caption(id = "toolbar-c", text = "All systems healthy") } }
+      sdk.Label(id = "toolbar-vl", text = "ICONS                           STATUS", x = 430, y = 245, width = 220, height = 18)
+      timeline main { at 0 reveal toolbar-h duration 160 after toolbar-h reveal toolbar-hero duration 240 after toolbar-hero reveal toolbar-hero-l duration 140 after toolbar-hero-l stagger targets [toolbar-v1, toolbar-v2] step 100 duration 180 after toolbar-v2 reveal toolbar-vl duration 140 }
+    }
+  }
+
+  slide "sdk.splitPane" {
+    eyebrow: "COMPOSITION · SPLIT PANE"
+    title: "Split pane gives peer regions durable proportion"
+    lede: "Use split panes for side-by-side workspaces whose relationship must remain visible."
+    narration: "The hero pairs configuration and results; variants compare compact horizontal and vertical arrangements."
+    caption: "Use panes for persistent peers, not transient overlays."
+    render: @scene {
+      sdk.Header(id = "split-h", title = "SDK.SPLITPANE", caption = "paired workspace", x = 18, y = 16, width = 664, height = 44)
+      sdk.SplitPane(id = "split-hero", label = "configure and inspect", direction = "row", gap = 14, x = 35, y = 85, width = 390, height = 210) { children { sdk.Section(id = "split-left", title = "Configuration", width = 180, height = 190) sdk.Section(id = "split-right", title = "Results", width = 180, height = 190, strokeRole = theme(accent.primary)) } }
+      sdk.Label(id = "split-hero-l", text = "HERO · CONFIG + RESULTS", x = 35, y = 310, width = 390, height = 18)
+      sdk.SplitPane(id = "split-v1", label = "horizontal", direction = "row", gap = 8, x = 450, y = 95, width = 200, height = 90) { children { sdk.Shape(id = "split-v1a", label = "A") sdk.Shape(id = "split-v1b", label = "B") } }
+      sdk.SplitPane(id = "split-v2", label = "vertical", direction = "column", gap = 8, x = 450, y = 210, width = 200, height = 90) { children { sdk.Shape(id = "split-v2a", label = "A") sdk.Shape(id = "split-v2b", label = "B") } }
+      sdk.Label(id = "split-vl", text = "HORIZONTAL                    VERTICAL", x = 450, y = 315, width = 200, height = 18)
+      timeline main { at 0 reveal split-h duration 160 after split-h reveal split-hero duration 240 after split-hero reveal split-hero-l duration 140 after split-hero-l stagger targets [split-v1, split-v2] step 100 duration 180 after split-v2 reveal split-vl duration 140 }
+    }
+  }
+
+  slide "sdk.mediaObject" {
+    eyebrow: "COMPOSITION · MEDIA OBJECT"
+    title: "Media object binds identity and body content"
+    lede: "Use named slots to compose a leading visual, body, and trailing context."
+    narration: "The hero presents a benchmark owner and summary; variants compare service and artifact rows."
+    caption: "Media establishes identity; the body carries meaning."
+    render: @scene {
+      sdk.Header(id = "media-h", title = "SDK.MEDIAOBJECT", caption = "media + body pattern", x = 18, y = 16, width = 664, height = 44)
+      sdk.MediaObject(id = "media-hero", label = "benchmark owner", gap = 18, x = 44, y = 100, width = 350, height = 150) { media { sdk.Avatar(id = "media-av", label = "Mina", icon = "user", variant = "info", width = 72, height = 72) } body { sdk.PropertyList(id = "media-props", items = ["Owner: Mina", "Run: 42", "State: complete"], width = 230, height = 110) } trailing { sdk.Badge(id = "media-ok", label = "DONE", variant = "success") } }
+      sdk.Label(id = "media-hero-l", text = "HERO · OWNER + RUN SUMMARY", x = 44, y = 268, width = 350, height = 18)
+      sdk.MediaObject(id = "media-v1", label = "service", gap = 10, x = 430, y = 95, width = 220, height = 82) { leading { sdk.Icon(id = "media-server", icon = "server") } body { sdk.Caption(id = "media-server-c", text = "Gateway · healthy") } }
+      sdk.MediaObject(id = "media-v2", label = "artifact", gap = 10, x = 430, y = 205, width = 220, height = 82) { leading { sdk.Icon(id = "media-file", icon = "file") } body { sdk.Caption(id = "media-file-c", text = "records.jsonl · 48 MB") } }
+      sdk.Label(id = "media-vl", text = "SERVICE                         ARTIFACT", x = 430, y = 300, width = 220, height = 18)
+      timeline main { at 0 reveal media-h duration 160 after media-h reveal media-hero duration 240 after media-hero reveal media-hero-l duration 140 after media-hero-l stagger targets [media-v1, media-v2] step 100 duration 180 after media-v2 reveal media-vl duration 140 }
+    }
+  }
+
+  slide "A composed benchmark workspace" {
+    eyebrow: "FINALE · COMPOSITION"
+    title: "Primitives become a believable product surface"
+    lede: "Typography, status, data, navigation, indicators, and containers combine without losing their individual contracts."
+    narration: "The finale composes six generic families into a benchmark workspace. Every primitive remains production SDK output."
+    caption: "Compose from semantic contracts; let hierarchy do the visual work."
+    render: @scene {
+      sdk.Header(id = "final-h", title = "BENCHMARK · RUN 42", caption = "complete · us-west · Llama 3.1 70B", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary))
+      sdk.Breadcrumb(id = "final-bc", items = ["Workspace", "Benchmarks", "Run 42"], x = 32, y = 72, width = 105, height = 26)
+      sdk.Toolbar(id = "final-tools", label = "run actions", gap = 8, x = 440, y = 68, width = 228, height = 34) { children { sdk.Badge(id = "final-rerun", label = "RERUN", variant = "info") sdk.Badge(id = "final-export", label = "EXPORT", variant = "success") } }
+      sdk.SplitPane(id = "final-split", label = "benchmark workspace", direction = "row", gap = 14, x = 32, y = 112, width = 636, height = 220) {
+        children {
+          sdk.Section(id = "final-summary", title = "Performance", width = 300, height = 210, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) {
+            children {
+              sdk.Stat(id = "final-stat", title = "Throughput", items = ["1,284 req/s", "+8.2%"])
+              sdk.Metric(id = "final-metric", title = "P95 latency", items = ["18.7 ms", "within SLO"])
+              sdk.Progress(id = "final-progress", label = "artifact export", value = 1, width = 250, height = 18)
+            }
+          }
+          sdk.Section(id = "final-health", title = "Endpoint health", width = 300, height = 210, surfaceRole = theme(surface.elevated)) {
+            children {
+              sdk.MediaObject(id = "final-owner", label = "owner", gap = 10, width = 260, height = 70) { media { sdk.Avatar(id = "final-avatar", label = "Mina", icon = "user", variant = "info") } body { sdk.IconLabel(id = "final-owner-label", label = "Mina · on call", icon = "check") } }
+              sdk.Sparkline(id = "final-spark", label = "throughput trend", values = [42, 45, 44, 51, 56, 60], width = 250, height = 54)
+              sdk.StatusCard(id = "final-status", title = "All systems healthy", variant = "success", width = 250, height = 62)
+            }
+          }
+        }
+      }
+      sdk.Caption(id = "final-cap", text = "Seven families · one coherent interface", x = 32, y = 350, width = 636, height = 20)
       timeline main {
-        at 0 reveal generic-header duration 180
-        after generic-header reveal generic-grid duration 260
+        at 0 reveal final-h duration 180
+        after final-h reveal final-bc duration 160
+        after final-bc reveal final-tools duration 180
+        after final-tools reveal final-split duration 240
+        after final-split stagger targets [final-stat, final-metric, final-progress] step 90 duration 180
+        after final-progress stagger targets [final-owner, final-spark, final-status] step 90 duration 180
+        after final-status reveal final-cap duration 160
       }
     }
   }

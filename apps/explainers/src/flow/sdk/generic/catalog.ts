@@ -265,6 +265,7 @@ function groupNode(
   label: string,
   children: readonly RenderNodeIr[],
   style: Readonly<Record<string, StyleValueIr>> = { coordinateSpace: "local" },
+  props?: Readonly<Record<string, JsonValue>>,
 ): RenderNodeIr {
   return origin(
     {
@@ -276,6 +277,7 @@ function groupNode(
       accessibility: { label },
       fallback: label,
       sourceMap: context.sourceMap,
+      ...(props !== undefined ? { props } : {}),
       children,
     },
     context,
@@ -473,6 +475,35 @@ function shapeFactory(spec: CatalogSpec): SdkComponentFactory {
             ? 10
             : 0,
     };
+    if (
+      spec.id === "sdk.badge" ||
+      spec.id === "sdk.alert" ||
+      spec.id === "sdk.statusCard"
+    ) {
+      const semanticProps =
+        spec.id === "sdk.badge"
+          ? { label }
+          : {
+              title: label,
+              ...(stringProp(props, "detail") !== undefined
+                ? { detail: stringProp(props, "detail")! }
+                : {}),
+            };
+      const root = groupNode(
+        spec,
+        context,
+        box,
+        label,
+        [],
+        { ...style, coordinateSpace: "local" },
+        semanticProps,
+      );
+      return success([root], { self: { nodeId: root.id } }, {
+        enter: [root.id],
+        emphasis: [root.id],
+        exit: [root.id],
+      });
+    }
     const chrome = rectNode(
       context.instanceId,
       box,
@@ -497,40 +528,42 @@ function textFactory(spec: CatalogSpec): SdkComponentFactory {
     const text = visibleText(props, spec.id.slice(4));
     const isCode = spec.id === "sdk.codeBlock";
     const isQuote = spec.id === "sdk.quote";
-    const textId = isCode || isQuote ? `${context.instanceId}__text` : context.instanceId;
-    const node = textNode(textId, text, isCode || isQuote
-      ? { x: 12, y: 10, width: Math.max(box.width - 24, 0), height: Math.max(box.height - 20, 0) }
-      : box, context, spec.id, isCode || isQuote ? "text" : "root", {
-      fontSize: spec.id === "sdk.title" ? 22 : spec.id === "sdk.caption" ? 10 : 12,
-      fontWeight: spec.id === "sdk.title" ? "bold" : "normal",
-      fontFamily: isCode ? "monospace" : "inherit",
-      fontStyle: isQuote ? "italic" : "normal",
-      textAnchor: "start",
-      fill: stringProp(props, "inkRole") ?? "@theme.ink.primary",
-      whiteSpace: isCode ? "pre" : "normal",
-    });
+    const inkRole = stringProp(props, "inkRole") ?? "@theme.ink.primary";
     if (!isCode && !isQuote) {
+      const node = textNode(context.instanceId, text, box, context, spec.id, "root", {
+        fontSize: spec.id === "sdk.title" ? 22 : spec.id === "sdk.caption" ? 10 : 12,
+        fontWeight: spec.id === "sdk.title" ? "bold" : "normal",
+        fontFamily: "inherit",
+        fontStyle: "normal",
+        textAnchor: "start",
+        fill: inkRole,
+        whiteSpace: "normal",
+      });
       return success([node], { self: { nodeId: node.id }, text: { nodeId: node.id } }, {
         enter: [node.id],
         emphasis: [node.id],
         exit: [node.id],
       });
     }
-    const chrome = rectNode(
-      `${context.instanceId}__chrome`,
-      { x: 0, y: 0, width: box.width, height: box.height },
+    const root = groupNode(
+      spec,
       context,
-      spec.id,
-      "chrome",
+      box,
       text,
+      [],
       {
         ...variantStyle(props),
         radius: 6,
+        coordinateSpace: "local",
         ...(isQuote ? { strokeWidth: 0, borderLeftWidth: 4 } : {}),
       },
+      {
+        text,
+        presentation: isCode ? "code-block" : "quote",
+        inkRole,
+      },
     );
-    const root = groupNode(spec, context, box, text, [chrome, node]);
-    return success([root], { self: { nodeId: root.id }, text: { nodeId: node.id } }, {
+    return success([root], { self: { nodeId: root.id }, text: { nodeId: root.id } }, {
       enter: [root.id],
       emphasis: [root.id],
       exit: [root.id],
@@ -590,32 +623,47 @@ function iconFactory(spec: CatalogSpec): SdkComponentFactory {
       });
     }
     const label = visibleText(props, spec.id.slice(4));
-    const children: RenderNodeIr[] = [
-      rectNode(
-        `${context.instanceId}__chrome`,
-        { x: 0, y: 0, width: box.width, height: box.height },
+    const inkRole = stringProp(props, "inkRole") ?? "@theme.ink.primary";
+    if (spec.id === "sdk.emptyState") {
+      const detail = stringProp(props, "detail");
+      const root = groupNode(
+        spec,
         context,
-        spec.id,
-        "chrome",
+        box,
         label,
-        { ...variantStyle(props), radius: spec.id === "sdk.avatar" ? box.width : 8 },
-      ),
-      icon,
-    ];
-    if (spec.id !== "sdk.avatar") {
-      children.push(
-        textNode(
-          `${context.instanceId}__label`,
-          label,
-          { x: 40, y: 8, width: Math.max(box.width - 48, 0), height: Math.max(box.height - 16, 0) },
-          context,
-          spec.id,
-          "label",
-          { fontSize: 12, textAnchor: "start" },
-        ),
+        [icon],
+        { ...variantStyle(props), radius: 8, coordinateSpace: "local" },
+        {
+          title: label,
+          ...(detail !== undefined ? { detail } : {}),
+          inkRole,
+        },
       );
+      return success([root], { self: { nodeId: root.id }, icon: { nodeId: iconId } }, {
+        enter: [root.id],
+        emphasis: [root.id],
+        exit: [root.id],
+      });
     }
-    const root = groupNode(spec, context, box, label, children);
+    const isAvatar = spec.id === "sdk.avatar";
+    const root = groupNode(
+      spec,
+      context,
+      box,
+      label,
+      [icon],
+      {
+        ...variantStyle(props),
+        radius: isAvatar ? box.width : 8,
+        coordinateSpace: "local",
+      },
+      {
+        presentation: isAvatar ? "avatar" : "icon-label",
+        icon: iconName,
+        inkRole,
+        ...(isAvatar ? {} : { label }),
+      },
+    );
     return success([root], { self: { nodeId: root.id }, icon: { nodeId: iconId } }, {
       enter: [root.id],
       emphasis: [root.id],
@@ -719,7 +767,8 @@ function containerFactory(spec: CatalogSpec): SdkComponentFactory {
       coordinateSpace: "local",
       direction: stringProp(props, "direction") ?? (spec.id === "sdk.splitPane" ? "row" : "row"),
       gap: numberProp(props, "gap", 8),
-      padding: spec.id === "sdk.inset" ? numberProp(props, "gap", 12) : 0,
+      // layout.pad reads style.inset / style.pad (never style.padding).
+      ...(spec.id === "sdk.inset" ? { inset: numberProp(props, "gap", 12) } : {}),
       ...(spec.id === "sdk.section" || spec.id === "sdk.tableCell"
         ? { ...variantStyle(props), radius: 6 }
         : {}),
@@ -938,12 +987,27 @@ function collectionFactory(spec: CatalogSpec): SdkComponentFactory {
     const suppliedRoots = rootsOf(fragments);
     const itemTexts = stringItems(props);
     const texts = itemTexts.length > 0 ? itemTexts : [visibleText(props, spec.id.slice(4))];
+    // layout.rail sums child widths along a row; full-bleed stacked items overflow.
+    const rail = spec.capabilityId === "layout.rail";
     const rowHeight = Math.max(20, Math.min(32, box.height / Math.max(texts.length, 1)));
     const generated = texts.map((text, index) =>
       textNode(
         `${context.instanceId}__item-${index}`,
         text,
-        { x: 8, y: index * rowHeight, width: Math.max(box.width - 16, 0), height: rowHeight },
+        rail
+          ? {
+              x: 0,
+              y: 0,
+              // Width 0 requests intrinsic/content sizing from core.text layout.
+              width: 0,
+              height: Math.max(box.height, rowHeight),
+            }
+          : {
+              x: 8,
+              y: index * rowHeight,
+              width: Math.max(box.width - 16, 0),
+              height: rowHeight,
+            },
         context,
         spec.id,
         `item-${index}`,

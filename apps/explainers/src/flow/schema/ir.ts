@@ -130,6 +130,8 @@ export type FoundationCapabilityId =
   | "layout.grid"
   | "layout.pad"
   | "layout.rail"
+  | "layout.overlay"
+  | "layout.frame"
   | "motion.signal"
   | "motion.pulse";
 
@@ -186,8 +188,10 @@ export type ConnectorAxisIr = "x" | "y";
 export type ConnectorNodeIr = RenderNodeBaseIr &
   Readonly<{
     kind: "connector";
-    from: ConnectorEndpointIr;
-    to: ConnectorEndpointIr;
+    from?: ConnectorEndpointIr | undefined;
+    to?: ConnectorEndpointIr | undefined;
+    /** Resolved connector whose path drives this motion signal. */
+    edgeRef?: string | undefined;
     /** Optional bend / waypoint for elbow routing. */
     via?: PointIr | undefined;
     /** Preferred first-segment axis for orthogonal elbows. */
@@ -443,6 +447,8 @@ const foundationCapabilitySchema = z.union([
   z.literal("layout.grid"),
   z.literal("layout.pad"),
   z.literal("layout.rail"),
+  z.literal("layout.overlay"),
+  z.literal("layout.frame"),
   z.literal("motion.signal"),
   z.literal("motion.pulse"),
   z.string().min(1),
@@ -573,8 +579,9 @@ const renderNodeSchema: z.ZodType<RenderNodeIr> = z.lazy(() =>
       z.strictObject({
         ...renderNodeBaseShape,
         kind: z.literal("connector"),
-        from: connectorEndpointSchema,
-        to: connectorEndpointSchema,
+        from: connectorEndpointSchema.optional(),
+        to: connectorEndpointSchema.optional(),
+        edgeRef: z.string().min(1).optional(),
         via: pointIrSchema.optional(),
         axis: connectorAxisSchema.optional(),
       }),
@@ -590,6 +597,47 @@ const renderNodeSchema: z.ZodType<RenderNodeIr> = z.lazy(() =>
       }),
     ])
     .superRefine((node, context) => {
+      if (node.kind === "connector") {
+        const hasFrom = node.from !== undefined;
+        const hasTo = node.to !== undefined;
+        const hasEndpoints = hasFrom && hasTo;
+        const hasEdgeRef = node.edgeRef !== undefined;
+        const hasPath = node.path !== undefined || node.points !== undefined;
+
+        if ((node.capabilityId ?? node.capability) === "motion.signal") {
+          const modeCount = [hasEndpoints, hasEdgeRef, hasPath].filter(Boolean).length;
+          if (hasFrom !== hasTo || modeCount !== 1) {
+            context.addIssue({
+              code: "custom",
+              message:
+                "motion.signal requires exactly one mode: edgeRef, from + to, or path/points",
+            });
+          }
+        } else {
+          if (hasEdgeRef) {
+            context.addIssue({
+              code: "custom",
+              path: ["edgeRef"],
+              message: `Connector "${node.id}" cannot reference another edge`,
+            });
+          }
+          if (!hasFrom) {
+            context.addIssue({
+              code: "custom",
+              path: ["from"],
+              message: `Connector "${node.id}" requires a source endpoint`,
+            });
+          }
+          if (!hasTo) {
+            context.addIssue({
+              code: "custom",
+              path: ["to"],
+              message: `Connector "${node.id}" requires a destination endpoint`,
+            });
+          }
+        }
+        return;
+      }
       if (node.kind !== "fan") {
         return;
       }

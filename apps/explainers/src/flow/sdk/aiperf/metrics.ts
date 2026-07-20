@@ -11,12 +11,8 @@
 //! W&B, ...). The component carries no deck-specific prose or fixed slide
 //! ids; callers supply labels and theme roles as props.
 //!
-//! The generic `sdk.*` factory pack (`sdk/generic/chrome.ts`, `topology.ts`,
-//! ...) is being built concurrently and is not yet available. Until it lands,
-//! this module composes ordinary Scene IR through a small local kit (below)
-//! that mirrors the same primitives (`core.rect` + `core.text` chrome,
-//! `core.fan-out`). Swapping the local kit for `sdk.card` / `sdk.fanOut`
-//! calls is a self-contained follow-up once those factories are registered.
+//! Metrics and exporter nodes use native semantic `core.chip` Scene IR so
+//! their chrome and text remain renderer-owned rather than serialized children.
 
 import type { ComponentPropDescriptor } from "../../schema/component-descriptor.js";
 import { diagnostic, type Result } from "../../schema/diagnostic.js";
@@ -26,15 +22,12 @@ import type {
   FanNodeIr,
   GeometryIr,
   GroupNodeIr,
-  RectNodeIr,
   RenderNodeIr,
-  TextNodeIr,
 } from "../../schema/ir.js";
 import type { JsonValue } from "../../schema/json-value.js";
 import type { SourceRange } from "../../schema/source.js";
 import {
   THEME_ROLES,
-  type StyleValueIr,
   type ThemeRole,
   type ThemeRoleReferenceIr,
 } from "../../schema/theme.js";
@@ -114,45 +107,6 @@ function requireLabels(
         "Provide at least one entry in the labels array, or omit the prop to use the component default.",
       ),
     ],
-  };
-}
-
-function textNode(
-  id: string,
-  text: string,
-  geometry: GeometryIr,
-  sourceMap: SourceRange,
-  style: Readonly<Record<string, StyleValueIr>>,
-): TextNodeIr {
-  return {
-    kind: "text",
-    id,
-    capabilityId: "core.text",
-    geometry,
-    style,
-    accessibility: { label: text },
-    fallback: text,
-    sourceMap,
-    text,
-  };
-}
-
-function rectNode(
-  id: string,
-  geometry: GeometryIr,
-  sourceMap: SourceRange,
-  style: Readonly<Record<string, StyleValueIr>>,
-  label: string,
-): RectNodeIr {
-  return {
-    kind: "rect",
-    id,
-    capabilityId: "core.rect",
-    geometry,
-    style,
-    accessibility: { label },
-    fallback: label,
-    sourceMap,
   };
 }
 
@@ -247,7 +201,7 @@ function fanOutNode(
   };
 }
 
-function labeledBox(args: {
+function semanticChip(args: {
   id: string;
   label: string;
   x: number;
@@ -261,31 +215,23 @@ function labeledBox(args: {
 }): GroupNodeIr {
   const { id, label, x, y, width, height, sourceMap, surfaceRole, inkRole, lineRole } =
     args;
-  const chrome = rectNode(
-    `${id}-chrome`,
-    { x: 0, y: 0, width, height },
-    sourceMap,
-    {
+  return {
+    kind: "group",
+    id,
+    capabilityId: "core.chip",
+    geometry: { x, y, width, height },
+    style: {
       fill: themeRole(surfaceRole),
       stroke: themeRole(lineRole),
       strokeWidth: 1.2,
       radius: 8,
     },
-    label,
-  );
-  const text = textNode(
-    `${id}-label`,
-    label,
-    { x: 0, y: Math.max((height - 16) / 2, 0), width, height: 16 },
+    props: { label, inkRole },
+    accessibility: { label },
+    fallback: label,
     sourceMap,
-    {
-      fontSize: 12,
-      fontWeight: "bold",
-      textAnchor: "middle",
-      fill: themeRole(inkRole),
-    },
-  );
-  return groupNode(id, { x, y, width, height }, sourceMap, label, [chrome, text]);
+    children: [],
+  };
 }
 
 function symbolExportFromId(id: string): string {
@@ -364,7 +310,7 @@ function metricsExportFactory(
   const height = CHIP_HEIGHT * 2 + ROW_GAP;
 
   const sourceId = nodeId(instanceId, "source");
-  const source = labeledBox({
+  const source = semanticChip({
     id: sourceId,
     label: sourceLabel,
     x: (width - CHIP_WIDTH) / 2,
@@ -379,7 +325,7 @@ function metricsExportFactory(
 
   const exportersY = CHIP_HEIGHT + ROW_GAP;
   const exporters = exporterLabels.map((label, index) =>
-    labeledBox({
+    semanticChip({
       id: nodeId(instanceId, `exporter-${index}`),
       label,
       x: index * (CHIP_WIDTH + CHIP_GAP),

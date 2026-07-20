@@ -240,8 +240,59 @@ function rangeBetween(
   };
 }
 
+/**
+ * Decode a QuotedString token image into its string value.
+ *
+ * The lexer accepts raw control characters (e.g. TAB) that JSON.parse rejects.
+ * Decode escapes manually so `parseDocument` returns a Result instead of throwing.
+ */
 function stringValue(token: IToken): string {
-  return JSON.parse(token.image) as string;
+  const body = token.image.slice(1, -1);
+  let result = "";
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i]!;
+    if (ch !== "\\") {
+      result += ch;
+      continue;
+    }
+    const next = body[++i];
+    switch (next) {
+      case '"':
+        result += '"';
+        break;
+      case "\\":
+        result += "\\";
+        break;
+      case "/":
+        result += "/";
+        break;
+      case "b":
+        result += "\b";
+        break;
+      case "f":
+        result += "\f";
+        break;
+      case "n":
+        result += "\n";
+        break;
+      case "r":
+        result += "\r";
+        break;
+      case "t":
+        result += "\t";
+        break;
+      case "u": {
+        const hex = body.slice(i + 1, i + 5);
+        result += String.fromCharCode(Number.parseInt(hex, 16));
+        i += 4;
+        break;
+      }
+      default:
+        result += next ?? "";
+        break;
+    }
+  }
+  return result;
 }
 
 function numberValue(token: IToken): number {
@@ -413,7 +464,7 @@ class FlowParser extends EmbeddedActionsParser {
     const parts: string[] = [];
     const first = this.CONSUME(Identifier);
     this.ACTION(() => parts.push(first.image));
-    this.AT_LEAST_ONE(() => {
+    this.MANY(() => {
       this.CONSUME(Dot);
       const part = this.CONSUME2(Identifier);
       this.ACTION(() => parts.push(part.image));

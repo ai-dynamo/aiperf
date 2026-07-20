@@ -144,32 +144,6 @@ function withOrigin<T extends RenderNodeIr>(
   });
 }
 
-function rect(
-  id: string,
-  geometryValue: GeometryIr,
-  style: Readonly<Record<string, StyleValueIr>>,
-  label: string,
-  context: SdkExpansionContext,
-  spec: DiagramSpec,
-  role: string,
-): RenderNodeIr {
-  return withOrigin(
-    {
-      kind: "rect",
-      id,
-      capabilityId: "core.rect",
-      geometry: geometryValue,
-      style,
-      accessibility: { label },
-      fallback: label,
-      sourceMap: context.sourceMap,
-    },
-    context,
-    spec.id,
-    role,
-  );
-}
-
 function text(
   id: string,
   content: string,
@@ -203,6 +177,8 @@ function group(
   geometryValue: GeometryIr,
   label: string,
   children: readonly RenderNodeIr[],
+  style: Readonly<Record<string, StyleValueIr>> = { coordinateSpace: "local" },
+  props?: Readonly<Record<string, JsonValue>>,
 ): RenderNodeIr {
   return withOrigin(
     {
@@ -210,15 +186,43 @@ function group(
       id: context.instanceId,
       capabilityId: `diagram.${spec.category}`,
       geometry: geometryValue,
-      style: { coordinateSpace: "local" },
+      style,
       accessibility: { label },
       fallback: label,
       sourceMap: context.sourceMap,
+      ...(props !== undefined ? { props } : {}),
       children,
     },
     context,
     spec.id,
     "root",
+  );
+}
+
+function semanticTarget(
+  id: string,
+  geometryValue: GeometryIr,
+  label: string,
+  context: SdkExpansionContext,
+  spec: DiagramSpec,
+  role: string,
+): RenderNodeIr {
+  return withOrigin(
+    {
+      kind: "group",
+      id,
+      capabilityId: "core.semantic-port",
+      geometry: geometryValue,
+      style: {},
+      accessibility: { label },
+      fallback: label,
+      sourceMap: context.sourceMap,
+      props: { role },
+      children: [],
+    },
+    context,
+    spec.id,
+    role,
   );
 }
 
@@ -308,19 +312,9 @@ function standardFactory(spec: DiagramSpec): SdkComponentFactory {
     const box = geometry(props, spec);
     const label = labelFor(props, spec);
     const detail = stringProp(props, "detail");
-    const chromeId = `${context.instanceId}__chrome`;
     const glyphId = `${context.instanceId}__glyph`;
     const titleId = `${context.instanceId}__title`;
     const children: RenderNodeIr[] = [
-      rect(
-        chromeId,
-        { x: 0, y: 0, width: box.width, height: box.height },
-        themeStyle(props, spec),
-        label,
-        context,
-        spec,
-        "chrome",
-      ),
       text(
         glyphId,
         spec.glyph,
@@ -335,34 +329,15 @@ function standardFactory(spec: DiagramSpec): SdkComponentFactory {
         spec,
         "glyph",
       ),
-      text(
+      semanticTarget(
         titleId,
-        label,
         { x: 46, y: detail === undefined ? 20 : 12, width: Math.max(box.width - 56, 0), height: 22 },
-        {
-          fill: stringProp(props, "inkRole") ?? "@theme.ink.primary",
-          fontSize: 13,
-          fontWeight: "bold",
-          textAnchor: "start",
-        },
+        label,
         context,
         spec,
         "title",
       ),
     ];
-    if (detail !== undefined) {
-      children.push(
-        text(
-          `${context.instanceId}__detail`,
-          detail,
-          { x: 46, y: 38, width: Math.max(box.width - 56, 0), height: 18 },
-          { fill: "@theme.ink.secondary", fontSize: 10, textAnchor: "start" },
-          context,
-          spec,
-          "detail",
-        ),
-      );
-    }
     if (spec.id === "sdk.retry" || spec.id === "sdk.loop") {
       children.push(
         withOrigin(
@@ -386,7 +361,15 @@ function standardFactory(spec: DiagramSpec): SdkComponentFactory {
     }
     const childRoots = childFragments(slots).flatMap((fragment) => fragment.roots);
     children.push(...childRoots);
-    const root = group(spec, context, box, label, children);
+    const root = group(
+      spec,
+      context,
+      box,
+      label,
+      children,
+      { ...themeStyle(props, spec), coordinateSpace: "local" },
+      { title: label, glyph: spec.glyph, ...(detail !== undefined ? { detail } : {}) },
+    );
     const ports = semanticPorts(spec, context, box, props);
     ports.icon = { nodeId: glyphId };
     ports.title = { nodeId: titleId };
@@ -397,7 +380,7 @@ function standardFactory(spec: DiagramSpec): SdkComponentFactory {
         ports,
         actions:
           spec.category === "control" || spec.category === "messaging" || spec.category === "network"
-            ? { enter: [root.id], draw: [chromeId], trace: [root.id] }
+            ? { enter: [root.id], draw: [root.id], trace: [root.id] }
             : { enter: [root.id], emphasis: [root.id], exit: [root.id] },
       },
       diagnostics: [],
@@ -411,25 +394,15 @@ function boundaryFactory(spec: DiagramSpec): SdkComponentFactory {
     const label = labelFor(props, spec);
     const fragments = childFragments(slots);
     const content = fragments.flatMap((fragment) => fragment.roots);
-    const chrome = rect(
-      `${context.instanceId}__chrome`,
-      { x: 0, y: 0, width: box.width, height: box.height },
-      themeStyle(props, spec),
-      label,
-      context,
+    const root = group(
       spec,
-      "chrome",
-    );
-    const title = text(
-      `${context.instanceId}__title`,
-      label,
-      { x: 12, y: 8, width: Math.max(box.width - 24, 0), height: 20 },
-      { fill: stringProp(props, "inkRole") ?? "@theme.ink.primary", fontSize: 12, fontWeight: "bold", textAnchor: "start" },
       context,
-      spec,
-      "title",
+      box,
+      label,
+      content,
+      { ...themeStyle(props, spec), coordinateSpace: "local" },
+      { title: label },
     );
-    const root = group(spec, context, box, label, [chrome, title, ...content]);
     const ports = semanticPorts(spec, context, box, props);
     fragments.forEach((fragment, index) => {
       const child = fragment.roots[0];

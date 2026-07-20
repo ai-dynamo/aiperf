@@ -75,5 +75,79 @@ describe("semantic Scene node lowering", () => {
     });
     expect(sceneNodeSchema.parse(stepper)).toEqual(stepper);
   });
+
+  it("retains an edge-bound motion signal without synthetic endpoints", () => {
+    const signal = lowerSemanticSceneNode(
+      {
+        id: "motion",
+        capability: "motion.signal",
+        geometry: { x: 0, y: 0, width: 0, height: 0 },
+        style: { motion: "signal", markerEnd: "none" },
+        edgeRef: "request-credit",
+      },
+      {
+        id: "motion",
+        capability: "motion.signal",
+        children: [],
+        label: "motion signal",
+        fallback: "motion signal",
+        sourceMap: SOURCE_MAP,
+      },
+    );
+
+    expect(signal).toMatchObject({
+      id: "motion",
+      kind: "connector",
+      capabilityId: "motion.signal",
+      edgeRef: "request-credit",
+    });
+    expect(signal).not.toHaveProperty("from");
+    expect(signal).not.toHaveProperty("to");
+    expect(signal).not.toHaveProperty("props.edgeRef");
+    expect(sceneNodeSchema.parse(signal)).toEqual(signal);
+  });
+
+  it("rejects missing and mixed connector modes in the strict schema", () => {
+    const base = {
+      id: "connector",
+      kind: "connector",
+      geometry: { x: 0, y: 0, width: 0, height: 0 },
+      style: {},
+      accessibility: { label: "connector" },
+      fallback: "connector",
+      sourceMap: SOURCE_MAP,
+    } as const;
+
+    expect(
+      sceneNodeSchema.safeParse({
+        ...base,
+        capabilityId: "core.connector",
+      }).success,
+    ).toBe(false);
+    expect(
+      sceneNodeSchema.safeParse({
+        ...base,
+        capabilityId: "core.connector",
+        from: { x: 0, y: 0 },
+        to: { x: 1, y: 1 },
+        edgeRef: "edge",
+      }).success,
+    ).toBe(false);
+    expect(
+      sceneNodeSchema.safeParse({
+        ...base,
+        capabilityId: "motion.signal",
+        edgeRef: "edge",
+        path: "M0 0 L1 1",
+      }).success,
+    ).toBe(false);
+    expect(
+      sceneNodeSchema.safeParse({
+        ...base,
+        capabilityId: "motion.signal",
+        from: { x: 0, y: 0 },
+      }).success,
+    ).toBe(false);
+  });
 });
 

@@ -13,13 +13,8 @@
 //! deck-specific prose or fixed slide ids; callers supply labels and theme
 //! roles as props.
 //!
-//! The generic `sdk.*` factory pack (`sdk/generic/chrome.ts`, `topology.ts`,
-//! ...) is being built concurrently and is not yet available. Until it lands,
-//! this module composes ordinary Scene IR through a small local kit (below)
-//! that mirrors the same primitives (`core.rect` + `core.text` chrome,
-//! `core.connector` / `core.route`). Swapping the local kit for `sdk.card` /
-//! `sdk.pipeline` / `sdk.edge` calls is a self-contained follow-up once those
-//! factories are registered.
+//! Labeled stages use native semantic `core.chip` Scene IR, while the segment
+//! pool and Velo envelope use semantic `core.panel` containers.
 
 import type { ComponentPropDescriptor } from "../../schema/component-descriptor.js";
 import { diagnostic, type Result } from "../../schema/diagnostic.js";
@@ -28,9 +23,7 @@ import type {
   ConnectorNodeIr,
   GeometryIr,
   GroupNodeIr,
-  RectNodeIr,
   RenderNodeIr,
-  TextNodeIr,
 } from "../../schema/ir.js";
 import type { JsonValue } from "../../schema/json-value.js";
 import type { SourceRange } from "../../schema/source.js";
@@ -119,45 +112,6 @@ function requireLabels(
   };
 }
 
-function textNode(
-  id: string,
-  text: string,
-  geometry: GeometryIr,
-  sourceMap: SourceRange,
-  style: Readonly<Record<string, StyleValueIr>>,
-): TextNodeIr {
-  return {
-    kind: "text",
-    id,
-    capabilityId: "core.text",
-    geometry,
-    style,
-    accessibility: { label: text },
-    fallback: text,
-    sourceMap,
-    text,
-  };
-}
-
-function rectNode(
-  id: string,
-  geometry: GeometryIr,
-  sourceMap: SourceRange,
-  style: Readonly<Record<string, StyleValueIr>>,
-  label: string,
-): RectNodeIr {
-  return {
-    kind: "rect",
-    id,
-    capabilityId: "core.rect",
-    geometry,
-    style,
-    accessibility: { label },
-    fallback: label,
-    sourceMap,
-  };
-}
-
 function groupNode(
   id: string,
   geometry: GeometryIr,
@@ -226,7 +180,7 @@ function connectorNode(
   };
 }
 
-function labeledBox(args: {
+function semanticChip(args: {
   id: string;
   label: string;
   x: number;
@@ -240,31 +194,55 @@ function labeledBox(args: {
 }): GroupNodeIr {
   const { id, label, x, y, width, height, sourceMap, surfaceRole, inkRole, lineRole } =
     args;
-  const chrome = rectNode(
-    `${id}-chrome`,
-    { x: 0, y: 0, width, height },
-    sourceMap,
-    {
+  return {
+    kind: "group",
+    id,
+    capabilityId: "core.chip",
+    geometry: { x, y, width, height },
+    style: {
       fill: themeRole(surfaceRole),
       stroke: themeRole(lineRole),
       strokeWidth: 1.2,
       radius: 8,
     },
-    label,
-  );
-  const text = textNode(
-    `${id}-label`,
-    label,
-    { x: 0, y: Math.max((height - 16) / 2, 0), width, height: 16 },
+    props: { label, inkRole },
+    accessibility: { label },
+    fallback: label,
     sourceMap,
-    {
-      fontSize: 12,
-      fontWeight: "bold",
-      textAnchor: "middle",
-      fill: themeRole(inkRole),
+    children: [],
+  };
+}
+
+function semanticPanel(args: {
+  id: string;
+  label: string;
+  geometry: GeometryIr;
+  sourceMap: SourceRange;
+  surfaceRole: ThemeRole;
+  inkRole: ThemeRole;
+  lineRole: ThemeRole;
+  children: readonly RenderNodeIr[];
+  dashed?: boolean;
+}): GroupNodeIr {
+  return {
+    kind: "group",
+    id: args.id,
+    capabilityId: "core.panel",
+    geometry: args.geometry,
+    style: {
+      coordinateSpace: "local",
+      fill: themeRole(args.surfaceRole),
+      stroke: themeRole(args.lineRole),
+      strokeWidth: args.dashed === true ? 1.4 : 1.2,
+      radius: 10,
+      ...(args.dashed === true ? { strokeDasharray: "4 3" } : {}),
     },
-  );
-  return groupNode(id, { x, y, width, height }, sourceMap, label, [chrome, text]);
+    props: { title: args.label, inkRole: args.inkRole },
+    accessibility: { label: args.label },
+    fallback: args.label,
+    sourceMap: args.sourceMap,
+    children: args.children,
+  };
 }
 
 function symbolExportFromId(id: string): string {
@@ -339,7 +317,7 @@ function requestPipelineFactory(
   const height = STAGE_HEIGHT;
 
   const stages = stageLabels.map((label, index) =>
-    labeledBox({
+    semanticChip({
       id: nodeId(instanceId, `stage-${index}`),
       label,
       x: index * (STAGE_WIDTH + STAGE_GAP),
@@ -449,33 +427,8 @@ function segmentPoolFactory(
   const height = POOL_HEADER + SEGMENT_HEIGHT + POOL_PAD * 2;
 
   const poolId = instanceId;
-  const chrome = rectNode(
-    nodeId(instanceId, "pool-chrome"),
-    { x: 0, y: 0, width, height },
-    sourceMap,
-    {
-      fill: themeRole(surfaceRole),
-      stroke: themeRole(lineRole),
-      strokeWidth: 1.2,
-      radius: 10,
-    },
-    poolLabel,
-  );
-  const title = textNode(
-    nodeId(instanceId, "pool-title"),
-    poolLabel,
-    { x: POOL_PAD, y: POOL_PAD, width: Math.max(width - POOL_PAD * 2, 0), height: 18 },
-    sourceMap,
-    {
-      fontSize: 12,
-      fontWeight: "bold",
-      textAnchor: "start",
-      fill: themeRole(inkRole),
-    },
-  );
-
   const segments = segmentLabels.map((label, index) =>
-    labeledBox({
+    semanticChip({
       id: nodeId(instanceId, `segment-${index}`),
       label,
       x: POOL_PAD + index * (SEGMENT_WIDTH + SEGMENT_GAP),
@@ -489,11 +442,16 @@ function segmentPoolFactory(
     }),
   );
 
-  const root = groupNode(poolId, { x: origin.x, y: origin.y, width, height }, sourceMap, poolLabel, [
-    chrome,
-    title,
-    ...segments,
-  ]);
+  const root = semanticPanel({
+    id: poolId,
+    label: poolLabel,
+    geometry: { x: origin.x, y: origin.y, width, height },
+    sourceMap,
+    surfaceRole,
+    inkRole,
+    lineRole,
+    children: segments,
+  });
 
   const ports: Record<string, ConnectorEndpointIr> = {
     pool: { nodeId: poolId, anchor: "w" },
@@ -543,7 +501,7 @@ function warmupHandoffFactory(
 
   const fromId = nodeId(instanceId, "from");
   const toId = nodeId(instanceId, "to");
-  const fromBox = labeledBox({
+  const fromBox = semanticChip({
     id: fromId,
     label: fromLabel,
     x: 0,
@@ -555,7 +513,7 @@ function warmupHandoffFactory(
     inkRole,
     lineRole,
   });
-  const toBox = labeledBox({
+  const toBox = semanticChip({
     id: toId,
     label: toLabel,
     x: HANDOFF_WIDTH + HANDOFF_GAP,
@@ -632,33 +590,8 @@ function veloEnvelopeFactory(
   const height = PAYLOAD_HEIGHT + ENVELOPE_PAD * 2 + ENVELOPE_TITLE_BAND;
 
   const envelopeId = instanceId;
-  const chrome = rectNode(
-    nodeId(instanceId, "envelope-chrome"),
-    { x: 0, y: 0, width, height },
-    sourceMap,
-    {
-      fill: themeRole(surfaceRole),
-      stroke: themeRole(lineRole),
-      strokeWidth: 1.4,
-      radius: 10,
-      strokeDasharray: "4 3",
-    },
-    envelopeLabel,
-  );
-  const title = textNode(
-    nodeId(instanceId, "envelope-title"),
-    envelopeLabel,
-    { x: ENVELOPE_PAD, y: 4, width: Math.max(width - ENVELOPE_PAD * 2, 0), height: 16 },
-    sourceMap,
-    {
-      fontSize: 11,
-      fontWeight: "bold",
-      textAnchor: "start",
-      fill: themeRole(inkRole),
-    },
-  );
   const payloadId = nodeId(instanceId, "payload");
-  const payload = labeledBox({
+  const payload = semanticChip({
     id: payloadId,
     label: payloadLabel,
     x: ENVELOPE_PAD,
@@ -671,11 +604,17 @@ function veloEnvelopeFactory(
     lineRole,
   });
 
-  const root = groupNode(envelopeId, { x: origin.x, y: origin.y, width, height }, sourceMap, envelopeLabel, [
-    chrome,
-    title,
-    payload,
-  ]);
+  const root = semanticPanel({
+    id: envelopeId,
+    label: envelopeLabel,
+    geometry: { x: origin.x, y: origin.y, width, height },
+    sourceMap,
+    surfaceRole,
+    inkRole,
+    lineRole,
+    children: [payload],
+    dashed: true,
+  });
 
   return {
     ok: true,
@@ -733,7 +672,7 @@ function phaseLifecycleFactory(
   const height = PHASE_HEIGHT;
 
   const phases = phaseLabels.map((label, index) =>
-    labeledBox({
+    semanticChip({
       id: nodeId(instanceId, `phase-${index}`),
       label,
       x: index * (PHASE_WIDTH + PHASE_GAP),
