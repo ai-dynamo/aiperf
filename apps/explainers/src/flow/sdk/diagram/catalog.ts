@@ -199,33 +199,6 @@ function group(
   );
 }
 
-function semanticTarget(
-  id: string,
-  geometryValue: GeometryIr,
-  label: string,
-  context: SdkExpansionContext,
-  spec: DiagramSpec,
-  role: string,
-): RenderNodeIr {
-  return withOrigin(
-    {
-      kind: "group",
-      id,
-      capabilityId: "core.semantic-port",
-      geometry: geometryValue,
-      style: {},
-      accessibility: { label },
-      fallback: label,
-      sourceMap: context.sourceMap,
-      props: { role },
-      children: [],
-    },
-    context,
-    spec.id,
-    role,
-  );
-}
-
 function themeStyle(props: Props, spec: DiagramSpec): Record<string, StyleValueIr> {
   const surfaceByCategory: Readonly<Record<Category, string>> = {
     actor: "@theme.surface.elevated",
@@ -328,14 +301,6 @@ function standardFactory(spec: DiagramSpec): SdkComponentFactory {
         context,
         spec,
         "glyph",
-      ),
-      semanticTarget(
-        titleId,
-        { x: 46, y: detail === undefined ? 20 : 12, width: Math.max(box.width - 56, 0), height: 22 },
-        label,
-        context,
-        spec,
-        "title",
       ),
     ];
     if (spec.id === "sdk.retry" || spec.id === "sdk.loop") {

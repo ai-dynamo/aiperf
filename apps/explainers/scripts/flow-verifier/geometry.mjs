@@ -3,13 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/** Default SceneRenderer viewport. */
-export const DEFAULT_VIEWPORT = Object.freeze({
-  width: 700,
-  height: 400,
-  margin: 24,
-});
-
 /** Snap distance (px) for connector endpoint / dot proximity. */
 export const SNAP_PX = 36;
 
@@ -41,8 +34,23 @@ const MOTION_CAPS = new Set([
   "motion.motion-signal",
 ]);
 
+/**
+ * Returns a node's canonical or authoring-alias capability, mirroring
+ * SceneRenderer's three-tier resolution: `capabilityId`, then `capability`,
+ * then a `core.${kind}` fallback so kind-only nodes (no explicit capability
+ * authored yet) still classify correctly instead of resolving to `""`.
+ */
 export function capabilityOf(node) {
-  return String(node?.capabilityId ?? node?.capability ?? "");
+  if (typeof node?.capabilityId === "string" && node.capabilityId.length > 0) {
+    return node.capabilityId;
+  }
+  if (typeof node?.capability === "string" && node.capability.length > 0) {
+    return node.capability;
+  }
+  if (typeof node?.kind === "string" && node.kind.length > 0) {
+    return `core.${node.kind}`;
+  }
+  return "";
 }
 
 export function kindOf(node) {
@@ -84,50 +92,6 @@ export function isMotionSignalNode(node) {
     role === "motion" ||
     role === "motion-signal"
   );
-}
-
-/** True when the author disabled arrowheads (undirected divider / guide). */
-export function markerEndDisabled(node) {
-  const markerEnd = node?.style?.markerEnd;
-  if (markerEnd === undefined || markerEnd === null) return false;
-  if (markerEnd === false || markerEnd === 0) return true;
-  if (typeof markerEnd === "string") {
-    const token = markerEnd.trim().toLowerCase();
-    return token === "none" || token === "false" || token === "0";
-  }
-  if (typeof markerEnd === "object" && markerEnd !== null) {
-    const kind = markerEnd.kind;
-    if (typeof kind === "string") {
-      const token = kind.trim().toLowerCase();
-      return token === "none" || token === "false";
-    }
-  }
-  return false;
-}
-
-/** Directed connectors that should snap to boxes (excludes motion + headless). */
-export function isDirectedConnector(node) {
-  if (!isArrowLike(node) || isMotionSignalNode(node) || markerEndDisabled(node)) {
-    return false;
-  }
-  if (
-    node?.style?.arrowhead === false ||
-    node?.style?.arrowhead === 0 ||
-    node?.style?.arrowhead === "false"
-  ) {
-    return false;
-  }
-  const id = String(node?.id ?? "").toLowerCase();
-  // Visual dividers / rules are not box-to-box connectors.
-  if (/^(split|divider|rule|sep|guide)([-_]|$)/.test(id)) {
-    return false;
-  }
-  const cap = capabilityOf(node);
-  // Braces are undirected (mirror SceneRenderer / desugar markerEnd: none).
-  if (cap === "core.bracket") {
-    return false;
-  }
-  return true;
 }
 
 export function isDotLike(node) {
@@ -198,262 +162,12 @@ export function nodeIds(roots) {
   );
 }
 
-export function geomOf(node) {
-  const g = node?.geometry ?? node?.layout;
-  if (!g || typeof g !== "object") return null;
-  const x = Number(g.x);
-  const y = Number(g.y);
-  const w = Number(g.width);
-  const h = Number(g.height);
-  if (![x, y, w, h].every(Number.isFinite)) return null;
-  return { x, y, width: w, height: h };
-}
-
-export function boxCenter(geom) {
-  return { x: geom.x + geom.width / 2, y: geom.y + geom.height / 2 };
-}
-
-/** Edge / corner / center point on a box (SceneRenderer anchor parity). */
-export function nodeAnchorPoint(geom, anchor) {
-  const center = boxCenter(geom);
-  const left = geom.x;
-  const right = geom.x + geom.width;
-  const top = geom.y;
-  const bottom = geom.y + geom.height;
-  switch (String(anchor ?? "center").toLowerCase()) {
-    case "left":
-    case "west":
-    case "w":
-      return { x: left, y: center.y };
-    case "right":
-    case "east":
-    case "e":
-      return { x: right, y: center.y };
-    case "top":
-    case "north":
-    case "n":
-      return { x: center.x, y: top };
-    case "bottom":
-    case "south":
-    case "s":
-      return { x: center.x, y: bottom };
-    case "ne":
-      return { x: right, y: top };
-    case "nw":
-      return { x: left, y: top };
-    case "se":
-      return { x: right, y: bottom };
-    case "sw":
-      return { x: left, y: bottom };
-    case "center":
-    default:
-      return center;
-  }
-}
-
 /**
- * Resolve a connector endpoint to a point. Supports absolute `{x,y}` and
- * node-anchored `{nodeId, anchor}` when `nodesById` is provided.
- */
-export function resolveEndpoint(endpoint, nodesById) {
-  if (!endpoint || typeof endpoint !== "object") return null;
-  const nodeId = endpoint.nodeId;
-  if (typeof nodeId === "string" && nodeId.length > 0 && nodesById) {
-    const target = nodesById.get(nodeId);
-    const g = target ? geomOf(target) : null;
-    if (g) return nodeAnchorPoint(g, endpoint.anchor);
-  }
-  if (Number.isFinite(endpoint.x) && Number.isFinite(endpoint.y)) {
-    return { x: endpoint.x, y: endpoint.y };
-  }
-  return null;
-}
-
-function isSoftAnchor(anchor) {
-  if (anchor === undefined || anchor === null || String(anchor).length === 0) {
-    return true;
-  }
-  const token = String(anchor).toLowerCase();
-  return token === "center" || token === "middle" || token === "c";
-}
-
-function facingAnchor(geom, peer) {
-  const center = boxCenter(geom);
-  const dx = peer.x - center.x;
-  const dy = peer.y - center.y;
-  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? "e" : "w";
-  return dy >= 0 ? "s" : "n";
-}
-
-function resolveFanEndpoint(endpoint, peer, nodesById) {
-  if (!endpoint || typeof endpoint !== "object") return null;
-  if (Number.isFinite(endpoint.x) && Number.isFinite(endpoint.y)) {
-    return { x: endpoint.x, y: endpoint.y };
-  }
-  if (typeof endpoint.nodeId !== "string" || endpoint.nodeId.length === 0) {
-    return null;
-  }
-  const target = nodesById?.get(endpoint.nodeId);
-  const geom = target ? geomOf(target) : null;
-  if (!geom) return null;
-  const anchor = isSoftAnchor(endpoint.anchor)
-    ? facingAnchor(geom, peer)
-    : endpoint.anchor;
-  return nodeAnchorPoint(geom, anchor);
-}
-
-function centroid(points) {
-  if (points.length === 0) return null;
-  const sum = points.reduce(
-    (total, point) => ({ x: total.x + point.x, y: total.y + point.y }),
-    { x: 0, y: 0 },
-  );
-  return { x: sum.x / points.length, y: sum.y / points.length };
-}
-
-function compactPoints(points) {
-  return points.filter((point, index) => {
-    const previous = points[index - 1];
-    return (
-      previous === undefined ||
-      Math.abs(previous.x - point.x) > 0.001 ||
-      Math.abs(previous.y - point.y) > 0.001
-    );
-  });
-}
-
-function fanBranchPoints(endpoint, junction, axis, incoming) {
-  if (axis === "x") {
-    return incoming
-      ? [endpoint, { x: junction.x, y: endpoint.y }, junction]
-      : [junction, { x: junction.x, y: endpoint.y }, endpoint];
-  }
-  return incoming
-    ? [endpoint, { x: endpoint.x, y: junction.y }, junction]
-    : [junction, { x: endpoint.x, y: junction.y }, endpoint];
-}
-
-function orthogonalFanPoints(start, end, axis) {
-  return axis === "x"
-    ? [start, { x: end.x, y: start.y }, end]
-    : [start, { x: start.x, y: end.y }, end];
-}
-
-function automaticFanJunction(singleton, many, axis) {
-  const manyCentroid = centroid(many);
-  if (!manyCentroid) return null;
-  if (axis === "x") {
-    const towardPositive = manyCentroid.x >= singleton.x;
-    const corridorEdge = towardPositive
-      ? Math.min(...many.map((point) => point.x))
-      : Math.max(...many.map((point) => point.x));
-    return { x: (singleton.x + corridorEdge) / 2, y: singleton.y };
-  }
-  const towardPositive = manyCentroid.y >= singleton.y;
-  const corridorEdge = towardPositive
-    ? Math.min(...many.map((point) => point.y))
-    : Math.max(...many.map((point) => point.y));
-  return { x: singleton.x, y: (singleton.y + corridorEdge) / 2 };
-}
-
-/**
- * Mirror SceneRenderer's endpoint, junction, and trajectory resolution.
- * Returns null when malformed endpoints cannot produce finite connected paths.
- */
-export function resolveFanGeometry(node, nodesById) {
-  const fanOut = capabilityOf(node) !== "core.fan-in";
-  const from = Array.isArray(node?.from) ? node.from : [node?.from];
-  const to = Array.isArray(node?.to) ? node.to : [node?.to];
-  const singletonEndpoint = (fanOut ? from : to)[0];
-  const manyEndpoints = fanOut ? to : from;
-  if (!singletonEndpoint || manyEndpoints.some((endpoint) => !endpoint)) {
-    return null;
-  }
-
-  const origin = { x: 0, y: 0 };
-  const roughSingleton = resolveFanEndpoint(
-    singletonEndpoint,
-    origin,
-    nodesById,
-  );
-  if (!roughSingleton) return null;
-  const roughMany = manyEndpoints.map((endpoint) =>
-    resolveFanEndpoint(endpoint, roughSingleton, nodesById),
-  );
-  if (roughMany.some((point) => point === null)) return null;
-  const roughManyCentroid = centroid(roughMany);
-  if (!roughManyCentroid) return null;
-  const singleton = resolveFanEndpoint(
-    singletonEndpoint,
-    roughManyCentroid,
-    nodesById,
-  );
-  if (!singleton) return null;
-  const many = manyEndpoints.map((endpoint) =>
-    resolveFanEndpoint(endpoint, singleton, nodesById),
-  );
-  if (many.some((point) => point === null)) return null;
-  const manyCentroid = centroid(many);
-  if (!manyCentroid) return null;
-
-  const styledAxis = node?.style?.axis;
-  const axis =
-    node?.axis === "x" || node?.axis === "y"
-      ? node.axis
-      : styledAxis === "x" || styledAxis === "y"
-        ? styledAxis
-        : Math.abs(manyCentroid.x - singleton.x) >=
-            Math.abs(manyCentroid.y - singleton.y)
-          ? "x"
-          : "y";
-  const junction =
-    node?.junction === undefined
-      ? automaticFanJunction(singleton, many, axis)
-      : resolveFanEndpoint(
-          node.junction,
-          fanOut ? manyCentroid : singleton,
-          nodesById,
-        );
-  if (
-    !junction ||
-    !Number.isFinite(junction.x) ||
-    !Number.isFinite(junction.y)
-  ) {
-    return null;
-  }
-
-  const trunk = compactPoints(
-    fanOut
-      ? orthogonalFanPoints(singleton, junction, axis)
-      : orthogonalFanPoints(junction, singleton, axis),
-  );
-  const branches = many.map((endpoint) =>
-    compactPoints(fanBranchPoints(endpoint, junction, axis, !fanOut)),
-  );
-  const trajectories = branches.map((branch) =>
-    compactPoints(
-      fanOut
-        ? [...trunk, ...branch.slice(1)]
-        : [...branch, ...trunk.slice(1)],
-    ),
-  );
-  return { axis, junction, trunk, branches, trajectories };
-}
-
-export function dist(a, b) {
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  return Math.hypot(dx, dy);
-}
-
-export function pointNearBox(point, geom, snap = SNAP_PX) {
-  const cx = Math.min(Math.max(point.x, geom.x), geom.x + geom.width);
-  const cy = Math.min(Math.max(point.y, geom.y), geom.y + geom.height);
-  return dist(point, { x: cx, y: cy }) <= snap;
-}
-
-/**
- * Parse SVG path commands into polyline points.
+ * Sample canonical snapshot SVG path data for proximity/playback checks.
+ *
+ * Snapshots provide the resolved `d` string, but not sampled points or DOM path
+ * metrics. This parser deliberately interprets only that resolved output; it
+ * never reconstructs connector endpoints or routing from authored scene data.
  * Supports M/L/H/V (abs/rel) and records endpoints of C/S/Q/T/A so cubic
  * connectors still yield usable start/end for snap checks.
  */
@@ -562,319 +276,6 @@ export function pathPoints(pathData) {
   return points;
 }
 
-function pathDataFromPoints(points, nodesById) {
-  if (!Array.isArray(points) || points.length === 0) return null;
-  const resolved = points.map((point) => resolveEndpoint(point, nodesById));
-  if (resolved.some((point) => point === null)) return null;
-  return resolved
-    .slice(1)
-    .reduce(
-      (path, point) => `${path} L${point.x} ${point.y}`,
-      `M${resolved[0].x} ${resolved[0].y}`,
-    );
-}
-
-function cardinalAnchorAxis(anchor) {
-  switch (String(anchor ?? "").toLowerCase()) {
-    case "left":
-    case "west":
-    case "w":
-    case "right":
-    case "east":
-    case "e":
-      return "x";
-    case "top":
-    case "north":
-    case "n":
-    case "bottom":
-    case "south":
-    case "s":
-      return "y";
-    default:
-      return undefined;
-  }
-}
-
-function elbowPathFromPoints(points) {
-  const compact = points.filter(
-    (point, index) =>
-      index === 0 ||
-      point.x !== points[index - 1].x ||
-      point.y !== points[index - 1].y,
-  );
-  const first = compact[0] ?? { x: 0, y: 0 };
-  let path = `M${first.x} ${first.y}`;
-  for (let index = 1; index < compact.length; index += 1) {
-    const previous = compact[index - 1];
-    const point = compact[index];
-    path += previous.y === point.y ? ` H${point.x}` : ` V${point.y}`;
-  }
-  return path;
-}
-
-function sameElbowPoint(a, b) {
-  return Math.abs(a.x - b.x) <= 1e-6 && Math.abs(a.y - b.y) <= 1e-6;
-}
-
-function defaultElbowPoints(start, end, preferX, sourceAxis, targetAxis) {
-  if (sourceAxis !== undefined && targetAxis !== undefined && sourceAxis !== targetAxis) {
-    return sourceAxis === "x"
-      ? [start, { x: end.x, y: start.y }, end]
-      : [start, { x: start.x, y: end.y }, end];
-  }
-  if (preferX) {
-    const midX = (start.x + end.x) / 2;
-    return [start, { x: midX, y: start.y }, { x: midX, y: end.y }, end];
-  }
-  const midY = (start.y + end.y) / 2;
-  return [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end];
-}
-
-function orthogonalSegmentsVisible(points, obstacles) {
-  for (let index = 1; index < points.length; index += 1) {
-    const start = points[index - 1];
-    const end = points[index];
-    if (
-      obstacles.some((obstacle) =>
-        segmentIntersectsBounds(start, end, obstacle.bounds, true),
-      )
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function obstacleAwareElbowPoints(
-  start,
-  end,
-  fromAnchor,
-  toAnchor,
-  obstacles,
-  clearance,
-) {
-  const pad = Number.isFinite(clearance) ? Math.max(clearance, 0) : 12;
-  const inflated = obstacles.map((obstacle) => ({
-    id: obstacle.id,
-    bounds: inflateBounds(obstacle.bounds, pad),
-  }));
-  const sourceDirection = anchorExitDirection(fromAnchor, end, start);
-  const targetDirection = anchorExitDirection(toAnchor, start, end);
-  const escape = Math.max(pad, 1);
-  const sourceEscape = {
-    x: roundCanonical(start.x + sourceDirection.x * escape),
-    y: roundCanonical(start.y + sourceDirection.y * escape),
-  };
-  const targetEscape = {
-    x: roundCanonical(end.x + targetDirection.x * escape),
-    y: roundCanonical(end.y + targetDirection.y * escape),
-  };
-  if (
-    inflated.some(
-      (obstacle) =>
-        pointInBounds(sourceEscape, obstacle.bounds, true) ||
-        pointInBounds(targetEscape, obstacle.bounds, true),
-    )
-  ) {
-    return undefined;
-  }
-  const xs = new Set([sourceEscape.x, targetEscape.x]);
-  const ys = new Set([sourceEscape.y, targetEscape.y]);
-  for (const obstacle of inflated) {
-    xs.add(roundCanonical(obstacle.bounds.x - 0.5));
-    xs.add(roundCanonical(obstacle.bounds.x + obstacle.bounds.width + 0.5));
-    ys.add(roundCanonical(obstacle.bounds.y - 0.5));
-    ys.add(roundCanonical(obstacle.bounds.y + obstacle.bounds.height + 0.5));
-  }
-  const sortedX = [...xs].sort((left, right) => left - right);
-  const sortedY = [...ys].sort((left, right) => left - right);
-  const points = [];
-  const indexByKey = new Map();
-  const pointKey = (point) => `${roundCanonical(point.x)},${roundCanonical(point.y)}`;
-  for (const x of sortedX) {
-    for (const y of sortedY) {
-      const point = { x, y };
-      if (inflated.some((obstacle) => pointInBounds(point, obstacle.bounds, true))) {
-        continue;
-      }
-      indexByKey.set(pointKey(point), points.length);
-      points.push(point);
-    }
-  }
-  const sourceIndex = indexByKey.get(pointKey(sourceEscape));
-  const targetIndex = indexByKey.get(pointKey(targetEscape));
-  if (sourceIndex === undefined || targetIndex === undefined) return undefined;
-
-  const adjacency = points.map(() => []);
-  const connectVisible = (indices, axis) => {
-    indices.sort((left, right) =>
-      axis === "x"
-        ? points[left].x - points[right].x
-        : points[left].y - points[right].y,
-    );
-    for (let index = 1; index < indices.length; index += 1) {
-      const left = indices[index - 1];
-      const right = indices[index];
-      const a = points[left];
-      const b = points[right];
-      if (!orthogonalSegmentsVisible([a, b], inflated)) continue;
-      const length = Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
-      adjacency[left].push({ index: right, axis, length });
-      adjacency[right].push({ index: left, axis, length });
-    }
-  };
-  for (const y of sortedY) {
-    connectVisible(
-      points.flatMap((point, index) => (point.y === y ? [index] : [])),
-      "x",
-    );
-  }
-  for (const x of sortedX) {
-    connectVisible(
-      points.flatMap((point, index) => (point.x === x ? [index] : [])),
-      "y",
-    );
-  }
-
-  const stateKey = (state) => `${state.index}:${state.axis}`;
-  const startState = {
-    index: sourceIndex,
-    axis: cardinalAnchorAxis(fromAnchor) ?? "x",
-  };
-  const distances = new Map([[stateKey(startState), 0]]);
-  const previous = new Map();
-  const states = new Map([[stateKey(startState), startState]]);
-  const open = new Set([stateKey(startState)]);
-  let targetKey;
-  while (open.size > 0) {
-    let currentKey;
-    let currentDistance = Infinity;
-    for (const key of open) {
-      const candidate = distances.get(key) ?? Infinity;
-      if (
-        candidate < currentDistance - 1e-9 ||
-        (Math.abs(candidate - currentDistance) <= 1e-9 &&
-          (currentKey === undefined || key.localeCompare(currentKey) < 0))
-      ) {
-        currentKey = key;
-        currentDistance = candidate;
-      }
-    }
-    if (currentKey === undefined) break;
-    open.delete(currentKey);
-    const current = states.get(currentKey);
-    if (current.index === targetIndex) {
-      targetKey = currentKey;
-      break;
-    }
-    for (const edge of adjacency[current.index]) {
-      const next = { index: edge.index, axis: edge.axis };
-      const nextKey = stateKey(next);
-      const bendCost = current.axis === edge.axis ? 0 : Math.max(pad * 2, 8);
-      const candidate = currentDistance + edge.length + bendCost;
-      const known = distances.get(nextKey) ?? Infinity;
-      if (
-        candidate < known - 1e-9 ||
-        (Math.abs(candidate - known) <= 1e-9 &&
-          currentKey.localeCompare(previous.get(nextKey) ?? "\uffff") < 0)
-      ) {
-        distances.set(nextKey, candidate);
-        previous.set(nextKey, currentKey);
-        states.set(nextKey, next);
-        open.add(nextKey);
-      }
-    }
-  }
-  if (targetKey === undefined) return undefined;
-  const routed = [];
-  let cursor = targetKey;
-  while (cursor !== undefined) {
-    routed.push(points[states.get(cursor).index]);
-    cursor = previous.get(cursor);
-  }
-  routed.reverse();
-  const result = [start, ...routed, end];
-  return result.filter(
-    (point, index) => index === 0 || !sameElbowPoint(point, result[index - 1]),
-  );
-}
-
-export function elbowPathData(
-  start,
-  end,
-  via,
-  axis,
-  fromAnchor,
-  toAnchor,
-  obstacles = [],
-  clearance = 12,
-) {
-  const dx = Math.abs(end.x - start.x);
-  const dy = Math.abs(end.y - start.y);
-  const sourceAxis = cardinalAnchorAxis(fromAnchor);
-  const targetAxis = cardinalAnchorAxis(toAnchor);
-  const preferX =
-    sourceAxis === "x" ||
-    (sourceAxis === undefined && targetAxis === "x") ||
-    (sourceAxis === undefined &&
-      targetAxis === undefined &&
-      (axis === "x" || (axis !== "y" && dx >= dy)));
-  if (
-    via === undefined &&
-    sourceAxis !== undefined &&
-    targetAxis !== undefined &&
-    obstacles.length > 0
-  ) {
-    const inflated = obstacles.map((obstacle) => ({
-      id: obstacle.id,
-      bounds: inflateBounds(obstacle.bounds, clearance),
-    }));
-    const direct = defaultElbowPoints(start, end, preferX, sourceAxis, targetAxis);
-    if (!orthogonalSegmentsVisible(direct, inflated)) {
-      const routed = obstacleAwareElbowPoints(
-        start,
-        end,
-        fromAnchor,
-        toAnchor,
-        obstacles,
-        clearance,
-      );
-      if (routed !== undefined) {
-        return elbowPathFromPoints(routed);
-      }
-    }
-  }
-  if (via) {
-    if (sourceAxis !== undefined || targetAxis !== undefined) {
-      const firstAxis = sourceAxis ?? (preferX ? "x" : "y");
-      const lastAxis = targetAxis ?? (firstAxis === "x" ? "y" : "x");
-      const firstJoin =
-        firstAxis === "x"
-          ? { x: via.x, y: start.y }
-          : { x: start.x, y: via.y };
-      const lastJoin =
-        lastAxis === "x"
-          ? { x: via.x, y: end.y }
-          : { x: end.x, y: via.y };
-      return elbowPathFromPoints([start, firstJoin, via, lastJoin, end]);
-    }
-    return preferX
-      ? `M${start.x} ${start.y} H${via.x} V${via.y} H${end.x} V${end.y}`
-      : `M${start.x} ${start.y} V${via.y} H${via.x} V${end.y} H${end.x}`;
-  }
-  if (sourceAxis !== undefined && targetAxis !== undefined && sourceAxis !== targetAxis) {
-    return sourceAxis === "x"
-      ? `M${start.x} ${start.y} H${end.x} V${end.y}`
-      : `M${start.x} ${start.y} V${end.y} H${end.x}`;
-  }
-  if (preferX) {
-    const midX = (start.x + end.x) / 2;
-    return `M${start.x} ${start.y} H${midX} V${end.y} H${end.x}`;
-  }
-  const midY = (start.y + end.y) / 2;
-  return `M${start.x} ${start.y} V${midY} H${end.x} V${end.y}`;
-}
-
 function normalizeVector(vector) {
   const length = Math.hypot(vector.x, vector.y);
   if (length < 1e-6) {
@@ -921,10 +322,11 @@ function anchorExitDirection(anchor, peer, self) {
   }
 }
 
-// --- Deterministic obstacle-aware curved router (Node mirror of the TS core) ---
-// Kept byte-behavior-equivalent to
-// src/core/diagram/connector-routing-{types,geometry,search}.ts so the verifier
-// exercises the same routing the renderer produces.
+// --- Synthetic advanced curved-router matrix ---
+// This is the sole intentional geometry mirror in the Node verifier. The
+// deck-independent matrix has no scene to resolve and therefore cannot consume
+// a canonical snapshot; it independently pressure-tests deterministic routing
+// across anchor pairs, obstacle halos, self-loops, lanes, and fallbacks.
 
 const CUBIC_SAMPLE_COUNT = 33;
 const CANONICAL_SCALE = 1000;
@@ -973,6 +375,37 @@ function pointInBounds(point, bounds, strict = false) {
     return point.x > left && point.x < right && point.y > top && point.y < bottom;
   }
   return point.x >= left && point.x <= right && point.y >= top && point.y <= bottom;
+}
+
+/**
+ * Shrink an axis-aligned rectangle so `point` is not in its strict interior.
+ * Pushes the nearest edge to the point. Leaves bounds unchanged when the point
+ * is already outside the open interior. Used so clearance inflation around a
+ * third-party obstacle near a connector endpoint does not treat that endpoint
+ * as blocked while still keeping the obstacle for the rest of the path. Mirror
+ * of `shrinkBoundsToExcludePoint` in connector-routing-geometry.ts.
+ */
+function shrinkBoundsToExcludePoint(bounds, point) {
+  if (!pointInBounds(point, bounds, true)) return bounds;
+  const left = bounds.x;
+  const right = bounds.x + bounds.width;
+  const top = bounds.y;
+  const bottom = bounds.y + bounds.height;
+  const distLeft = point.x - left;
+  const distRight = right - point.x;
+  const distTop = point.y - top;
+  const distBottom = bottom - point.y;
+  const minDist = Math.min(distLeft, distRight, distTop, distBottom);
+  if (minDist === distLeft) {
+    return { x: point.x, y: bounds.y, width: right - point.x, height: bounds.height };
+  }
+  if (minDist === distRight) {
+    return { x: bounds.x, y: bounds.y, width: point.x - left, height: bounds.height };
+  }
+  if (minDist === distTop) {
+    return { x: bounds.x, y: point.y, width: bounds.width, height: bottom - point.y };
+  }
+  return { x: bounds.x, y: bounds.y, width: bounds.width, height: point.y - top };
 }
 
 function segmentIntersectsBounds(start, end, bounds, allowBoundary = true) {
@@ -1235,21 +668,55 @@ function endpointExitDirection(anchor, peer, self) {
   return unit(anchorExitDirection(anchor, peer, self));
 }
 
+/**
+ * True when any leg of a polyline crosses an obstacle's true (uninflated)
+ * interior. Used to downgrade `feasible` when the resolved waypoints — found
+ * against the clearance-inflated search graph — still cut through real
+ * obstacle geometry, e.g. an obstacle dropped from the graph because an
+ * endpoint sits inside its true bounds. Mirror of
+ * `polylinePenetratesTrueBounds` in connector-routing-search.ts.
+ */
+function polylinePenetratesTrueBounds(waypoints, obstacles) {
+  for (let i = 0; i < waypoints.length - 1; i += 1) {
+    const a = waypoints[i];
+    const b = waypoints[i + 1];
+    for (const obstacle of obstacles) {
+      if (segmentIntersectsBounds(a, b, obstacle.bounds, true)) return true;
+    }
+  }
+  return false;
+}
+
+/** Mirror of `resolveWaypoints` in connector-routing-search.ts. */
 function resolveWaypoints(start, end, obstacles, clearance) {
-  const inflated = obstacles
-    .map((obstacle) => ({ id: obstacle.id, bounds: inflateBounds(obstacle.bounds, clearance) }))
-    .filter(
-      (obstacle) =>
-        !pointInBounds(start, obstacle.bounds, true) && !pointInBounds(end, obstacle.bounds, true),
-    );
+  // Source/target boxes are excluded upstream. Do not drop third-party
+  // obstacles merely because clearance inflation covers an endpoint — that
+  // removed them for the *entire* path and let curves cut through far away.
+  // Keep the obstacle, but shrink the inflated rect so the endpoint itself is
+  // not treated as blocked. Still skip obstacles whose true (uninflated)
+  // interior contains an endpoint — that geometry is unavoidable from the
+  // endpoint itself; `feasible` below still catches a resulting penetration
+  // elsewhere on the path.
+  const inflated = obstacles.flatMap((obstacle) => {
+    if (pointInBounds(start, obstacle.bounds, true) || pointInBounds(end, obstacle.bounds, true)) {
+      return [];
+    }
+    let bounds = inflateBounds(obstacle.bounds, clearance);
+    bounds = shrinkBoundsToExcludePoint(bounds, start);
+    bounds = shrinkBoundsToExcludePoint(bounds, end);
+    if (bounds.width <= 0 || bounds.height <= 0) return [];
+    return [{ id: obstacle.id, bounds }];
+  });
   if (inflated.length === 0 || segmentIsVisible(start, end, inflated)) {
-    return { waypoints: [start, end], feasible: true };
+    const waypoints = [start, end];
+    return { waypoints, feasible: !polylinePenetratesTrueBounds(waypoints, obstacles) };
   }
   const path = shortestVisiblePath(start, end, inflated);
   if (path === undefined || path.length < 2) {
     return { waypoints: [start, end], feasible: false };
   }
-  return { waypoints: simplifyWaypoints(path), feasible: true };
+  const waypoints = simplifyWaypoints(path);
+  return { waypoints, feasible: !polylinePenetratesTrueBounds(waypoints, obstacles) };
 }
 
 function formatNumber(value) {
@@ -1412,7 +879,7 @@ function renderPolyline(waypoints, fromDir, toDir, obstacles, curvature) {
   return { segments: bestSegments, penetrations: bestPenetrations };
 }
 
-/** Node mirror of routeCurve in connector-routing-search.ts. */
+/** Route one deck-independent synthetic advanced-matrix case. */
 export function routeCurve(input) {
   const options = input.options ?? DEFAULT_CURVE_ROUTE_OPTIONS;
   const start = { x: roundCanonical(input.start.x), y: roundCanonical(input.start.y) };
@@ -1488,120 +955,9 @@ export function routeCurve(input) {
 }
 
 /**
- * Validate a resolved route: emit an error for unexpected obstacle penetration
- * and a warning for an explicit deterministic fallback.
+ * Playback sampling remains local because resolved snapshots are static and do
+ * not encode cue windows or playhead state.
  */
-export function verifyCurveRouteResult(edgeId, result, obstacles) {
-  const findings = [];
-  const penetrations = penetratedIds(result.segments, obstacles ?? []);
-  if (penetrations.length > 0 && !result.usedFallback) {
-    findings.push({
-      severity: "error",
-      code: "CURVE_OBSTACLE_PENETRATION",
-      edgeId,
-      obstacleIds: penetrations,
-    });
-  }
-  if (result.usedFallback) {
-    findings.push({
-      severity: "warn",
-      code: "CURVE_FALLBACK",
-      edgeId,
-      obstacleIds: result.penetratedObstacleIds ?? [],
-    });
-  }
-  return findings;
-}
-
-function isElbowRoute(node) {
-  const capability = capabilityOf(node);
-  if (capability === "core.elbow" || capability === "core.route") {
-    return true;
-  }
-  if (node?.kind === "elbow") {
-    return true;
-  }
-  return node?.style?.route === "elbow";
-}
-
-function isCurveRoute(node) {
-  if (node?.style?.route === "curve") {
-    return true;
-  }
-  return capabilityOf(node) === "core.curve";
-}
-
-function endpointAnchor(endpoint) {
-  return typeof endpoint?.anchor === "string" && endpoint.anchor.length > 0
-    ? endpoint.anchor
-    : undefined;
-}
-
-export function arrowPathData(node, nodesById) {
-  if (typeof node?.d === "string" && node.d.trim()) return node.d;
-  if (typeof node?.path === "string" && node.path.trim()) return node.path;
-  const pointsPath = pathDataFromPoints(node?.points, nodesById);
-  if (pointsPath) return pointsPath;
-  const from = node?.from;
-  const to = node?.to;
-  const start = resolveEndpoint(from, nodesById);
-  const end = resolveEndpoint(to, nodesById);
-  if (start && end) {
-    if (isCurveRoute(node)) {
-      return routeCurve({
-        edgeId: String(node?.id ?? ""),
-        start,
-        end,
-        fromAnchor: endpointAnchor(from),
-        toAnchor: endpointAnchor(to),
-        sourceId: typeof from?.nodeId === "string" ? from.nodeId : undefined,
-        targetId: typeof to?.nodeId === "string" ? to.nodeId : undefined,
-        obstacles: [],
-        siblings: [],
-        options: normalizeCurveRouteOptions(node?.style),
-      }).d;
-    }
-    if (isElbowRoute(node)) {
-      const via = resolveEndpoint(node?.via, nodesById);
-      const styledAxis = node?.style?.axis;
-      const axis =
-        node?.axis === "x" || node?.axis === "y"
-          ? node.axis
-          : styledAxis === "x" || styledAxis === "y"
-            ? styledAxis
-            : undefined;
-      const options = normalizeCurveRouteOptions(node?.style);
-      const sourceId = typeof from?.nodeId === "string" ? from.nodeId : undefined;
-      const targetId = typeof to?.nodeId === "string" ? to.nodeId : undefined;
-      const obstacles = options.avoidObstacles
-        ? [...nodesById.entries()].flatMap(([id, candidate]) => {
-            if (id === sourceId || id === targetId || !isBoxLike(candidate)) {
-              return [];
-            }
-            const geometry = geomOf(candidate);
-            return geometry !== null &&
-              geometry.width > 0 &&
-              geometry.height > 0
-              ? [{ id, bounds: geometry }]
-              : [];
-          })
-        : [];
-      return elbowPathData(
-        start,
-        end,
-        via ?? undefined,
-        axis,
-        endpointAnchor(from),
-        endpointAnchor(to),
-        obstacles,
-        options.clearance,
-      );
-    }
-    return `M${start.x} ${start.y} L${end.x} ${end.y}`;
-  }
-  return null;
-}
-
 export function timelineDurationMs(timeline) {
   let max = 0;
   for (const cue of timeline ?? []) {
@@ -1617,47 +973,42 @@ export function isDrawAction(action) {
   return a === "draw" || a === "trace" || a === "reveal-stroke";
 }
 
+/**
+ * Picks the cue whose window most recently began at or before
+ * `playbackTimeMs`, falling back to the earliest-authored cue when none has
+ * started yet. Mirrors SceneRenderer's `mostRecentlyStartedCue`: authoring
+ * the same target with more than one draw/trace cue (e.g. draw early, then
+ * confirm later) is a supported idiom, so picking blindly by declaration
+ * order (`.at(-1)`) instead of by which window is actually live disagrees
+ * with the runtime and discards the earlier cue's live animation window.
+ */
+function mostRecentlyStartedCue(cues, playbackTimeMs) {
+  let started;
+  let earliest;
+  for (const cue of cues) {
+    const atMs = Number(cue.at) || 0;
+    if (earliest === undefined || atMs < (Number(earliest.at) || 0)) {
+      earliest = cue;
+    }
+    if (
+      atMs <= playbackTimeMs &&
+      (started === undefined || atMs >= (Number(started.at) || 0))
+    ) {
+      started = cue;
+    }
+  }
+  return started ?? earliest;
+}
+
 export function drawProgress(timeline, nodeId, tMs) {
   const cues = (timeline ?? []).filter(
     (c) => c.target === nodeId && isDrawAction(c.action),
   );
-  const cue = cues.at(-1);
+  const cue = mostRecentlyStartedCue(cues, tMs);
   if (!cue) return undefined;
   const at = Number(cue.at) || 0;
   const dur = Number(cue.duration) || 0;
   if (tMs <= at) return 0;
   if (dur <= 0) return 1;
   return Math.min(1, Math.max(0, (tMs - at) / dur));
-}
-
-/** Resolve viewport from scene.viewport with DEFAULT_VIEWPORT fallback. */
-export function sceneViewport(scene, override) {
-  const authored = scene?.viewport;
-  const width =
-    typeof authored?.width === "number" && Number.isFinite(authored.width)
-      ? authored.width
-      : DEFAULT_VIEWPORT.width;
-  const height =
-    typeof authored?.height === "number" && Number.isFinite(authored.height)
-      ? authored.height
-      : DEFAULT_VIEWPORT.height;
-  const margin =
-    typeof override?.margin === "number"
-      ? override.margin
-      : DEFAULT_VIEWPORT.margin;
-  return {
-    width: override?.width ?? width,
-    height: override?.height ?? height,
-    margin,
-  };
-}
-
-export function inViewport(geom, viewport = DEFAULT_VIEWPORT) {
-  const { width, height, margin } = viewport;
-  return (
-    geom.x + geom.width >= -margin &&
-    geom.y + geom.height >= -margin &&
-    geom.x <= width + margin &&
-    geom.y <= height + margin
-  );
 }

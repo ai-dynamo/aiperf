@@ -27,6 +27,7 @@ export type ThemeContext = Readonly<{
 /**
  * Resolves a theme value from a role, following inheritance chain.
  * Returns undefined if the role is not found in the active theme or inherited themes.
+ * Throws when `extends` forms a cycle so evaluation fails closed with a diagnostic.
  */
 export function resolveThemeValue(
   role: ThemeRole,
@@ -38,9 +39,17 @@ export function resolveThemeValue(
     return activeValue;
   }
 
-  // Follow the inheritance chain
+  // Follow the inheritance chain; reject cycles in author-supplied theme graphs.
+  const visited = new Set<string>([context.activeTheme.id]);
   let currentThemeId = context.activeTheme.extends;
   while (currentThemeId) {
+    if (visited.has(currentThemeId)) {
+      const cyclePath = [...visited, currentThemeId].join(" -> ");
+      throw new Error(
+        `Theme extends cycle detected while resolving role "${role}": ${cyclePath}`,
+      );
+    }
+    visited.add(currentThemeId);
     const theme = context.allThemes.find((t) => t.id === currentThemeId);
     if (!theme) {
       break;

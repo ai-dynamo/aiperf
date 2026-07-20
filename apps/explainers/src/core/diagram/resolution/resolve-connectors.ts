@@ -82,7 +82,10 @@ function finitePoint(point: ScenePointLike | undefined): ResolvedPoint | undefin
 function singlePoint(
   point: ScenePointLike | readonly ScenePointLike[] | undefined,
 ): ScenePointLike | undefined {
-  return Array.isArray(point) ? undefined : point;
+  if (point === undefined || Array.isArray(point)) {
+    return undefined;
+  }
+  return point as ScenePointLike;
 }
 
 function anchorPoint(
@@ -129,16 +132,29 @@ function anchorPoint(
 function resolveEndpoint(
   endpoint: ScenePointLike | undefined,
   worldGeometryById: ReadonlyMap<string, SceneGeometryLike>,
+  node: SceneNodeLike,
+  diagnostics: SceneResolutionDiagnostic[],
 ): ResolvedPoint {
   const authored = finitePoint(endpoint);
   if (authored !== undefined) {
     return authored;
   }
-  if (typeof endpoint?.nodeId === "string") {
-    const geometry = worldGeometryById.get(endpoint.nodeId);
+  const nodeId = endpoint?.nodeId;
+  if (typeof nodeId === "string" && nodeId.length > 0) {
+    const geometry = worldGeometryById.get(nodeId);
     if (geometry !== undefined) {
-      return anchorPoint(geometry, endpoint.anchor);
+      return anchorPoint(geometry, endpoint?.anchor);
     }
+    diagnostics.push(
+      makeDiagnostic(
+        node,
+        "SCENE_CONNECTOR_ENDPOINT_MISSING_GEOMETRY",
+        "error",
+        `Connector "${node.id}" references node "${nodeId}", which has no resolved world geometry.`,
+        [node.id, nodeId],
+        "Reference a node id present in the scene, or author explicit x/y coordinates for this endpoint.",
+      ),
+    );
   }
   return { x: 0, y: 0 };
 }
@@ -156,19 +172,38 @@ function isMotionSignal(node: SceneNodeLike): boolean {
   );
 }
 
+function isEdgeBoundMotionSignal(node: SceneNodeLike): boolean {
+  return (
+    isMotionSignal(node) &&
+    typeof node.edgeRef === "string" &&
+    node.edgeRef.length > 0
+  );
+}
+
+function isRoutedConnector(node: SceneNodeLike): boolean {
+  return isConnector(node) && !isEdgeBoundMotionSignal(node);
+}
+
 function isConnector(node: SceneNodeLike): boolean {
   const capability = capabilityOf(node);
+  // Glyph icons and brace geometry reuse path IR but are not routed edges.
+  if (
+    capability === "core.path" ||
+    capability === "core.bracket" ||
+    node.kind === "path" ||
+    node.kind === "bracket"
+  ) {
+    return false;
+  }
   return (
     node.kind === "connector" ||
     node.kind === "arrow" ||
     node.kind === "elbow" ||
-    node.kind === "path" ||
     node.kind === "line" ||
     capability === "core.connector" ||
     capability === "core.arrow" ||
     capability === "core.elbow" ||
     capability === "core.route" ||
-    capability === "core.path" ||
     capability === "core.line" ||
     isMotionSignal(node)
   );
@@ -416,6 +451,7 @@ function makeDiagnostic(
 function routeCandidate(
   node: SceneNodeLike,
   input: ResolveConnectorsInput,
+  diagnostics: SceneResolutionDiagnostic[],
 ): ConnectorCandidate {
   const from = singlePoint(node.from);
   const to = singlePoint(node.to);
@@ -429,8 +465,8 @@ function routeCandidate(
       : undefined;
   return {
     node,
-    source: resolveEndpoint(from, input.worldGeometryById),
-    target: resolveEndpoint(to, input.worldGeometryById),
+    source: resolveEndpoint(from, input.worldGeometryById, node, diagnostics),
+    target: resolveEndpoint(to, input.worldGeometryById, node, diagnostics),
     from,
     to,
     ...(sourceId === undefined ? {} : { sourceId }),
@@ -442,6 +478,7 @@ function routeCandidate(
 function candidatePath(
   candidate: ConnectorCandidate,
   input: ResolveConnectorsInput,
+  diagnostics: SceneResolutionDiagnostic[],
   siblings: readonly RoutedSibling[],
   laneOffset: number,
 ): Readonly<{
@@ -462,7 +499,7 @@ function candidatePath(
   }
   if (Array.isArray(node.points) && node.points.length > 0) {
     const points = node.points.map((point) =>
-      resolveEndpoint(point, input.worldGeometryById),
+      resolveEndpoint(point, input.worldGeometryById, node, diagnostics),
     );
     return {
       d: polylinePath(points),
@@ -505,7 +542,7 @@ function candidatePath(
     const via =
       node.via === undefined
         ? undefined
-        : resolveEndpoint(node.via, input.worldGeometryById);
+        : resolveEndpoint(node.via, input.worldGeometryById, node, diagnostics);
     const d = elbowPathData(
       source,
       target,
@@ -536,6 +573,11 @@ function validatePath(
   path: ReturnType<typeof candidatePath>,
   diagnostics: SceneResolutionDiagnostic[],
 ): void {
+  // Motion signals often bind to an edge and carry companion path geometry that
+  // is not meant to attach to the signal's own from/to ports.
+  if (isMotionSignal(candidate.node)) {
+    return;
+  }
   const authored =
     typeof candidate.node.d === "string" || typeof candidate.node.path === "string";
   const parsed = parseSvgPath(path.d);
@@ -651,8 +693,8 @@ export function resolveConnectors(
   const connectorsById = new Map<string, ResolvedConnector>();
   const diagnostics: SceneResolutionDiagnostic[] = [];
   const candidates = [...input.nodesById.values()]
-    .filter(isConnector)
-    .map((node) => routeCandidate(node, input));
+    .filter(isRoutedConnector)
+    .map((node) => routeCandidate(node, input, diagnostics));
 
   const laneOffsets = new Map<string, number>();
   const curveGroups = new Map<string, ConnectorCandidate[]>();
@@ -693,6 +735,7 @@ export function resolveConnectors(
     const path = candidatePath(
       candidate,
       input,
+      diagnostics,
       siblings,
       laneOffsets.get(candidate.node.id) ?? 0,
     );
@@ -762,9 +805,84 @@ export function resolveConnectors(
     }
   }
 
+  resolveEdgeBoundMotionSignals(input, connectorsById, diagnostics);
+
   diagnostics.sort(diagnosticOrder);
   return Object.freeze({
     connectorsById,
     diagnostics: Object.freeze(diagnostics),
   });
+}
+
+function resolveEdgeBoundMotionSignals(
+  input: ResolveConnectorsInput,
+  connectorsById: Map<string, ResolvedConnector>,
+  diagnostics: SceneResolutionDiagnostic[],
+): void {
+  const motionNodes = [...input.nodesById.values()]
+    .filter(isEdgeBoundMotionSignal)
+    .sort((left, right) => left.id.localeCompare(right.id));
+  for (const node of motionNodes) {
+    const edgeRef = node.edgeRef!;
+    if (edgeRef === node.id) {
+      diagnostics.push(
+        makeDiagnostic(
+          node,
+          "SCENE_SIGNAL_EDGE_NOT_FOUND",
+          "error",
+          `Motion signal "${node.id}" cannot reference itself.`,
+          [node.id, edgeRef],
+          `Reference an ordinary connector id with edge = "${edgeRef}".`,
+        ),
+      );
+      continue;
+    }
+    const referencedNode = input.nodesById.get(edgeRef);
+    if (referencedNode === undefined || isMotionSignal(referencedNode)) {
+      diagnostics.push(
+        makeDiagnostic(
+          node,
+          "SCENE_SIGNAL_EDGE_NOT_FOUND",
+          "error",
+          `Motion signal "${node.id}" references unknown edge "${edgeRef}".`,
+          [node.id, edgeRef],
+          `Reference a resolved connector id with edge = "${edgeRef}".`,
+        ),
+      );
+      continue;
+    }
+    const referenced = connectorsById.get(edgeRef);
+    if (referenced === undefined) {
+      diagnostics.push(
+        makeDiagnostic(
+          node,
+          "SCENE_SIGNAL_EDGE_NOT_FOUND",
+          "error",
+          `Motion signal "${node.id}" references unresolved edge "${edgeRef}".`,
+          [node.id, edgeRef],
+          `Reference a resolved connector id with edge = "${edgeRef}".`,
+        ),
+      );
+      continue;
+    }
+    connectorsById.set(
+      node.id,
+      Object.freeze({
+        id: node.id,
+        source: referenced.source,
+        target: referenced.target,
+        ...(referenced.sourceId === undefined
+          ? {}
+          : { sourceId: referenced.sourceId }),
+        ...(referenced.targetId === undefined
+          ? {}
+          : { targetId: referenced.targetId }),
+        d: referenced.d,
+        directed: false,
+        showArrowhead: false,
+        usedFallback: referenced.usedFallback,
+        penetratedObstacleIds: referenced.penetratedObstacleIds,
+      }),
+    );
+  }
 }

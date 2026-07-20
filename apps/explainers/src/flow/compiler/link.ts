@@ -345,6 +345,10 @@ function collectComponentInvocations(
   }
 }
 
+function localComponentNames(document: DocumentAst): ReadonlySet<string> {
+  return new Set(document.symbols.map(({ name }) => name));
+}
+
 function qualifiedNameDiagnostics(
   document: DocumentAst,
   imports: ReadonlyMap<string, ResolvedModule>,
@@ -386,6 +390,7 @@ function qualifiedNameDiagnostics(
       left.sourceMap.end.offset - right.sourceMap.end.offset,
   );
 
+  const locals = localComponentNames(document);
   const qualifiedNames = new Map<
     ComponentInvocationAst,
     ResolvedQualifiedName
@@ -393,6 +398,17 @@ function qualifiedNameDiagnostics(
   const diagnostics: Diagnostic[] = [];
   for (const invocation of invocations) {
     if (invocation.namespace === undefined) {
+      if (!locals.has(invocation.name)) {
+        diagnostics.push(
+          diagnostic(
+            "LINK_UNKNOWN_NAME",
+            "error",
+            `Unknown component or symbol "${invocation.name}".`,
+            invocation.sourceMap,
+            `Declare \`symbol ${invocation.name}(...)\` in this document or fix the name.`,
+          ),
+        );
+      }
       continue;
     }
     if (!declaredAliases.has(invocation.namespace)) {
@@ -463,12 +479,20 @@ export function link(
 
   // Flatten in primary-then-import declaration order so validation and later
   // lowering see a stable theme list independent of Map iteration quirks.
+  // Deduplicate by canonicalUri so importing one module under two aliases
+  // does not double-count themes / use-theme defaults.
   const importedModules: ResolvedModule[] = [];
+  const seenCanonicalUris = new Set<string>();
   for (const declaration of document.imports ?? []) {
     const resolved = moduleResolution.imports.get(declaration.alias);
-    if (resolved !== undefined) {
-      importedModules.push(resolved);
+    if (resolved === undefined) {
+      continue;
     }
+    if (seenCanonicalUris.has(resolved.canonicalUri)) {
+      continue;
+    }
+    seenCanonicalUris.add(resolved.canonicalUri);
+    importedModules.push(resolved);
   }
   const themes: readonly ThemeDeclarationAst[] = [
     ...(document.themes ?? []),

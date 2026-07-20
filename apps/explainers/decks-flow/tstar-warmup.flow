@@ -160,7 +160,7 @@ explainer "t* Warmup" {
         id = "s2-ord-a",
         title = "Warmup phase",
         detail = "N requests",
-        x = 60, y = 250, width = 110, height = 70,
+        x = 60, y = 250, width = 110, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.tertiary)
       )
@@ -168,7 +168,7 @@ explainer "t* Warmup" {
         id = "s2-ord-b",
         title = "Profiling",
         detail = "fresh metrics",
-        x = 200, y = 250, width = 110, height = 70,
+        x = 200, y = 250, width = 110, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -197,7 +197,7 @@ explainer "t* Warmup" {
         id = "s2-ts-a",
         title = "Prefix < t*",
         detail = "warmup history",
-        x = 400, y = 250, width = 110, height = 70,
+        x = 400, y = 250, width = 110, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -205,7 +205,7 @@ explainer "t* Warmup" {
         id = "s2-ts-b",
         title = "Live ≥ t*",
         detail = "profile set",
-        x = 540, y = 250, width = 110, height = 70,
+        x = 540, y = 250, width = 110, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -412,7 +412,7 @@ explainer "t* Warmup" {
         id = "s4-kv",
         title = "Warm KV",
         detail = "executed prefix",
-        x = 80, y = 240, width = 160, height = 70,
+        x = 80, y = 240, width = 160, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -435,7 +435,7 @@ explainer "t* Warmup" {
         id = "s4-path",
         title = "Full prompt path",
         detail = "pre-t* segments kept",
-        x = 430, y = 240, width = 180, height = 70,
+        x = 430, y = 240, width = 180, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -549,7 +549,7 @@ explainer "t* Warmup" {
         id = "s5-seed",
         title = "Shared seeded sampler",
         detail = "same t* · not re-drawn",
-        x = 200, y = 260, width = 280, height = 70,
+        x = 200, y = 260, width = 280, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -626,7 +626,7 @@ explainer "t* Warmup" {
         id = "s6-n0",
         title = "n0",
         detail = "0 µs",
-        x = 40, y = 100, width = 90, height = 70,
+        x = 40, y = 100, width = 90, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -634,7 +634,7 @@ explainer "t* Warmup" {
         id = "s6-n1",
         title = "n1",
         detail = "mid",
-        x = 160, y = 100, width = 90, height = 70,
+        x = 160, y = 100, width = 90, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -642,7 +642,7 @@ explainer "t* Warmup" {
         id = "s6-n2",
         title = "n2",
         detail = "later",
-        x = 280, y = 100, width = 90, height = 70,
+        x = 280, y = 100, width = 90, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -650,7 +650,7 @@ explainer "t* Warmup" {
         id = "s6-n3",
         title = "n3",
         detail = "max = dur",
-        x = 400, y = 100, width = 100, height = 70,
+        x = 400, y = 100, width = 100, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -679,7 +679,7 @@ explainer "t* Warmup" {
         id = "s6-dur",
         title = "trace_duration_us",
         detail = "max arrival_offset_us",
-        x = 520, y = 100, width = 150, height = 70,
+        x = 520, y = 100, width = 150, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -694,7 +694,7 @@ explainer "t* Warmup" {
         id = "s6-lo",
         title = "lo",
         detail = "min_ratio × dur",
-        x = 80, y = 230, width = 200, height = 70,
+        x = 80, y = 230, width = 200, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -702,7 +702,7 @@ explainer "t* Warmup" {
         id = "s6-hi",
         title = "hi",
         detail = "max_ratio × dur",
-        x = 400, y = 230, width = 200, height = 70,
+        x = 400, y = 230, width = 200, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -790,7 +790,7 @@ explainer "t* Warmup" {
         id = "s7-draw",
         title = "uniform(lo, hi)",
         detail = "NumPy PCG64 · float µs",
-        x = 70, y = 220, width = 220, height = 70,
+        x = 70, y = 220, width = 220, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -819,7 +819,7 @@ explainer "t* Warmup" {
         id = "s7-exact",
         title = "Exact instant",
         detail = "0.0 or lo.max(0) · no RNG",
-        x = 410, y = 220, width = 220, height = 70,
+        x = 410, y = 220, width = 220, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -932,7 +932,7 @@ explainer "t* Warmup" {
         id = "s8-salt",
         title = "Lane salt",
         detail = "trace_id + lane",
-        x = 260, y = 250, width = 180, height = 70,
+        x = 260, y = 250, width = 180, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -1038,7 +1038,7 @@ explainer "t* Warmup" {
         id = "s9-start",
         title = "START",
         detail = "re-root",
-        x = 310, y = 100, width = 100, height = 70,
+        x = 310, y = 100, width = 100, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1046,7 +1046,7 @@ explainer "t* Warmup" {
         id = "s9-n2",
         title = "n2",
         detail = "survivor",
-        x = 460, y = 100, width = 100, height = 70,
+        x = 460, y = 100, width = 100, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1054,7 +1054,7 @@ explainer "t* Warmup" {
         id = "s9-n3",
         title = "n3",
         detail = "survivor",
-        x = 580, y = 220, width = 100, height = 70,
+        x = 580, y = 220, width = 100, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1178,7 +1178,7 @@ explainer "t* Warmup" {
         id = "s10-n3",
         title = "n3",
         detail = "keeps n2_out",
-        x = 500, y = 250, width = 140, height = 70,
+        x = 500, y = 250, width = 140, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1261,7 +1261,7 @@ explainer "t* Warmup" {
         id = "s11-n2",
         title = "n2",
         detail = "survivor node",
-        x = 70, y = 220, width = 100, height = 70,
+        x = 70, y = 220, width = 100, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1269,7 +1269,7 @@ explainer "t* Warmup" {
         id = "s11-n3",
         title = "n3",
         detail = "survivor node",
-        x = 190, y = 220, width = 100, height = 70,
+        x = 190, y = 220, width = 100, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1292,7 +1292,7 @@ explainer "t* Warmup" {
         id = "s11-seg",
         title = "Full prefix kept",
         detail = "pre-t* segments intact",
-        x = 420, y = 220, width = 200, height = 70,
+        x = 420, y = 220, width = 200, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1413,7 +1413,7 @@ explainer "t* Warmup" {
         id = "s12-loop",
         title = "Shared cursor",
         detail = "draw → dispatch → repeat",
-        x = 240, y = 240, width = 180, height = 70,
+        x = 240, y = 240, width = 180, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1519,7 +1519,7 @@ explainer "t* Warmup" {
         id = "s13-seq",
         title = "Sequential",
         detail = "x % total",
-        x = 40, y = 230, width = 180, height = 70,
+        x = 40, y = 230, width = 180, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -1527,7 +1527,7 @@ explainer "t* Warmup" {
         id = "s13-shuf",
         title = "Shuffle",
         detail = "PCG64 epochs",
-        x = 250, y = 230, width = 180, height = 70,
+        x = 250, y = 230, width = 180, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1535,7 +1535,7 @@ explainer "t* Warmup" {
         id = "s13-rand",
         title = "Random",
         detail = "MT19937 choice",
-        x = 460, y = 230, width = 180, height = 70,
+        x = 460, y = 230, width = 180, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1642,7 +1642,7 @@ explainer "t* Warmup" {
         id = "s14-tpl",
         title = "template_trace_id",
         detail = "mid-flight template",
-        x = 40, y = 220, width = 150, height = 60,
+        x = 40, y = 220, width = 150, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -1650,7 +1650,7 @@ explainer "t* Warmup" {
         id = "s14-iid",
         title = "instance_id",
         detail = "e.g. t-1#0.p2",
-        x = 210, y = 220, width = 140, height = 60,
+        x = 210, y = 220, width = 140, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1658,7 +1658,7 @@ explainer "t* Warmup" {
         id = "s14-ts",
         title = "t_star_us",
         detail = "lane plan",
-        x = 370, y = 220, width = 120, height = 60,
+        x = 370, y = 220, width = 120, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1666,7 +1666,7 @@ explainer "t* Warmup" {
         id = "s14-exec",
         title = "executed · walls",
         detail = "KV held · residuals",
-        x = 510, y = 220, width = 160, height = 60,
+        x = 510, y = 220, width = 160, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1774,7 +1774,7 @@ explainer "t* Warmup" {
         id = "s15-bad",
         title = "Fresh .0",
         detail = "cold prefill · KV lost",
-        x = 180, y = 240, width = 200, height = 70,
+        x = 180, y = 240, width = 200, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1782,7 +1782,7 @@ explainer "t* Warmup" {
         id = "s15-good",
         title = "Reuse id",
         detail = "KV transfers",
-        x = 420, y = 240, width = 200, height = 70,
+        x = 420, y = 240, width = 200, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1851,7 +1851,7 @@ explainer "t* Warmup" {
         id = "s16-n0",
         title = "n0",
         detail = "pre-t* drop",
-        x = 40, y = 120, width = 100, height = 70,
+        x = 40, y = 120, width = 100, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.tertiary)
       )
@@ -1859,7 +1859,7 @@ explainer "t* Warmup" {
         id = "s16-n1",
         title = "n1",
         detail = "pre-t* drop",
-        x = 160, y = 120, width = 100, height = 70,
+        x = 160, y = 120, width = 100, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.tertiary)
       )
@@ -1867,7 +1867,7 @@ explainer "t* Warmup" {
         id = "s16-n2",
         title = "n2",
         detail = "executed · skip",
-        x = 300, y = 120, width = 120, height = 70,
+        x = 300, y = 120, width = 120, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1875,7 +1875,7 @@ explainer "t* Warmup" {
         id = "s16-start",
         title = "START",
         detail = "re-root",
-        x = 460, y = 100, width = 100, height = 60,
+        x = 460, y = 100, width = 100, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1883,7 +1883,7 @@ explainer "t* Warmup" {
         id = "s16-n3",
         title = "n3",
         detail = "residual live",
-        x = 580, y = 200, width = 100, height = 70,
+        x = 580, y = 200, width = 100, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1898,7 +1898,7 @@ explainer "t* Warmup" {
         id = "s16-walls",
         title = "return_wall_us",
         detail = "vs drain_end_wall_us",
-        x = 40, y = 240, width = 220, height = 70,
+        x = 40, y = 240, width = 220, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -2110,7 +2110,7 @@ explainer "t* Warmup" {
         id = "s18-single",
         title = "Single-pass profiling",
         detail = "ignore cursor · full corpus",
-        x = 200, y = 240, width = 300, height = 70,
+        x = 200, y = 240, width = 300, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -2201,7 +2201,7 @@ explainer "t* Warmup" {
         id = "s19-gate",
         title = "Pre-profiling gate",
         detail = "no corrupt frontier",
-        x = 40, y = 240, width = 200, height = 70,
+        x = 40, y = 240, width = 200, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -2209,7 +2209,7 @@ explainer "t* Warmup" {
         id = "s19-full",
         title = "Full replay",
         detail = "no topology chop",
-        x = 280, y = 240, width = 180, height = 70,
+        x = 280, y = 240, width = 180, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -2217,7 +2217,7 @@ explainer "t* Warmup" {
         id = "s19-lo",
         title = "t* = lo",
         detail = "WindowTStarSampler",
-        x = 500, y = 240, width = 170, height = 70,
+        x = 500, y = 240, width = 170, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -2361,7 +2361,7 @@ explainer "t* Warmup" {
         id = "s20-min",
         title = "trajectory_start_min_ratio",
         detail = "window lo",
-        x = 40, y = 210, width = 200, height = 60,
+        x = 40, y = 210, width = 200, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -2369,7 +2369,7 @@ explainer "t* Warmup" {
         id = "s20-max",
         title = "trajectory_start_max_ratio",
         detail = "window hi",
-        x = 260, y = 210, width = 200, height = 60,
+        x = 260, y = 210, width = 200, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -2377,7 +2377,7 @@ explainer "t* Warmup" {
         id = "s20-seed",
         title = "t_star_random_seed",
         detail = "lane-salted base",
-        x = 480, y = 210, width = 190, height = 60,
+        x = 480, y = 210, width = 190, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )

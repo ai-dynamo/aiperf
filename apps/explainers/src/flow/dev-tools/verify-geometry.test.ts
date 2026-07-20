@@ -9,13 +9,41 @@ import {
   CHIP_PAD_X,
   estimateTextWidth,
 } from "../../core/diagram/text-metrics.js";
-import { materializeSceneWorldGeometry } from "../../core/diagram/capabilities/resolved-geometry.js";
+import { resolvedSceneSnapshot } from "../../core/diagram/resolution/serialize.js";
 import type { ResolvedSceneSnapshot } from "../../core/diagram/resolution/types.js";
 // @ts-expect-error The plain-Node verifier intentionally has no TS declarations.
 import { verifyPackageIr } from "../../../scripts/flow-verifier/ir.mjs";
-import { indexResolvedWorldGeometry } from "./verify-geometry.js";
+import {
+  indexResolvedWorldGeometry,
+  resolveSceneForGeometryVerification,
+} from "./verify-geometry.js";
 
 describe("verifier geometry layout parity", () => {
+  it("exposes the canonical resolver result to browser verification", () => {
+    const scene = {
+      viewport: { width: 700, height: 400 },
+      roots: [
+        {
+          id: "box",
+          kind: "rect",
+          geometry: { x: 12, y: 18, width: 40, height: 20 },
+          children: [],
+        },
+      ],
+      timeline: [],
+    };
+
+    const resolved = resolveSceneForGeometryVerification(scene);
+
+    expect(resolved.worldGeometryById.get("box")).toEqual({
+      x: 12,
+      y: 18,
+      width: 40,
+      height: 20,
+    });
+    expect(resolved.scene).toBe(scene);
+  });
+
   it("indexes intrinsic children after rail reflow in world space", () => {
     const roots = [
       {
@@ -151,34 +179,41 @@ describe("verifier geometry layout parity", () => {
         ],
       },
     ] as unknown as readonly RenderNodeIr[];
-    const materialized = materializeSceneWorldGeometry(roots);
-
-    const findings = verifyPackageIr({
-      id: "layout-parity",
-      slides: [
+    const scene = {
+      roots,
+      timeline: [
         {
-          id: "stack-circle",
-          render: {
-            scene: {
-              roots: materialized,
-              timeline: [
-                {
-                  id: "enter-stack",
-                  at: 0,
-                  duration: 100,
-                  action: "enter",
-                  target: "stack",
-                },
-              ],
+          id: "enter-stack",
+          at: 0,
+          duration: 100,
+          action: "enter",
+          target: "stack",
+        },
+      ],
+    };
+    const snapshot = resolvedSceneSnapshot(
+      resolveSceneForGeometryVerification(scene),
+    );
+
+    const findings = verifyPackageIr(
+      {
+        id: "layout-parity",
+        slides: [
+          {
+            id: "stack-circle",
+            render: {
+              scene,
             },
           },
         },
-      ],
-    });
+      },
+      { snapshots: [{ slideId: "stack-circle", snapshot }] },
+    );
 
     expect(
       findings.filter(
         ({ code }: { code: string }) =>
+          code === "resolved-snapshot-missing" ||
           code === "zero-area-box" ||
           code === "missing-geometry" ||
           code === "out-of-viewport",

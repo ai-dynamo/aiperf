@@ -54,7 +54,7 @@ explainer "Segment Pools" {
         id = "composer",
         title = "Composer",
         detail = "intern rows",
-        x = 30, y = 130, width = 150, height = 70,
+        x = 30, y = 130, width = 150, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -91,7 +91,7 @@ explainer "Segment Pools" {
         id = "freeze",
         title = ".freeze()",
         detail = "drop ids",
-        x = 430, y = 130, width = 110, height = 70,
+        x = 430, y = 130, width = 110, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -106,7 +106,7 @@ explainer "Segment Pools" {
         id = "dataset",
         title = "Dataset",
         detail = "Arc store",
-        x = 570, y = 110, width = 110, height = 60,
+        x = 570, y = 110, width = 110, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -114,7 +114,7 @@ explainer "Segment Pools" {
         id = "body-plan",
         title = "BodyPlan",
         detail = "precompute",
-        x = 570, y = 190, width = 110, height = 60,
+        x = 570, y = 190, width = 110, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -122,7 +122,7 @@ explainer "Segment Pools" {
         id = "materializer",
         title = "Materializer",
         detail = "→ Bytes",
-        x = 570, y = 270, width = 110, height = 60,
+        x = 570, y = 270, width = 110, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -137,7 +137,7 @@ explainer "Segment Pools" {
         id = "in-memory-store",
         title = "InMemoryStore",
         detail = "Box<[Segment]>",
-        x = 230, y = 230, width = 160, height = 70,
+        x = 230, y = 230, width = 160, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -235,7 +235,7 @@ explainer "Segment Pools" {
         id = "h0",
         title = "H0 system",
         detail = "shared",
-        x = 120, y = 240, width = 140, height = 70,
+        x = 120, y = 240, width = 140, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -243,7 +243,7 @@ explainer "Segment Pools" {
         id = "h1",
         title = "H1 user",
         detail = "shared",
-        x = 300, y = 240, width = 140, height = 70,
+        x = 300, y = 240, width = 140, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -251,7 +251,7 @@ explainer "Segment Pools" {
         id = "h23",
         title = "H2 / H3",
         detail = "novel replies",
-        x = 480, y = 240, width = 140, height = 70,
+        x = 480, y = 240, width = 140, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.orange)
       )
@@ -354,7 +354,7 @@ explainer "Segment Pools" {
         id = "hash-recipe",
         title = "HASH_VERSION + domain + parent id",
         detail = "blake3 → SegmentId([u8;32])",
-        x = 150, y = 250, width = 400, height = 70,
+        x = 150, y = 250, width = 400, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -443,7 +443,7 @@ explainer "Segment Pools" {
         id = "literals",
         title = "literals",
         detail = "serde_json",
-        x = 80, y = 240, width = 160, height = 70,
+        x = 80, y = 240, width = 160, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -451,7 +451,7 @@ explainer "Segment Pools" {
         id = "wires",
         title = "segment wires",
         detail = "clone Bytes",
-        x = 280, y = 240, width = 160, height = 70,
+        x = 280, y = 240, width = 160, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -459,7 +459,7 @@ explainer "Segment Pools" {
         id = "overrides",
         title = "Overrides",
         detail = "stream · limits",
-        x = 480, y = 240, width = 160, height = 70,
+        x = 480, y = 240, width = 160, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.orange)
       )
@@ -514,7 +514,7 @@ explainer "Segment Pools" {
         id = "h0",
         title = "H0 system",
         detail = "shared once",
-        x = 40, y = 140, width = 140, height = 70,
+        x = 40, y = 140, width = 140, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -529,7 +529,7 @@ explainer "Segment Pools" {
         id = "h1",
         title = "H1 user",
         detail = "shared once",
-        x = 220, y = 140, width = 140, height = 70,
+        x = 220, y = 140, width = 140, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -544,7 +544,7 @@ explainer "Segment Pools" {
         id = "h2",
         title = "H2 assistant",
         detail = "C1 \"4\"",
-        x = 460, y = 100, width = 150, height = 70,
+        x = 460, y = 100, width = 150, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -552,7 +552,7 @@ explainer "Segment Pools" {
         id = "h3",
         title = "H3 assistant",
         detail = "C2 novel",
-        x = 460, y = 220, width = 150, height = 70,
+        x = 460, y = 220, width = 150, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -622,7 +622,7 @@ explainer "Segment Pools" {
         id = "raw",
         title = "Raw first?",
         detail = "complete body",
-        x = 280, y = 70, width = 170, height = 70,
+        x = 280, y = 70, width = 170, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -630,7 +630,7 @@ explainer "Segment Pools" {
         id = "token",
         title = "TokenIds?",
         detail = "native / validate",
-        x = 280, y = 155, width = 170, height = 70,
+        x = 280, y = 155, width = 170, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -638,7 +638,7 @@ explainer "Segment Pools" {
         id = "messages",
         title = "Messages",
         detail = "format array",
-        x = 280, y = 240, width = 170, height = 70,
+        x = 280, y = 240, width = 170, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )

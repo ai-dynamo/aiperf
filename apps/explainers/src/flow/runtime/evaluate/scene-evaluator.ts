@@ -507,11 +507,16 @@ export function evaluateScene(
           `Accessibility reading order references unknown node "${id}".`,
         );
       }
+      // Connectors use routed endpoint extent so pick regions match the drawn line.
+      const bounds =
+        node.kind === "connector"
+          ? connectorBounds(node, index).bounds
+          : geometry(node);
       return {
         id: `hit:${id}`,
         semanticId: id,
         order,
-        bounds: geometry(node),
+        bounds,
         source: sourceReference(node.sourceMap),
       };
     },

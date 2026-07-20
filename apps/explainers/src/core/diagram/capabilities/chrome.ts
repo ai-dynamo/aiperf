@@ -12,13 +12,23 @@ import type {
 import {
   DETAIL_HEIGHT,
   INSET,
-  STEPPER_CHIP_HEIGHT,
+  SUBTITLE_HEIGHT,
   TITLE_HEIGHT,
-  stepperChipWidth,
 } from "../text-metrics.js";
+import { managedLayoutOptions } from "./layout.js";
+
+export type SemanticGeneratedRole =
+  | "chrome"
+  | "title"
+  | "detail"
+  | "subtitle"
+  | "caption"
+  | "label"
+  | "step";
 
 export type SemanticTextPart = Readonly<{
   id: string;
+  role: SemanticGeneratedRole;
   text: string;
   x: number;
   y: number;
@@ -36,6 +46,7 @@ export type SemanticTextPart = Readonly<{
 
 export type SemanticBoxPart = Readonly<{
   id: string;
+  role: SemanticGeneratedRole;
   geometry: SceneGeometryLike;
   radius: number;
 }>;
@@ -51,26 +62,6 @@ function stringProp(node: SceneNodeLike, key: string): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function stringArrayProp(
-  node: SceneNodeLike,
-  key: string,
-): readonly string[] {
-  const value = node.props?.[key];
-  return Array.isArray(value)
-    ? value.filter(
-        (entry): entry is string =>
-          typeof entry === "string" && entry.length > 0,
-      )
-    : [];
-}
-
-function gapOf(node: SceneNodeLike, fallback = 12): number {
-  const value = node.style?.gap ?? node.props?.gap;
-  return typeof value === "number" && Number.isFinite(value)
-    ? Math.max(0, value)
-    : fallback;
-}
-
 function presentationOf(node: SceneNodeLike): string | undefined {
   return stringProp(node, "presentation");
 }
@@ -84,6 +75,24 @@ function radiusOf(node: SceneNodeLike, fallback: number): number {
 
 function inkRoleOf(node: SceneNodeLike): string | undefined {
   return stringProp(node, "inkRole");
+}
+
+function generatedTextRole(
+  node: SceneNodeLike,
+  role: "title" | "detail" | "subtitle",
+): SemanticGeneratedRole {
+  const capability = node.capabilityId ?? node.capability;
+  if (capability === "core.chip") return "label";
+  if (capability === "core.note") return "caption";
+  if (role === "detail" && capability === "core.header") return "caption";
+  return role;
+}
+
+function generatedTextId(
+  node: SceneNodeLike,
+  role: "title" | "detail" | "subtitle",
+): string {
+  return `${node.id}__${generatedTextRole(node, role)}`;
 }
 
 /** Whether a semantic node carries renderer-owned visual content. */
@@ -110,7 +119,6 @@ export function hasNativeSemanticChrome(node: SceneNodeLike): boolean {
       "core.note",
       "core.lane",
       "core.band",
-      "core.stepper",
       "layout.frame",
     ].includes(capability)
   );
@@ -130,6 +138,7 @@ export function resolveSemanticChrome(
     return {
       rootBox: {
         id: `${node.id}__chrome`,
+        role: "chrome",
         geometry,
         radius: radiusOf(node, 6),
       },
@@ -137,6 +146,7 @@ export function resolveSemanticChrome(
       texts: [
         {
           id: `${node.id}__text`,
+          role: "label",
           text,
           x: geometry.x + 12,
           y: geometry.y + 10,
@@ -157,6 +167,7 @@ export function resolveSemanticChrome(
     return {
       rootBox: {
         id: `${node.id}__chrome`,
+        role: "chrome",
         geometry,
         radius: radiusOf(node, Math.max(geometry.width, geometry.height) / 2),
       },
@@ -170,6 +181,7 @@ export function resolveSemanticChrome(
     return {
       rootBox: {
         id: `${node.id}__chrome`,
+        role: "chrome",
         geometry,
         radius: radiusOf(node, 8),
       },
@@ -177,6 +189,7 @@ export function resolveSemanticChrome(
       texts: [
         {
           id: `${node.id}__label`,
+          role: "label",
           text: label,
           x: geometry.x + 40,
           y: geometry.y + 8,
@@ -200,39 +213,30 @@ export function resolveSemanticChrome(
   const isDiagram = capability.startsWith("diagram.");
   const isDiagramBoundary = capability === "diagram.boundary";
   if (capability === "core.stepper") {
-    const steps = stringArrayProp(node, "steps");
-    const gap = gapOf(node);
-    let cursorX = geometry.x;
-    const boxes: SemanticBoxPart[] = [];
-    const texts: SemanticTextPart[] = [];
-    steps.forEach((step, index) => {
-      const width = stepperChipWidth(step, index);
-      boxes.push({
-        id: `${node.id}__step-${index}`,
-        geometry: {
-          x: cursorX,
-          y: geometry.y,
-          width,
-          height: STEPPER_CHIP_HEIGHT,
-        },
-        radius: 4,
-      });
-      texts.push({
-        id: `${node.id}__step-${index}-label`,
-        text: `${index + 1}. ${step}`,
-        x: cursorX,
-        y: geometry.y,
-        width,
-        height: STEPPER_CHIP_HEIGHT,
-        fontSize: 11,
-        fontWeight: "bold",
-        anchor: "middle",
-        ...(inkRole !== undefined ? { inkRole } : {}),
-      });
-      cursorX += width + gap;
-    });
-    return { boxes, texts };
+    return { boxes: [], texts: [] };
   }
+
+  // Frames place managed content at `padding`; chrome must share that x-origin.
+  const framePadding =
+    capability === "layout.frame"
+      ? managedLayoutOptions(node).padding
+      : undefined;
+  const chromeInsetX =
+    framePadding !== undefined
+      ? framePadding
+      : isDiagramBoundary
+        ? 12
+        : isDiagram
+          ? 46
+          : INSET;
+  const chromeInsetXEnd =
+    framePadding !== undefined
+      ? framePadding
+      : isDiagramBoundary
+        ? 12
+        : isDiagram
+          ? 10
+          : INSET;
 
   const texts: SemanticTextPart[] = [];
   if (title !== undefined) {
@@ -241,11 +245,10 @@ export function resolveSemanticChrome(
       capability === "core.chip" ||
       capability === "core.note";
     texts.push({
-      id: `${node.id}__title`,
+      id: generatedTextId(node, "title"),
+      role: generatedTextRole(node, "title"),
       text: title,
-      x: centered
-        ? geometry.x
-        : geometry.x + (isDiagramBoundary ? 12 : isDiagram ? 46 : INSET),
+      x: centered ? geometry.x : geometry.x + chromeInsetX,
       y:
         capability === "core.chip"
           ? geometry.y
@@ -256,11 +259,7 @@ export function resolveSemanticChrome(
               : geometry.y + INSET + (centered ? 2 : 0),
       width: centered
         ? geometry.width
-        : Math.max(
-            geometry.width -
-              (isDiagramBoundary ? 24 : isDiagram ? 56 : INSET * 2),
-            0,
-          ),
+        : Math.max(geometry.width - chromeInsetX - chromeInsetXEnd, 0),
       height: capability === "core.chip" ? geometry.height : TITLE_HEIGHT,
       fontSize:
         capability === "core.header"
@@ -278,14 +277,17 @@ export function resolveSemanticChrome(
     });
   }
   if (detail !== undefined) {
+    const detailInsetX = isDiagram ? 46 : chromeInsetX;
+    const detailInsetXEnd = isDiagram ? 10 : chromeInsetXEnd;
     texts.push({
-      id: `${node.id}__detail`,
+      id: generatedTextId(node, "detail"),
+      role: generatedTextRole(node, "detail"),
       text: detail,
-      x: geometry.x + (isDiagram ? 46 : INSET),
+      x: geometry.x + detailInsetX,
       y: isDiagram
         ? geometry.y + 38
         : geometry.y + INSET + TITLE_HEIGHT + 4,
-      width: Math.max(geometry.width - (isDiagram ? 56 : INSET * 2), 0),
+      width: Math.max(geometry.width - detailInsetX - detailInsetXEnd, 0),
       height: DETAIL_HEIGHT,
       fontSize: isDiagram ? 10 : 11.5,
       anchor: capability === "core.panel" ? "middle" : "start",
@@ -295,12 +297,13 @@ export function resolveSemanticChrome(
   }
   if (subtitle !== undefined) {
     texts.push({
-      id: `${node.id}__subtitle`,
+      id: generatedTextId(node, "subtitle"),
+      role: generatedTextRole(node, "subtitle"),
       text: subtitle,
-      x: geometry.x + INSET,
+      x: geometry.x + chromeInsetX,
       y: geometry.y + INSET + TITLE_HEIGHT + DETAIL_HEIGHT + 6,
-      width: Math.max(geometry.width - INSET * 2, 0),
-      height: 16,
+      width: Math.max(geometry.width - chromeInsetX - chromeInsetXEnd, 0),
+      height: SUBTITLE_HEIGHT,
       fontSize: 10,
       anchor: "middle",
       tone: "secondary",
@@ -310,6 +313,7 @@ export function resolveSemanticChrome(
   return {
     rootBox: {
       id: `${node.id}__chrome`,
+      role: "chrome",
       geometry,
       radius: radiusOf(
         node,

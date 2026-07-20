@@ -150,6 +150,84 @@ describe("resolveConnectors", () => {
     );
   });
 
+  it("reports missing endpoint geometry instead of silently collapsing to the origin", () => {
+    const result = resolve(edge({ from: { nodeId: "missing", anchor: "e" } }));
+    const resolved = result.connectorsById.get("edge");
+
+    expect(resolved?.source).toEqual({ x: 0, y: 0 });
+    expect(resolved?.sourceId).toBe("missing");
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "SCENE_CONNECTOR_ENDPOINT_MISSING_GEOMETRY",
+        severity: "error",
+        nodeIds: ["edge", "missing"],
+      }),
+    );
+  });
+
+  it("still allows explicit x/y coordinates without requiring a nodeId", () => {
+    const result = resolve(
+      edge({ from: { x: 12, y: 34 }, to: { x: 56, y: 78 } }),
+    );
+    const resolved = result.connectorsById.get("edge");
+
+    expect(resolved?.source).toEqual({ x: 12, y: 34 });
+    expect(resolved?.target).toEqual({ x: 56, y: 78 });
+    expect(resolved?.sourceId).toBeUndefined();
+    expect(resolved?.targetId).toBeUndefined();
+    expect(
+      result.diagnostics.some(
+        (diagnostic) =>
+          diagnostic.code === "SCENE_CONNECTOR_ENDPOINT_MISSING_GEOMETRY",
+      ),
+    ).toBe(false);
+  });
+
+  it("resolves edge-bound motion signals from the referenced connector path", () => {
+    const credit = edge({ id: "request-credit" });
+    const motion: SceneNodeLike = {
+      id: "motion",
+      kind: "connector",
+      capabilityId: "motion.signal",
+      geometry: { x: 0, y: 0, width: 0, height: 0 },
+      edgeRef: "request-credit",
+      style: {},
+    };
+    const result = resolve(credit, [motion]);
+    const edgePath = result.connectorsById.get("request-credit");
+    const motionPath = result.connectorsById.get("motion");
+
+    expect(edgePath?.d).toBeDefined();
+    expect(motionPath?.d).toBe(edgePath?.d);
+    expect(motionPath).toMatchObject({
+      directed: false,
+      showArrowhead: false,
+      source: edgePath?.source,
+      target: edgePath?.target,
+    });
+    expect(motionPath?.d).not.toBe("M0 0 L0 0");
+  });
+
+  it("reports missing edge references for edge-bound motion signals", () => {
+    const motion: SceneNodeLike = {
+      id: "motion",
+      kind: "connector",
+      capabilityId: "motion.signal",
+      geometry: { x: 0, y: 0, width: 0, height: 0 },
+      edgeRef: "missing-edge",
+      style: {},
+    };
+    const result = resolve(edge(), [motion]);
+
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "SCENE_SIGNAL_EDGE_NOT_FOUND",
+        severity: "error",
+        nodeIds: expect.arrayContaining(["motion", "missing-edge"]),
+      }),
+    );
+  });
+
   it("carries penetrating curve fallback metadata into diagnostics", () => {
     const blocker = panel("blocker", {
       x: 75,

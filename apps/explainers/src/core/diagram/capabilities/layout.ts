@@ -17,6 +17,7 @@ import {
   INSET,
   STEPPER_CHIP_HEIGHT,
   STEPPER_MIN_CHIP_WIDTH,
+  SUBTITLE_HEIGHT,
   TITLE_HEIGHT,
   estimateTextWidth,
   scaledSceneFontSize,
@@ -28,13 +29,24 @@ import type {
   NativeSceneCapability,
 } from "./types.js";
 
-const LANE_TITLE_BAND = 28;
+const LANE_TITLE_BAND = 32;
 const LANE_INSET = 10;
 const DEFAULT_CHILD_HEIGHT = 64;
 const DEFAULT_GAP = 8;
 const SWIMLANE_LABEL_WIDTH = 72;
-const FRAME_TITLE_BAND = 28;
-const FRAME_DETAIL_BAND = 48;
+const FRAME_TITLE_BAND = 32;
+const FRAME_DETAIL_BAND = 52;
+const TEXT_BAND_GAP = 4;
+const DIAGRAM_GLYPH_GUTTER = 46;
+const DIAGRAM_END_INSET = 10;
+const DIAGRAM_BOUNDARY_INSET = 12;
+const PRESENTATION_TEXT_INSET_X = 12;
+const PRESENTATION_TEXT_INSET_Y = 10;
+const ICON_LABEL_TEXT_OFFSET = 40;
+const ICON_LABEL_END_INSET = 8;
+const AVATAR_ICON_INSET = 8;
+const AVATAR_ICON_SIZE = 24;
+const AVATAR_MIN_SIDE = AVATAR_ICON_INSET * 2 + AVATAR_ICON_SIZE;
 
 function capabilityLayout(
   bounds: SceneGeometryLike,
@@ -368,21 +380,185 @@ export function resolvePanelLayout(
     (typeof node.props?.detail === "string" && node.props.detail) ||
     (typeof node.props?.caption === "string" && node.props.caption) ||
     "";
+  const subtitle =
+    typeof node.props?.subtitle === "string" ? node.props.subtitle : "";
   const titleWidth =
     title.length > 0 ? estimateTextWidth(title, 14, "bold") + INSET * 2 : 0;
   const detailWidth =
     detail.length > 0
       ? estimateTextWidth(detail, 11.5, "normal") + INSET * 2
       : 0;
+  const subtitleWidth =
+    subtitle.length > 0
+      ? estimateTextWidth(subtitle, 10, "normal") + INSET * 2
+      : 0;
   const contentHeight =
     INSET * 2 +
     (title.length > 0 ? TITLE_HEIGHT : 0) +
-    (detail.length > 0 ? DETAIL_HEIGHT + 4 : 0);
+    (detail.length > 0 ? DETAIL_HEIGHT + TEXT_BAND_GAP : 0) +
+    (subtitle.length > 0 ? SUBTITLE_HEIGHT + TEXT_BAND_GAP : 0);
+  return capabilityLayout(
+    {
+      ...authored,
+      width: Math.max(authored.width, titleWidth, detailWidth, subtitleWidth),
+      height: Math.max(authored.height, contentHeight),
+    },
+    childGeometries,
+  );
+}
+
+/** Intrinsic diagram chrome layout with authored dimensions as minimums. */
+export function resolveDiagramLayout(
+  node: SceneNodeLike,
+  children: readonly SceneNodeLike[],
+): CapabilityLayout {
+  const authored = geometryOf(node);
+  const childGeometries = children.map(geometryOf);
+  if (clipsOverflow(node)) {
+    return capabilityLayout(authored, childGeometries);
+  }
+  const title =
+    (typeof node.props?.title === "string" && node.props.title) ||
+    (typeof node.props?.label === "string" && node.props.label) ||
+    (typeof node.props?.text === "string" && node.props.text) ||
+    "";
+  const detail =
+    (typeof node.props?.detail === "string" && node.props.detail) ||
+    (typeof node.props?.caption === "string" && node.props.caption) ||
+    "";
+  const isBoundary = node.capabilityId === "diagram.boundary";
+  const horizontalChrome = isBoundary
+    ? DIAGRAM_BOUNDARY_INSET * 2
+    : DIAGRAM_GLYPH_GUTTER + DIAGRAM_END_INSET;
+  const titleWidth =
+    title.length > 0
+      ? estimateTextWidth(title, isBoundary ? 12 : 13, "bold") +
+        horizontalChrome
+      : 0;
+  const detailWidth =
+    detail.length > 0
+      ? estimateTextWidth(detail, 10, "normal") + horizontalChrome
+      : 0;
+  const contentHeight =
+    title.length > 0
+      ? detail.length > 0
+        ? 38 + DETAIL_HEIGHT + TEXT_BAND_GAP
+        : 20 + TITLE_HEIGHT
+      : 0;
   return capabilityLayout(
     {
       ...authored,
       width: Math.max(authored.width, titleWidth, detailWidth),
       height: Math.max(authored.height, contentHeight),
+    },
+    childGeometries,
+  );
+}
+
+/** Intrinsic square sizing for avatar presentation chrome and nested icon glyph. */
+export function resolveAvatarLayout(
+  node: SceneNodeLike,
+  children: readonly SceneNodeLike[],
+): CapabilityLayout {
+  const authored = geometryOf(node);
+  const childGeometries = children.map(geometryOf);
+  if (clipsOverflow(node)) {
+    return capabilityLayout(authored, childGeometries);
+  }
+  const side = Math.max(authored.width, authored.height, AVATAR_MIN_SIDE);
+  return capabilityLayout(
+    {
+      ...authored,
+      width: side,
+      height: side,
+    },
+    childGeometries,
+  );
+}
+
+/** Intrinsic sizing for renderer-owned presentation chrome. */
+export function resolvePresentationLayout(
+  node: SceneNodeLike,
+  children: readonly SceneNodeLike[],
+): CapabilityLayout {
+  const presentation = node.props?.presentation;
+  if (presentation === "avatar") {
+    return resolveAvatarLayout(node, children);
+  }
+  if (
+    presentation !== "code-block" &&
+    presentation !== "quote" &&
+    presentation !== "icon-label"
+  ) {
+    return resolveIdentityLayout(node, children);
+  }
+  const authored = geometryOf(node);
+  const childGeometries = children.map(geometryOf);
+  if (clipsOverflow(node)) {
+    return capabilityLayout(authored, childGeometries);
+  }
+  const text =
+    presentation === "icon-label"
+      ? (typeof node.props?.label === "string" && node.props.label) ||
+        (typeof node.props?.text === "string" && node.props.text) ||
+        ""
+      : typeof node.props?.text === "string"
+        ? node.props.text
+        : "";
+  const lines = presentation === "code-block" ? text.split("\n") : [text];
+  const textWidth = lines.reduce(
+    (width, line) => Math.max(width, estimateTextWidth(line, 12)),
+    0,
+  );
+  const horizontalChrome =
+    presentation === "icon-label"
+      ? ICON_LABEL_TEXT_OFFSET + ICON_LABEL_END_INSET
+      : PRESENTATION_TEXT_INSET_X * 2;
+  const verticalChrome =
+    presentation === "icon-label"
+      ? 16
+      : PRESENTATION_TEXT_INSET_Y * 2;
+  return capabilityLayout(
+    {
+      ...authored,
+      width: Math.max(authored.width, textWidth + horizontalChrome),
+      height: Math.max(
+        authored.height,
+        Math.ceil(scaledSceneFontSize(12) * lines.length + verticalChrome),
+      ),
+    },
+    childGeometries,
+  );
+}
+
+/** Intrinsic callout layout with enough padded room for its centered label. */
+export function resolveCalloutLayout(
+  node: SceneNodeLike,
+  children: readonly SceneNodeLike[],
+): CapabilityLayout {
+  const authored = geometryOf(node);
+  const childGeometries = children.map(geometryOf);
+  if (clipsOverflow(node)) {
+    return capabilityLayout(authored, childGeometries);
+  }
+  const label =
+    (typeof node.props?.text === "string" && node.props.text) ||
+    (typeof node.props?.label === "string" && node.props.label) ||
+    node.accessibility?.label ||
+    "";
+  return capabilityLayout(
+    {
+      ...authored,
+      width: Math.max(
+        authored.width,
+        label.length > 0
+          ? estimateTextWidth(label, 12, "normal") + INSET * 2
+          : authored.width,
+      ),
+      height: Math.max(
+        authored.height,
+        scaledSceneFontSize(12) + INSET * 2,
+      ),
     },
     childGeometries,
   );
@@ -779,7 +955,17 @@ export function resolveFrameLayout(
     typeof node.props?.title === "string" ? node.props.title : "";
   const detail =
     typeof node.props?.detail === "string" ? node.props.detail : "";
-  const titleBand = detail.length > 0 ? FRAME_DETAIL_BAND : FRAME_TITLE_BAND;
+  const subtitle =
+    typeof node.props?.subtitle === "string" ? node.props.subtitle : "";
+  // Match chrome subtitle bottom: INSET + TITLE + DETAIL + gap + SUBTITLE.
+  const subtitleBand =
+    subtitle.length > 0
+      ? INSET + TITLE_HEIGHT + DETAIL_HEIGHT + 6 + SUBTITLE_HEIGHT
+      : 0;
+  const titleBand = Math.max(
+    detail.length > 0 ? FRAME_DETAIL_BAND : FRAME_TITLE_BAND,
+    subtitleBand,
+  );
   const normal = children
     .map((child, index) => ({ child, index, geometry: geometryOf(child) }))
     .filter(({ child }) => !isAbsolute(child));
@@ -794,9 +980,12 @@ export function resolveFrameLayout(
     title.length > 0 ? estimateTextWidth(title, 14, "bold") : 0;
   const detailWidth =
     detail.length > 0 ? estimateTextWidth(detail, 11.5, "normal") : 0;
+  const subtitleWidth =
+    subtitle.length > 0 ? estimateTextWidth(subtitle, 10, "normal") : 0;
   const bounds = managedBounds(
     authored,
-    Math.max(contentCross, titleWidth, detailWidth) + options.padding * 2,
+    Math.max(contentCross, titleWidth, detailWidth, subtitleWidth) +
+      options.padding * 2,
     titleBand + contentMain + options.padding * 2,
     options,
   );
@@ -1048,6 +1237,7 @@ export const LAYOUT_CAPABILITIES: readonly NativeSceneCapability[] = [
   { capabilityId: "core.chip", resolveLayout: resolveChipLayout },
   { capabilityId: "core.panel", resolveLayout: resolvePanelLayout },
   { capabilityId: "core.note", resolveLayout: resolvePanelLayout },
+  { capabilityId: "core.callout", resolveLayout: resolveCalloutLayout },
   { capabilityId: "core.header", resolveLayout: resolveHeaderLayout },
   { capabilityId: "core.text", resolveLayout: resolveTextLayout },
   { capabilityId: "core.lane", resolveLayout: resolveLaneLayout },
@@ -1056,5 +1246,14 @@ export const LAYOUT_CAPABILITIES: readonly NativeSceneCapability[] = [
   { capabilityId: "core.stepper", resolveLayout: resolveStepperLayout },
   { capabilityId: "core.circle", resolveLayout: resolveEllipseLayout },
   { capabilityId: "core.ellipse", resolveLayout: resolveEllipseLayout },
+  { capabilityId: "core.group", resolveLayout: resolvePresentationLayout },
+  { capabilityId: "diagram.actor", resolveLayout: resolveDiagramLayout },
+  { capabilityId: "diagram.compute", resolveLayout: resolveDiagramLayout },
+  { capabilityId: "diagram.storage", resolveLayout: resolveDiagramLayout },
+  { capabilityId: "diagram.messaging", resolveLayout: resolveDiagramLayout },
+  { capabilityId: "diagram.network", resolveLayout: resolveDiagramLayout },
+  { capabilityId: "diagram.control", resolveLayout: resolveDiagramLayout },
+  { capabilityId: "diagram.boundary", resolveLayout: resolveDiagramLayout },
+  { capabilityId: "diagram.symbol", resolveLayout: resolveDiagramLayout },
 ];
 

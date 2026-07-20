@@ -183,7 +183,6 @@ describe("resolveArgumentValue array-literal and ref", () => {
     const result = lowerExplainerScene(scene);
     expect(result.ok).toBe(true);
     if (!result.ok) {
-      expect(result.diagnostics).toEqual([]);
       return;
     }
 

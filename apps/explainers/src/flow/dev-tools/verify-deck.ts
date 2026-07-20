@@ -13,9 +13,7 @@ import type {
 } from "../schema/index.js";
 import { resolveCapabilityId } from "../schema/index.js";
 import {
-  applyTimelineState,
   evaluateFrame,
-  evaluateTimelineState,
   type FrozenCapabilityEvaluatorRegistry,
 } from "../runtime/index.js";
 import {
@@ -756,11 +754,14 @@ function evaluatorFindings(
     );
     for (const timeMs of representativeTimes(expandedTimeline)) {
       try {
-        const frame = evaluateFrame(scene, timeMs, {
-          scene: { evaluators: registry },
-        });
-        const timelineState = evaluateTimelineState(expandedTimeline, timeMs);
-        applyTimelineState(frame.displayList.commands, timelineState);
+        // Pass the stagger-expanded timeline so evaluateFrame applies reveal/trace.
+        evaluateFrame(
+          { ...scene, timeline: expandedTimeline },
+          timeMs,
+          {
+            scene: { evaluators: registry },
+          },
+        );
       } catch (error: unknown) {
         findings.push(
           finding(

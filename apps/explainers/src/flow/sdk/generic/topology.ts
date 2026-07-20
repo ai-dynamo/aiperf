@@ -478,11 +478,18 @@ export const SDK_ROUTE: SdkComponentDefinition = {
 
 // --- sdk.pipeline -------------------------------------------------------------
 
-function portOrRootEndpoint(
+/**
+ * Resolve an auto-edge endpoint from a stage fragment's named ports, falling
+ * back to its primary root id. Returns `undefined` — never a synthetic
+ * `{x: 0, y: 0}` origin coordinate — when neither resolves, so the caller
+ * fails the component instead of rendering a coordinate-only endpoint that
+ * would bypass `SceneRenderer`'s timeline-gated connector opacity.
+ */
+export function portOrRootEndpoint(
   fragment: SceneFragment,
   preferredPorts: readonly string[],
   anchor: string,
-): ConnectorEndpointIr {
+): ConnectorEndpointIr | undefined {
   for (const portName of preferredPorts) {
     const port = fragment.ports[portName];
     if (port !== undefined) {
@@ -490,12 +497,14 @@ function portOrRootEndpoint(
     }
   }
   const rootId = primaryRootId(fragment);
-  return rootId !== undefined ? { nodeId: rootId, anchor } : { x: 0, y: 0 };
+  return rootId !== undefined ? { nodeId: rootId, anchor } : undefined;
 }
 
-const PIPELINE_DEFAULT_GAP = 24;
-const PIPELINE_DEFAULT_NODE_WIDTH = 96;
-const PIPELINE_DEFAULT_NODE_HEIGHT = 56;
+/** Horizontal spacing between consecutive pipeline stages (slightly above node width ratio). */
+const PIPELINE_DEFAULT_GAP = 28;
+/** Default stage box when slot roots omit size — matches panel height band for short titles. */
+const PIPELINE_DEFAULT_NODE_WIDTH = 120;
+const PIPELINE_DEFAULT_NODE_HEIGHT = 64;
 
 /** Place a pipeline stage root at a local (x, y), preserving size. */
 function placePipelineNode(node: RenderNodeIr, x: number, y: number): RenderNodeIr {
@@ -600,6 +609,13 @@ const pipelineFactory: SdkComponentFactory = (props, slots, context) => {
     const targetFragment = placedFragments[index + 1]!;
     const source = portOrRootEndpoint(sourceFragment, ["output", "result", "next", "self"], "e");
     const target = portOrRootEndpoint(targetFragment, ["input", "control", "self"], "w");
+    if (source === undefined || target === undefined) {
+      return fail(
+        context,
+        "SDK_PIPELINE_EDGE_ENDPOINT_REQUIRED",
+        `sdk.pipeline "${context.instanceId}" stage ${index + 1} to ${index + 2} has no resolvable auto-edge endpoint.`,
+      );
+    }
     const edgeId = nodeId(context, `edge-${index}`);
     const label = `${context.instanceId} stage ${index + 1} to ${index + 2}`;
     const edge: RenderNodeIr = withOrigin(

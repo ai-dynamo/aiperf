@@ -9,6 +9,7 @@ import { parseDocument } from "../language/index.js";
 import {
   safeParseFlowIr,
   type CapabilityRegistryManifest,
+  type ComponentCatalog,
   type FlowIr,
   type Result,
 } from "../schema/index.js";
@@ -27,6 +28,8 @@ export type CompileRequest = Readonly<{
   sourceName: string;
   capabilities: CapabilityRegistryManifest;
   strict: boolean;
+  /** When provided, enables COMPONENT_UNKNOWN / prop validation. */
+  components?: ComponentCatalog;
 }>;
 
 /** Runs the full parse → symbols → link → validate → lower → schema-validate pipeline. */
@@ -51,7 +54,12 @@ export function compileSource(request: CompileRequest): Result<FlowIr> {
     return linked;
   }
 
-  const validated = validate(linked.value, request.capabilities, request.strict);
+  const validated = validate(
+    linked.value,
+    request.capabilities,
+    request.strict,
+    request.components,
+  );
   if (!validated.ok) {
     return validated;
   }

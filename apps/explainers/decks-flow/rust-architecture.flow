@@ -72,7 +72,7 @@ explainer "Rust Architecture" {
       sdk.Panel(id = "runtime", title = "aiperf-runtime", detail = "engine + transports", x = 250, y = 130, width = 170, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "runtime", anchor: "e" }, to = { nodeId: "loadgen", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Panel(id = "loadgen", title = "dispatch", detail = "in-crate module", x = 460, y = 130, width = 180, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
-      sdk.Panel(id = "mock", title = "mock-server", detail = "separate target", x = 520, y = 280, width = 120, height = 58, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Panel(id = "mock", title = "mock-server", detail = "separate target", x = 520, y = 280, width = 120, height = 72, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal cli duration 320
@@ -259,17 +259,17 @@ explainer "Rust Architecture" {
     caption: "Capabilities are frozen before the first request."
     render: @scene {
       sdk.Header(id = "header", title = "REGISTRY BOOTSTRAP", caption = "frozen capabilities", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "registry", title = "AIPerfRegistry", detail = "transactional build", x = 250, y = 90, width = 200, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "loaders", title = "loaders", detail = "registered", x = 80, y = 220, width = 110, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Panel(id = "samplers", title = "samplers", detail = "registered", x = 220, y = 220, width = 110, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Panel(id = "endpoints", title = "endpoints", detail = "registered", x = 360, y = 220, width = 110, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Panel(id = "registry", title = "AIPerfRegistry", detail = "transactional build", x = 250, y = 90, width = 200, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "loaders", title = "loaders", detail = "registered", x = 80, y = 220, width = 110, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Panel(id = "samplers", title = "samplers", detail = "registered", x = 220, y = 220, width = 110, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Panel(id = "endpoints", title = "endpoints", detail = "registered", x = 360, y = 220, width = 110, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       sdk.FanOut(id = "registry-fan", from = { nodeId: "registry", anchor: "s" }, to = [
             { nodeId: "loaders", anchor: "n" },
             { nodeId: "samplers", anchor: "n" },
             { nodeId: "endpoints", anchor: "n" },
             { nodeId: "transports", anchor: "n" }
           ], axis = "y", junction = { x: 350, y: 190 }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2 })
-      sdk.Panel(id = "transports", title = "transports", detail = "registered", x = 500, y = 220, width = 110, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Panel(id = "transports", title = "transports", detail = "registered", x = 500, y = 220, width = 110, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal registry duration 360
@@ -464,15 +464,15 @@ explainer "Rust Architecture" {
     caption: "Scale out by adding worker threads, not shared mutable hot state."
     render: @scene {
       sdk.Header(id = "header", title = "WORKER MODEL", caption = "thread-per-core sub-cells", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "coord", title = "Coordinator thread", detail = "workers > 1", x = 250, y = 90, width = 200, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
-      sdk.Panel(id = "w0", title = "Worker 0", detail = "sub-cell", x = 120, y = 220, width = 110, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "w1", title = "Worker 1", detail = "sub-cell", x = 290, y = 220, width = 110, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "coord", title = "Coordinator thread", detail = "workers > 1", x = 250, y = 90, width = 200, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
+      sdk.Panel(id = "w0", title = "Worker 0", detail = "sub-cell", x = 120, y = 220, width = 110, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "w1", title = "Worker 1", detail = "sub-cell", x = 290, y = 220, width = 110, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.FanOut(id = "worker-fan", from = { nodeId: "coord", anchor: "s" }, to = [
             { nodeId: "w0", anchor: "n" },
             { nodeId: "w1", anchor: "n" },
             { nodeId: "w2", anchor: "n" }
           ], axis = "y", junction = { x: 350, y: 190 }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2 })
-      sdk.Panel(id = "w2", title = "Worker 2", detail = "sub-cell", x = 460, y = 220, width = 110, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "w2", title = "Worker 2", detail = "sub-cell", x = 460, y = 220, width = 110, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal coord duration 340

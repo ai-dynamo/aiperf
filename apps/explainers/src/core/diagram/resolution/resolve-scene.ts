@@ -6,6 +6,10 @@
 //! Pure deterministic traversal from authored Scene IR to canonical world layout.
 
 import { resolveCapabilityLayout } from "../capabilities/registry.js";
+import {
+  hasNativeSemanticChrome,
+  resolveSemanticChrome,
+} from "../capabilities/chrome.js";
 import type { CapabilityLayoutDiagnostic } from "../capabilities/types.js";
 import type {
   SceneGeometryLike,
@@ -13,7 +17,13 @@ import type {
   SceneNodeLike,
   SceneSourceRangeLike,
 } from "../scene-types.js";
-import type { ResolvedScene, SceneResolutionDiagnostic } from "./types.js";
+import { resolveConnectors } from "./resolve-connectors.js";
+import type {
+  ResolvedConnector,
+  ResolvedGeneratedPart,
+  ResolvedScene,
+  SceneResolutionDiagnostic,
+} from "./types.js";
 
 /** Stable fallback source range for structural scenes without authored metadata. */
 export const UNKNOWN_SCENE_RANGE: SceneSourceRangeLike = Object.freeze({
@@ -226,6 +236,143 @@ function resolveLayoutChildren(
   });
 }
 
+function boundsOverlap(
+  left: SceneGeometryLike,
+  right: SceneGeometryLike,
+): boolean {
+  return (
+    left.x < right.x + right.width &&
+    left.x + left.width > right.x &&
+    left.y < right.y + right.height &&
+    left.y + left.height > right.y
+  );
+}
+
+function boundsEscapeViewport(
+  bounds: SceneGeometryLike,
+  viewport: Readonly<{ width: number; height: number }>,
+): boolean {
+  return (
+    bounds.x < 0 ||
+    bounds.y < 0 ||
+    bounds.x + bounds.width > viewport.width ||
+    bounds.y + bounds.height > viewport.height
+  );
+}
+
+function appendFinalValidationDiagnostics(input: {
+  scene: SceneIrLike;
+  nodesById: ReadonlyMap<string, SceneNodeLike>;
+  worldGeometryById: ReadonlyMap<string, SceneGeometryLike>;
+  ancestorIdsById: ReadonlyMap<string, readonly string[]>;
+  generatedPartsById: ReadonlyMap<string, ResolvedGeneratedPart>;
+  connectorsById: ReadonlyMap<string, ResolvedConnector>;
+  diagnostics: SceneResolutionDiagnostic[];
+}): void {
+  const viewport = input.scene.viewport ?? { width: 700, height: 400 };
+  const siblingGroups = new Map<string, string[]>();
+  for (const [id, node] of input.nodesById) {
+    const bounds = input.worldGeometryById.get(id);
+    if (
+      bounds === undefined ||
+      bounds.width <= 0 ||
+      bounds.height <= 0 ||
+      input.connectorsById.has(id)
+    ) {
+      continue;
+    }
+    const ancestors = input.ancestorIdsById.get(id) ?? [];
+    const parentId = ancestors.at(-1);
+    const parent = parentId === undefined ? undefined : input.nodesById.get(parentId);
+    if (capabilityOf(parent ?? { id: "" }) !== "layout.overlay") {
+      const key = parentId ?? "<root>";
+      const siblings = siblingGroups.get(key) ?? [];
+      siblings.push(id);
+      siblingGroups.set(key, siblings);
+    }
+    if (boundsEscapeViewport(bounds, viewport)) {
+      input.diagnostics.push({
+        code: "SCENE_VIEWPORT_ESCAPE",
+        severity: "warning",
+        message: `Node "${id}" exceeds the ${viewport.width}×${viewport.height} scene viewport.`,
+        range: node.sourceMap ?? UNKNOWN_SCENE_RANGE,
+        nodeIds: [id],
+        repair: "Move or resize the node so its resolved bounds remain inside the viewport.",
+      });
+    }
+  }
+  for (const siblingIds of siblingGroups.values()) {
+    for (let leftIndex = 0; leftIndex < siblingIds.length; leftIndex += 1) {
+      for (
+        let rightIndex = leftIndex + 1;
+        rightIndex < siblingIds.length;
+        rightIndex += 1
+      ) {
+        const leftId = siblingIds[leftIndex];
+        const rightId = siblingIds[rightIndex];
+        const left = input.worldGeometryById.get(leftId);
+        const right = input.worldGeometryById.get(rightId);
+        if (left === undefined || right === undefined || !boundsOverlap(left, right)) {
+          continue;
+        }
+        const rightNode = input.nodesById.get(rightId);
+        input.diagnostics.push({
+          code: "SCENE_ABSOLUTE_SIBLING_OVERLAP",
+          severity: "warning",
+          message: `Resolved siblings "${leftId}" and "${rightId}" overlap.`,
+          range: rightNode?.sourceMap ?? UNKNOWN_SCENE_RANGE,
+          nodeIds: [leftId, rightId],
+          repair: "Move the siblings apart or place intentional overlap in layout.overlay.",
+        });
+      }
+    }
+  }
+  for (const part of input.generatedPartsById.values()) {
+    if (!boundsEscapeViewport(part.geometry, viewport)) continue;
+    input.diagnostics.push({
+      code: "SCENE_VIEWPORT_ESCAPE",
+      severity: "warning",
+      message: `Generated part "${part.id}" exceeds the scene viewport.`,
+      range: input.nodesById.get(part.ownerId)?.sourceMap ?? UNKNOWN_SCENE_RANGE,
+      nodeIds: [part.ownerId, part.id],
+    });
+  }
+  for (const connector of input.connectorsById.values()) {
+    if (!connector.showArrowhead) continue;
+    if (
+      connector.target.x >= 0 &&
+      connector.target.y >= 0 &&
+      connector.target.x <= viewport.width &&
+      connector.target.y <= viewport.height
+    ) {
+      continue;
+    }
+    input.diagnostics.push({
+      code: "SCENE_VIEWPORT_ESCAPE",
+      severity: "warning",
+      message: `Arrow tip for "${connector.id}" exceeds the scene viewport.`,
+      range: input.nodesById.get(connector.id)?.sourceMap ?? UNKNOWN_SCENE_RANGE,
+      nodeIds: [connector.id],
+    });
+  }
+  for (const diagnostic of [...input.diagnostics]) {
+    if (
+      diagnostic.code !== "SCENE_MANAGED_CONTENT_OVERFLOW" ||
+      input.diagnostics.some(
+        (candidate) =>
+          candidate.code === "SCENE_FIXED_CONTENT_OVERFLOW" &&
+          candidate.nodeIds[0] === diagnostic.nodeIds[0],
+      )
+    ) {
+      continue;
+    }
+    input.diagnostics.push({
+      ...diagnostic,
+      code: "SCENE_FIXED_CONTENT_OVERFLOW",
+    });
+  }
+}
+
 /**
  * Resolve authored scene nodes into final world geometry in document order.
  *
@@ -236,6 +383,7 @@ export function resolveScene(scene: SceneIrLike): ResolvedScene {
   const worldGeometryById = new Map<string, SceneGeometryLike>();
   const ancestorIdsById = new Map<string, readonly string[]>();
   const diagnostics: SceneResolutionDiagnostic[] = [];
+  const visitedNodes: SceneNodeLike[] = [];
 
   const visit = (
     node: SceneNodeLike,
@@ -279,6 +427,7 @@ export function resolveScene(scene: SceneIrLike): ResolvedScene {
     nodesById.set(node.id, node);
     worldGeometryById.set(node.id, worldGeometry);
     ancestorIdsById.set(node.id, Object.freeze([...ancestors]));
+    visitedNodes.push(node);
 
     if (!Array.isArray(children) || children.length === 0) {
       return;
@@ -300,14 +449,96 @@ export function resolveScene(scene: SceneIrLike): ResolvedScene {
   for (const root of scene.roots) {
     visit(root, 0, 0, false, undefined, Object.freeze([]));
   }
+  const generatedPartsById = new Map<string, ResolvedGeneratedPart>();
+  for (const node of visitedNodes) {
+    if (!hasNativeSemanticChrome(node)) {
+      continue;
+    }
+    const geometry = worldGeometryById.get(node.id);
+    if (geometry === undefined) {
+      continue;
+    }
+    const chrome = resolveSemanticChrome(node, geometry);
+    const parts = [
+      ...(chrome.rootBox === undefined ? [] : [chrome.rootBox]),
+      ...chrome.boxes,
+      ...chrome.texts,
+    ];
+    for (const part of parts) {
+      const authoredOwner = nodesById.get(part.id);
+      const generatedOwner = generatedPartsById.get(part.id);
+      const priorOwnerId = authoredOwner?.id ?? generatedOwner?.ownerId;
+      if (priorOwnerId !== undefined) {
+        diagnostics.push({
+          code: "SCENE_DUPLICATE_PAINT_OWNER",
+          severity: "error",
+          message: `Generated part "${part.id}" is owned by both "${priorOwnerId}" and "${node.id}".`,
+          range: node.sourceMap ?? UNKNOWN_SCENE_RANGE,
+          nodeIds: [priorOwnerId, node.id],
+          repair:
+            "Remove the compatibility child; semantic chrome owns this role.",
+        });
+        if (generatedOwner !== undefined) {
+          diagnostics.push({
+            code: "SCENE_DUPLICATE_GENERATED_ID",
+            severity: "error",
+            message: `Generated part ID "${part.id}" is repeated by "${generatedOwner.ownerId}" and "${node.id}".`,
+            range: node.sourceMap ?? UNKNOWN_SCENE_RANGE,
+            nodeIds: [generatedOwner.ownerId, node.id],
+            repair: "Give each semantic chrome owner a unique authored ID.",
+          });
+        }
+        continue;
+      }
+      const partGeometry =
+        "geometry" in part
+          ? part.geometry
+          : {
+              x: part.x,
+              y: part.y,
+              width: part.width,
+              height: part.height,
+            };
+      const generatedPart: ResolvedGeneratedPart = {
+        id: part.id,
+        ownerId: node.id,
+        role: part.role,
+        geometry: partGeometry,
+      };
+      generatedPartsById.set(part.id, generatedPart);
+      worldGeometryById.set(part.id, partGeometry);
+    }
+  }
+  const connectors = resolveConnectors({
+    nodesById,
+    worldGeometryById,
+    ancestorIdsById,
+  });
+  diagnostics.push(...connectors.diagnostics);
+  appendFinalValidationDiagnostics({
+    scene,
+    nodesById,
+    worldGeometryById,
+    ancestorIdsById,
+    generatedPartsById,
+    connectorsById: connectors.connectorsById,
+    diagnostics,
+  });
+  diagnostics.sort(
+    (left, right) =>
+      left.range.source.localeCompare(right.range.source) ||
+      left.range.start.offset - right.range.start.offset ||
+      left.code.localeCompare(right.code) ||
+      (left.nodeIds[0] ?? "").localeCompare(right.nodeIds[0] ?? ""),
+  );
 
   return Object.freeze({
     scene,
     nodesById,
     worldGeometryById,
     ancestorIdsById,
-    generatedPartsById: new Map(),
-    connectorsById: new Map(),
+    generatedPartsById,
+    connectorsById: connectors.connectorsById,
     diagnostics: Object.freeze(diagnostics),
   });
 }

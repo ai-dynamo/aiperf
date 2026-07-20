@@ -56,10 +56,11 @@ explainer "SDK Generic Catalog" {
       sdk.Header(id = "c1-h", title = "FOUNDATIONS + SHAPES", caption = "01 / 07", x = 18, y = 16, width = 664, height = 44)
       sdk.Shape(id = "c1-shape", variant = "rounded", label = "surface", x = 70, y = 120, width = 220, height = 130, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
       sdk.Title(id = "c1-title", text = "form", x = 110, y = 165, width = 140, height = 32)
-      sdk.Shape(id = "c1-target", variant = "circle", label = "symbol target", x = 540, y = 145, width = 78, height = 78, surfaceRole = theme(surface.elevated))
-      sdk.Arrow(id = "c1-arrow", label = "flow", from = { nodeId: "c1-shape", anchor: "e" }, to = { nodeId: "c1-target", anchor: "w" }, x = 290, y = 185, width = 250, height = 0, strokeRole = theme(accent.primary))
-      sdk.Icon(id = "c1-icon", icon = "code", x = 555, y = 160, width = 48, height = 48, inkRole = theme(accent.primary))
-      timeline main { at 0 reveal c1-h duration 180 after c1-h stagger targets [c1-shape, c1-target] step 80 duration 220 after c1-target reveal c1-title duration 160 after c1-title trace c1-arrow duration 260 after c1-arrow reveal c1-icon duration 180 }
+      sdk.Shape(id = "c1-target", variant = "rounded", label = "symbol target", x = 520, y = 130, width = 110, height = 70, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Arrow(id = "c1-arrow", label = "flow", from = { nodeId: "c1-shape", anchor: "e" }, to = { nodeId: "c1-target", anchor: "w" }, x = 290, y = 165, width = 230, height = 0, strokeRole = theme(accent.primary))
+      sdk.Icon(id = "c1-icon", icon = "code", x = 551, y = 220, width = 48, height = 48, inkRole = theme(accent.primary))
+      sdk.Caption(id = "c1-icon-l", text = "named icon", x = 520, y = 278, width = 110, height = 16)
+      timeline main { at 0 reveal c1-h duration 180 after c1-h stagger targets [c1-shape, c1-target] step 80 duration 220 after c1-target reveal c1-title duration 160 after c1-title trace c1-arrow duration 260 after c1-arrow reveal c1-icon duration 180 after c1-icon reveal c1-icon-l duration 140 }
     }
   }
 
@@ -75,9 +76,10 @@ explainer "SDK Generic Catalog" {
       sdk.Label(id = "shape-hero-l", text = "HERO · ROUNDED SERVICE SURFACE", x = 44, y = 270, width = 350, height = 18)
       sdk.Shape(id = "shape-v1", label = "rect", variant = "rect", x = 440, y = 112, width = 92, height = 70, surfaceRole = theme(surface.secondary))
       sdk.Shape(id = "shape-v2", label = "circle", variant = "circle", x = 560, y = 112, width = 70, height = 70, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "shape-vl", text = "RECT                         CIRCLE", x = 440, y = 198, width = 210, height = 18)
+      sdk.Label(id = "shape-v1-l", text = "RECT", x = 440, y = 198, width = 92, height = 18)
+      sdk.Label(id = "shape-v2-l", text = "CIRCLE", x = 560, y = 198, width = 70, height = 18)
       sdk.Note(id = "shape-note", text = "Geometry is authored; theme roles own color.", x = 44, y = 320, width = 606, height = 30)
-      timeline main { at 0 reveal shape-h duration 160 after shape-h reveal shape-hero duration 240 after shape-hero reveal shape-hero-l duration 140 after shape-hero-l stagger targets [shape-v1, shape-v2] step 100 duration 180 after shape-v2 reveal shape-vl duration 140 after shape-vl reveal shape-note duration 160 }
+      timeline main { at 0 reveal shape-h duration 160 after shape-h reveal shape-hero duration 240 after shape-hero reveal shape-hero-l duration 140 after shape-hero-l stagger targets [shape-v1, shape-v2] step 100 duration 180 after shape-v2 stagger targets [shape-v1-l, shape-v2-l] step 80 duration 140 after shape-v2-l reveal shape-note duration 160 }
     }
   }
 
@@ -93,9 +95,10 @@ explainer "SDK Generic Catalog" {
       sdk.Label(id = "text-hero-l", text = "HERO · P95 LATENCY", x = 54, y = 220, width = 330, height = 18)
       sdk.Text(id = "text-v1", text = "ready", x = 450, y = 125, width = 160, height = 28, inkRole = theme(ink.primary))
       sdk.Text(id = "text-v2", text = "updated 2m ago", x = 450, y = 180, width = 180, height = 28, inkRole = theme(ink.secondary))
-      sdk.Label(id = "text-vl", text = "PRIMARY                         SECONDARY", x = 450, y = 225, width = 190, height = 18)
+      sdk.Label(id = "text-v1-l", text = "PRIMARY", x = 450, y = 160, width = 160, height = 16)
+      sdk.Label(id = "text-v2-l", text = "SECONDARY", x = 450, y = 215, width = 180, height = 16)
       sdk.Note(id = "text-note", text = "Prefer specialized typography primitives for longer content.", x = 54, y = 310, width = 586, height = 30)
-      timeline main { at 0 reveal text-h duration 160 after text-h reveal text-hero duration 240 after text-hero reveal text-hero-l duration 140 after text-hero-l stagger targets [text-v1, text-v2] step 100 duration 180 after text-v2 reveal text-vl duration 140 after text-vl reveal text-note duration 160 }
+      timeline main { at 0 reveal text-h duration 160 after text-h reveal text-hero duration 240 after text-hero reveal text-hero-l duration 140 after text-hero-l reveal text-v1 duration 160 after text-v1 reveal text-v1-l duration 120 after text-v1-l reveal text-v2 duration 160 after text-v2 reveal text-v2-l duration 120 after text-v2-l reveal text-note duration 160 }
     }
   }
 
@@ -110,9 +113,10 @@ explainer "SDK Generic Catalog" {
       sdk.RichText(id = "rich-hero", text = "Release 2.4\nFaster routing with deterministic fallback.", x = 44, y = 105, width = 350, height = 120, inkRole = theme(ink.primary))
       sdk.Label(id = "rich-hero-l", text = "HERO · RELEASE SUMMARY", x = 44, y = 242, width = 350, height = 18)
       sdk.RichText(id = "rich-v1", text = "Tip\nPin the model revision.", x = 440, y = 108, width = 190, height = 62, inkRole = theme(accent.primary))
-      sdk.RichText(id = "rich-v2", text = "Status\nAll regions healthy.", x = 440, y = 190, width = 190, height = 62, inkRole = theme(ink.secondary))
-      sdk.Label(id = "rich-vl", text = "TIP                                      STATUS", x = 440, y = 270, width = 190, height = 18)
-      timeline main { at 0 reveal rich-h duration 160 after rich-h reveal rich-hero duration 240 after rich-hero reveal rich-hero-l duration 140 after rich-hero-l stagger targets [rich-v1, rich-v2] step 100 duration 180 after rich-v2 reveal rich-vl duration 140 }
+      sdk.RichText(id = "rich-v2", text = "Status\nAll regions healthy.", x = 440, y = 220, width = 190, height = 62, inkRole = theme(ink.secondary))
+      sdk.Label(id = "rich-v1-l", text = "TIP", x = 440, y = 192, width = 190, height = 16)
+      sdk.Label(id = "rich-v2-l", text = "STATUS", x = 440, y = 304, width = 190, height = 16)
+      timeline main { at 0 reveal rich-h duration 160 after rich-h reveal rich-hero duration 240 after rich-hero reveal rich-hero-l duration 140 after rich-hero-l reveal rich-v1 duration 160 after rich-v1 reveal rich-v1-l duration 120 after rich-v1-l reveal rich-v2 duration 160 after rich-v2 reveal rich-v2-l duration 120 }
     }
   }
 
@@ -129,8 +133,10 @@ explainer "SDK Generic Catalog" {
       sdk.Icon(id = "icon-v1", icon = "check", x = 430, y = 125, width = 42, height = 42, inkRole = theme(accent.green))
       sdk.Icon(id = "icon-v2", icon = "warning", x = 505, y = 125, width = 42, height = 42, inkRole = theme(accent.warning))
       sdk.Icon(id = "icon-v3", icon = "lock", x = 580, y = 125, width = 42, height = 42, inkRole = theme(ink.primary))
-      sdk.Label(id = "icon-vl", text = "OK             WARN             SECURE", x = 420, y = 190, width = 220, height = 18)
-      timeline main { at 0 reveal icon-h duration 160 after icon-h reveal icon-hero duration 240 after icon-hero reveal icon-hero-l duration 140 after icon-hero-l stagger targets [icon-v1, icon-v2, icon-v3] step 90 duration 180 after icon-v3 reveal icon-vl duration 140 }
+      sdk.Label(id = "icon-v1-l", text = "OK", x = 430, y = 178, width = 42, height = 16)
+      sdk.Label(id = "icon-v2-l", text = "WARN", x = 505, y = 178, width = 42, height = 16)
+      sdk.Label(id = "icon-v3-l", text = "SECURE", x = 580, y = 178, width = 50, height = 16)
+      timeline main { at 0 reveal icon-h duration 160 after icon-h reveal icon-hero duration 240 after icon-hero reveal icon-hero-l duration 140 after icon-hero-l stagger targets [icon-v1, icon-v2, icon-v3] step 90 duration 180 after icon-v3 stagger targets [icon-v1-l, icon-v2-l, icon-v3-l] step 70 duration 140 }
     }
   }
 
@@ -138,16 +144,17 @@ explainer "SDK Generic Catalog" {
     eyebrow: "FOUNDATIONS · IMAGE"
     title: "Images bring trusted media into scene IR"
     lede: "Use package-resolvable repository assets and select contain or cover intentionally."
-    narration: "The AIPerf mark is rendered from an existing public asset. The variants compare contain and cover fitting."
+    narration: "The NVIDIA symbol is rendered from an existing repository asset served by Vite. The variants compare contain and cover fitting."
     caption: "A valid source is required; fitting is an authored choice."
     render: @scene {
       sdk.Header(id = "image-h", title = "SDK.IMAGE", caption = "repository media", x = 18, y = 16, width = 664, height = 44)
-      sdk.Image(id = "image-hero", src = "/aiperf-mark.svg", label = "AIPerf mark", variant = "contain", x = 44, y = 100, width = 350, height = 165)
+      sdk.Image(id = "image-hero", src = "/nvidia-symbol.svg", label = "NVIDIA symbol", variant = "contain", x = 44, y = 100, width = 350, height = 165)
       sdk.Label(id = "image-hero-l", text = "HERO · CONTAIN", x = 44, y = 280, width = 350, height = 18)
-      sdk.Image(id = "image-v1", src = "/aiperf-mark.svg", label = "contained mark", variant = "contain", x = 440, y = 110, width = 90, height = 90)
-      sdk.Image(id = "image-v2", src = "/aiperf-mark.svg", label = "covered mark", variant = "cover", x = 560, y = 110, width = 90, height = 90)
-      sdk.Label(id = "image-vl", text = "CONTAIN                    COVER", x = 440, y = 218, width = 210, height = 18)
-      timeline main { at 0 reveal image-h duration 160 after image-h reveal image-hero duration 240 after image-hero reveal image-hero-l duration 140 after image-hero-l stagger targets [image-v1, image-v2] step 100 duration 180 after image-v2 reveal image-vl duration 140 }
+      sdk.Image(id = "image-v1", src = "/nvidia-symbol.svg", label = "contained mark", variant = "contain", x = 440, y = 110, width = 90, height = 90)
+      sdk.Image(id = "image-v2", src = "/nvidia-symbol.svg", label = "covered mark", variant = "cover", x = 560, y = 110, width = 90, height = 90)
+      sdk.Label(id = "image-v1-l", text = "CONTAIN", x = 440, y = 210, width = 90, height = 16)
+      sdk.Label(id = "image-v2-l", text = "COVER", x = 560, y = 210, width = 90, height = 16)
+      timeline main { at 0 reveal image-h duration 160 after image-h reveal image-hero duration 240 after image-hero reveal image-hero-l duration 140 after image-hero-l stagger targets [image-v1, image-v2] step 100 duration 180 after image-v2 stagger targets [image-v1-l, image-v2-l] step 80 duration 140 }
     }
   }
 
@@ -165,8 +172,9 @@ explainer "SDK Generic Catalog" {
       sdk.Label(id = "line-hero-l", text = "HERO · PEER RELATION", x = 120, y = 230, width = 220, height = 18)
       sdk.Line(id = "line-v1", label = "quiet", from = { x: 450, y: 140 }, to = { x: 630, y: 140 }, x = 450, y = 140, width = 180, height = 0, strokeRole = theme(ink.secondary))
       sdk.Line(id = "line-v2", label = "active", from = { x: 450, y: 210 }, to = { x: 630, y: 210 }, x = 450, y = 210, width = 180, height = 0, strokeRole = theme(accent.primary))
-      sdk.Label(id = "line-vl", text = "QUIET                              ACTIVE", x = 450, y = 245, width = 180, height = 18)
-      timeline main { at 0 reveal line-h duration 160 after line-h stagger targets [line-a, line-b] step 80 duration 180 after line-b trace line-hero duration 260 after line-hero reveal line-hero-l duration 140 after line-hero-l stagger targets [line-v1, line-v2] step 100 duration 180 after line-v2 reveal line-vl duration 140 }
+      sdk.Label(id = "line-v1-l", text = "QUIET", x = 450, y = 155, width = 180, height = 16)
+      sdk.Label(id = "line-v2-l", text = "ACTIVE", x = 450, y = 225, width = 180, height = 16)
+      timeline main { at 0 reveal line-h duration 160 after line-h stagger targets [line-a, line-b] step 80 duration 180 after line-b trace line-hero duration 260 after line-hero reveal line-hero-l duration 140 after line-hero-l reveal line-v1 duration 160 after line-v1 reveal line-v1-l duration 120 after line-v1-l reveal line-v2 duration 160 after line-v2 reveal line-v2-l duration 120 }
     }
   }
 
@@ -178,18 +186,19 @@ explainer "SDK Generic Catalog" {
     caption: "Arrowheads encode direction; labels explain intent."
     render: @scene {
       sdk.Header(id = "arrow-h", title = "SDK.ARROW", caption = "directional connector", x = 18, y = 16, width = 664, height = 44)
-      sdk.Shape(id = "arrow-ha", variant = "circle", label = "client", x = 48, y = 145, width = 50, height = 50, surfaceRole = theme(surface.elevated))
+      sdk.Shape(id = "arrow-ha", variant = "rounded", label = "client", x = 48, y = 145, width = 70, height = 50, surfaceRole = theme(surface.elevated))
       sdk.Shape(id = "arrow-hb", variant = "rounded", label = "server", x = 360, y = 145, width = 70, height = 50, surfaceRole = theme(surface.elevated))
-      sdk.Arrow(id = "arrow-hero", label = "dispatch request", from = { nodeId: "arrow-ha", anchor: "e" }, to = { nodeId: "arrow-hb", anchor: "w" }, x = 98, y = 170, width = 262, height = 0, strokeRole = theme(accent.primary))
+      sdk.Arrow(id = "arrow-hero", label = "dispatch request", from = { nodeId: "arrow-ha", anchor: "e" }, to = { nodeId: "arrow-hb", anchor: "w" }, x = 118, y = 170, width = 242, height = 0, strokeRole = theme(accent.primary))
       sdk.Label(id = "arrow-hero-l", text = "HERO · DISPATCH REQUEST", x = 100, y = 205, width = 260, height = 18)
-      sdk.Shape(id = "arrow-v1a", variant = "circle", label = "source", x = 450, y = 110, width = 30, height = 30)
-      sdk.Shape(id = "arrow-v1b", variant = "circle", label = "target", x = 620, y = 110, width = 30, height = 30)
-      sdk.Arrow(id = "arrow-v1", label = "forward", from = { nodeId: "arrow-v1a", anchor: "e" }, to = { nodeId: "arrow-v1b", anchor: "w" }, x = 480, y = 125, width = 140, height = 0, strokeRole = theme(accent.green))
-      sdk.Shape(id = "arrow-v2a", variant = "circle", label = "source", x = 450, y = 180, width = 30, height = 30)
-      sdk.Shape(id = "arrow-v2b", variant = "circle", label = "target", x = 620, y = 225, width = 30, height = 30)
-      sdk.Arrow(id = "arrow-v2", label = "handoff", from = { nodeId: "arrow-v2a", anchor: "e" }, to = { nodeId: "arrow-v2b", anchor: "w" }, x = 480, y = 195, width = 140, height = 45, strokeRole = theme(accent.warning))
-      sdk.Label(id = "arrow-vl", text = "FORWARD                         HANDOFF", x = 450, y = 265, width = 190, height = 18)
-      timeline main { at 0 reveal arrow-h duration 160 after arrow-h stagger targets [arrow-ha, arrow-hb] step 80 duration 160 after arrow-hb trace arrow-hero duration 280 after arrow-hero reveal arrow-hero-l duration 140 after arrow-hero-l stagger targets [arrow-v1a, arrow-v1b, arrow-v2a, arrow-v2b] step 60 duration 140 after arrow-v2b trace arrow-v1 duration 180 after arrow-v1 trace arrow-v2 duration 180 after arrow-v2 reveal arrow-vl duration 140 }
+      sdk.Shape(id = "arrow-v1a", variant = "rounded", label = "source", x = 440, y = 105, width = 44, height = 36, surfaceRole = theme(surface.elevated))
+      sdk.Shape(id = "arrow-v1b", variant = "rounded", label = "target", x = 610, y = 105, width = 44, height = 36, surfaceRole = theme(surface.elevated))
+      sdk.Arrow(id = "arrow-v1", label = "forward", from = { nodeId: "arrow-v1a", anchor: "e" }, to = { nodeId: "arrow-v1b", anchor: "w" }, x = 484, y = 123, width = 126, height = 0, strokeRole = theme(accent.green))
+      sdk.Label(id = "arrow-v1-l", text = "FORWARD", x = 440, y = 150, width = 214, height = 16)
+      sdk.Shape(id = "arrow-v2a", variant = "rounded", label = "source", x = 440, y = 185, width = 44, height = 36, surfaceRole = theme(surface.elevated))
+      sdk.Shape(id = "arrow-v2b", variant = "rounded", label = "target", x = 610, y = 230, width = 44, height = 36, surfaceRole = theme(surface.elevated))
+      sdk.Arrow(id = "arrow-v2", label = "handoff", from = { nodeId: "arrow-v2a", anchor: "e" }, to = { nodeId: "arrow-v2b", anchor: "w" }, x = 484, y = 203, width = 126, height = 45, strokeRole = theme(accent.warning))
+      sdk.Label(id = "arrow-v2-l", text = "HANDOFF", x = 440, y = 280, width = 214, height = 16)
+      timeline main { at 0 reveal arrow-h duration 160 after arrow-h stagger targets [arrow-ha, arrow-hb] step 80 duration 160 after arrow-hb trace arrow-hero duration 280 after arrow-hero reveal arrow-hero-l duration 140 after arrow-hero-l stagger targets [arrow-v1a, arrow-v1b] step 60 duration 140 after arrow-v1b trace arrow-v1 duration 180 after arrow-v1 reveal arrow-v1-l duration 120 after arrow-v1-l stagger targets [arrow-v2a, arrow-v2b] step 60 duration 140 after arrow-v2b trace arrow-v2 duration 180 after arrow-v2 reveal arrow-v2-l duration 120 }
     }
   }
 
@@ -205,8 +214,9 @@ explainer "SDK Generic Catalog" {
       sdk.Label(id = "spacer-hero-l", text = "HERO · 96 × 96 RESERVED", x = 54, y = 278, width = 340, height = 18)
       sdk.Section(id = "spacer-f1", title = "inline", x = 440, y = 110, width = 90, height = 90, strokeRole = theme(ink.secondary)) { children { sdk.Spacer(id = "spacer-v1", label = "24", width = 24, height = 24) } }
       sdk.Section(id = "spacer-f2", title = "section", x = 560, y = 110, width = 90, height = 90, strokeRole = theme(accent.green)) { children { sdk.Spacer(id = "spacer-v2", label = "48", width = 48, height = 48) } }
-      sdk.Label(id = "spacer-vl", text = "24 PX                         48 PX", x = 440, y = 218, width = 210, height = 18)
-      timeline main { at 0 reveal spacer-h duration 160 after spacer-h reveal spacer-frame duration 220 after spacer-frame reveal spacer-hero-l duration 140 after spacer-hero-l stagger targets [spacer-f1, spacer-f2] step 100 duration 180 after spacer-f2 reveal spacer-vl duration 140 }
+      sdk.Label(id = "spacer-v1-l", text = "24 PX", x = 440, y = 210, width = 90, height = 16)
+      sdk.Label(id = "spacer-v2-l", text = "48 PX", x = 560, y = 210, width = 90, height = 16)
+      timeline main { at 0 reveal spacer-h duration 160 after spacer-h reveal spacer-frame duration 220 after spacer-frame reveal spacer-hero-l duration 140 after spacer-hero-l stagger targets [spacer-f1, spacer-f2] step 100 duration 180 after spacer-f2 stagger targets [spacer-v1-l, spacer-v2-l] step 80 duration 140 }
     }
   }
 
@@ -222,8 +232,9 @@ explainer "SDK Generic Catalog" {
       sdk.Label(id = "inset-hero-l", text = "HERO · 24 PX INSET", x = 44, y = 268, width = 350, height = 18)
       sdk.Inset(id = "inset-v1", label = "compact", gap = 8, x = 440, y = 112, width = 90, height = 80) { children { sdk.Badge(id = "inset-b1", label = "8 px", variant = "info") } }
       sdk.Inset(id = "inset-v2", label = "roomy", gap = 20, x = 560, y = 112, width = 90, height = 80) { children { sdk.Badge(id = "inset-b2", label = "20 px", variant = "success") } }
-      sdk.Label(id = "inset-vl", text = "COMPACT                      ROOMY", x = 440, y = 210, width = 210, height = 18)
-      timeline main { at 0 reveal inset-h duration 160 after inset-h reveal inset-hero duration 240 after inset-hero reveal inset-hero-l duration 140 after inset-hero-l stagger targets [inset-v1, inset-v2] step 100 duration 180 after inset-v2 reveal inset-vl duration 140 }
+      sdk.Label(id = "inset-v1-l", text = "COMPACT", x = 440, y = 202, width = 90, height = 16)
+      sdk.Label(id = "inset-v2-l", text = "ROOMY", x = 560, y = 202, width = 90, height = 16)
+      timeline main { at 0 reveal inset-h duration 160 after inset-h reveal inset-hero duration 240 after inset-hero reveal inset-hero-l duration 140 after inset-hero-l stagger targets [inset-v1, inset-v2] step 100 duration 180 after inset-v2 stagger targets [inset-v1-l, inset-v2-l] step 80 duration 140 }
     }
   }
 
@@ -254,8 +265,9 @@ explainer "SDK Generic Catalog" {
       sdk.Label(id = "title-hero-l", text = "HERO · PRODUCT VIEW", x = 54, y = 195, width = 350, height = 18)
       sdk.Title(id = "title-v1", text = "Traffic", x = 450, y = 115, width = 180, height = 32)
       sdk.Title(id = "title-v2", text = "Errors", x = 450, y = 180, width = 180, height = 32, inkRole = theme(accent.warning))
-      sdk.Label(id = "title-vl", text = "SECTION                         ATTENTION", x = 450, y = 230, width = 190, height = 18)
-      timeline main { at 0 reveal title-h duration 160 after title-h reveal title-hero duration 240 after title-hero reveal title-hero-l duration 140 after title-hero-l stagger targets [title-v1, title-v2] step 100 duration 180 after title-v2 reveal title-vl duration 140 }
+      sdk.Label(id = "title-v1-l", text = "SECTION", x = 450, y = 152, width = 180, height = 16)
+      sdk.Label(id = "title-v2-l", text = "ATTENTION", x = 450, y = 218, width = 180, height = 16)
+      timeline main { at 0 reveal title-h duration 160 after title-h reveal title-hero duration 240 after title-hero reveal title-hero-l duration 140 after title-hero-l reveal title-v1 duration 160 after title-v1 reveal title-v1-l duration 120 after title-v1-l reveal title-v2 duration 160 after title-v2 reveal title-v2-l duration 120 }
     }
   }
 
@@ -267,12 +279,13 @@ explainer "SDK Generic Catalog" {
     caption: "Write for scanning: one idea per paragraph."
     render: @scene {
       sdk.Header(id = "para-h", title = "SDK.PARAGRAPH", caption = "bounded prose", x = 18, y = 16, width = 664, height = 44)
-      sdk.Paragraph(id = "para-hero", text = "Requests stay in-region unless capacity falls below the configured safety margin.", x = 44, y = 108, width = 350, height = 120)
+      sdk.Paragraph(id = "para-hero", text = "Requests stay in-region unless capacity falls below the configured safety margin.", x = 44, y = 108, width = 300, height = 120)
       sdk.Label(id = "para-hero-l", text = "HERO · POLICY EXPLANATION", x = 44, y = 246, width = 350, height = 18)
       sdk.Paragraph(id = "para-v1", text = "Pin revisions before comparing runs.", x = 440, y = 110, width = 200, height = 62, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "para-v2", text = "Metrics refresh every 10 seconds.", x = 440, y = 190, width = 200, height = 62, inkRole = theme(ink.secondary))
-      sdk.Label(id = "para-vl", text = "GUIDANCE                         SUPPORTING", x = 440, y = 270, width = 200, height = 18)
-      timeline main { at 0 reveal para-h duration 160 after para-h reveal para-hero duration 240 after para-hero reveal para-hero-l duration 140 after para-hero-l stagger targets [para-v1, para-v2] step 100 duration 180 after para-v2 reveal para-vl duration 140 }
+      sdk.Paragraph(id = "para-v2", text = "Metrics refresh every 10 seconds.", x = 440, y = 222, width = 200, height = 62, inkRole = theme(ink.secondary))
+      sdk.Label(id = "para-v1-l", text = "GUIDANCE", x = 440, y = 194, width = 200, height = 16)
+      sdk.Label(id = "para-v2-l", text = "SUPPORTING", x = 440, y = 306, width = 200, height = 16)
+      timeline main { at 0 reveal para-h duration 160 after para-h reveal para-hero duration 240 after para-hero reveal para-hero-l duration 140 after para-hero-l reveal para-v1 duration 160 after para-v1 reveal para-v1-l duration 120 after para-v1-l reveal para-v2 duration 160 after para-v2 reveal para-v2-l duration 120 }
     }
   }
 
@@ -289,8 +302,9 @@ explainer "SDK Generic Catalog" {
       sdk.Label(id = "caption-hero-l", text = "HERO · TEMPORAL CONTEXT", x = 54, y = 270, width = 340, height = 18)
       sdk.Caption(id = "caption-v1", text = "Source: gateway", x = 450, y = 125, width = 180, height = 20)
       sdk.Caption(id = "caption-v2", text = "Requests / second", x = 450, y = 185, width = 180, height = 20, inkRole = theme(ink.secondary))
-      sdk.Label(id = "caption-vl", text = "SOURCE                           UNIT", x = 450, y = 225, width = 180, height = 18)
-      timeline main { at 0 reveal caption-h duration 160 after caption-h reveal caption-chart duration 220 after caption-chart reveal caption-hero duration 180 after caption-hero reveal caption-hero-l duration 140 after caption-hero-l stagger targets [caption-v1, caption-v2] step 100 duration 180 after caption-v2 reveal caption-vl duration 140 }
+      sdk.Label(id = "caption-v1-l", text = "SOURCE", x = 450, y = 152, width = 180, height = 16)
+      sdk.Label(id = "caption-v2-l", text = "UNIT", x = 450, y = 212, width = 180, height = 16)
+      timeline main { at 0 reveal caption-h duration 160 after caption-h reveal caption-chart duration 220 after caption-chart reveal caption-hero duration 180 after caption-hero reveal caption-hero-l duration 140 after caption-hero-l reveal caption-v1 duration 160 after caption-v1 reveal caption-v1-l duration 120 after caption-v1-l reveal caption-v2 duration 160 after caption-v2 reveal caption-v2-l duration 120 }
     }
   }
 
@@ -305,9 +319,10 @@ explainer "SDK Generic Catalog" {
       sdk.CodeBlock(id = "code-hero", text = "sdk.Progress(\n  value = 0.72\n)", x = 44, y = 92, width = 350, height = 170, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
       sdk.Label(id = "code-hero-l", text = "HERO · FLOW INVOCATION", x = 44, y = 278, width = 350, height = 18)
       sdk.CodeBlock(id = "code-v1", text = "npm run verify", x = 435, y = 100, width = 215, height = 70)
-      sdk.CodeBlock(id = "code-v2", text = "workers: 8", x = 435, y = 195, width = 215, height = 70, variant = "info")
-      sdk.Label(id = "code-vl", text = "SHELL                              CONFIG", x = 435, y = 280, width = 215, height = 18)
-      timeline main { at 0 reveal code-h duration 160 after code-h reveal code-hero duration 240 after code-hero reveal code-hero-l duration 140 after code-hero-l stagger targets [code-v1, code-v2] step 100 duration 180 after code-v2 reveal code-vl duration 140 }
+      sdk.CodeBlock(id = "code-v2", text = "workers: 8", x = 435, y = 216, width = 215, height = 70, variant = "info")
+      sdk.Label(id = "code-v1-l", text = "SHELL", x = 435, y = 188, width = 215, height = 16)
+      sdk.Label(id = "code-v2-l", text = "CONFIG", x = 435, y = 304, width = 215, height = 16)
+      timeline main { at 0 reveal code-h duration 160 after code-h reveal code-hero duration 240 after code-hero reveal code-hero-l duration 140 after code-hero-l reveal code-v1 duration 160 after code-v1 reveal code-v1-l duration 120 after code-v1-l reveal code-v2 duration 160 after code-v2 reveal code-v2-l duration 120 }
     }
   }
 
@@ -322,9 +337,10 @@ explainer "SDK Generic Catalog" {
       sdk.Quote(id = "quote-hero", text = "Measure the system users actually experience.", x = 44, y = 105, width = 350, height = 140, variant = "info")
       sdk.Label(id = "quote-hero-l", text = "HERO · PRODUCT PRINCIPLE", x = 44, y = 262, width = 350, height = 18)
       sdk.Quote(id = "quote-v1", text = "The graph made bottlenecks obvious.", x = 435, y = 105, width = 215, height = 80)
-      sdk.Quote(id = "quote-v2", text = "Trust evidence over intuition.", x = 435, y = 205, width = 215, height = 80, variant = "success")
-      sdk.Label(id = "quote-vl", text = "TESTIMONY                         MAXIM", x = 435, y = 302, width = 215, height = 18)
-      timeline main { at 0 reveal quote-h duration 160 after quote-h reveal quote-hero duration 240 after quote-hero reveal quote-hero-l duration 140 after quote-hero-l stagger targets [quote-v1, quote-v2] step 100 duration 180 after quote-v2 reveal quote-vl duration 140 }
+      sdk.Quote(id = "quote-v2", text = "Trust evidence over intuition.", x = 435, y = 239, width = 215, height = 80, variant = "success")
+      sdk.Label(id = "quote-v1-l", text = "TESTIMONY", x = 435, y = 211, width = 215, height = 16)
+      sdk.Label(id = "quote-v2-l", text = "MAXIM", x = 435, y = 345, width = 215, height = 16)
+      timeline main { at 0 reveal quote-h duration 160 after quote-h reveal quote-hero duration 240 after quote-hero reveal quote-hero-l duration 140 after quote-hero-l reveal quote-v1 duration 160 after quote-v1 reveal quote-v1-l duration 120 after quote-v1-l reveal quote-v2 duration 160 after quote-v2 reveal quote-v2-l duration 120 }
     }
   }
 
@@ -339,9 +355,10 @@ explainer "SDK Generic Catalog" {
       sdk.List(id = "list-hero", title = "Launch checklist", items = ["Pin model revision", "Warm the endpoint", "Verify artifacts"], gap = 8, x = 44, y = 96, width = 350, height = 170)
       sdk.Label(id = "list-hero-l", text = "HERO · CHECKLIST", x = 44, y = 282, width = 350, height = 18)
       sdk.List(id = "list-v1", items = ["Inspect", "Compare"], x = 435, y = 105, width = 215, height = 72)
-      sdk.List(id = "list-v2", items = ["Queue", "Run", "Export"], x = 435, y = 195, width = 215, height = 96)
-      sdk.Label(id = "list-vl", text = "COMPACT                           EXTENDED", x = 435, y = 305, width = 215, height = 18)
-      timeline main { at 0 reveal list-h duration 160 after list-h reveal list-hero duration 240 after list-hero reveal list-hero-l duration 140 after list-hero-l stagger targets [list-v1, list-v2] step 100 duration 180 after list-v2 reveal list-vl duration 140 }
+      sdk.List(id = "list-v2", items = ["Queue", "Run", "Export"], x = 435, y = 231, width = 215, height = 96)
+      sdk.Label(id = "list-v1-l", text = "COMPACT", x = 435, y = 203, width = 215, height = 16)
+      sdk.Label(id = "list-v2-l", text = "EXTENDED", x = 435, y = 351, width = 215, height = 16)
+      timeline main { at 0 reveal list-h duration 160 after list-h reveal list-hero duration 240 after list-hero reveal list-hero-l duration 140 after list-hero-l reveal list-v1 duration 160 after list-v1 reveal list-v1-l duration 120 after list-v1-l reveal list-v2 duration 160 after list-v2 reveal list-v2-l duration 120 }
     }
   }
 
@@ -356,9 +373,10 @@ explainer "SDK Generic Catalog" {
       sdk.KeyValue(id = "kv-hero", entries = [{ key: "Model", value: "Llama 3.1 70B" }], x = 44, y = 120, width = 350, height = 72)
       sdk.Label(id = "kv-hero-l", text = "HERO · MODEL IDENTITY", x = 44, y = 215, width = 350, height = 18)
       sdk.KeyValue(id = "kv-v1", entries = [{ key: "Region", value: "us-west" }], x = 435, y = 115, width = 215, height = 42)
-      sdk.KeyValue(id = "kv-v2", entries = [{ key: "Protocol", value: "HTTP/2" }], x = 435, y = 185, width = 215, height = 42)
-      sdk.Label(id = "kv-vl", text = "LOCATION                         TRANSPORT", x = 435, y = 245, width = 215, height = 18)
-      timeline main { at 0 reveal kv-h duration 160 after kv-h reveal kv-hero duration 240 after kv-hero reveal kv-hero-l duration 140 after kv-hero-l stagger targets [kv-v1, kv-v2] step 100 duration 180 after kv-v2 reveal kv-vl duration 140 }
+      sdk.KeyValue(id = "kv-v2", entries = [{ key: "Protocol", value: "HTTP/2" }], x = 435, y = 201, width = 215, height = 42)
+      sdk.Label(id = "kv-v1-l", text = "LOCATION", x = 435, y = 175, width = 215, height = 16)
+      sdk.Label(id = "kv-v2-l", text = "TRANSPORT", x = 435, y = 261, width = 215, height = 16)
+      timeline main { at 0 reveal kv-h duration 160 after kv-h reveal kv-hero duration 240 after kv-hero reveal kv-hero-l duration 140 after kv-hero-l reveal kv-v1 duration 160 after kv-v1 reveal kv-v1-l duration 120 after kv-v1-l reveal kv-v2 duration 160 after kv-v2 reveal kv-v2-l duration 120 }
     }
   }
 
@@ -373,9 +391,10 @@ explainer "SDK Generic Catalog" {
       sdk.PropertyList(id = "props-hero", title = "Endpoint", entries = [{ key: "Model", value: "Nemotron" }, { key: "Region", value: "us-east" }, { key: "Mode", value: "streaming" }], gap = 6, x = 44, y = 90, width = 350, height = 185)
       sdk.Label(id = "props-hero-l", text = "HERO · ENDPOINT PROFILE", x = 44, y = 290, width = 350, height = 18)
       sdk.PropertyList(id = "props-v1", items = ["workers: 8", "dispatch: global"], x = 435, y = 100, width = 215, height = 90)
-      sdk.PropertyList(id = "props-v2", items = ["records: jsonl", "summary: json"], x = 435, y = 210, width = 215, height = 90)
-      sdk.Label(id = "props-vl", text = "RUNTIME                         ARTIFACTS", x = 435, y = 315, width = 215, height = 18)
-      timeline main { at 0 reveal props-h duration 160 after props-h reveal props-hero duration 240 after props-hero reveal props-hero-l duration 140 after props-hero-l stagger targets [props-v1, props-v2] step 100 duration 180 after props-v2 reveal props-vl duration 140 }
+      sdk.PropertyList(id = "props-v2", items = ["records: jsonl", "summary: json"], x = 435, y = 240, width = 215, height = 90)
+      sdk.Label(id = "props-v1-l", text = "RUNTIME", x = 435, y = 212, width = 215, height = 16)
+      sdk.Label(id = "props-v2-l", text = "ARTIFACTS", x = 435, y = 352, width = 215, height = 16)
+      timeline main { at 0 reveal props-h duration 160 after props-h reveal props-hero duration 240 after props-hero reveal props-hero-l duration 140 after props-hero-l reveal props-v1 duration 160 after props-v1 reveal props-v1-l duration 120 after props-v1-l reveal props-v2 duration 160 after props-v2 reveal props-v2-l duration 120 }
     }
   }
 
@@ -404,11 +423,13 @@ explainer "SDK Generic Catalog" {
       sdk.Header(id = "badge-h", title = "SDK.BADGE", caption = "compact category", x = 18, y = 16, width = 664, height = 44)
       sdk.Badge(id = "badge-hero", label = "PRODUCTION", variant = "success", x = 90, y = 130, width = 250, height = 64)
       sdk.Label(id = "badge-hero-l", text = "HERO · RELEASE CHANNEL", x = 70, y = 220, width = 290, height = 18)
-      sdk.Badge(id = "badge-v1", label = "INFO", variant = "info", x = 430, y = 120, width = 90, height = 28)
-      sdk.Badge(id = "badge-v2", label = "BETA", variant = "warning", x = 540, y = 120, width = 90, height = 28)
+      sdk.Badge(id = "badge-v1", label = "INFO", variant = "info", x = 430, y = 110, width = 90, height = 28)
+      sdk.Label(id = "badge-v1-l", text = "INFO", x = 430, y = 146, width = 90, height = 16)
+      sdk.Badge(id = "badge-v2", label = "BETA", variant = "warning", x = 540, y = 110, width = 90, height = 28)
+      sdk.Label(id = "badge-v2-l", text = "WARNING", x = 540, y = 146, width = 90, height = 16)
       sdk.Badge(id = "badge-v3", label = "BLOCKED", variant = "danger", x = 485, y = 190, width = 100, height = 28)
-      sdk.Label(id = "badge-vl", text = "INFO · WARNING · DANGER", x = 440, y = 240, width = 190, height = 18)
-      timeline main { at 0 reveal badge-h duration 160 after badge-h reveal badge-hero duration 240 after badge-hero reveal badge-hero-l duration 140 after badge-hero-l stagger targets [badge-v1, badge-v2, badge-v3] step 90 duration 180 after badge-v3 reveal badge-vl duration 140 }
+      sdk.Label(id = "badge-v3-l", text = "DANGER", x = 485, y = 226, width = 100, height = 16)
+      timeline main { at 0 reveal badge-h duration 160 after badge-h reveal badge-hero duration 240 after badge-hero reveal badge-hero-l duration 140 after badge-hero-l stagger targets [badge-v1, badge-v2] step 90 duration 160 after badge-v2 stagger targets [badge-v1-l, badge-v2-l] step 70 duration 120 after badge-v2-l reveal badge-v3 duration 160 after badge-v3 reveal badge-v3-l duration 120 }
     }
   }
 
@@ -424,10 +445,12 @@ explainer "SDK Generic Catalog" {
       sdk.Title(id = "dot-copy", text = "Endpoint healthy", x = 210, y = 145, width = 190, height = 32)
       sdk.Label(id = "dot-hero-l", text = "HERO · LABELED HEALTH", x = 90, y = 230, width = 300, height = 18)
       sdk.StatusDot(id = "dot-v1", label = "warning", variant = "warning", x = 455, y = 130, width = 28, height = 28)
+      sdk.Label(id = "dot-v1-l", text = "WARN", x = 445, y = 170, width = 48, height = 16)
       sdk.StatusDot(id = "dot-v2", label = "danger", variant = "danger", x = 520, y = 130, width = 28, height = 28)
+      sdk.Label(id = "dot-v2-l", text = "ERROR", x = 510, y = 170, width = 48, height = 16)
       sdk.StatusDot(id = "dot-v3", label = "info", variant = "info", x = 585, y = 130, width = 28, height = 28)
-      sdk.Label(id = "dot-vl", text = "WARN       ERROR       INFO", x = 440, y = 190, width = 200, height = 18)
-      timeline main { at 0 reveal dot-h duration 160 after dot-h reveal dot-hero duration 220 after dot-hero reveal dot-copy duration 160 after dot-copy reveal dot-hero-l duration 140 after dot-hero-l stagger targets [dot-v1, dot-v2, dot-v3] step 90 duration 180 after dot-v3 reveal dot-vl duration 140 }
+      sdk.Label(id = "dot-v3-l", text = "INFO", x = 575, y = 170, width = 48, height = 16)
+      timeline main { at 0 reveal dot-h duration 160 after dot-h reveal dot-hero duration 220 after dot-hero reveal dot-copy duration 160 after dot-copy reveal dot-hero-l duration 140 after dot-hero-l stagger targets [dot-v1, dot-v2, dot-v3] step 90 duration 180 after dot-v3 stagger targets [dot-v1-l, dot-v2-l, dot-v3-l] step 70 duration 140 }
     }
   }
 
@@ -442,10 +465,12 @@ explainer "SDK Generic Catalog" {
       sdk.Avatar(id = "avatar-hero", label = "Mina, on call", icon = "user", variant = "info", x = 120, y = 105, width = 130, height = 130)
       sdk.Label(id = "avatar-hero-l", text = "HERO · ON-CALL OWNER", x = 80, y = 255, width = 220, height = 18)
       sdk.Avatar(id = "avatar-v1", label = "operator", icon = "user", variant = "neutral", x = 430, y = 120, width = 58, height = 58)
+      sdk.Label(id = "avatar-v1-l", text = "HUMAN", x = 430, y = 188, width = 58, height = 16)
       sdk.Avatar(id = "avatar-v2", label = "service", icon = "server", variant = "success", x = 515, y = 120, width = 58, height = 58)
+      sdk.Label(id = "avatar-v2-l", text = "SERVICE", x = 515, y = 188, width = 58, height = 16)
       sdk.Avatar(id = "avatar-v3", label = "automation", icon = "code", variant = "warning", x = 600, y = 120, width = 58, height = 58)
-      sdk.Label(id = "avatar-vl", text = "HUMAN       SERVICE       AGENT", x = 420, y = 205, width = 240, height = 18)
-      timeline main { at 0 reveal avatar-h duration 160 after avatar-h reveal avatar-hero duration 240 after avatar-hero reveal avatar-hero-l duration 140 after avatar-hero-l stagger targets [avatar-v1, avatar-v2, avatar-v3] step 90 duration 180 after avatar-v3 reveal avatar-vl duration 140 }
+      sdk.Label(id = "avatar-v3-l", text = "AGENT", x = 600, y = 188, width = 58, height = 16)
+      timeline main { at 0 reveal avatar-h duration 160 after avatar-h reveal avatar-hero duration 240 after avatar-hero reveal avatar-hero-l duration 140 after avatar-hero-l stagger targets [avatar-v1, avatar-v2, avatar-v3] step 90 duration 180 after avatar-v3 stagger targets [avatar-v1-l, avatar-v2-l, avatar-v3-l] step 70 duration 140 }
     }
   }
 
@@ -459,11 +484,13 @@ explainer "SDK Generic Catalog" {
       sdk.Header(id = "il-h", title = "SDK.ICONLABEL", caption = "symbol + words", x = 18, y = 16, width = 664, height = 44)
       sdk.IconLabel(id = "il-hero", label = "Private endpoint", icon = "lock", variant = "success", x = 54, y = 125, width = 340, height = 70)
       sdk.Label(id = "il-hero-l", text = "HERO · SECURITY CONTEXT", x = 54, y = 220, width = 340, height = 18)
-      sdk.IconLabel(id = "il-v1", label = "Verified", icon = "check", x = 430, y = 105, width = 210, height = 42)
-      sdk.IconLabel(id = "il-v2", label = "Vector store", icon = "database", x = 430, y = 170, width = 210, height = 42)
-      sdk.IconLabel(id = "il-v3", label = "Cloud", icon = "cloud", x = 430, y = 235, width = 210, height = 42)
-      sdk.Label(id = "il-vl", text = "STATE · RESOURCE · LOCATION", x = 430, y = 295, width = 210, height = 18)
-      timeline main { at 0 reveal il-h duration 160 after il-h reveal il-hero duration 240 after il-hero reveal il-hero-l duration 140 after il-hero-l stagger targets [il-v1, il-v2, il-v3] step 90 duration 180 after il-v3 reveal il-vl duration 140 }
+      sdk.IconLabel(id = "il-v1", label = "Verified", icon = "check", x = 430, y = 100, width = 210, height = 42)
+      sdk.Label(id = "il-v1-l", text = "STATE", x = 430, y = 158, width = 210, height = 14)
+      sdk.IconLabel(id = "il-v2", label = "Vector store", icon = "database", x = 430, y = 184, width = 210, height = 42)
+      sdk.Label(id = "il-v2-l", text = "RESOURCE", x = 430, y = 242, width = 210, height = 14)
+      sdk.IconLabel(id = "il-v3", label = "Cloud", icon = "cloud", x = 430, y = 268, width = 210, height = 42)
+      sdk.Label(id = "il-v3-l", text = "LOCATION", x = 430, y = 326, width = 210, height = 14)
+      timeline main { at 0 reveal il-h duration 160 after il-h reveal il-hero duration 240 after il-hero reveal il-hero-l duration 140 after il-hero-l reveal il-v1 duration 140 after il-v1 reveal il-v1-l duration 100 after il-v1-l reveal il-v2 duration 140 after il-v2 reveal il-v2-l duration 100 after il-v2-l reveal il-v3 duration 140 after il-v3 reveal il-v3-l duration 100 }
     }
   }
 
@@ -477,11 +504,13 @@ explainer "SDK Generic Catalog" {
       sdk.Header(id = "alert-h", title = "SDK.ALERT", caption = "actionable interruption", x = 18, y = 16, width = 664, height = 44)
       sdk.Alert(id = "alert-hero", title = "Capacity below safety margin", variant = "warning", x = 44, y = 105, width = 350, height = 140)
       sdk.Label(id = "alert-hero-l", text = "HERO · CAPACITY WARNING", x = 44, y = 265, width = 350, height = 18)
-      sdk.Alert(id = "alert-v1", title = "Run queued", variant = "info", x = 430, y = 95, width = 220, height = 62)
-      sdk.Alert(id = "alert-v2", title = "Export complete", variant = "success", x = 430, y = 175, width = 220, height = 62)
-      sdk.Alert(id = "alert-v3", title = "Connection failed", variant = "danger", x = 430, y = 255, width = 220, height = 62)
-      sdk.Label(id = "alert-vl", text = "INFO · SUCCESS · DANGER", x = 430, y = 330, width = 220, height = 18)
-      timeline main { at 0 reveal alert-h duration 160 after alert-h reveal alert-hero duration 240 after alert-hero reveal alert-hero-l duration 140 after alert-hero-l stagger targets [alert-v1, alert-v2, alert-v3] step 90 duration 180 after alert-v3 reveal alert-vl duration 140 }
+      sdk.Alert(id = "alert-v1", title = "Run queued", variant = "info", x = 430, y = 90, width = 220, height = 54)
+      sdk.Label(id = "alert-v1-l", text = "INFO", x = 430, y = 160, width = 220, height = 14)
+      sdk.Alert(id = "alert-v2", title = "Export complete", variant = "success", x = 430, y = 186, width = 220, height = 54)
+      sdk.Label(id = "alert-v2-l", text = "SUCCESS", x = 430, y = 256, width = 220, height = 14)
+      sdk.Alert(id = "alert-v3", title = "Connection failed", variant = "danger", x = 430, y = 282, width = 220, height = 54)
+      sdk.Label(id = "alert-v3-l", text = "DANGER", x = 430, y = 352, width = 220, height = 14)
+      timeline main { at 0 reveal alert-h duration 160 after alert-h reveal alert-hero duration 240 after alert-hero reveal alert-hero-l duration 140 after alert-hero-l reveal alert-v1 duration 140 after alert-v1 reveal alert-v1-l duration 100 after alert-v1-l reveal alert-v2 duration 140 after alert-v2 reveal alert-v2-l duration 100 after alert-v2-l reveal alert-v3 duration 140 after alert-v3 reveal alert-v3-l duration 100 }
     }
   }
 
@@ -495,10 +524,11 @@ explainer "SDK Generic Catalog" {
       sdk.Header(id = "sc-h", title = "SDK.STATUSCARD", caption = "persistent health summary", x = 18, y = 16, width = 664, height = 44)
       sdk.StatusCard(id = "sc-hero", title = "Gateway · healthy", variant = "success", x = 44, y = 100, width = 350, height = 155)
       sdk.Label(id = "sc-hero-l", text = "HERO · PRIMARY SERVICE", x = 44, y = 272, width = 350, height = 18)
-      sdk.StatusCard(id = "sc-v1", title = "Tokenizer · degraded", variant = "warning", x = 430, y = 110, width = 220, height = 82)
-      sdk.StatusCard(id = "sc-v2", title = "Exporter · failed", variant = "danger", x = 430, y = 215, width = 220, height = 82)
-      sdk.Label(id = "sc-vl", text = "DEGRADED                         FAILED", x = 430, y = 312, width = 220, height = 18)
-      timeline main { at 0 reveal sc-h duration 160 after sc-h reveal sc-hero duration 240 after sc-hero reveal sc-hero-l duration 140 after sc-hero-l stagger targets [sc-v1, sc-v2] step 100 duration 180 after sc-v2 reveal sc-vl duration 140 }
+      sdk.StatusCard(id = "sc-v1", title = "Tokenizer · degraded", variant = "warning", x = 430, y = 110, width = 220, height = 88)
+      sdk.StatusCard(id = "sc-v2", title = "Exporter · failed", variant = "danger", x = 430, y = 244, width = 220, height = 88)
+      sdk.Label(id = "sc-v1-l", text = "DEGRADED", x = 430, y = 216, width = 220, height = 16)
+      sdk.Label(id = "sc-v2-l", text = "FAILED", x = 430, y = 350, width = 220, height = 16)
+      timeline main { at 0 reveal sc-h duration 160 after sc-h reveal sc-hero duration 240 after sc-hero reveal sc-hero-l duration 140 after sc-hero-l reveal sc-v1 duration 160 after sc-v1 reveal sc-v1-l duration 120 after sc-v1-l reveal sc-v2 duration 160 after sc-v2 reveal sc-v2-l duration 120 }
     }
   }
 
@@ -513,9 +543,10 @@ explainer "SDK Generic Catalog" {
       sdk.EmptyState(id = "empty-hero", title = "No benchmark runs yet", icon = "file", variant = "info", x = 44, y = 85, width = 350, height = 200)
       sdk.Label(id = "empty-hero-l", text = "HERO · FIRST-RUN STATE", x = 44, y = 300, width = 350, height = 18)
       sdk.EmptyState(id = "empty-v1", title = "No matches", icon = "file", x = 430, y = 95, width = 220, height = 105)
-      sdk.EmptyState(id = "empty-v2", title = "No reports saved", icon = "database", x = 430, y = 220, width = 220, height = 105)
-      sdk.Label(id = "empty-vl", text = "SEARCH                           LIBRARY", x = 430, y = 338, width = 220, height = 18)
-      timeline main { at 0 reveal empty-h duration 160 after empty-h reveal empty-hero duration 240 after empty-hero reveal empty-hero-l duration 140 after empty-hero-l stagger targets [empty-v1, empty-v2] step 100 duration 180 after empty-v2 reveal empty-vl duration 140 }
+      sdk.EmptyState(id = "empty-v2", title = "No reports saved", icon = "database", x = 430, y = 248, width = 220, height = 105)
+      sdk.Label(id = "empty-v1-l", text = "SEARCH", x = 430, y = 220, width = 220, height = 16)
+      sdk.Label(id = "empty-v2-l", text = "LIBRARY", x = 430, y = 373, width = 220, height = 16)
+      timeline main { at 0 reveal empty-h duration 160 after empty-h reveal empty-hero duration 240 after empty-hero reveal empty-hero-l duration 140 after empty-hero-l reveal empty-v1 duration 160 after empty-v1 reveal empty-v1-l duration 120 after empty-v1-l reveal empty-v2 duration 160 after empty-v2 reveal empty-v2-l duration 120 }
     }
   }
 
@@ -545,9 +576,10 @@ explainer "SDK Generic Catalog" {
       sdk.Stat(id = "stat-hero", title = "Throughput", items = ["1,284 req/s", "+8.2% vs baseline"], x = 44, y = 95, width = 350, height = 165)
       sdk.Label(id = "stat-hero-l", text = "HERO · PRIMARY KPI", x = 44, y = 278, width = 350, height = 18)
       sdk.Stat(id = "stat-v1", title = "Requests", items = ["84,211"], x = 430, y = 105, width = 220, height = 82)
-      sdk.Stat(id = "stat-v2", title = "Workers", items = ["8 active"], x = 430, y = 210, width = 220, height = 82)
-      sdk.Label(id = "stat-vl", text = "COUNT                           CAPACITY", x = 430, y = 308, width = 220, height = 18)
-      timeline main { at 0 reveal stat-h duration 160 after stat-h reveal stat-hero duration 240 after stat-hero reveal stat-hero-l duration 140 after stat-hero-l stagger targets [stat-v1, stat-v2] step 100 duration 180 after stat-v2 reveal stat-vl duration 140 }
+      sdk.Stat(id = "stat-v2", title = "Workers", items = ["8 active"], x = 430, y = 237, width = 220, height = 82)
+      sdk.Label(id = "stat-v1-l", text = "COUNT", x = 430, y = 209, width = 220, height = 16)
+      sdk.Label(id = "stat-v2-l", text = "CAPACITY", x = 430, y = 341, width = 220, height = 16)
+      timeline main { at 0 reveal stat-h duration 160 after stat-h reveal stat-hero duration 240 after stat-hero reveal stat-hero-l duration 140 after stat-hero-l reveal stat-v1 duration 160 after stat-v1 reveal stat-v1-l duration 120 after stat-v1-l reveal stat-v2 duration 160 after stat-v2 reveal stat-v2-l duration 120 }
     }
   }
 
@@ -562,9 +594,10 @@ explainer "SDK Generic Catalog" {
       sdk.Metric(id = "metric-hero", title = "P95 latency", items = ["18.7 ms", "within 25 ms SLO"], x = 44, y = 95, width = 350, height = 165)
       sdk.Label(id = "metric-hero-l", text = "HERO · LATENCY SLO", x = 44, y = 278, width = 350, height = 18)
       sdk.Metric(id = "metric-v1", title = "Output rate", items = ["92 tok/s"], x = 430, y = 105, width = 220, height = 82)
-      sdk.Metric(id = "metric-v2", title = "Errors", items = ["0.04%", "low"], x = 430, y = 210, width = 220, height = 82)
-      sdk.Label(id = "metric-vl", text = "RATE                              RATIO", x = 430, y = 308, width = 220, height = 18)
-      timeline main { at 0 reveal metric-h duration 160 after metric-h reveal metric-hero duration 240 after metric-hero reveal metric-hero-l duration 140 after metric-hero-l stagger targets [metric-v1, metric-v2] step 100 duration 180 after metric-v2 reveal metric-vl duration 140 }
+      sdk.Metric(id = "metric-v2", title = "Errors", items = ["0.04%", "low"], x = 430, y = 237, width = 220, height = 82)
+      sdk.Label(id = "metric-v1-l", text = "RATE", x = 430, y = 209, width = 220, height = 16)
+      sdk.Label(id = "metric-v2-l", text = "RATIO", x = 430, y = 341, width = 220, height = 16)
+      timeline main { at 0 reveal metric-h duration 160 after metric-h reveal metric-hero duration 240 after metric-hero reveal metric-hero-l duration 140 after metric-hero-l reveal metric-v1 duration 160 after metric-v1 reveal metric-v1-l duration 120 after metric-v1-l reveal metric-v2 duration 160 after metric-v2 reveal metric-v2-l duration 120 }
     }
   }
 
@@ -579,9 +612,10 @@ explainer "SDK Generic Catalog" {
       sdk.Table(id = "table-hero", title = "Benchmark comparison", columns = ["Model", "P95", "Req/s"], x = 35, y = 90, width = 390, height = 190)
       sdk.Label(id = "table-hero-l", text = "HERO · PERFORMANCE MATRIX", x = 35, y = 295, width = 390, height = 18)
       sdk.Table(id = "table-v1", title = "Capacity", columns = ["GPU", "Load"], x = 450, y = 100, width = 200, height = 90)
-      sdk.Table(id = "table-v2", title = "Artifacts", columns = ["Type", "Size"], x = 450, y = 215, width = 200, height = 90)
-      sdk.Label(id = "table-vl", text = "CAPACITY                        OUTPUTS", x = 450, y = 320, width = 200, height = 18)
-      timeline main { at 0 reveal table-h duration 160 after table-h reveal table-hero duration 240 after table-hero reveal table-hero-l duration 140 after table-hero-l stagger targets [table-v1, table-v2] step 100 duration 180 after table-v2 reveal table-vl duration 140 }
+      sdk.Table(id = "table-v2", title = "Artifacts", columns = ["Type", "Size"], x = 450, y = 232, width = 200, height = 90)
+      sdk.Label(id = "table-v1-l", text = "CAPACITY", x = 450, y = 204, width = 200, height = 16)
+      sdk.Label(id = "table-v2-l", text = "OUTPUTS", x = 450, y = 336, width = 200, height = 16)
+      timeline main { at 0 reveal table-h duration 160 after table-h reveal table-hero duration 240 after table-hero reveal table-hero-l duration 140 after table-hero-l reveal table-v1 duration 160 after table-v1 reveal table-v1-l duration 120 after table-v1-l reveal table-v2 duration 160 after table-v2 reveal table-v2-l duration 120 }
     }
   }
 
@@ -596,9 +630,10 @@ explainer "SDK Generic Catalog" {
       sdk.TableRow(id = "row-hero", label = "Llama benchmark row", x = 44, y = 120, width = 350, height = 54) { cells { sdk.TableCell(id = "row-hc1", label = "Llama 70B") sdk.TableCell(id = "row-hc2", label = "18.7 ms") sdk.TableCell(id = "row-hc3", label = "1,284/s") } }
       sdk.Label(id = "row-hero-l", text = "HERO · RESULT RECORD", x = 44, y = 198, width = 350, height = 18)
       sdk.TableRow(id = "row-v1", label = "header row", x = 430, y = 110, width = 220, height = 42) { cells { sdk.TableCell(id = "row-v1c1", label = "MODEL") sdk.TableCell(id = "row-v1c2", label = "P95") } }
-      sdk.TableRow(id = "row-v2", label = "summary row", x = 430, y = 185, width = 220, height = 42) { cells { sdk.TableCell(id = "row-v2c1", label = "TOTAL", surfaceRole = theme(accent.green)) sdk.TableCell(id = "row-v2c2", label = "84K", surfaceRole = theme(accent.green)) } }
-      sdk.Label(id = "row-vl", text = "HEADER                           SUMMARY", x = 430, y = 245, width = 220, height = 18)
-      timeline main { at 0 reveal row-h duration 160 after row-h reveal row-hero duration 240 after row-hero reveal row-hero-l duration 140 after row-hero-l stagger targets [row-v1, row-v2] step 100 duration 180 after row-v2 reveal row-vl duration 140 }
+      sdk.TableRow(id = "row-v2", label = "summary row", x = 430, y = 202, width = 220, height = 42) { cells { sdk.TableCell(id = "row-v2c1", label = "TOTAL", surfaceRole = theme(accent.green)) sdk.TableCell(id = "row-v2c2", label = "84K", surfaceRole = theme(accent.green)) } }
+      sdk.Label(id = "row-v1-l", text = "HEADER", x = 430, y = 174, width = 220, height = 16)
+      sdk.Label(id = "row-v2-l", text = "SUMMARY", x = 430, y = 266, width = 220, height = 16)
+      timeline main { at 0 reveal row-h duration 160 after row-h reveal row-hero duration 240 after row-hero reveal row-hero-l duration 140 after row-hero-l reveal row-v1 duration 160 after row-v1 reveal row-v1-l duration 120 after row-v1-l reveal row-v2 duration 160 after row-v2 reveal row-v2-l duration 120 }
     }
   }
 
@@ -614,8 +649,9 @@ explainer "SDK Generic Catalog" {
       sdk.Label(id = "cell-hero-l", text = "HERO · RICH IDENTITY CELL", x = 44, y = 225, width = 350, height = 18)
       sdk.TableCell(id = "cell-v1", label = "18.7 ms", x = 430, y = 110, width = 100, height = 54, surfaceRole = theme(surface.elevated))
       sdk.TableCell(id = "cell-v2", label = "healthy", x = 550, y = 110, width = 100, height = 54, surfaceRole = theme(accent.green))
-      sdk.Label(id = "cell-vl", text = "VALUE                         STATUS", x = 430, y = 185, width = 220, height = 18)
-      timeline main { at 0 reveal cell-h duration 160 after cell-h reveal cell-hero duration 240 after cell-hero reveal cell-hero-l duration 140 after cell-hero-l stagger targets [cell-v1, cell-v2] step 100 duration 180 after cell-v2 reveal cell-vl duration 140 }
+      sdk.Label(id = "cell-v1-l", text = "VALUE", x = 430, y = 172, width = 100, height = 16)
+      sdk.Label(id = "cell-v2-l", text = "STATUS", x = 550, y = 172, width = 100, height = 16)
+      timeline main { at 0 reveal cell-h duration 160 after cell-h reveal cell-hero duration 240 after cell-hero reveal cell-hero-l duration 140 after cell-hero-l stagger targets [cell-v1, cell-v2] step 100 duration 180 after cell-v2 stagger targets [cell-v1-l, cell-v2-l] step 80 duration 140 }
     }
   }
 
@@ -630,9 +666,10 @@ explainer "SDK Generic Catalog" {
       sdk.TagList(id = "tags-hero", title = "Endpoint capabilities", items = ["streaming", "tools", "vision", "json"], gap = 10, x = 44, y = 120, width = 82, height = 54)
       sdk.Label(id = "tags-hero-l", text = "HERO · CAPABILITY TAXONOMY", x = 44, y = 200, width = 350, height = 18)
       sdk.TagList(id = "tags-v1", items = ["HTTP", "SSE"], gap = 6, x = 430, y = 110, width = 100, height = 42)
-      sdk.TagList(id = "tags-v2", items = ["JSONL", "CSV", "OTLP"], gap = 6, x = 430, y = 185, width = 68, height = 42)
-      sdk.Label(id = "tags-vl", text = "PROTOCOL                         OUTPUTS", x = 430, y = 245, width = 220, height = 18)
-      timeline main { at 0 reveal tags-h duration 160 after tags-h reveal tags-hero duration 240 after tags-hero reveal tags-hero-l duration 140 after tags-hero-l stagger targets [tags-v1, tags-v2] step 100 duration 180 after tags-v2 reveal tags-vl duration 140 }
+      sdk.TagList(id = "tags-v2", items = ["JSONL", "CSV", "OTLP"], gap = 6, x = 430, y = 194, width = 68, height = 42)
+      sdk.Label(id = "tags-v1-l", text = "PROTOCOL", x = 430, y = 168, width = 220, height = 16)
+      sdk.Label(id = "tags-v2-l", text = "OUTPUTS", x = 430, y = 252, width = 220, height = 16)
+      timeline main { at 0 reveal tags-h duration 160 after tags-h reveal tags-hero duration 240 after tags-hero reveal tags-hero-l duration 140 after tags-hero-l reveal tags-v1 duration 160 after tags-v1 reveal tags-v1-l duration 120 after tags-v1-l reveal tags-v2 duration 160 after tags-v2 reveal tags-v2-l duration 120 }
     }
   }
 
@@ -662,9 +699,10 @@ explainer "SDK Generic Catalog" {
       sdk.Breadcrumb(id = "bc-hero", items = ["Workspace", "Benchmarks", "Run 42"], gap = 12, x = 44, y = 130, width = 105, height = 38)
       sdk.Label(id = "bc-hero-l", text = "HERO · RUN LOCATION", x = 44, y = 195, width = 350, height = 18)
       sdk.Breadcrumb(id = "bc-v1", items = ["Home", "Models"], x = 430, y = 110, width = 100, height = 30)
-      sdk.Breadcrumb(id = "bc-v2", items = ["Runs", "42", "Artifacts", "records"], x = 430, y = 180, width = 48, height = 30)
-      sdk.Label(id = "bc-vl", text = "SHALLOW                           DEEP", x = 430, y = 230, width = 220, height = 18)
-      timeline main { at 0 reveal bc-h duration 160 after bc-h reveal bc-hero duration 240 after bc-hero reveal bc-hero-l duration 140 after bc-hero-l stagger targets [bc-v1, bc-v2] step 100 duration 180 after bc-v2 reveal bc-vl duration 140 }
+      sdk.Breadcrumb(id = "bc-v2", items = ["Runs", "42", "Artifacts", "records"], x = 430, y = 188, width = 48, height = 30)
+      sdk.Label(id = "bc-v1-l", text = "SHALLOW", x = 430, y = 152, width = 220, height = 16)
+      sdk.Label(id = "bc-v2-l", text = "DEEP", x = 430, y = 230, width = 220, height = 16)
+      timeline main { at 0 reveal bc-h duration 160 after bc-h reveal bc-hero duration 240 after bc-hero reveal bc-hero-l duration 140 after bc-hero-l reveal bc-v1 duration 160 after bc-v1 reveal bc-v1-l duration 120 after bc-v1-l reveal bc-v2 duration 160 after bc-v2 reveal bc-v2-l duration 120 }
     }
   }
 
@@ -679,9 +717,10 @@ explainer "SDK Generic Catalog" {
       sdk.Tabs(id = "tabs-hero", items = ["Overview", "Metrics", "Artifacts"], gap = 16, x = 44, y = 125, width = 100, height = 44)
       sdk.Label(id = "tabs-hero-l", text = "HERO · RUN WORKSPACE", x = 44, y = 195, width = 350, height = 18)
       sdk.Tabs(id = "tabs-v1", items = ["Live", "History"], x = 430, y = 110, width = 100, height = 34)
-      sdk.Tabs(id = "tabs-v2", items = ["All", "Healthy", "Warning", "Failed"], x = 430, y = 180, width = 48, height = 34)
-      sdk.Label(id = "tabs-vl", text = "BINARY                           FILTER SET", x = 430, y = 235, width = 220, height = 18)
-      timeline main { at 0 reveal tabs-h duration 160 after tabs-h reveal tabs-hero duration 240 after tabs-hero reveal tabs-hero-l duration 140 after tabs-hero-l stagger targets [tabs-v1, tabs-v2] step 100 duration 180 after tabs-v2 reveal tabs-vl duration 140 }
+      sdk.Tabs(id = "tabs-v2", items = ["All", "Healthy", "Warning", "Failed"], x = 430, y = 192, width = 48, height = 34)
+      sdk.Label(id = "tabs-v1-l", text = "BINARY", x = 430, y = 156, width = 220, height = 16)
+      sdk.Label(id = "tabs-v2-l", text = "FILTER SET", x = 430, y = 238, width = 220, height = 16)
+      timeline main { at 0 reveal tabs-h duration 160 after tabs-h reveal tabs-hero duration 240 after tabs-hero reveal tabs-hero-l duration 140 after tabs-hero-l reveal tabs-v1 duration 160 after tabs-v1 reveal tabs-v1-l duration 120 after tabs-v1-l reveal tabs-v2 duration 160 after tabs-v2 reveal tabs-v2-l duration 120 }
     }
   }
 
@@ -696,9 +735,10 @@ explainer "SDK Generic Catalog" {
       sdk.Pagination(id = "pages-hero", items = ["Prev", "4", "5", "6", "Next"], gap = 12, x = 44, y = 125, width = 60, height = 42)
       sdk.Label(id = "pages-hero-l", text = "HERO · BENCHMARK HISTORY", x = 44, y = 195, width = 350, height = 18)
       sdk.Pagination(id = "pages-v1", items = ["1", "2", "3"], x = 430, y = 110, width = 62, height = 32)
-      sdk.Pagination(id = "pages-v2", items = ["1", "…", "12"], x = 430, y = 180, width = 62, height = 32)
-      sdk.Label(id = "pages-vl", text = "SHORT                           TRUNCATED", x = 430, y = 235, width = 220, height = 18)
-      timeline main { at 0 reveal pages-h duration 160 after pages-h reveal pages-hero duration 240 after pages-hero reveal pages-hero-l duration 140 after pages-hero-l stagger targets [pages-v1, pages-v2] step 100 duration 180 after pages-v2 reveal pages-vl duration 140 }
+      sdk.Pagination(id = "pages-v2", items = ["1", "…", "12"], x = 430, y = 188, width = 62, height = 32)
+      sdk.Label(id = "pages-v1-l", text = "SHORT", x = 430, y = 154, width = 220, height = 16)
+      sdk.Label(id = "pages-v2-l", text = "TRUNCATED", x = 430, y = 232, width = 220, height = 16)
+      timeline main { at 0 reveal pages-h duration 160 after pages-h reveal pages-hero duration 240 after pages-hero reveal pages-hero-l duration 140 after pages-hero-l reveal pages-v1 duration 160 after pages-v1 reveal pages-v1-l duration 120 after pages-v1-l reveal pages-v2 duration 160 after pages-v2 reveal pages-v2-l duration 120 }
     }
   }
 
@@ -713,9 +753,10 @@ explainer "SDK Generic Catalog" {
       sdk.Timeline(id = "timeline-hero", title = "Benchmark lifecycle", items = ["Queued · 09:40", "Running · 09:41", "Complete · 09:47"], gap = 8, x = 44, y = 90, width = 350, height = 195)
       sdk.Label(id = "timeline-hero-l", text = "HERO · RUN LIFECYCLE", x = 44, y = 300, width = 350, height = 18)
       sdk.Timeline(id = "timeline-v1", items = ["Build", "Deploy"], x = 430, y = 100, width = 220, height = 90)
-      sdk.Timeline(id = "timeline-v2", items = ["Alert", "Mitigate", "Resolve"], x = 430, y = 210, width = 220, height = 105)
-      sdk.Label(id = "timeline-vl", text = "DEPLOYMENT                     INCIDENT", x = 430, y = 330, width = 220, height = 18)
-      timeline main { at 0 reveal timeline-h duration 160 after timeline-h reveal timeline-hero duration 240 after timeline-hero reveal timeline-hero-l duration 140 after timeline-hero-l stagger targets [timeline-v1, timeline-v2] step 100 duration 180 after timeline-v2 reveal timeline-vl duration 140 }
+      sdk.Timeline(id = "timeline-v2", items = ["Alert", "Mitigate", "Resolve"], x = 430, y = 243, width = 220, height = 105)
+      sdk.Label(id = "timeline-v1-l", text = "DEPLOYMENT", x = 430, y = 215, width = 220, height = 16)
+      sdk.Label(id = "timeline-v2-l", text = "INCIDENT", x = 430, y = 358, width = 220, height = 16)
+      timeline main { at 0 reveal timeline-h duration 160 after timeline-h reveal timeline-hero duration 240 after timeline-hero reveal timeline-hero-l duration 140 after timeline-hero-l reveal timeline-v1 duration 160 after timeline-v1 reveal timeline-v1-l duration 120 after timeline-v1-l reveal timeline-v2 duration 160 after timeline-v2 reveal timeline-v2-l duration 120 }
     }
   }
 
@@ -730,9 +771,10 @@ explainer "SDK Generic Catalog" {
       sdk.TimelineItem(id = "ti-hero", title = "Benchmark complete · 09:47", x = 44, y = 115, width = 350, height = 80) { children { sdk.Caption(id = "ti-cap", text = "84,211 requests · artifacts exported", width = 300, height = 20) } }
       sdk.Label(id = "ti-hero-l", text = "HERO · COMPLETION EVENT", x = 44, y = 220, width = 350, height = 18)
       sdk.TimelineItem(id = "ti-v1", title = "Running · 09:41", x = 430, y = 105, width = 220, height = 54)
-      sdk.TimelineItem(id = "ti-v2", title = "Failed · 09:44", x = 430, y = 185, width = 220, height = 54, surfaceRole = theme(accent.red))
-      sdk.Label(id = "ti-vl", text = "ACTIVE                           FAILURE", x = 430, y = 255, width = 220, height = 18)
-      timeline main { at 0 reveal ti-h duration 160 after ti-h reveal ti-hero duration 240 after ti-hero reveal ti-hero-l duration 140 after ti-hero-l stagger targets [ti-v1, ti-v2] step 100 duration 180 after ti-v2 reveal ti-vl duration 140 }
+      sdk.TimelineItem(id = "ti-v2", title = "Failed · 09:44", x = 430, y = 197, width = 220, height = 54, surfaceRole = theme(accent.danger))
+      sdk.Label(id = "ti-v1-l", text = "ACTIVE", x = 430, y = 171, width = 220, height = 16)
+      sdk.Label(id = "ti-v2-l", text = "FAILURE", x = 430, y = 263, width = 220, height = 16)
+      timeline main { at 0 reveal ti-h duration 160 after ti-h reveal ti-hero duration 240 after ti-hero reveal ti-hero-l duration 140 after ti-hero-l reveal ti-v1 duration 160 after ti-v1 reveal ti-v1-l duration 120 after ti-v1-l reveal ti-v2 duration 160 after ti-v2 reveal ti-v2-l duration 120 }
     }
   }
 
@@ -761,11 +803,13 @@ explainer "SDK Generic Catalog" {
       sdk.Header(id = "progress-h", title = "SDK.PROGRESS", caption = "completion indicator", x = 18, y = 16, width = 664, height = 44)
       sdk.Progress(id = "progress-hero", label = "Exporting artifacts", value = 0.72, x = 44, y = 135, width = 350, height = 28)
       sdk.Label(id = "progress-hero-l", text = "HERO · 72% EXPORTED", x = 44, y = 190, width = 350, height = 18)
-      sdk.Progress(id = "progress-v1", label = "started", value = 0.15, x = 430, y = 105, width = 220, height = 16)
-      sdk.Progress(id = "progress-v2", label = "halfway", value = 0.5, x = 430, y = 165, width = 220, height = 16)
-      sdk.Progress(id = "progress-v3", label = "complete", value = 1, x = 430, y = 225, width = 220, height = 16)
-      sdk.Label(id = "progress-vl", text = "EARLY · MIDPOINT · COMPLETE", x = 430, y = 270, width = 220, height = 18)
-      timeline main { at 0 reveal progress-h duration 160 after progress-h reveal progress-hero duration 240 after progress-hero reveal progress-hero-l duration 140 after progress-hero-l stagger targets [progress-v1, progress-v2, progress-v3] step 90 duration 180 after progress-v3 reveal progress-vl duration 140 }
+      sdk.Progress(id = "progress-v1", label = "started", value = 0.15, x = 430, y = 100, width = 220, height = 16)
+      sdk.Label(id = "progress-v1-l", text = "EARLY", x = 430, y = 124, width = 220, height = 14)
+      sdk.Progress(id = "progress-v2", label = "halfway", value = 0.5, x = 430, y = 160, width = 220, height = 16)
+      sdk.Label(id = "progress-v2-l", text = "MIDPOINT", x = 430, y = 184, width = 220, height = 14)
+      sdk.Progress(id = "progress-v3", label = "complete", value = 1, x = 430, y = 220, width = 220, height = 16)
+      sdk.Label(id = "progress-v3-l", text = "COMPLETE", x = 430, y = 244, width = 220, height = 14)
+      timeline main { at 0 reveal progress-h duration 160 after progress-h reveal progress-hero duration 240 after progress-hero reveal progress-hero-l duration 140 after progress-hero-l reveal progress-v1 duration 140 after progress-v1 reveal progress-v1-l duration 100 after progress-v1-l reveal progress-v2 duration 140 after progress-v2 reveal progress-v2-l duration 100 after progress-v2-l reveal progress-v3 duration 140 after progress-v3 reveal progress-v3-l duration 100 }
     }
   }
 
@@ -779,11 +823,13 @@ explainer "SDK Generic Catalog" {
       sdk.Header(id = "meter-h", title = "SDK.METER", caption = "bounded quantity", x = 18, y = 16, width = 664, height = 44)
       sdk.Meter(id = "meter-hero", label = "GPU memory", value = 76, min = 0, max = 100, x = 44, y = 135, width = 350, height = 30)
       sdk.Label(id = "meter-hero-l", text = "HERO · 76 / 100 GB", x = 44, y = 192, width = 350, height = 18)
-      sdk.Meter(id = "meter-v1", label = "low", value = 20, min = 0, max = 100, x = 430, y = 105, width = 220, height = 18)
-      sdk.Meter(id = "meter-v2", label = "moderate", value = 55, min = 0, max = 100, x = 430, y = 165, width = 220, height = 18)
-      sdk.Meter(id = "meter-v3", label = "high", value = 90, min = 0, max = 100, x = 430, y = 225, width = 220, height = 18)
-      sdk.Label(id = "meter-vl", text = "LOW · MODERATE · HIGH", x = 430, y = 270, width = 220, height = 18)
-      timeline main { at 0 reveal meter-h duration 160 after meter-h reveal meter-hero duration 240 after meter-hero reveal meter-hero-l duration 140 after meter-hero-l stagger targets [meter-v1, meter-v2, meter-v3] step 90 duration 180 after meter-v3 reveal meter-vl duration 140 }
+      sdk.Meter(id = "meter-v1", label = "low", value = 20, min = 0, max = 100, x = 430, y = 100, width = 220, height = 18)
+      sdk.Label(id = "meter-v1-l", text = "LOW", x = 430, y = 126, width = 220, height = 14)
+      sdk.Meter(id = "meter-v2", label = "moderate", value = 55, min = 0, max = 100, x = 430, y = 160, width = 220, height = 18)
+      sdk.Label(id = "meter-v2-l", text = "MODERATE", x = 430, y = 186, width = 220, height = 14)
+      sdk.Meter(id = "meter-v3", label = "high", value = 90, min = 0, max = 100, x = 430, y = 220, width = 220, height = 18)
+      sdk.Label(id = "meter-v3-l", text = "HIGH", x = 430, y = 246, width = 220, height = 14)
+      timeline main { at 0 reveal meter-h duration 160 after meter-h reveal meter-hero duration 240 after meter-hero reveal meter-hero-l duration 140 after meter-hero-l reveal meter-v1 duration 140 after meter-v1 reveal meter-v1-l duration 100 after meter-v1-l reveal meter-v2 duration 140 after meter-v2 reveal meter-v2-l duration 100 after meter-v2-l reveal meter-v3 duration 140 after meter-v3 reveal meter-v3-l duration 100 }
     }
   }
 
@@ -797,11 +843,13 @@ explainer "SDK Generic Catalog" {
       sdk.Header(id = "gauge-h", title = "SDK.GAUGE", caption = "dashboard level", x = 18, y = 16, width = 664, height = 44)
       sdk.Gauge(id = "gauge-hero", label = "GPU utilization", value = 0.82, x = 110, y = 105, width = 180, height = 110)
       sdk.Label(id = "gauge-hero-l", text = "HERO · 82% UTILIZATION", x = 70, y = 240, width = 260, height = 18)
-      sdk.Gauge(id = "gauge-v1", label = "idle", value = 0.12, x = 420, y = 110, width = 80, height = 58)
-      sdk.Gauge(id = "gauge-v2", label = "nominal", value = 0.58, x = 505, y = 110, width = 80, height = 58)
-      sdk.Gauge(id = "gauge-v3", label = "saturated", value = 0.96, x = 590, y = 110, width = 80, height = 58)
-      sdk.Label(id = "gauge-vl", text = "IDLE        NOMINAL        HIGH", x = 415, y = 195, width = 255, height = 18)
-      timeline main { at 0 reveal gauge-h duration 160 after gauge-h reveal gauge-hero duration 240 after gauge-hero reveal gauge-hero-l duration 140 after gauge-hero-l stagger targets [gauge-v1, gauge-v2, gauge-v3] step 90 duration 180 after gauge-v3 reveal gauge-vl duration 140 }
+      sdk.Gauge(id = "gauge-v1", label = "idle", value = 0.12, x = 420, y = 108, width = 80, height = 68)
+      sdk.Label(id = "gauge-v1-l", text = "IDLE", x = 420, y = 184, width = 80, height = 16)
+      sdk.Gauge(id = "gauge-v2", label = "nominal", value = 0.58, x = 505, y = 108, width = 80, height = 68)
+      sdk.Label(id = "gauge-v2-l", text = "NOMINAL", x = 505, y = 184, width = 80, height = 16)
+      sdk.Gauge(id = "gauge-v3", label = "saturated", value = 0.96, x = 590, y = 108, width = 80, height = 68)
+      sdk.Label(id = "gauge-v3-l", text = "HIGH", x = 590, y = 184, width = 80, height = 16)
+      timeline main { at 0 reveal gauge-h duration 160 after gauge-h reveal gauge-hero duration 240 after gauge-hero reveal gauge-hero-l duration 140 after gauge-hero-l stagger targets [gauge-v1, gauge-v2, gauge-v3] step 90 duration 180 after gauge-v3 stagger targets [gauge-v1-l, gauge-v2-l, gauge-v3-l] step 70 duration 140 }
     }
   }
 
@@ -815,11 +863,13 @@ explainer "SDK Generic Catalog" {
       sdk.Header(id = "spark-h", title = "SDK.SPARKLINE", caption = "compact trend", x = 18, y = 16, width = 664, height = 44)
       sdk.Sparkline(id = "spark-hero", label = "rising throughput", values = [42, 45, 44, 51, 56, 60, 68], x = 44, y = 105, width = 350, height = 130)
       sdk.Label(id = "spark-hero-l", text = "HERO · 30-MINUTE TREND", x = 44, y = 255, width = 350, height = 18)
-      sdk.Sparkline(id = "spark-v1", label = "steady", values = [5, 5, 6, 5, 5], x = 430, y = 100, width = 220, height = 45)
-      sdk.Sparkline(id = "spark-v2", label = "volatile", values = [2, 8, 3, 9, 4], x = 430, y = 170, width = 220, height = 45)
-      sdk.Sparkline(id = "spark-v3", label = "falling", values = [9, 8, 6, 4, 2], x = 430, y = 240, width = 220, height = 45)
-      sdk.Label(id = "spark-vl", text = "STEADY · VOLATILE · FALLING", x = 430, y = 300, width = 220, height = 18)
-      timeline main { at 0 reveal spark-h duration 160 after spark-h reveal spark-hero duration 240 after spark-hero reveal spark-hero-l duration 140 after spark-hero-l stagger targets [spark-v1, spark-v2, spark-v3] step 90 duration 180 after spark-v3 reveal spark-vl duration 140 }
+      sdk.Sparkline(id = "spark-v1", label = "steady", values = [5, 5, 6, 5, 5], x = 430, y = 95, width = 220, height = 42)
+      sdk.Label(id = "spark-v1-l", text = "STEADY", x = 430, y = 142, width = 220, height = 14)
+      sdk.Sparkline(id = "spark-v2", label = "volatile", values = [2, 8, 3, 9, 4], x = 430, y = 165, width = 220, height = 42)
+      sdk.Label(id = "spark-v2-l", text = "VOLATILE", x = 430, y = 212, width = 220, height = 14)
+      sdk.Sparkline(id = "spark-v3", label = "falling", values = [9, 8, 6, 4, 2], x = 430, y = 235, width = 220, height = 42)
+      sdk.Label(id = "spark-v3-l", text = "FALLING", x = 430, y = 282, width = 220, height = 14)
+      timeline main { at 0 reveal spark-h duration 160 after spark-h reveal spark-hero duration 240 after spark-hero reveal spark-hero-l duration 140 after spark-hero-l reveal spark-v1 duration 140 after spark-v1 reveal spark-v1-l duration 100 after spark-v1-l reveal spark-v2 duration 140 after spark-v2 reveal spark-v2-l duration 100 after spark-v2-l reveal spark-v3 duration 140 after spark-v3 reveal spark-v3-l duration 100 }
     }
   }
 
@@ -833,11 +883,13 @@ explainer "SDK Generic Catalog" {
       sdk.Header(id = "rating-h", title = "SDK.RATING", caption = "five-step score", x = 18, y = 16, width = 664, height = 44)
       sdk.Rating(id = "rating-hero", label = "response quality", value = 0.8, x = 100, y = 125, width = 240, height = 48)
       sdk.Label(id = "rating-hero-l", text = "HERO · 4 / 5 QUALITY", x = 70, y = 205, width = 300, height = 18)
-      sdk.Rating(id = "rating-v1", label = "low", value = 0.2, x = 430, y = 105, width = 180, height = 24)
-      sdk.Rating(id = "rating-v2", label = "medium", value = 0.6, x = 430, y = 165, width = 180, height = 24)
-      sdk.Rating(id = "rating-v3", label = "excellent", value = 1, x = 430, y = 225, width = 180, height = 24)
-      sdk.Label(id = "rating-vl", text = "LOW · MEDIUM · EXCELLENT", x = 430, y = 270, width = 200, height = 18)
-      timeline main { at 0 reveal rating-h duration 160 after rating-h reveal rating-hero duration 240 after rating-hero reveal rating-hero-l duration 140 after rating-hero-l stagger targets [rating-v1, rating-v2, rating-v3] step 90 duration 180 after rating-v3 reveal rating-vl duration 140 }
+      sdk.Rating(id = "rating-v1", label = "low", value = 0.2, x = 430, y = 95, width = 160, height = 24)
+      sdk.Label(id = "rating-v1-l", text = "LOW", x = 430, y = 141, width = 160, height = 14)
+      sdk.Rating(id = "rating-v2", label = "medium", value = 0.6, x = 430, y = 167, width = 160, height = 24)
+      sdk.Label(id = "rating-v2-l", text = "MEDIUM", x = 430, y = 213, width = 160, height = 14)
+      sdk.Rating(id = "rating-v3", label = "excellent", value = 1, x = 430, y = 239, width = 160, height = 24)
+      sdk.Label(id = "rating-v3-l", text = "EXCELLENT", x = 430, y = 285, width = 160, height = 14)
+      timeline main { at 0 reveal rating-h duration 160 after rating-h reveal rating-hero duration 240 after rating-hero reveal rating-hero-l duration 140 after rating-hero-l reveal rating-v1 duration 140 after rating-v1 reveal rating-v1-l duration 100 after rating-v1-l reveal rating-v2 duration 140 after rating-v2 reveal rating-v2-l duration 100 after rating-v2-l reveal rating-v3 duration 140 after rating-v3 reveal rating-v3-l duration 100 }
     }
   }
 
@@ -851,11 +903,13 @@ explainer "SDK Generic Catalog" {
       sdk.Header(id = "sem-h", title = "SDK.SEMAPHORE", caption = "three-state health", x = 18, y = 16, width = 664, height = 44)
       sdk.Semaphore(id = "sem-hero", label = "admission healthy", value = 1, x = 120, y = 125, width = 180, height = 60)
       sdk.Label(id = "sem-hero-l", text = "HERO · ADMISSION OPEN", x = 70, y = 215, width = 280, height = 18)
-      sdk.Semaphore(id = "sem-v1", label = "blocked", value = 0, x = 430, y = 110, width = 90, height = 30)
-      sdk.Semaphore(id = "sem-v2", label = "caution", value = 0.5, x = 430, y = 175, width = 90, height = 30)
-      sdk.Semaphore(id = "sem-v3", label = "healthy", value = 1, x = 430, y = 240, width = 90, height = 30)
-      sdk.Label(id = "sem-vl", text = "BLOCKED · CAUTION · HEALTHY", x = 540, y = 175, width = 120, height = 36)
-      timeline main { at 0 reveal sem-h duration 160 after sem-h reveal sem-hero duration 240 after sem-hero reveal sem-hero-l duration 140 after sem-hero-l stagger targets [sem-v1, sem-v2, sem-v3] step 90 duration 180 after sem-v3 reveal sem-vl duration 140 }
+      sdk.Semaphore(id = "sem-v1", label = "blocked", value = 0, x = 450, y = 100, width = 90, height = 28)
+      sdk.Label(id = "sem-v1-l", text = "BLOCKED", x = 450, y = 146, width = 120, height = 16)
+      sdk.Semaphore(id = "sem-v2", label = "caution", value = 0.5, x = 450, y = 172, width = 90, height = 28)
+      sdk.Label(id = "sem-v2-l", text = "CAUTION", x = 450, y = 218, width = 120, height = 16)
+      sdk.Semaphore(id = "sem-v3", label = "healthy", value = 1, x = 450, y = 244, width = 90, height = 28)
+      sdk.Label(id = "sem-v3-l", text = "HEALTHY", x = 450, y = 290, width = 120, height = 16)
+      timeline main { at 0 reveal sem-h duration 160 after sem-h reveal sem-hero duration 240 after sem-hero reveal sem-hero-l duration 140 after sem-hero-l reveal sem-v1 duration 140 after sem-v1 reveal sem-v1-l duration 100 after sem-v1-l reveal sem-v2 duration 140 after sem-v2 reveal sem-v2-l duration 100 after sem-v2-l reveal sem-v3 duration 140 after sem-v3 reveal sem-v3-l duration 100 }
     }
   }
 
@@ -888,9 +942,10 @@ explainer "SDK Generic Catalog" {
       sdk.Section(id = "section-hero", title = "Benchmark summary", x = 44, y = 85, width = 350, height = 205, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) { children { sdk.Stat(id = "section-stat", title = "Requests", items = ["84,211"]) sdk.Metric(id = "section-metric", title = "P95", items = ["18.7 ms"]) } }
       sdk.Label(id = "section-hero-l", text = "HERO · SUMMARY REGION", x = 44, y = 305, width = 350, height = 18)
       sdk.Section(id = "section-v1", title = "Filters", x = 430, y = 95, width = 220, height = 90, surfaceRole = theme(surface.elevated))
-      sdk.Section(id = "section-v2", title = "Attention", x = 430, y = 210, width = 220, height = 90, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.warning))
-      sdk.Label(id = "section-vl", text = "NEUTRAL                         EMPHASIZED", x = 430, y = 315, width = 220, height = 18)
-      timeline main { at 0 reveal section-h duration 160 after section-h reveal section-hero duration 240 after section-hero reveal section-hero-l duration 140 after section-hero-l stagger targets [section-v1, section-v2] step 100 duration 180 after section-v2 reveal section-vl duration 140 }
+      sdk.Section(id = "section-v2", title = "Attention", x = 430, y = 232, width = 220, height = 90, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.warning))
+      sdk.Label(id = "section-v1-l", text = "NEUTRAL", x = 430, y = 204, width = 220, height = 16)
+      sdk.Label(id = "section-v2-l", text = "EMPHASIZED", x = 430, y = 336, width = 220, height = 16)
+      timeline main { at 0 reveal section-h duration 160 after section-h reveal section-hero duration 240 after section-hero reveal section-hero-l duration 140 after section-hero-l reveal section-v1 duration 160 after section-v1 reveal section-v1-l duration 120 after section-v1-l reveal section-v2 duration 160 after section-v2 reveal section-v2-l duration 120 }
     }
   }
 
@@ -904,10 +959,11 @@ explainer "SDK Generic Catalog" {
       sdk.Header(id = "toolbar-h", title = "SDK.TOOLBAR", caption = "action rail", x = 18, y = 16, width = 664, height = 44)
       sdk.Toolbar(id = "toolbar-hero", label = "run actions", gap = 14, x = 44, y = 115, width = 350, height = 64) { children { sdk.Badge(id = "toolbar-run", label = "RUN", variant = "success") sdk.Badge(id = "toolbar-stop", label = "STOP", variant = "danger") sdk.Badge(id = "toolbar-export", label = "EXPORT", variant = "info") } }
       sdk.Label(id = "toolbar-hero-l", text = "HERO · RUN ACTIONS", x = 44, y = 205, width = 350, height = 18)
-      sdk.Toolbar(id = "toolbar-v1", label = "compact", gap = 8, x = 430, y = 105, width = 220, height = 46) { children { sdk.Icon(id = "toolbar-i1", icon = "check") sdk.Icon(id = "toolbar-i2", icon = "file") } }
-      sdk.Toolbar(id = "toolbar-v2", label = "status", gap = 8, x = 430, y = 180, width = 220, height = 46) { children { sdk.Badge(id = "toolbar-d", label = "HEALTHY", variant = "success") sdk.Caption(id = "toolbar-c", text = "All systems healthy") } }
-      sdk.Label(id = "toolbar-vl", text = "ICONS                           STATUS", x = 430, y = 245, width = 220, height = 18)
-      timeline main { at 0 reveal toolbar-h duration 160 after toolbar-h reveal toolbar-hero duration 240 after toolbar-hero reveal toolbar-hero-l duration 140 after toolbar-hero-l stagger targets [toolbar-v1, toolbar-v2] step 100 duration 180 after toolbar-v2 reveal toolbar-vl duration 140 }
+      sdk.Toolbar(id = "toolbar-v1", label = "compact", gap = 8, x = 430, y = 105, width = 200, height = 40) { children { sdk.Icon(id = "toolbar-i1", icon = "check", width = 24, height = 24) sdk.Icon(id = "toolbar-i2", icon = "file", width = 24, height = 24) } }
+      sdk.Label(id = "toolbar-v1-l", text = "ICONS", x = 430, y = 152, width = 200, height = 16)
+      sdk.Toolbar(id = "toolbar-v2", label = "status", gap = 8, x = 430, y = 198, width = 200, height = 40) { children { sdk.Badge(id = "toolbar-d", label = "OK", variant = "success", width = 48, height = 24) sdk.Caption(id = "toolbar-c", text = "healthy", width = 80, height = 18) } }
+      sdk.Label(id = "toolbar-v2-l", text = "STATUS", x = 430, y = 248, width = 200, height = 16)
+      timeline main { at 0 reveal toolbar-h duration 160 after toolbar-h reveal toolbar-hero duration 240 after toolbar-hero reveal toolbar-hero-l duration 140 after toolbar-hero-l reveal toolbar-v1 duration 160 after toolbar-v1 reveal toolbar-v1-l duration 120 after toolbar-v1-l reveal toolbar-v2 duration 160 after toolbar-v2 reveal toolbar-v2-l duration 120 }
     }
   }
 
@@ -922,9 +978,10 @@ explainer "SDK Generic Catalog" {
       sdk.SplitPane(id = "split-hero", label = "configure and inspect", direction = "row", gap = 14, x = 35, y = 85, width = 390, height = 210) { children { sdk.Section(id = "split-left", title = "Configuration", width = 180, height = 190) sdk.Section(id = "split-right", title = "Results", width = 180, height = 190, strokeRole = theme(accent.primary)) } }
       sdk.Label(id = "split-hero-l", text = "HERO · CONFIG + RESULTS", x = 35, y = 310, width = 390, height = 18)
       sdk.SplitPane(id = "split-v1", label = "horizontal", direction = "row", gap = 8, x = 450, y = 95, width = 200, height = 90) { children { sdk.Shape(id = "split-v1a", label = "A") sdk.Shape(id = "split-v1b", label = "B") } }
-      sdk.SplitPane(id = "split-v2", label = "vertical", direction = "column", gap = 8, x = 450, y = 210, width = 200, height = 90) { children { sdk.Shape(id = "split-v2a", label = "A") sdk.Shape(id = "split-v2b", label = "B") } }
-      sdk.Label(id = "split-vl", text = "HORIZONTAL                    VERTICAL", x = 450, y = 315, width = 200, height = 18)
-      timeline main { at 0 reveal split-h duration 160 after split-h reveal split-hero duration 240 after split-hero reveal split-hero-l duration 140 after split-hero-l stagger targets [split-v1, split-v2] step 100 duration 180 after split-v2 reveal split-vl duration 140 }
+      sdk.SplitPane(id = "split-v2", label = "vertical", direction = "column", gap = 8, x = 450, y = 232, width = 200, height = 90) { children { sdk.Shape(id = "split-v2a", label = "A") sdk.Shape(id = "split-v2b", label = "B") } }
+      sdk.Label(id = "split-v1-l", text = "HORIZONTAL", x = 450, y = 204, width = 200, height = 16)
+      sdk.Label(id = "split-v2-l", text = "VERTICAL", x = 450, y = 336, width = 200, height = 16)
+      timeline main { at 0 reveal split-h duration 160 after split-h reveal split-hero duration 240 after split-hero reveal split-hero-l duration 140 after split-hero-l reveal split-v1 duration 160 after split-v1 reveal split-v1-l duration 120 after split-v1-l reveal split-v2 duration 160 after split-v2 reveal split-v2-l duration 120 }
     }
   }
 
@@ -939,9 +996,10 @@ explainer "SDK Generic Catalog" {
       sdk.MediaObject(id = "media-hero", label = "benchmark owner", gap = 18, x = 44, y = 100, width = 350, height = 150) { media { sdk.Avatar(id = "media-av", label = "Mina", icon = "user", variant = "info", width = 72, height = 72) } body { sdk.PropertyList(id = "media-props", items = ["Owner: Mina", "Run: 42", "State: complete"], width = 230, height = 110) } trailing { sdk.Badge(id = "media-ok", label = "DONE", variant = "success") } }
       sdk.Label(id = "media-hero-l", text = "HERO · OWNER + RUN SUMMARY", x = 44, y = 268, width = 350, height = 18)
       sdk.MediaObject(id = "media-v1", label = "service", gap = 10, x = 430, y = 95, width = 220, height = 82) { leading { sdk.Icon(id = "media-server", icon = "server") } body { sdk.Caption(id = "media-server-c", text = "Gateway · healthy") } }
-      sdk.MediaObject(id = "media-v2", label = "artifact", gap = 10, x = 430, y = 205, width = 220, height = 82) { leading { sdk.Icon(id = "media-file", icon = "file") } body { sdk.Caption(id = "media-file-c", text = "records.jsonl · 48 MB") } }
-      sdk.Label(id = "media-vl", text = "SERVICE                         ARTIFACT", x = 430, y = 300, width = 220, height = 18)
-      timeline main { at 0 reveal media-h duration 160 after media-h reveal media-hero duration 240 after media-hero reveal media-hero-l duration 140 after media-hero-l stagger targets [media-v1, media-v2] step 100 duration 180 after media-v2 reveal media-vl duration 140 }
+      sdk.MediaObject(id = "media-v2", label = "artifact", gap = 10, x = 430, y = 218, width = 220, height = 82) { leading { sdk.Icon(id = "media-file", icon = "file") } body { sdk.Caption(id = "media-file-c", text = "records.jsonl · 48 MB") } }
+      sdk.Label(id = "media-v1-l", text = "SERVICE", x = 430, y = 184, width = 220, height = 16)
+      sdk.Label(id = "media-v2-l", text = "ARTIFACT", x = 430, y = 307, width = 220, height = 16)
+      timeline main { at 0 reveal media-h duration 160 after media-h reveal media-hero duration 240 after media-hero reveal media-hero-l duration 140 after media-hero-l reveal media-v1 duration 160 after media-v1 reveal media-v1-l duration 120 after media-v1-l reveal media-v2 duration 160 after media-v2 reveal media-v2-l duration 120 }
     }
   }
 

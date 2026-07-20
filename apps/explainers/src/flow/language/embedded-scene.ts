@@ -14,15 +14,22 @@
  * - panel: `title`, `detail`
  * - header: `title`, `caption`
  * - circle / ellipse: `r` / `rx` / `ry`, `center` `{ x, y }`
- * - stack / grid / rail: `direction`, `cols`, `gap` (also via `style`)
+ * - managed stack / grid / rail / overlay / frame: opt-in placement through
+ *   `padding`, `align`, `justify`, `gap`, `fixedWidth`, and `fixedHeight`
+ *   (also via `style`); authored width/height remain minimums unless fixed
+ * - managed child escape hatch: `style.position: "absolute"` preserves that
+ *   child's local x/y and removes it from normal flow
  * - lane / band / swimlane / stepper: structure macros (`title`, `steps`, `labels`, `linked`)
- * - route / elbow / connector: `from`, `to`, `via`, `axis`
+ * - route / elbow / connector: `from`, `to`, `via`, `axis`; SDK edges are
+ *   directed with a visible arrowhead unless `arrowhead = false`
  * - curved connectors: `style.route: "curve"` (or `sdk.edge mode: "curve"`)
  *   with optional obstacle-aware controls `style.clearance`, `style.curvature`,
  *   `style.avoidObstacles`, `style.preferredSide`, `style.bundle`, and
  *   `style.parallelGap`
  * - fan-out / fan-in: scalar or array `from` / `to`, `axis`, `junction`
- * - motion.signal: `d`, or `from` / `to`
+ * - motion.signal: `edgeRef` reuses one resolved connector path, while `d` or
+ *   `from` / `to` remain standalone modes; native SDK authoring uses
+ *   `sdk.Signal(edge = "edge-id")`
  * - stagger cues: `targets`, `step`, `easing`; actions `stagger` /
  *   `enter-children` / `fade` / `exit` (plus existing `enter` / `draw` / …)
  *

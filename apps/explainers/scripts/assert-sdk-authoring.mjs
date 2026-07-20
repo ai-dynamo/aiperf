@@ -126,9 +126,10 @@ function lineAt(source, offset) {
 
 /**
  * Returns the index just past the `}` that closes the `{` at `openIndex`,
- * skipping braces inside double-quoted strings.
+ * skipping braces inside double-quoted strings and Flow comments (`//`, `/*`).
+ * Comment rules mirror `src/flow/language/tokens.ts` (LineComment / BlockComment).
  */
-function matchBrace(source, openIndex) {
+export function matchBrace(source, openIndex) {
   let depth = 0;
   let inString = false;
   for (let i = openIndex; i < source.length; i += 1) {
@@ -143,7 +144,29 @@ function matchBrace(source, openIndex) {
     }
     if (char === '"') {
       inString = true;
-    } else if (char === "{") {
+      continue;
+    }
+    // Line comment: // … to end of line (Flow lexer LineComment).
+    if (char === "/" && source[i + 1] === "/") {
+      i += 2;
+      while (i < source.length && source[i] !== "\n" && source[i] !== "\r") {
+        i += 1;
+      }
+      continue;
+    }
+    // Block comment: /* … */ (Flow lexer BlockComment; non-greedy).
+    if (char === "/" && source[i + 1] === "*") {
+      i += 2;
+      while (i < source.length) {
+        if (source[i] === "*" && source[i + 1] === "/") {
+          i += 1; // loop will +1 past '/'
+          break;
+        }
+        i += 1;
+      }
+      continue;
+    }
+    if (char === "{") {
       depth += 1;
     } else if (char === "}") {
       depth -= 1;
@@ -156,7 +179,7 @@ function matchBrace(source, openIndex) {
 }
 
 /** Extracts every `@scene { … }` body with its owning label and offsets. */
-function extractScenes(source) {
+export function extractScenes(source) {
   const scenes = [];
   const re = /(render|finalCard)\s*:\s*@scene\s*\{/g;
   let match;
@@ -351,7 +374,13 @@ async function main() {
   process.exit(failed ? 1 : 0);
 }
 
-main().catch((error) => {
-  console.error(String(error?.stack ?? error));
-  process.exit(2);
-});
+const isDirectRun =
+  process.argv[1] != null &&
+  resolve(fileURLToPath(import.meta.url)) === resolve(process.argv[1]);
+
+if (isDirectRun) {
+  main().catch((error) => {
+    console.error(String(error?.stack ?? error));
+    process.exit(2);
+  });
+}

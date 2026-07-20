@@ -125,7 +125,7 @@ const CATALOG: readonly CatalogSpec[] = [
   { id: "sdk.badge", capabilityId: "core.chip", family: "shape", width: 88, height: 26, actions: CHROME_ACTIONS },
   { id: "sdk.statusDot", capabilityId: "core.circle", family: "shape", width: 14, height: 14, actions: CHROME_ACTIONS },
   { id: "sdk.avatar", capabilityId: "core.group", family: "icon", width: 48, height: 48, actions: CHROME_ACTIONS },
-  { id: "sdk.iconLabel", capabilityId: "core.group", family: "icon", width: 160, height: 32, actions: CHROME_ACTIONS },
+  { id: "sdk.iconLabel", capabilityId: "core.group", family: "icon", width: 160, height: 40, actions: CHROME_ACTIONS },
   { id: "sdk.alert", capabilityId: "core.panel", family: "shape", width: 280, height: 72, actions: CHROME_ACTIONS },
   { id: "sdk.statusCard", capabilityId: "core.panel", family: "shape", width: 220, height: 88, actions: CHROME_ACTIONS },
   { id: "sdk.emptyState", capabilityId: "core.panel", family: "icon", width: 260, height: 140, actions: CHROME_ACTIONS },
@@ -344,7 +344,7 @@ function variantStyle(props: Props): Record<string, StyleValueIr> {
     info: "@theme.accent.primary",
     success: "@theme.accent.green",
     warning: "@theme.accent.tertiary",
-    danger: "@theme.accent.red",
+    danger: "@theme.accent.danger",
   };
   return {
     fill: stringProp(props, "surfaceRole") ?? variantRole[variant] ?? variantRole.neutral!,
@@ -480,15 +480,17 @@ function shapeFactory(spec: CatalogSpec): SdkComponentFactory {
       spec.id === "sdk.alert" ||
       spec.id === "sdk.statusCard"
     ) {
-      const semanticProps =
+      const semanticProps: Record<string, JsonValue> =
         spec.id === "sdk.badge"
           ? { label }
-          : {
-              title: label,
-              ...(stringProp(props, "detail") !== undefined
-                ? { detail: stringProp(props, "detail")! }
-                : {}),
-            };
+          : (() => {
+              const record: Record<string, JsonValue> = { title: label };
+              const detail = stringProp(props, "detail");
+              if (detail !== undefined) {
+                record.detail = detail;
+              }
+              return record;
+            })();
       const root = groupNode(
         spec,
         context,

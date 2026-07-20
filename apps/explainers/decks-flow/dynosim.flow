@@ -528,7 +528,7 @@ explainer "Dynosim" {
         id = "s5-drive",
         title = "drive_sim_with_source",
         detail = "virtual pump",
-        x = 250, y = 250, width = 200, height = 70,
+        x = 250, y = 250, width = 200, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -599,7 +599,7 @@ explainer "Dynosim" {
         id = "s6-drive",
         title = "drive_real_with_source",
         detail = "wall pump",
-        x = 250, y = 250, width = 200, height = 70,
+        x = 250, y = 250, width = 200, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )

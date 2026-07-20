@@ -22,6 +22,7 @@ import {
   pointInBounds,
   roundCanonical,
   routeBounds,
+  segmentIntersectsBounds,
   segmentIsVisible,
   shrinkBoundsToExcludePoint,
   simplifyWaypoints,
@@ -242,6 +243,29 @@ export function endpointExitDirection(
 }
 
 /**
+ * True when any leg of a polyline crosses an obstacle's true (uninflated)
+ * interior. Used to downgrade `feasible` when the resolved waypoints — found
+ * against the clearance-inflated search graph — still cut through real
+ * obstacle geometry, e.g. an obstacle dropped from the graph because an
+ * endpoint sits inside its true bounds.
+ */
+function polylinePenetratesTrueBounds(
+  waypoints: readonly Point2[],
+  obstacles: readonly RouteObstacle[],
+): boolean {
+  for (let i = 0; i < waypoints.length - 1; i += 1) {
+    const a = waypoints[i]!;
+    const b = waypoints[i + 1]!;
+    for (const obstacle of obstacles) {
+      if (segmentIntersectsBounds(a, b, obstacle.bounds, true)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Resolve an obstacle-avoiding polyline between two endpoints. Returns the
  * simplified waypoint list (always including both endpoints). When no
  * obstacle-free polyline exists, returns just the endpoints.
@@ -257,7 +281,9 @@ export function resolveWaypoints(
   // removed them for the *entire* path and let curves cut through far away.
   // Keep the obstacle, but shrink the inflated rect so the endpoint itself is
   // not treated as blocked. Still skip obstacles whose true (uninflated)
-  // interior contains an endpoint.
+  // interior contains an endpoint — that geometry is unavoidable from the
+  // endpoint itself; `feasible` below still catches a resulting penetration
+  // elsewhere on the path.
   const inflated = obstacles.flatMap((obstacle): RouteObstacle[] => {
     if (pointInBounds(start, obstacle.bounds, true) || pointInBounds(end, obstacle.bounds, true)) {
       return [];
@@ -271,13 +297,15 @@ export function resolveWaypoints(
     return [{ id: obstacle.id, bounds }];
   });
   if (inflated.length === 0 || segmentIsVisible(start, end, inflated)) {
-    return { waypoints: [start, end], feasible: true };
+    const waypoints = [start, end];
+    return { waypoints, feasible: !polylinePenetratesTrueBounds(waypoints, obstacles) };
   }
   const path = shortestVisiblePath(start, end, inflated);
   if (path === undefined || path.length < 2) {
     return { waypoints: [start, end], feasible: false };
   }
-  return { waypoints: simplifyWaypoints(path), feasible: true };
+  const waypoints = simplifyWaypoints(path);
+  return { waypoints, feasible: !polylinePenetratesTrueBounds(waypoints, obstacles) };
 }
 
 function formatNumber(value: number): string {

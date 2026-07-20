@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { resolveScene } from "../../../core/diagram/resolution/resolve-scene.js";
 import { createSdkRegistry } from "../registry.js";
 import type { SceneFragment } from "../types.js";
 
@@ -166,6 +167,28 @@ describe("diagram SDK catalog", () => {
       ).toEqual([]);
       expect(result.value.ports.icon).toEqual({ nodeId: "server__glyph" });
       expect(result.value.ports.title).toEqual({ nodeId: "server__title" });
+      const descendantIds = new Set<string>();
+      const collectDescendantIds = (nodes: readonly (typeof result.value.roots)[number][]) => {
+        for (const node of nodes) {
+          descendantIds.add(node.id);
+          if (node.kind === "group" || node.kind === "component") {
+            collectDescendantIds(node.children);
+          }
+        }
+      };
+      collectDescendantIds(result.value.roots);
+      expect(descendantIds.has("server__title")).toBe(false);
+
+      const resolved = resolveScene({ roots: result.value.roots });
+      expect(resolved.generatedPartsById.get("server__title")).toMatchObject({
+        ownerId: "server",
+        role: "title",
+      });
+      expect(
+        resolved.diagnostics.some(
+          (diagnostic) => diagnostic.code === "SCENE_DUPLICATE_PAINT_OWNER",
+        ),
+      ).toBe(false);
       expect(result.value.actions).toEqual({
         enter: ["server"],
         emphasis: ["server"],

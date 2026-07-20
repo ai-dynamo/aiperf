@@ -12,6 +12,8 @@ import type {
   PointIr,
   RenderNodeIr,
   SourceRange,
+  StyleValueIr,
+  ThemeRoleReferenceIr,
 } from "../schema/index.js";
 
 const unknownRange: SourceRange = {
@@ -34,21 +36,43 @@ function finiteOrUndefined(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+/** Coerce an authored numeric field to a finite number, else `fallback`. */
+function finiteNumber(value: unknown, fallback: number): number {
+  const n = Number(value ?? fallback);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** Coerce an extent field to a finite nonnegative number, else `fallback`. */
+function nonnegativeExtent(value: unknown, fallback: number): number {
+  const n = finiteNumber(value, fallback);
+  return n >= 0 ? n : fallback;
+}
+
 function geometryOf(node: Record<string, unknown>): GeometryIr {
   const geometry = asRecord(node.geometry) ?? asRecord(node.layout) ?? {};
   return {
-    x: Number(geometry.x ?? 0),
-    y: Number(geometry.y ?? 0),
-    width: Number(geometry.width ?? 0),
-    height: Number(geometry.height ?? 0),
+    x: finiteNumber(geometry.x, 0),
+    y: finiteNumber(geometry.y, 0),
+    width: nonnegativeExtent(geometry.width, 0),
+    height: nonnegativeExtent(geometry.height, 0),
   };
+}
+
+function isThemeRoleStyleValue(value: unknown): value is ThemeRoleReferenceIr {
+  const record = asRecord(value);
+  return (
+    record !== undefined &&
+    record.kind === "theme-role" &&
+    typeof record.role === "string" &&
+    record.role.length > 0
+  );
 }
 
 function styleOf(
   node: Record<string, unknown>,
-): Record<string, string | number | boolean> {
+): Record<string, StyleValueIr> {
   const style = asRecord(node.style) ?? {};
-  const out: Record<string, string | number | boolean> = {};
+  const out: Record<string, StyleValueIr> = {};
   for (const [key, value] of Object.entries(style)) {
     if (
       typeof value === "string" ||
@@ -56,6 +80,8 @@ function styleOf(
       typeof value === "boolean"
     ) {
       out[key] = value;
+    } else if (isThemeRoleStyleValue(value)) {
+      out[key] = { kind: "theme-role", role: value.role };
     }
   }
   for (const key of [
@@ -70,13 +96,17 @@ function styleOf(
     "stroke",
   ] as const) {
     const value = node[key];
+    if (out[key] !== undefined) {
+      continue;
+    }
     if (
-      (typeof value === "string" ||
-        typeof value === "number" ||
-        typeof value === "boolean") &&
-      out[key] === undefined
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
     ) {
       out[key] = value;
+    } else if (isThemeRoleStyleValue(value)) {
+      out[key] = { kind: "theme-role", role: value.role };
     }
   }
   return out;
@@ -178,10 +208,19 @@ function pathOf(node: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-function connectorEndpointOf(value: unknown): ConnectorEndpointIr {
+/**
+ * Resolve a `from` / `to` prop value into a `ConnectorEndpointIr`.
+ *
+ * Returns `undefined` when the value is absent or cannot be resolved to a
+ * `nodeId` or an `x`/`y` coordinate pair; callers must omit the property
+ * rather than invent a `{x: 0, y: 0}` origin endpoint, so the downstream
+ * scene schema's `superRefine` fails closed on malformed authoring instead
+ * of silently rendering a coordinate-only endpoint.
+ */
+function connectorEndpointOf(value: unknown): ConnectorEndpointIr | undefined {
   const record = asRecord(value);
   if (record === undefined) {
-    return { x: 0, y: 0 };
+    return undefined;
   }
   const x = finiteOrUndefined(record.x);
   const y = finiteOrUndefined(record.y);
@@ -209,7 +248,7 @@ function connectorEndpointOf(value: unknown): ConnectorEndpointIr {
       ...(anchor !== undefined ? { anchor } : {}),
     };
   }
-  return { x: 0, y: 0 };
+  return undefined;
 }
 
 function pointsOf(
@@ -225,14 +264,11 @@ function pointsOf(
       continue;
     }
     const endpoint = connectorEndpointOf(record);
-    const hasCoord =
-      (typeof endpoint.x === "number" && Number.isFinite(endpoint.x)) ||
-      (typeof endpoint.y === "number" && Number.isFinite(endpoint.y));
-    const hasNode =
-      typeof endpoint.nodeId === "string" && endpoint.nodeId.length > 0;
-    if (!hasCoord && !hasNode) {
+    if (endpoint === undefined) {
       continue;
     }
+    const hasNode =
+      typeof endpoint.nodeId === "string" && endpoint.nodeId.length > 0;
     if (
       typeof endpoint.x === "number" &&
       Number.isFinite(endpoint.x) &&
@@ -379,7 +415,7 @@ function requireFanEndpointSide(
 
 function requireFanAxis(
   node: Record<string, unknown>,
-  style: Record<string, string | number | boolean>,
+  style: Record<string, StyleValueIr>,
   label: string,
 ): ConnectorAxisIr | undefined {
   const raw = node.axis !== undefined ? node.axis : style.axis;
@@ -393,11 +429,13 @@ function requireFanAxis(
 }
 
 function geometryFromEndpoints(
-  from: ConnectorEndpointIr,
-  to: ConnectorEndpointIr,
+  from: ConnectorEndpointIr | undefined,
+  to: ConnectorEndpointIr | undefined,
   fallback: GeometryIr,
 ): GeometryIr {
   if (
+    from === undefined ||
+    to === undefined ||
     typeof from.x !== "number" ||
     typeof from.y !== "number" ||
     typeof to.x !== "number" ||
@@ -411,26 +449,6 @@ function geometryFromEndpoints(
     width: Math.max(Math.abs(to.x - from.x), 0),
     height: Math.max(Math.abs(to.y - from.y), 0),
   };
-}
-
-function arrowHasAbsoluteGeometry(node: Record<string, unknown>): boolean {
-  if (pathOf(node) !== undefined || pointsOf(node) !== undefined) {
-    return true;
-  }
-  const from = asRecord(node.from);
-  const to = asRecord(node.to);
-  if (from === undefined || to === undefined) {
-    return false;
-  }
-  const fromAbsolute =
-    finiteOrUndefined(from.x) !== undefined &&
-    finiteOrUndefined(from.y) !== undefined &&
-    !(typeof from.nodeId === "string" && from.nodeId.length > 0);
-  const toAbsolute =
-    finiteOrUndefined(to.x) !== undefined &&
-    finiteOrUndefined(to.y) !== undefined &&
-    !(typeof to.nodeId === "string" && to.nodeId.length > 0);
-  return fromAbsolute && toAbsolute;
 }
 
 /** Build a native RenderNodeIr from a normalized package authoring node. */
@@ -457,7 +475,9 @@ export function lowerFirstClassPackageNode(
   let geometry = geometryOf(node);
   let style = styleOf(node);
 
-  if (capability === "core.arrow" && arrowHasAbsoluteGeometry(node)) {
+  // Default arrowheads for every core.arrow, including nodeId↔nodeId edges.
+  // Absolute-geometry gating previously dropped markerEnd on anchored arrows.
+  if (capability === "core.arrow") {
     kind = "connector";
     if (style.markerEnd === undefined && style.arrowhead === undefined) {
       style = { ...style, arrowhead: true, markerEnd: "arrow" };
@@ -534,8 +554,8 @@ export function lowerFirstClassPackageNode(
       geometry,
       style,
       kind: "connector",
-      from,
-      to,
+      ...(from !== undefined ? { from } : {}),
+      ...(to !== undefined ? { to } : {}),
       ...(via !== undefined ? { via } : {}),
       ...(axis !== undefined ? { axis } : {}),
     };

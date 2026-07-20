@@ -12,7 +12,7 @@
     "assert:sdk-authoring": "node scripts/assert-sdk-authoring.mjs",
     "flow-verifier": "node scripts/flow-verifier.mjs --ir-only",
     "flow-verifier:ir": "node scripts/flow-verifier.mjs --ir-only",
-    "do-not-use-me-extended-flow-verifier": "node scripts/flow-verifier.mjs",
+    "flow-verifier:extended": "node scripts/flow-verifier.mjs",
     "deploy:pages": "bash scripts/deploy-pages.sh"
   },
   "dependencies": {

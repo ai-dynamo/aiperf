@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { JsonValue } from "../../schema/json-value.js";
 import { createSdkRegistry } from "../registry.js";
 import type { SceneFragment, SdkExpansionContext } from "../types.js";
 
@@ -79,7 +80,7 @@ const CHILD: SceneFragment = {
   actions: { enter: ["child"] },
 };
 
-const BASE_PROPS = {
+const BASE_PROPS: Readonly<Record<string, JsonValue>> = {
   id: "example",
   text: "Example",
   title: "Example",
@@ -99,7 +100,7 @@ const BASE_PROPS = {
   ],
   values: [1, 3, 2],
   columns: ["Name", "Value"],
-} as const;
+};
 
 describe("generic SDK catalog", () => {
   it("registers every approved generic primitive", () => {
@@ -173,6 +174,20 @@ describe("generic SDK catalog", () => {
     expect(circle.ok && circle.value.roots[0]?.capabilityId).toBe("core.circle");
     expect(invalid.ok).toBe(false);
     expect(!invalid.ok && invalid.diagnostics[0]?.code).toBe("SDK_SHAPE_VARIANT_INVALID");
+  });
+
+  it("emits a resolvable accent.danger role for danger variants", () => {
+    const definition = createSdkRegistry().lookup("sdk.badge")!;
+    const result = definition.factory(
+      { id: "danger-badge", label: "BLOCKED", variant: "danger" },
+      {},
+      { instanceId: "danger-badge", sourceMap: SOURCE_MAP, themeTokens: new Map() },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.roots[0]?.style?.fill).toBe("@theme.accent.danger");
+    }
   });
 
   it("preserves media-object slot order and exposes semantic child ports", () => {
@@ -430,6 +445,57 @@ describe("generic SDK catalog", () => {
           exit: ["semantic"],
         });
       }
+    }
+  });
+
+  it("emits notes as one semantic owner while preserving the generated caption port", () => {
+    const result = createSdkRegistry().lookup("sdk.note")!.factory(
+      { id: "note", text: "The worker only executes" },
+      {},
+      {
+        instanceId: "note",
+        sourceMap: SOURCE_MAP,
+        themeTokens: new Map(),
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.roots[0]).toMatchObject({
+        id: "note",
+        capabilityId: "core.note",
+        props: { text: "The worker only executes" },
+        children: [],
+      });
+      expect(result.value.ports.caption).toEqual({
+        nodeId: "note__caption",
+      });
+    }
+  });
+
+  it.each([
+    ["sdk.header", { id: "header", title: "Title", caption: "Caption" }],
+    ["sdk.panel", { id: "panel", title: "Title", detail: "Detail" }],
+    ["sdk.card", { id: "card", title: "Title", detail: "Detail", subtitle: "Sub" }],
+    ["sdk.chip", { id: "chip", label: "Ready" }],
+  ] as const)("%s keeps generated chrome out of authored children", (componentId, props) => {
+    const result = createSdkRegistry().lookup(componentId)!.factory(
+      props,
+      {},
+      {
+        instanceId: props.id,
+        sourceMap: SOURCE_MAP,
+        themeTokens: new Map(),
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(
+        result.value.roots[0]?.kind === "group"
+          ? result.value.roots[0].children
+          : undefined,
+      ).toEqual([]);
     }
   });
 
@@ -718,12 +784,13 @@ describe("generic SDK catalog", () => {
       expect(edgeBound.value.roots[0]).not.toHaveProperty("to");
     }
 
-    for (const conflicting of [
+    const conflictingCases: ReadonlyArray<Readonly<Record<string, JsonValue>>> = [
       { id: "motion", edge: "request-credit", from: { x: 0, y: 0 }, to: { x: 1, y: 1 } },
       { id: "motion", edge: "request-credit", path: "M0 0 L1 1" },
       { id: "motion", edge: "request-credit", points: [{ x: 0, y: 0 }, { x: 1, y: 1 }] },
       { id: "motion", from: { x: 0, y: 0 } },
-    ]) {
+    ];
+    for (const conflicting of conflictingCases) {
       const result = expand(conflicting);
       expect(result.ok).toBe(false);
       expect(!result.ok && result.diagnostics[0]?.code).toBe("SDK_SIGNAL_MODE_CONFLICT");
@@ -830,6 +897,19 @@ describe("generic SDK catalog", () => {
             ? style.pad
             : undefined;
       expect(inset).toBe(18);
+    }
+  });
+
+  it("defaults sdk.iconLabel to a height floor that fits icon-label presentation chrome", () => {
+    const result = createSdkRegistry().lookup("sdk.iconLabel")!.factory(
+      { id: "labeled", icon: "check", label: "Ready" },
+      {},
+      { instanceId: "labeled", sourceMap: SOURCE_MAP, themeTokens: new Map() },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.roots[0]?.geometry.height).toBeGreaterThanOrEqual(40);
     }
   });
 });

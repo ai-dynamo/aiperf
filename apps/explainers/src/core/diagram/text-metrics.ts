@@ -12,6 +12,7 @@ export const BOLD_CHAR_WIDTH = 6.2;
 export const INSET = 8;
 export const TITLE_HEIGHT = 22;
 export const DETAIL_HEIGHT = 20;
+export const SUBTITLE_HEIGHT = 16;
 export const CHIP_PAD_X = 24;
 export const STEPPER_MIN_CHIP_WIDTH = 72;
 export const STEPPER_CHIP_HEIGHT = 26;

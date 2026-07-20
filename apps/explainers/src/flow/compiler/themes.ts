@@ -64,17 +64,41 @@ function invalidValueDetail(
     }
     case "number": {
       const literal = value.kind === "literal" ? value.value : undefined;
-      if (typeof literal === "number" && Number.isFinite(literal)) {
+      if (typeof literal !== "number" || !Number.isFinite(literal)) {
+        return `a non-finite number value "${receivedValue(assignment)}"`;
+      }
+      // Mirror schema/theme.ts role-specific number constraints so authoring
+      // fails with THEME_INVALID_VALUE instead of opaque IR_INVALID later.
+      if (role.startsWith("weight.")) {
+        if (
+          !Number.isInteger(literal) ||
+          literal < 100 ||
+          literal > 900
+        ) {
+          return `an invalid weight value "${receivedValue(assignment)}"; expected an integer from 100 to 900`;
+        }
         return undefined;
       }
-      return `a non-finite number value "${receivedValue(assignment)}"`;
+      if (role.startsWith("size.")) {
+        if (literal <= 0) {
+          return `an invalid size value "${receivedValue(assignment)}"; expected a positive number`;
+        }
+        return undefined;
+      }
+      if (literal < 0) {
+        return `a negative number value "${receivedValue(assignment)}"; expected a nonnegative number`;
+      }
+      return undefined;
     }
     case "duration": {
       const literal = value.kind === "literal" ? value.value : undefined;
-      if (typeof literal === "number" && Number.isFinite(literal)) {
-        return undefined;
+      if (typeof literal !== "number" || !Number.isFinite(literal)) {
+        return `a non-finite duration value "${receivedValue(assignment)}"`;
       }
-      return `a non-finite duration value "${receivedValue(assignment)}"`;
+      if (!Number.isInteger(literal) || literal < 0) {
+        return `an invalid duration value "${receivedValue(assignment)}"; expected a nonnegative integer`;
+      }
+      return undefined;
     }
     case "enum": {
       const literal = value.kind === "literal" ? value.value : undefined;

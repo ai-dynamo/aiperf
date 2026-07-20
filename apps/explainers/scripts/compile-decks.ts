@@ -21,7 +21,10 @@ import { fileURLToPath } from "node:url";
 import { compileExplainerSource } from "../src/flow/compiler/compile-explainer.js";
 import { validateExplainerSet } from "../src/flow/compiler/validate-explainer-set.js";
 import { formatDiagnostic } from "../src/flow/diagnostics.js";
-import { materializeSceneWorldGeometry } from "../src/core/diagram/capabilities/resolved-geometry.js";
+import { resolveScene } from "../src/core/diagram/resolution/resolve-scene.js";
+import { resolvedSceneSnapshot } from "../src/core/diagram/resolution/serialize.js";
+import type { ResolvedSceneSnapshot } from "../src/core/diagram/resolution/types.js";
+import type { DeckPackage } from "../src/flow/schema/deck-package.js";
 import {
   FOUNDATION_CAPABILITIES,
   hasErrors,
@@ -33,6 +36,15 @@ const FLOW_EXTENSION = ".flow";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const explainersRoot = resolve(__dirname, "..");
 const decksFlowDir = join(explainersRoot, "decks-flow");
+
+type VerifierBundle = Readonly<{
+  packages: readonly DeckPackage[];
+  resolvedScenes: readonly Readonly<{
+    deckId: string;
+    slideId: string;
+    snapshot: ResolvedSceneSnapshot;
+  }>[];
+}>;
 
 function printDiagnostics(diagnostics: readonly Diagnostic[]): void {
   for (const entry of diagnostics) {
@@ -94,35 +106,32 @@ async function main(): Promise<void> {
     return;
   }
 
-  const verifierPackages = packages.map((packageValue) => ({
-    ...packageValue,
-    slides: packageValue.slides.map((slide) => ({
-      ...slide,
-      render:
-        slide.render?.scene === undefined
-          ? slide.render
-          : {
-              ...slide.render,
-              scene: {
-                ...slide.render.scene,
-                roots: materializeSceneWorldGeometry(slide.render.scene.roots),
-              },
-            },
-    })),
-    finalCard:
-      packageValue.finalCard?.scene === undefined
-        ? packageValue.finalCard
-        : {
-            ...packageValue.finalCard,
-            scene: {
-              ...packageValue.finalCard.scene,
-              roots: materializeSceneWorldGeometry(
-                packageValue.finalCard.scene.roots,
-              ),
-            },
+  const resolvedScenes = packages.flatMap((packageValue) => {
+    const slides = packageValue.slides.flatMap((slide) => {
+      const scene = slide.render?.scene;
+      if (scene === undefined) return [];
+      return [
+        {
+          deckId: packageValue.id,
+          slideId: slide.id,
+          snapshot: resolvedSceneSnapshot(resolveScene(scene)),
+        },
+      ];
+    });
+    const finalScene = packageValue.finalCard?.scene;
+    return finalScene === undefined
+      ? slides
+      : [
+          ...slides,
+          {
+            deckId: packageValue.id,
+            slideId: "__final-card",
+            snapshot: resolvedSceneSnapshot(resolveScene(finalScene)),
           },
-  }));
-  process.stdout.write(JSON.stringify(verifierPackages));
+        ];
+  });
+  const bundle: VerifierBundle = { packages, resolvedScenes };
+  process.stdout.write(JSON.stringify(bundle));
 }
 
 main().catch((error) => {

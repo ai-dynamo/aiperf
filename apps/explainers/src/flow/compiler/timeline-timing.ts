@@ -57,7 +57,8 @@ export function findUnresolvedAfterRefs(
     if (cue.timing.mode === "after" && !seenTargets.has(cue.timing.ref)) {
       unresolved.push(index);
     }
-    if (cue.targets !== undefined) {
+    // Match resolveTimelineCueTiming: empty targets[] falls through to target.
+    if (cue.targets !== undefined && cue.targets.length > 0) {
       cue.targets.forEach((id) => seenTargets.add(id));
     } else if (cue.target.length > 0) {
       seenTargets.add(cue.target);

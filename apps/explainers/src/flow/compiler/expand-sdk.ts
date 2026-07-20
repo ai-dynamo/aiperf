@@ -37,7 +37,9 @@ import {
   type ScenePrimitiveAst,
   type SlotBlockAst,
   type SymbolBodyStatementAst,
+  type SymbolDefinitionAst,
   type TimelineAst,
+  type TokenDeclarationAst,
   type ValueAst,
 } from "../language/index.js";
 import {
@@ -100,6 +102,11 @@ export type ExpandSdkOptions = Readonly<{
   registry: SdkRegistry;
   /** Document token bindings used to resolve `@token` prop references. */
   tokens?: ReadonlyMap<string, JsonValue>;
+  /**
+   * Document-level symbol macros available to the pre-SDK symbol expansion
+   * pass. Without these, legacy macros inside an SDK scene are left opaque.
+   */
+  symbols?: readonly SymbolDefinitionAst[];
   defaults?: SdkSceneDefaults;
   slideId?: string;
   /** Owning `.flow` source range for diagnostics and generated sourceMaps. */
@@ -227,13 +234,26 @@ function sceneInvokesSdk(scene: SceneAst, registry: SdkRegistry): boolean {
 function valueAstToJson(
   value: ValueAst,
   tokens: ReadonlyMap<string, JsonValue>,
+  diagnostics: Diagnostic[],
 ): JsonValue {
   if (value.kind === "literal") {
     return value.value;
   }
   if (value.kind === "token-reference") {
     const resolved = tokens.get(value.token);
-    return resolved !== undefined ? resolved : `@${value.token}`;
+    if (resolved !== undefined) {
+      return resolved;
+    }
+    diagnostics.push(
+      diagnostic(
+        "LINK_UNKNOWN_REFERENCE",
+        "error",
+        `Unknown token reference "${value.token}".`,
+        value.sourceMap,
+        `Declare \`token ${value.token} = "..."\` at the document level.`,
+      ),
+    );
+    return null;
   }
   // theme-role-reference: pass the bare role name through; chrome factories
   // accept `@theme.*` role strings while domain factories match bare roles.
@@ -249,7 +269,7 @@ function resolveArgumentValue(
     case "literal":
     case "token-reference":
     case "theme-role-reference":
-      return valueAstToJson(value, state.tokens);
+      return valueAstToJson(value, state.tokens, state.diagnostics);
     case "identifier-reference": {
       const bound = bindings.get(value.name);
       if (bound !== undefined) {
@@ -700,6 +720,67 @@ function availableInstancesHint(actionIndex: SdkActionIndex): string {
 }
 
 /**
+ * Resolves one authored timeline target id to concrete scene node ids.
+ *
+ * Component instances expand through their published action bindings (preferring
+ * the cue's aliased SDK action, then `enter` for stagger choreography members
+ * that publish enter but not stagger). Plain node ids pass through when present
+ * in the scene. Unknown ids and unsupported actions fail closed with a
+ * diagnostic.
+ */
+function resolveTimelineTargetNodeIds(
+  targetId: string,
+  cueAction: string,
+  actionIndex: SdkActionIndex,
+  nodeIds: ReadonlySet<string>,
+  sourceMap: SourceRange,
+  diagnostics: Diagnostic[],
+): readonly string[] | undefined {
+  const instanceActions = actionIndex.get(targetId);
+  if (instanceActions !== undefined) {
+  const preferred = SDK_TIMELINE_ACTION_ALIASES[cueAction];
+  const preferredBound =
+    preferred !== undefined ? instanceActions.get(preferred) : undefined;
+  const staggerEnterFallback =
+    cueAction === "stagger" || cueAction === "enter-children"
+      ? instanceActions.get("enter")
+      : undefined;
+  const bound =
+    preferredBound !== undefined && preferredBound.length > 0
+      ? preferredBound
+      : staggerEnterFallback !== undefined && staggerEnterFallback.length > 0
+        ? staggerEnterFallback
+        : undefined;
+  if (bound !== undefined) {
+    return bound;
+  }
+    diagnostics.push(
+      diagnostic(
+        "SDK_TIMELINE_UNSUPPORTED_ACTION",
+        "error",
+        `Timeline cue action "${cueAction}" is not a public SDK action for component instance "${targetId}".`,
+        sourceMap,
+        supportedActionsHint(instanceActions),
+      ),
+    );
+    return undefined;
+  }
+  if (nodeIds.has(targetId)) {
+    return [targetId];
+  }
+  diagnostics.push(
+    diagnostic(
+      "SDK_TIMELINE_UNKNOWN_TARGET",
+      "error",
+      `Timeline cue targets "${targetId}", which is neither a component instance nor a scene node.`,
+      sourceMap,
+      availableInstancesHint(actionIndex),
+    ),
+  );
+  return undefined;
+}
+
+/**
  * Fans one authored instance/action cue out to concrete generated node ids.
  *
  * Emits one internal cue per bound node id (stable, index-suffixed ids when an
@@ -735,7 +816,13 @@ function pushInstanceActionCues(
     );
     return;
   }
-  const bound = instanceActions.get(params.action);
+  let bound = instanceActions.get(params.action);
+  if (
+    (bound === undefined || bound.length === 0) &&
+    params.action === "stagger"
+  ) {
+    bound = instanceActions.get("enter");
+  }
   if (bound === undefined || bound.length === 0) {
     diagnostics.push(
       diagnostic(
@@ -833,16 +920,50 @@ function buildTimeline(
         return;
       }
 
-      // Freeform / literal node targets (and stagger member lists) pass through.
+      // Stagger / multi-target cues: expand each member through the same
+      // instance-action / node-id membership path as single-target cues.
+      if (cue.targets !== undefined && cue.targets.length > 0) {
+        const resolvedTargets: string[] = [];
+        let failed = false;
+        for (const member of cue.targets) {
+          const resolved = resolveTimelineTargetNodeIds(
+            member,
+            cue.action,
+            actionIndex,
+            nodeIds,
+            sourceMap,
+            diagnostics,
+          );
+          if (resolved === undefined) {
+            failed = true;
+            continue;
+          }
+          resolvedTargets.push(...resolved);
+        }
+        if (failed) {
+          return;
+        }
+        cues.push({
+          id: baseId,
+          at,
+          duration: cue.duration,
+          target: cue.target,
+          action: cue.action,
+          targets: resolvedTargets,
+          ...(cue.step !== undefined ? { step: cue.step } : {}),
+          ...(cue.easing !== undefined ? { easing: cue.easing } : {}),
+          sourceMap,
+        });
+        return;
+      }
+
+      // Freeform / literal node targets pass through.
       cues.push({
         id: baseId,
         at,
         duration: cue.duration,
         target: cue.target,
         action: cue.action,
-        ...(cue.targets !== undefined && cue.targets.length > 0
-          ? { targets: cue.targets }
-          : {}),
         ...(cue.step !== undefined ? { step: cue.step } : {}),
         ...(cue.easing !== undefined ? { easing: cue.easing } : {}),
         sourceMap,
@@ -1012,19 +1133,65 @@ function assembleScene(
 // Public entry point.
 // ---------------------------------------------------------------------------
 
-function wrapSceneDocument(scene: SceneAst, sourceRange: SourceRange): DocumentAst {
+function wrapSceneDocument(
+  scene: SceneAst,
+  sourceRange: SourceRange,
+  options: ExpandSdkOptions,
+): DocumentAst {
   return {
     kind: "document",
     id: `explainer-sdk-scene-${scene.id}`,
     title: scene.title,
     language: { kind: "language", version: 1, sourceMap: sourceRange },
     requirements: [],
-    tokens: [],
+    tokens: tokensToDeclarations(options.tokens, sourceRange),
     themes: [],
-    symbols: [],
+    symbols: options.symbols ?? [],
     scenes: [scene],
     sourceMap: sourceRange,
   };
+}
+
+/** Converts document token bindings into AST declarations for the symbol pass. */
+function tokensToDeclarations(
+  tokens: ReadonlyMap<string, JsonValue> | undefined,
+  sourceRange: SourceRange,
+): readonly TokenDeclarationAst[] {
+  if (tokens === undefined || tokens.size === 0) {
+    return [];
+  }
+  const declarations: TokenDeclarationAst[] = [];
+  for (const [id, value] of tokens) {
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
+      declarations.push({
+        kind: "token",
+        id,
+        value: { kind: "literal", value, sourceMap: sourceRange },
+        sourceMap: sourceRange,
+      });
+    }
+  }
+  return declarations;
+}
+
+/**
+ * Heuristic: does an unparsed native body clearly target SDK authoring?
+ * Used when `toSceneAst` fails so parse diagnostics can still surface for
+ * SDK scenes instead of being discarded as `not-sdk`.
+ */
+function bodyTargetsSdk(body: string, registry: SdkRegistry): boolean {
+  const pattern = /\b((?:sdk|aiperf)\.[A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+  for (const match of body.matchAll(pattern)) {
+    const raw = match[1];
+    if (raw !== undefined && registry.lookup(canonicalSdkComponentId(raw)) !== undefined) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Parses / normalizes a raw slide scene value into a native `SceneAst`. */
@@ -1068,8 +1235,15 @@ export function expandSdkInvocations(
     return { status: "not-sdk" };
   }
   if (!parsed.ok) {
-    // Only surface parse errors when the source clearly targets SDK authoring;
+    // Surface parse errors when the source clearly targets SDK authoring;
     // otherwise defer to the existing lowering path for a single diagnostic.
+    if (
+      isNativeEmbeddedSource(rawScene) &&
+      rawScene.form === "native" &&
+      bodyTargetsSdk(rawScene.body, options.registry)
+    ) {
+      return { status: "error", diagnostics: parsed.diagnostics };
+    }
     return { status: "not-sdk" };
   }
 
@@ -1079,7 +1253,7 @@ export function expandSdkInvocations(
 
   // Run symbol expansion first so legacy macros that emit SDK calls resolve
   // before SDK expansion (parse → symbols → SDK).
-  const document = wrapSceneDocument(parsed.value, sourceRange);
+  const document = wrapSceneDocument(parsed.value, sourceRange, options);
   const symbols = collectSymbols(document);
   if (!symbols.ok) {
     return { status: "error", diagnostics: symbols.diagnostics };

@@ -20,7 +20,9 @@ import {
   parseNativeEmbeddedScene,
   type ArgumentValueAst,
   type EmbeddedSceneSource,
+  type InteractionAst,
   type PackageSceneAst,
+  type ResponsiveAst,
   type SceneAst,
   type DocumentAst,
   type LiteralAst,
@@ -28,18 +30,25 @@ import {
   type RenderDeclarationAst,
   type ScenePrimitiveAst,
   type TimelineCueEasing,
+  type ValueAst,
 } from "../language/index.js";
 import {
   diagnostic,
   hasErrors,
   sceneIrSchema,
+  type CameraKeyframeIr,
   type CapabilityRegistryManifest,
   type Diagnostic,
+  type GeometryIr,
+  type InteractionIr,
   type RenderNodeIr,
+  type ResponsiveVariantIr,
   type Result,
   type SceneIr,
   type SceneRender,
   type SourceRange,
+  type StyleValueIr,
+  type ThemeRole,
   type TimelineCueIr,
 } from "../schema/index.js";
 
@@ -145,13 +154,23 @@ function wrapSceneDocument(
   options: LowerExplainerSceneOptions = {},
 ): DocumentAst {
   const sourceMap = options.sourceRange ?? scene.sourceMap;
+  // Surface `options.tokens` as document tokens so `link` accepts `@token`
+  // references on the embedded-scene path (mirrors authored `token` decls).
+  const tokens = [...(options.tokens ?? new Map()).entries()].map(
+    ([id, value]) => ({
+      kind: "token" as const,
+      id,
+      value: { kind: "literal" as const, value, sourceMap },
+      sourceMap,
+    }),
+  );
   return {
     kind: "document",
     id: `explainer-scene-${scene.id}`,
     title: scene.title,
     language: { kind: "language", version: 1, sourceMap },
     requirements: [],
-    tokens: [],
+    tokens,
     themes: [],
     symbols: [],
     scenes: [
@@ -340,16 +359,40 @@ function emptySceneField(
   };
 }
 
-function resolveArgumentValue(value: ArgumentValueAst): unknown {
+function resolveLiteralOrToken(
+  value: LiteralAst | Extract<ValueAst, { kind: "token-reference" }>,
+  tokens: ReadonlyMap<string, LiteralAst["value"]>,
+): LiteralAst["value"] {
+  if (value.kind === "literal") {
+    return value.value;
+  }
+  const resolved = tokens.get(value.token);
+  if (resolved === undefined) {
+    throw new Error(
+      `Internal error: token "${value.token}" was not resolved during linking.`,
+    );
+  }
+  return resolved;
+}
+
+/**
+ * Resolve argument values for package-path props, mirroring `lower.ts`:
+ * tokens resolve via the tokens map; theme roles become `@theme.<role>`.
+ */
+function resolveArgumentValue(
+  value: ArgumentValueAst,
+  tokens: ReadonlyMap<string, LiteralAst["value"]>,
+): unknown {
   switch (value.kind) {
     case "literal":
-      return value.value;
     case "token-reference":
-      return `@${value.token}`;
+      return resolveLiteralOrToken(value, tokens);
+    case "theme-role-reference":
+      return `@theme.${value.role}`;
     case "identifier-reference":
       return value.name;
     case "array-literal":
-      return value.items.map((item) => resolveArgumentValue(item));
+      return value.items.map((item) => resolveArgumentValue(item, tokens));
     case "ref":
       // Match expand-sdk / lower.ts: `{ ref: "instance.port" }`.
       return { ref: value.target };
@@ -357,24 +400,40 @@ function resolveArgumentValue(value: ArgumentValueAst): unknown {
       return Object.fromEntries(
         value.properties.map((property) => [
           property.name,
-          resolveArgumentValue(property.value as ArgumentValueAst),
+          resolveArgumentValue(property.value as ArgumentValueAst, tokens),
         ]),
       );
   }
 }
 
+/** Style fill/stroke for package nodes — preserves theme-role IR shape. */
+function packageStyleValue(
+  value: ValueAst,
+  tokens: ReadonlyMap<string, LiteralAst["value"]>,
+): StyleValueIr {
+  switch (value.kind) {
+    case "literal":
+    case "token-reference":
+      return resolveLiteralOrToken(value, tokens) as StyleValueIr;
+    case "theme-role-reference":
+      return { kind: "theme-role", role: value.role as ThemeRole };
+  }
+}
+
 function propsToRecord(
   props: readonly PropAssignmentAst[],
+  tokens: ReadonlyMap<string, LiteralAst["value"]>,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const prop of props) {
-    out[prop.name] = resolveArgumentValue(prop.value);
+    out[prop.name] = resolveArgumentValue(prop.value, tokens);
   }
   return out;
 }
 
 function renderDeclarationToPackage(
   node: RenderDeclarationAst,
+  tokens: ReadonlyMap<string, LiteralAst["value"]>,
 ): Record<string, unknown> {
   if (node.kind === "rect") {
     return {
@@ -382,18 +441,10 @@ function renderDeclarationToPackage(
       capability: "core.rect",
       layout: { x: node.x, y: node.y, width: node.width, height: node.height },
       style: {
-        ...(node.fill.kind === "literal"
-          ? { fill: node.fill.value }
-          : node.fill.kind === "token-reference"
-            ? { fill: `@${node.fill.token}` }
-            : {}),
+        fill: packageStyleValue(node.fill, tokens),
         ...(node.stroke === undefined
           ? {}
-          : node.stroke.kind === "literal"
-            ? { stroke: node.stroke.value }
-            : node.stroke.kind === "token-reference"
-              ? { stroke: `@${node.stroke.token}` }
-              : {}),
+          : { stroke: packageStyleValue(node.stroke, tokens) }),
       },
       text: node.label,
       accessibility: {
@@ -412,44 +463,45 @@ function renderDeclarationToPackage(
       from: { nodeId: node.from },
       to: { nodeId: node.to },
       style: {
-        ...(node.stroke.kind === "literal"
-          ? { stroke: node.stroke.value }
-          : node.stroke.kind === "token-reference"
-            ? { stroke: `@${node.stroke.token}` }
-            : {}),
+        stroke: packageStyleValue(node.stroke, tokens),
       },
       accessibility: { label: node.label },
       fallback: node.fallback.text,
     };
   }
   if (node.kind === "scene-primitive") {
-    return scenePrimitiveToPackage(node);
+    return scenePrimitiveToPackage(node, tokens);
   }
   // Component invocations fall through as opaque capability-bearing nodes.
   const idProp = node.props.find((prop) => prop.name === "id");
   return {
     id:
       idProp !== undefined
-        ? String(resolveArgumentValue(idProp.value))
+        ? String(resolveArgumentValue(idProp.value, tokens))
         : node.name,
     capability:
       node.namespace !== undefined
         ? `${node.namespace}.${node.name}`
         : node.name,
-    ...propsToRecord(node.props),
+    ...propsToRecord(node.props, tokens),
   };
 }
 
 function scenePrimitiveToPackage(
   node: ScenePrimitiveAst,
+  tokens: ReadonlyMap<string, LiteralAst["value"]>,
 ): Record<string, unknown> {
-  const props = propsToRecord(node.props);
+  const props = propsToRecord(node.props, tokens);
   return {
     id: node.id,
     capability: node.capability,
     ...props,
     ...(node.children !== undefined
-      ? { children: node.children.map(renderDeclarationToPackage) }
+      ? {
+          children: node.children.map((child) =>
+            renderDeclarationToPackage(child, tokens),
+          ),
+        }
       : {}),
     ...(node.fallback !== undefined ? { fallback: node.fallback.text } : {}),
   };
@@ -479,7 +531,86 @@ function nativeSceneNeedsPackageLower(scene: SceneAst): boolean {
   return false;
 }
 
-function nativeSceneToPackageScene(scene: SceneAst): PackageSceneAst {
+/** Rect nodes keyed by id, for resolving native camera keyframe targets. */
+function rectsById(
+  declarations: readonly RenderDeclarationAst[],
+): ReadonlyMap<string, Extract<RenderDeclarationAst, { kind: "rect" }>> {
+  const map = new Map<
+    string,
+    Extract<RenderDeclarationAst, { kind: "rect" }>
+  >();
+  for (const node of declarations) {
+    if (node.kind === "rect") {
+      map.set(node.id, node);
+    }
+  }
+  return map;
+}
+
+/**
+ * Converts native `camera <id> { at <ms> frame <targets> zoom <n> }` blocks
+ * into package-form `{ at, x, y, zoom }` keyframes, resolving each keyframe's
+ * first target to its rect center (matching `lowerCamera` in `lower.ts`).
+ */
+function nativeCamerasToPackageCamera(
+  scene: SceneAst,
+): readonly Record<string, unknown>[] {
+  const rects = rectsById(scene.renderDeclarations);
+  return scene.cameras.flatMap((camera) =>
+    camera.keyframes.map((keyframe, index) => {
+      const firstTarget = keyframe.targets.references[0];
+      const rect = firstTarget === undefined ? undefined : rects.get(firstTarget);
+      const center =
+        rect === undefined
+          ? { x: 0, y: 0 }
+          : { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+      return {
+        id: `${camera.id}-${index}`,
+        at: keyframe.time,
+        x: center.x,
+        y: center.y,
+        zoom: keyframe.zoom,
+      };
+    }),
+  );
+}
+
+function nativeInteractionsToPackage(
+  interactions: readonly InteractionAst[],
+): readonly Record<string, unknown>[] {
+  return interactions.map((interaction) => ({
+    id: interaction.id,
+    event: interaction.event.name,
+    target: interaction.event.target,
+    action: interaction.action.name,
+  }));
+}
+
+function nativeResponsiveToPackage(
+  variants: readonly ResponsiveAst[],
+): readonly Record<string, unknown>[] {
+  return variants.map((responsive) => ({
+    id: responsive.id,
+    condition: `${responsive.condition.property} ${responsive.condition.operator} ${responsive.condition.value}`,
+    overrides: responsive.overrides.map((override) => ({
+      target: override.target,
+      property: override.property,
+      value: override.value,
+    })),
+  }));
+}
+
+/** Package scene carrying optional interactions / responsive chrome. */
+type PackageSceneWithChrome = PackageSceneAst &
+  Readonly<{
+    interactions?: readonly unknown[];
+    responsive?: readonly unknown[];
+  }>;
+
+function nativeSceneToPackageScene(
+  scene: SceneAst,
+  tokens: ReadonlyMap<string, LiteralAst["value"]>,
+): PackageSceneWithChrome {
   const timeline = scene.timelines.flatMap((timelineAst) => {
     const resolvedAt = resolveTimelineCueTiming(timelineAst.cues);
     return timelineAst.cues.map((cue, index) => ({
@@ -506,9 +637,13 @@ function nativeSceneToPackageScene(scene: SceneAst): PackageSceneAst {
     ...(scene.fallback?.text !== undefined
       ? { fallback: scene.fallback.text }
       : {}),
-    roots: scene.renderDeclarations.map(renderDeclarationToPackage),
+    roots: scene.renderDeclarations.map((node) =>
+      renderDeclarationToPackage(node, tokens),
+    ),
     timeline,
-    camera: [],
+    camera: nativeCamerasToPackageCamera(scene),
+    interactions: nativeInteractionsToPackage(scene.interactions),
+    responsive: nativeResponsiveToPackage(scene.responsiveVariants),
     accessibility: {
       label: scene.title,
       readingOrder: scene.readingOrder?.references ?? [],
@@ -535,7 +670,10 @@ function lowerNativeSceneAst(
   if (nativeSceneNeedsPackageLower(expandedScene)) {
     const loweredPackage = lowerPackageScene(
       {
-        ...nativeSceneToPackageScene(expandedScene),
+        ...nativeSceneToPackageScene(
+          expandedScene,
+          options.tokens ?? new Map(),
+        ),
         sourceMap: options.sourceRange ?? expandedScene.sourceMap,
       },
       options,
@@ -755,8 +893,157 @@ function normalizePackageTimeline(
   };
 }
 
+/** Parses one package-form camera keyframe, or `undefined` when not finite. */
+function normalizePackageCamera(
+  value: unknown,
+  index: number,
+): CameraKeyframeIr | undefined {
+  const keyframe = asRecord(value);
+  if (keyframe === undefined) {
+    return undefined;
+  }
+  const at = Number(keyframe.at);
+  const x = Number(keyframe.x);
+  const y = Number(keyframe.y);
+  const zoom = Number(keyframe.zoom);
+  if (
+    !Number.isFinite(at) ||
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    !Number.isFinite(zoom)
+  ) {
+    return undefined;
+  }
+  return {
+    id:
+      typeof keyframe.id === "string" && keyframe.id.length > 0
+        ? keyframe.id
+        : `camera-${index}`,
+    at,
+    x,
+    y,
+    zoom,
+    sourceMap: unknownRange,
+  };
+}
+
+function normalizePackageInteraction(
+  value: unknown,
+  index: number,
+): InteractionIr | undefined {
+  const interaction = asRecord(value);
+  if (interaction === undefined) {
+    return undefined;
+  }
+  const id =
+    typeof interaction.id === "string" && interaction.id.length > 0
+      ? interaction.id
+      : `interaction-${index}`;
+  const event =
+    typeof interaction.event === "string" ? interaction.event : undefined;
+  const target =
+    typeof interaction.target === "string" ? interaction.target : undefined;
+  const action =
+    typeof interaction.action === "string" ? interaction.action : undefined;
+  if (
+    event === undefined ||
+    event.length === 0 ||
+    target === undefined ||
+    target.length === 0 ||
+    action === undefined ||
+    action.length === 0
+  ) {
+    return undefined;
+  }
+  return { id, event, target, action, sourceMap: unknownRange };
+}
+
+const GEOMETRY_KEYS = ["x", "y", "width", "height"] as const;
+type GeometryKey = (typeof GEOMETRY_KEYS)[number];
+
+function isGeometryKey(value: string): value is GeometryKey {
+  return (GEOMETRY_KEYS as readonly string[]).includes(value);
+}
+
+function withGeometry<T extends RenderNodeIr>(
+  node: T,
+  patch: Partial<GeometryIr>,
+): T {
+  return { ...node, geometry: { ...node.geometry, ...patch } } as T;
+}
+
+function applyResponsiveOverrides(
+  nodes: readonly RenderNodeIr[],
+  patchesByTarget: ReadonlyMap<string, Partial<GeometryIr>>,
+): readonly RenderNodeIr[] {
+  return nodes.map((node) => {
+    const patch = patchesByTarget.get(node.id);
+    const patched = patch === undefined ? node : withGeometry(node, patch);
+    return patched.kind === "group" || patched.kind === "component"
+      ? {
+          ...patched,
+          children: applyResponsiveOverrides(patched.children, patchesByTarget),
+        }
+      : patched;
+  });
+}
+
+function normalizePackageResponsive(
+  value: unknown,
+  roots: readonly RenderNodeIr[],
+): ResponsiveVariantIr | undefined {
+  const responsive = asRecord(value);
+  if (responsive === undefined) {
+    return undefined;
+  }
+  const id =
+    typeof responsive.id === "string" && responsive.id.length > 0
+      ? responsive.id
+      : undefined;
+  const condition =
+    typeof responsive.condition === "string" && responsive.condition.length > 0
+      ? responsive.condition
+      : undefined;
+  if (id === undefined || condition === undefined) {
+    return undefined;
+  }
+
+  const patchesByTarget = new Map<string, Partial<GeometryIr>>();
+  if (Array.isArray(responsive.overrides)) {
+    for (const entry of responsive.overrides) {
+      const override = asRecord(entry);
+      if (override === undefined) {
+        continue;
+      }
+      const target =
+        typeof override.target === "string" ? override.target : undefined;
+      const property =
+        typeof override.property === "string" ? override.property : undefined;
+      const rawValue = override.value;
+      if (
+        target === undefined ||
+        property === undefined ||
+        !isGeometryKey(property) ||
+        typeof rawValue !== "number" ||
+        !Number.isFinite(rawValue)
+      ) {
+        continue;
+      }
+      const existing = patchesByTarget.get(target) ?? {};
+      patchesByTarget.set(target, { ...existing, [property]: rawValue });
+    }
+  }
+
+  return {
+    id,
+    condition,
+    roots: applyResponsiveOverrides(roots, patchesByTarget),
+    sourceMap: unknownRange,
+  };
+}
+
 function lowerPackageScene(
-  scene: PackageSceneAst,
+  scene: PackageSceneWithChrome,
   options: LowerExplainerSceneOptions,
 ): Result<SceneRender> {
   const range = sceneRange(scene, options);
@@ -766,6 +1053,19 @@ function lowerPackageScene(
   const timeline = (scene.timeline ?? []).map((cue, index) =>
     normalizePackageTimeline(cue, index, roots),
   );
+  const camera = (scene.camera ?? [])
+    .map((keyframe, index) => normalizePackageCamera(keyframe, index))
+    .filter((keyframe): keyframe is CameraKeyframeIr => keyframe !== undefined);
+  const interactions = (scene.interactions ?? [])
+    .map((interaction, index) => normalizePackageInteraction(interaction, index))
+    .filter(
+      (interaction): interaction is InteractionIr => interaction !== undefined,
+    );
+  const responsive = (scene.responsive ?? [])
+    .map((variant) => normalizePackageResponsive(variant, roots))
+    .filter(
+      (variant): variant is ResponsiveVariantIr => variant !== undefined,
+    );
   if (roots.length === 0) {
     return emptySceneField("roots", options, range);
   }
@@ -825,11 +1125,11 @@ function lowerPackageScene(
     summary,
     ...(viewport !== undefined ? { viewport } : {}),
     roots,
-    camera: [],
+    camera,
     timeline,
     narration,
-    interactions: [],
-    responsive: [],
+    interactions,
+    responsive,
     accessibility: {
       label: accessibilityLabel,
       readingOrder:

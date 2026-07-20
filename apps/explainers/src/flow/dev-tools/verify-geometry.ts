@@ -11,6 +11,9 @@ import type {
   SceneIr,
   TimelineCueIr,
 } from "../schema/index.js";
+import { resolveScene } from "../../core/diagram/resolution/resolve-scene.js";
+import type { ResolvedScene } from "../../core/diagram/resolution/types.js";
+import type { SceneIrLike } from "../../core/diagram/scene-types.js";
 import {
   elbowPathData,
   isCurveRoute,
@@ -20,7 +23,23 @@ import {
   type CurveRouteResult,
   type RouteObstacle,
 } from "../../core/diagram/connector-routing.js";
-export { resolveSceneWorldGeometry as indexResolvedWorldGeometry } from "../../core/diagram/capabilities/resolved-geometry.js";
+
+/** Resolve one authored scene once for browser-side geometry verification. */
+export function resolveSceneForGeometryVerification(
+  scene: SceneIrLike,
+): ResolvedScene {
+  return resolveScene(scene);
+}
+
+/** Compatibility index backed by the same canonical resolver as rendering. */
+export function indexResolvedWorldGeometry(
+  roots: readonly RenderNodeIr[],
+): ReadonlyMap<string, Geometry> {
+  return resolveScene({
+    roots,
+    timeline: [],
+  }).worldGeometryById;
+}
 
 /** Default SceneRenderer viewport. */
 export const DEFAULT_VIEWPORT = Object.freeze({
@@ -93,10 +112,27 @@ function styleOf(node: unknown): UnknownRecord {
   return record(record(node).style);
 }
 
-/** Returns a node's canonical or authoring-alias capability. */
+/**
+ * Returns a node's canonical or authoring-alias capability, mirroring
+ * SceneRenderer's three-tier resolution: `capabilityId`, then `capability`,
+ * then a `core.${kind}` fallback so kind-only nodes (no explicit capability
+ * authored yet) still classify correctly instead of resolving to `""`.
+ */
 export function capabilityOf(node: unknown): string {
   const value = record(node);
-  return String(value.capabilityId ?? value.capability ?? "");
+  if (
+    typeof value.capabilityId === "string" &&
+    value.capabilityId.length > 0
+  ) {
+    return value.capabilityId;
+  }
+  if (typeof value.capability === "string" && value.capability.length > 0) {
+    return value.capability;
+  }
+  if (typeof value.kind === "string" && value.kind.length > 0) {
+    return `core.${value.kind}`;
+  }
+  return "";
 }
 
 /** Returns a node's structural kind. */
@@ -666,6 +702,29 @@ function endpointAnchor(endpoint: unknown): string | undefined {
     : undefined;
 }
 
+/**
+ * True when `id` is a descendant of `candidate` at any depth. Mirrors
+ * SceneRenderer's `curveObstacles` ancestor exclusion (which walks the
+ * resolver's precomputed `ancestorIdsById`) without needing that index here:
+ * `nodesById` entries still carry their original `children`, so containment
+ * can be checked directly from each candidate's own subtree. This keeps a
+ * group/component container from being treated as an obstacle for its own
+ * nested source or target endpoint.
+ */
+function containsDescendantId(
+  candidate: unknown,
+  id: string | undefined,
+): boolean {
+  if (id === undefined) return false;
+  const children = record(candidate).children;
+  if (!Array.isArray(children)) return false;
+  for (const child of children) {
+    if (record(child).id === id) return true;
+    if (containsDescendantId(child, id)) return true;
+  }
+  return false;
+}
+
 /** Route-metadata finding raised when a curved edge misbehaves. */
 export type CurveRouteFinding = Readonly<{
   severity: "error" | "warn";
@@ -704,7 +763,17 @@ export function verifyCurveRouteResult(
   return findings;
 }
 
-/** Resolves authored connector forms into SVG path data. */
+/**
+ * Resolves authored connector forms into SVG path data.
+ *
+ * Elbow obstacle geometry comes from whatever `nodesById` the caller passes
+ * in, not from a resolver-owned `worldGeometryById` fetched here: this stays
+ * a pure function over caller-supplied nodes rather than re-resolving the
+ * scene. `verify-deck.ts` already builds its `nodesById` from
+ * `indexResolvedWorldGeometry`-derived world geometry, so obstacle bounds
+ * are canonical there; a caller that passes raw local-space geometry gets
+ * local-space obstacles instead.
+ */
 export function arrowPathData(
   node: RenderNodeIr,
   nodesById?: NodesById,
@@ -752,7 +821,13 @@ export function arrowPathData(
       const obstacles =
         options.avoidObstacles && nodesById !== undefined
           ? [...nodesById.entries()].flatMap(([id, candidate]) => {
-              if (id === sourceId || id === targetId || !isBoxLike(candidate)) {
+              if (
+                id === sourceId ||
+                id === targetId ||
+                !isBoxLike(candidate) ||
+                containsDescendantId(candidate, sourceId) ||
+                containsDescendantId(candidate, targetId)
+              ) {
                 return [];
               }
               const geometry = geomOf(candidate);
@@ -798,18 +873,47 @@ export function isDrawAction(action: unknown): boolean {
   return value === "draw" || value === "trace" || value === "reveal-stroke";
 }
 
-/** Returns a path's latest draw-cue progress at one timeline time. */
+/**
+ * Picks the cue whose window most recently began at or before
+ * `playbackTimeMs`, falling back to the earliest-authored cue when none has
+ * started yet. Mirrors SceneRenderer's `mostRecentlyStartedCue`: authoring
+ * the same target with more than one draw/trace cue (e.g. draw early, then
+ * confirm later) is a supported idiom, so picking blindly by declaration
+ * order (`.at(-1)`) instead of by which window is actually live disagrees
+ * with the runtime and discards the earlier cue's live animation window.
+ */
+function mostRecentlyStartedCue<T extends { readonly at: number }>(
+  cues: readonly T[],
+  playbackTimeMs: number,
+): T | undefined {
+  let started: T | undefined;
+  let earliest: T | undefined;
+  for (const cue of cues) {
+    const atMs = Number(cue.at) || 0;
+    if (earliest === undefined || atMs < (Number(earliest.at) || 0)) {
+      earliest = cue;
+    }
+    if (
+      atMs <= playbackTimeMs &&
+      (started === undefined || atMs >= (Number(started.at) || 0))
+    ) {
+      started = cue;
+    }
+  }
+  return started ?? earliest;
+}
+
+/** Returns a path's live draw-cue progress at one timeline time. */
 export function drawProgress(
   timeline: readonly TimelineCueIr[],
   nodeId: string,
   timeMs: number,
 ): number | undefined {
-  const cue = timeline
-    .filter(
-      (candidate) =>
-        candidate.target === nodeId && isDrawAction(candidate.action),
-    )
-    .at(-1);
+  const cues = timeline.filter(
+    (candidate) =>
+      candidate.target === nodeId && isDrawAction(candidate.action),
+  );
+  const cue = mostRecentlyStartedCue(cues, timeMs);
   if (!cue) return undefined;
   const at = Number(cue.at) || 0;
   const duration = Number(cue.duration) || 0;

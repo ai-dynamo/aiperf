@@ -7,9 +7,14 @@ import { describe, expect, it } from "vitest";
 
 import type { SceneNodeLike } from "../scene-types.js";
 import {
+  DETAIL_HEIGHT,
   estimateTextWidth,
+  INSET,
   stepperChipWidth,
+  SUBTITLE_HEIGHT,
+  TITLE_HEIGHT,
 } from "../text-metrics.js";
+import { LEGEND_DEFINITION } from "../../../flow/sdk/generic/chrome.js";
 import {
   createCapabilityRegistry,
   resolveCapabilityLayout,
@@ -167,8 +172,57 @@ describe("native Scene capability layout", () => {
       node("content", "core.panel", 100, 30),
     ]);
 
-    expect(layout.contentBounds.y).toBe(34);
-    expect(layout.childGeometries[0]?.y).toBeGreaterThanOrEqual(34);
+    expect(layout.contentBounds.y).toBe(38);
+    expect(layout.childGeometries[0]?.y).toBeGreaterThanOrEqual(38);
+  });
+
+  it("reserves frame chrome vertical budget for subtitle", () => {
+    const subtitle = "thread-per-core worker sink";
+    const frame = node("frame", "layout.frame", 180, 80, {
+      props: {
+        title: "Worker",
+        detail: "One event loop",
+        subtitle,
+      },
+      style: { padding: 6, gap: 8 },
+    });
+
+    const layout = resolveCapabilityLayout(frame, [
+      node("content", "core.panel", 100, 30),
+    ]);
+    const subtitleBottom =
+      INSET + TITLE_HEIGHT + DETAIL_HEIGHT + 6 + SUBTITLE_HEIGHT;
+    const expectedChromeBand = Math.max(52, subtitleBottom);
+
+    expect(layout.contentBounds.y).toBe(expectedChromeBand + 6);
+    expect(layout.childGeometries[0]?.y).toBeGreaterThanOrEqual(
+      expectedChromeBand + 6,
+    );
+    expect(layout.bounds.width).toBe(
+      Math.max(
+        180,
+        estimateTextWidth("Worker", 14, "bold") + 12,
+        estimateTextWidth("One event loop", 11.5) + 12,
+        estimateTextWidth(subtitle, 10) + 12,
+      ),
+    );
+    expect(layout.bounds.height).toBeGreaterThanOrEqual(
+      expectedChromeBand + 30 + 12,
+    );
+  });
+
+  it("grows note chrome to fit its subtitle band", () => {
+    const subtitle = "single source of truth for benchmark measurements";
+    const note = node("note", "core.note", 100, 56, {
+      props: { title: "Remember", detail: "metrics", subtitle },
+    });
+
+    const layout = resolveCapabilityLayout(note, []);
+
+    expect(layout.bounds.width).toBe(
+      Math.max(100, estimateTextWidth(subtitle, 10) + 16),
+    );
+    expect(layout.bounds.height).toBeGreaterThanOrEqual(78);
   });
 
   it("resolves one semantic frame box with title and detail parts", () => {
@@ -186,6 +240,36 @@ describe("native Scene capability layout", () => {
         { id: "frame__detail", text: "One event loop" },
       ],
     });
+  });
+
+  it("aligns frame chrome text with managed padding", () => {
+    const frame = node("frame", "layout.frame", 200, 120, {
+      props: { title: "Worker", detail: "One event loop", subtitle: "sink" },
+      style: { padding: 20 },
+      geometry: { x: 10, y: 15, width: 200, height: 120 },
+    });
+
+    const chrome = resolveSemanticChrome(frame, frame.geometry!);
+
+    expect(chrome.texts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "frame__title",
+          x: 10 + 20,
+          width: 200 - 40,
+        }),
+        expect.objectContaining({
+          id: "frame__detail",
+          x: 10 + 20,
+          width: 200 - 40,
+        }),
+        expect.objectContaining({
+          id: "frame__subtitle",
+          x: 10 + 20,
+          width: 200 - 40,
+        }),
+      ]),
+    );
   });
 
   it("expands a semantic stepper using scale-aware chip widths", () => {
@@ -235,6 +319,76 @@ describe("native Scene capability layout", () => {
     expect(panelLayout.bounds.height).toBeGreaterThanOrEqual(40);
     expect(noteLayout.bounds.width).toBeGreaterThan(100);
     expect(noteLayout.bounds.height).toBeGreaterThanOrEqual(40);
+  });
+
+  it("grows panel chrome to fit its subtitle band and text", () => {
+    const subtitle = "single source of truth for benchmark measurements";
+    const panel = node("card", "core.panel", 100, 56, {
+      props: { title: "Worker", detail: "register", subtitle },
+    });
+
+    const layout = resolveCapabilityLayout(panel, []);
+
+    expect(layout.bounds.width).toBe(
+      Math.max(100, estimateTextWidth(subtitle, 10) + 16),
+    );
+    expect(layout.bounds.height).toBeGreaterThanOrEqual(78);
+  });
+
+  it("keeps authored clipped panel bounds despite subtitle content", () => {
+    const panel = node("card", "core.panel", 100, 56, {
+      props: {
+        title: "Worker",
+        detail: "register",
+        subtitle: "single source of truth for benchmark measurements",
+      },
+      style: { overflow: "hidden" },
+    });
+
+    expect(resolveCapabilityLayout(panel, []).bounds).toEqual(panel.geometry);
+  });
+
+  it("grows callouts to fit their labels unless clipping is authored", () => {
+    const label = "A long callout label that must remain visible";
+    const callout = node("callout", "core.callout", 100, 24, {
+      props: { text: label },
+    });
+    const clipped = { ...callout, style: { clip: true } };
+
+    const layout = resolveCapabilityLayout(callout, []);
+
+    expect(layout.bounds.width).toBe(
+      Math.max(100, estimateTextWidth(label, 12) + 16),
+    );
+    expect(layout.bounds.height).toBeGreaterThanOrEqual(24);
+    expect(resolveCapabilityLayout(clipped, []).bounds).toEqual(callout.geometry);
+  });
+
+  it("grows legend factory geometry for scale-aware entry labels", () => {
+    const label = "Authoritative endpoint measurements";
+    const result = LEGEND_DEFINITION.factory(
+      { id: "legend", width: 80, entries: [{ label }] },
+      {},
+      {
+        instanceId: "legend",
+        sourceMap: {
+          source: "layout.test.flow",
+          start: { offset: 0, line: 1, column: 1 },
+          end: { offset: 1, line: 1, column: 2 },
+        },
+        themeTokens: new Map(),
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const root = result.value.roots[0]!;
+      const expectedWidth = 10 + 8 + estimateTextWidth(label, 11) + 8;
+      expect(root.geometry.width).toBe(expectedWidth);
+      expect(
+        root.kind === "group" ? root.children[0]?.geometry.width : undefined,
+      ).toBe(expectedWidth);
+    }
   });
 
   it("grows header chrome to fit its title and caption", () => {
@@ -312,6 +466,150 @@ describe("native Scene capability layout", () => {
     });
   });
 
+  it("grows every diagram capability to fit title and detail chrome", () => {
+    const title = "Authoritative benchmark database";
+    const detail = "records endpoint measurements";
+    const capabilityIds = [
+      "diagram.actor",
+      "diagram.compute",
+      "diagram.storage",
+      "diagram.messaging",
+      "diagram.network",
+      "diagram.control",
+      "diagram.boundary",
+      "diagram.symbol",
+    ];
+
+    for (const capabilityId of capabilityIds) {
+      const diagram = node("diagram", capabilityId, 100, 40, {
+        props: { title, detail },
+      });
+      const layout = resolveCapabilityLayout(diagram, []);
+      const horizontalChrome = capabilityId === "diagram.boundary" ? 24 : 56;
+
+      expect(layout.bounds.width).toBe(
+        Math.max(
+          100,
+          estimateTextWidth(title, capabilityId === "diagram.boundary" ? 12 : 13, "bold") +
+            horizontalChrome,
+          estimateTextWidth(detail, 10) + horizontalChrome,
+        ),
+      );
+      expect(layout.bounds.height).toBeGreaterThanOrEqual(62);
+    }
+  });
+
+  it("keeps authored clipped diagram bounds despite long chrome", () => {
+    const diagram = node("diagram", "diagram.compute", 100, 40, {
+      props: {
+        title: "Authoritative benchmark database",
+        detail: "records endpoint measurements",
+      },
+      style: { clip: true },
+    });
+
+    expect(resolveCapabilityLayout(diagram, []).bounds).toEqual(diagram.geometry);
+  });
+
+  it("grows presentation groups around code, quote, and icon-label text", () => {
+    const code = node("code", "core.group", 100, 20, {
+      props: {
+        presentation: "code-block",
+        text: "const authoritative = true;\nreturn authoritative;",
+      },
+    });
+    const quote = node("quote", "core.group", 100, 20, {
+      props: {
+        presentation: "quote",
+        text: "Measure endpoint behavior, not assumptions.",
+      },
+    });
+    const iconLabel = node("icon-label", "core.group", 100, 20, {
+      props: {
+        presentation: "icon-label",
+        label: "Authoritative metrics",
+      },
+    });
+
+    expect(resolveCapabilityLayout(code, []).bounds).toMatchObject({
+      width:
+        Math.max(
+          estimateTextWidth("const authoritative = true;", 12),
+          estimateTextWidth("return authoritative;", 12),
+        ) + 24,
+    });
+    expect(resolveCapabilityLayout(code, []).bounds.height).toBeGreaterThan(20);
+    expect(resolveCapabilityLayout(quote, []).bounds.width).toBe(
+      estimateTextWidth("Measure endpoint behavior, not assumptions.", 12) + 24,
+    );
+    expect(resolveCapabilityLayout(quote, []).bounds.height).toBeGreaterThan(20);
+    expect(resolveCapabilityLayout(iconLabel, []).bounds).toMatchObject({
+      width: estimateTextWidth("Authoritative metrics", 12) + 48,
+    });
+    expect(resolveCapabilityLayout(iconLabel, []).bounds.height).toBeGreaterThan(20);
+  });
+
+  it("keeps authored clipped presentation bounds", () => {
+    const code = node("code", "core.group", 100, 20, {
+      props: {
+        presentation: "code-block",
+        text: "const authoritative = true;",
+      },
+      style: { overflow: "hidden" },
+    });
+
+    expect(resolveCapabilityLayout(code, []).bounds).toEqual(code.geometry);
+  });
+
+  it("grows avatar presentation to a square icon-safe minimum", () => {
+    const defaultSize = node("avatar", "core.group", 48, 48, {
+      props: { presentation: "avatar", icon: "user" },
+    });
+    const undersized = node("avatar", "core.group", 30, 30, {
+      props: { presentation: "avatar", icon: "user" },
+    });
+    const rectangular = node("avatar", "core.group", 100, 48, {
+      props: { presentation: "avatar", icon: "user" },
+    });
+    const hero = node("avatar", "core.group", 130, 130, {
+      props: { presentation: "avatar", icon: "user", label: "Mina, on call" },
+    });
+
+    expect(resolveCapabilityLayout(defaultSize, []).bounds).toEqual({
+      x: 0,
+      y: 0,
+      width: 48,
+      height: 48,
+    });
+    expect(resolveCapabilityLayout(undersized, []).bounds).toEqual({
+      x: 0,
+      y: 0,
+      width: 40,
+      height: 40,
+    });
+    expect(resolveCapabilityLayout(rectangular, []).bounds).toEqual({
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+    });
+    expect(resolveCapabilityLayout(hero, []).bounds).toEqual({
+      x: 0,
+      y: 0,
+      width: 130,
+      height: 130,
+    });
+  });
+
+  it("keeps authored clipped avatar bounds despite icon-safe minimum", () => {
+    const avatar = node("avatar", "core.group", 30, 30, {
+      props: { presentation: "avatar", icon: "user" },
+      style: { clip: true },
+    });
+
+    expect(resolveCapabilityLayout(avatar, []).bounds).toEqual(avatar.geometry);
+  });
+
   it("expands a lane around its title band and children", () => {
     const lane = node("lane", "core.lane", 220, 120, {
       style: { gap: 8 },
@@ -323,10 +621,10 @@ describe("native Scene capability layout", () => {
 
     const layout = resolveCapabilityLayout(lane, children);
 
-    expect(layout.bounds.height).toBe(174);
+    expect(layout.bounds.height).toBe(178);
     expect(layout.childGeometries).toEqual([
-      { x: 10, y: 28, width: 160, height: 64 },
-      { x: 10, y: 100, width: 160, height: 64 },
+      { x: 10, y: 32, width: 160, height: 64 },
+      { x: 10, y: 104, width: 160, height: 64 },
     ]);
   });
 

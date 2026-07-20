@@ -23,6 +23,10 @@ import {
   evaluateScene,
   type EvaluateSceneOptions,
 } from "./scene-evaluator.js";
+import {
+  applyTimelineState,
+  evaluateTimelineState,
+} from "./timeline-state.js";
 import type { EvaluatedScene } from "./types.js";
 
 /** Optional scene, quality, and prior-frame inputs for frame evaluation. */
@@ -64,13 +68,21 @@ export function evaluateFrame(
     );
   }
 
+  const qualityProfile =
+    options.quality ?? qualityPolicyProfile("reference");
   const evaluatedScene = evaluateScene(sceneIr, timeMs, options.scene);
   const quality = applyQualityPolicy(
     evaluatedScene.displayList,
-    options.quality ?? qualityPolicyProfile("reference"),
+    qualityProfile,
     options.displayContract,
   );
-  const displayList = quality.list;
+  const timelineState = evaluateTimelineState(sceneIr.timeline, timeMs, {
+    reducedMotion: qualityProfile.motion === "reduced",
+  });
+  const displayList: QualityDisplayList = {
+    ...quality.list,
+    commands: applyTimelineState(quality.list.commands, timelineState),
+  };
 
   return deepFreeze({
     scene: { ...evaluatedScene, displayList },

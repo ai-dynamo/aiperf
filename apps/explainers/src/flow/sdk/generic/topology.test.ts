@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createSdkRegistry } from "../registry.js";
+import { portOrRootEndpoint } from "./topology.js";
 import type { SceneFragment, SdkExpansionContext } from "../types.js";
 import type { RenderNodeIr } from "../../schema/ir.js";
 
@@ -94,5 +95,89 @@ describe("sdk.pipeline topology factory", () => {
     expect(result.value.actions.enter).toContain("stage-a");
     expect(result.value.actions.enter).toContain("stage-a-badge");
     expect(result.value.actions.enter).toContain("stage-b");
+  });
+
+  it("floors unset stage geometry to pipeline defaults", () => {
+    const definition = createSdkRegistry().lookup("sdk.pipeline")!;
+    const unsetGeometry = { x: 0, y: 0, width: 0, height: 0 };
+    const stageA = stageFragment("stage-a", [], unsetGeometry);
+    const stageB = stageFragment("stage-b", [], unsetGeometry);
+
+    const result = definition.factory({ id: "pipe" }, { nodes: [stageA, stageB] }, context("pipe"));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const group = result.value.roots[0];
+    expect(group?.kind).toBe("group");
+    if (group?.kind !== "group") {
+      return;
+    }
+
+    const stageWidth = 120;
+    const stageHeight = 64;
+    const gap = 28;
+
+    const placedA = group.children.find((child) => child.id === "stage-a");
+    const placedB = group.children.find((child) => child.id === "stage-b");
+    expect(placedA?.geometry).toMatchObject({ x: 0, y: 0, width: stageWidth, height: stageHeight });
+    expect(placedB?.geometry).toMatchObject({
+      x: stageWidth + gap,
+      y: 0,
+      width: stageWidth,
+      height: stageHeight,
+    });
+    expect(group.geometry).toMatchObject({ width: stageWidth * 2 + gap, height: stageHeight });
+  });
+
+  it("preserves explicit stage sizes over pipeline defaults", () => {
+    const definition = createSdkRegistry().lookup("sdk.pipeline")!;
+    const stageA = stageFragment("stage-a", [], { x: 0, y: 0, width: 200, height: 100 });
+    const stageB = stageFragment("stage-b", [], { x: 0, y: 0, width: 0, height: 0 });
+
+    const result = definition.factory({ id: "pipe" }, { nodes: [stageA, stageB] }, context("pipe"));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const group = result.value.roots[0];
+    expect(group?.kind).toBe("group");
+    if (group?.kind !== "group") {
+      return;
+    }
+
+    const placedA = group.children.find((child) => child.id === "stage-a");
+    const placedB = group.children.find((child) => child.id === "stage-b");
+    expect(placedA?.geometry).toMatchObject({ width: 200, height: 100 });
+    expect(placedB?.geometry).toMatchObject({ x: 200 + 28, width: 120, height: 64 });
+    expect(group.geometry?.height).toBe(100);
+  });
+});
+
+describe("portOrRootEndpoint auto-edge endpoint resolution", () => {
+  it("prefers a named port over the fragment's root id", () => {
+    const stageA = stageFragment("stage-a");
+    expect(portOrRootEndpoint(stageA, ["output"], "e")).toEqual({
+      nodeId: "stage-a",
+      anchor: "e",
+    });
+  });
+
+  it("falls back to the primary root id when no preferred port matches", () => {
+    const stageA = stageFragment("stage-a");
+    expect(portOrRootEndpoint(stageA, ["missing-port"], "e")).toEqual({
+      nodeId: "stage-a",
+      anchor: "e",
+    });
+  });
+
+  it("fails closed with undefined instead of a synthetic {x:0,y:0} origin when neither a port nor a root id resolves", () => {
+    const rootless: SceneFragment = { roots: [], ports: {}, actions: {} };
+    expect(portOrRootEndpoint(rootless, ["output"], "e")).toBeUndefined();
+    expect(portOrRootEndpoint(rootless, [], "e")).toBeUndefined();
   });
 });

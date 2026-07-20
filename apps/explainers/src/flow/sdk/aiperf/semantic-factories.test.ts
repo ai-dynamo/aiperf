@@ -146,4 +146,44 @@ describe("AIPerf semantic SDK factories", () => {
       ).toBe(true);
     }
   });
+
+  it("rejects explicit empty required label arrays instead of substituting defaults", () => {
+    const labelPropsByComponent: Readonly<Record<string, string>> = {
+      "aiperf.controllerCells": "cellLabels",
+      "aiperf.workerMerge": "workerLabels",
+      "aiperf.registryBootstrap": "categoryLabels",
+      "aiperf.requestPipeline": "stageLabels",
+      "aiperf.segmentPool": "segmentLabels",
+      "aiperf.phaseLifecycle": "phaseLabels",
+      "aiperf.metricsExport": "exporterLabels",
+    };
+
+    for (const [componentId, propKey] of Object.entries(labelPropsByComponent)) {
+      const definition = AIPERF_SDK_COMPONENTS.find(
+        (entry) => entry.descriptor.id === componentId,
+      );
+      expect(definition, componentId).toBeDefined();
+      if (definition === undefined) {
+        continue;
+      }
+
+      const instanceId = componentId.replace(".", "-");
+      for (const emptyLabels of [[], [""]] as const) {
+        const result = definition.factory(
+          { id: instanceId, [propKey]: [...emptyLabels] },
+          {},
+          { instanceId, sourceMap: SOURCE_MAP, themeTokens: new Map() },
+        );
+
+        expect(result.ok, `${componentId} ${propKey}=${JSON.stringify(emptyLabels)}`).toBe(
+          false,
+        );
+        if (result.ok) {
+          continue;
+        }
+        expect(result.diagnostics[0]?.code, componentId).toBe("SDK_FACTORY_FAILED");
+        expect(result.diagnostics[0]?.message, componentId).toContain("requires at least one label");
+      }
+    }
+  });
 });

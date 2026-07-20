@@ -660,7 +660,7 @@ explainer "Cellular algorithm workbook" {
 
     render: @scene {
       sdk.Header(id = "header", title = "REFERENCE · EXHAUSTIVE CATALOG", caption = "maintainer map → exhaustive source canvas.")
-      sdk.Panel(id = "pages", title = "~100 algorithm pages", x = 70, y = 75, width = 560, height = 82, strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "pages", title = "~100 algorithm pages", x = 70, y = 88, width = 560, height = 82, strokeRole = "@theme.accent.primary")
       sdk.Edge(id = "ref-a", mode = "path", from = { nodeId: "pages", anchor: "s" }, to = { nodeId: "canvas", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Panel(id = "canvas", title = "docs/canvases/cellular-algorithm-workbook.canvas.tsx", x = 70, y = 210, width = 560, height = 72, strokeRole = "@theme.accent.secondary")
       timeline primary {

@@ -108,3 +108,43 @@ describe("sdk.bracket chrome factory", () => {
     },
   );
 });
+
+describe("sdk chrome factory default geometry floors", () => {
+  const registry = createSdkRegistry();
+
+  it.each([
+    ["sdk.header", { id: "hdr", title: "Title" }, { height: 66 }],
+    ["sdk.panel", { id: "pnl", title: "Title", detail: "Detail" }, { height: 70 }],
+    ["sdk.card", { id: "crd", title: "Title", detail: "Detail", subtitle: "Sub" }, { height: 88 }],
+    ["sdk.note", { id: "nt", text: "Note" }, { height: 48 }],
+    ["sdk.label", { id: "lbl", text: "Label" }, { height: 22 }],
+    ["sdk.callout", { id: "co", text: "Callout" }, { height: 48 }],
+  ] as const)(
+    "%s uses raised default geometry when height is omitted",
+    (componentId, props, expected) => {
+      const result = registry.lookup(componentId)!.factory(props, {}, context(props.id));
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.roots[0]?.geometry).toMatchObject(expected);
+      }
+    },
+  );
+
+  it.each([
+    ["compact", 88],
+    ["standard", 88],
+    ["wide", 88],
+  ] as const)("sdk.card size preset %s defaults to height %i", (size, height) => {
+    const result = registry.lookup("sdk.card")!.factory(
+      { id: "card", title: "Title", detail: "Detail", subtitle: "Sub", size },
+      {},
+      context("card"),
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.roots[0]?.geometry.height).toBe(height);
+    }
+  });
+});

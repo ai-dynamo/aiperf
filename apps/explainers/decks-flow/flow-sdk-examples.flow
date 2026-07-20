@@ -189,7 +189,7 @@ explainer "Flow SDK Examples" {
       sdk.Divider(
         id = "s2-div",
         axis = "x",
-        x = 52, y = 202, length = 596,
+        x = 52, y = 192, length = 596,
         strokeRole = theme(ink.tertiary),
         strokeWidth = 1.2
       )
@@ -208,12 +208,12 @@ explainer "Flow SDK Examples" {
           { label: "secondary", colorRole: theme(accent.secondary) },
           { label: "tertiary", colorRole: theme(accent.tertiary) }
         ],
-        x = 52, y = 222, width = 204, height = 92
+        x = 52, y = 204, width = 204, height = 92
       )
       sdk.Note(
         id = "s2-note",
         text = "sdk.note — footnotes and constraints belong in notes, not stray rects.",
-        x = 278, y = 222, width = 370, height = 64,
+        x = 278, y = 204, width = 370, height = 64,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -230,19 +230,20 @@ explainer "Flow SDK Examples" {
     }
   }
 
-  //! Slide 3 — layout: stack, grid, rail/band/lane slots, stepper.
+  //! Slide 3 — opt-in managed layout: frame, stack, rail, overlay, and slots.
   slide "Layout and slots" {
     eyebrow: "Layout · 3 of 19"
     title: "Layout and slots"
-    lede: "`sdk.stack`, `sdk.grid`, `sdk.rail`, `sdk.band`, and `sdk.lane` compose child components through `children { … }` or `nodes { … }` slots instead of hand-placed coordinates."
-    narration: "Layout components compose children through slots. Use stack, grid, rail, band, and lane instead of calculating every coordinate by hand."
+    lede: "Managed layout is opt-in: `sdk.Frame`, `sdk.Stack`, `sdk.Grid`, `sdk.Rail`, and `sdk.Overlay` place slot children. Use `padding`, `align`, and `justify`; authored sizes are minimums unless `fixedWidth` or `fixedHeight` is true."
+    narration: "Managed containers are opt-in. Frame reserves its title, stack and rail flow children, grid places cells, and overlay marks overlap as intentional. Padding and alignment replace coordinate arithmetic."
     term: {
       word: "children slot"
       meaning: "Brace block after a layout invocation containing nested sdk.* components positioned by the parent factory."
     }
     points: [
-      "`sdk.rail` + `children { sdk.Chip … }` is the tag-row pattern from production decks.",
-      "`sdk.pipeline` uses a `nodes` slot (next slide).",
+      "`sdk.Frame` reserves title-safe content; `sdk.Overlay` is the explicit intentional-overlap container.",
+      "`padding`, `align`, and `justify` control placement; `fixedWidth` and `fixedHeight` opt out of content expansion.",
+      "Inside managed containers, `style.position = \"absolute\"` explicitly preserves a child's local x/y and removes it from normal flow.",
       "Evidence: `apps/explainers/decks-flow/dynosim.flow`, `apps/explainers/src/flow/sdk/generic/layout.ts`."
     ]
     caption: "Let layout factories place children."
@@ -256,21 +257,30 @@ explainer "Flow SDK Examples" {
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
-      sdk.Band(
-        id = "s3-band",
-        title = "sdk.band — grouped region",
-        x = 40, y = 78, width = 620, height = 110
-      )
-      sdk.Rail(
-        id = "s3-rail",
-        direction = "row",
-        gap = 12,
-        x = 60, y = 116, width = 580, height = 28
+      sdk.Frame(
+        id = "s3-frame",
+        title = "sdk.frame — title-safe managed region",
+        x = 40, y = 78, width = 620, height = 116,
+        padding = 10,
+        align = "stretch",
+        fixedWidth = true,
+        fixedHeight = true
       ) {
         children {
-          sdk.Chip(id = "s3-c0", label = "row", surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-          sdk.Chip(id = "s3-c1", label = "of", surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
-          sdk.Chip(id = "s3-c2", label = "chips", surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
+          sdk.Rail(
+            id = "s3-rail",
+            direction = "row",
+            gap = 12,
+            width = 600, height = 28,
+            align = "center",
+            fixedWidth = true
+          ) {
+            children {
+              sdk.Chip(id = "s3-c0", label = "row", surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+              sdk.Chip(id = "s3-c1", label = "of", surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
+              sdk.Chip(id = "s3-c2", label = "chips", surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
+            }
+          }
         }
       }
       sdk.Stack(
@@ -284,14 +294,18 @@ explainer "Flow SDK Examples" {
           sdk.Panel(id = "s3-p1", title = "auto", detail = "gap", width = 176, height = 54, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
         }
       }
-      sdk.Lane(
-        id = "s3-lane",
-        title = "sdk.lane",
-        x = 228, y = 208, width = 180, height = 128
+      sdk.Overlay(
+        id = "s3-overlay",
+        x = 228, y = 208, width = 180, height = 128,
+        padding = 10,
+        align = "center",
+        justify = "center",
+        fixedWidth = true,
+        fixedHeight = true
       ) {
         children {
-          sdk.Panel(id = "s3-l0", title = "lane", detail = "slot", width = 140, height = 40, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
-          sdk.Panel(id = "s3-l1", title = "child", detail = "panel", width = 140, height = 40, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+          sdk.Panel(id = "s3-l0", title = "overlay", detail = "intentional", width = 140, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
+          sdk.Chip(id = "s3-l1", label = "centered", width = 92, height = 26, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.green))
         }
       }
       sdk.Stepper(
@@ -304,11 +318,11 @@ explainer "Flow SDK Examples" {
 
       timeline main {
         at 0 reveal s3-hdr duration 220
-        after s3-hdr reveal s3-band duration 200
-        after s3-band stagger targets [s3-c0, s3-c1, s3-c2] step 60 duration 180
+        after s3-hdr reveal s3-frame duration 200
+        after s3-frame stagger targets [s3-c0, s3-c1, s3-c2] step 60 duration 180
         after s3-c2 stagger targets [s3-p0, s3-p1] step 80 duration 180
-        after s3-p1 reveal s3-lane duration 220
-        after s3-lane reveal s3-stepper duration 220
+        after s3-p1 reveal s3-overlay duration 220
+        after s3-overlay reveal s3-stepper duration 220
       }
     }
   }
@@ -317,13 +331,14 @@ explainer "Flow SDK Examples" {
   slide "Topology patterns" {
     eyebrow: "Topology · 4 of 19"
     title: "Topology patterns"
-    lede: "Bind edges with `{ nodeId, anchor }` endpoints. Use `mode = \"connector\"` for straight node-anchored links and `mode = \"route\"` for orthogonal auto-routing. `sdk.fanOut` / `sdk.fanIn` replace manual fan trees; `sdk.pipeline` wires ordered stages."
-    narration: "Anchor edges to node ids. Connector mode is straight; route mode auto-orthogonalizes. Fan out, fan in, and pipeline replace manual wiring."
+    lede: "Bind edges with `{ nodeId, anchor }` endpoints. `sdk.Edge` is directed with a visible arrowhead by default; set `arrowhead = false` only for an intentional undirected guide. Route mode auto-routes without an authored path."
+    narration: "Anchor edges to node ids. Edges are visibly directed by default, while arrowhead false explicitly creates a guide. Route mode chooses the path automatically."
     term: {
       word: "anchor"
       meaning: "Compass side on a node (`n`, `e`, `s`, `w`) used as an edge endpoint."
     }
     points: [
+      "Directed is the safe default for connector, route, curve, path, and line modes.",
       "Fan arrays: `to = [{ nodeId: \"a\", anchor: \"w\" }, …]`.",
       "Pipeline requires at least two `nodes` slot entries.",
       "Evidence: `apps/explainers/decks-flow/segment-pools.flow`, `apps/explainers/src/flow/sdk/generic/topology.ts`."
@@ -343,7 +358,7 @@ explainer "Flow SDK Examples" {
         id = "s4-src",
         title = "source",
         detail = "fan root",
-        x = 40, y = 120, width = 130, height = 70,
+        x = 40, y = 120, width = 130, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -358,9 +373,9 @@ explainer "Flow SDK Examples" {
         axis = "x",
         style = { stroke: theme(accent.secondary), strokeWidth: 2.2 }
       )
-      sdk.Panel(id = "s4-a", title = "A", detail = "target", x = 240, y = 80, width = 100, height = 56, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
-      sdk.Panel(id = "s4-b", title = "B", detail = "target", x = 240, y = 150, width = 100, height = 56, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
-      sdk.Panel(id = "s4-c", title = "C", detail = "target", x = 240, y = 220, width = 100, height = 56, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
+      sdk.Panel(id = "s4-a", title = "A", detail = "target", x = 240, y = 80, width = 100, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
+      sdk.Panel(id = "s4-b", title = "B", detail = "target", x = 240, y = 160, width = 100, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
+      sdk.Panel(id = "s4-c", title = "C", detail = "target", x = 240, y = 240, width = 100, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
       sdk.Pipeline(
         id = "s4-pipe",
         edgeMode = "route",
@@ -368,9 +383,9 @@ explainer "Flow SDK Examples" {
         x = 380, y = 120
       ) {
         nodes {
-          sdk.Panel(id = "s4-n0", title = "1", detail = "stage", x = 0, y = 0, width = 72, height = 56, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-          sdk.Panel(id = "s4-n1", title = "2", detail = "stage", x = 0, y = 0, width = 72, height = 56, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-          sdk.Panel(id = "s4-n2", title = "3", detail = "stage", x = 0, y = 0, width = 72, height = 56, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+          sdk.Panel(id = "s4-n0", title = "1", detail = "stage", x = 0, y = 0, width = 72, height = 68, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+          sdk.Panel(id = "s4-n1", title = "2", detail = "stage", x = 0, y = 0, width = 72, height = 68, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+          sdk.Panel(id = "s4-n2", title = "3", detail = "stage", x = 0, y = 0, width = 72, height = 68, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
         }
       }
       sdk.Edge(
@@ -1288,7 +1303,7 @@ explainer "Flow SDK Examples" {
     caption: "Four corners · one peer-facing center."
     render: @scene {
       sdk.Header(id = "rx3-hdr", title = "CORNERS + CENTER", caption = "diagonal tangents · peer-facing fallback", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
-      sdk.Panel(id = "rx3-center", title = "CENTER", detail = "soft anchor", x = 290, y = 165, width = 120, height = 58, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Panel(id = "rx3-center", title = "CENTER", detail = "soft anchor", x = 290, y = 165, width = 120, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
       sdk.Panel(id = "rx3-nw", title = "NW", detail = "to se", x = 60, y = 82, width = 90, height = 48, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
       sdk.Panel(id = "rx3-ne", title = "NE", detail = "to sw", x = 550, y = 82, width = 90, height = 48, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
       sdk.Panel(id = "rx3-sw", title = "SW", detail = "to ne", x = 60, y = 270, width = 90, height = 48, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
@@ -1321,10 +1336,10 @@ explainer "Flow SDK Examples" {
     caption: "Outside the box · deterministic perimeter."
     render: @scene {
       sdk.Header(id = "rx4-hdr", title = "SAME SIDE + SELF LOOP", caption = "outside component bounds", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
-      sdk.Panel(id = "rx4-a", title = "A", detail = "n → n", x = 70, y = 170, width = 100, height = 58, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Panel(id = "rx4-b", title = "B", detail = "same side", x = 245, y = 170, width = 100, height = 58, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Panel(id = "rx4-a", title = "A", detail = "n → n", x = 70, y = 170, width = 100, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "rx4-b", title = "B", detail = "same side", x = 245, y = 170, width = 100, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
       sdk.Edge(id = "rx4-nn", mode = "curve", from = { nodeId: "rx4-a", anchor: "n" }, to = { nodeId: "rx4-b", anchor: "n" }, style = { stroke: theme(accent.secondary), strokeWidth: 2.2, preferredSide: "n" })
-      sdk.Panel(id = "rx4-loop-node", title = "SELF", detail = "w → w", x = 480, y = 170, width = 110, height = 58, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
+      sdk.Panel(id = "rx4-loop-node", title = "SELF", detail = "w → w", x = 480, y = 170, width = 110, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
       sdk.Edge(id = "rx4-loop", mode = "curve", from = { nodeId: "rx4-loop-node", anchor: "w" }, to = { nodeId: "rx4-loop-node", anchor: "w" }, style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, preferredSide: "w", clearance: 18 })
       sdk.Label(id = "rx4-note-a", text = "same-side arc", x = 135, y = 104, width = 150, height = 20, fontSize = 11, align = "middle", inkRole = theme(ink.secondary))
       sdk.Label(id = "rx4-note-b", text = "perimeter self-loop", x = 455, y = 104, width = 160, height = 20, fontSize = 11, align = "middle", inkRole = theme(ink.secondary))
@@ -1349,10 +1364,10 @@ explainer "Flow SDK Examples" {
     caption: "Automatic detour · optional author controls."
     render: @scene {
       sdk.Header(id = "rx5-hdr", title = "OBSTACLE AVOIDANCE", caption = "visibility graph · stable detour", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
-      sdk.Panel(id = "rx5-src", title = "source", detail = "from e", x = 40, y = 165, width = 100, height = 56, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "rx5-src", title = "source", detail = "from e", x = 40, y = 165, width = 100, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
       sdk.Panel(id = "rx5-wall-a", title = "obstacle A", detail = "clearance +12", x = 250, y = 100, width = 100, height = 90, surfaceRole = theme(surface.primary), strokeRole = theme(accent.warning))
       sdk.Panel(id = "rx5-wall-b", title = "obstacle B", detail = "positive area", x = 370, y = 205, width = 100, height = 90, surfaceRole = theme(surface.primary), strokeRole = theme(accent.warning))
-      sdk.Panel(id = "rx5-dst", title = "target", detail = "to w", x = 560, y = 165, width = 100, height = 56, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Panel(id = "rx5-dst", title = "target", detail = "to w", x = 560, y = 165, width = 100, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
       sdk.Edge(id = "rx5-default", mode = "curve", from = { nodeId: "rx5-src", anchor: "e" }, to = { nodeId: "rx5-dst", anchor: "w" }, style = { stroke: theme(accent.secondary), strokeWidth: 2.4, clearance: 12 })
       sdk.Edge(id = "rx5-side", mode = "curve", from = { nodeId: "rx5-src", anchor: "se" }, to = { nodeId: "rx5-dst", anchor: "sw" }, style = { stroke: theme(accent.tertiary), strokeWidth: 1.8, clearance: 22, preferredSide: "s", parallelGap: 14 })
       sdk.Edge(id = "rx5-direct", mode = "curve", from = { nodeId: "rx5-src", anchor: "ne" }, to = { nodeId: "rx5-dst", anchor: "nw" }, style = { stroke: theme(accent.warning), strokeWidth: 1.4, avoidObstacles: false, curvature: 0.2 })
@@ -1379,8 +1394,8 @@ explainer "Flow SDK Examples" {
     caption: "−gap · center · +gap."
     render: @scene {
       sdk.Header(id = "rx6-hdr", title = "PARALLEL LANES", caption = "same endpoints · distinct routes", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
-      sdk.Panel(id = "rx6-src", title = "source", detail = "three edges", x = 70, y = 165, width = 120, height = 60, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Panel(id = "rx6-dst", title = "target", detail = "same anchors", x = 510, y = 165, width = 120, height = 60, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Panel(id = "rx6-src", title = "source", detail = "three edges", x = 70, y = 165, width = 120, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "rx6-dst", title = "target", detail = "same anchors", x = 510, y = 165, width = 120, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
       sdk.Edge(id = "rx6-lane-a", mode = "curve", from = { nodeId: "rx6-src", anchor: "e" }, to = { nodeId: "rx6-dst", anchor: "w" }, style = { stroke: theme(accent.primary), strokeWidth: 2.0, parallelGap: 14 })
       sdk.Edge(id = "rx6-lane-b", mode = "curve", from = { nodeId: "rx6-src", anchor: "e" }, to = { nodeId: "rx6-dst", anchor: "w" }, style = { stroke: theme(accent.secondary), strokeWidth: 2.0, parallelGap: 14 })
       sdk.Edge(id = "rx6-lane-c", mode = "curve", from = { nodeId: "rx6-src", anchor: "e" }, to = { nodeId: "rx6-dst", anchor: "w" }, style = { stroke: theme(accent.tertiary), strokeWidth: 2.0, parallelGap: 14 })
@@ -1407,8 +1422,8 @@ explainer "Flow SDK Examples" {
     caption: "Separate semantics · shared geometry."
     render: @scene {
       sdk.Header(id = "rx7-hdr", title = "BUNDLED CORRIDOR", caption = "three ids · one path", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
-      sdk.Panel(id = "rx7-src", title = "producer", detail = "3 semantic edges", x = 70, y = 165, width = 130, height = 60, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Panel(id = "rx7-dst", title = "consumer", detail = "shared corridor", x = 500, y = 165, width = 130, height = 60, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Panel(id = "rx7-src", title = "producer", detail = "3 semantic edges", x = 70, y = 165, width = 130, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "rx7-dst", title = "consumer", detail = "shared corridor", x = 500, y = 165, width = 130, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
       sdk.Edge(id = "rx7-bundle-a", mode = "curve", from = { nodeId: "rx7-src", anchor: "e" }, to = { nodeId: "rx7-dst", anchor: "w" }, style = { stroke: theme(accent.primary), strokeWidth: 4.5, bundle: true })
       sdk.Edge(id = "rx7-bundle-b", mode = "curve", from = { nodeId: "rx7-src", anchor: "e" }, to = { nodeId: "rx7-dst", anchor: "w" }, style = { stroke: theme(accent.secondary), strokeWidth: 2.8, bundle: true })
       sdk.Edge(id = "rx7-bundle-c", mode = "curve", from = { nodeId: "rx7-src", anchor: "e" }, to = { nodeId: "rx7-dst", anchor: "w" }, style = { stroke: theme(accent.green), strokeWidth: 1.2, bundle: true })
@@ -1498,14 +1513,14 @@ explainer "Flow SDK Examples" {
   slide "Motion overlays" {
     eyebrow: "Motion · 14 of 19"
     title: "Motion overlays"
-    lede: "`sdk.signal` and `sdk.flow` animate along edges; `sdk.pulse` highlights a target region. Motion components expose `trace` / `pulse` timeline actions distinct from structural `reveal`."
-    narration: "Signal and flow animate along paths. Pulse highlights a target. Motion uses trace and pulse timeline actions instead of reveal."
+    lede: "Use `sdk.Signal(edge = \"edge-id\")` for edge-associated motion so the animation consumes the edge's resolved route exactly. Standalone `from`/`to`, `path`, or `points` motion remains available for non-edge animation."
+    narration: "Bind a signal to an edge id so motion and the visible connector share one resolved path. Use standalone motion geometry only when there is no edge."
     term: {
       word: "trace"
       meaning: "Timeline action that plays a motion overlay along a connector or registered SDK motion instance."
     }
     points: [
-      "`sdk.flow` can render a backing edge (`edge = true`) sharing the same draw/trace action.",
+      "`edge` is mutually exclusive with `from`, `to`, `path`, and `points` on `sdk.Signal`.",
       "Pair structural reveals with a late `trace` on the motion id for polish.",
       "Evidence: `apps/explainers/decks-flow/slurm-velo.flow`, `apps/explainers/src/flow/sdk/generic/motion.ts`."
     ]
@@ -1536,20 +1551,16 @@ explainer "Flow SDK Examples" {
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
-      sdk.Flow(
-        id = "s5-flow",
-        edge = true,
-        edgeMode = "connector",
+      sdk.Edge(
+        id = "s5-edge",
+        mode = "connector",
         from = { nodeId: "s5-left", anchor: "e" },
         to = { nodeId: "s5-right", anchor: "w" },
-        opacity = 0.6,
-        strokeWidth = 2.4,
-        style = { stroke: theme(accent.tertiary) }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.4 }
       )
       sdk.Signal(
         id = "s5-signal",
-        from = { nodeId: "s5-left", anchor: "e" },
-        to = { nodeId: "s5-right", anchor: "w" },
+        edge = "s5-edge",
         opacity = 0.55,
         strokeWidth = 2.2,
         style = { stroke: theme(accent.primary) }
@@ -1566,8 +1577,8 @@ explainer "Flow SDK Examples" {
         at 0 reveal s5-hdr duration 220
         after s5-hdr reveal s5-left duration 240
         after s5-left reveal s5-right duration 240
-        after s5-right trace s5-flow duration 380
-        after s5-flow trace s5-signal duration 900
+        after s5-right trace s5-edge duration 380
+        after s5-edge trace s5-signal duration 900
         after s5-signal reveal s5-pulse duration 700
       }
     }
@@ -1626,7 +1637,7 @@ explainer "Flow SDK Examples" {
         id = "s6-c",
         title = "C",
         detail = "stagger",
-        x = 560, y = 120, width = 100, height = 56,
+        x = 560, y = 120, width = 100, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1634,7 +1645,7 @@ explainer "Flow SDK Examples" {
         id = "s6-d",
         title = "D",
         detail = "stagger",
-        x = 560, y = 190, width = 100, height = 56,
+        x = 560, y = 200, width = 100, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1642,7 +1653,7 @@ explainer "Flow SDK Examples" {
         id = "s6-e",
         title = "E",
         detail = "stagger",
-        x = 560, y = 260, width = 100, height = 56,
+        x = 560, y = 280, width = 100, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1710,7 +1721,7 @@ explainer "Flow SDK Examples" {
         id = "s7-export",
         sourceLabel = "Metrics plane",
         exporterLabels = ["JSON", "CSV"],
-        x = 470, y = 70
+        x = 420, y = 240
       )
       aiperf.RequestPipeline(
         id = "s7-pipe",
@@ -1846,8 +1857,8 @@ explainer "Flow SDK Examples" {
         axis = "x",
         style = { stroke: theme(accent.green), strokeWidth: 2.2 }
       )
-      sdk.Panel(id = "s9-json", title = "JSON", detail = "artifact", x = 430, y = 150, width = 128, height = 64, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Panel(id = "s9-csv", title = "CSV", detail = "artifact", x = 430, y = 236, width = 128, height = 64, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Panel(id = "s9-json", title = "JSON", detail = "artifact", x = 430, y = 150, width = 128, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Panel(id = "s9-csv", title = "CSV", detail = "artifact", x = 430, y = 236, width = 128, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
       sdk.Flow(
         id = "s9-flow",
         edge = true,
@@ -1904,13 +1915,13 @@ explainer "Flow SDK Examples" {
         steps = ["author", "register", "build", "verify", "preview"],
         linked = true,
         gap = 12,
-        x = 40, y = 90, width = 620, height = 28
+        x = 40, y = 78, width = 620, height = 28
       )
       sdk.Stack(
         id = "s10-stack",
         direction = "column",
-        gap = 10,
-        x = 40, y = 130, width = 620, height = 200
+        gap = 6,
+        x = 40, y = 100, width = 620, height = 200
       ) {
         children {
           sdk.Panel(id = "s10-a", title = "native sdk.* scenes", detail = "no package-form roots", surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))

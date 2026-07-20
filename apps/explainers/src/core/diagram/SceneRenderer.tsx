@@ -28,11 +28,8 @@ import {
   isElbowRoute,
   normalizeCurveRouteOptions,
   routeCurve,
-  translateRoutePath,
   type CurveRouteOptions,
-  type CurveRouteResult,
   type RouteObstacle,
-  type RoutedSibling,
 } from "./connector-routing.js";
 import { FlowArrow } from "./FlowArrow";
 import { MotionSignal } from "./MotionSignal";
@@ -41,6 +38,7 @@ import {
   resolveSemanticChrome,
 } from "./capabilities/chrome.js";
 import { resolveScene } from "./resolution/resolve-scene.js";
+import type { ResolvedConnector } from "./resolution/types.js";
 import type {
   SceneCameraKeyframeLike,
   SceneGeometryLike,
@@ -184,13 +182,7 @@ type SceneNodeIndex = Readonly<{
   nodesById: ReadonlyMap<string, SceneNodeLike>;
   worldGeometryById: ReadonlyMap<string, SceneGeometryLike>;
   ancestorIdsById: ReadonlyMap<string, readonly string[]>;
-  /**
-   * World-space curved routes resolved once per scene in document order, so
-   * parallel lanes, bundles, and self-loops account for sibling edges. Consumers
-   * rebase into their drawing frame; edges with non-node endpoints are absent and
-   * fall back to per-call resolution.
-   */
-  curveRoutesById: ReadonlyMap<string, CurveRouteResult>;
+  connectorsById: ReadonlyMap<string, ResolvedConnector>;
 }>;
 
 type ScenePoint = Readonly<{ x: number; y: number }>;
@@ -388,143 +380,6 @@ function isGroupLike(node: SceneNodeLike, capability: string): boolean {
     return true;
   }
   return node.kind === "group" || node.kind === "component";
-}
-
-/** World-space endpoint of a curved edge when it is anchored to a known node. */
-function sceneCurveEndpointWorld(
-  endpoint: ScenePointLike | undefined,
-  worldGeometryById: ReadonlyMap<string, SceneGeometryLike>,
-): Readonly<{ point: ScenePoint; id: string; anchor: string | undefined }> | undefined {
-  const id =
-    typeof endpoint?.nodeId === "string" && endpoint.nodeId.length > 0
-      ? endpoint.nodeId
-      : undefined;
-  if (id === undefined) {
-    return undefined;
-  }
-  const world = worldGeometryById.get(id);
-  if (world === undefined) {
-    return undefined;
-  }
-  const anchor = typeof endpoint?.anchor === "string" ? endpoint.anchor : undefined;
-  return { point: nodeAnchorPoint(world, anchor), id, anchor };
-}
-
-/**
- * Resolve every node-anchored curved edge once, in document order, so parallel
- * edges separate into deterministic lanes (or collapse into a bundle) and
- * self-loops arc around their box. Routes are world-space; consumers rebase them.
- */
-function resolveSceneCurveRoutes(
-  nodesById: ReadonlyMap<string, SceneNodeLike>,
-  worldGeometryById: ReadonlyMap<string, SceneGeometryLike>,
-  ancestorIdsById: ReadonlyMap<string, readonly string[]>,
-): ReadonlyMap<string, CurveRouteResult> {
-  type CurveEdge = Readonly<{
-    node: SceneNodeLike;
-    from: ScenePointLike | undefined;
-    to: ScenePointLike | undefined;
-    start: ScenePoint;
-    end: ScenePoint;
-    fromId: string;
-    toId: string;
-    fromAnchor: string | undefined;
-    toAnchor: string | undefined;
-    options: CurveRouteOptions;
-  }>;
-
-  const edges: CurveEdge[] = [];
-  for (const node of nodesById.values()) {
-    if (!isCurveRoute(node)) {
-      continue;
-    }
-    const from = singleScenePoint(node.from);
-    const to = singleScenePoint(node.to);
-    const source = sceneCurveEndpointWorld(from, worldGeometryById);
-    const target = sceneCurveEndpointWorld(to, worldGeometryById);
-    if (source === undefined || target === undefined) {
-      continue;
-    }
-    edges.push({
-      node,
-      from,
-      to,
-      start: source.point,
-      end: target.point,
-      fromId: source.id,
-      toId: target.id,
-      fromAnchor: source.anchor,
-      toAnchor: target.anchor,
-      options: normalizeCurveRouteOptions(node.style),
-    });
-  }
-
-  // Assign symmetric lane offsets to edges sharing endpoints and anchors.
-  const laneOffsetByNode = new Map<string, number>();
-  const groups = new Map<string, CurveEdge[]>();
-  for (const edge of edges) {
-    const key = `${edge.fromId}\u0000${edge.toId}\u0000${edge.fromAnchor ?? ""}\u0000${edge.toAnchor ?? ""}`;
-    const group = groups.get(key);
-    if (group === undefined) {
-      groups.set(key, [edge]);
-    } else {
-      group.push(edge);
-    }
-  }
-  for (const group of groups.values()) {
-    if (group.length < 2) {
-      continue;
-    }
-    if (group.every((edge) => edge.options.bundle)) {
-      for (const edge of group) {
-        laneOffsetByNode.set(edge.node.id, 0);
-      }
-      continue;
-    }
-    const ordered = [...group].sort((left, right) => left.node.id.localeCompare(right.node.id));
-    const count = ordered.length;
-    ordered.forEach((edge, index) => {
-      const lane = index - (count - 1) / 2;
-      laneOffsetByNode.set(edge.node.id, lane * edge.options.parallelGap);
-    });
-  }
-
-  const tempIndex: SceneNodeIndex = {
-    nodesById,
-    worldGeometryById,
-    ancestorIdsById,
-    curveRoutesById: new Map(),
-  };
-  const routes = new Map<string, CurveRouteResult>();
-  const siblings: RoutedSibling[] = [];
-  for (const edge of edges) {
-    const route = routeCurve({
-      edgeId: edge.node.id,
-      start: edge.start,
-      end: edge.end,
-      fromAnchor: edge.fromAnchor,
-      toAnchor: edge.toAnchor,
-      sourceId: edge.fromId,
-      targetId: edge.toId,
-      sourceBounds: worldGeometryById.get(edge.fromId),
-      targetBounds: worldGeometryById.get(edge.toId),
-      obstacles: curveObstacles(edge.from, edge.to, tempIndex, edge.options),
-      siblings,
-      options: edge.options,
-      laneOffset: laneOffsetByNode.get(edge.node.id) ?? 0,
-    });
-    routes.set(edge.node.id, route);
-    siblings.push({
-      id: edge.node.id,
-      sourceId: edge.fromId,
-      targetId: edge.toId,
-      fromAnchor: edge.fromAnchor,
-      toAnchor: edge.toAnchor,
-      waypoints: route.waypoints,
-      segments: route.segments,
-    });
-  }
-  return routes;
 }
 
 /** Center point of world-space geometry. */
@@ -725,7 +580,7 @@ function visiblePathForMotion(
             endpointsMatch(singleton, motionTo),
       );
       if (branchIndex >= 0) {
-        return resolveFanGeometry(candidate, index, layoutOrigin).trajectories[
+        return resolveFanGeometry(candidate, index, layoutOrigin)?.trajectories[
           branchIndex
         ]?.d;
       }
@@ -766,6 +621,11 @@ function motionSignalPathData(
   index: SceneNodeIndex,
   layoutOrigin: LayoutOrigin,
 ): string | undefined {
+  const resolved = index.connectorsById.get(node.id);
+  if (resolved?.d !== undefined && resolved.d.length > 0) {
+    return boundaryOnlyMotionPath(resolved.d, index, layoutOrigin);
+  }
+
   const from = singleScenePoint(node.from);
   const to = singleScenePoint(node.to);
   const hasNodeEndpoint =
@@ -1301,6 +1161,12 @@ function automaticFanJunction(
   many: readonly ScenePoint[],
   axis: "x" | "y",
 ): ScenePoint {
+  if (many.length === 0) {
+    // No "many"-side endpoints to route through — Math.min/max(...[]) would
+    // collapse to +/-Infinity. Defensive fallback; callers should guard
+    // this case before routing a fan at all (see resolveFanGeometry).
+    return singleton;
+  }
   const centroid = pointCentroid(many);
   if (axis === "x") {
     const towardPositive = centroid.x >= singleton.x;
@@ -1632,7 +1498,7 @@ export function resolveFanGeometry(
   node: SceneNodeLike,
   index: SceneNodeIndex,
   layoutOrigin: LayoutOrigin = ZERO_ORIGIN,
-): ResolvedFanGeometry {
+): ResolvedFanGeometry | undefined {
   const capability =
     capabilityOf(node) === "core.fan-in" ? "core.fan-in" : "core.fan-out";
   const fanOut = capability === "core.fan-out";
@@ -1640,6 +1506,13 @@ export function resolveFanGeometry(
   const to = scenePoints(node.to);
   const singletonEndpoint = (fanOut ? from[0] : to[0]) ?? {};
   const manyEndpoints = fanOut ? to : from;
+  if (manyEndpoints.length < 2) {
+    // A fan needs at least two "many"-side endpoints to have a junction to
+    // route through; fewer collapses automaticFanJunction's Math.min/max
+    // over an empty array to Infinity. Render nothing rather than a
+    // garbage path.
+    return undefined;
+  }
 
   const roughSingleton = resolveFanEndpointWorld(
     singletonEndpoint,
@@ -1985,10 +1858,8 @@ function frameRouteObstacles(
 }
 
 /**
- * Resolve a curved edge into a single canonical route, shared by both the drawn
- * stroke and any motion signal that travels it. Endpoints are lifted to world
- * space so obstacle geometry lines up, then the resolved route is rebased back
- * into the current drawing frame by subtracting `layoutOrigin`.
+ * Read the canonical curved route, with a compatibility fallback for temporary
+ * scene indexes that do not contain this node.
  */
 function resolvedCurveRoute(
   node: SceneNodeLike,
@@ -1996,12 +1867,10 @@ function resolvedCurveRoute(
   to: ScenePointLike | undefined,
   index: SceneNodeIndex,
   layoutOrigin: LayoutOrigin,
-): CurveRouteResult {
-  // Prefer the scene-level route (sibling lanes, bundles, self-loops), rebased
-  // from world space into this node's drawing frame.
-  const sceneRoute = index.curveRoutesById.get(node.id);
-  if (sceneRoute !== undefined) {
-    return translateRoutePath(sceneRoute, -layoutOrigin.x, -layoutOrigin.y);
+): string {
+  const connector = index.connectorsById.get(node.id);
+  if (connector !== undefined) {
+    return connector.d;
   }
   const frameStart = resolveEndpoint(from, index, layoutOrigin);
   const frameEnd = resolveEndpoint(to, index, layoutOrigin);
@@ -2024,7 +1893,7 @@ function resolvedCurveRoute(
     siblings: [],
     options,
   });
-  return translateRoutePath(route, -layoutOrigin.x, -layoutOrigin.y);
+  return route.d;
 }
 
 /** Resolve connector geometry for motion overlays on node-linked endpoints. */
@@ -2038,7 +1907,7 @@ function motionConnectorPathData(
   layoutOrigin: LayoutOrigin,
 ): string {
   if (isCurveRoute(node)) {
-    return resolvedCurveRoute(node, from, to, index, layoutOrigin).d;
+    return resolvedCurveRoute(node, from, to, index, layoutOrigin);
   }
   if (isElbowRoute(node) || node.via !== undefined || connectorAxisOf(node) !== undefined) {
     const options = normalizeCurveRouteOptions(node.style);
@@ -2223,10 +2092,6 @@ function shouldShowArrowhead(node: SceneNodeLike, capability: string): boolean {
   if (isMotionSignalNode(node, capability) || markerEndDisabled(node.style)) {
     return false;
   }
-  // Visual dividers / rules are never directed (matches flow-verifier).
-  if (/^(split|divider|rule|sep|guide)([-_]|$)/i.test(node.id)) {
-    return false;
-  }
   // Braces are undirected geometry (also stamp markerEnd: "none").
   if (capability === "core.bracket" || node.kind === "bracket") {
     return hasExplicitMarkerEnd(node.style);
@@ -2344,6 +2209,14 @@ function mostRecentlyStartedCue(
  * blindly takes the last-authored cue even if its window isn't active —
  * silently masking an earlier, currently-active cue of the same kind.
  */
+/**
+ * Forward tolerance for a zero-duration cue's active window. Real playback
+ * advances in animation-frame steps, so `playbackTimeMs === atMs` almost
+ * never holds exactly — an authored `duration: 0` emphasize/pulse cue would
+ * otherwise never have a frame in which it is considered active.
+ */
+const ZERO_DURATION_CUE_WINDOW_MS = 48;
+
 function activeWindowCue(
   cues: readonly SceneTimelineCueLike[],
   playbackTimeMs: number,
@@ -2354,7 +2227,8 @@ function activeWindowCue(
     const durationMs = Math.max(0, finiteNumber(cue.duration));
     const inWindow =
       durationMs <= 0
-        ? playbackTimeMs === atMs
+        ? playbackTimeMs >= atMs &&
+          playbackTimeMs <= atMs + ZERO_DURATION_CUE_WINDOW_MS
         : playbackTimeMs >= atMs && playbackTimeMs <= atMs + durationMs;
     if (inWindow) {
       match = cue;
@@ -2413,21 +2287,34 @@ function appearanceForNode(
     }
   }
 
-  if (fadeCue !== undefined) {
+  // A fade authored before the currently active enter cue is stale — a
+  // later enter/reveal supersedes it and must not keep the node hidden or
+  // faded forever.
+  const fadeSuperseded =
+    fadeCue !== undefined &&
+    enterCue !== undefined &&
+    Math.max(0, finiteNumber(fadeCue.at)) <
+      Math.max(0, finiteNumber(enterCue.at));
+
+  if (fadeCue !== undefined && !fadeSuperseded) {
     const fadeAt = Math.max(0, finiteNumber(fadeCue.at));
     if (playbackTimeMs >= fadeAt) {
       const fadeProgress = cueProgress(fadeCue, playbackTimeMs);
-      const opacity = enterOpacity * (1 - fadeProgress);
-      if (fadeCue.action === "exit" && fadeProgress >= 1) {
-        return { state: "hidden", opacity: 0 };
-      }
       if (fadeProgress >= 1) {
-        return { state: "hidden", opacity: 0 };
+        // `exit` is terminal — the node stays hidden. A completed `fade`
+        // (not `exit`) is not terminal; fall through to the enter-derived
+        // state so a later `reveal` cue can bring the node back.
+        if (fadeCue.action === "exit") {
+          return { state: "hidden", opacity: 0 };
+        }
+      } else {
+        const opacity = enterOpacity * (1 - fadeProgress);
+        return {
+          state:
+            opacity <= 0 ? "hidden" : state === "unchanged" ? "entering" : state,
+          opacity,
+        };
       }
-      return {
-        state: opacity <= 0 ? "hidden" : state === "unchanged" ? "entering" : state,
-        opacity,
-      };
     }
   }
 
@@ -2448,19 +2335,31 @@ function connectorEndpointOpacity(
   index: SceneNodeIndex,
 ): number | undefined {
   const dependencyIds = new Set<string>();
-  for (const endpoint of [...scenePoints(node.from), ...scenePoints(node.to)]) {
+  let brokenReference = false;
+  const endpoints = [
+    ...scenePoints(node.from),
+    ...scenePoints(node.to),
+    ...scenePoints(node.junction),
+  ];
+  for (const endpoint of endpoints) {
     const endpointId = endpoint.nodeId;
-    if (
-      typeof endpointId !== "string" ||
-      endpointId.length === 0 ||
-      !index.nodesById.has(endpointId)
-    ) {
+    if (typeof endpointId !== "string" || endpointId.length === 0) {
+      continue;
+    }
+    if (!index.nodesById.has(endpointId)) {
+      // A non-empty nodeId that does not resolve is an authoring error, not
+      // "no dependency" — fail closed instead of rendering an orphaned
+      // connector at full opacity.
+      brokenReference = true;
       continue;
     }
     dependencyIds.add(endpointId);
     for (const ancestorId of index.ancestorIdsById.get(endpointId) ?? []) {
       dependencyIds.add(ancestorId);
     }
+  }
+  if (brokenReference) {
+    return 0;
   }
   if (dependencyIds.size === 0) {
     return undefined;
@@ -2475,7 +2374,7 @@ function connectorEndpointOpacity(
   return opacity;
 }
 
-/** True once a fade/exit cue window has started for this node. */
+/** True only while a fade/exit cue's window is actively progressing. */
 function isFadingOut(
   nodeId: string,
   timeline: readonly SceneTimelineCueLike[],
@@ -2485,7 +2384,20 @@ function isFadingOut(
   if (fadeCue === undefined) {
     return false;
   }
-  return playbackTimeMs >= Math.max(0, finiteNumber(fadeCue.at));
+  const fadeAt = Math.max(0, finiteNumber(fadeCue.at));
+  const enterCue = enterCueForNode(nodeId, timeline, playbackTimeMs);
+  if (
+    enterCue !== undefined &&
+    fadeAt < Math.max(0, finiteNumber(enterCue.at))
+  ) {
+    // Superseded by a newer enter cue — the stale fade is not in effect.
+    return false;
+  }
+  if (playbackTimeMs < fadeAt) {
+    return false;
+  }
+  const fadeProgress = cueProgress(fadeCue, playbackTimeMs);
+  return fadeProgress > 0 && fadeProgress < 1;
 }
 
 /**
@@ -2598,15 +2510,18 @@ function emphasisForNode(
     return undefined;
   }
   if (durationMs <= 0) {
-    if (playbackTimeMs > atMs) {
+    if (playbackTimeMs > atMs + ZERO_DURATION_CUE_WINDOW_MS) {
       return undefined;
     }
   } else if (playbackTimeMs > atMs + durationMs) {
     return undefined;
   }
 
-  const progress = cueProgress(cue, playbackTimeMs);
-  const intensity = Math.sin(progress * Math.PI);
+  // A zero-duration cue has no window to ease across — treat it as an
+  // instantaneous one-frame peak (the midpoint of the half-sine envelope)
+  // instead of `sin(progress * PI)` at progress 1, which rounds to ~0.
+  const intensity =
+    durationMs <= 0 ? 1 : Math.sin(cueProgress(cue, playbackTimeMs) * Math.PI);
   if (intensity <= 0) {
     return undefined;
   }
@@ -2640,15 +2555,17 @@ function pulseCueForNode(
     return undefined;
   }
   if (durationMs <= 0) {
-    if (playbackTimeMs > atMs) {
+    if (playbackTimeMs > atMs + ZERO_DURATION_CUE_WINDOW_MS) {
       return undefined;
     }
   } else if (playbackTimeMs > atMs + durationMs) {
     return undefined;
   }
 
-  const progress = cueProgress(cue, playbackTimeMs);
-  const intensity = Math.sin(progress * Math.PI);
+  // See emphasisForNode: a zero-duration cue peaks for one frame instead of
+  // evaluating the half-sine envelope at progress 1 (~0 intensity).
+  const intensity =
+    durationMs <= 0 ? 1 : Math.sin(cueProgress(cue, playbackTimeMs) * Math.PI);
   if (intensity <= 0) {
     return undefined;
   }
@@ -2953,6 +2870,10 @@ function arrowPathData(
   index: SceneNodeIndex,
   layoutOrigin: LayoutOrigin,
 ): string | undefined {
+  const resolved = index.connectorsById.get(node.id);
+  if (resolved !== undefined) {
+    return resolved.d;
+  }
   if (typeof node.d === "string" && node.d.length > 0) {
     return node.d;
   }
@@ -2966,7 +2887,7 @@ function arrowPathData(
   const to = singleScenePoint(node.to);
   if (from !== undefined || to !== undefined) {
     if (isCurveRoute(node)) {
-      return resolvedCurveRoute(node, from, to, index, layoutOrigin).d;
+      return resolvedCurveRoute(node, from, to, index, layoutOrigin);
     }
     const start = resolveEndpoint(from, index, layoutOrigin);
     const end = resolveEndpoint(to, index, layoutOrigin);
@@ -3368,6 +3289,8 @@ function renderNode(
   };
   const kids = node.children;
   const appearance = appearanceForNode(node.id, timeline, playbackTimeMs);
+  const fadingOut = isFadingOut(node.id, timeline, playbackTimeMs);
+  const nodeHidden = appearance.state === "hidden" || appearance.opacity <= 0;
   const fanNode = isFanNode(node, capability);
   const endpointOpacity =
     fanNode ||
@@ -3392,17 +3315,17 @@ function renderNode(
     themeAccent,
   );
   const pulseCue = pulseCueForNode(node.id, timeline, playbackTimeMs);
-  const continuousPulse = continuousPulseForNode(
-    node,
-    capability,
-    appearance,
-    playbackTimeMs,
-    playback,
-  );
+  // Continuous pulse and emphasize/pulse cues animate a visible node; a
+  // hidden node (pre-enter or fully faded) has nothing to glow/scale and
+  // must not keep animating underneath its own invisibility.
+  const continuousPulse =
+    nodeHidden || fadingOut
+      ? undefined
+      : continuousPulseForNode(node, capability, appearance, playbackTimeMs, playback);
   if (import.meta.env.DEV && emphasis !== undefined && pulseCue !== undefined) {
     warnOverlappingEmphasisOnce(node.id);
   }
-  const activeEmphasis = emphasis ?? pulseCue;
+  const activeEmphasis = nodeHidden ? undefined : emphasis ?? pulseCue;
   const label = node.accessibility?.label ?? node.id;
   const description = node.accessibility?.description;
   const descriptionId =
@@ -3695,8 +3618,7 @@ function renderNode(
       themeStroke,
     );
     const chromeEnterOpacity =
-      appearance.state === "entering" &&
-      !isFadingOut(node.id, timeline, playbackTimeMs)
+      appearance.state === "entering" && !fadingOut
         ? appearance.opacity
         : undefined;
     body = (
@@ -3793,6 +3715,9 @@ function renderNode(
     );
   } else if (fanNode) {
     const geometry = resolveFanGeometry(node, index, layoutOrigin);
+    if (geometry === undefined) {
+      body = null;
+    } else {
     const stroke = paintFromStyle(node.style, "stroke", theme, themeAccent);
     const tip = tipForArrowNode(node, capability);
     const markerId =
@@ -3804,12 +3729,43 @@ function renderNode(
     // rendering solid from t=0, ahead of the target nodes fading in.
     const strokeProgress =
       drawProgress ?? fanStrokeProgress(node.id, timeline, playbackTimeMs);
-    const drawing = strokeProgress !== undefined;
     const strokeWidth = strokeWidthFromStyle(node.style) * strokeScale;
     const authoredDash = authoredStrokeDasharray(node.style);
     const dashed = isDashedStyle(node.style);
+    const firstHalf =
+      traceProgress === undefined ? undefined : clamp01(traceProgress * 2);
+    const secondHalf =
+      traceProgress === undefined
+        ? undefined
+        : traceProgress === 0.5
+          ? 0.001
+          : clamp01((traceProgress - 0.5) * 2);
+    // A trace-driven fan reveals its own stroke in the same two phases as
+    // the MotionSignal ball below: fan-out travels trunk-then-branch
+    // (single -> many), fan-in travels branch-then-merge-trunk (many ->
+    // single). An explicit `draw`/`reveal-stroke` cue (drawProgress
+    // defined) has no ball phase and drives every segment uniformly.
+    const trunkSideRole: "trunk" | "merge-trunk" =
+      geometry.capability === "core.fan-out" ? "trunk" : "merge-trunk";
+    const trunkFirst = geometry.capability === "core.fan-out";
+    const segmentProgress = (
+      role: "trunk" | "branch" | "merge-trunk",
+    ): number | undefined => {
+      if (drawProgress !== undefined) {
+        return drawProgress;
+      }
+      if (traceProgress === undefined) {
+        return strokeProgress;
+      }
+      const isTrunkSide = role === trunkSideRole;
+      return (
+        (trunkFirst === isTrunkSide ? firstHalf : secondHalf) ?? strokeProgress
+      );
+    };
     const resolvedSegments = geometry.segments.map((segment) => {
       const semanticTip = segment.showMarker ? tip : null;
+      const progress = segmentProgress(segment.role);
+      const segmentDrawing = progress !== undefined && progress < 1;
       return {
         ...segment,
         d:
@@ -3823,17 +3779,11 @@ function renderNode(
         showMarker:
           segment.showMarker &&
           semanticTip !== null &&
-          (!drawing || strokeProgress >= 1 || playback.reducedMotion),
+          (!segmentDrawing || playback.reducedMotion),
+        progress,
+        drawing: segmentDrawing,
       };
     });
-    const firstHalf =
-      traceProgress === undefined ? undefined : clamp01(traceProgress * 2);
-    const secondHalf =
-      traceProgress === undefined
-        ? undefined
-        : traceProgress === 0.5
-          ? 0.001
-          : clamp01((traceProgress - 0.5) * 2);
     const trajectorySplits = geometry.trajectories.map((trajectory) => ({
       trajectory,
       split: splitFanTrajectoryAtJunction(trajectory.d, geometry.junction),
@@ -3933,18 +3883,20 @@ function renderNode(
             markerId={markerId}
             showMarker={segment.showMarker}
             color={stroke}
-            dashed={!drawing && dashed}
+            dashed={!segment.drawing && dashed}
             strokeWidth={strokeWidth}
             strokeLinecap="butt"
-            pathLength={drawing ? 1 : undefined}
+            pathLength={segment.drawing ? 1 : undefined}
             strokeDasharray={
-              drawing
+              segment.drawing
                 ? 1
                 : authoredDash !== undefined
                   ? authoredDash
                   : undefined
             }
-            strokeDashoffset={drawing ? 1 - strokeProgress : undefined}
+            strokeDashoffset={
+              segment.drawing ? 1 - (segment.progress ?? 0) : undefined
+            }
             focusable={false}
             aria-hidden="true"
             style={styleToCss(node.style, theme)}
@@ -3957,6 +3909,7 @@ function renderNode(
         {traceSignals}
       </>
     );
+    }
   } else if (isMotionSignalNode(node, capability)) {
     const d = motionSignalPathData(node, index, layoutOrigin);
     if (d !== undefined) {
@@ -3973,8 +3926,17 @@ function renderNode(
       // Travel with a calm SMIL loop. Short `draw` cues (~0.9s) used to drive
       // progress 0→1 once and park the ball at the destination — that felt like
       // a zip through boxes. Keep draw/enter for visibility only.
+      //
+      // Deliberately not gated on `playback.playing`: SMIL's indefinite
+      // `<animate>`/`<animateMotion>` loop is un-keyed to `playbackTimeMs`
+      // (it is a decorative, self-timed loop, not a timeline-driven
+      // progress). Toggling `active` off on pause would unmount the circle,
+      // and remounting on resume restarts `begin={delay}` from zero —
+      // desyncing the dot from where it was before pausing. Leaving it
+      // mounted keeps the loop's own wall-clock continuity across
+      // pause/resume; only a genuinely inactive state (reduced motion,
+      // hidden node, or an endpoint not yet on stage) should unmount it.
       const smilActive =
-        playback.playing &&
         !playback.reducedMotion &&
         appearance.state !== "hidden" &&
         // Hold the traveler until every node-backed endpoint is on stage, so
@@ -4021,12 +3983,16 @@ function renderNode(
       );
     }
   } else if (isArrowLike(node, capability)) {
-    const dRaw = arrowPathData(node, index, layoutOrigin);
+    const resolvedConnector = index.connectorsById.get(node.id);
+    const dRaw = resolvedConnector?.d;
     if (dRaw !== undefined) {
       const stroke = paintFromStyle(node.style, "stroke", theme, themeAccent);
-      const tip = tipForArrowNode(node, capability);
+      const tip =
+        resolvedConnector?.showArrowhead
+          ? resolveMarkerTip(node.style?.markerEnd, DEFAULT_MARKER_TIP)
+          : null;
       const wantsMarker = tip !== null;
-      const drawing = drawProgress !== undefined;
+      const drawing = drawProgress !== undefined && drawProgress < 1;
       // SVG marker-end sits at the path tip immediately; only attach it once
       // the stroke has fully revealed so tips never lead the line.
       const showMarker =
@@ -4066,6 +4032,7 @@ function renderNode(
             aria-hidden="true"
             style={styleToCss(node.style, theme)}
             data-flow-arrowhead={showMarker ? "true" : "false"}
+            data-flow-resolved-path={dRaw}
             data-flow-tip={tip?.key}
             data-flow-elbow={isElbowRoute(node) ? "true" : undefined}
             data-flow-curve={isCurveRoute(node) ? "true" : undefined}
@@ -4092,7 +4059,6 @@ function renderNode(
 
   const baseOpacity =
     appearance.state === "unchanged" ? 1 : appearance.opacity;
-  const fadingOut = isFadingOut(node.id, timeline, playbackTimeMs);
   // MentalModel only faded box chrome — labels popped in fully opaque. Keep
   // enter fades off text / panel wrappers; chrome rect carries the ramp.
   const snapEnterOpaque =
@@ -4223,11 +4189,7 @@ export function SceneRenderer({
       nodesById: resolved.nodesById,
       worldGeometryById: resolved.worldGeometryById,
       ancestorIdsById: resolved.ancestorIdsById,
-      curveRoutesById: resolveSceneCurveRoutes(
-        resolved.nodesById,
-        resolved.worldGeometryById,
-        resolved.ancestorIdsById,
-      ),
+      connectorsById: resolved.connectorsById,
     };
     const authoredTimeline = Array.isArray(scene.timeline) ? scene.timeline : [];
     const nextTimeline = expandTimelineCues(
@@ -4246,6 +4208,7 @@ export function SceneRenderer({
   const [playbackTimeMs, setPlaybackTimeMs] = useState(0);
   const playbackTimeMsRef = useRef(0);
   const rate = playbackRate > 0 ? playbackRate : 1;
+  const scenePlaybackIdentity = scene.id ?? scene.roots;
 
   const commitTime = (nextMs: number) => {
     const clamped = Math.min(durationMs, Math.max(0, nextMs));
@@ -4255,7 +4218,7 @@ export function SceneRenderer({
 
   useEffect(() => {
     commitTime(0);
-  }, [restartKey, scene.id, durationMs]);
+  }, [restartKey, scenePlaybackIdentity, durationMs]);
 
   useEffect(() => {
     if (reducedMotion) {
@@ -4287,7 +4250,14 @@ export function SceneRenderer({
         window.cancelAnimationFrame(animationFrameId);
       }
     };
-  }, [playing, reducedMotion, durationMs, restartKey, scene.id, rate]);
+  }, [
+    playing,
+    reducedMotion,
+    durationMs,
+    restartKey,
+    scenePlaybackIdentity,
+    rate,
+  ]);
 
   const effectiveTimeMs = reducedMotion ? durationMs : playbackTimeMs;
   const ariaLabel =

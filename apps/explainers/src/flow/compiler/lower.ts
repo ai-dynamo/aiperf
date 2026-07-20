@@ -99,6 +99,10 @@ function lowerStyleValue(
       return resolveLiteralValue(value, tokens);
     case "theme-role-reference":
       return { kind: "theme-role", role: value.role as ThemeRole };
+    default: {
+      const _exhaustive: never = value;
+      return _exhaustive;
+    }
   }
 }
 
@@ -110,6 +114,8 @@ function resolveArgumentValue(
     case "literal":
     case "token-reference":
       return resolveLiteralValue(value, tokens);
+    case "theme-role-reference":
+      return `@theme.${value.role}`;
     case "identifier-reference":
       return value.name;
     case "array-literal":
@@ -124,6 +130,10 @@ function resolveArgumentValue(
           resolveArgumentValue(property.value, tokens),
         ]),
       );
+    default: {
+      const _exhaustive: never = value;
+      return _exhaustive;
+    }
   }
 }
 

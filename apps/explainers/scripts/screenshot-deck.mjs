@@ -12,6 +12,7 @@
  * Usage:
  *   node apps/explainers/scripts/screenshot-deck.mjs --deck flow-sdk-examples
  *   node apps/explainers/scripts/screenshot-deck.mjs --deck flow-sdk-examples --base-url http://127.0.0.1:4173
+ *   node apps/explainers/scripts/screenshot-deck.mjs --deck flow-sdk-examples --viewport 1280x720
  */
 
 import { mkdir } from "node:fs/promises";
@@ -25,7 +26,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const EXPLAINERS_ROOT = resolve(__dirname, "..");
 
 function parseArgs(argv) {
-  const options = { deck: "flow-sdk-examples", baseUrl: null, out: null };
+  const options = {
+    deck: "flow-sdk-examples",
+    baseUrl: null,
+    out: null,
+    viewport: { width: 1440, height: 1100 },
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--deck") options.deck = argv[++i];
@@ -34,8 +40,24 @@ function parseArgs(argv) {
     else if (arg.startsWith("--base-url=")) options.baseUrl = arg.slice(11);
     else if (arg === "--out") options.out = argv[++i];
     else if (arg.startsWith("--out=")) options.out = arg.slice(6);
+    else if (arg === "--viewport") options.viewport = parseViewport(argv[++i]);
+    else if (arg.startsWith("--viewport=")) {
+      options.viewport = parseViewport(arg.slice("--viewport=".length));
+    }
   }
   return options;
+}
+
+function parseViewport(value) {
+  const match = /^(\d+)x(\d+)$/.exec(value ?? "");
+  if (!match) {
+    throw new Error(`invalid --viewport "${value}"; expected WIDTHxHEIGHT`);
+  }
+  const viewport = { width: Number(match[1]), height: Number(match[2]) };
+  if (viewport.width === 0 || viewport.height === 0) {
+    throw new Error(`invalid --viewport "${value}"; dimensions must be positive`);
+  }
+  return viewport;
 }
 
 function resolvePlaywright() {
@@ -266,7 +288,7 @@ async function main() {
   const chromium = await loadChromium();
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({
-    viewport: { width: 1440, height: 1100 },
+    viewport: options.viewport,
     deviceScaleFactor: 1,
   });
   // Prefer reduced motion so scenes settle quickly for still frames.
@@ -324,7 +346,13 @@ async function main() {
     if (stop) stop();
   }
 
-  console.log(JSON.stringify({ deck: options.deck, outDir, paths }, null, 2));
+  console.log(
+    JSON.stringify(
+      { deck: options.deck, viewport: options.viewport, outDir, paths },
+      null,
+      2,
+    ),
+  );
 }
 
 main().catch((error) => {

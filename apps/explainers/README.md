@@ -19,9 +19,19 @@ Routes (hash router):
 
 - `/#/` — hub
 - `/#/rust-architecture`
+- `/#/rust-architecture-atlas`
+- `/#/segment-pools`
 - `/#/slurm-velo`
+- `/#/velo-deep-dive`
+- `/#/cellular-internals`
+- `/#/cellular-algorithms`
 - `/#/dynosim`
+- `/#/tstar-warmup`
 - `/#/synthetic-dataset-generator`
+- `/#/aiperf-vs-locust`
+- `/#/flow-sdk-examples`
+- `/#/sdk-generic-catalog`
+- `/#/sdk-diagram-catalog`
 
 ## Build
 

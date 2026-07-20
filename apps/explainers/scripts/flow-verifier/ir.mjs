@@ -5,13 +5,10 @@
 
 import {
   SNAP_PX,
-  arrowPathData,
+  capabilityOf as sceneCapabilityOf,
   drawProgress,
-  geomOf,
-  inViewport,
   isArrowLike,
   isBoxLike,
-  isDirectedConnector,
   isDotLike,
   isDrawAction,
   isFanNode,
@@ -21,28 +18,78 @@ import {
   nodeIds,
   normalizeCurveRouteOptions,
   pathPoints,
-  pointNearBox,
-  resolveFanGeometry,
   routeCurve,
-  sceneViewport,
   timelineDurationMs,
   walkNodes,
 } from "./geometry.mjs";
 
 /**
- * @typedef {{ severity: "error" | "warn"; deck: string; slide: string; code: string; message: string }} Finding
+ * @typedef {{ severity: "error" | "warn" | "info"; deck: string; slide: string; code: string; message: string; source?: string; line?: number; column?: number }} Finding
  */
 
 function finding(severity, deck, slide, code, message) {
   return { severity, deck, slide, code, message };
 }
 
-function sceneNodeById(scene, id) {
-  return walkNodes(scene?.roots ?? []).find((node) => node?.id === id);
+function appendResolutionDiagnostics(deck, slide, snapshot, findings) {
+  for (const diagnostic of snapshot?.diagnostics ?? []) {
+    findings.push({
+      ...finding(
+        diagnostic.severity === "warning" ? "warn" : diagnostic.severity,
+        deck,
+        slide,
+        diagnostic.code,
+        diagnostic.message,
+      ),
+      source: diagnostic.range?.source,
+      line: diagnostic.range?.start?.line,
+      column: diagnostic.range?.start?.column,
+    });
+  }
 }
 
+function sceneNodeById(scene, id) {
+  return walkNodes(scene?.roots ?? []).find(
+    (node) => node?.id === id || node?.sdkOrigin?.instanceId === id,
+  );
+}
+
+/**
+ * Narrow capability lookup for `expectNode`, which compares against literal
+ * managed capabilities (e.g. "layout.frame") rather than `core.*` scene
+ * capabilities — unlike the imported `sceneCapabilityOf`, this intentionally
+ * has no `core.${kind}` fallback.
+ */
 function capabilityOf(node) {
   return node?.capabilityId ?? node?.capability ?? node?.kind;
+}
+
+/**
+ * Match the canonical resolver's structural connector eligibility without
+ * duplicating endpoint, route, or direction calculations.
+ */
+function isCanonicalConnectorNode(node) {
+  const capability = sceneCapabilityOf(node);
+  if (
+    capability === "core.path" ||
+    capability === "core.bracket" ||
+    node?.kind === "path" ||
+    node?.kind === "bracket"
+  ) {
+    return false;
+  }
+  return (
+    node?.kind === "connector" ||
+    node?.kind === "arrow" ||
+    node?.kind === "elbow" ||
+    node?.kind === "line" ||
+    capability === "core.connector" ||
+    capability === "core.arrow" ||
+    capability === "core.elbow" ||
+    capability === "core.route" ||
+    capability === "core.line" ||
+    isMotionSignalNode(node)
+  );
 }
 
 function expectNode(nodes, id, capability, deck, slide, findings) {
@@ -72,43 +119,7 @@ function expectNode(nodes, id, capability, deck, slide, findings) {
   }
 }
 
-function boxesOverlap(left, right) {
-  return (
-    left.x < right.x + right.width &&
-    left.x + left.width > right.x &&
-    left.y < right.y + right.height &&
-    left.y + left.height > right.y
-  );
-}
-
-function verifyManagedChildrenDoNotOverlap(
-  container,
-  deck,
-  slide,
-  findings,
-) {
-  const children = (container?.children ?? [])
-    .filter((child) => isBoxLike(child) && !isArrowLike(child))
-    .map((child) => ({ id: child.id, geometry: geomOf(child) }))
-    .filter((entry) => entry.geometry !== null);
-  for (let left = 0; left < children.length; left += 1) {
-    for (let right = left + 1; right < children.length; right += 1) {
-      if (boxesOverlap(children[left].geometry, children[right].geometry)) {
-        findings.push(
-          finding(
-            "error",
-            deck,
-            slide,
-            "worker-managed-child-overlap",
-            `"${children[left].id}" overlaps "${children[right].id}" inside "${container.id}"`,
-          ),
-        );
-      }
-    }
-  }
-}
-
-function verifyWorkerSlide(pkg, findings) {
+function verifyWorkerSlide(pkg, snapshots, findings) {
   if (pkg?.id !== "aiperf-vs-locust") return;
   const slide = (pkg.slides ?? []).find(
     (candidate) => candidate?.title === "One event loop, one lightweight task per in-flight credit",
@@ -128,16 +139,29 @@ function verifyWorkerSlide(pkg, findings) {
   }
   const slideLabel = slide.id ?? slide.title;
   const allNodes = walkNodes(scene.roots ?? []);
-  const nodes = new Map(allNodes.map((node) => [node.id, node]));
+  const snapshot = snapshots.find(({ slideId }) => slideId === slide.id)?.snapshot;
+  if (snapshot === undefined) {
+    findings.push(
+      finding(
+        "error",
+        pkg.id,
+        slideLabel,
+        "worker-snapshot-missing",
+        "worker slide has no resolved scene snapshot",
+      ),
+    );
+    return;
+  }
+  const nodes = new Map(snapshot.nodes.map((node) => [node.id, node]));
+  const connectors = new Map(
+    snapshot.connectors.map((connector) => [connector.id, connector]),
+  );
   expectNode(nodes, "s10-worker", "layout.frame", pkg.id, slideLabel, findings);
   expectNode(nodes, "s10-tasks", "layout.stack", pkg.id, slideLabel, findings);
   expectNode(nodes, "s10-steps", "layout.rail", pkg.id, slideLabel, findings);
 
-  const edge = nodes.get("s10-e8");
-  if (
-    edge?.style?.arrowhead !== true ||
-    edge?.style?.markerEnd !== "arrow"
-  ) {
+  const edge = connectors.get("s10-e8");
+  if (edge?.showArrowhead !== true) {
     findings.push(
       finding(
         "error",
@@ -148,7 +172,8 @@ function verifyWorkerSlide(pkg, findings) {
       ),
     );
   }
-  if (edge?.path !== undefined || edge?.d !== undefined) {
+  const authoredEdge = sceneNodeById(scene, "s10-e8");
+  if (authoredEdge?.path !== undefined || authoredEdge?.d !== undefined) {
     findings.push(
       finding(
         "error",
@@ -171,13 +196,30 @@ function verifyWorkerSlide(pkg, findings) {
     );
   }
 
-  for (const id of ["s10-worker", "s10-worker-flow", "s10-tasks", "s10-steps"]) {
-    verifyManagedChildrenDoNotOverlap(nodes.get(id), pkg.id, slideLabel, findings);
-  }
-  const footerNodes = allNodes.filter((node) => node.id === "s10-note");
   if (
-    footerNodes.length !== 1 ||
-    capabilityOf(footerNodes[0]) !== "core.text"
+    snapshot.diagnostics.some(
+      (diagnostic) => diagnostic.code === "SCENE_MANAGED_CHILD_OVERLAP",
+    )
+  ) {
+    findings.push(
+      finding(
+        "error",
+        pkg.id,
+        slideLabel,
+        "worker-managed-child-overlap",
+        "worker slide must not contain managed-child overlap diagnostics",
+      ),
+    );
+  }
+  const footerParts = snapshot.generatedParts.filter(
+    (part) =>
+      part.ownerId === "s10-note" &&
+      (part.role === "caption" || part.role === "label"),
+  );
+  const footerNode = nodes.get("s10-note");
+  if (
+    footerParts.length !== 1 &&
+    !(footerParts.length === 0 && footerNode?.capability === "core.text")
   ) {
     findings.push(
       finding(
@@ -185,7 +227,7 @@ function verifyWorkerSlide(pkg, findings) {
         pkg.id,
         slideLabel,
         "worker-note-owner",
-        "s10-note must have exactly one semantic label owner",
+        "s10-note must have exactly one generated caption or semantic label owner",
       ),
     );
   }
@@ -203,22 +245,6 @@ function cueTargets(cue) {
     }
   }
   return out;
-}
-
-function boxGeoms(nodes) {
-  const boxes = [];
-  for (const node of nodes) {
-    if (!isBoxLike(node) || isArrowLike(node) || isDotLike(node)) continue;
-    const g = geomOf(node);
-    if (!g) continue;
-    if (g.width <= 0 || g.height <= 0) continue;
-    boxes.push(g);
-  }
-  return boxes;
-}
-
-function endpointAnchored(point, boxes, snap = SNAP_PX) {
-  return boxes.some((b) => pointNearBox(point, b, snap));
 }
 
 function pointNearPath(point, points, snap = SNAP_PX) {
@@ -243,7 +269,13 @@ function pointNearPath(point, points, snap = SNAP_PX) {
 }
 
 function fanCardinalityValid(node) {
-  if (node?.capability === "core.fan-out") {
+  // Use the aligned three-tier capabilityOf (capabilityId, capability,
+  // core.${kind}) rather than a raw `node.capability` check: a fan node
+  // authored/expanded with only `capabilityId` set (or with only
+  // `kind: "fan"` and no capability yet) must still resolve to the correct
+  // fan-out/fan-in branch instead of falling through to `false` below.
+  const capability = sceneCapabilityOf(node);
+  if (capability === "core.fan-out") {
     return (
       node.from !== null &&
       typeof node.from === "object" &&
@@ -252,7 +284,7 @@ function fanCardinalityValid(node) {
       node.to.length >= 2
     );
   }
-  if (node?.capability === "core.fan-in") {
+  if (capability === "core.fan-in") {
     return (
       Array.isArray(node.from) &&
       node.from.length >= 2 &&
@@ -262,29 +294,6 @@ function fanCardinalityValid(node) {
     );
   }
   return false;
-}
-
-function pointsNear(left, right, tolerance = 0.001) {
-  return (
-    Math.abs(left.x - right.x) <= tolerance &&
-    Math.abs(left.y - right.y) <= tolerance
-  );
-}
-
-function fanGeometryConnected(geometry) {
-  if (
-    geometry.trunk.length < 2 ||
-    geometry.branches.some((branch) => branch.length < 2)
-  ) {
-    return false;
-  }
-  const trunkTouchesJunction = geometry.trunk.some((point) =>
-    pointsNear(point, geometry.junction),
-  );
-  const branchesTouchJunction = geometry.branches.every((branch) =>
-    branch.some((point) => pointsNear(point, geometry.junction)),
-  );
-  return trunkTouchesJunction && branchesTouchJunction;
 }
 
 function hasFanTraceCue(timeline, fanId) {
@@ -324,7 +333,8 @@ function hasStaggeredBranchMotion(timeline, nodesById) {
 function verifySceneIr(deck, slideLabel, scene, options, findings) {
     const roots = scene.roots;
     const timeline = scene.timeline;
-    const viewport = sceneViewport(scene, options.viewport);
+    const snapshot = options.snapshot;
+    appendResolutionDiagnostics(deck, slideLabel, snapshot, findings);
     if (!Array.isArray(roots) || roots.length === 0) {
       findings.push(
         finding(
@@ -348,10 +358,32 @@ function verifySceneIr(deck, slideLabel, scene, options, findings) {
         ),
       );
     }
+    if (snapshot === undefined) {
+      findings.push(
+        finding(
+          "error",
+          deck,
+          slideLabel,
+          "resolved-snapshot-missing",
+          "scene has no canonical resolved snapshot",
+        ),
+      );
+      return;
+    }
 
-    const nodes = walkNodes(roots);
+    const resolvedNodes = new Map(
+      snapshot.nodes.map((node) => [node.id, node]),
+    );
+    const resolvedConnectors = new Map(
+      snapshot.connectors.map((connector) => [connector.id, connector]),
+    );
+    const nodes = walkNodes(roots).map((node) => {
+      const resolved = resolvedNodes.get(node.id);
+      return resolved === undefined
+        ? node
+        : { ...node, resolvedBounds: resolved.bounds };
+    });
     const ids = nodeIds(roots);
-    const boxes = boxGeoms(nodes);
     const drawTargets = new Set(
       (timeline ?? [])
         .filter((c) => isDrawAction(c?.action))
@@ -419,22 +451,6 @@ function verifySceneIr(deck, slideLabel, scene, options, findings) {
               `fan "${id}" must be fan-out with one source and at least two destinations, or fan-in with at least two sources and one destination`,
             ),
           );
-        } else {
-          const geometry = resolveFanGeometry(node, nodesById);
-          if (!geometry || !fanGeometryConnected(geometry)) {
-            findings.push(
-              finding(
-                "error",
-                deck,
-                slideLabel,
-                "fan-disconnected-junction",
-                `fan "${id}" does not resolve to a finite trunk and branches connected at one junction`,
-              ),
-            );
-          } else {
-            pathPolylines.push(...geometry.trajectories);
-            directedArrowIds.push(id);
-          }
         }
         if (!hasFanTraceCue(timeline, id) && !staggeredBranchMotion) {
           findings.push(
@@ -451,21 +467,30 @@ function verifySceneIr(deck, slideLabel, scene, options, findings) {
       }
 
       if (isArrowLike(node)) {
-        const referencedEdge =
-          isMotionSignalNode(node) && typeof node.edgeRef === "string"
-            ? nodesById.get(node.edgeRef)
-            : undefined;
-        const path = arrowPathData(referencedEdge ?? node, nodesById);
-        if (!path) {
+        const resolvedConnector = resolvedConnectors.get(id);
+        if (
+          resolvedConnector === undefined &&
+          isCanonicalConnectorNode(node)
+        ) {
           findings.push(
             finding(
               "error",
               deck,
               slideLabel,
-              "arrow-missing-path",
-              `arrow/path node "${id}" has no path/d data`,
+              "resolved-connector-missing",
+              `connector "${id}" is absent from the canonical resolved snapshot`,
             ),
           );
+          continue;
+        }
+        const path =
+          resolvedConnector?.d ??
+          (typeof node.d === "string" && node.d.trim() !== ""
+            ? node.d
+            : typeof node.path === "string" && node.path.trim() !== ""
+              ? node.path
+              : undefined);
+        if (path === undefined) {
           continue;
         }
         const pts = pathPoints(path);
@@ -483,44 +508,16 @@ function verifySceneIr(deck, slideLabel, scene, options, findings) {
         }
         pathPolylines.push(pts);
 
-        // Motion guides and headless dividers are not connectors.
-        if (!isDirectedConnector(node)) {
+        // Direction policy is canonical resolver output, never inferred here.
+        if (resolvedConnector?.directed !== true) {
           continue;
         }
         directedArrowIds.push(id);
-
-        const start = pts[0];
-        const end = pts[pts.length - 1];
-        if (boxes.length > 0) {
-          const startOk = endpointAnchored(start, boxes);
-          const endOk = endpointAnchored(end, boxes);
-          if (!startOk && !endOk) {
-            findings.push(
-              finding(
-                "warn",
-                deck,
-                slideLabel,
-                "floating-arrow",
-                `arrow "${id}" endpoints float away from all boxes (snap ${SNAP_PX}px)`,
-              ),
-            );
-          } else if (!startOk || !endOk) {
-            findings.push(
-              finding(
-                "warn",
-                deck,
-                slideLabel,
-                "loose-arrow",
-                `arrow "${id}" has one unanchored endpoint`,
-              ),
-            );
-          }
-        }
         continue;
       }
 
       if (isDotLike(node)) {
-        const g = geomOf(node);
+        const g = node.resolvedBounds;
         if (!g) {
           findings.push(
             finding(
@@ -559,7 +556,7 @@ function verifySceneIr(deck, slideLabel, scene, options, findings) {
       }
 
       if (isBoxLike(node)) {
-        const g = geomOf(node);
+        const g = node.resolvedBounds;
         if (!g) {
           findings.push(
             finding(
@@ -583,17 +580,6 @@ function verifySceneIr(deck, slideLabel, scene, options, findings) {
             ),
           );
           continue;
-        }
-        if (!inViewport(g, viewport)) {
-          findings.push(
-            finding(
-              "error",
-              deck,
-              slideLabel,
-              "out-of-viewport",
-              `box "${id}" at (${g.x},${g.y}) ${g.width}×${g.height} outside ${viewport.width}×${viewport.height}`,
-            ),
-          );
         }
       }
     }
@@ -803,6 +789,29 @@ function buildCurveScenarios() {
     obstacles: [{ id: "wall", bounds: { x: 0, y: 60, width: 400, height: 80 } }],
     expectFallback: true,
   });
+  scenarios.push({
+    id: "near-endpoint-halo",
+    start: { x: 100, y: 50 },
+    end: { x: 400, y: 50 },
+    fromAnchor: "e",
+    toAnchor: "w",
+    // `near`'s clearance halo (not its true interior) covers `start`. Dropping
+    // the obstacle for the whole path instead of shrinking around the
+    // endpoint let the straight chord cut through it far from the endpoint.
+    obstacles: [{ id: "near", bounds: { x: 106, y: 20, width: 80, height: 60 } }],
+  });
+  scenarios.push({
+    id: "opposite-halo-endpoints",
+    start: { x: 80, y: 100 },
+    end: { x: 140, y: 100 },
+    fromAnchor: "e",
+    toAnchor: "w",
+    // `boxed` is narrow; both endpoints sit outside its true interior but
+    // inside its clearance halo on opposite sides, exercising the sequential
+    // per-endpoint shrink.
+    obstacles: [{ id: "boxed", bounds: { x: 100, y: 0, width: 20, height: 200 } }],
+    style: { clearance: 30 },
+  });
   return scenarios;
 }
 
@@ -891,6 +900,21 @@ export function verifyAdvancedCurveRouting() {
           finding("error", deck, scenario.id, "curve-fallback-no-ids", "fallback route did not report penetrated obstacles"),
         );
       }
+    } else if (first.usedFallback) {
+      // A scenario not marked `expectFallback` is expected to find a clean,
+      // obstacle-avoiding route. Regression guard for the halo-drop bug: an
+      // obstacle whose *inflated* bounds cover an endpoint must stay in the
+      // search graph (shrunk around that endpoint) instead of being dropped
+      // for the whole path, which degrades to a straight penetrating chord.
+      findings.push(
+        finding(
+          "error",
+          deck,
+          scenario.id,
+          "curve-unexpected-fallback",
+          `route degraded to a fallback despite an avoidable layout (obstacles: ${first.penetratedObstacleIds.join(", ") || "none"})`,
+        ),
+      );
     }
   }
 
@@ -912,98 +936,6 @@ export function verifyAdvancedCurveRouting() {
     );
   }
 
-  const anchoredElbow = arrowPathData(
-    {
-      id: "anchored-elbow",
-      kind: "elbow",
-      from: { x: 100, y: 100, anchor: "e" },
-      to: { x: 200, y: 300, anchor: "w" },
-    },
-    new Map(),
-  );
-  if (anchoredElbow !== "M100 100 H150 V300 H200") {
-    findings.push(
-      finding(
-        "error",
-        deck,
-        "anchored-elbow",
-        "elbow-runs-along-component-edge",
-        `east-to-west elbow must approach the target horizontally; got ${anchoredElbow}`,
-      ),
-    );
-  }
-
-  const obstacleNodes = new Map([
-    [
-      "elbow-source",
-      {
-        id: "elbow-source",
-        kind: "rect",
-        geometry: { x: 0, y: 0, width: 100, height: 50 },
-      },
-    ],
-    [
-      "elbow-blocker",
-      {
-        id: "elbow-blocker",
-        kind: "rect",
-        geometry: { x: 140, y: 10, width: 80, height: 100 },
-      },
-    ],
-    [
-      "elbow-target",
-      {
-        id: "elbow-target",
-        kind: "rect",
-        geometry: { x: 300, y: 100, width: 100, height: 50 },
-      },
-    ],
-  ]);
-  const avoidingElbow = arrowPathData(
-    {
-      id: "obstacle-elbow",
-      kind: "elbow",
-      from: { nodeId: "elbow-source", anchor: "e" },
-      to: { nodeId: "elbow-target", anchor: "w" },
-    },
-    obstacleNodes,
-  );
-  const blocker = { x: 128, y: -2, width: 104, height: 124 };
-  const avoidingPoints = pathPoints(avoidingElbow ?? "");
-  const crossesBlocker = avoidingPoints.slice(1).some((point, index) => {
-    const previous = avoidingPoints[index];
-    if (previous === undefined) return false;
-    const horizontal = Math.abs(previous.y - point.y) <= 1e-6;
-    const vertical = Math.abs(previous.x - point.x) <= 1e-6;
-    if (horizontal) {
-      return (
-        previous.y > blocker.y &&
-        previous.y < blocker.y + blocker.height &&
-        Math.max(previous.x, point.x) > blocker.x &&
-        Math.min(previous.x, point.x) < blocker.x + blocker.width
-      );
-    }
-    if (vertical) {
-      return (
-        previous.x > blocker.x &&
-        previous.x < blocker.x + blocker.width &&
-        Math.max(previous.y, point.y) > blocker.y &&
-        Math.min(previous.y, point.y) < blocker.y + blocker.height
-      );
-    }
-    return true;
-  });
-  if (avoidingPoints.length < 4 || crossesBlocker) {
-    findings.push(
-      finding(
-        "error",
-        deck,
-        "obstacle-elbow",
-        "elbow-crosses-component",
-        `orthogonal route must avoid inflated blocker bounds; got ${avoidingElbow}`,
-      ),
-    );
-  }
   return findings;
 }
 
@@ -1094,6 +1026,12 @@ export function verifyPackageIr(pkg, options = {}) {
   const deck = pkg?.id ?? "unknown";
   const findings = [];
   const slides = Array.isArray(pkg?.slides) ? pkg.slides : [];
+  const snapshotsBySlideId = new Map(
+    (options.snapshots ?? []).map(({ slideId, snapshot }) => [
+      slideId,
+      snapshot,
+    ]),
+  );
 
   if (slides.length === 0) {
     findings.push(
@@ -1103,7 +1041,7 @@ export function verifyPackageIr(pkg, options = {}) {
   }
 
   verifyRoutingSdkExamples(pkg, findings);
-  verifyWorkerSlide(pkg, findings);
+  verifyWorkerSlide(pkg, options.snapshots ?? [], findings);
 
   slides.forEach((slide, index) => {
     const slideLabel = `${index}:${slide?.id ?? slide?.title ?? "slide"}`;
@@ -1124,12 +1062,27 @@ export function verifyPackageIr(pkg, options = {}) {
       return;
     }
 
-    verifySceneIr(deck, slideLabel, scene, options, findings);
+    verifySceneIr(
+      deck,
+      slideLabel,
+      scene,
+      {
+        ...options,
+        snapshot: options.snapshot ?? snapshotsBySlideId.get(slide?.id),
+      },
+      findings,
+    );
   });
 
   const finalCardScene = pkg?.finalCard?.scene;
   if (finalCardScene != null && typeof finalCardScene === "object") {
-    verifySceneIr(deck, "finalCard", finalCardScene, options, findings);
+    verifySceneIr(
+      deck,
+      "finalCard",
+      finalCardScene,
+      { ...options, snapshot: snapshotsBySlideId.get("__final-card") },
+      findings,
+    );
   }
 
   return findings;

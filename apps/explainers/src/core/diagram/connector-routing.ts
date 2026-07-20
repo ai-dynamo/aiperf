@@ -16,8 +16,9 @@ import {
   pointInBounds,
   roundCanonical,
   segmentIntersectsBounds,
+  shrinkBoundsToExcludePoint,
 } from "./connector-routing-geometry.js";
-import type { RouteObstacle } from "./connector-routing-types.js";
+import type { Bounds2, RouteObstacle } from "./connector-routing-types.js";
 
 /**
  * Public facade for the obstacle-aware curved router. The deterministic search,
@@ -198,6 +199,22 @@ function samePoint(a: Point2, b: Point2): boolean {
   return Math.abs(a.x - b.x) <= 1e-6 && Math.abs(a.y - b.y) <= 1e-6;
 }
 
+/** Deterministic offset used to keep a same-axis elbow bend from collapsing. */
+const SAME_AXIS_ELBOW_OFFSET = 24;
+
+/**
+ * Midpoint of `a`/`b`, offset off of `a` when they coincide. Same-side
+ * cardinal anchors (e.g. `e`→`e`, `n`→`n`) can share the coordinate that runs
+ * along their own axis; averaging that coordinate would collapse the bend to
+ * the anchor itself and leave the terminal leg on the wrong axis.
+ */
+function axisSafeMidpoint(a: number, b: number): number {
+  if (Math.abs(a - b) > 1e-6) {
+    return (a + b) / 2;
+  }
+  return a + SAME_AXIS_ELBOW_OFFSET;
+}
+
 function defaultElbowPoints(
   start: Point2,
   end: Point2,
@@ -211,10 +228,10 @@ function defaultElbowPoints(
       : [start, { x: start.x, y: end.y }, end];
   }
   if (preferX) {
-    const midX = (start.x + end.x) / 2;
+    const midX = axisSafeMidpoint(start.x, end.x);
     return [start, { x: midX, y: start.y }, { x: midX, y: end.y }, end];
   }
-  const midY = (start.y + end.y) / 2;
+  const midY = axisSafeMidpoint(start.y, end.y);
   return [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end];
 }
 
@@ -237,8 +254,176 @@ function orthogonalSegmentsVisible(
 }
 
 /**
+ * Obstacles inflated by clearance for elbow routing, with each obstacle's
+ * inflated rectangle shrunk away from `start`/`end` (mirrors the curved
+ * router's `resolveWaypoints`). Clearance halos frequently overlap a nearby
+ * endpoint without the endpoint's own node being the obstacle; shrinking
+ * keeps that obstacle in play for the rest of the path instead of either
+ * treating the endpoint as permanently blocked or dropping the obstacle
+ * globally. An obstacle whose true (uninflated) interior contains an
+ * endpoint is dropped entirely, since it cannot be an avoidable third party.
+ */
+function inflateElbowObstacles(
+  obstacles: readonly RouteObstacle[],
+  clearance: number,
+  start: Point2,
+  end: Point2,
+): RouteObstacle[] {
+  return obstacles.flatMap((obstacle): RouteObstacle[] => {
+    if (pointInBounds(start, obstacle.bounds, true) || pointInBounds(end, obstacle.bounds, true)) {
+      return [];
+    }
+    let bounds = inflateBounds(obstacle.bounds, clearance);
+    bounds = shrinkBoundsToExcludePoint(bounds, start);
+    bounds = shrinkBoundsToExcludePoint(bounds, end);
+    if (bounds.width <= 0 || bounds.height <= 0) {
+      return [];
+    }
+    return [{ id: obstacle.id, bounds }];
+  });
+}
+
+/**
+ * Escape stub leaving `anchor` along its cardinal `direction`, ordered from
+ * the anchor outward. Returns a single point when the direct escape ray is
+ * clear. When an obstacle blocks it — including when the anchor sits close
+ * enough that no point along the ray escapes it — retries by bending once
+ * perpendicular (above/below a blocked horizontal exit, left/right of a
+ * blocked vertical one) far enough to clear every obstacle obstructing the
+ * ray, then resumes travel toward the original escape coordinate from clear
+ * ground. Returns undefined when no such stub is obstacle-free.
+ */
+function resolveElbowEscapeStub(
+  anchor: Point2,
+  direction: Point2,
+  distance: number,
+  inflated: readonly RouteObstacle[],
+): readonly Point2[] | undefined {
+  const direct: Point2 = {
+    x: roundCanonical(anchor.x + direction.x * distance),
+    y: roundCanonical(anchor.y + direction.y * distance),
+  };
+  const segmentBlocked = (from: Point2, to: Point2): boolean =>
+    inflated.some(
+      (obstacle) =>
+        pointInBounds(to, obstacle.bounds, true) ||
+        segmentIntersectsBounds(from, to, obstacle.bounds, true),
+    );
+  if (!segmentBlocked(anchor, direct)) {
+    return [direct];
+  }
+  const horizontal = direction.x !== 0;
+  const blockers = inflated.filter(
+    (obstacle) =>
+      pointInBounds(direct, obstacle.bounds, true) ||
+      segmentIntersectsBounds(anchor, direct, obstacle.bounds, true),
+  );
+  if (blockers.length === 0) {
+    return undefined;
+  }
+  const margin = 1;
+  const candidates: Point2[] = horizontal
+    ? [
+        { x: anchor.x, y: roundCanonical(Math.min(...blockers.map((o) => o.bounds.y)) - margin) },
+        {
+          x: anchor.x,
+          y: roundCanonical(Math.max(...blockers.map((o) => o.bounds.y + o.bounds.height)) + margin),
+        },
+      ]
+    : [
+        { x: roundCanonical(Math.min(...blockers.map((o) => o.bounds.x)) - margin), y: anchor.y },
+        {
+          x: roundCanonical(Math.max(...blockers.map((o) => o.bounds.x + o.bounds.width)) + margin),
+          y: anchor.y,
+        },
+      ];
+  candidates.sort(
+    (left, right) =>
+      Math.hypot(left.x - anchor.x, left.y - anchor.y) -
+      Math.hypot(right.x - anchor.x, right.y - anchor.y),
+  );
+  for (const bend of candidates) {
+    if (segmentBlocked(anchor, bend)) {
+      continue;
+    }
+    const resume: Point2 = horizontal ? { x: direct.x, y: bend.y } : { x: bend.x, y: direct.y };
+    if (segmentBlocked(bend, resume)) {
+      continue;
+    }
+    return [bend, resume];
+  }
+  return undefined;
+}
+
+/** Axis of a stub's final leg, or `fallback` for a single-point (direct) stub. */
+function elbowStubArrivalAxis(stub: readonly Point2[], fallback: "x" | "y"): "x" | "y" {
+  if (stub.length < 2) {
+    return fallback;
+  }
+  const previous = stub[stub.length - 2]!;
+  const last = stub[stub.length - 1]!;
+  return previous.y === last.y ? "x" : "y";
+}
+
+/** Tight bounding rectangle enclosing every obstacle, or undefined when empty. */
+function unionBounds(boxes: readonly RouteObstacle[]): Bounds2 | undefined {
+  if (boxes.length === 0) {
+    return undefined;
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const box of boxes) {
+    minX = Math.min(minX, box.bounds.x);
+    minY = Math.min(minY, box.bounds.y);
+    maxX = Math.max(maxX, box.bounds.x + box.bounds.width);
+    maxY = Math.max(maxY, box.bounds.y + box.bounds.height);
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+/**
+ * Best-effort rectilinear detour around the combined footprint of every
+ * obstacle. Used only as a last resort when the deterministic grid search
+ * cannot find a route at all, so a search abort never silently falls back to
+ * a straight path that cuts through the blocker. Tries clearing over the
+ * top, under the bottom, and past either side of the union bounds and keeps
+ * the first candidate whose legs cross no obstacle.
+ */
+function detourAroundObstacles(
+  start: Point2,
+  end: Point2,
+  inflated: readonly RouteObstacle[],
+): readonly Point2[] | undefined {
+  const union = unionBounds(inflated);
+  if (union === undefined) {
+    return undefined;
+  }
+  const margin = 1;
+  const top = roundCanonical(union.y - margin);
+  const bottom = roundCanonical(union.y + union.height + margin);
+  const left = roundCanonical(union.x - margin);
+  const right = roundCanonical(union.x + union.width + margin);
+  const candidates: readonly Point2[][] = [
+    [start, { x: start.x, y: top }, { x: end.x, y: top }, end],
+    [start, { x: start.x, y: bottom }, { x: end.x, y: bottom }, end],
+    [start, { x: left, y: start.y }, { x: left, y: end.y }, end],
+    [start, { x: right, y: start.y }, { x: right, y: end.y }, end],
+  ];
+  for (const candidate of candidates) {
+    if (orthogonalSegmentsVisible(candidate, inflated)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Deterministic rectilinear shortest path over an obstacle-coordinate grid.
- * Endpoint escape stubs preserve cardinal tangents before grid search begins.
+ * Endpoint escape stubs preserve cardinal tangents before grid search
+ * begins; when a stub's direct ray is obstructed, it bends once perpendicular
+ * around the blocker (see `resolveElbowEscapeStub`) before the search runs.
  */
 function obstacleAwareElbowPoints(
   start: Point2,
@@ -249,33 +434,24 @@ function obstacleAwareElbowPoints(
   clearance: number,
 ): readonly Point2[] | undefined {
   const pad = Number.isFinite(clearance) ? Math.max(clearance, 0) : 12;
-  const inflated = obstacles.map((obstacle) => ({
-    id: obstacle.id,
-    bounds: inflateBounds(obstacle.bounds, pad),
-  }));
+  const inflated = inflateElbowObstacles(obstacles, pad, start, end);
   const sourceDirection = anchorExitDirection(fromAnchor, end, start);
   const targetDirection = anchorExitDirection(toAnchor, start, end);
   const escape = Math.max(pad, 1);
-  const sourceEscape = {
-    x: roundCanonical(start.x + sourceDirection.x * escape),
-    y: roundCanonical(start.y + sourceDirection.y * escape),
-  };
-  const targetEscape = {
-    x: roundCanonical(end.x + targetDirection.x * escape),
-    y: roundCanonical(end.y + targetDirection.y * escape),
-  };
-  if (
-    inflated.some(
-      (obstacle) =>
-        pointInBounds(sourceEscape, obstacle.bounds, true) ||
-        pointInBounds(targetEscape, obstacle.bounds, true),
-    )
-  ) {
+  const sourceStub = resolveElbowEscapeStub(start, sourceDirection, escape, inflated);
+  const targetStub = resolveElbowEscapeStub(end, targetDirection, escape, inflated);
+  if (sourceStub === undefined || targetStub === undefined) {
     return undefined;
   }
+  const sourceAttach = sourceStub[sourceStub.length - 1]!;
+  const targetAttach = targetStub[targetStub.length - 1]!;
 
-  const xs = new Set<number>([sourceEscape.x, targetEscape.x]);
-  const ys = new Set<number>([sourceEscape.y, targetEscape.y]);
+  const xs = new Set<number>();
+  const ys = new Set<number>();
+  for (const point of [...sourceStub, ...targetStub]) {
+    xs.add(point.x);
+    ys.add(point.y);
+  }
   for (const obstacle of inflated) {
     xs.add(roundCanonical(obstacle.bounds.x - 0.5));
     xs.add(roundCanonical(obstacle.bounds.x + obstacle.bounds.width + 0.5));
@@ -297,8 +473,8 @@ function obstacleAwareElbowPoints(
       points.push(point);
     }
   }
-  const sourceIndex = indexByKey.get(pointKey(sourceEscape));
-  const targetIndex = indexByKey.get(pointKey(targetEscape));
+  const sourceIndex = indexByKey.get(pointKey(sourceAttach));
+  const targetIndex = indexByKey.get(pointKey(targetAttach));
   if (sourceIndex === undefined || targetIndex === undefined) {
     return undefined;
   }
@@ -339,8 +515,8 @@ function obstacleAwareElbowPoints(
 
   type SearchState = Readonly<{ index: number; axis: "x" | "y" }>;
   const stateKey = (state: SearchState): string => `${state.index}:${state.axis}`;
-  const sourceAxis = cardinalAnchorAxis(fromAnchor) ?? "x";
-  const startState: SearchState = { index: sourceIndex, axis: sourceAxis };
+  const sourceArrivalAxis = elbowStubArrivalAxis(sourceStub, cardinalAnchorAxis(fromAnchor) ?? "x");
+  const startState: SearchState = { index: sourceIndex, axis: sourceArrivalAxis };
   const distances = new Map<string, number>([[stateKey(startState), 0]]);
   const previous = new Map<string, string>();
   const states = new Map<string, SearchState>([[stateKey(startState), startState]]);
@@ -395,7 +571,13 @@ function obstacleAwareElbowPoints(
     cursor = previous.get(cursor);
   }
   routed.reverse();
-  const result = [start, ...routed, end];
+  const result = [
+    start,
+    ...sourceStub.slice(0, -1),
+    ...routed,
+    ...targetStub.slice(0, -1).reverse(),
+    end,
+  ];
   return result.filter(
     (point, index) => index === 0 || !samePoint(point, result[index - 1]!),
   );
@@ -434,10 +616,7 @@ export function elbowPathData(
     targetAxis !== undefined &&
     obstacles.length > 0
   ) {
-    const inflated = obstacles.map((obstacle) => ({
-      id: obstacle.id,
-      bounds: inflateBounds(obstacle.bounds, clearance),
-    }));
+    const inflated = inflateElbowObstacles(obstacles, clearance, start, end);
     const direct = defaultElbowPoints(start, end, preferX, sourceAxis, targetAxis);
     if (!orthogonalSegmentsVisible(direct, inflated)) {
       const routed = obstacleAwareElbowPoints(
@@ -450,6 +629,14 @@ export function elbowPathData(
       );
       if (routed !== undefined) {
         return elbowPathFromPoints(routed);
+      }
+      // The deterministic grid search found no obstacle-free route (e.g. an
+      // escape stub could not clear a blocker even after bending). Never
+      // fall through to the obstructed `direct` path below: detour around
+      // every obstacle's combined footprint as a best-effort last resort.
+      const detour = detourAroundObstacles(start, end, inflated);
+      if (detour !== undefined) {
+        return elbowPathFromPoints(detour);
       }
     }
   }
@@ -472,17 +659,7 @@ export function elbowPathData(
     }
     return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} V${formatPathNumber(via.y)} H${formatPathNumber(via.x)} V${formatPathNumber(end.y)} H${formatPathNumber(end.x)}`;
   }
-  if (sourceAxis !== undefined && targetAxis !== undefined && sourceAxis !== targetAxis) {
-    return sourceAxis === "x"
-      ? `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} H${formatPathNumber(end.x)} V${formatPathNumber(end.y)}`
-      : `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} V${formatPathNumber(end.y)} H${formatPathNumber(end.x)}`;
-  }
-  if (preferX) {
-    const midX = (start.x + end.x) / 2;
-    return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} H${formatPathNumber(midX)} V${formatPathNumber(end.y)} H${formatPathNumber(end.x)}`;
-  }
-  const midY = (start.y + end.y) / 2;
-  return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} V${formatPathNumber(midY)} H${formatPathNumber(end.x)} V${formatPathNumber(end.y)}`;
+  return elbowPathFromPoints(defaultElbowPoints(start, end, preferX, sourceAxis, targetAxis));
 }
 
 function elbowPathFromPoints(points: readonly Point2[]): string {

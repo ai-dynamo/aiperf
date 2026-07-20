@@ -64,13 +64,14 @@ function readStringArray(
   fallback: readonly string[],
 ): readonly string[] {
   const value = props[key];
+  // Omit the prop to use defaults; an explicit array (even empty) is author intent
+  // and must reach requireLabels rather than silently substituting the fallback.
   if (!Array.isArray(value)) {
     return fallback;
   }
-  const strings = value.filter(
+  return value.filter(
     (entry): entry is string => typeof entry === "string" && entry.length > 0,
   );
-  return strings.length > 0 ? strings : fallback;
 }
 
 function readThemeRole(

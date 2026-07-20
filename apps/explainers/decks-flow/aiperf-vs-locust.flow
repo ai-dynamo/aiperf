@@ -13,35 +13,35 @@ explainer "AIPerf vs Locust" {
   hub: {
     highlight: "aiperf vs locust"
     title: "cooperative green threads vs ledger-admitted tasks"
-    description: "Locust's concurrency unit is a cooperative green thread, one per simulated user. AIPerf's concurrency unit is an admitted credit, realized as a lightweight task — and many of those run concurrently inside a single worker process."
+    description: "Locust's concurrency unit is a cooperative green thread, one per simulated user. AIPerf's concurrency unit is an admitted credit, realized as a lightweight task — and many of those run concurrently inside a single thread-per-core worker."
   }
 
   slide "Two architectures" {
     eyebrow: "Overview"
     title: "Cooperative green threads vs ledger-admitted tasks"
-    lede: "Locust's unit of concurrency is a lightweight cooperative thread, one per simulated user. AIPerf's unit of concurrency is an admitted credit, realized as a lightweight task — a single worker process hosts many of these running at once."
+    lede: "Locust's unit of concurrency is a lightweight cooperative thread, one per simulated user. AIPerf's unit of concurrency is an admitted credit, realized as a lightweight task — a single thread-per-core worker hosts many of these running at once."
 
-    narration: "Locust's concurrency unit is a green thread. AIPerf's is a credit, realized as a task inside a worker process. One worker hosts many credits at once."
+    narration: "Locust's concurrency unit is a green thread. AIPerf's is a credit, realized as a task inside a worker. One worker hosts many credits at once."
 
     term: {
       word: "concurrency unit"
-      meaning: "The thing a load-testing tool multiplies to reach a target in-flight-request count. For Locust that unit is a cooperative green thread. For AIPerf it is an admitted credit — a worker process is an execution host that runs many credits concurrently, not one concurrency unit per process."
+      meaning: "The thing a load-testing tool multiplies to reach a target in-flight-request count. For Locust that unit is a cooperative green thread. For AIPerf it is an admitted credit — a worker is an execution host (co-located sink or OS-thread sub-cell) that runs many credits concurrently, not one concurrency unit per worker."
     }
 
     points: [
       "Locust: a virtual user is a cooperative green thread — one thread, at most one in-flight request.",
       "AIPerf: a credit is the concurrency unit — one credit, one in-flight request, realized as a lightweight task inside a worker.",
-      "A single AIPerf worker process normally runs many credits concurrently, with no internal cap of its own.",
-      "The fair comparison is green thread to credit, not green thread to worker process — a worker hosts many concurrency units at once."
+      "A single AIPerf worker normally runs many credits concurrently, with no internal cap of its own.",
+      "The fair comparison is green thread to credit, not green thread to worker — a worker hosts many concurrency units at once."
     ]
 
-    caption: "One green thread per request vs one admitted credit per request — not one process per request."
+    caption: "One green thread per request vs one admitted credit per request — not one worker per request."
 
     render: @scene {
       sdk.Header(
         id = "s1-hdr",
         title = "GREEN THREADS vs ADMITTED CREDITS",
-        caption = "One green thread per request vs one admitted credit per request — not one process per request.",
+        caption = "One green thread per request vs one admitted credit per request — not one worker per request.",
         x = 18, y = 16, width = 664, height = 44,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
@@ -50,7 +50,7 @@ explainer "AIPerf vs Locust" {
         id = "s1-locust",
         title = "Locust",
         detail = "N virtual users",
-        x = 40, y = 80, width = 260, height = 60,
+        x = 40, y = 80, width = 260, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -58,7 +58,7 @@ explainer "AIPerf vs Locust" {
         id = "s1-t1",
         title = "thread 1",
         detail = "1 in-flight request",
-        x = 50, y = 150, width = 75, height = 50,
+        x = 50, y = 158, width = 75, height = 50,
         surfaceRole = theme(surface.base),
         strokeRole = theme(accent.secondary)
       )
@@ -66,7 +66,7 @@ explainer "AIPerf vs Locust" {
         id = "s1-t2",
         title = "thread 2",
         detail = "1 in-flight request",
-        x = 135, y = 150, width = 75, height = 50,
+        x = 135, y = 158, width = 75, height = 50,
         surfaceRole = theme(surface.base),
         strokeRole = theme(accent.secondary)
       )
@@ -74,7 +74,7 @@ explainer "AIPerf vs Locust" {
         id = "s1-t3",
         title = "thread 3",
         detail = "1 in-flight request",
-        x = 220, y = 150, width = 75, height = 50,
+        x = 220, y = 158, width = 75, height = 50,
         surfaceRole = theme(surface.base),
         strokeRole = theme(accent.secondary)
       )
@@ -123,8 +123,8 @@ explainer "AIPerf vs Locust" {
       sdk.Panel(
         id = "s1-aiperf",
         title = "AIPerf",
-        detail = "1 worker process",
-        x = 380, y = 80, width = 260, height = 60,
+        detail = "1 worker (thread-per-core)",
+        x = 380, y = 80, width = 260, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -154,7 +154,7 @@ explainer "AIPerf vs Locust" {
       )
       sdk.Label(
         id = "s1-cdots",
-        text = "... many more credits, one process",
+        text = "... many more credits, one worker",
         x = 390, y = 208, width = 260, height = 20,
         fontSize = 12,
         inkRole = theme(ink.tertiary)
@@ -182,7 +182,7 @@ explainer "AIPerf vs Locust" {
       )
       sdk.Label(
         id = "s1-acount",
-        text = "concurrency = credits, not processes",
+        text = "concurrency = credits, not workers",
         x = 390, y = 235, width = 260, height = 20,
         fontSize = 12,
         weight = "bold",
@@ -190,8 +190,8 @@ explainer "AIPerf vs Locust" {
       )
       sdk.Panel(
         id = "s1-host",
-        title = "One process hosts many units",
-        detail = "the process is an execution host, not the unit itself",
+        title = "One worker hosts many units",
+        detail = "the worker is an execution host, not the unit itself",
         x = 60, y = 285, width = 580, height = 50,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
@@ -202,7 +202,7 @@ explainer "AIPerf vs Locust" {
         to = { nodeId: "s1-aiperf", anchor: "w" },
         opacity = 0.4,
         strokeWidth = 2,
-        label = "thread vs credit, not process",
+        label = "green thread vs credit, not worker",
         style = { stroke: theme(accent.tertiary) }
       )
 
@@ -267,7 +267,7 @@ explainer "AIPerf vs Locust" {
         id = "s2-exec1",
         title = "Execute task A",
         detail = "runs the simulated request",
-        x = 40, y = 90, width = 160, height = 70,
+        x = 40, y = 90, width = 160, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -282,7 +282,7 @@ explainer "AIPerf vs Locust" {
         id = "s2-wait1",
         title = "Pause",
         detail = "sleep(think_time)",
-        x = 230, y = 90, width = 130, height = 70,
+        x = 230, y = 90, width = 130, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -297,7 +297,7 @@ explainer "AIPerf vs Locust" {
         id = "s2-exec2",
         title = "Execute task B",
         detail = "next queued task",
-        x = 390, y = 90, width = 160, height = 70,
+        x = 390, y = 90, width = 160, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -312,7 +312,7 @@ explainer "AIPerf vs Locust" {
         id = "s2-wait2",
         title = "Pause",
         detail = "sleep(think_time)",
-        x = 560, y = 90, width = 90, height = 70,
+        x = 560, y = 90, width = 90, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -340,7 +340,7 @@ explainer "AIPerf vs Locust" {
         id = "s2-zero",
         title = "think_time = 0",
         detail = "sleep(0) → cooperative yield, no delay",
-        x = 40, y = 230, width = 280, height = 70,
+        x = 40, y = 230, width = 280, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -348,7 +348,7 @@ explainer "AIPerf vs Locust" {
         id = "s2-nonzero",
         title = "think_time = t > 0",
         detail = "sleep(t) → real wall-clock delay",
-        x = 380, y = 230, width = 280, height = 70,
+        x = 380, y = 230, width = 280, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -421,7 +421,7 @@ explainer "AIPerf vs Locust" {
         id = "s3-master",
         title = "Coordinator process",
         detail = "round-robin cursor: → B next",
-        x = 250, y = 70, width = 240, height = 70,
+        x = 250, y = 86, width = 240, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -429,7 +429,7 @@ explainer "AIPerf vs Locust" {
         id = "s3-w1",
         title = "Worker A",
         detail = "connected",
-        x = 40, y = 180, width = 140, height = 60,
+        x = 40, y = 180, width = 140, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -437,7 +437,7 @@ explainer "AIPerf vs Locust" {
         id = "s3-w2",
         title = "Worker B",
         detail = "connected · next",
-        x = 200, y = 180, width = 140, height = 60,
+        x = 200, y = 180, width = 140, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -445,7 +445,7 @@ explainer "AIPerf vs Locust" {
         id = "s3-w3",
         title = "Worker C",
         detail = "connected",
-        x = 360, y = 180, width = 140, height = 60,
+        x = 360, y = 180, width = 140, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -453,7 +453,7 @@ explainer "AIPerf vs Locust" {
         id = "s3-w4",
         title = "Worker D",
         detail = "connected",
-        x = 520, y = 180, width = 140, height = 60,
+        x = 520, y = 180, width = 140, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -568,7 +568,7 @@ explainer "AIPerf vs Locust" {
       sdk.Label(
         id = "s4-t0",
         text = "t=0s",
-        x = 60, y = 74, width = 60, height = 18,
+        x = 60, y = 90, width = 60, height = 18,
         fontSize = 11,
         inkRole = theme(ink.tertiary)
       )
@@ -576,14 +576,14 @@ explainer "AIPerf vs Locust" {
         id = "s4-r0",
         title = "report",
         detail = "worker → coordinator",
-        x = 40, y = 92, width = 110, height = 50,
+        x = 40, y = 108, width = 110, height = 50,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Label(
         id = "s4-t1",
         text = "t=3s",
-        x = 220, y = 74, width = 60, height = 18,
+        x = 220, y = 90, width = 60, height = 18,
         fontSize = 11,
         inkRole = theme(ink.tertiary)
       )
@@ -591,14 +591,14 @@ explainer "AIPerf vs Locust" {
         id = "s4-r1",
         title = "report",
         detail = "worker → coordinator",
-        x = 200, y = 92, width = 110, height = 50,
+        x = 200, y = 108, width = 110, height = 50,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Label(
         id = "s4-t2",
         text = "t=6s",
-        x = 380, y = 74, width = 60, height = 18,
+        x = 380, y = 90, width = 60, height = 18,
         fontSize = 11,
         inkRole = theme(ink.tertiary)
       )
@@ -606,7 +606,7 @@ explainer "AIPerf vs Locust" {
         id = "s4-r2",
         title = "report",
         detail = "worker → coordinator",
-        x = 360, y = 92, width = 110, height = 50,
+        x = 360, y = 108, width = 110, height = 50,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -628,7 +628,7 @@ explainer "AIPerf vs Locust" {
         id = "s4-merge",
         title = "Running total",
         detail = "extended, not recomputed, each tick",
-        x = 530, y = 85, width = 130, height = 65,
+        x = 530, y = 101, width = 130, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -649,7 +649,7 @@ explainer "AIPerf vs Locust" {
         id = "s4-inTask",
         title = "Executing a task",
         detail = "grace period: finishes, then exits",
-        x = 40, y = 210, width = 260, height = 65,
+        x = 40, y = 210, width = 260, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -657,7 +657,7 @@ explainer "AIPerf vs Locust" {
         id = "s4-inWait",
         title = "Paused between tasks",
         detail = "terminated immediately, no exception",
-        x = 340, y = 210, width = 260, height = 65,
+        x = 340, y = 210, width = 260, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -702,70 +702,70 @@ explainer "AIPerf vs Locust" {
 
   slide "AIPerf: process topology" {
     eyebrow: "AIPerf architecture"
-    title: "One coordinator process launches and hosts everything else"
-    lede: "The command-line invocation becomes a coordinator process, which starts several internal message-routing proxies inside itself, then forks a handful of always-needed processes as real operating-system processes — and worker processes are spawned dynamically, on command, after the run starts."
+    title: "One native binary; thread-per-core workers inside it"
+    lede: "`aiperf profile` resolves Config v2 and re-executes the same `aiperf` binary as `--execute` over stdio. That single process owns scheduling, dataset, transport, and metrics in-process — not as forked message-routing services. When `workers == 1` the sink co-locates on the coordinator thread; when `workers > 1` each OS thread is a self-contained sub-cell."
 
-    narration: "The coordinator hosts internal proxies and forks the always-needed processes. Workers spawn dynamically, on command, sized by CPU."
+    narration: "One native binary re-execs itself for --execute. Workers are thread-per-core sub-cells, not forked ZMQ processes. Optional --cells adds a controller merge."
 
     term: {
-      word: "coordinator process"
-      meaning: "The top-level AIPerf process — what a benchmark invocation actually becomes. It hosts the run's internal message-routing proxies in-process and owns the logic that forks every other service as a real operating-system process, including workers, which it spawns dynamically on command rather than at startup."
+      word: "execute process"
+      meaning: "The same `aiperf` binary running in hidden `--execute` mode after `profile` projects Config v2 onto a protocol-v2 request over stdio. It is both the public CLI and the execution engine — scheduling, admission, transport sinks, and metrics live in-process. Parallelism is thread-per-core workers, not a fork-based multiprocess proxy mesh."
     }
 
     points: [
-      "The benchmark invocation becomes the coordinator process; its internal proxies run inside it, not as separate processes.",
-      "Always forked as separate processes: dataset loading, timing/dispatch, worker orchestration, results processing.",
-      "Worker processes are spawned dynamically on an internal command, not at startup — the coordinator does the actual forking.",
-      "A results-processing tier automatically scales its process count alongside the worker count."
+      "`profile` → Config v2 → re-exec `aiperf --execute` over stdio; one native binary, no separate runner.",
+      "Dataset, scheduling/admission, transport, and metrics stay in-process modules — not forked OS services.",
+      "`workers == 1`: co-located sink on the coordinator thread. `workers > 1`: each OS thread is a self-contained sub-cell.",
+      "Optional `--cells N` promotes a controller that partitions work and merges cell results — not a ZMQ proxy mesh."
     ]
 
-    caption: "One process hosts the proxies and forks the rest — workers spawn on command."
+    caption: "One binary · in-process runtime · thread-per-core workers · optional cellular merge."
 
     render: @scene {
       sdk.Header(
         id = "s5-hdr",
-        title = "ONE COORDINATOR FORKS THE FLEET",
-        caption = "One process hosts the proxies and forks the rest — workers spawn on command.",
+        title = "ONE NATIVE BINARY · THREAD-PER-CORE",
+        caption = "One binary · in-process runtime · thread-per-core workers · optional cellular merge.",
         x = 18, y = 16, width = 664, height = 44,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
       sdk.Panel(
         id = "s5-sc",
-        title = "Coordinator process",
-        detail = "hosts internal proxies · forks services",
-        x = 220, y = 68, width = 260, height = 60,
+        title = "aiperf --execute",
+        detail = "single native process · stdio from profile",
+        x = 220, y = 86, width = 260, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
       sdk.Panel(
         id = "s5-dm",
-        title = "Dataset process",
-        detail = "always forked",
+        title = "Dataset",
+        detail = "in-process",
         x = 30, y = 165, width = 145, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Panel(
         id = "s5-tm",
-        title = "Timing/dispatch",
-        detail = "always forked",
+        title = "Scheduling",
+        detail = "admission · in-process",
         x = 195, y = 165, width = 145, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Panel(
         id = "s5-wm",
-        title = "Worker orchestration",
-        detail = "always forked",
+        title = "Transport sinks",
+        detail = "HTTP · gRPC · in-process",
         x = 360, y = 165, width = 145, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Panel(
         id = "s5-rm",
-        title = "Results process",
-        detail = "always forked",
+        title = "Metrics · report",
+        detail = "in-process merge",
         x = 525, y = 165, width = 145, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
@@ -824,8 +824,8 @@ explainer "AIPerf vs Locust" {
       )
       sdk.Panel(
         id = "s5-opt4",
-        title = "API server",
-        detail = "optional",
+        title = "--cells N",
+        detail = "optional cellular",
         x = 405, y = 235, width = 100, height = 40,
         surfaceRole = theme(surface.base),
         strokeRole = theme(ink.tertiary)
@@ -839,8 +839,8 @@ explainer "AIPerf vs Locust" {
       )
       sdk.Panel(
         id = "s5-workers",
-        title = "N × worker process",
-        detail = "spawned dynamically, sized by CPU count",
+        title = "N × OS-thread sub-cell",
+        detail = "workers > 1 · thread-per-core · LocalSet + sink",
         x = 195, y = 300, width = 300, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
@@ -858,7 +858,7 @@ explainer "AIPerf vs Locust" {
         to = { nodeId: "s5-workers", anchor: "center" },
         opacity = 0.4,
         strokeWidth = 2,
-        label = "dynamic spawn",
+        label = "thread-per-core",
         style = { stroke: theme(accent.primary) }
       )
 
@@ -887,62 +887,62 @@ explainer "AIPerf vs Locust" {
 
   slide "AIPerf: internal message topology" {
     eyebrow: "AIPerf architecture"
-    title: "A different message-passing pattern for each different job"
-    lede: "A broadcast-style status bus for general messaging, an addressed request/reply channel for on-demand dataset lookups, a fire-and-forget streaming channel for raw results — all hosted inside the coordinator process — plus a dedicated credit-dispatch channel and a separate credit-return channel, both bound directly by the timing/dispatch process."
+    title: "In-process admission and dispatch — no proxy mesh"
+    lede: "Admission, credit issuance, and observation stay inside the `--execute` process. `runtime.dispatch` selects how workers share a concurrency/rate gate (`sharded`, `global`, or `global-hop`). Optional cellular mode adds a controller that merges cell results over Velo control traffic — measured load still rides HTTP or gRPC directly, never a shared message-routing proxy layer."
 
-    narration: "Each job gets its own channel: broadcast, addressed lookup, or stream. Credit dispatch and return bypass the shared proxies entirely."
+    narration: "No ZMQ proxy mesh. Admission and dispatch are in-process. Cellular merge uses Velo for control only; load stays on HTTP or gRPC."
 
     term: {
-      word: "addressed dispatch"
-      meaning: "A message-passing pattern where the sender can direct a message to one specific, identified recipient rather than broadcasting to everyone — used for credit dispatch specifically so a credit can be sent to exactly the worker that should receive it."
+      word: "dispatch mode"
+      meaning: "How `workers > 1` admits and issues work inside one cell: `sharded` partitions budgets statically per thread, `global` admits concurrency and rate from a shared per-cell gate, and `global-hop` additionally routes every request through one coordinator-owned dispatcher for exact global issuance order. None of these are a fork-based message-routing proxy mesh."
     }
 
     points: [
-      "Status bus: broadcast-style, hosted inside the coordinator — every process publishes and every process can listen.",
-      "Dataset lookups: an addressed request/reply channel — a worker's fallback path to ask for a conversation on demand.",
-      "Raw results: a fire-and-forget streaming channel from workers toward the results-processing tier.",
-      "Credit dispatch and credit return are NOT routed through the shared proxies — bound directly by the timing/dispatch process."
+      "Admission and credit issuance live in-process — workers do not receive work over coordinator-hosted proxies.",
+      "Each worker owns a LocalSet, transport sink, and local capture; metrics merge at phase boundaries.",
+      "`dispatch` chooses sharded, global, or global-hop sharing of the concurrency/rate gate — still one process.",
+      "Optional `--cells`: controller merges records or folded stores over Velo; inference traffic is not proxied."
     ]
 
-    caption: "The credit channels bypass the shared proxy layer entirely."
+    caption: "In-process gates and sinks — cellular merge is not a ZMQ proxy mesh."
 
     render: @scene {
       sdk.Header(
         id = "s6-hdr",
-        title = "ONE PATTERN PER JOB",
-        caption = "The credit channels bypass the shared proxy layer entirely.",
+        title = "IN-PROCESS · NO PROXY MESH",
+        caption = "In-process gates and sinks — cellular merge is not a ZMQ proxy mesh.",
         x = 18, y = 16, width = 664, height = 44,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
       sdk.Panel(
         id = "s6-coord",
-        title = "Coordinator-hosted proxies",
-        detail = "shared by every process",
-        x = 40, y = 68, width = 300, height = 50,
+        title = "aiperf --execute",
+        detail = "single process runtime",
+        x = 40, y = 86, width = 300, height = 50,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Panel(
         id = "s6-bus",
-        title = "Status bus",
-        detail = "broadcast, every process listens",
+        title = "Admission gate",
+        detail = "shared when dispatch=global",
         x = 30, y = 140, width = 160, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Panel(
         id = "s6-dset",
-        title = "Dataset lookup",
-        detail = "addressed request/reply",
+        title = "Worker LocalSet",
+        detail = "scheduling + sink",
         x = 210, y = 140, width = 160, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Panel(
         id = "s6-raw",
-        title = "Raw results",
-        detail = "fire-and-forget stream",
+        title = "Metrics merge",
+        detail = "at phase boundary",
         x = 390, y = 140, width = 160, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
@@ -976,24 +976,24 @@ explainer "AIPerf vs Locust" {
       )
       sdk.Panel(
         id = "s6-timing",
-        title = "Timing/dispatch process",
-        detail = "binds its own channels directly",
+        title = "Dispatch strategy",
+        detail = "sharded · global · global-hop",
         x = 220, y = 235, width = 260, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
       sdk.Panel(
         id = "s6-dispatch",
-        title = "Credit dispatch",
-        detail = "addressed to one worker",
+        title = "Credit issue",
+        detail = "admit then run on a worker",
         x = 60, y = 310, width = 220, height = 50,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
       sdk.Panel(
         id = "s6-return",
-        title = "Credit return",
-        detail = "separate one-way channel",
+        title = "Credit complete",
+        detail = "observe · release slot",
         x = 400, y = 310, width = 220, height = 50,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
@@ -1018,7 +1018,7 @@ explainer "AIPerf vs Locust" {
         to = { nodeId: "s6-timing", anchor: "e" },
         opacity = 0.4,
         strokeWidth = 2,
-        label = "shared vs direct-bound",
+        label = "in-process, not ZMQ",
         style = { stroke: theme(accent.tertiary) }
       )
 
@@ -1045,20 +1045,20 @@ explainer "AIPerf vs Locust" {
   slide "AIPerf: the credit lifecycle" {
     eyebrow: "AIPerf architecture"
     title: "Created, gated, dispatched, stuck to a conversation, returned"
-    lede: "A credit is built and handed to the credit router, which won't dispatch anything until every worker has announced it's ready. Multi-turn conversations stick to whichever worker handled the first turn, so session state and cache locality survive the whole conversation."
+    lede: "A credit is built and admitted before a worker runs it. Multi-turn conversations stick to whichever worker handled the first turn, so session state and cache locality survive the whole conversation. Completion observes the request and releases the admission slot in-process — not over a separate proxy return channel."
 
-    narration: "Turn one goes to the least-loaded worker; every later turn sticks to that same worker. Returns ride a separate channel."
+    narration: "Turn one goes to the least-loaded worker; every later turn sticks to that same worker. Completion releases the slot in-process."
 
     term: {
       word: "sticky routing"
-      meaning: "The credit router's policy of routing every subsequent turn of a multi-turn conversation to the same worker that handled its first turn, so per-conversation session state and any resulting inference-server cache locality persist for the conversation's duration. Only first turns use least-loaded worker selection."
+      meaning: "Policy of routing every subsequent turn of a multi-turn conversation to the same worker that handled its first turn, so per-conversation session state and any resulting inference-server cache locality persist for the conversation's duration. Only first turns use least-loaded worker selection."
     }
 
     points: [
-      "A startup readiness check blocks the very first credit until at least one worker has announced it's ready.",
+      "Admission blocks issuance until the run is ready to dispatch work to workers.",
       "First turn of a conversation: least-loaded worker selection. Later turns: routed back to the same worker.",
       "The sticky mapping exists only while more turns are expected, and is torn down on the conversation's final turn.",
-      "Credit dispatch and credit return travel over two separate, one-directional channels."
+      "Credit completion observes the request and releases the admission slot in-process — no ZMQ return channel."
     ]
 
     caption: "First turn picks the worker; every later turn goes back to the same one."
@@ -1077,13 +1077,13 @@ explainer "AIPerf vs Locust" {
         steps = ["credit created", "readiness gate", "sticky or least-loaded", "returned"],
         linked = true,
         gap = 14,
-        x = 40, y = 68, width = 600, height = 24
+        x = 40, y = 86, width = 600, height = 24
       )
       sdk.Panel(
         id = "s7-t1",
         title = "Turn 1",
         detail = "least-loaded selection",
-        x = 40, y = 110, width = 150, height = 65,
+        x = 40, y = 110, width = 150, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1156,8 +1156,8 @@ explainer "AIPerf vs Locust" {
       )
       sdk.Panel(
         id = "s7-return",
-        title = "Credit returned",
-        detail = "worker → separate one-way return channel",
+        title = "Credit complete",
+        detail = "observe · release admission slot",
         x = 220, y = 280, width = 260, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
@@ -1233,7 +1233,7 @@ explainer "AIPerf vs Locust" {
         id = "s8-c1",
         title = "Lifecycle",
         detail = "always active · vote: yes",
-        x = 30, y = 80, width = 130, height = 60,
+        x = 30, y = 80, width = 130, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1241,7 +1241,7 @@ explainer "AIPerf vs Locust" {
         id = "s8-c2",
         title = "DAG lifecycle",
         detail = "always active · vote: yes",
-        x = 175, y = 80, width = 130, height = 60,
+        x = 175, y = 80, width = 130, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1249,7 +1249,7 @@ explainer "AIPerf vs Locust" {
         id = "s8-c3",
         title = "Request count",
         detail = "if configured · vote: yes",
-        x = 320, y = 80, width = 130, height = 60,
+        x = 320, y = 80, width = 130, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -1257,7 +1257,7 @@ explainer "AIPerf vs Locust" {
         id = "s8-c4",
         title = "Session count",
         detail = "if configured · vote: yes",
-        x = 465, y = 80, width = 130, height = 60,
+        x = 465, y = 80, width = 130, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -1265,7 +1265,7 @@ explainer "AIPerf vs Locust" {
         id = "s8-c5",
         title = "Duration",
         detail = "if configured · vote: no",
-        x = 610, y = 80, width = 55, height = 60,
+        x = 610, y = 80, width = 55, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1273,7 +1273,7 @@ explainer "AIPerf vs Locust" {
         id = "s8-and",
         title = "AND",
         detail = "one \"no\" is enough to stop",
-        x = 260, y = 190, width = 200, height = 60,
+        x = 260, y = 190, width = 200, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1387,7 +1387,7 @@ explainer "AIPerf vs Locust" {
         id = "s9-gate1",
         title = "Request-count condition",
         detail = "disabled when overshoot mode is on",
-        x = 40, y = 70, width = 260, height = 60,
+        x = 40, y = 86, width = 260, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -1395,7 +1395,7 @@ explainer "AIPerf vs Locust" {
         id = "s9-gate2",
         title = "Separate internal cap",
         detail = "also had to be disabled",
-        x = 380, y = 70, width = 260, height = 60,
+        x = 380, y = 86, width = 260, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -1490,23 +1490,23 @@ explainer "AIPerf vs Locust" {
     }
   }
 
-  slide "AIPerf: inside one worker process" {
+  slide "AIPerf: inside one worker" {
     eyebrow: "AIPerf architecture"
     title: "One event loop, one lightweight task per in-flight credit"
-    lede: "A worker doesn't throttle itself — no internal limit on how much it runs at once. Every credit it receives becomes an independent task on its one event loop, sharing one pooled HTTP connection. Concurrency admission happens entirely upstream, at credit issuance."
+    lede: "A worker doesn't throttle itself — no internal limit on how much it runs at once. Every credit it receives becomes an independent task on its one LocalSet event loop, sharing one pooled HTTP or gRPC sink. Concurrency admission happens entirely upstream, at credit issuance."
 
     narration: "Every credit becomes its own task, no worker-side limit. The real gate is upstream, at slot acquisition before dispatch."
 
     term: {
       word: "task-per-credit"
-      meaning: "AIPerf's worker concurrency model: every received credit becomes its own lightweight task on the worker's single event loop, with no internal limit — the worker executes whatever concurrency it's handed, because admission was already decided upstream by the credit ledger."
+      meaning: "AIPerf's worker concurrency model: every admitted credit becomes its own lightweight task on the worker's single LocalSet event loop, with no internal limit — the worker executes whatever concurrency it's handed, because admission was already decided upstream by the credit ledger."
     }
 
     points: [
       "A received credit becomes an independent task on the worker's one event loop — no worker-side limit.",
-      "Outbound HTTP calls share one pooled connection manager, sized generously, rarely the bottleneck.",
+      "Outbound calls share the worker-local transport sink and connection pool.",
       "The worker makes zero admission decisions — it runs exactly whatever concurrency it's been handed.",
-      "Real concurrency enforcement lives entirely upstream, at slot acquisition before a credit is ever sent."
+      "Real concurrency enforcement lives entirely upstream, at slot acquisition before a credit is ever issued."
     ]
 
     caption: "Worker doesn't gate — the ledger already did."
@@ -1522,8 +1522,8 @@ explainer "AIPerf vs Locust" {
       )
       sdk.Frame(
         id = "s10-worker",
-        title = "One worker process, one event loop",
-        x = 30, y = 62, width = 640, height = 196,
+        title = "One worker thread, one LocalSet event loop",
+        x = 30, y = 72, width = 640, height = 200,
         padding = 10,
         align = "stretch",
         fixedWidth = true,
@@ -1594,7 +1594,7 @@ explainer "AIPerf vs Locust" {
                 id = "s10-pool",
                 title = "Shared connection pool",
                 detail = "sized generously",
-                width = 190, height = 60,
+                width = 190, height = 72,
                 surfaceRole = theme(surface.elevated),
                 strokeRole = theme(accent.secondary)
               )
@@ -1665,7 +1665,7 @@ explainer "AIPerf vs Locust" {
           sdk.Panel(
             id = "s10-step2",
             title = "2. slot granted",
-            detail = "only then is a credit sent",
+            detail = "only then is a credit issued",
             width = 220, height = 52,
             surfaceRole = theme(surface.elevated),
             strokeRole = theme(accent.warning)
@@ -1761,7 +1761,7 @@ explainer "AIPerf vs Locust" {
         id = "s11-locust",
         title = "Locust",
         detail = "exact via loop structure · no counter",
-        x = 30, y = 68, width = 290, height = 65,
+        x = 30, y = 86, width = 290, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -1769,14 +1769,14 @@ explainer "AIPerf vs Locust" {
         id = "s11-aiperf",
         title = "AIPerf",
         detail = "exact via credit ledger · has a counter",
-        x = 360, y = 68, width = 290, height = 65,
+        x = 360, y = 86, width = 290, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Divider(
         id = "s11-div",
         axis = "y",
-        x = 335, y = 68, length = 260,
+        x = 335, y = 86, length = 260,
         strokeRole = theme(ink.tertiary)
       )
       sdk.Label(
@@ -1864,7 +1864,7 @@ explainer "AIPerf vs Locust" {
         id = "s11-stop-l",
         title = "Result: stop at N",
         detail = "overshoots, then kills every thread",
-        x = 30, y = 260, width = 290, height = 65,
+        x = 30, y = 260, width = 290, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1872,7 +1872,7 @@ explainer "AIPerf vs Locust" {
         id = "s11-stop-a",
         title = "Result: stop at N",
         detail = "exact cutoff, then a real drain",
-        x = 360, y = 260, width = 290, height = 65,
+        x = 360, y = 260, width = 290, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )

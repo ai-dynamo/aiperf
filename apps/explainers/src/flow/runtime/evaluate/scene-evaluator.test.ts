@@ -143,3 +143,55 @@ describe("evaluateScene connector endpoints", () => {
     });
   });
 });
+
+describe("evaluateScene connector hit regions", () => {
+  it("uses routed line bounds for connector hit regions, not authored geometry", () => {
+    const a = rect("a", { x: 0, y: 0, width: 40, height: 20 });
+    const b = rect("b", { x: 100, y: 40, width: 40, height: 20 });
+    const edge = connector({
+      id: "edge",
+      // Degenerate authored box — not the visual extent of the routed line.
+      geometry: { x: 0, y: 0, width: 0, height: 0 },
+      from: { nodeId: "a" },
+      to: { nodeId: "b" },
+    });
+
+    const evaluated = evaluateScene(scene([a, b, edge], ["a", "b", "edge"]));
+
+    const hit = evaluated.displayList.hitRegions.find(
+      (region) => region.semanticId === "edge",
+    );
+    expect(hit).toBeDefined();
+    // Centers: a=(20,10), b=(120,50) → line extent (20,10)-(120,50)
+    expect(hit?.bounds).toEqual({
+      x: 20,
+      y: 10,
+      width: 100,
+      height: 40,
+    });
+
+    const command = evaluated.displayList.commands.find(({ id }) => id === "edge");
+    expect(command?.paintBounds).toEqual(hit?.bounds);
+  });
+
+  it("uses free-coordinate endpoint extent for connector hit regions", () => {
+    const edge = connector({
+      id: "edge",
+      geometry: { x: 999, y: 999, width: 1, height: 1 },
+      from: { x: 10, y: 20 },
+      to: { x: 110, y: 80 },
+    });
+
+    const evaluated = evaluateScene(scene([edge], ["edge"]));
+
+    const hit = evaluated.displayList.hitRegions.find(
+      (region) => region.semanticId === "edge",
+    );
+    expect(hit?.bounds).toEqual({
+      x: 10,
+      y: 20,
+      width: 100,
+      height: 60,
+    });
+  });
+});

@@ -190,4 +190,211 @@ describe("resolveScene", () => {
       }),
     );
   });
+
+  it("includes canonical connector paths and diagnostics in the resolved scene", () => {
+    const scene: SceneIrLike = {
+      roots: [
+        panel("source", 80, 40, { x: 10, y: 20 }),
+        panel("target", 80, 40, { x: 210, y: 20 }),
+        {
+          id: "edge",
+          kind: "connector",
+          capabilityId: "core.connector",
+          geometry: { x: 0, y: 0, width: 0, height: 0 },
+          style: {},
+          from: { nodeId: "source", anchor: "e" },
+          to: { nodeId: "target", anchor: "w" },
+        },
+      ],
+      timeline: [],
+    };
+
+    const resolved = resolveScene(scene);
+
+    expect(resolved.connectorsById.get("edge")).toMatchObject({
+      d: "M90 40 L210 40",
+      directed: true,
+      showArrowhead: true,
+    });
+    expect(resolved.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "SCENE_DIRECTED_ARROWHEAD_DEFAULTED",
+        severity: "info",
+      }),
+    );
+  });
+
+  it("indexes native semantic chrome under capability-specific generated IDs", () => {
+    const scene: SceneIrLike = {
+      viewport: { width: 700, height: 400 },
+      roots: [
+        {
+          id: "header",
+          kind: "group",
+          capabilityId: "core.header",
+          geometry: { x: 20, y: 30, width: 300, height: 66 },
+          props: { title: "Profile", caption: "source" },
+          children: [],
+        },
+        {
+          id: "chip",
+          kind: "group",
+          capabilityId: "core.chip",
+          geometry: { x: 20, y: 120, width: 84, height: 26 },
+          props: { label: "Ready" },
+          children: [],
+        },
+        {
+          id: "note",
+          kind: "group",
+          capabilityId: "core.note",
+          geometry: { x: 20, y: 170, width: 180, height: 48 },
+          props: { text: "The worker only executes" },
+          children: [],
+        },
+      ],
+      timeline: [],
+    };
+
+    const resolved = resolveScene(scene);
+
+    expect([...resolved.generatedPartsById.keys()]).toEqual([
+      "header__chrome",
+      "header__title",
+      "header__caption",
+      "chip__chrome",
+      "chip__label",
+      "note__chrome",
+      "note__caption",
+    ]);
+    expect(resolved.generatedPartsById.get("note__caption")).toMatchObject({
+      ownerId: "note",
+      role: "caption",
+    });
+    expect(resolved.worldGeometryById.get("note__caption")).toEqual(
+      resolved.generatedPartsById.get("note__caption")?.geometry,
+    );
+  });
+
+  it("rejects an authored node that claims a semantic chrome generated ID", () => {
+    const scene: SceneIrLike = {
+      roots: [
+        {
+          id: "panel",
+          kind: "group",
+          capabilityId: "core.panel",
+          geometry: { x: 20, y: 30, width: 180, height: 70 },
+          props: { title: "Profile" },
+          children: [
+            {
+              id: "panel__title",
+              kind: "text",
+              capabilityId: "core.text",
+              geometry: { x: 8, y: 8, width: 160, height: 22 },
+              text: "Compatibility title",
+            },
+          ],
+        },
+      ],
+      timeline: [],
+    };
+
+    const resolved = resolveScene(scene);
+
+    expect(
+      resolved.diagnostics.filter(
+        ({ code }) => code === "SCENE_DUPLICATE_PAINT_OWNER",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        severity: "error",
+        nodeIds: ["panel__title", "panel"],
+      }),
+    ]);
+  });
+
+  it("does not generate paint parts for layout-managed stepper children", () => {
+    const scene: SceneIrLike = {
+      roots: [
+        {
+          id: "s7-steps",
+          kind: "group",
+          capabilityId: "core.stepper",
+          geometry: { x: 20, y: 30, width: 0, height: 0 },
+          props: { steps: ["Plan", "Run"] },
+          children: [
+            {
+              id: "s7-steps-step-0",
+              kind: "group",
+              capabilityId: "core.chip",
+              geometry: { x: 0, y: 0, width: 0, height: 0 },
+              props: { label: "1. Plan" },
+            },
+            {
+              id: "s7-steps-step-1",
+              kind: "group",
+              capabilityId: "core.chip",
+              geometry: { x: 0, y: 0, width: 0, height: 0 },
+              props: { label: "2. Run" },
+            },
+          ],
+        },
+      ],
+      timeline: [],
+    };
+
+    const resolved = resolveScene(scene);
+
+    expect(
+      resolved.diagnostics.filter(
+        ({ code }) => code === "SCENE_DUPLICATE_PAINT_OWNER",
+      ),
+    ).toEqual([]);
+    expect(
+      [...resolved.generatedPartsById.values()].filter(
+        ({ ownerId }) => ownerId === "s7-steps",
+      ),
+    ).toEqual([]);
+    expect(resolved.worldGeometryById.get("s7-steps-step-0")).toEqual(
+      expect.objectContaining({ width: expect.any(Number) }),
+    );
+  });
+
+  it("reports repeated generated IDs independently of authored ownership", () => {
+    const duplicate = {
+      id: "panel",
+      kind: "group",
+      capabilityId: "core.panel",
+      geometry: { x: 20, y: 30, width: 180, height: 70 },
+      props: { title: "Profile" },
+      children: [],
+    } satisfies SceneNodeLike;
+    const scene: SceneIrLike = {
+      roots: [
+        duplicate,
+        {
+          ...duplicate,
+          geometry: { ...duplicate.geometry, x: 240 },
+        },
+      ],
+      timeline: [],
+    };
+
+    const resolved = resolveScene(scene);
+
+    expect(
+      resolved.diagnostics.filter(
+        ({ code }) => code === "SCENE_DUPLICATE_GENERATED_ID",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        severity: "error",
+        nodeIds: ["panel", "panel"],
+      }),
+      expect.objectContaining({
+        severity: "error",
+        nodeIds: ["panel", "panel"],
+      }),
+    ]);
+  });
 });

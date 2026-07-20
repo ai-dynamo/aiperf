@@ -98,6 +98,10 @@ export type QualityDisplayList = Readonly<{
 export type DegradationReport = Readonly<{
   tier: QualityTier;
   motionReduced: boolean;
+  /**
+   * Pre-order indices into the *original* (pre-policy) command tree.
+   * Filter and decorative-budget suppressions share this single index space.
+   */
   suppressedCommandIndices: readonly number[];
   suppressedFamilies: readonly DecorativeFamily[];
   suppressedHitRegionIds: readonly string[];
@@ -229,6 +233,11 @@ type FilterCommandsResult = Readonly<{
   suppressedIndices: readonly number[];
   suppressedFamilies: ReadonlySet<DecorativeFamily>;
   nextIndex: number;
+  /**
+   * Original-tree pre-order indices for every node that remains in the
+   * filtered command tree (same pre-order walk `enforceDecorativeBudget` uses).
+   */
+  keptOriginalIndices: readonly number[];
 }>;
 
 function filterCommands(
@@ -240,6 +249,7 @@ function filterCommands(
   const kept: QualityAnnotatedCommand[] = [];
   const suppressedIndices: number[] = [];
   const suppressedFamilies = new Set<DecorativeFamily>();
+  const keptOriginalIndices: number[] = [];
   let index = startIndex;
 
   for (const command of commands) {
@@ -247,6 +257,7 @@ function filterCommands(
     index += 1;
 
     let nextCommand = command;
+    let nestedKeptOriginalIndices: readonly number[] = [];
     if (
       command.kind === "group" ||
       command.kind === "clip" ||
@@ -259,6 +270,7 @@ function filterCommands(
         index,
       );
       index = nested.nextIndex;
+      nestedKeptOriginalIndices = nested.keptOriginalIndices;
       for (const suppressed of nested.suppressedIndices) {
         suppressedIndices.push(suppressed);
       }
@@ -283,6 +295,10 @@ function filterCommands(
           nextCommand.kind === "layer") &&
         nextCommand.children.length > 0
       ) {
+        // Hoisted children keep their original indices; the container does not.
+        for (const originalIndex of nestedKeptOriginalIndices) {
+          keptOriginalIndices.push(originalIndex);
+        }
         for (const child of nextCommand.children as readonly QualityAnnotatedCommand[]) {
           kept.push(
             profile.motion === "reduced" ? zeroMotion(child) : child,
@@ -296,6 +312,10 @@ function filterCommands(
       nextCommand = zeroMotion(nextCommand);
     }
 
+    keptOriginalIndices.push(commandIndex);
+    for (const originalIndex of nestedKeptOriginalIndices) {
+      keptOriginalIndices.push(originalIndex);
+    }
     kept.push(nextCommand);
   }
 
@@ -304,6 +324,7 @@ function filterCommands(
     suppressedIndices,
     suppressedFamilies,
     nextIndex: index,
+    keptOriginalIndices,
   };
 }
 
@@ -333,19 +354,27 @@ function shouldKeepHitRegion(
 function enforceDecorativeBudget(
   commands: readonly QualityAnnotatedCommand[],
   maxDecorativeCommands: number,
-  startIndex: number,
+  originalIndices: readonly number[],
+  walkStart: number,
 ): FilterCommandsResult {
   const kept: QualityAnnotatedCommand[] = [];
   const suppressedIndices: number[] = [];
   const suppressedFamilies = new Set<DecorativeFamily>();
+  const keptOriginalIndices: number[] = [];
   let decorativeCount = 0;
-  let index = startIndex;
+  let walk = walkStart;
 
   for (const command of commands) {
-    const commandIndex = index;
-    index += 1;
+    const commandIndex = originalIndices[walk];
+    if (commandIndex === undefined) {
+      throw new Error(
+        `Decorative budget walk is missing original index at offset ${walk}.`,
+      );
+    }
+    walk += 1;
 
     let nextCommand = command;
+    let nestedKeptOriginalIndices: readonly number[] = [];
     if (
       command.kind === "group" ||
       command.kind === "clip" ||
@@ -354,9 +383,11 @@ function enforceDecorativeBudget(
       const nested = enforceDecorativeBudget(
         command.children as readonly QualityAnnotatedCommand[],
         Math.max(0, maxDecorativeCommands - decorativeCount),
-        index,
+        originalIndices,
+        walk,
       );
-      index = nested.nextIndex;
+      walk = nested.nextIndex;
+      nestedKeptOriginalIndices = nested.keptOriginalIndices;
       for (const suppressed of nested.suppressedIndices) {
         suppressedIndices.push(suppressed);
       }
@@ -383,6 +414,11 @@ function enforceDecorativeBudget(
       decorativeCount += 1;
     }
 
+    // Pre-order: this node, then remaining descendants.
+    keptOriginalIndices.push(commandIndex);
+    for (const originalIndex of nestedKeptOriginalIndices) {
+      keptOriginalIndices.push(originalIndex);
+    }
     kept.push(nextCommand);
   }
 
@@ -390,7 +426,8 @@ function enforceDecorativeBudget(
     commands: kept,
     suppressedIndices,
     suppressedFamilies,
-    nextIndex: index,
+    nextIndex: walk,
+    keptOriginalIndices,
   };
 }
 
@@ -418,6 +455,7 @@ export function applyQualityPolicy(
     const budgeted = enforceDecorativeBudget(
       filtered.commands,
       displayContract.maxDecorativeCommands,
+      filtered.keptOriginalIndices,
       0,
     );
     const suppressedFamilies = new Set(filtered.suppressedFamilies);
@@ -432,6 +470,7 @@ export function applyQualityPolicy(
       ].sort((left, right) => left - right),
       suppressedFamilies,
       nextIndex: budgeted.nextIndex,
+      keptOriginalIndices: budgeted.keptOriginalIndices,
     };
   }
 

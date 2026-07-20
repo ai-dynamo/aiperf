@@ -240,13 +240,17 @@ Containers support:
 
 - Direction or axis where applicable.
 - Gap between children.
-- Padding and title inset.
-- Main-axis and cross-axis alignment.
+- `padding` (default `0`) and title inset.
+- Cross-axis `align` (`start` by default; also `center`, `end`, or `stretch`).
+- Main-axis `justify` (`start` by default; also `center`, `end`, or
+  `space-between`).
 - Minimum width and height.
-- Optional fixed width and height.
+- `fixedWidth` and `fixedHeight` (both `false` by default).
 - Child order.
 - Optional per-child minimum size.
-- Explicit per-child position override.
+- Explicit per-child position override through
+  `style.position = "absolute"`, which preserves authored local `x`/`y` and
+  removes that child from normal flow.
 
 Authored width and height are minimum constraints by default. Managed
 containers expand to fit content unless fixed sizing is explicitly requested.

@@ -26,8 +26,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Every primitive expands through the production SDK into a labeled node. Semantic ports connect roles such as read, producer, inbound, and branch.yes without naming generated children."
     narration: "The catalog begins with the shared grammar, then teaches each category through focused production examples."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Stable instance IDs keep authored connections readable.",
+      "Category ports preserve storage, messaging, network, and branch semantics."
     ]
     caption: "Connect intent, not generated geometry."
 
@@ -38,8 +38,8 @@ explainer "SDK Diagram Catalog" {
       sdk.Database(id = "sink", title = "Scene IR", detail = "validated output", x = 520, y = 135, width = 140, height = 82, strokeRole = theme(accent.tertiary))
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.write"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Endpoint(id = "variant-1", title = "input", detail = "semantic ref", x = 70, y = 285, width = 140, height = 62)
-      sdk.Queue(id = "variant-2", title = "producer", detail = "category port", x = 280, y = 285, width = 140, height = 62)
+      sdk.Endpoint(id = "variant-1", title = "input", detail = "semantic ref", x = 70, y = 285, width = 140, height = 72)
+      sdk.Queue(id = "variant-2", title = "producer", detail = "category port", x = 280, y = 285, width = 140, height = 72)
       sdk.Decision(id = "variant-3", title = "branch.yes", detail = "named outcome", x = 490, y = 280, width = 140, height = 68, branches = ["yes", "no"])
       timeline main {
         at 0 reveal header duration 160
@@ -59,8 +59,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Actors and compute primitives share a visual grammar while retaining their system-level meaning."
     narration: "Chapter 1 introduces actors and compute before the focused specimens."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Three specimens preview the chapter’s shared visual grammar.",
+      "Focused pages follow in a deliberate teaching sequence."
     ]
     caption: "9 primitives · focused examples follow."
 
@@ -85,8 +85,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Starts a measured run. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The User hero is followed by Analyst, SRE, and Researcher variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Run owner anchors the primary user example.",
+      "The surrounding nodes clarify who owns work before and after this compute role."
     ]
     caption: "Actors establish ownership before infrastructure begins."
 
@@ -97,17 +97,16 @@ explainer "SDK Diagram Catalog" {
       sdk.Service(id = "sink", title = "Profile API", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.User(id = "variant-1", title = "Analyst", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.User(id = "variant-2", title = "SRE", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.User(id = "variant-3", title = "Researcher", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.User(id = "variant-1", title = "Analyst", detail = "owns analysis", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
+      sdk.User(id = "variant-2", title = "SRE", detail = "guards production", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.User(id = "variant-3", title = "Researcher", detail = "explores models", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero stagger targets [source, sink] step 100 duration 180
+        after sink trace edge-in duration 220
+        after edge-in trace edge-out duration 220
+        after edge-out stagger targets [variant-2, variant-1, variant-3] step 120 duration 180
       }
     }
   }
@@ -118,8 +117,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Authors benchmark requests. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Client hero is followed by CLI, Runner, and Notebook variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Load client anchors the primary client example.",
+      "The surrounding nodes clarify who owns work before and after this compute role."
     ]
     caption: "Clients initiate work at the system edge."
 
@@ -130,17 +129,16 @@ explainer "SDK Diagram Catalog" {
       sdk.Gateway(id = "sink", title = "Ingress", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Client(id = "variant-1", title = "CLI", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Client(id = "variant-2", title = "Runner", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Client(id = "variant-3", title = "Notebook", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Client(id = "variant-1", title = "CLI", detail = "interactive authoring", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Client(id = "variant-2", title = "Runner", detail = "scheduled execution", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Client(id = "variant-3", title = "Notebook", detail = "exploratory session", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero stagger targets [source, sink] step 100 duration 180
+        after sink trace edge-in duration 220
+        after edge-in trace edge-out duration 220
+        after edge-out stagger targets [variant-2, variant-1, variant-3] step 120 duration 180
       }
     }
   }
@@ -151,8 +149,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Owns request behavior. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Service hero is followed by Chat, Embed, and Rank variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Inference API anchors the primary service example.",
+      "The surrounding nodes clarify who owns work before and after this compute role."
     ]
     caption: "Services name capabilities rather than machines."
 
@@ -163,17 +161,16 @@ explainer "SDK Diagram Catalog" {
       sdk.Database(id = "sink", title = "Model metadata", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Service(id = "variant-1", title = "Chat", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Service(id = "variant-2", title = "Embed", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Service(id = "variant-3", title = "Rank", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Service(id = "variant-1", title = "Chat", detail = "streaming generation", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Service(id = "variant-2", title = "Embed", detail = "vector encoding", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Service(id = "variant-3", title = "Rank", detail = "candidate ordering", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero stagger targets [source, sink] step 100 duration 180
+        after sink trace edge-in duration 220
+        after edge-in trace edge-out duration 220
+        after edge-out stagger targets [variant-2, variant-1, variant-3] step 120 duration 180
       }
     }
   }
@@ -184,8 +181,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Serves model traffic. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Server hero is followed by H100-0, H100-1, and CPU fallback variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "GPU server anchors the primary server example.",
+      "The surrounding nodes clarify who owns work before and after this compute role."
     ]
     caption: "Servers make deployment units explicit."
 
@@ -196,17 +193,16 @@ explainer "SDK Diagram Catalog" {
       sdk.Database(id = "sink", title = "Weights", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Server(id = "variant-1", title = "H100-0", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Server(id = "variant-2", title = "H100-1", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Server(id = "variant-3", title = "CPU fallback", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Server(id = "variant-1", title = "H100-0", detail = "serving traffic", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Server(id = "variant-2", title = "H100-1", detail = "warming weights", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Server(id = "variant-3", title = "CPU fallback", detail = "reduced capacity", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero stagger targets [source, sink] step 100 duration 180
+        after sink trace edge-in duration 220
+        after edge-in trace edge-out duration 220
+        after edge-out stagger targets [variant-2, variant-1, variant-3] step 120 duration 180
       }
     }
   }
@@ -217,8 +213,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Isolates one run. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Process hero is followed by Controller, Cell, and Sidecar variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "aiperf --execute anchors the primary process example.",
+      "The surrounding nodes clarify who owns work before and after this compute role."
     ]
     caption: "Processes show operating-system isolation."
 
@@ -229,17 +225,16 @@ explainer "SDK Diagram Catalog" {
       sdk.Worker(id = "sink", title = "Local worker", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Process(id = "variant-1", title = "Controller", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Process(id = "variant-2", title = "Cell", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Process(id = "variant-3", title = "Sidecar", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Process(id = "variant-1", title = "Controller", detail = "coordinates cells", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Process(id = "variant-2", title = "Cell", detail = "dispatches load", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Process(id = "variant-3", title = "Sidecar", detail = "exports results", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero stagger targets [source, sink] step 100 duration 180
+        after sink trace edge-in duration 220
+        after edge-in trace edge-out duration 220
+        after edge-out stagger targets [variant-2, variant-1, variant-3] step 120 duration 180
       }
     }
   }
@@ -250,8 +245,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Owns a local sink. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Worker hero is followed by Active, Draining, and Idle variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Worker 03 anchors the primary worker example.",
+      "The surrounding nodes clarify who owns work before and after this compute role."
     ]
     caption: "Workers communicate concurrency and local ownership."
 
@@ -262,17 +257,16 @@ explainer "SDK Diagram Catalog" {
       sdk.Endpoint(id = "sink", title = "Model route", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Worker(id = "variant-1", title = "Active", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Worker(id = "variant-2", title = "Draining", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Worker(id = "variant-3", title = "Idle", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Worker(id = "variant-1", title = "Active", detail = "accepting turns", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Worker(id = "variant-2", title = "Draining", detail = "finishing in-flight", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Worker(id = "variant-3", title = "Idle", detail = "awaiting work", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero stagger targets [source, sink] step 100 duration 180
+        after sink trace edge-in duration 220
+        after edge-in trace edge-out duration 220
+        after edge-out stagger targets [variant-2, variant-1, variant-3] step 120 duration 180
       }
     }
   }
@@ -283,8 +277,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Classifies token events. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Function hero is followed by Parse, Measure, and Fold variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Reduce response anchors the primary function example.",
+      "The surrounding nodes clarify who owns work before and after this compute role."
     ]
     caption: "Functions show bounded transformations inside a flow."
 
@@ -295,17 +289,16 @@ explainer "SDK Diagram Catalog" {
       sdk.DataStore(id = "sink", title = "Measurements", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Function(id = "variant-1", title = "Parse", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Function(id = "variant-2", title = "Measure", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Function(id = "variant-3", title = "Fold", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Function(id = "variant-1", title = "Parse", detail = "decodes frames", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Function(id = "variant-2", title = "Measure", detail = "records timings", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Function(id = "variant-3", title = "Fold", detail = "merges metrics", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero stagger targets [source, sink] step 100 duration 180
+        after sink trace edge-in duration 220
+        after edge-in trace edge-out duration 220
+        after edge-out stagger targets [variant-2, variant-1, variant-3] step 120 duration 180
       }
     }
   }
@@ -316,8 +309,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Packages the executor. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Container hero is followed by CLI image, Cell image, and Mock image variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Runtime image anchors the primary container example.",
+      "The surrounding nodes clarify who owns work before and after this compute role."
     ]
     caption: "Containers communicate packaging boundaries."
 
@@ -328,17 +321,16 @@ explainer "SDK Diagram Catalog" {
       sdk.Service(id = "sink", title = "aiperf", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Container(id = "variant-1", title = "CLI image", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Container(id = "variant-2", title = "Cell image", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Container(id = "variant-3", title = "Mock image", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Container(id = "variant-1", title = "CLI image", detail = "minimal runtime", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Container(id = "variant-2", title = "Cell image", detail = "cell deployment", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Container(id = "variant-3", title = "Mock image", detail = "deterministic target", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero stagger targets [source, sink] step 100 duration 180
+        after sink trace edge-in duration 220
+        after edge-in trace edge-out duration 220
+        after edge-out stagger targets [variant-2, variant-1, variant-3] step 120 duration 180
       }
     }
   }
@@ -349,8 +341,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Hosts distributed cells. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Cloud hero is followed by us-west, us-east, and on-prem variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Remote region anchors the primary cloud example.",
+      "The surrounding nodes clarify who owns work before and after this compute role."
     ]
     caption: "Cloud marks remote infrastructure without hiding roles."
 
@@ -361,17 +353,16 @@ explainer "SDK Diagram Catalog" {
       sdk.Cluster(id = "sink", title = "Cell fleet", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Cloud(id = "variant-1", title = "us-west", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Cloud(id = "variant-2", title = "us-east", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Cloud(id = "variant-3", title = "on-prem", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Cloud(id = "variant-1", title = "us-west", detail = "primary region", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Cloud(id = "variant-2", title = "us-east", detail = "replica region", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Cloud(id = "variant-3", title = "on-prem", detail = "hybrid capacity", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero stagger targets [source, sink] step 100 duration 180
+        after sink trace edge-in duration 220
+        after edge-in trace edge-out duration 220
+        after edge-out stagger targets [variant-2, variant-1, variant-3] step 120 duration 180
       }
     }
   }
@@ -382,8 +373,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Storage primitives share a visual grammar while retaining their system-level meaning."
     narration: "Chapter 2 introduces storage before the focused specimens."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Three specimens preview the chapter’s shared visual grammar.",
+      "Focused pages follow in a deliberate teaching sequence."
     ]
     caption: "6 primitives · focused examples follow."
 
@@ -408,8 +399,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Stores benchmark summaries. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Database hero is followed by Runs, Traces, and Index variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Results DB anchors the primary database example.",
+      "The left path writes into storage; the right path reads stored state back out."
     ]
     caption: "Read and write ports preserve storage direction."
 
@@ -418,19 +409,20 @@ explainer "SDK Diagram Catalog" {
       sdk.Service(id = "source", title = "Reporter", detail = "writer", x = 55, y = 125, width = 140, height = 72)
       sdk.Database(id = "hero", title = "Results DB", detail = "stores benchmark summaries", x = 275, y = 105, width = 170, height = 110, strokeRole = theme(accent.green))
       sdk.Client(id = "sink", title = "Dashboard", detail = "reader", x = 515, y = 145, width = 140, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.read"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.write"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Database(id = "variant-1", title = "Runs", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Database(id = "variant-2", title = "Traces", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Database(id = "variant-3", title = "Index", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
+      sdk.Database(id = "variant-1", title = "Runs", detail = "relational summaries", x = 72, y = 286, width = 160, height = 78, strokeRole = theme(ink.secondary))
+      sdk.Database(id = "variant-2", title = "Traces", detail = "append-only events", x = 270, y = 306, width = 160, height = 78, strokeRole = theme(accent.tertiary))
+      sdk.Database(id = "variant-3", title = "Index", detail = "search metadata", x = 468, y = 286, width = 160, height = 78, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
         after hero reveal source duration 180
-        after source trace edge-in duration 220
+        after source trace edge-in duration 240
         after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after sink trace edge-out duration 240
+        after edge-out reveal variant-1 duration 160
+        after variant-1 stagger targets [variant-2, variant-3] step 130 duration 170
       }
     }
   }
@@ -441,8 +433,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Holds folded observations. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The DataStore hero is followed by Exact, Sketch, and Window variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Metric store anchors the primary dataStore example.",
+      "The left path writes into storage; the right path reads stored state back out."
     ]
     caption: "Data stores describe logical persistence."
 
@@ -451,19 +443,20 @@ explainer "SDK Diagram Catalog" {
       sdk.Worker(id = "source", title = "Metric fold", detail = "writer", x = 55, y = 125, width = 140, height = 72)
       sdk.DataStore(id = "hero", title = "Metric store", detail = "holds folded observations", x = 275, y = 105, width = 170, height = 110, strokeRole = theme(accent.green))
       sdk.Service(id = "sink", title = "Report builder", detail = "reader", x = 515, y = 145, width = 140, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.read"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.write"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.DataStore(id = "variant-1", title = "Exact", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.DataStore(id = "variant-2", title = "Sketch", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.DataStore(id = "variant-3", title = "Window", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
+      sdk.DataStore(id = "variant-1", title = "Exact", detail = "per-request records", x = 72, y = 286, width = 160, height = 78, strokeRole = theme(ink.secondary))
+      sdk.DataStore(id = "variant-2", title = "Sketch", detail = "mergeable digest", x = 270, y = 306, width = 160, height = 78, strokeRole = theme(accent.tertiary))
+      sdk.DataStore(id = "variant-3", title = "Window", detail = "steady-state slice", x = 468, y = 286, width = 160, height = 78, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
         after hero reveal source duration 180
-        after source trace edge-in duration 220
+        after source trace edge-in duration 240
         after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after sink trace edge-out duration 240
+        after edge-out reveal variant-1 duration 160
+        after variant-1 stagger targets [variant-2, variant-3] step 130 duration 170
       }
     }
   }
@@ -474,8 +467,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Reuses warm prefixes. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Cache hero is followed by Hot, Warm, and Cold variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Prompt cache anchors the primary cache example.",
+      "The left path writes into storage; the right path reads stored state back out."
     ]
     caption: "Caches expose reuse and latency-sensitive state."
 
@@ -484,19 +477,20 @@ explainer "SDK Diagram Catalog" {
       sdk.Service(id = "source", title = "Tokenizer", detail = "writer", x = 55, y = 125, width = 140, height = 72)
       sdk.Cache(id = "hero", title = "Prompt cache", detail = "reuses warm prefixes", x = 275, y = 105, width = 170, height = 110, strokeRole = theme(accent.green))
       sdk.Worker(id = "sink", title = "Request builder", detail = "reader", x = 515, y = 145, width = 140, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.read"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.write"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Cache(id = "variant-1", title = "Hot", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Cache(id = "variant-2", title = "Warm", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Cache(id = "variant-3", title = "Cold", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
+      sdk.Cache(id = "variant-1", title = "Hot", detail = "resident prefix", x = 72, y = 286, width = 160, height = 78, strokeRole = theme(ink.secondary))
+      sdk.Cache(id = "variant-2", title = "Warm", detail = "shared prefix", x = 270, y = 306, width = 160, height = 78, strokeRole = theme(accent.tertiary))
+      sdk.Cache(id = "variant-3", title = "Cold", detail = "cache miss", x = 468, y = 286, width = 160, height = 78, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
         after hero reveal source duration 180
-        after source trace edge-in duration 220
+        after source trace edge-in duration 240
         after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after sink trace edge-out duration 240
+        after edge-out reveal variant-1 duration 160
+        after variant-1 stagger targets [variant-2, variant-3] step 130 duration 170
       }
     }
   }
@@ -507,8 +501,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Captures authored intent. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The File hero is followed by Config, Trace, and Report variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "config.yaml anchors the primary file example.",
+      "The left path writes into storage; the right path reads stored state back out."
     ]
     caption: "Files represent discrete lifecycle artifacts."
 
@@ -517,19 +511,20 @@ explainer "SDK Diagram Catalog" {
       sdk.User(id = "source", title = "Author", detail = "writer", x = 55, y = 125, width = 140, height = 72)
       sdk.File(id = "hero", title = "config.yaml", detail = "captures authored intent", x = 275, y = 105, width = 170, height = 110, strokeRole = theme(accent.green))
       sdk.ProcessStep(id = "sink", title = "Validate", detail = "reader", x = 515, y = 145, width = 140, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.read"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.write"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.File(id = "variant-1", title = "Config", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.File(id = "variant-2", title = "Trace", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.File(id = "variant-3", title = "Report", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
+      sdk.File(id = "variant-1", title = "Config", detail = "authored YAML", x = 72, y = 286, width = 160, height = 78, strokeRole = theme(ink.secondary))
+      sdk.File(id = "variant-2", title = "Trace", detail = "captured JSONL", x = 270, y = 306, width = 160, height = 78, strokeRole = theme(accent.tertiary))
+      sdk.File(id = "variant-3", title = "Report", detail = "generated JSON", x = 468, y = 286, width = 160, height = 78, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
         after hero reveal source duration 180
-        after source trace edge-in duration 220
+        after source trace edge-in duration 240
         after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after sink trace edge-out duration 240
+        after edge-out reveal variant-1 duration 160
+        after variant-1 stagger targets [variant-2, variant-3] step 130 duration 170
       }
     }
   }
@@ -540,8 +535,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Retains large outputs. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The ObjectStore hero is followed by Records, Media, and Logs variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Artifact bucket anchors the primary objectStore example.",
+      "The left path writes into storage; the right path reads stored state back out."
     ]
     caption: "Object stores signal durable blob storage."
 
@@ -550,19 +545,20 @@ explainer "SDK Diagram Catalog" {
       sdk.Service(id = "source", title = "Exporter", detail = "writer", x = 55, y = 125, width = 140, height = 72)
       sdk.ObjectStore(id = "hero", title = "Artifact bucket", detail = "retains large outputs", x = 275, y = 105, width = 170, height = 110, strokeRole = theme(accent.green))
       sdk.Client(id = "sink", title = "Analysis job", detail = "reader", x = 515, y = 145, width = 140, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.read"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.write"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.ObjectStore(id = "variant-1", title = "Records", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.ObjectStore(id = "variant-2", title = "Media", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.ObjectStore(id = "variant-3", title = "Logs", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
+      sdk.ObjectStore(id = "variant-1", title = "Records", detail = "columnar artifacts", x = 72, y = 286, width = 160, height = 78, strokeRole = theme(ink.secondary))
+      sdk.ObjectStore(id = "variant-2", title = "Media", detail = "request payloads", x = 270, y = 306, width = 160, height = 78, strokeRole = theme(accent.tertiary))
+      sdk.ObjectStore(id = "variant-3", title = "Logs", detail = "compressed diagnostics", x = 468, y = 286, width = 160, height = 78, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
         after hero reveal source duration 180
-        after source trace edge-in duration 220
+        after source trace edge-in duration 240
         after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after sink trace edge-out duration 240
+        after edge-out reveal variant-1 duration 160
+        after variant-1 stagger targets [variant-2, variant-3] step 130 duration 170
       }
     }
   }
@@ -573,8 +569,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Mounts local corpus data. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Volume hero is followed by Read-only, Scratch, and Shared variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Dataset volume anchors the primary volume example.",
+      "The left path writes into storage; the right path reads stored state back out."
     ]
     caption: "Volumes show storage attached to compute."
 
@@ -583,19 +579,20 @@ explainer "SDK Diagram Catalog" {
       sdk.Container(id = "source", title = "Cell image", detail = "writer", x = 55, y = 125, width = 140, height = 72)
       sdk.Volume(id = "hero", title = "Dataset volume", detail = "mounts local corpus data", x = 275, y = 105, width = 170, height = 110, strokeRole = theme(accent.green))
       sdk.Worker(id = "sink", title = "Loader", detail = "reader", x = 515, y = 145, width = 140, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.read"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.write"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Volume(id = "variant-1", title = "Read-only", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Volume(id = "variant-2", title = "Scratch", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Volume(id = "variant-3", title = "Shared", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
+      sdk.Volume(id = "variant-1", title = "Read-only", detail = "immutable corpus", x = 72, y = 286, width = 160, height = 78, strokeRole = theme(ink.secondary))
+      sdk.Volume(id = "variant-2", title = "Scratch", detail = "ephemeral workspace", x = 270, y = 306, width = 160, height = 78, strokeRole = theme(accent.tertiary))
+      sdk.Volume(id = "variant-3", title = "Shared", detail = "multi-cell results", x = 468, y = 286, width = 160, height = 78, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
         after hero reveal source duration 180
-        after source trace edge-in duration 220
+        after source trace edge-in duration 240
         after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after sink trace edge-out duration 240
+        after edge-out reveal variant-1 duration 160
+        after variant-1 stagger targets [variant-2, variant-3] step 130 duration 170
       }
     }
   }
@@ -606,8 +603,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Messaging and network primitives share a visual grammar while retaining their system-level meaning."
     narration: "Chapter 3 introduces messaging and network before the focused specimens."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Three specimens preview the chapter’s shared visual grammar.",
+      "Focused pages follow in a deliberate teaching sequence."
     ]
     caption: "8 primitives · focused examples follow."
 
@@ -632,8 +629,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Buffers admitted work. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Queue hero is followed by Pending, Priority, and Drain variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Ready turns anchors the primary queue example.",
+      "Directional semantic ports distinguish ingress from delivery without generated IDs."
     ]
     caption: "Producer and consumer ports expose queue direction."
 
@@ -644,17 +641,17 @@ explainer "SDK Diagram Catalog" {
       sdk.Worker(id = "sink", title = "Dispatcher", detail = "downstream", x = 515, y = 105, width = 140, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.producer"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.consumer"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Queue(id = "variant-1", title = "Pending", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Queue(id = "variant-2", title = "Priority", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Queue(id = "variant-3", title = "Drain", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Queue(id = "variant-1", title = "Pending", detail = "twelve ready turns", x = 52, y = 278, width = 145, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Queue(id = "variant-2", title = "Priority", detail = "warmup first", x = 278, y = 304, width = 145, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Queue(id = "variant-3", title = "Drain", detail = "rejecting new work", x = 504, y = 278, width = 145, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero reveal source duration 160
+        after source trace edge-in duration 260
+        after edge-in reveal sink duration 160
+        after sink trace edge-out duration 260
+        after edge-out stagger targets [variant-1, variant-3, variant-2] step 110 duration 180
       }
     }
   }
@@ -665,8 +662,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Fans out observations. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Topic hero is followed by Usage, Tokens, and Errors variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Token events anchors the primary topic example.",
+      "Directional semantic ports distinguish ingress from delivery without generated IDs."
     ]
     caption: "Topics model named publish-subscribe channels."
 
@@ -677,17 +674,17 @@ explainer "SDK Diagram Catalog" {
       sdk.Worker(id = "sink", title = "Collector", detail = "downstream", x = 515, y = 105, width = 140, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.producer"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.consumer"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Topic(id = "variant-1", title = "Usage", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Topic(id = "variant-2", title = "Tokens", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Topic(id = "variant-3", title = "Errors", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Topic(id = "variant-1", title = "Usage", detail = "terminal accounting", x = 52, y = 278, width = 145, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Topic(id = "variant-2", title = "Tokens", detail = "incremental output", x = 278, y = 304, width = 145, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Topic(id = "variant-3", title = "Errors", detail = "classified failures", x = 504, y = 278, width = 145, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero reveal source duration 160
+        after source trace edge-in duration 260
+        after edge-in reveal sink duration 160
+        after sink trace edge-out duration 260
+        after edge-out stagger targets [variant-1, variant-3, variant-2] step 110 duration 180
       }
     }
   }
@@ -698,8 +695,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Preserves event ordering. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Stream hero is followed by Open, Backpressured, and Complete variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "SSE byte stream anchors the primary stream example.",
+      "Directional semantic ports distinguish ingress from delivery without generated IDs."
     ]
     caption: "Streams emphasize ordered incremental delivery."
 
@@ -710,17 +707,17 @@ explainer "SDK Diagram Catalog" {
       sdk.Function(id = "sink", title = "Reducer", detail = "downstream", x = 515, y = 105, width = 140, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.producer"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.consumer"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Stream(id = "variant-1", title = "Open", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Stream(id = "variant-2", title = "Backpressured", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Stream(id = "variant-3", title = "Complete", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Stream(id = "variant-1", title = "Open", detail = "receiving bytes", x = 52, y = 278, width = 145, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Stream(id = "variant-2", title = "Backpressured", detail = "consumer-limited", x = 278, y = 304, width = 145, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Stream(id = "variant-3", title = "Complete", detail = "terminal frame seen", x = 504, y = 278, width = 145, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero reveal source duration 160
+        after source trace edge-in duration 260
+        after edge-in reveal sink duration 160
+        after sink trace edge-out duration 260
+        after edge-out stagger targets [variant-1, variant-3, variant-2] step 110 duration 180
       }
     }
   }
@@ -731,8 +728,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Decouples lifecycle observers. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The EventBus hero is followed by Phase, Request, and Telemetry variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Runtime events anchors the primary eventBus example.",
+      "Directional semantic ports distinguish ingress from delivery without generated IDs."
     ]
     caption: "Event buses connect many producers and handlers."
 
@@ -743,17 +740,17 @@ explainer "SDK Diagram Catalog" {
       sdk.Service(id = "sink", title = "Exporters", detail = "downstream", x = 515, y = 105, width = 140, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.producer"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.consumer"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.EventBus(id = "variant-1", title = "Phase", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.EventBus(id = "variant-2", title = "Request", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.EventBus(id = "variant-3", title = "Telemetry", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.EventBus(id = "variant-1", title = "Phase", detail = "lifecycle changes", x = 52, y = 278, width = 145, height = 72, strokeRole = theme(ink.secondary))
+      sdk.EventBus(id = "variant-2", title = "Request", detail = "request completion", x = 278, y = 304, width = 145, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.EventBus(id = "variant-3", title = "Telemetry", detail = "side-channel samples", x = 504, y = 278, width = 145, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero reveal source duration 160
+        after source trace edge-in duration 260
+        after edge-in reveal sink duration 160
+        after sink trace edge-out duration 260
+        after edge-out stagger targets [variant-1, variant-3, variant-2] step 110 duration 180
       }
     }
   }
@@ -764,8 +761,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Normalizes external ingress. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Gateway hero is followed by Public, Private, and Local variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "API gateway anchors the primary gateway example.",
+      "Directional semantic ports distinguish ingress from delivery without generated IDs."
     ]
     caption: "Inbound and outbound ports preserve gateway direction."
 
@@ -776,17 +773,17 @@ explainer "SDK Diagram Catalog" {
       sdk.Service(id = "sink", title = "Inference API", detail = "downstream", x = 515, y = 105, width = 140, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.inbound"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.outbound"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Gateway(id = "variant-1", title = "Public", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Gateway(id = "variant-2", title = "Private", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Gateway(id = "variant-3", title = "Local", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Gateway(id = "variant-1", title = "Public", detail = "TLS ingress", x = 52, y = 278, width = 145, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Gateway(id = "variant-2", title = "Private", detail = "VPC ingress", x = 278, y = 304, width = 145, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Gateway(id = "variant-3", title = "Local", detail = "Unix socket", x = 504, y = 278, width = 145, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero reveal source duration 160
+        after source trace edge-in duration 260
+        after edge-in reveal sink duration 160
+        after sink trace edge-out duration 260
+        after edge-out stagger targets [variant-1, variant-3, variant-2] step 110 duration 180
       }
     }
   }
@@ -797,8 +794,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Binds protocol to a target. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Endpoint hero is followed by HTTP, gRPC, and Dry run variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Model endpoint anchors the primary endpoint example.",
+      "Directional semantic ports distinguish ingress from delivery without generated IDs."
     ]
     caption: "Endpoints represent addressable protocol bindings."
 
@@ -809,17 +806,17 @@ explainer "SDK Diagram Catalog" {
       sdk.Server(id = "sink", title = "GPU backend", detail = "downstream", x = 515, y = 105, width = 140, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.inbound"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.outbound"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Endpoint(id = "variant-1", title = "HTTP", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Endpoint(id = "variant-2", title = "gRPC", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Endpoint(id = "variant-3", title = "Dry run", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Endpoint(id = "variant-1", title = "HTTP", detail = "OpenAI-compatible", x = 52, y = 278, width = 145, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Endpoint(id = "variant-2", title = "gRPC", detail = "KServe binding", x = 278, y = 304, width = 145, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Endpoint(id = "variant-3", title = "Dry run", detail = "socket-free transport", x = 504, y = 278, width = 145, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero reveal source duration 160
+        after source trace edge-in duration 260
+        after edge-in reveal sink duration 160
+        after sink trace edge-out duration 260
+        after edge-out stagger targets [variant-1, variant-3, variant-2] step 110 duration 180
       }
     }
   }
@@ -830,8 +827,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Spreads requests across replicas. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The LoadBalancer hero is followed by Round robin, Least load, and Sticky variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Traffic balancer anchors the primary loadBalancer example.",
+      "Directional semantic ports distinguish ingress from delivery without generated IDs."
     ]
     caption: "Load balancers expose distribution policy."
 
@@ -842,17 +839,17 @@ explainer "SDK Diagram Catalog" {
       sdk.Server(id = "sink", title = "Replica pool", detail = "downstream", x = 515, y = 105, width = 140, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.inbound"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.outbound"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.LoadBalancer(id = "variant-1", title = "Round robin", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.LoadBalancer(id = "variant-2", title = "Least load", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.LoadBalancer(id = "variant-3", title = "Sticky", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.LoadBalancer(id = "variant-1", title = "Round robin", detail = "even distribution", x = 52, y = 278, width = 145, height = 72, strokeRole = theme(ink.secondary))
+      sdk.LoadBalancer(id = "variant-2", title = "Least load", detail = "adaptive distribution", x = 278, y = 304, width = 145, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.LoadBalancer(id = "variant-3", title = "Sticky", detail = "session affinity", x = 504, y = 278, width = 145, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero reveal source duration 160
+        after source trace edge-in duration 260
+        after edge-in reveal sink duration 160
+        after sink trace edge-out duration 260
+        after edge-out stagger targets [variant-1, variant-3, variant-2] step 110 duration 180
       }
     }
   }
@@ -863,8 +860,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Admits benchmark traffic. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Firewall hero is followed by Allow, Deny, and Audit variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Network policy anchors the primary firewall example.",
+      "Directional semantic ports distinguish ingress from delivery without generated IDs."
     ]
     caption: "Firewalls mark policy checkpoints on paths."
 
@@ -875,17 +872,17 @@ explainer "SDK Diagram Catalog" {
       sdk.Gateway(id = "sink", title = "Protected ingress", detail = "downstream", x = 515, y = 105, width = 140, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.inbound"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.outbound"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Firewall(id = "variant-1", title = "Allow", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Firewall(id = "variant-2", title = "Deny", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Firewall(id = "variant-3", title = "Audit", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Firewall(id = "variant-1", title = "Allow", detail = "port 443 admitted", x = 52, y = 278, width = 145, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Firewall(id = "variant-2", title = "Deny", detail = "public ingress blocked", x = 278, y = 304, width = 145, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Firewall(id = "variant-3", title = "Audit", detail = "decisions recorded", x = 504, y = 278, width = 145, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after hero reveal source duration 160
+        after source trace edge-in duration 260
+        after edge-in reveal sink duration 160
+        after sink trace edge-out duration 260
+        after edge-out stagger targets [variant-1, variant-3, variant-2] step 110 duration 180
       }
     }
   }
@@ -896,8 +893,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Control flow primitives share a visual grammar while retaining their system-level meaning."
     narration: "Chapter 4 introduces control flow before the focused specimens."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Three specimens preview the chapter’s shared visual grammar.",
+      "Focused pages follow in a deliberate teaching sequence."
     ]
     caption: "8 primitives · focused examples follow."
 
@@ -922,8 +919,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Opens the lifecycle. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Start hero is followed by Manual, Scheduled, and Remote variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Run accepted anchors the primary start example.",
+      "The surrounding actions make entry, outcome, and continuation explicit."
     ]
     caption: "Start nodes identify one process entry."
 
@@ -934,17 +931,17 @@ explainer "SDK Diagram Catalog" {
       sdk.ProcessStep(id = "sink", title = "Validate config", detail = "next", x = 525, y = 140, width = 135, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Start(id = "variant-1", title = "Manual", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Start(id = "variant-2", title = "Scheduled", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Start(id = "variant-3", title = "Remote", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Start(id = "variant-1", title = "Manual", detail = "operator initiated", x = 88, y = 292, width = 150, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Start(id = "variant-2", title = "Scheduled", detail = "CI initiated", x = 275, y = 292, width = 150, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Start(id = "variant-3", title = "Remote", detail = "controller initiated", x = 462, y = 292, width = 150, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
+        after hero reveal source duration 160
         after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
+        after edge-in reveal sink duration 160
         after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after edge-out stagger targets [variant-1, variant-2, variant-3] step 140 duration 180
       }
     }
   }
@@ -955,8 +952,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Closes the lifecycle. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The End hero is followed by Success, Cancelled, and Failed variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Artifacts committed anchors the primary end example.",
+      "The surrounding actions make entry, outcome, and continuation explicit."
     ]
     caption: "End nodes make terminal outcomes explicit."
 
@@ -967,17 +964,17 @@ explainer "SDK Diagram Catalog" {
       sdk.User(id = "sink", title = "Result owner", detail = "next", x = 525, y = 140, width = 135, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.End(id = "variant-1", title = "Success", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.End(id = "variant-2", title = "Cancelled", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.End(id = "variant-3", title = "Failed", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.End(id = "variant-1", title = "Success", detail = "artifacts complete", x = 88, y = 292, width = 150, height = 72, strokeRole = theme(ink.secondary))
+      sdk.End(id = "variant-2", title = "Cancelled", detail = "drain completed", x = 275, y = 292, width = 150, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.End(id = "variant-3", title = "Failed", detail = "diagnostic terminal", x = 462, y = 292, width = 150, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
+        after hero reveal source duration 160
         after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
+        after edge-in reveal sink duration 160
         after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after edge-out stagger targets [variant-1, variant-2, variant-3] step 140 duration 180
       }
     }
   }
@@ -988,8 +985,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Performs one bounded action. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The ProcessStep hero is followed by Validate, Prepare, and Execute variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Prepare endpoint anchors the primary processStep example.",
+      "The surrounding actions make entry, outcome, and continuation explicit."
     ]
     caption: "Process steps turn lifecycles into readable actions."
 
@@ -1000,17 +997,17 @@ explainer "SDK Diagram Catalog" {
       sdk.Decision(id = "sink", title = "Ready?", detail = "next", x = 525, y = 140, width = 135, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.ProcessStep(id = "variant-1", title = "Validate", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.ProcessStep(id = "variant-2", title = "Prepare", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.ProcessStep(id = "variant-3", title = "Execute", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.ProcessStep(id = "variant-1", title = "Validate", detail = "rejects unknowns", x = 88, y = 292, width = 150, height = 72, strokeRole = theme(ink.secondary))
+      sdk.ProcessStep(id = "variant-2", title = "Prepare", detail = "builds local state", x = 275, y = 292, width = 150, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.ProcessStep(id = "variant-3", title = "Execute", detail = "dispatches measured work", x = 462, y = 292, width = 150, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
+        after hero reveal source duration 160
         after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
+        after edge-in reveal sink duration 160
         after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after edge-out stagger targets [variant-1, variant-2, variant-3] step 140 duration 180
       }
     }
   }
@@ -1021,8 +1018,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Branches on readiness. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Decision hero is followed by Yes, No, and Timeout variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Target healthy? anchors the primary decision example.",
+      "The surrounding actions make entry, outcome, and continuation explicit."
     ]
     caption: "Named branch ports survive geometry changes."
 
@@ -1033,17 +1030,17 @@ explainer "SDK Diagram Catalog" {
       sdk.Service(id = "sink", title = "Dispatch", detail = "next", x = 525, y = 140, width = 135, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.branch.yes"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Decision(id = "variant-1", title = "Yes", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Decision(id = "variant-2", title = "No", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Decision(id = "variant-3", title = "Timeout", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Decision(id = "variant-1", title = "Yes", detail = "continue branch", x = 88, y = 292, width = 150, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Decision(id = "variant-2", title = "No", detail = "recovery branch", x = 275, y = 292, width = 150, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Decision(id = "variant-3", title = "Timeout", detail = "terminal branch", x = 462, y = 292, width = 150, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
+        after hero reveal source duration 160
         after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
+        after edge-in reveal sink duration 160
         after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after edge-out stagger targets [variant-1, variant-2, variant-3] step 140 duration 180
       }
     }
   }
@@ -1054,8 +1051,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Rejoins compatible branches. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Merge hero is followed by Records, Metrics, and Cells variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Join outcomes anchors the primary merge example.",
+      "The surrounding actions make entry, outcome, and continuation explicit."
     ]
     caption: "Merge nodes show where divergent paths converge."
 
@@ -1066,17 +1063,17 @@ explainer "SDK Diagram Catalog" {
       sdk.ProcessStep(id = "sink", title = "Export", detail = "next", x = 525, y = 140, width = 135, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Merge(id = "variant-1", title = "Records", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Merge(id = "variant-2", title = "Metrics", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Merge(id = "variant-3", title = "Cells", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Merge(id = "variant-1", title = "Records", detail = "exact record join", x = 88, y = 292, width = 150, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Merge(id = "variant-2", title = "Metrics", detail = "folded store join", x = 275, y = 292, width = 150, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Merge(id = "variant-3", title = "Cells", detail = "partition join", x = 462, y = 292, width = 150, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
+        after hero reveal source duration 160
         after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
+        after edge-in reveal sink duration 160
         after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after edge-out stagger targets [variant-1, variant-2, variant-3] step 140 duration 180
       }
     }
   }
@@ -1087,8 +1084,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Waits on the injected clock. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Delay hero is followed by 100 ms, 200 ms, and Sim clock variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Linear backoff anchors the primary delay example.",
+      "The surrounding actions make entry, outcome, and continuation explicit."
     ]
     caption: "Delays make intentional waiting visible."
 
@@ -1096,20 +1093,20 @@ explainer "SDK Diagram Catalog" {
       sdk.Header(id = "header", title = "DELAY", caption = "Delays make intentional waiting visible.", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary))
       sdk.Decision(id = "source", title = "Retry needed", detail = "previous", x = 38, y = 140, width = 135, height = 72)
       sdk.Delay(id = "hero", title = "Linear backoff", detail = "waits on the injected clock", x = 270, y = 125, width = 170, height = 100, strokeRole = theme(accent.green))
-      sdk.Retry(id = "sink", title = "Reconnect", detail = "next", x = 525, y = 140, width = 135, height = 72)
+      sdk.ProcessStep(id = "sink", title = "Reconnect", detail = "next", x = 540, y = 130, width = 140, height = 82)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Delay(id = "variant-1", title = "100 ms", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Delay(id = "variant-2", title = "200 ms", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Delay(id = "variant-3", title = "Sim clock", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Delay(id = "variant-1", title = "100 ms", detail = "first backoff", x = 88, y = 292, width = 150, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Delay(id = "variant-2", title = "200 ms", detail = "second backoff", x = 275, y = 292, width = 150, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Delay(id = "variant-3", title = "Sim clock", detail = "virtual-time wait", x = 462, y = 292, width = 150, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
+        after hero reveal source duration 160
         after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
+        after edge-in reveal sink duration 160
         after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after edge-out stagger targets [variant-1, variant-2, variant-3] step 140 duration 180
       }
     }
   }
@@ -1120,8 +1117,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Loops after pre-send failure. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Retry hero is followed by Attempt 1, Attempt 2, and Exhausted variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Reconnect anchors the primary retry example.",
+      "The surrounding actions make entry, outcome, and continuation explicit."
     ]
     caption: "Retry exposes a semantic recovery back port."
 
@@ -1132,17 +1129,20 @@ explainer "SDK Diagram Catalog" {
       sdk.Endpoint(id = "sink", title = "Dial target", detail = "next", x = 525, y = 140, width = 135, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Retry(id = "variant-1", title = "Attempt 1", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Retry(id = "variant-2", title = "Attempt 2", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Retry(id = "variant-3", title = "Exhausted", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Edge(id = "edge-back", mode = "route", from = ref("hero.back"), to = ref("source.input"), style = { stroke: theme(accent.warning), strokeWidth: 2.0, fill: "none" })
+      sdk.ProcessStep(id = "variant-1", title = "Attempt 1", detail = "immediate dial", x = 40, y = 280, width = 140, height = 82, strokeRole = theme(ink.secondary))
+      sdk.Delay(id = "variant-2", title = "Attempt 2", detail = "clock-delayed dial", x = 280, y = 280, width = 140, height = 82, strokeRole = theme(accent.tertiary))
+      sdk.End(id = "variant-3", title = "Exhausted", detail = "budget exhausted", x = 520, y = 280, width = 140, height = 82, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
+        after hero reveal source duration 160
         after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
+        after edge-in reveal sink duration 160
         after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after edge-out trace edge-back duration 240
+        after edge-back trace hero__back-edge duration 180
+        after hero__back-edge stagger targets [variant-1, variant-2, variant-3] step 110 duration 170
       }
     }
   }
@@ -1153,8 +1153,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Repeats until dialogue ends. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Loop hero is followed by Turn 1, Turn N, and Stop variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Conversation turns anchors the primary loop example.",
+      "The surrounding actions make entry, outcome, and continuation explicit."
     ]
     caption: "Loop exposes repeated work and its return edge."
 
@@ -1165,17 +1165,20 @@ explainer "SDK Diagram Catalog" {
       sdk.ProcessStep(id = "sink", title = "Dispatch turn", detail = "next", x = 525, y = 140, width = 135, height = 72)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Loop(id = "variant-1", title = "Turn 1", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Loop(id = "variant-2", title = "Turn N", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Loop(id = "variant-3", title = "Stop", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Edge(id = "edge-back", mode = "route", from = ref("hero.back"), to = ref("source.input"), style = { stroke: theme(accent.warning), strokeWidth: 2.0, fill: "none" })
+      sdk.Start(id = "variant-1", title = "Turn 1", detail = "initial prompt", x = 40, y = 280, width = 140, height = 82, strokeRole = theme(ink.secondary))
+      sdk.ProcessStep(id = "variant-2", title = "Turn N", detail = "history-bearing turn", x = 280, y = 280, width = 140, height = 82, strokeRole = theme(accent.tertiary))
+      sdk.End(id = "variant-3", title = "Stop", detail = "conversation complete", x = 520, y = 280, width = 140, height = 82, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
+        after hero reveal source duration 160
         after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
+        after edge-in reveal sink duration 160
         after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after edge-out trace edge-back duration 240
+        after edge-back trace hero__back-edge duration 180
+        after hero__back-edge stagger targets [variant-1, variant-2, variant-3] step 110 duration 170
       }
     }
   }
@@ -1186,8 +1189,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Boundaries and grouping primitives share a visual grammar while retaining their system-level meaning."
     narration: "Chapter 5 introduces boundaries and grouping before the focused specimens."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Three specimens preview the chapter’s shared visual grammar.",
+      "Focused pages follow in a deliberate teaching sequence."
     ]
     caption: "4 primitives · focused examples follow."
 
@@ -1212,8 +1215,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Groups one runtime role. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Boundary hero is followed by Runtime, Transport, and Metrics variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Execution boundary anchors the primary boundary example.",
+      "Nested members establish scope while entry and exit remain connectable."
     ]
     caption: "Boundaries group responsibility with entry and exit ports."
 
@@ -1229,17 +1232,16 @@ explainer "SDK Diagram Catalog" {
       sdk.Service(id = "sink", title = "Artifacts", detail = "exit", x = 542, y = 150, width = 130, height = 68)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.entry"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.exit"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Boundary(id = "variant-1", title = "Runtime", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Boundary(id = "variant-2", title = "Transport", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Boundary(id = "variant-3", title = "Metrics", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Boundary(id = "variant-1", title = "Runtime", detail = "process responsibility", x = 44, y = 300, width = 170, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Boundary(id = "variant-2", title = "Transport", detail = "wire responsibility", x = 265, y = 278, width = 170, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Boundary(id = "variant-3", title = "Metrics", detail = "measurement responsibility", x = 486, y = 300, width = 170, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
-        after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after header reveal hero duration 280
+        after hero stagger targets [source, sink] step 140 duration 180
+        after sink trace edge-in duration 240
+        after edge-in trace edge-out duration 240
+        after edge-out stagger targets [variant-2, variant-1, variant-3] step 130 duration 180
       }
     }
   }
@@ -1250,8 +1252,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Contains colocated replicas. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Zone hero is followed by Zone A, Zone B, and Zone C variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Availability zone anchors the primary zone example.",
+      "Nested members establish scope while entry and exit remain connectable."
     ]
     caption: "Zones communicate placement and failure domains."
 
@@ -1267,17 +1269,16 @@ explainer "SDK Diagram Catalog" {
       sdk.LoadBalancer(id = "sink", title = "Replica set", detail = "exit", x = 542, y = 150, width = 130, height = 68)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.entry"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.exit"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Zone(id = "variant-1", title = "Zone A", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Zone(id = "variant-2", title = "Zone B", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Zone(id = "variant-3", title = "Zone C", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Zone(id = "variant-1", title = "Zone A", detail = "serving traffic", x = 44, y = 300, width = 170, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Zone(id = "variant-2", title = "Zone B", detail = "failover reserve", x = 265, y = 278, width = 170, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Zone(id = "variant-3", title = "Zone C", detail = "elastic capacity", x = 486, y = 300, width = 170, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
-        after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after header reveal hero duration 280
+        after hero stagger targets [source, sink] step 140 duration 180
+        after sink trace edge-in duration 240
+        after edge-in trace edge-out duration 240
+        after edge-out stagger targets [variant-2, variant-1, variant-3] step 130 duration 180
       }
     }
   }
@@ -1288,8 +1289,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Groups distributed workers. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Cluster hero is followed by Local, Remote, and SLURM variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Cell cluster anchors the primary cluster example.",
+      "Nested members establish scope while entry and exit remain connectable."
     ]
     caption: "Clusters show members managed as one fleet."
 
@@ -1305,17 +1306,16 @@ explainer "SDK Diagram Catalog" {
       sdk.DataStore(id = "sink", title = "Merged results", detail = "exit", x = 542, y = 150, width = 130, height = 68)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.entry"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.exit"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Cluster(id = "variant-1", title = "Local", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Cluster(id = "variant-2", title = "Remote", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Cluster(id = "variant-3", title = "SLURM", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Cluster(id = "variant-1", title = "Local", detail = "four local workers", x = 44, y = 300, width = 170, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Cluster(id = "variant-2", title = "Remote", detail = "eight remote cells", x = 265, y = 278, width = 170, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Cluster(id = "variant-3", title = "SLURM", detail = "scheduled allocation", x = 486, y = 300, width = 170, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
-        after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after header reveal hero duration 280
+        after hero stagger targets [source, sink] step 140 duration 180
+        after sink trace edge-in duration 240
+        after edge-in trace edge-out duration 240
+        after edge-out stagger targets [variant-2, variant-1, variant-3] step 130 duration 180
       }
     }
   }
@@ -1326,8 +1326,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Separates credentials and traffic. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The TrustBoundary hero is followed by Public, Service, and Data variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Tenant trust boundary anchors the primary trustBoundary example.",
+      "Nested members establish scope while entry and exit remain connectable."
     ]
     caption: "Dashed trust chrome makes security scope explicit."
 
@@ -1343,17 +1343,16 @@ explainer "SDK Diagram Catalog" {
       sdk.Service(id = "sink", title = "Private runtime", detail = "exit", x = 542, y = 150, width = 130, height = 68)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.entry"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.exit"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.TrustBoundary(id = "variant-1", title = "Public", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.TrustBoundary(id = "variant-2", title = "Service", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.TrustBoundary(id = "variant-3", title = "Data", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.TrustBoundary(id = "variant-1", title = "Public", detail = "untrusted ingress", x = 44, y = 300, width = 170, height = 72, strokeRole = theme(ink.secondary))
+      sdk.TrustBoundary(id = "variant-2", title = "Service", detail = "authenticated service", x = 265, y = 278, width = 170, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.TrustBoundary(id = "variant-3", title = "Data", detail = "restricted records", x = 486, y = 300, width = 170, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
-        after header reveal hero duration 260
-        after hero reveal source duration 180
-        after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
-        after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
+        after header reveal hero duration 280
+        after hero stagger targets [source, sink] step 140 duration 180
+        after sink trace edge-in duration 240
+        after edge-in trace edge-out duration 240
+        after edge-out stagger targets [variant-2, variant-1, variant-3] step 130 duration 180
       }
     }
   }
@@ -1364,8 +1363,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Symbols and annotations primitives share a visual grammar while retaining their system-level meaning."
     narration: "Chapter 6 introduces symbols and annotations before the focused specimens."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Three specimens preview the chapter’s shared visual grammar.",
+      "Focused pages follow in a deliberate teaching sequence."
     ]
     caption: "6 primitives · focused examples follow."
 
@@ -1390,8 +1389,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Marks a durable artifact. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Document hero is followed by Config, Report, and Trace variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Run manifest anchors the primary document example.",
+      "The compact symbol annotates a concrete relationship without taking over the topology."
     ]
     caption: "Documents add artifact meaning without becoming stores."
 
@@ -1402,17 +1401,17 @@ explainer "SDK Diagram Catalog" {
       sdk.ObjectStore(id = "sink", title = "Archive", detail = "context", x = 490, y = 135, width = 145, height = 78)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Document(id = "variant-1", title = "Config", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Document(id = "variant-2", title = "Report", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Document(id = "variant-3", title = "Trace", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Document(id = "variant-1", title = "Config", detail = "authored input", x = 82, y = 276, width = 140, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Document(id = "variant-2", title = "Report", detail = "generated output", x = 280, y = 300, width = 140, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Document(id = "variant-3", title = "Trace", detail = "captured evidence", x = 478, y = 324, width = 140, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
+        after hero stagger targets [variant-1, variant-2, variant-3] step 120 duration 170
+        after variant-3 reveal source duration 160
         after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
+        after edge-in reveal sink duration 160
         after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
       }
     }
   }
@@ -1423,8 +1422,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Marks an operator command. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Terminal hero is followed by Local, CI, and Cell variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "aiperf profile anchors the primary terminal example.",
+      "The compact symbol annotates a concrete relationship without taking over the topology."
     ]
     caption: "Terminals distinguish commands from long-running processes."
 
@@ -1435,17 +1434,17 @@ explainer "SDK Diagram Catalog" {
       sdk.Process(id = "sink", title = "Native CLI", detail = "context", x = 490, y = 135, width = 145, height = 78)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Terminal(id = "variant-1", title = "Local", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Terminal(id = "variant-2", title = "CI", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Terminal(id = "variant-3", title = "Cell", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Terminal(id = "variant-1", title = "Local", detail = "interactive shell", x = 82, y = 276, width = 140, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Terminal(id = "variant-2", title = "CI", detail = "noninteractive job", x = 280, y = 300, width = 140, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Terminal(id = "variant-3", title = "Cell", detail = "internal process mode", x = 478, y = 324, width = 140, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
+        after hero stagger targets [variant-1, variant-2, variant-3] step 120 duration 170
+        after variant-3 reveal source duration 160
         after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
+        after edge-in reveal sink duration 160
         after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
       }
     }
   }
@@ -1456,8 +1455,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Anchors scheduling and measurement. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Clock hero is followed by Real, Sim, and Window variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Injected clock anchors the primary clock example.",
+      "The compact symbol annotates a concrete relationship without taking over the topology."
     ]
     caption: "Clocks call out the source of time."
 
@@ -1468,17 +1467,17 @@ explainer "SDK Diagram Catalog" {
       sdk.Worker(id = "sink", title = "Observer", detail = "context", x = 490, y = 135, width = 145, height = 78)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Clock(id = "variant-1", title = "Real", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Clock(id = "variant-2", title = "Sim", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Clock(id = "variant-3", title = "Window", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Clock(id = "variant-1", title = "Real", detail = "wall-clock reactor", x = 82, y = 276, width = 140, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Clock(id = "variant-2", title = "Sim", detail = "deterministic virtual time", x = 280, y = 300, width = 140, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Clock(id = "variant-3", title = "Window", detail = "measurement interval", x = 478, y = 324, width = 140, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
+        after hero stagger targets [variant-1, variant-2, variant-3] step 120 duration 170
+        after variant-3 reveal source duration 160
         after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
+        after edge-in reveal sink duration 160
         after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
       }
     }
   }
@@ -1489,8 +1488,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Marks exclusive access. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Lock hero is followed by Open, Held, and Released variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Admission permit anchors the primary lock example.",
+      "The compact symbol annotates a concrete relationship without taking over the topology."
     ]
     caption: "Locks annotate protected ownership."
 
@@ -1501,17 +1500,17 @@ explainer "SDK Diagram Catalog" {
       sdk.Worker(id = "sink", title = "Slot owner", detail = "context", x = 490, y = 135, width = 145, height = 78)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Lock(id = "variant-1", title = "Open", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Lock(id = "variant-2", title = "Held", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Lock(id = "variant-3", title = "Released", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Lock(id = "variant-1", title = "Open", detail = "capacity available", x = 82, y = 276, width = 140, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Lock(id = "variant-2", title = "Held", detail = "slot in flight", x = 280, y = 300, width = 140, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Lock(id = "variant-3", title = "Released", detail = "permit returned", x = 478, y = 324, width = 140, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
+        after hero stagger targets [variant-1, variant-2, variant-3] step 120 duration 170
+        after variant-3 reveal source duration 160
         after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
+        after edge-in reveal sink duration 160
         after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
       }
     }
   }
@@ -1522,8 +1521,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Identifies a prepared binding. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Key hero is followed by Dense, Stable, and Local variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "EndpointKey anchors the primary key example.",
+      "The compact symbol annotates a concrete relationship without taking over the topology."
     ]
     caption: "Keys identify prepared lookup relationships."
 
@@ -1534,17 +1533,17 @@ explainer "SDK Diagram Catalog" {
       sdk.Endpoint(id = "sink", title = "Worker binding", detail = "context", x = 490, y = 135, width = 145, height = 78)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Key(id = "variant-1", title = "Dense", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Key(id = "variant-2", title = "Stable", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Key(id = "variant-3", title = "Local", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Key(id = "variant-1", title = "Dense", detail = "compact index", x = 82, y = 276, width = 140, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Key(id = "variant-2", title = "Stable", detail = "stable for run", x = 280, y = 300, width = 140, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Key(id = "variant-3", title = "Local", detail = "worker-local lookup", x = 478, y = 324, width = 140, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
+        after hero stagger targets [variant-1, variant-2, variant-3] step 120 duration 170
+        after variant-3 reveal source duration 160
         after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
+        after edge-in reveal sink duration 160
         after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
       }
     }
   }
@@ -1555,8 +1554,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Flags degraded evidence. The hero appears in a believable relationship while three quieter specimens compare concrete states."
     narration: "The Warning hero is followed by Bounds, Route, and Fallback variants."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "Quality warning anchors the primary warning example.",
+      "The compact symbol annotates a concrete relationship without taking over the topology."
     ]
     caption: "Warnings annotate risk without replacing its source."
 
@@ -1567,17 +1566,17 @@ explainer "SDK Diagram Catalog" {
       sdk.User(id = "sink", title = "Deck author", detail = "context", x = 490, y = 135, width = 145, height = 78)
       sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Warning(id = "variant-1", title = "Bounds", detail = "baseline", x = 62, y = 292, width = 150, height = 62, strokeRole = theme(ink.secondary))
-      sdk.Warning(id = "variant-2", title = "Route", detail = "alternate", x = 280, y = 292, width = 150, height = 62, strokeRole = theme(accent.tertiary))
-      sdk.Warning(id = "variant-3", title = "Fallback", detail = "exception", x = 498, y = 292, width = 150, height = 62, strokeRole = theme(accent.warning))
+      sdk.Warning(id = "variant-1", title = "Bounds", detail = "content clipped", x = 82, y = 276, width = 140, height = 72, strokeRole = theme(ink.secondary))
+      sdk.Warning(id = "variant-2", title = "Route", detail = "connector conflict", x = 280, y = 300, width = 140, height = 72, strokeRole = theme(accent.tertiary))
+      sdk.Warning(id = "variant-3", title = "Fallback", detail = "quality degraded", x = 478, y = 324, width = 140, height = 72, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
-        after hero reveal source duration 180
+        after hero stagger targets [variant-1, variant-2, variant-3] step 120 duration 170
+        after variant-3 reveal source duration 160
         after source trace edge-in duration 220
-        after edge-in reveal sink duration 180
+        after edge-in reveal sink duration 160
         after sink trace edge-out duration 220
-        after edge-out stagger targets [variant-1, variant-2, variant-3] step 120 duration 180
       }
     }
   }
@@ -1588,8 +1587,8 @@ explainer "SDK Diagram Catalog" {
     lede: "Compute, storage, messaging, control, and a trust boundary form one coherent benchmark path. Every node still expands through the production SDK used on its focused page."
     narration: "The field guide closes by composing families while preserving semantic references across nested boundary children."
     points: [
-      "The hero demonstrates the production primitive in context.",
-      "Three secondary specimens compare meaningful roles or states."
+      "A trust boundary contains the measured request path and local result store.",
+      "A health decision gates durable artifact publication."
     ]
     caption: "A small grammar scales from one specimen to a complete system."
 
@@ -1597,19 +1596,20 @@ explainer "SDK Diagram Catalog" {
       sdk.Header(id = "header", title = "CATALOG COMPOSITION", caption = "Compute, storage, messaging, control, and trust compose without stand-ins.", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary))
       sdk.TrustBoundary(id = "trust", title = "Benchmark trust boundary", x = 145, y = 78, width = 500, height = 220, strokeRole = theme(accent.green)) {
         children {
-          sdk.Client(id = "client", title = "Load client", detail = "authors turns", x = 24, y = 52, width = 120, height = 70)
-          sdk.Queue(id = "queue", title = "Ready turns", detail = "admitted", x = 190, y = 52, width = 120, height = 70)
-          sdk.Service(id = "service", title = "Inference", detail = "dispatch", x = 356, y = 52, width = 120, height = 70)
-          sdk.Database(id = "results", title = "Results", detail = "folded", x = 190, y = 140, width = 120, height = 60)
+          sdk.Client(id = "client", title = "Load client", detail = "authors turns", x = 24, y = 52, width = 140, height = 72)
+          sdk.Queue(id = "queue", title = "Ready turns", detail = "admitted", x = 184, y = 52, width = 140, height = 72)
+          sdk.Service(id = "service", title = "Inference", detail = "dispatch", x = 344, y = 52, width = 140, height = 72)
+          sdk.Database(id = "results", title = "Results", detail = "folded", x = 175, y = 140, width = 150, height = 72)
         }
       }
-      sdk.User(id = "operator", title = "Operator", detail = "owns intent", x = 20, y = 145, width = 105, height = 70)
-      sdk.Decision(id = "gate", title = "Healthy?", detail = "control gate", x = 285, y = 315, width = 130, height = 62, branches = ["yes", "no"], strokeRole = theme(accent.warning))
-      sdk.Cloud(id = "archive", title = "Artifact cloud", detail = "durable outputs", x = 540, y = 315, width = 135, height = 62)
+      sdk.User(id = "operator", title = "Operator", detail = "owns intent", x = 20, y = 145, width = 105, height = 72)
+      sdk.Decision(id = "gate", title = "Healthy?", detail = "control gate", x = 285, y = 315, width = 130, height = 72, branches = ["yes", "no"], strokeRole = theme(accent.warning))
+      sdk.Cloud(id = "archive", title = "Artifact cloud", detail = "durable outputs", x = 540, y = 315, width = 135, height = 72)
       sdk.Edge(id = "final-in", mode = "route", from = ref("operator.output"), to = ref("trust.entry"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "final-flow-1", mode = "route", from = ref("trust.child.0.output"), to = ref("trust.child.1.producer"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
       sdk.Edge(id = "final-flow-2", mode = "route", from = ref("trust.child.1.consumer"), to = ref("trust.child.2.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "final-out", mode = "route", from = ref("trust.exit"), to = ref("archive.input"), style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" })
+      sdk.Edge(id = "final-gate-in", mode = "route", from = ref("trust.child.3.read"), to = ref("gate.input"), style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" })
+      sdk.Edge(id = "final-gate-out", mode = "route", from = ref("gate.branch.yes"), to = ref("archive.input"), style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" })
       timeline main {
         at 0 reveal header duration 180
         after header reveal trust duration 260
@@ -1619,7 +1619,8 @@ explainer "SDK Diagram Catalog" {
         after final-flow-1 trace final-flow-2 duration 220
         after final-flow-2 reveal gate duration 180
         after gate reveal archive duration 180
-        after archive trace final-out duration 220
+        after archive trace final-gate-in duration 220
+        after final-gate-in trace final-gate-out duration 220
       }
     }
   }

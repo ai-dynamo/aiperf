@@ -40,6 +40,7 @@ import type {
   TextNodeIr,
 } from "../../schema/index.js";
 import { diagnostic } from "../../schema/index.js";
+import { estimateTextWidth } from "../../../core/diagram/text-metrics.js";
 import { attachSdkOrigin, type SdkOrigin } from "../provenance.js";
 import type {
   SceneFragment,
@@ -59,12 +60,12 @@ const DETAIL_HEIGHT = 20;
 const SUBTITLE_HEIGHT = 16;
 const HEADER_TEXT_HEIGHT = 24;
 
-const HEADER_DEFAULT_GEOMETRY = { x: 18, y: 16, width: 664, height: 44 } as const;
-const PANEL_DEFAULT_GEOMETRY = { width: 160, height: 64 } as const;
+const HEADER_DEFAULT_GEOMETRY = { x: 18, y: 16, width: 664, height: 66 } as const;
+const PANEL_DEFAULT_GEOMETRY = { width: 160, height: 70 } as const;
 const CHIP_DEFAULT_GEOMETRY = { width: 84, height: 26 } as const;
-const NOTE_DEFAULT_GEOMETRY = { width: 160, height: 40 } as const;
-const LABEL_DEFAULT_GEOMETRY = { width: 120, height: 16 } as const;
-const CALLOUT_DEFAULT_GEOMETRY = { width: 140, height: 40 } as const;
+const NOTE_DEFAULT_GEOMETRY = { width: 160, height: 48 } as const;
+const LABEL_DEFAULT_GEOMETRY = { width: 120, height: 22 } as const;
+const CALLOUT_DEFAULT_GEOMETRY = { width: 140, height: 48 } as const;
 const CALLOUT_STEM_DROP = 24;
 const DIVIDER_DEFAULT_LENGTH = 200;
 const BRACKET_DEFAULT_VERTICAL = { width: 24, height: 120 } as const;
@@ -81,9 +82,9 @@ type CardSizePreset = Readonly<{ width: number; height: number }>;
 
 /** Named `sdk.card` size presets replacing raw pixel clusters at call sites. */
 const CARD_SIZE_PRESETS: Readonly<Record<string, CardSizePreset>> = {
-  compact: { width: 150, height: 80 },
-  standard: { width: 190, height: 80 },
-  wide: { width: 250, height: 80 },
+  compact: { width: 150, height: 88 },
+  standard: { width: 190, height: 88 },
+  wide: { width: 250, height: 88 },
 };
 
 /** Public actions shared by every generic chrome / content component. */
@@ -296,29 +297,6 @@ function buildGroup(args: {
   };
 }
 
-function buildSemanticTarget(args: {
-  id: string;
-  geometry: GeometryIr;
-  label: string;
-  componentId: string;
-  role: string;
-  context: SdkExpansionContext;
-}): RenderNodeIr {
-  return attachSdkOrigin(
-    buildGroup({
-      id: args.id,
-      capabilityId: "core.semantic-port",
-      geometry: args.geometry,
-      style: {},
-      props: { role: args.role },
-      children: [],
-      label: args.label,
-      sourceMap: args.context.sourceMap,
-    }),
-    makeOrigin(args.componentId, args.context, args.role),
-  );
-}
-
 function buildConnector(args: {
   id: string;
   capabilityId: string;
@@ -414,7 +392,7 @@ function makeDescriptor(
 }
 
 // ---------------------------------------------------------------------------
-// sdk.header — chrome geometry (18,16,664,44) with theme surface / ink roles.
+// sdk.header — chrome geometry (18,16,664,66) with theme surface / ink roles.
 // Exposes `title` / `caption` ports; binds enter/emphasis/exit to the header
 // group id.
 // ---------------------------------------------------------------------------
@@ -450,47 +428,15 @@ const headerFactory: SdkComponentFactory = (props, _slots, context) => {
     height: numberProp(props, "height") ?? HEADER_DEFAULT_GEOMETRY.height,
   };
 
-  const half = Math.max(geometry.width / 2 - INSET, 0);
-  const children: RenderNodeIr[] = [];
   const ports: Record<string, ConnectorEndpointIr> = {};
 
   if (title !== undefined) {
     const titleId = `${rootId}__title`;
-    children.push(
-      buildSemanticTarget({
-        id: titleId,
-        geometry: {
-          x: INSET,
-          y: Math.max((geometry.height - HEADER_TEXT_HEIGHT) / 2, 0),
-          width: half,
-          height: HEADER_TEXT_HEIGHT,
-        },
-        label: title,
-        componentId: "sdk.header",
-        role: "title",
-        context,
-      }),
-    );
     ports.title = { nodeId: titleId };
   }
 
   if (caption !== undefined) {
     const captionId = `${rootId}__caption`;
-    children.push(
-      buildSemanticTarget({
-        id: captionId,
-        geometry: {
-          x: Math.max(geometry.width - INSET - half, geometry.width / 2),
-          y: Math.max((geometry.height - HEADER_TEXT_HEIGHT) / 2, 0),
-          width: half,
-          height: HEADER_TEXT_HEIGHT,
-        },
-        label: caption,
-        componentId: "sdk.header",
-        role: "caption",
-        context,
-      }),
-    );
     ports.caption = { nodeId: captionId };
   }
 
@@ -508,7 +454,7 @@ const headerFactory: SdkComponentFactory = (props, _slots, context) => {
         ...(title !== undefined ? { title } : {}),
         ...(caption !== undefined ? { caption } : {}),
       },
-      children,
+      children: [],
       label: title ?? caption ?? "Header",
       sourceMap: context.sourceMap,
     }),
@@ -565,42 +511,15 @@ const panelFactory: SdkComponentFactory = (props, _slots, context) => {
     height: numberProp(props, "height") ?? PANEL_DEFAULT_GEOMETRY.height,
   };
 
-  const innerWidth = Math.max(geometry.width - INSET * 2, 0);
-  const children: RenderNodeIr[] = [];
   const ports: Record<string, ConnectorEndpointIr> = {};
 
   if (title !== undefined) {
     const titleId = `${rootId}__title`;
-    children.push(
-      buildSemanticTarget({
-        id: titleId,
-        geometry: { x: INSET, y: INSET + 2, width: innerWidth, height: TITLE_HEIGHT },
-        label: title,
-        componentId: "sdk.panel",
-        role: "title",
-        context,
-      }),
-    );
     ports.title = { nodeId: titleId };
   }
 
   if (detail !== undefined) {
     const detailId = `${rootId}__detail`;
-    children.push(
-      buildSemanticTarget({
-        id: detailId,
-        geometry: {
-          x: INSET,
-          y: INSET + 2 + TITLE_HEIGHT + 2,
-          width: innerWidth,
-          height: DETAIL_HEIGHT,
-        },
-        label: detail,
-        componentId: "sdk.panel",
-        role: "detail",
-        context,
-      }),
-    );
     ports.detail = { nodeId: detailId };
   }
 
@@ -619,7 +538,7 @@ const panelFactory: SdkComponentFactory = (props, _slots, context) => {
         ...(title !== undefined ? { title } : {}),
         ...(detail !== undefined ? { detail } : {}),
       },
-      children,
+      children: [],
       label: title ?? detail ?? "Panel",
       sourceMap: context.sourceMap,
     }),
@@ -680,55 +599,20 @@ const cardFactory: SdkComponentFactory = (props, _slots, context) => {
     height: numberProp(props, "height") ?? preset.height,
   };
 
-  const innerWidth = Math.max(geometry.width - INSET * 2, 0);
-  const children: RenderNodeIr[] = [];
   const ports: Record<string, ConnectorEndpointIr> = {};
-  let cursorY = INSET + 2;
 
   if (title !== undefined) {
     const titleId = `${rootId}__title`;
-    children.push(
-      buildSemanticTarget({
-        id: titleId,
-        geometry: { x: INSET, y: cursorY, width: innerWidth, height: TITLE_HEIGHT },
-        label: title,
-        componentId: "sdk.card",
-        role: "title",
-        context,
-      }),
-    );
     ports.title = { nodeId: titleId };
-    cursorY += TITLE_HEIGHT + 2;
   }
 
   if (detail !== undefined) {
     const detailId = `${rootId}__detail`;
-    children.push(
-      buildSemanticTarget({
-        id: detailId,
-        geometry: { x: INSET, y: cursorY, width: innerWidth, height: DETAIL_HEIGHT },
-        label: detail,
-        componentId: "sdk.card",
-        role: "detail",
-        context,
-      }),
-    );
     ports.detail = { nodeId: detailId };
-    cursorY += DETAIL_HEIGHT + 2;
   }
 
   if (subtitle !== undefined) {
     const subtitleId = `${rootId}__subtitle`;
-    children.push(
-      buildSemanticTarget({
-        id: subtitleId,
-        geometry: { x: INSET, y: cursorY, width: innerWidth, height: SUBTITLE_HEIGHT },
-        label: subtitle,
-        componentId: "sdk.card",
-        role: "subtitle",
-        context,
-      }),
-    );
     ports.subtitle = { nodeId: subtitleId };
   }
 
@@ -747,7 +631,7 @@ const cardFactory: SdkComponentFactory = (props, _slots, context) => {
         ...(detail !== undefined ? { detail } : {}),
         ...(subtitle !== undefined ? { subtitle } : {}),
       },
-      children,
+      children: [],
       label: title ?? detail ?? subtitle ?? "Card",
       sourceMap: context.sourceMap,
     }),
@@ -804,20 +688,6 @@ const chipFactory: SdkComponentFactory = (props, _slots, context) => {
 
   const labelId = `${rootId}__label`;
 
-  const labelTarget = buildSemanticTarget({
-      id: labelId,
-      geometry: {
-        x: 0,
-        y: Math.max((geometry.height - 16) / 2, 0),
-        width: geometry.width,
-        height: 16,
-      },
-      label,
-      componentId: "sdk.chip",
-      role: "label",
-      context,
-    });
-
   const root = attachSdkOrigin(
     buildGroup({
       id: rootId,
@@ -831,7 +701,7 @@ const chipFactory: SdkComponentFactory = (props, _slots, context) => {
         ...(strokeRole !== undefined ? { stroke: strokeRole } : {}),
       },
       props: { label },
-      children: [labelTarget],
+      children: [],
       label,
       sourceMap: context.sourceMap,
     }),
@@ -892,20 +762,6 @@ const noteFactory: SdkComponentFactory = (props, _slots, context) => {
 
   const captionId = `${rootId}__caption`;
 
-  const captionTarget = buildSemanticTarget({
-      id: captionId,
-      geometry: {
-        x: INSET,
-        y: Math.max((geometry.height - 14) / 2, 0),
-        width: Math.max(geometry.width - INSET * 2, 0),
-        height: 14,
-      },
-      label: text,
-      componentId: "sdk.note",
-      role: "caption",
-      context,
-    });
-
   const root = attachSdkOrigin(
     buildGroup({
       id: rootId,
@@ -919,7 +775,7 @@ const noteFactory: SdkComponentFactory = (props, _slots, context) => {
         radius,
       },
       props: { text, inkRole },
-      children: [captionTarget],
+      children: [],
       label: text,
       sourceMap: context.sourceMap,
     }),
@@ -1085,7 +941,21 @@ const legendFactory: SdkComponentFactory = (props, _slots, context) => {
   const rootId = context.instanceId;
   const title = stringProp(props, "title");
   const rowHeight = numberProp(props, "rowHeight") ?? LEGEND_ROW_HEIGHT;
-  const width = numberProp(props, "width") ?? LEGEND_DEFAULT_WIDTH;
+  const authoredWidth = numberProp(props, "width") ?? LEGEND_DEFAULT_WIDTH;
+  const titleWidth =
+    title !== undefined ? estimateTextWidth(title, 12, "bold") + INSET : 0;
+  const entryWidth = entries.reduce(
+    (maximum, entry) =>
+      Math.max(
+        maximum,
+        LEGEND_SWATCH_SIZE +
+          LEGEND_LABEL_GAP +
+          estimateTextWidth(entry.label, 11) +
+          INSET,
+      ),
+    0,
+  );
+  const width = Math.max(authoredWidth, titleWidth, entryWidth);
 
   const children: RenderNodeIr[] = [];
   const ports: Record<string, ConnectorEndpointIr> = {};
