@@ -33,12 +33,13 @@ import {
 } from "./connector-routing.js";
 import { FlowArrow } from "./FlowArrow";
 import { MotionSignal } from "./MotionSignal";
-import { isMotionSignalNode } from "./node-classification.js";
+import { isFanNode, isMotionSignalNode } from "./node-classification.js";
 import { hasNativeSemanticChrome } from "./capabilities/chrome.js";
 import { resolveScene } from "./resolution/resolve-scene.js";
 import { isRoutingObstacle } from "./resolution/resolve-connectors.js";
 import type {
   ResolvedConnector,
+  ResolvedFanGeometry,
   ResolvedGeneratedPart,
 } from "./resolution/types.js";
 import type {
@@ -50,7 +51,7 @@ import type {
   SceneTimelineCueLike,
   SceneViewportLike,
 } from "./scene-types.js";
-import { scaledSceneFontSize } from "./text-metrics.js";
+import { scaledSceneFontSize, wrapTextToWidth } from "./text-metrics.js";
 
 export type {
   SceneCameraKeyframeLike,
@@ -65,6 +66,9 @@ export type {
   SceneTimelineCueLike,
   SceneViewportLike,
 } from "./scene-types.js";
+
+// Re-exported for direct unit testing of the shared fan segment builder.
+export { fanSegmentFromAtomic } from "./resolution/resolve-fans.js";
 
 export type SceneRendererProps = Readonly<{
   scene: SceneIrLike;
@@ -180,31 +184,11 @@ type SceneNodeIndex = Readonly<{
   ancestorIdsById: ReadonlyMap<string, readonly string[]>;
   generatedPartsById: ReadonlyMap<string, ResolvedGeneratedPart>;
   connectorsById: ReadonlyMap<string, ResolvedConnector>;
+  fanGeometryById: ReadonlyMap<string, ResolvedFanGeometry>;
 }>;
 
 /** @internal exported for direct unit testing of fan/arrowhead geometry helpers. */
 export type ScenePoint = Readonly<{ x: number; y: number }>;
-
-export type FanSegment = Readonly<{
-  id: string;
-  d: string;
-  directed: true;
-  showMarker: boolean;
-  role: "trunk" | "branch" | "merge-trunk";
-}>;
-
-export type FanTrajectory = Readonly<{
-  id: string;
-  d: string;
-  role: "trunk" | "branch" | "merge-trunk";
-}>;
-
-export type ResolvedFanGeometry = Readonly<{
-  capability: "core.fan-out" | "core.fan-in";
-  segments: readonly FanSegment[];
-  junction: ScenePoint;
-  trajectories: readonly FanTrajectory[];
-}>;
 
 function finiteNumber(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -598,7 +582,7 @@ function visiblePathForMotion(
             endpointsMatch(singleton, motionTo),
       );
       if (branchIndex >= 0) {
-        return resolveFanGeometry(candidate, index, layoutOrigin)?.trajectories[
+        return fanGeometryFor(candidate, index, layoutOrigin)?.trajectories[
           branchIndex
         ]?.d;
       }
@@ -1070,62 +1054,6 @@ function scenePoints(
   return isScenePointArray(value) ? value : [value];
 }
 
-function pointCentroid(points: readonly ScenePoint[]): ScenePoint {
-  if (points.length === 0) {
-    return { x: 0, y: 0 };
-  }
-  const sum = points.reduce(
-    (total, point) => ({ x: total.x + point.x, y: total.y + point.y }),
-    { x: 0, y: 0 },
-  );
-  return { x: sum.x / points.length, y: sum.y / points.length };
-}
-
-function facingAnchorToPoint(
-  geometry: SceneGeometryLike,
-  peer: ScenePoint,
-): "e" | "w" | "n" | "s" {
-  const center = nodeCenter(geometry);
-  const dx = peer.x - center.x;
-  const dy = peer.y - center.y;
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    return dx >= 0 ? "e" : "w";
-  }
-  return dy >= 0 ? "s" : "n";
-}
-
-/** Resolve a fan endpoint in world space, upgrading soft anchors to facing edges. */
-function resolveFanEndpointWorld(
-  endpoint: ScenePointLike,
-  peer: ScenePoint,
-  index: SceneNodeIndex,
-  layoutOrigin: LayoutOrigin,
-): ScenePoint {
-  const hasX = typeof endpoint.x === "number" && Number.isFinite(endpoint.x);
-  const hasY = typeof endpoint.y === "number" && Number.isFinite(endpoint.y);
-  if (hasX && hasY) {
-    return {
-      x: (endpoint.x as number) + layoutOrigin.x,
-      y: (endpoint.y as number) + layoutOrigin.y,
-    };
-  }
-  if (typeof endpoint.nodeId !== "string" || endpoint.nodeId.length === 0) {
-    return { x: layoutOrigin.x, y: layoutOrigin.y };
-  }
-  const world =
-    index.worldGeometryById.get(endpoint.nodeId) ??
-    (index.nodesById.has(endpoint.nodeId)
-      ? geometryOf(index.nodesById.get(endpoint.nodeId)!)
-      : undefined);
-  if (world === undefined) {
-    return { x: layoutOrigin.x, y: layoutOrigin.y };
-  }
-  const anchor = isSoftMotionAnchor(endpoint.anchor)
-    ? facingAnchorToPoint(world, peer)
-    : endpoint.anchor;
-  return nodeAnchorPoint(world, anchor);
-}
-
 function fanPath(points: readonly ScenePoint[]): string {
   const compact: ScenePoint[] = [];
   for (const point of points) {
@@ -1148,340 +1076,8 @@ function fanPath(points: readonly ScenePoint[]): string {
     );
 }
 
-function fanBranchPoints(
-  start: ScenePoint,
-  junction: ScenePoint,
-  axis: "x" | "y",
-  incoming: boolean,
-): readonly ScenePoint[] {
-  if (axis === "x") {
-    return incoming
-      ? [start, { x: junction.x, y: start.y }, junction]
-      : [junction, { x: junction.x, y: start.y }, start];
-  }
-  return incoming
-    ? [start, { x: start.x, y: junction.y }, junction]
-    : [junction, { x: start.x, y: junction.y }, start];
-}
-
-function orthogonalFanPoints(
-  start: ScenePoint,
-  end: ScenePoint,
-  axis: "x" | "y",
-): readonly ScenePoint[] {
-  return axis === "x"
-    ? [start, { x: end.x, y: start.y }, end]
-    : [start, { x: start.x, y: end.y }, end];
-}
-
-function automaticFanJunction(
-  singleton: ScenePoint,
-  many: readonly ScenePoint[],
-  axis: "x" | "y",
-): ScenePoint {
-  if (many.length === 0) {
-    // No "many"-side endpoints to route through — Math.min/max(...[]) would
-    // collapse to +/-Infinity. Defensive fallback; callers should guard
-    // this case before routing a fan at all (see resolveFanGeometry).
-    return singleton;
-  }
-  const centroid = pointCentroid(many);
-  if (axis === "x") {
-    const towardPositive = centroid.x >= singleton.x;
-    const corridorEdge = towardPositive
-      ? Math.min(...many.map((point) => point.x))
-      : Math.max(...many.map((point) => point.x));
-    return { x: (singleton.x + corridorEdge) / 2, y: singleton.y };
-  }
-  const towardPositive = centroid.y >= singleton.y;
-  const corridorEdge = towardPositive
-    ? Math.min(...many.map((point) => point.y))
-    : Math.max(...many.map((point) => point.y));
-  return { x: singleton.x, y: (singleton.y + corridorEdge) / 2 };
-}
-
 function pointsNear(a: ScenePoint, b: ScenePoint, eps = 0.001): boolean {
   return Math.abs(a.x - b.x) <= eps && Math.abs(a.y - b.y) <= eps;
-}
-
-/** Collapse a polyline into atomic horizontal / vertical spans. */
-function atomicOrthogonalSpans(
-  points: readonly ScenePoint[],
-): readonly Readonly<{ start: ScenePoint; end: ScenePoint }>[] {
-  const compact: ScenePoint[] = [];
-  for (const point of points) {
-    const previous = compact.at(-1);
-    if (previous === undefined || !pointsNear(previous, point)) {
-      compact.push(point);
-    }
-  }
-  const spans: Array<Readonly<{ start: ScenePoint; end: ScenePoint }>> = [];
-  for (let i = 0; i < compact.length - 1; i++) {
-    const start = compact[i]!;
-    const end = compact[i + 1]!;
-    const horizontal = Math.abs(start.y - end.y) <= 0.001;
-    const vertical = Math.abs(start.x - end.x) <= 0.001;
-    if (!horizontal && !vertical) {
-      // Keep authored orthogonal intent: reject diagonals from paint.
-      continue;
-    }
-    if (pointsNear(start, end)) {
-      continue;
-    }
-    spans.push({ start, end });
-  }
-  return spans;
-}
-
-/** @internal exported for direct unit testing of fan segment orientation. */
-export type FanAtomicSpan = Readonly<{
-  axis: "h" | "v";
-  fixed: number;
-  from: number;
-  to: number;
-  role: "trunk" | "branch" | "merge-trunk";
-  destination?: ScenePoint;
-}>;
-
-function toFanAtomicSpan(
-  start: ScenePoint,
-  end: ScenePoint,
-  role: "trunk" | "branch" | "merge-trunk",
-  destination: ScenePoint | undefined,
-): FanAtomicSpan | undefined {
-  const horizontal = Math.abs(start.y - end.y) <= 0.001;
-  const vertical = Math.abs(start.x - end.x) <= 0.001;
-  if (horizontal === vertical) {
-    return undefined;
-  }
-  if (horizontal) {
-    return {
-      axis: "h",
-      fixed: start.y,
-      from: Math.min(start.x, end.x),
-      to: Math.max(start.x, end.x),
-      role,
-      ...(destination !== undefined ? { destination } : {}),
-    };
-  }
-  return {
-    axis: "v",
-    fixed: start.x,
-    from: Math.min(start.y, end.y),
-    to: Math.max(start.y, end.y),
-    role,
-    ...(destination !== undefined ? { destination } : {}),
-  };
-}
-
-function mergeCollinearFanSpans(
-  spans: readonly FanAtomicSpan[],
-): readonly FanAtomicSpan[] {
-  type Bucket = {
-    axis: "h" | "v";
-    fixed: number;
-    role: "trunk" | "branch" | "merge-trunk";
-    intervals: Array<{ from: number; to: number }>;
-  };
-  const buckets = new Map<string, Bucket>();
-  for (const span of spans) {
-    const key = `${span.axis}:${formatPathNumber(span.fixed)}`;
-    const existing = buckets.get(key);
-    if (existing === undefined) {
-      buckets.set(key, {
-        axis: span.axis,
-        fixed: span.fixed,
-        role: span.role,
-        intervals: [{ from: span.from, to: span.to }],
-      });
-      continue;
-    }
-    existing.intervals.push({ from: span.from, to: span.to });
-    if (span.role === "trunk" || span.role === "merge-trunk") {
-      existing.role = span.role;
-    }
-  }
-
-  const merged: FanAtomicSpan[] = [];
-  for (const bucket of buckets.values()) {
-    const sorted = bucket.intervals
-      .slice()
-      .sort((left, right) => left.from - right.from || left.to - right.to);
-    const collapsed: Array<{ from: number; to: number }> = [];
-    for (const interval of sorted) {
-      const last = collapsed.at(-1);
-      if (last === undefined || interval.from > last.to + 0.001) {
-        collapsed.push({ from: interval.from, to: interval.to });
-      } else {
-        last.to = Math.max(last.to, interval.to);
-      }
-    }
-    for (const interval of collapsed) {
-      if (interval.to - interval.from <= 0.001) {
-        continue;
-      }
-      merged.push({
-        axis: bucket.axis,
-        fixed: bucket.fixed,
-        from: interval.from,
-        to: interval.to,
-        role: bucket.role,
-      });
-    }
-  }
-  return merged;
-}
-
-function subtractInterval(
-  host: Readonly<{ from: number; to: number }>,
-  cut: Readonly<{ from: number; to: number }>,
-): readonly Readonly<{ from: number; to: number }>[] {
-  if (cut.to <= host.from + 0.001 || cut.from >= host.to - 0.001) {
-    return [host];
-  }
-  const parts: Array<{ from: number; to: number }> = [];
-  if (cut.from > host.from + 0.001) {
-    parts.push({ from: host.from, to: Math.min(host.to, cut.from) });
-  }
-  if (cut.to < host.to - 0.001) {
-    parts.push({ from: Math.max(host.from, cut.to), to: host.to });
-  }
-  return parts.filter((part) => part.to - part.from > 0.001);
-}
-
-/** @internal exported for direct unit testing of destination orientation. */
-export function fanSegmentFromAtomic(
-  id: string,
-  span: FanAtomicSpan,
-): FanSegment {
-  const start =
-    span.axis === "h"
-      ? { x: span.from, y: span.fixed }
-      : { x: span.fixed, y: span.from };
-  const end =
-    span.axis === "h"
-      ? { x: span.to, y: span.fixed }
-      : { x: span.fixed, y: span.to };
-  const destination = span.destination;
-  let directed = { start, end };
-  if (destination !== undefined) {
-    if (pointsNear(end, destination)) {
-      directed = { start, end };
-    } else if (pointsNear(start, destination)) {
-      directed = { start: end, end: start };
-    } else {
-      // Neither endpoint sits on the destination within epsilon (a merged
-      // corridor whose destination is inset from both span ends) — orient
-      // toward whichever end is actually closer so the marker still points
-      // at the destination instead of always defaulting to `end`.
-      const distanceToEnd = Math.hypot(
-        end.x - destination.x,
-        end.y - destination.y,
-      );
-      const distanceToStart = Math.hypot(
-        start.x - destination.x,
-        start.y - destination.y,
-      );
-      directed =
-        distanceToStart < distanceToEnd
-          ? { start: end, end: start }
-          : { start, end };
-    }
-  }
-  return {
-    id,
-    d: fanPath([directed.start, directed.end]),
-    directed: true,
-    showMarker: destination !== undefined,
-    role: span.role,
-  };
-}
-
-/**
- * Paint spans are normalized atomic H/V segments with collinear overlaps
- * merged so shared corridors stroke once. Destination markers stay only on
- * terminal segments that end at a semantic destination.
- */
-function paintFanSegments(
-  nodeId: string,
-  trunkPoints: readonly ScenePoint[],
-  trunkRole: "trunk" | "merge-trunk",
-  branchPointSets: readonly (readonly ScenePoint[])[],
-  destinations: readonly ScenePoint[],
-): readonly FanSegment[] {
-  const corridors: FanAtomicSpan[] = [];
-  const terminals: FanAtomicSpan[] = [];
-  const pushPoints = (
-    points: readonly ScenePoint[],
-    role: "trunk" | "branch" | "merge-trunk",
-    destination: ScenePoint | undefined,
-  ) => {
-    const spans = atomicOrthogonalSpans(points);
-    spans.forEach((span, index) => {
-      const isLast = index === spans.length - 1;
-      const atomic = toFanAtomicSpan(
-        span.start,
-        span.end,
-        role,
-        isLast ? destination : undefined,
-      );
-      if (atomic === undefined) {
-        return;
-      }
-      if (atomic.destination !== undefined) {
-        terminals.push(atomic);
-      } else {
-        corridors.push(atomic);
-      }
-    });
-  };
-
-  pushPoints(
-    trunkPoints,
-    trunkRole,
-    trunkRole === "merge-trunk" ? destinations[0] : undefined,
-  );
-  branchPointSets.forEach((points, branchIndex) => {
-    pushPoints(
-      points,
-      "branch",
-      trunkRole === "trunk" ? destinations[branchIndex] : undefined,
-    );
-  });
-
-  // Merge shared corridors, then subtract terminal stubs so destinations
-  // keep a dedicated marked segment and are never double-stroked.
-  let mergedCorridors = mergeCollinearFanSpans(corridors);
-  const uniqueTerminals: FanAtomicSpan[] = [];
-  const terminalKeys = new Set<string>();
-  for (const terminal of terminals) {
-    const key = `${terminal.axis}:${formatPathNumber(terminal.fixed)}:${formatPathNumber(terminal.from)}:${formatPathNumber(terminal.to)}`;
-    if (terminalKeys.has(key)) {
-      continue;
-    }
-    terminalKeys.add(key);
-    uniqueTerminals.push(terminal);
-  }
-  for (const terminal of uniqueTerminals) {
-    mergedCorridors = mergedCorridors.flatMap((corridor) => {
-      if (
-        corridor.axis !== terminal.axis ||
-        Math.abs(corridor.fixed - terminal.fixed) > 0.001
-      ) {
-        return [corridor];
-      }
-      return subtractInterval(corridor, terminal).map((part) => ({
-        ...corridor,
-        from: part.from,
-        to: part.to,
-      }));
-    });
-  }
-
-  const painted = [...mergedCorridors, ...uniqueTerminals];
-  return painted.map((span, index) =>
-    fanSegmentFromAtomic(`${nodeId}-span-${index}`, span),
-  );
 }
 
 function fanPathPoints(d: string): ScenePoint[] {
@@ -1514,8 +1110,11 @@ function projectPointOntoSegment(
   };
 }
 
-/** Split a fan trajectory at the junction into trunk and branch ball paths. */
-function splitFanTrajectoryAtJunction(
+/**
+ * Split a fan trajectory at the junction into trunk and branch ball paths.
+ * @internal exported for direct unit testing of off-trajectory junctions.
+ */
+export function splitFanTrajectoryAtJunction(
   d: string,
   junction: ScenePoint,
 ): Readonly<{ head: string; tail: string }> | undefined {
@@ -1564,106 +1163,48 @@ function splitFanTrajectoryAtJunction(
   };
 }
 
-/**
- * Resolve fan topology in world space, then rebase it to the current layout.
- * Paint uses merged atomic spans; trajectories stay complete source→destination.
- */
-export function resolveFanGeometry(
+/** Rebase canonical world-space fan geometry into the current layout's local space. */
+function localizeFanGeometry(
+  geometry: ResolvedFanGeometry,
+  layoutOrigin: LayoutOrigin,
+): ResolvedFanGeometry {
+  if (layoutOrigin.x === 0 && layoutOrigin.y === 0) {
+    return geometry;
+  }
+  const shift = (d: string): string =>
+    fanPath(
+      fanPathPoints(d).map((point) => ({
+        x: point.x - layoutOrigin.x,
+        y: point.y - layoutOrigin.y,
+      })),
+    );
+  return {
+    ...geometry,
+    junction: {
+      x: geometry.junction.x - layoutOrigin.x,
+      y: geometry.junction.y - layoutOrigin.y,
+    },
+    segments: geometry.segments.map((segment) => ({
+      ...segment,
+      d: shift(segment.d),
+    })),
+    trajectories: geometry.trajectories.map((trajectory) => ({
+      ...trajectory,
+      d: shift(trajectory.d),
+    })),
+  };
+}
+
+/** Look up a node's canonical fan geometry from the resolved index, rebased to layout space. */
+function fanGeometryFor(
   node: SceneNodeLike,
   index: SceneNodeIndex,
-  layoutOrigin: LayoutOrigin = ZERO_ORIGIN,
+  layoutOrigin: LayoutOrigin,
 ): ResolvedFanGeometry | undefined {
-  const capability =
-    capabilityOf(node) === "core.fan-in" ? "core.fan-in" : "core.fan-out";
-  const fanOut = capability === "core.fan-out";
-  const from = scenePoints(node.from);
-  const to = scenePoints(node.to);
-  const singletonEndpoint = (fanOut ? from[0] : to[0]) ?? {};
-  const manyEndpoints = fanOut ? to : from;
-  if (manyEndpoints.length < 2) {
-    // A fan needs at least two "many"-side endpoints to have a junction to
-    // route through; fewer collapses automaticFanJunction's Math.min/max
-    // over an empty array to Infinity. Render nothing rather than a
-    // garbage path.
-    return undefined;
-  }
-
-  const roughSingleton = resolveFanEndpointWorld(
-    singletonEndpoint,
-    { x: layoutOrigin.x, y: layoutOrigin.y },
-    index,
-    layoutOrigin,
-  );
-  const roughMany = manyEndpoints.map((endpoint) =>
-    resolveFanEndpointWorld(endpoint, roughSingleton, index, layoutOrigin),
-  );
-  const roughManyCentroid = pointCentroid(roughMany);
-  const singleton = resolveFanEndpointWorld(
-    singletonEndpoint,
-    roughManyCentroid,
-    index,
-    layoutOrigin,
-  );
-  const many = manyEndpoints.map((endpoint) =>
-    resolveFanEndpointWorld(endpoint, singleton, index, layoutOrigin),
-  );
-  const manyCentroid = pointCentroid(many);
-  const axis =
-    connectorAxisOf(node) ??
-    (Math.abs(manyCentroid.x - singleton.x) >=
-    Math.abs(manyCentroid.y - singleton.y)
-      ? "x"
-      : "y");
-  const authoredJunction = singleScenePoint(node.junction);
-  const junctionWorld =
-    authoredJunction === undefined
-      ? automaticFanJunction(singleton, many, axis)
-      : resolveFanEndpointWorld(
-          authoredJunction,
-          fanOut ? manyCentroid : singleton,
-          index,
-          layoutOrigin,
-        );
-  const local = (point: ScenePoint): ScenePoint => ({
-    x: point.x - layoutOrigin.x,
-    y: point.y - layoutOrigin.y,
-  });
-  const singletonLocal = local(singleton);
-  const manyLocal = many.map(local);
-  const junction = local(junctionWorld);
-
-  const trunkPoints = fanOut
-    ? orthogonalFanPoints(singletonLocal, junction, axis)
-    : orthogonalFanPoints(junction, singletonLocal, axis);
-  const trunkRole = fanOut ? "trunk" : "merge-trunk";
-  const branchPointSets = manyLocal.map((endpoint) =>
-    fanBranchPoints(endpoint, junction, axis, !fanOut),
-  );
-  const destinations = fanOut ? manyLocal : [singletonLocal];
-  const trajectories = manyLocal.map((_endpoint, branchIndex): FanTrajectory => {
-    const branchPoints = branchPointSets[branchIndex]!;
-    // Fan-in must keep the orthogonal merge-trunk (not a diagonal jump).
-    const points = fanOut
-      ? [...trunkPoints, ...branchPoints.slice(1)]
-      : [...branchPoints, ...trunkPoints.slice(1)];
-    return {
-      id: `${node.id}-trajectory-${branchIndex}`,
-      d: fanPath(points),
-      role: fanOut ? "branch" : "merge-trunk",
-    };
-  });
-  return {
-    capability,
-    segments: paintFanSegments(
-      node.id,
-      trunkPoints,
-      trunkRole,
-      branchPointSets,
-      destinations,
-    ),
-    junction,
-    trajectories,
-  };
+  const geometry = index.fanGeometryById.get(node.id);
+  return geometry === undefined
+    ? undefined
+    : localizeFanGeometry(geometry, layoutOrigin);
 }
 
 function polylinePathData(
@@ -1804,14 +1345,6 @@ function isArrowLike(node: SceneNodeLike, capability: string): boolean {
     return true;
   }
   return typeof node.kind === "string" && ARROW_KINDS.has(node.kind);
-}
-
-function isFanNode(node: SceneNodeLike, capability: string): boolean {
-  return (
-    capability === "core.fan-out" ||
-    capability === "core.fan-in" ||
-    node.kind === "fan"
-  );
 }
 
 function isDotLike(node: SceneNodeLike, capability: string): boolean {
@@ -3266,8 +2799,9 @@ function shortenPathEndParsed(d: string, inset: number): string {
 /**
  * Pull the stroke end back by the arrowhead length so a `refX=0` tip lands on
  * the authored endpoint instead of poking into the destination box.
+ * @internal exported for direct unit testing of multi-segment/cubic cuts.
  */
-function shortenPathForArrowhead(
+export function shortenPathForArrowhead(
   d: string,
   strokeWidth: number,
   tipInsetUnits: number,
@@ -3803,10 +3337,25 @@ function renderNode(
       textAnchor === "middle" && geom.height > fontSize * 1.25;
     const textY = centerVertically ? geom.y + geom.height / 2 : geom.y;
     const content = node.text ?? "";
-    const textLines =
-      content.includes("\n") || node.style?.whiteSpace === "pre"
-        ? content.split("\n")
-        : undefined;
+    // Auto-wrap to the box width by default. Manual `\n` (or `whiteSpace: "pre"`)
+    // is author-authoritative and never re-wrapped; `whiteSpace: "nowrap"` opts
+    // a node out entirely (short kickers/stats that must stay one line even if
+    // they overflow). `estimateTextWidth` only distinguishes normal vs bold, so
+    // any non-"normal" weight is measured as bold.
+    const whiteSpaceStyle = node.style?.whiteSpace;
+    const hasManualBreaks =
+      content.includes("\n") || whiteSpaceStyle === "pre";
+    const fontWeight =
+      node.style?.fontWeight === "bold" || node.style?.fontWeight === 700
+        ? "bold"
+        : "normal";
+    const textLines = hasManualBreaks
+      ? content.split("\n")
+      : whiteSpaceStyle === "nowrap"
+        ? undefined
+        : geom.width > 0
+          ? wrapTextToWidth(content, geom.width, fontSize, fontWeight)
+          : undefined;
     const lineHeight =
       typeof node.style?.lineHeight === "number" &&
       Number.isFinite(node.style.lineHeight)
@@ -3838,7 +3387,7 @@ function renderNode(
       </text>
     );
   } else if (fanNode) {
-    const geometry = resolveFanGeometry(node, index, layoutOrigin);
+    const geometry = fanGeometryFor(node, index, layoutOrigin);
     if (geometry === undefined) {
       body = null;
     } else {
@@ -4118,10 +3667,16 @@ function renderNode(
       resolvedConnector?.d ?? arrowPathData(node, index, layoutOrigin);
     if (dRaw !== undefined) {
       const stroke = paintFromStyle(node.style, "stroke", theme, themeAccent);
+      // Routed connectors use resolver policy; authored core.path glyphs only
+      // show a tip when markerEnd is explicitly enabled (icons stamp "none").
       const tip =
-        resolvedConnector?.showArrowhead
-          ? resolveMarkerTip(node.style?.markerEnd, DEFAULT_MARKER_TIP)
-          : null;
+        resolvedConnector !== undefined
+          ? resolvedConnector.showArrowhead
+            ? resolveMarkerTip(node.style?.markerEnd, DEFAULT_MARKER_TIP)
+            : null
+          : hasExplicitMarkerEnd(node.style)
+            ? resolveMarkerTip(node.style?.markerEnd, DEFAULT_MARKER_TIP)
+            : null;
       const wantsMarker = tip !== null;
       const drawing = drawProgress !== undefined && drawProgress < 1;
       // SVG marker-end sits at the path tip immediately; only attach it once
@@ -4331,6 +3886,7 @@ export function SceneRenderer({
       ancestorIdsById: resolved.ancestorIdsById,
       generatedPartsById: resolved.generatedPartsById,
       connectorsById: resolved.connectorsById,
+      fanGeometryById: resolved.fanGeometryById,
     };
     const authoredTimeline = Array.isArray(scene.timeline) ? scene.timeline : [];
     const nextTimeline = expandTimelineCues(
