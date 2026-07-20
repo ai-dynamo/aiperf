@@ -966,8 +966,962 @@ export const COMPARE_GRID_DEFINITION: SdkComponentDefinition = {
 };
 
 // ---------------------------------------------------------------------------
+// Extra palette token for the black index chips / accents that alternate with
+// the green ones in the "Observer sequence" and "Crate topology" slides.
+// ---------------------------------------------------------------------------
+
+const COLOR_INK_FILL = "#000000"; // solid black chip / accent fill
+
+/** Read an optional boolean flag from a loosely-typed record. */
+function jsonFlag(value: JsonValue | undefined): boolean {
+  return value === true;
+}
+
+// ---------------------------------------------------------------------------
+// sdk.numberedSequence — vertical stack of rows. Each row is a small square
+// index chip on the left (green fill when `emphasis`, black otherwise, mirroring
+// the deck's alternating `1..6` squares) carrying the `number`, and a bordered
+// box to its right with a bold mono `title` and gray `detail`. Root
+// `core.group`; exposes an indexed `row[i]` port family. Source: the "Observer
+// sequence" slide's `on_arrival` / `on_admit` / `on_token` / ... callback list.
+// ---------------------------------------------------------------------------
+
+type SequenceEntry = Readonly<{
+  number: string;
+  title: string;
+  detail?: string;
+  emphasis: boolean;
+}>;
+
+const SEQ_CHIP = 44; // square index chip edge length
+const SEQ_ROW_H = 56; // box height per row
+const SEQ_ROW_GAP = 12; // vertical gap between rows
+const SEQ_CHIP_GAP = 14; // horizontal gap chip → box
+const SEQ_BOX_W = 380; // bordered detail box width
+const SEQ_INSET = 14;
+
+function parseSequenceItems(
+  props: Readonly<Record<string, JsonValue>>,
+  componentId: string,
+  sourceMap: SourceRange,
+  diagnostics: Diagnostic[],
+): readonly SequenceEntry[] | undefined {
+  const raw = jsonArray(props.items);
+  if (raw === undefined || raw.length === 0) {
+    diagnostics.push(
+      diagnostic(
+        "SDK_PROP_REQUIRED",
+        "error",
+        `Component "${componentId}" requires a non-empty "items" array prop.`,
+        sourceMap,
+        `Provide "items" as an array of {number, title, detail?, emphasis?} objects.`,
+      ),
+    );
+    return undefined;
+  }
+
+  const items: SequenceEntry[] = [];
+  let valid = true;
+  raw.forEach((rawItem, index) => {
+    const record = jsonRecord(rawItem);
+    const number = record !== undefined ? jsonString(record.number) : undefined;
+    const title = record !== undefined ? jsonString(record.title) : undefined;
+    if (number === undefined || title === undefined) {
+      valid = false;
+      diagnostics.push(
+        diagnostic(
+          "SDK_PROP_INVALID_TYPE",
+          "error",
+          `Component "${componentId}" items[${index}] requires non-empty string "number" and "title".`,
+          sourceMap,
+          `Provide items[${index}].number and items[${index}].title as non-empty strings.`,
+        ),
+      );
+      return;
+    }
+    const detail = record !== undefined ? jsonString(record.detail) : undefined;
+    const emphasis = record !== undefined ? jsonFlag(record.emphasis) : false;
+    items.push({ number, title, emphasis, ...(detail !== undefined ? { detail } : {}) });
+  });
+
+  return valid ? items : undefined;
+}
+
+const numberedSequenceFactory: SdkComponentFactory = (props, _slots, context) => {
+  const diagnostics: Diagnostic[] = [];
+  const id = requireStringProp(props, "id", "sdk.numberedSequence", context.sourceMap, diagnostics);
+  const items = parseSequenceItems(props, "sdk.numberedSequence", context.sourceMap, diagnostics);
+  if (id === undefined || items === undefined) {
+    return fail(diagnostics);
+  }
+
+  const rootId = context.instanceId;
+  const x = numberProp(props, "x") ?? 0;
+  const y = numberProp(props, "y") ?? 0;
+  const stride = SEQ_ROW_H + SEQ_ROW_GAP;
+  const boxX = SEQ_CHIP + SEQ_CHIP_GAP;
+
+  const children: RenderNodeIr[] = [];
+  const ports: Record<string, ConnectorEndpointIr> = {};
+
+  items.forEach((item, index) => {
+    const rowY = index * stride;
+    const rowId = `${rootId}__row-${index}`;
+    const rowChildren: RenderNodeIr[] = [];
+
+    // Index chip: green when emphasized, solid black otherwise.
+    const chipFill = item.emphasis ? COLOR_ACCENT : COLOR_INK_FILL;
+    rowChildren.push(
+      attachSdkOrigin(
+        buildRect({
+          id: `${rowId}__chip`,
+          geometry: { x: 0, y: (SEQ_ROW_H - SEQ_CHIP) / 2, width: SEQ_CHIP, height: SEQ_CHIP },
+          style: { fill: chipFill },
+          label: `${item.number} chip`,
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.numberedSequence", context, "chip"),
+      ),
+    );
+    rowChildren.push(
+      attachSdkOrigin(
+        buildText({
+          id: `${rowId}__number`,
+          text: item.number,
+          geometry: { x: 0, y: (SEQ_ROW_H - SEQ_CHIP) / 2 + 12, width: SEQ_CHIP, height: 22 },
+          style: {
+            fontSize: 18,
+            fontFamily: MONO_FONT,
+            fontWeight: "bold",
+            fill: COLOR_SURFACE,
+            textAnchor: "middle",
+          },
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.numberedSequence", context, "number"),
+      ),
+    );
+
+    // Bordered detail box to the right of the chip.
+    const boxChildren: RenderNodeIr[] = [
+      attachSdkOrigin(
+        buildText({
+          id: `${rowId}__title`,
+          text: item.title,
+          geometry: {
+            x: SEQ_INSET,
+            y: item.detail !== undefined ? 10 : (SEQ_ROW_H - 22) / 2,
+            width: SEQ_BOX_W - SEQ_INSET * 2,
+            height: 22,
+          },
+          style: { fontSize: 16, fontFamily: MONO_FONT, fontWeight: "bold", fill: COLOR_INK, textAnchor: "start" },
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.numberedSequence", context, "title"),
+      ),
+    ];
+    if (item.detail !== undefined) {
+      boxChildren.push(
+        attachSdkOrigin(
+          buildText({
+            id: `${rowId}__detail`,
+            text: item.detail,
+            geometry: { x: SEQ_INSET, y: 34, width: SEQ_BOX_W - SEQ_INSET * 2, height: 18 },
+            style: { fontSize: 13, fill: COLOR_MUTED, textAnchor: "start" },
+            sourceMap: context.sourceMap,
+          }),
+          makeOrigin("sdk.numberedSequence", context, "detail"),
+        ),
+      );
+    }
+    rowChildren.push(
+      attachSdkOrigin(
+        buildGroup({
+          id: `${rowId}__box`,
+          capabilityId: "core.group",
+          geometry: { x: boxX, y: 0, width: SEQ_BOX_W, height: SEQ_ROW_H },
+          style: { coordinateSpace: "local", fill: COLOR_SURFACE, stroke: COLOR_BORDER, strokeWidth: 1 },
+          children: boxChildren,
+          label: item.title,
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.numberedSequence", context, "box"),
+      ),
+    );
+
+    children.push(
+      attachSdkOrigin(
+        buildGroup({
+          id: rowId,
+          capabilityId: "core.group",
+          geometry: { x: 0, y: rowY, width: boxX + SEQ_BOX_W, height: SEQ_ROW_H },
+          style: { coordinateSpace: "local" },
+          children: rowChildren,
+          label: `${item.number} ${item.title}`,
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.numberedSequence", context, "row"),
+      ),
+    );
+    ports[`row[${index}]`] = { nodeId: rowId };
+  });
+
+  const width = boxX + SEQ_BOX_W;
+  const height = Math.max(items.length * stride - SEQ_ROW_GAP, 0);
+  const root = attachSdkOrigin(
+    buildGroup({
+      id: rootId,
+      capabilityId: "core.group",
+      geometry: { x, y, width, height },
+      style: { coordinateSpace: "local" },
+      children,
+      label: "numbered sequence",
+      sourceMap: context.sourceMap,
+    }),
+    makeOrigin("sdk.numberedSequence", context, "root"),
+  );
+
+  return succeed({
+    roots: [root],
+    ports: { self: { nodeId: rootId }, ...ports },
+    actions: { enter: [rootId], emphasis: [rootId], exit: [rootId] },
+  });
+};
+
+export const NUMBERED_SEQUENCE_DEFINITION: SdkComponentDefinition = {
+  descriptor: makeDescriptor("sdk.numberedSequence", "core.group", {
+    items: { type: "json", required: true },
+    x: { type: "number", required: false, default: 0 },
+    y: { type: "number", required: false, default: 0 },
+  }),
+  factory: numberedSequenceFactory,
+  actions: DECK_ACTIONS,
+};
+
+// ---------------------------------------------------------------------------
+// sdk.timelineAxis — a horizontal reference axis spanning `start`..`end` in
+// domain units. Tick marks + labels sit under the axis at each `ticks` entry, a
+// circle marker (filled green for `"exact"`, hollow gray for `"late"`) sits at
+// each `markers` entry, and an optional `target` draws a dashed vertical
+// reference line with its label. Root `core.group`; exposes indexed
+// `tick[i]` / `marker[i]` and (when present) `target` ports. Source: the "Clock"
+// slide's RealClock diagram.
+// ---------------------------------------------------------------------------
+
+type AxisTick = Readonly<{ at: number; label: string }>;
+type AxisMarker = Readonly<{ at: number; label: string; late: boolean }>;
+
+const AXIS_WIDTH = 640; // pixel span of the axis line
+const AXIS_LINE_Y = 60; // y of the horizontal axis within the group
+const AXIS_LINE_THICKNESS = 2;
+const AXIS_TICK_H = 10; // tick mark height below the axis
+const AXIS_MARKER_R = 8; // marker circle radius
+const AXIS_TARGET_TOP = 12; // dashed target line top y
+const AXIS_TARGET_BOTTOM = 96; // dashed target line bottom y
+const AXIS_HEIGHT = 128;
+
+function parseAxisTicks(value: JsonValue | undefined): readonly AxisTick[] {
+  const raw = jsonArray(value);
+  if (raw === undefined) {
+    return [];
+  }
+  const ticks: AxisTick[] = [];
+  raw.forEach((rawTick) => {
+    const record = jsonRecord(rawTick);
+    const at = record !== undefined ? jsonNumber(record.at) : undefined;
+    const label = record !== undefined ? jsonString(record.label) : undefined;
+    if (at !== undefined && label !== undefined) {
+      ticks.push({ at, label });
+    }
+  });
+  return ticks;
+}
+
+function parseAxisMarkers(value: JsonValue | undefined): readonly AxisMarker[] {
+  const raw = jsonArray(value);
+  if (raw === undefined) {
+    return [];
+  }
+  const markers: AxisMarker[] = [];
+  raw.forEach((rawMarker) => {
+    const record = jsonRecord(rawMarker);
+    const at = record !== undefined ? jsonNumber(record.at) : undefined;
+    const label = record !== undefined ? jsonString(record.label) : undefined;
+    if (at !== undefined && label !== undefined) {
+      markers.push({ at, label, late: record?.style === "late" });
+    }
+  });
+  return markers;
+}
+
+const timelineAxisFactory: SdkComponentFactory = (props, _slots, context) => {
+  const diagnostics: Diagnostic[] = [];
+  const id = requireStringProp(props, "id", "sdk.timelineAxis", context.sourceMap, diagnostics);
+  const start = numberProp(props, "start");
+  const end = numberProp(props, "end");
+  if (start === undefined) {
+    diagnostics.push(
+      diagnostic(
+        "SDK_PROP_REQUIRED",
+        "error",
+        `Component "sdk.timelineAxis" requires a finite number prop "start".`,
+        context.sourceMap,
+        `Provide "start" as a finite number.`,
+      ),
+    );
+  }
+  if (end === undefined) {
+    diagnostics.push(
+      diagnostic(
+        "SDK_PROP_REQUIRED",
+        "error",
+        `Component "sdk.timelineAxis" requires a finite number prop "end".`,
+        context.sourceMap,
+        `Provide "end" as a finite number.`,
+      ),
+    );
+  }
+  if (id === undefined || start === undefined || end === undefined) {
+    return fail(diagnostics);
+  }
+
+  const rootId = context.instanceId;
+  const width = numberProp(props, "width") ?? AXIS_WIDTH;
+  const x = numberProp(props, "x") ?? 0;
+  const y = numberProp(props, "y") ?? 0;
+  const span = end - start;
+  // Degenerate zero-span axes collapse every value onto the left edge.
+  const toX = (at: number): number => (span === 0 ? 0 : ((at - start) / span) * width);
+
+  const ticks = parseAxisTicks(props.ticks);
+  const markers = parseAxisMarkers(props.markers);
+  const targetRecord = jsonRecord(props.target);
+  const targetAt = targetRecord !== undefined ? jsonNumber(targetRecord.at) : undefined;
+  const targetLabel = targetRecord !== undefined ? jsonString(targetRecord.label) : undefined;
+
+  const children: RenderNodeIr[] = [];
+  const ports: Record<string, ConnectorEndpointIr> = {};
+
+  // Horizontal axis line (thin rect).
+  const axisId = `${rootId}__axis`;
+  children.push(
+    attachSdkOrigin(
+      buildRect({
+        id: axisId,
+        geometry: { x: 0, y: AXIS_LINE_Y, width, height: AXIS_LINE_THICKNESS },
+        style: { fill: COLOR_INK },
+        label: `axis ${start} to ${end}`,
+        sourceMap: context.sourceMap,
+      }),
+      makeOrigin("sdk.timelineAxis", context, "axis"),
+    ),
+  );
+  ports.axis = { nodeId: axisId };
+
+  // Optional dashed vertical target reference line + label.
+  if (targetAt !== undefined && targetLabel !== undefined) {
+    const targetX = toX(targetAt);
+    const targetLineId = `${rootId}__target`;
+    children.push(
+      attachSdkOrigin(
+        buildRect({
+          id: targetLineId,
+          geometry: { x: targetX, y: AXIS_TARGET_TOP, width: 1, height: AXIS_TARGET_BOTTOM - AXIS_TARGET_TOP },
+          style: { fill: COLOR_ACCENT, strokeDasharray: "4 3" },
+          label: `target ${targetLabel}`,
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.timelineAxis", context, "target"),
+      ),
+    );
+    children.push(
+      attachSdkOrigin(
+        buildText({
+          id: `${targetLineId}__label`,
+          text: targetLabel,
+          geometry: { x: targetX - 60, y: AXIS_TARGET_TOP - 4, width: 120, height: 16 },
+          style: { fontSize: 12, fontWeight: "bold", fill: COLOR_ACCENT, textAnchor: "middle" },
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.timelineAxis", context, "targetLabel"),
+      ),
+    );
+    ports.target = { nodeId: targetLineId };
+  }
+
+  // Tick marks + labels below the axis.
+  ticks.forEach((tick, index) => {
+    const tickX = toX(tick.at);
+    const tickId = `${rootId}__tick-${index}`;
+    children.push(
+      attachSdkOrigin(
+        buildRect({
+          id: tickId,
+          geometry: { x: tickX, y: AXIS_LINE_Y, width: 1, height: AXIS_TICK_H },
+          style: { fill: COLOR_SECONDARY },
+          label: `tick ${tick.label}`,
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.timelineAxis", context, "tick"),
+      ),
+    );
+    children.push(
+      attachSdkOrigin(
+        buildText({
+          id: `${tickId}__label`,
+          text: tick.label,
+          geometry: { x: tickX - 40, y: AXIS_LINE_Y + AXIS_TICK_H + 4, width: 80, height: 16 },
+          style: { fontSize: 12, fill: COLOR_SECONDARY, textAnchor: "middle" },
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.timelineAxis", context, "tickLabel"),
+      ),
+    );
+    ports[`tick[${index}]`] = { nodeId: tickId };
+  });
+
+  // Circle markers above the axis: filled green (exact) or hollow gray (late).
+  markers.forEach((marker, index) => {
+    const markerX = toX(marker.at);
+    const markerId = `${rootId}__marker-${index}`;
+    const markerCy = AXIS_LINE_Y - AXIS_MARKER_R - 6;
+    // core.rect used as a circle proxy via borderRadius so we avoid a new
+    // capability; a full radius on a square reads as a disc.
+    children.push(
+      attachSdkOrigin(
+        buildRect({
+          id: markerId,
+          geometry: {
+            x: markerX - AXIS_MARKER_R,
+            y: markerCy - AXIS_MARKER_R,
+            width: AXIS_MARKER_R * 2,
+            height: AXIS_MARKER_R * 2,
+          },
+          style: marker.late
+            ? { fill: "none", stroke: COLOR_MUTED, strokeWidth: 2, borderRadius: AXIS_MARKER_R }
+            : { fill: COLOR_ACCENT, borderRadius: AXIS_MARKER_R },
+          label: `marker ${marker.label}`,
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.timelineAxis", context, "marker"),
+      ),
+    );
+    children.push(
+      attachSdkOrigin(
+        buildText({
+          id: `${markerId}__label`,
+          text: marker.label,
+          geometry: { x: markerX - 60, y: markerCy - AXIS_MARKER_R - 18, width: 120, height: 16 },
+          style: {
+            fontSize: 12,
+            fontWeight: "bold",
+            fill: marker.late ? COLOR_MUTED : COLOR_ACCENT,
+            textAnchor: "middle",
+          },
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.timelineAxis", context, "markerLabel"),
+      ),
+    );
+    ports[`marker[${index}]`] = { nodeId: markerId };
+  });
+
+  const root = attachSdkOrigin(
+    buildGroup({
+      id: rootId,
+      capabilityId: "core.group",
+      geometry: { x, y, width, height: AXIS_HEIGHT },
+      style: { coordinateSpace: "local" },
+      children,
+      label: `timeline ${start} to ${end}`,
+      sourceMap: context.sourceMap,
+    }),
+    makeOrigin("sdk.timelineAxis", context, "root"),
+  );
+
+  return succeed({
+    roots: [root],
+    ports: { self: { nodeId: rootId }, ...ports },
+    actions: { enter: [rootId], emphasis: [rootId], exit: [rootId] },
+  });
+};
+
+export const TIMELINE_AXIS_DEFINITION: SdkComponentDefinition = {
+  descriptor: makeDescriptor("sdk.timelineAxis", "core.group", {
+    start: { type: "number", required: true },
+    end: { type: "number", required: true },
+    unit: { type: "string", required: false },
+    ticks: { type: "json", required: false },
+    markers: { type: "json", required: false },
+    target: { type: "json", required: false },
+    x: { type: "number", required: false, default: 0 },
+    y: { type: "number", required: false, default: 0 },
+    width: { type: "number", required: false, default: AXIS_WIDTH },
+  }),
+  factory: timelineAxisFactory,
+  actions: DECK_ACTIONS,
+};
+
+// ---------------------------------------------------------------------------
+// sdk.nodeTree — one root box over a row of child boxes, each connected to the
+// root by a `core.arrow` line, with an optional `orderNote` caption underneath.
+// The root box fills green when the root's own `emphasis` is set (the deck's
+// "popped first" element), children fill white unless individually emphasized.
+// Root `core.group`; exposes `rootBox` and indexed `child[i]` ports. Source: the
+// "Clock" slide's SimClock `BinaryHeap<Sleeper>` diagram.
+// ---------------------------------------------------------------------------
+
+type TreeNode = Readonly<{ label: string; detail?: string; emphasis: boolean }>;
+
+const TREE_BOX_W = 150;
+const TREE_BOX_H = 60;
+const TREE_CHILD_GAP = 40; // horizontal gap between child boxes
+const TREE_LEVEL_GAP = 70; // vertical gap root → children row
+const TREE_CAPTION_H = 24;
+const TREE_INSET = 12;
+
+function parseTreeNode(
+  value: JsonValue | undefined,
+): Readonly<{ label: string; detail?: string; emphasis: boolean }> | undefined {
+  const record = jsonRecord(value);
+  const label = record !== undefined ? jsonString(record.label) : undefined;
+  if (label === undefined) {
+    return undefined;
+  }
+  const detail = record !== undefined ? jsonString(record.detail) : undefined;
+  const emphasis = record !== undefined ? jsonFlag(record.emphasis) : false;
+  return { label, emphasis, ...(detail !== undefined ? { detail } : {}) };
+}
+
+function buildTreeBox(
+  args: {
+    componentId: string;
+    role: string;
+    id: string;
+    geometry: GeometryIr;
+    node: TreeNode;
+  },
+  context: SdkExpansionContext,
+): GroupNodeIr {
+  const filled = args.node.emphasis;
+  const boxChildren: RenderNodeIr[] = [
+    attachSdkOrigin(
+      buildText({
+        id: `${args.id}__label`,
+        text: args.node.label,
+        geometry: {
+          x: TREE_INSET,
+          y: args.node.detail !== undefined ? 12 : (TREE_BOX_H - 20) / 2,
+          width: TREE_BOX_W - TREE_INSET * 2,
+          height: 20,
+        },
+        style: {
+          fontSize: 16,
+          fontFamily: MONO_FONT,
+          fontWeight: "bold",
+          fill: filled ? COLOR_SURFACE : COLOR_INK,
+          textAnchor: "middle",
+        },
+        sourceMap: context.sourceMap,
+      }),
+      makeOrigin(args.componentId, context, `${args.role}Label`),
+    ),
+  ];
+  if (args.node.detail !== undefined) {
+    boxChildren.push(
+      attachSdkOrigin(
+        buildText({
+          id: `${args.id}__detail`,
+          text: args.node.detail,
+          geometry: { x: TREE_INSET, y: 34, width: TREE_BOX_W - TREE_INSET * 2, height: 16 },
+          style: { fontSize: 12, fill: filled ? COLOR_SURFACE : COLOR_MUTED, textAnchor: "middle" },
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin(args.componentId, context, `${args.role}Detail`),
+      ),
+    );
+  }
+  return attachSdkOrigin(
+    buildGroup({
+      id: args.id,
+      capabilityId: "core.group",
+      geometry: args.geometry,
+      style: {
+        coordinateSpace: "local",
+        fill: filled ? COLOR_ACCENT : COLOR_SURFACE,
+        stroke: filled ? COLOR_ACCENT : COLOR_BORDER,
+        strokeWidth: 1,
+      },
+      children: boxChildren,
+      label: args.node.label,
+      sourceMap: context.sourceMap,
+    }),
+    makeOrigin(args.componentId, context, args.role),
+  );
+}
+
+const nodeTreeFactory: SdkComponentFactory = (props, _slots, context) => {
+  const diagnostics: Diagnostic[] = [];
+  const id = requireStringProp(props, "id", "sdk.nodeTree", context.sourceMap, diagnostics);
+  const root = parseTreeNode(props.root);
+  if (root === undefined) {
+    diagnostics.push(
+      diagnostic(
+        "SDK_PROP_REQUIRED",
+        "error",
+        `Component "sdk.nodeTree" requires a "root" object with a non-empty string "label".`,
+        context.sourceMap,
+        `Provide "root" as {label, detail?, emphasis?}.`,
+      ),
+    );
+  }
+  const rawChildren = jsonArray(props.children);
+  if (rawChildren === undefined || rawChildren.length === 0) {
+    diagnostics.push(
+      diagnostic(
+        "SDK_PROP_REQUIRED",
+        "error",
+        `Component "sdk.nodeTree" requires a non-empty "children" array prop.`,
+        context.sourceMap,
+        `Provide "children" as an array of {label, detail?, emphasis?} objects.`,
+      ),
+    );
+  }
+  if (id === undefined || root === undefined || rawChildren === undefined || rawChildren.length === 0) {
+    return fail(diagnostics);
+  }
+
+  const childNodes: TreeNode[] = [];
+  let valid = true;
+  rawChildren.forEach((rawChild, index) => {
+    const node = parseTreeNode(rawChild);
+    if (node === undefined) {
+      valid = false;
+      diagnostics.push(
+        diagnostic(
+          "SDK_PROP_INVALID_TYPE",
+          "error",
+          `Component "sdk.nodeTree" children[${index}] requires a non-empty string "label".`,
+          context.sourceMap,
+          `Provide children[${index}].label as a non-empty string.`,
+        ),
+      );
+      return;
+    }
+    childNodes.push(node);
+  });
+  if (!valid) {
+    return fail(diagnostics);
+  }
+
+  const rootId = context.instanceId;
+  const x = numberProp(props, "x") ?? 0;
+  const y = numberProp(props, "y") ?? 0;
+  const orderNote = stringProp(props, "orderNote");
+
+  const childrenRowWidth =
+    childNodes.length * TREE_BOX_W + (childNodes.length - 1) * TREE_CHILD_GAP;
+  const width = Math.max(childrenRowWidth, TREE_BOX_W);
+  const childrenY = TREE_BOX_H + TREE_LEVEL_GAP;
+
+  const nodes: RenderNodeIr[] = [];
+
+  // Root box centered over the children row.
+  const rootBoxId = `${rootId}__root`;
+  const rootBoxX = (width - TREE_BOX_W) / 2;
+  nodes.push(
+    buildTreeBox(
+      {
+        componentId: "sdk.nodeTree",
+        role: "rootBox",
+        id: rootBoxId,
+        geometry: { x: rootBoxX, y: 0, width: TREE_BOX_W, height: TREE_BOX_H },
+        node: root,
+      },
+      context,
+    ),
+  );
+
+  const ports: Record<string, ConnectorEndpointIr> = { rootBox: { nodeId: rootBoxId } };
+
+  childNodes.forEach((node, index) => {
+    const childX = index * (TREE_BOX_W + TREE_CHILD_GAP);
+    const childBoxId = `${rootId}__child-${index}`;
+
+    // Connecting line from root bottom-center to child top-center.
+    const from: ConnectorEndpointIr = { x: rootBoxX + TREE_BOX_W / 2, y: TREE_BOX_H };
+    const to: ConnectorEndpointIr = { x: childX + TREE_BOX_W / 2, y: childrenY };
+    const lineId = `${rootId}__line-${index}`;
+    nodes.push(
+      attachSdkOrigin(
+        buildConnector({
+          id: lineId,
+          geometry: {
+            x: Math.min(from.x!, to.x!),
+            y: Math.min(from.y!, to.y!),
+            width: Math.abs(to.x! - from.x!),
+            height: Math.abs(to.y! - from.y!),
+          },
+          style: { fill: "none", stroke: COLOR_BORDER, strokeWidth: 1.5 },
+          from,
+          to,
+          label: `root to child ${index}`,
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.nodeTree", context, "line"),
+      ),
+    );
+
+    nodes.push(
+      buildTreeBox(
+        {
+          componentId: "sdk.nodeTree",
+          role: "child",
+          id: childBoxId,
+          geometry: { x: childX, y: childrenY, width: TREE_BOX_W, height: TREE_BOX_H },
+          node,
+        },
+        context,
+      ),
+    );
+    ports[`child[${index}]`] = { nodeId: childBoxId };
+  });
+
+  let height = childrenY + TREE_BOX_H;
+  if (orderNote !== undefined) {
+    const captionId = `${rootId}__caption`;
+    nodes.push(
+      attachSdkOrigin(
+        buildText({
+          id: captionId,
+          text: orderNote,
+          geometry: { x: 0, y: height + 8, width, height: TREE_CAPTION_H },
+          style: { fontSize: 13, fill: COLOR_SECONDARY, textAnchor: "middle" },
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.nodeTree", context, "caption"),
+      ),
+    );
+    ports.caption = { nodeId: captionId };
+    height += 8 + TREE_CAPTION_H;
+  }
+
+  const rootNode = attachSdkOrigin(
+    buildGroup({
+      id: rootId,
+      capabilityId: "core.group",
+      geometry: { x, y, width, height },
+      style: { coordinateSpace: "local" },
+      children: nodes,
+      label: `node tree ${root.label}`,
+      sourceMap: context.sourceMap,
+    }),
+    makeOrigin("sdk.nodeTree", context, "root"),
+  );
+
+  return succeed({
+    roots: [rootNode],
+    ports: { self: { nodeId: rootId }, ...ports },
+    actions: { enter: [rootId], emphasis: [rootId], exit: [rootId] },
+  });
+};
+
+export const NODE_TREE_DEFINITION: SdkComponentDefinition = {
+  descriptor: makeDescriptor("sdk.nodeTree", "core.group", {
+    root: { type: "json", required: true },
+    children: { type: "json", required: true },
+    orderNote: { type: "string", required: false },
+    x: { type: "number", required: false, default: 0 },
+    y: { type: "number", required: false, default: 0 },
+  }),
+  factory: nodeTreeFactory,
+  actions: DECK_ACTIONS,
+};
+
+// ---------------------------------------------------------------------------
+// sdk.cardGrid — a `layout.grid` of bordered cards (reusing the grid layout as
+// `sdk.compareGrid` does), each with a left-accent-colored border strip
+// (green/black/gray per `accent`, default gray), a bold mono `title`, and gray
+// `detail` body text. Exposes an indexed `card[i]` port family. Source: the
+// "Crate topology" slide's 4-card grid.
+// ---------------------------------------------------------------------------
+
+type CardAccent = "green" | "black" | "gray";
+type CardEntry = Readonly<{ title: string; detail: string; accent: CardAccent }>;
+
+const CARD_DEFAULT_COLUMNS = 2;
+const CARD_W = 260;
+const CARD_H = 108;
+const CARD_GAP = 16;
+const CARD_INSET = 18;
+const CARD_ACCENT_W = 4; // left border strip width
+
+function cardAccentColor(accent: CardAccent): string {
+  switch (accent) {
+    case "green":
+      return COLOR_ACCENT;
+    case "black":
+      return COLOR_INK_FILL;
+    default:
+      return COLOR_MUTED;
+  }
+}
+
+function parseCards(
+  props: Readonly<Record<string, JsonValue>>,
+  componentId: string,
+  sourceMap: SourceRange,
+  diagnostics: Diagnostic[],
+): readonly CardEntry[] | undefined {
+  const raw = jsonArray(props.cards);
+  if (raw === undefined || raw.length === 0) {
+    diagnostics.push(
+      diagnostic(
+        "SDK_PROP_REQUIRED",
+        "error",
+        `Component "${componentId}" requires a non-empty "cards" array prop.`,
+        sourceMap,
+        `Provide "cards" as an array of {title, detail, accent?} objects.`,
+      ),
+    );
+    return undefined;
+  }
+
+  const cards: CardEntry[] = [];
+  let valid = true;
+  raw.forEach((rawCard, index) => {
+    const record = jsonRecord(rawCard);
+    const title = record !== undefined ? jsonString(record.title) : undefined;
+    const detail = record !== undefined ? jsonString(record.detail) : undefined;
+    if (title === undefined || detail === undefined) {
+      valid = false;
+      diagnostics.push(
+        diagnostic(
+          "SDK_PROP_INVALID_TYPE",
+          "error",
+          `Component "${componentId}" cards[${index}] requires non-empty string "title" and "detail".`,
+          sourceMap,
+          `Provide cards[${index}].title and cards[${index}].detail as non-empty strings.`,
+        ),
+      );
+      return;
+    }
+    const rawAccent = record !== undefined ? jsonString(record.accent) : undefined;
+    const accent: CardAccent =
+      rawAccent === "green" || rawAccent === "black" ? rawAccent : "gray";
+    cards.push({ title, detail, accent });
+  });
+
+  return valid ? cards : undefined;
+}
+
+const cardGridFactory: SdkComponentFactory = (props, _slots, context) => {
+  const diagnostics: Diagnostic[] = [];
+  const id = requireStringProp(props, "id", "sdk.cardGrid", context.sourceMap, diagnostics);
+  const cards = parseCards(props, "sdk.cardGrid", context.sourceMap, diagnostics);
+  if (id === undefined || cards === undefined) {
+    return fail(diagnostics);
+  }
+
+  const rootId = context.instanceId;
+  const columns = Math.max(1, Math.round(numberProp(props, "columns") ?? CARD_DEFAULT_COLUMNS));
+  const gap = numberProp(props, "gap") ?? CARD_GAP;
+  const x = numberProp(props, "x") ?? 0;
+  const y = numberProp(props, "y") ?? 0;
+
+  const children: RenderNodeIr[] = [];
+  const ports: Record<string, ConnectorEndpointIr> = {};
+
+  cards.forEach((card, index) => {
+    const cardId = `${rootId}__card-${index}`;
+    const cardChildren: RenderNodeIr[] = [
+      attachSdkOrigin(
+        buildRect({
+          id: `${cardId}__accent`,
+          geometry: { x: 0, y: 0, width: CARD_ACCENT_W, height: CARD_H },
+          style: { fill: cardAccentColor(card.accent) },
+          label: `${card.title} accent`,
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.cardGrid", context, "accent"),
+      ),
+      attachSdkOrigin(
+        buildText({
+          id: `${cardId}__title`,
+          text: card.title,
+          geometry: { x: CARD_INSET, y: 20, width: CARD_W - CARD_INSET * 2, height: 24 },
+          style: { fontSize: 18, fontFamily: MONO_FONT, fontWeight: "bold", fill: COLOR_INK, textAnchor: "start" },
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.cardGrid", context, "title"),
+      ),
+      attachSdkOrigin(
+        buildText({
+          id: `${cardId}__detail`,
+          text: card.detail,
+          geometry: { x: CARD_INSET, y: 54, width: CARD_W - CARD_INSET * 2, height: 44 },
+          style: { fontSize: 14, fill: COLOR_MUTED, textAnchor: "start" },
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.cardGrid", context, "detail"),
+      ),
+    ];
+
+    children.push(
+      attachSdkOrigin(
+        buildGroup({
+          id: cardId,
+          capabilityId: "core.group",
+          geometry: { x: 0, y: 0, width: CARD_W, height: CARD_H },
+          style: { coordinateSpace: "local", fill: COLOR_SURFACE, stroke: COLOR_BORDER, strokeWidth: 1 },
+          children: cardChildren,
+          label: card.title,
+          sourceMap: context.sourceMap,
+        }),
+        makeOrigin("sdk.cardGrid", context, "card"),
+      ),
+    );
+    ports[`card[${index}]`] = { nodeId: cardId };
+  });
+
+  const rowCount = Math.ceil(cards.length / columns);
+  const width = columns * CARD_W + (columns - 1) * gap;
+  const height = rowCount * CARD_H + (rowCount - 1) * gap;
+
+  const root = attachSdkOrigin(
+    buildGroup({
+      id: rootId,
+      capabilityId: "layout.grid",
+      geometry: { x, y, width, height },
+      style: { coordinateSpace: "local", cols: columns, gap },
+      children,
+      label: "card grid",
+      sourceMap: context.sourceMap,
+    }),
+    makeOrigin("sdk.cardGrid", context, "root"),
+  );
+
+  return succeed({
+    roots: [root],
+    ports: { self: { nodeId: rootId }, ...ports },
+    actions: { enter: [rootId], emphasis: [rootId], exit: [rootId] },
+  });
+};
+
+export const CARD_GRID_DEFINITION: SdkComponentDefinition = {
+  descriptor: makeDescriptor("sdk.cardGrid", "layout.grid", {
+    columns: { type: "number", required: false, default: CARD_DEFAULT_COLUMNS },
+    cards: { type: "json", required: true },
+    gap: { type: "number", required: false, default: CARD_GAP },
+    x: { type: "number", required: false, default: 0 },
+    y: { type: "number", required: false, default: 0 },
+  }),
+  factory: cardGridFactory,
+  actions: DECK_ACTIONS,
+};
+
+// ---------------------------------------------------------------------------
 // Deck composite pack: `sdk/registry.ts` appends this to the generic pack.
-// Task 2 appends four more definitions to this array.
 // ---------------------------------------------------------------------------
 
 /** Deck-port SDK composite component definitions (working factories). */
@@ -976,4 +1930,8 @@ export const DECK_COMPOSITE_SDK_COMPONENTS: readonly SdkComponentDefinition[] = 
   STEP_CHAIN_DEFINITION,
   BIG_STAT_DEFINITION,
   COMPARE_GRID_DEFINITION,
+  NUMBERED_SEQUENCE_DEFINITION,
+  TIMELINE_AXIS_DEFINITION,
+  NODE_TREE_DEFINITION,
+  CARD_GRID_DEFINITION,
 ];
