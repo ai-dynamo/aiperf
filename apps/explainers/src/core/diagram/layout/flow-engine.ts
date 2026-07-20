@@ -380,9 +380,11 @@ function positionContainer(
 
   let crossCursor = (rowLike ? contentBox.y : contentBox.x) + contentDist.leading;
 
-  const orderedLines = reverse ? [...lines].reverse() : lines;
-
-  orderedLines.forEach((line) => {
+  // `row-reverse`/`column-reverse` only reverses the MAIN axis (child order
+  // within a line, handled below via `orderedIndexes`) — line stacking order
+  // along the cross axis is unaffected by direction; only `wrap-reverse`
+  // (not implemented — no current composite needs it) would reverse that.
+  lines.forEach((line) => {
     // A single implied line (the nowrap default, by far the common case)
     // always occupies the FULL cross-axis content space — align-content
     // only has meaning across multiple lines. With more than one line, a

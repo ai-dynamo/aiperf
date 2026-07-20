@@ -142,6 +142,25 @@ describe("layoutFlow", () => {
     expect(boxes.get("c")!.y).toBe(80); // 100 - 20
   });
 
+  it("row-reverse only reverses main-axis child order, not multi-line cross-axis stacking", () => {
+    const root: FlowNode = {
+      id: "root",
+      direction: "row-reverse",
+      wrap: "wrap",
+      children: [leaf("a", 40, 20), leaf("b", 40, 20), leaf("c", 40, 20)],
+    };
+    // budget fits 2 per line: line 1 = [a,b] (reversed to b,a on the main axis),
+    // line 2 = [c]. Line STACKING order must remain top-to-bottom (a/b's line
+    // first, c's line second) — only within-line order reverses.
+    const boxes = layoutFlow(root, { maxWidth: 90 });
+    expect(boxes.get("a")!.y).toBe(0);
+    expect(boxes.get("b")!.y).toBe(0);
+    expect(boxes.get("c")!.y).toBe(20); // second line, not stacked above the first
+    // within the first line, b (reversed order) sits at the start
+    expect(boxes.get("b")!.x).toBe(0);
+    expect(boxes.get("a")!.x).toBe(40);
+  });
+
   it("distributes extra space proportionally via grow", () => {
     const root: FlowNode = {
       id: "root",
