@@ -17,6 +17,7 @@ use image::ColorType;
 use image::codecs::jpeg::JpegEncoder;
 #[cfg(feature = "parquet")]
 use parquet::file::reader::{FileReader, SerializedFileReader};
+use rayon::prelude::*;
 use serde_json::{Map, Value};
 use smallvec::{SmallVec, smallvec};
 
@@ -149,9 +150,79 @@ impl Composer for AccuracyComposer {
         let mut ids = SessionIdGenerator::new(config.rng_root.seed(), "session");
         let mut finalizer = config.finalizer()?;
         let mut conversations = Vec::with_capacity(rows.len());
-        for row in rows {
+
+        // Tokenizing the prompt (and re-tokenizing it inside the composed
+        // `messages` body for `input_tokens`) is the dominant per-row cost and
+        // touches only `row.value`/`system_prompt`, not the shared, sequentially
+        // interned `SegmentPool` or the session-id generator - precompute it in
+        // parallel, then do the (necessarily sequential, since ids/segments are
+        // shared mutable state) main pass using the precomputed values.
+        struct Prepared {
+            message_wire: Bytes,
+            prompt_text: String,
+            prompt_tokens: Vec<u32>,
+            input_tokens: u64,
+            generation_size: u32,
+        }
+        let prepared: Vec<Prepared> = rows
+            .par_iter()
+            .map(|row| -> Result<Prepared> {
+                let object = require_object(&row.value, &row.origin)?;
+                let prompt = required_string(object, "prompt", &row.origin)?;
+                let mut messages = object
+                    .get("raw_messages")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([{"role":"user","content":prompt}]));
+                let messages_array = messages.as_array_mut().ok_or_else(|| {
+                    DatasetError::Validation(format!(
+                        "{}: raw_messages must be an array",
+                        row.origin
+                    ))
+                })?;
+                if let Some(system) = &system_prompt {
+                    messages_array
+                        .insert(0, serde_json::json!({"role":"system","content":system}));
+                }
+                validate_message_values(messages_array, &row.origin)?;
+                let message_wire = Bytes::from(serde_json::to_vec(&messages)?);
+                let prompt_text = system_prompt.as_ref().map_or_else(
+                    || prompt.to_string(),
+                    |system| format!("{system}\n\n{prompt}"),
+                );
+                let prompt_tokens = tokenizer.encode(&prompt_text)?;
+                let body = serde_json::json!({"messages": messages});
+                let input_tokens = extracted_token_count(&body, tokenizer)?;
+                let generation_size = object
+                    .get("metadata")
+                    .and_then(Value::as_object)
+                    .and_then(|metadata| metadata.get("generation_size"))
+                    .and_then(Value::as_u64)
+                    .and_then(|value| u32::try_from(value).ok())
+                    .or_else(|| {
+                        object
+                            .get("generation_size")
+                            .and_then(Value::as_u64)
+                            .and_then(|value| u32::try_from(value).ok())
+                    })
+                    .unwrap_or(100);
+                if generation_size == 0 {
+                    return Err(DatasetError::Validation(format!(
+                        "{}: generation_size must be positive",
+                        row.origin
+                    )));
+                }
+                Ok(Prepared {
+                    message_wire,
+                    prompt_text,
+                    prompt_tokens,
+                    input_tokens,
+                    generation_size,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        for (row, prepared) in rows.into_iter().zip(prepared) {
             let object = require_object(&row.value, &row.origin)?;
-            let prompt = required_string(object, "prompt", &row.origin)?;
             let task = required_string(object, "task", &row.origin)?;
             let session_id = object
                 .get("session_id")
@@ -163,29 +234,12 @@ impl Composer for AccuracyComposer {
                 .and_then(Value::as_str)
                 .map(CorrelationId::from)
                 .unwrap_or_else(|| CorrelationId::from(session_id.as_str()));
-            let mut messages = object
-                .get("raw_messages")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([{"role":"user","content":prompt}]));
-            let messages_array = messages.as_array_mut().ok_or_else(|| {
-                DatasetError::Validation(format!("{}: raw_messages must be an array", row.origin))
-            })?;
-            if let Some(system) = &system_prompt {
-                messages_array.insert(0, serde_json::json!({"role":"system","content":system}));
-            }
-            validate_message_values(messages_array, &row.origin)?;
-            let message_wire = Bytes::from(serde_json::to_vec(&messages)?);
-            let raw_messages = segments.intern_raw(None, message_wire)?;
-            let prompt_text = system_prompt.as_ref().map_or_else(
-                || prompt.to_string(),
-                |system| format!("{system}\n\n{prompt}"),
-            );
-            let prompt_tokens = tokenizer.encode(&prompt_text)?;
+            let raw_messages = segments.intern_raw(None, prepared.message_wire)?;
             let text = segments.intern_text(
                 Some(raw_messages),
                 "user",
-                Bytes::from(prompt_text),
-                prompt_tokens.into_boxed_slice(),
+                Bytes::from(prepared.prompt_text),
+                prepared.prompt_tokens.into_boxed_slice(),
             )?;
             let extra_body = object
                 .get("extra_body")
@@ -199,27 +253,8 @@ impl Composer for AccuracyComposer {
                     segments.intern_raw(Some(text), Bytes::from(serde_json::to_vec(value)?))
                 })
                 .transpose()?;
-            let body = serde_json::json!({"messages": messages});
-            let input_tokens = extracted_token_count(&body, tokenizer)?;
-            let generation_size = object
-                .get("metadata")
-                .and_then(Value::as_object)
-                .and_then(|metadata| metadata.get("generation_size"))
-                .and_then(Value::as_u64)
-                .and_then(|value| u32::try_from(value).ok())
-                .or_else(|| {
-                    object
-                        .get("generation_size")
-                        .and_then(Value::as_u64)
-                        .and_then(|value| u32::try_from(value).ok())
-                })
-                .unwrap_or(100);
-            if generation_size == 0 {
-                return Err(DatasetError::Validation(format!(
-                    "{}: generation_size must be positive",
-                    row.origin
-                )));
-            }
+            let input_tokens = prepared.input_tokens;
+            let generation_size = prepared.generation_size;
             let mut turn = Turn {
                 role: Some(Role::from("user")),
                 max_tokens: Some(generation_size),
@@ -261,37 +296,51 @@ impl Composer for ShareGptComposer {
         let mut ids = SessionIdGenerator::new(config.rng_root.seed(), "session");
         let mut finalizer = config.finalizer()?;
         let mut conversations = Vec::new();
-        for row in rows {
-            let Some(messages) = row.value.get("conversations").and_then(Value::as_array) else {
-                continue;
-            };
-            let pairs = sharegpt_pairs(messages);
-            if pairs.is_empty() {
-                continue;
-            }
-            let mut prepared = Vec::with_capacity(pairs.len());
-            let mut valid = true;
-            for (prompt, completion) in pairs {
-                let prompt_tokens = tokenizer.encode(&prompt)?;
-                let completion_tokens = tokenizer.encode(&completion)?;
-                if prompt_tokens.len() < min_length
-                    || prompt_tokens.len() > max_prompt
-                    || (!skip_min_output && completion_tokens.len() < min_length)
-                    || prompt_tokens.len() + completion_tokens.len() > max_total
-                {
-                    valid = false;
-                    break;
+
+        // Tokenizing every prompt/completion pair (and the min/max-length
+        // validity check that depends on those token counts) touches only the
+        // row's own JSON, not the shared segment pool or the session-id
+        // generator - precompute the whole per-row pair list (or `None` for a
+        // row that gets skipped) in parallel, then do the sequential
+        // segments/ids pass using the precomputed result.
+        let prepared_rows: Vec<Option<Vec<(String, Vec<u32>, u32)>>> = rows
+            .par_iter()
+            .map(|row| -> Result<Option<Vec<(String, Vec<u32>, u32)>>> {
+                let Some(messages) = row.value.get("conversations").and_then(Value::as_array)
+                else {
+                    return Ok(None);
+                };
+                let pairs = sharegpt_pairs(messages);
+                if pairs.is_empty() {
+                    return Ok(None);
                 }
-                let completion_tokens = u32::try_from(completion_tokens.len()).map_err(|_| {
-                    DatasetError::Validation(
-                        "ShareGPT completion length exceeds the u32 request limit".into(),
-                    )
-                })?;
-                prepared.push((prompt, prompt_tokens, completion_tokens));
-            }
-            if !valid || prepared.is_empty() {
-                continue;
-            }
+                let mut prepared = Vec::with_capacity(pairs.len());
+                for (prompt, completion) in pairs {
+                    let prompt_tokens = tokenizer.encode(&prompt)?;
+                    let completion_tokens = tokenizer.encode(&completion)?;
+                    if prompt_tokens.len() < min_length
+                        || prompt_tokens.len() > max_prompt
+                        || (!skip_min_output && completion_tokens.len() < min_length)
+                        || prompt_tokens.len() + completion_tokens.len() > max_total
+                    {
+                        return Ok(None);
+                    }
+                    let completion_tokens =
+                        u32::try_from(completion_tokens.len()).map_err(|_| {
+                            DatasetError::Validation(
+                                "ShareGPT completion length exceeds the u32 request limit".into(),
+                            )
+                        })?;
+                    prepared.push((prompt, prompt_tokens, completion_tokens));
+                }
+                if prepared.is_empty() {
+                    return Ok(None);
+                }
+                Ok(Some(prepared))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        for prepared in prepared_rows.into_iter().flatten() {
             let mut conversation = Conversation::new(ids.next_id());
             let mut parent = None;
             for (prompt, tokens, output_tokens) in prepared {
@@ -410,36 +459,56 @@ impl Composer for HfConversationComposer {
         let mut ids = SessionIdGenerator::new(config.rng_root.seed(), "session");
         let mut finalizer = config.finalizer()?;
         let mut conversations = Vec::new();
-        for row in rows {
+
+        // The `multi_turn` prompt/completion-pair tokenization + validity
+        // check below touches only the row's own JSON, not the shared segment
+        // pool or the session-id generator - precompute it in parallel for
+        // every row up front (`single_turn` rows are cheap and stay serial).
+        let multi_turn_prompts: Vec<Option<Vec<(String, Option<u32>)>>> = if multi_turn {
+            rows.par_iter()
+                .map(|row| -> Result<Option<Vec<(String, Option<u32>)>>> {
+                    let Some(object) = row.value.as_object() else {
+                        return Ok(None);
+                    };
+                    let Some(messages) = object.get(&column).and_then(Value::as_array) else {
+                        return Ok(None);
+                    };
+                    let normalized = normalize_hf_messages(messages);
+                    let mut prepared = Vec::new();
+                    for (prompt, completion) in hf_message_pairs(&normalized, &content_key) {
+                        let prompt_tokens = tokenizer.encode(&prompt)?.len();
+                        let completion_tokens = tokenizer.encode(&completion)?.len();
+                        if prompt_tokens < min_length
+                            || prompt_tokens > max_prompt
+                            || (!skip_min_output && completion_tokens < min_length)
+                            || prompt_tokens + completion_tokens > max_total
+                        {
+                            return Ok(None);
+                        }
+                        prepared.push((
+                            prompt,
+                            Some(u32::try_from(completion_tokens).map_err(|_| {
+                                DatasetError::Validation(
+                                    "HF conversation completion length exceeds u32".into(),
+                                )
+                            })?),
+                        ));
+                    }
+                    Ok(Some(prepared))
+                })
+                .collect::<Result<Vec<_>>>()?
+        } else {
+            Vec::new()
+        };
+
+        for (row_index, row) in rows.into_iter().enumerate() {
             let object = require_object(&row.value, &row.origin)?;
             let Some(messages) = object.get(&column).and_then(Value::as_array) else {
                 continue;
             };
             let normalized = normalize_hf_messages(messages);
             let prompts = if multi_turn {
-                let mut prepared = Vec::new();
-                let mut valid = true;
-                for (prompt, completion) in hf_message_pairs(&normalized, &content_key) {
-                    let prompt_tokens = tokenizer.encode(&prompt)?.len();
-                    let completion_tokens = tokenizer.encode(&completion)?.len();
-                    if prompt_tokens < min_length
-                        || prompt_tokens > max_prompt
-                        || (!skip_min_output && completion_tokens < min_length)
-                        || prompt_tokens + completion_tokens > max_total
-                    {
-                        valid = false;
-                        break;
-                    }
-                    prepared.push((
-                        prompt,
-                        Some(u32::try_from(completion_tokens).map_err(|_| {
-                            DatasetError::Validation(
-                                "HF conversation completion length exceeds u32".into(),
-                            )
-                        })?),
-                    ));
-                }
-                if valid { prepared } else { Vec::new() }
+                multi_turn_prompts[row_index].clone().unwrap_or_default()
             } else {
                 first_user_message(&normalized, &content_key)
                     .into_iter()
@@ -588,31 +657,52 @@ impl Composer for SpeedBenchComposer {
         let multi_turn = bool_option(config, "multi_turn", true)?;
         let mut finalizer = config.finalizer()?;
         let mut conversations = Vec::new();
-        for row in rows {
-            if !is_speed_bench(&row.value) {
-                return Err(DatasetError::Validation(format!(
-                    "{}: invalid SPEED-Bench row",
-                    row.origin
-                )));
-            }
-            if category.as_ref().is_some_and(|category| {
-                row.value.get("category").and_then(Value::as_str) != Some(category)
-            }) {
-                continue;
-            }
-            let id = row.value["question_id"].as_str().unwrap();
-            let messages = row.value["messages"].as_array().unwrap();
-            let selected = if multi_turn {
-                messages.as_slice()
-            } else {
-                &messages[..1]
-            };
-            let mut conversation = Conversation::new(id);
+
+        // Tokenizing every selected message is the dominant per-row cost and
+        // touches only the row's own JSON, not the shared segment pool (there
+        // is no session-id generator here - `id` comes straight from the row)
+        // - precompute the ordered (role, content, tokens) list for every row
+        // in parallel, then do the sequential intern pass.
+        struct Prepared<'a> {
+            id: &'a str,
+            turns: Vec<(&'a str, &'a str, Vec<u32>)>,
+        }
+        let prepared_rows: Vec<Option<Prepared>> = rows
+            .par_iter()
+            .map(|row| -> Result<Option<Prepared>> {
+                if !is_speed_bench(&row.value) {
+                    return Err(DatasetError::Validation(format!(
+                        "{}: invalid SPEED-Bench row",
+                        row.origin
+                    )));
+                }
+                if category.as_ref().is_some_and(|category| {
+                    row.value.get("category").and_then(Value::as_str) != Some(category)
+                }) {
+                    return Ok(None);
+                }
+                let id = row.value["question_id"].as_str().unwrap();
+                let messages = row.value["messages"].as_array().unwrap();
+                let selected = if multi_turn {
+                    messages.as_slice()
+                } else {
+                    &messages[..1]
+                };
+                let mut turns = Vec::with_capacity(selected.len());
+                for message in selected {
+                    let role = message["role"].as_str().unwrap();
+                    let content = message["content"].as_str().unwrap();
+                    let tokens = tokenizer.encode(content)?;
+                    turns.push((role, content, tokens));
+                }
+                Ok(Some(Prepared { id, turns }))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        for prepared in prepared_rows.into_iter().flatten() {
+            let mut conversation = Conversation::new(prepared.id);
             let mut parent = None;
-            for message in selected {
-                let role = message["role"].as_str().unwrap();
-                let content = message["content"].as_str().unwrap();
-                let tokens = tokenizer.encode(content)?;
+            for (role, content, tokens) in prepared.turns {
                 let input_tokens = tokens.len() as u64;
                 let handle = segments.intern_text(
                     parent,
@@ -1317,23 +1407,44 @@ fn compose_prompt_lists(
     let mut ids = SessionIdGenerator::new(config.rng_root.seed(), "session");
     let mut finalizer = config.finalizer()?;
     let mut conversations = Vec::new();
-    for row in rows {
-        let Some(turns) = row.value.get(field).and_then(Value::as_array) else {
+
+    // Tokenizing every non-empty text turn is the dominant per-row cost and
+    // touches only the row's own JSON, not the shared segment pool or the
+    // session-id generator - precompute the ordered (text, tokens) list for
+    // every row in parallel (order within a row is preserved so the
+    // `parent`-chaining intern pass below stays correct), then do the
+    // sequential intern pass.
+    let prepared_rows: Vec<Vec<(String, Vec<u32>)>> = rows
+        .par_iter()
+        .map(|row| -> Result<Vec<(String, Vec<u32>)>> {
+            let Some(turns) = row.value.get(field).and_then(Value::as_array) else {
+                return Ok(Vec::new());
+            };
+            let selected = if multi_turn {
+                turns.as_slice()
+            } else {
+                &turns[..turns.len().min(1)]
+            };
+            let mut prepared = Vec::new();
+            for value in selected {
+                let text = value_text(value)?.trim().to_string();
+                if text.is_empty() {
+                    continue;
+                }
+                let tokens = tokenizer.encode(&text)?;
+                prepared.push((text, tokens));
+            }
+            Ok(prepared)
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    for prepared in prepared_rows {
+        if prepared.is_empty() {
             continue;
-        };
-        let selected = if multi_turn {
-            turns.as_slice()
-        } else {
-            &turns[..turns.len().min(1)]
-        };
+        }
         let mut conversation = Conversation::new(ids.next_id());
         let mut parent = None;
-        for value in selected {
-            let text = value_text(value)?.trim().to_string();
-            if text.is_empty() {
-                continue;
-            }
-            let tokens = tokenizer.encode(&text)?;
+        for (text, tokens) in prepared {
             let input_tokens = tokens.len() as u64;
             let handle = segments.intern_text(
                 parent,
