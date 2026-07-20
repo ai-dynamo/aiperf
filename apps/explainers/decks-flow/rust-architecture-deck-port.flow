@@ -1228,4 +1228,158 @@ explainer "Rust Architecture — Deck Port" {
       }
     }
   }
+
+  // ---- Chapter 5 — Closing (Task 10) ----
+
+  slide "Divider 04" {
+    eyebrow: "CHAPTER 04"
+    title: "Cross-Cutting"
+    lede: "The configuration surface, the seams, the invariants."
+    narration: "Chapter-break slide 04: a huge green monospace '04' over the bold title 'Cross-Cutting' and the gray subtitle 'The configuration surface, the seams, the invariants', right-aligned."
+    caption: "Chapter 04 · Cross-Cutting."
+    render: @scene {
+      sdk.SectionDivider(id = "div04", number = "04", title = "Cross-Cutting", subtitle = "The configuration surface, the seams, the invariants", x = 34, y = 58, width = 650)
+      timeline main {
+        at 0 reveal div04 duration 320
+      }
+    }
+  }
+
+  slide "Config catalog" {
+    eyebrow: "THE CONFIGURATION SURFACE"
+    title: "The configuration surface"
+    lede: "Transport and workload are chosen independently; only validated pairs run."
+    narration: "The configuration surface: transport and workload are chosen independently, and only validated pairs run. A supported-pairs matrix crosses transport against workload — http runs scheduled and graph, grpc runs scheduled only, and both dynosim_offline and dynosim_online (feature-gated) run scheduled and graph. Workload is derived from the dataset format: dag_jsonl, weka_trace, and dynamo_trace select graph; everything else is scheduled. Six labeled parameter families round out the surface — phase types, arrivals, ramps, adaptive controllers, sequence-length distributions, and failure policy."
+    caption: "Transport × workload · only validated pairs run · six parameter families."
+    render: @scene {
+      sdk.Title(id = "cfg-title", text = "The configuration surface", x = 34, y = 20, width = 640, height = 30, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "cfg-sub", text = "Transport and workload are chosen independently; only validated pairs run", x = 34, y = 56, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "cfg-matrix-label", text = "SUPPORTED PAIRS · TRANSPORT × WORKLOAD", x = 34, y = 88, width = 310, height = 16, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "cfg-m1", text = "http · scheduled ✓ · graph ✓", x = 34, y = 108, width = 320, height = 18, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "cfg-m2", text = "grpc · scheduled ✓ · graph —", x = 34, y = 130, width = 320, height = 18, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "cfg-m3", text = "dynosim_offline (feature) · scheduled ✓ · graph ✓", x = 34, y = 152, width = 320, height = 18, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "cfg-m4", text = "dynosim_online (feature) · scheduled ✓ · graph ✓", x = 34, y = 174, width = 320, height = 18, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "cfg-derive", text = "Workload is derived from the dataset format — dag_jsonl / weka_trace / dynamo_trace select graph, everything else scheduled.", x = 34, y = 202, width = 320, height = 48, inkRole = theme(ink.tertiary))
+      sdk.Caption(id = "cfg-f1-l", text = "PHASE TYPES", x = 356, y = 84, width = 336, height = 14, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "cfg-f1-v", text = "concurrency · poisson · gamma · constant · user_centric · fixed_schedule", x = 356, y = 100, width = 336, height = 30, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "cfg-f2-l", text = "ARRIVALS", x = 356, y = 134, width = 336, height = 14, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "cfg-f2-v", text = "Constant · Poisson · Gamma · ConcurrencyBurst", x = 356, y = 150, width = 336, height = 18, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "cfg-f3-l", text = "RAMPS", x = 356, y = 172, width = 160, height = 14, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "cfg-f3-v", text = "Linear · Exponential · Poisson", x = 356, y = 188, width = 160, height = 30, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "cfg-f4-l", text = "ADAPTIVE", x = 528, y = 172, width = 164, height = 14, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "cfg-f4-v", text = "concurrency · prefill · request_rate · users", x = 528, y = 188, width = 164, height = 30, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "cfg-f5-l", text = "SEQ LENGTHS", x = 356, y = 226, width = 336, height = 14, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "cfg-f5-v", text = "Fixed · Normal · LogNormal · Multimodal · Empirical", x = 356, y = 242, width = 336, height = 18, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "cfg-f6-l", text = "FAILURE", x = 356, y = 264, width = 336, height = 14, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "cfg-f6-v", text = "continue (scheduled) · abort (graph)", x = 356, y = 280, width = 336, height = 18, inkRole = theme(ink.secondary))
+      timeline main {
+        at 0 reveal cfg-title duration 200
+        after cfg-title reveal cfg-sub duration 160
+        after cfg-sub reveal cfg-matrix-label duration 140
+        after cfg-matrix-label stagger targets [cfg-m1, cfg-m2, cfg-m3, cfg-m4] step 70 duration 150
+        after cfg-m4 reveal cfg-derive duration 160
+        after cfg-derive stagger targets [cfg-f1-l, cfg-f2-l, cfg-f3-l, cfg-f4-l, cfg-f5-l, cfg-f6-l] step 60 duration 120
+        after cfg-f6-l stagger targets [cfg-f1-v, cfg-f2-v, cfg-f3-v, cfg-f4-v, cfg-f5-v, cfg-f6-v] step 40 duration 100
+      }
+    }
+  }
+
+  slide "Everything is a trait" {
+    eyebrow: "EVERYTHING IS A TRAIT"
+    title: "Everything is a trait"
+    lede: "Every variation point is an implementable trait with at least one concrete impl."
+    narration: "Everything is a trait: every variation point is an implementable trait with at least one concrete impl — object-safe at dyn boundaries, monomorphized on the hot path. There are 115 extension seams across 18 layers, and the seam count per layer spans a wide range: Dataset 15, Scheduling 15, Graph 14, Runner composition 8, Phase lifecycle 8, Adaptive 7, Endpoints 6, HTTP 6, Metrics/report 6, Telemetry 6, Execution 5, Inputs 4, Cellular 4, and Dispatch/gRPC 3."
+    caption: "115 extension seams across 18 layers · every variation point a trait."
+    render: @scene {
+      sdk.Title(id = "trait-title", text = "Everything is a trait", x = 34, y = 18, width = 600, height = 28, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "trait-sub", text = "Every variation point is an implementable trait with at least one\nconcrete impl — object-safe at dyn boundaries, monomorphized on the hot path", x = 34, y = 50, width = 620, height = 40, inkRole = theme(ink.secondary))
+      sdk.Title(id = "trait-headline", text = "115 extension seams across 18 layers", x = 34, y = 104, width = 620, height = 30, inkRole = theme(accent.primary))
+      sdk.Caption(id = "trait-bars-label", text = "SEAMS PER LAYER", x = 34, y = 156, width = 300, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "trait-bars-1", items = ["Dataset · 15", "Scheduling · 15", "Graph · 14", "Runner comp. · 8", "Phase lifecycle · 8", "Adaptive · 7", "Endpoints · 6"], gap = 8, x = 34, y = 178, width = 640, height = 28)
+      sdk.TagList(id = "trait-bars-2", items = ["HTTP · 6", "Metrics/report · 6", "Telemetry · 6", "Execution · 5", "Inputs · 4", "Cellular · 4", "Dispatch/gRPC · 3"], gap = 8, x = 34, y = 216, width = 640, height = 28)
+      timeline main {
+        at 0 reveal trait-title duration 200
+        after trait-title reveal trait-sub duration 180
+        after trait-sub reveal trait-headline duration 220
+        after trait-headline reveal trait-bars-label duration 140
+        after trait-bars-label reveal trait-bars-1 duration 200
+        after trait-bars-1 reveal trait-bars-2 duration 200
+      }
+    }
+  }
+
+  slide "Invariants" {
+    eyebrow: "CROSS-CUTTING INVARIANTS"
+    title: "Cross-cutting invariants"
+    lede: "From the source, not the docs — the rules every subsystem holds to."
+    narration: "Cross-cutting invariants, read from the source rather than the docs — the rules every subsystem holds to. One, all time flows through Clock: never Instant::now or raw tokio::time for measurement, with virtual time an integer-ns tuple that tie-breaks on (at_ns, seq_no). Two, thread-per-core: N current_thread runtimes, per-trace state in Rc/RefCell, !Send futures, parallelism as many traces across threads rather than work-stealing. Three, no Arc/Mutex on the hot path: accumulate lock-free per worker and merge once at the join. Four, content-addressed: BLAKE3 prefix-dependent segments, materialize by concatenating pre-serialized bytes and never re-serialize. Five, NaN/Inf discipline: every value crossing a serialization boundary is finite or explicitly absent, and the cellular wire uses MessagePack for NaN-sparsity. Six, redaction at the boundary: every diagnostic is credential-scrubbed before stdout, secrets never enter DTOs and zeroize on drop. And one product entry path — Python projects exactly one side-effect-free protocol-v2 request; the runner fails closed on any unregistered id."
+    caption: "Six invariants from the source · one fail-closed product entry path."
+    render: @scene {
+      sdk.Title(id = "inv-title", text = "Cross-cutting invariants", x = 34, y = 18, width = 640, height = 28, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "inv-sub", text = "From the source, not the docs — the rules every subsystem holds to", x = 34, y = 50, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.Label(id = "inv-h1", text = "01 · All time via Clock", x = 34, y = 84, width = 300, height = 18, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "inv-d1", text = "No Instant::now / raw tokio timers;\nvirtual time = integer ns, (at_ns, seq_no) tie-break", x = 34, y = 104, width = 300, height = 60, inkRole = theme(ink.secondary))
+      sdk.Label(id = "inv-h2", text = "02 · Thread-per-core", x = 356, y = 84, width = 320, height = 18, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "inv-d2", text = "N current_thread runtimes; Rc/RefCell !Send\nper-trace state; many traces, not work-stealing", x = 356, y = 104, width = 320, height = 60, inkRole = theme(ink.secondary))
+      sdk.Label(id = "inv-h3", text = "03 · No Arc/Mutex hot-path", x = 34, y = 178, width = 300, height = 18, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "inv-d3", text = "Accumulate lock-free per worker,\nmerge once at the join", x = 34, y = 198, width = 300, height = 60, inkRole = theme(ink.secondary))
+      sdk.Label(id = "inv-h4", text = "04 · Content-addressed", x = 356, y = 178, width = 320, height = 18, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "inv-d4", text = "BLAKE3 prefix-dependent segments; materialize\nby concat of pre-serialized bytes, never re-serialize", x = 356, y = 198, width = 320, height = 60, inkRole = theme(ink.secondary))
+      sdk.Label(id = "inv-h5", text = "05 · NaN/Inf discipline", x = 34, y = 272, width = 300, height = 18, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "inv-d5", text = "Finite or explicitly absent at every serialization\nboundary; MessagePack wire for NaN-sparsity", x = 34, y = 292, width = 300, height = 60, inkRole = theme(ink.secondary))
+      sdk.Label(id = "inv-h6", text = "06 · Redaction at boundary", x = 356, y = 272, width = 320, height = 18, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "inv-d6", text = "Diagnostics credential-scrubbed before stdout;\nsecrets never enter DTOs, zeroize on drop", x = 356, y = 292, width = 320, height = 60, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "inv-callout", text = "One product entry path — Python projects exactly one side-effect-free protocol-v2 request; the runner fails closed on any unregistered id.", x = 34, y = 360, width = 640, height = 32, inkRole = theme(ink.primary), strokeRole = theme(ink.primary))
+      timeline main {
+        at 0 reveal inv-title duration 200
+        after inv-title reveal inv-sub duration 160
+        after inv-sub stagger targets [inv-h1, inv-h2, inv-h3, inv-h4, inv-h5, inv-h6] step 70 duration 130
+        after inv-h6 stagger targets [inv-d1, inv-d2, inv-d3, inv-d4, inv-d5, inv-d6] step 40 duration 100
+        after inv-d6 reveal inv-callout duration 200
+      }
+    }
+  }
+
+  slide "System map" {
+    eyebrow: "THE WHOLE SYSTEM ON ONE SLIDE"
+    title: "The whole system on one slide"
+    lede: "Eighteen subsystems, two seams, one product path."
+    narration: "The whole system on one slide: eighteen subsystems, two seams, one product path. A — the process boundary and protocol v2. B — input resolution. C — execution paths. D — HTTP transport. E — gRPC transport. F — endpoints. G — the dataset pipeline. H — the RNG substrate. I — timing and scheduling. J — the Graph-IR engine. K — metrics core. L — reporting and export. M — adaptive scale. N — accuracy. O — side-channel telemetry. P — cellular multi-process. Q — dynosim co-simulation. R — the mock server."
+    caption: "Eighteen subsystems A–R · two seams · one product path."
+    render: @scene {
+      sdk.Title(id = "map-title", text = "The whole system on one slide", x = 34, y = 20, width = 640, height = 30, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "map-sub", text = "Eighteen subsystems, two seams, one product path", x = 34, y = 56, width = 640, height = 20, inkRole = theme(ink.secondary))
+      // The HTML source is a flat 6-column grid of lettered cards with no
+      // connectors between them — not a networked diagram — so this maps to
+      // three non-wrapping sdk.TagList lanes rather than sdk.ProcessStep/Edge.
+      sdk.TagList(id = "map-row-1", items = ["A Process boundary", "B Input resolution", "C Execution paths", "D HTTP transport", "E gRPC transport", "F Endpoints"], gap = 8, x = 34, y = 110, width = 640, height = 60)
+      sdk.TagList(id = "map-row-2", items = ["G Dataset pipeline", "H RNG substrate", "I Timing + sched", "J Graph-IR engine", "K Metrics core", "L Report + export"], gap = 8, x = 34, y = 190, width = 640, height = 60)
+      sdk.TagList(id = "map-row-3", items = ["M Adaptive scale", "N Accuracy", "O Telemetry", "P Cellular", "Q Dynosim", "R Mock server"], gap = 8, x = 34, y = 270, width = 640, height = 60)
+      timeline main {
+        at 0 reveal map-title duration 200
+        after map-title reveal map-sub duration 160
+        after map-sub reveal map-row-1 duration 220
+        after map-row-1 reveal map-row-2 duration 220
+        after map-row-2 reveal map-row-3 duration 220
+      }
+    }
+  }
+
+  slide "Closing" {
+    eyebrow: "AIPERF RUST RUNTIME"
+    title: "Two seams. One codebase. Three run modes."
+    lede: "Specs are design intent; code is truth. Every variation point is a trait with at least one concrete impl."
+    narration: "Closing slide, mirroring the cover: the bold title 'Two seams. One codebase. Three run modes.' over the lede 'Specs are design intent; code is truth — every variation point is a trait with at least one concrete impl', closing with a green-barred byline reading 'Anthony Casagrande · AIPerf Rust Runtime'."
+    caption: "Two seams · one codebase · three run modes."
+    render: @scene {
+      sdk.Title(id = "close-title", text = "Two seams. One codebase.\nThree run modes.", x = 54, y = 92, width = 600, height = 84, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "close-lede", text = "Specs are design intent; code is truth. Every variation\npoint is a trait with at least one concrete impl.", x = 54, y = 200, width = 560, height = 56, inkRole = theme(ink.secondary))
+      sdk.IconLabel(id = "close-byline", label = "Anthony Casagrande · AIPerf Rust Runtime", icon = "user", x = 54, y = 300, width = 420, height = 36, inkRole = theme(ink.primary), strokeRole = theme(accent.primary))
+      timeline main {
+        at 0 reveal close-title duration 300
+        after close-title reveal close-lede duration 240
+        after close-lede reveal close-byline duration 200
+      }
+    }
+  }
 }
