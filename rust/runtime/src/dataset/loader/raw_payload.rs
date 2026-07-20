@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use rayon::prelude::*;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::value::RawValue;
@@ -113,6 +114,25 @@ impl Composer for RawPayloadComposer {
         let mut positions = HashMap::<String, usize>::new();
         let mut parents = Vec::<Option<crate::dataset::Handle>>::new();
 
+        // Tokenizing each row's payload text (a real BPE encode over the full
+        // prompt) is the dominant per-row cost and is independent per row, so
+        // do it as a parallel pre-pass across every available core instead of
+        // paying for it inline in the loop below. That loop is inherently
+        // sequential (session grouping via `positions`/`parents` and the
+        // shared `SegmentPool` intern calls both have row-to-row data
+        // dependencies), so without this pre-pass a large dataset serializes
+        // every row's tokenizer call onto a single thread regardless of how
+        // many cores the machine has.
+        let precomputed_input_tokens: Vec<Option<u64>> = rows
+            .par_iter()
+            .map(|row| -> Result<Option<u64>> {
+                match raw_token_ids(&row.value, &row.origin)? {
+                    Some(_) => Ok(None),
+                    None => raw_input_tokens(&row.value, tokenizer).map(Some),
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+
         for (row_index, row) in rows.into_iter().enumerate() {
             validate_payload_object(&row.value, &row.origin)?;
             let group = row
@@ -196,7 +216,12 @@ impl Composer for RawPayloadComposer {
                 body: Turn::dispatch_body(raw_payload, raw_token_handle, &[]),
                 extra_body,
                 input_tokens: raw_token_ids.as_ref().map_or_else(
-                    || raw_input_tokens(&row.value, state.tokenizer),
+                    || {
+                        Ok(precomputed_input_tokens[row_index].expect(
+                            "input tokens are precomputed above for every row without \
+                             raw_token_ids",
+                        ))
+                    },
                     |token_ids| {
                         u64::try_from(token_ids.len()).map_err(|_| {
                             DatasetError::Validation("raw token count exceeds u64".into())
