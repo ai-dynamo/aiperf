@@ -53,4 +53,9 @@ describe("Pill", () => {
     render(<Pill className="extra-pill-class">tag</Pill>);
     expect(screen.getByText("tag").className).toContain("extra-pill-class");
   });
+
+  it("applies an accessible label when the visible text alone doesn't convey meaning", () => {
+    render(<Pill ariaLabel="Implementation status: Rejected">Rejected</Pill>);
+    expect(screen.getByLabelText("Implementation status: Rejected")).toBeInTheDocument();
+  });
 });

@@ -115,7 +115,7 @@ export function ComposePage(): React.JSX.Element {
       <RecipeRail onSelect={setSelection} />
 
       <Grid columns="minmax(240px, 0.34fr) minmax(0, 1fr)" gap={20} align="start">
-        <Framed tone="elevated">
+        <Framed surfaceRole="elevated">
           <Stack gap={12}>
             <Eyebrow>Route selectors</Eyebrow>
             {(Object.keys(SELECTOR_OPTIONS) as SelectorKey[]).map((key) => (

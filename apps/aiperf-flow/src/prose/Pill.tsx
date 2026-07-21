@@ -22,6 +22,8 @@ export type PillProps = {
   tone?: CategoryRole;
   /** Renders as a `<button>` and applies `aria-pressed={active}` when provided. */
   onClick?: () => void;
+  /** Accessible label, for a pill whose visible text alone doesn't convey its meaning. */
+  ariaLabel?: string;
   className?: string;
 };
 
@@ -31,7 +33,14 @@ export type PillProps = {
  * `rounded-none` bordered label, optionally clickable/toggleable, optionally colored by
  * `CategoryRole` instead of the neutral active/inactive palette.
  */
-export function Pill({ children, active = false, tone, onClick, className }: PillProps): React.JSX.Element {
+export function Pill({
+  children,
+  active = false,
+  tone,
+  onClick,
+  ariaLabel,
+  className,
+}: PillProps): React.JSX.Element {
   const base = clsx(
     "inline-flex items-center rounded-none border px-2 py-0.5 text-xs font-semibold tracking-wide transition-colors",
     tone
@@ -45,10 +54,14 @@ export function Pill({ children, active = false, tone, onClick, className }: Pil
 
   if (onClick) {
     return (
-      <button type="button" className={base} onClick={onClick} aria-pressed={active}>
+      <button type="button" className={base} onClick={onClick} aria-pressed={active} aria-label={ariaLabel}>
         {children}
       </button>
     );
   }
-  return <span className={base}>{children}</span>;
+  return (
+    <span className={base} aria-label={ariaLabel}>
+      {children}
+    </span>
+  );
 }

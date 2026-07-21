@@ -9,7 +9,9 @@
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
 import { Code } from "../../prose/Code.js";
+import { Eyebrow } from "../../prose/Eyebrow.js";
 import { inkClassName } from "../../theme/tokens.js";
+import type { CategoryRole } from "../../theme/tokens.js";
 import {
   NODE_BY_ID,
   EDGE_BY_ID,
@@ -19,18 +21,14 @@ import {
   type Status,
 } from "./data.js";
 
-const STATUS_TEXT: Record<ReturnType<typeof statusTone>, string> = {
-  success: "text-category-green",
-  warning: "text-category-yellow",
-  neutral: "text-ink-tertiary",
+const STATUS_TONE: Record<ReturnType<typeof statusTone>, CategoryRole | undefined> = {
+  success: "green",
+  warning: "yellow",
+  neutral: undefined,
 };
 
 function StatusPill({ status }: { status: Status }): React.JSX.Element {
-  return (
-    <span className={`text-xs font-bold uppercase tracking-wide ${STATUS_TEXT[statusTone(status)]}`}>
-      {statusLabel(status)}
-    </span>
-  );
+  return <Eyebrow tone={STATUS_TONE[statusTone(status)]}>{statusLabel(status)}</Eyebrow>;
 }
 
 /** Engineer inspector for the currently selected node/edge id. Falls back to the controller node. */
@@ -69,15 +67,15 @@ export function Inspector({ selectedId }: { selectedId: string }): React.JSX.Ele
           <div className={`mt-0.5 text-sm ${inkClassName("secondary")}`}>{node.detail}</div>
         </div>
         <Stack gap={3}>
-          <span className={`text-xs font-bold uppercase tracking-wide ${inkClassName("tertiary")}`}>Symbol</span>
+          <Eyebrow>Symbol</Eyebrow>
           <Code>{node.symbol}</Code>
         </Stack>
         <Stack gap={3}>
-          <span className={`text-xs font-bold uppercase tracking-wide ${inkClassName("tertiary")}`}>Source</span>
+          <Eyebrow>Source</Eyebrow>
           <span className={`break-all text-sm ${inkClassName("secondary")}`}>{node.path}</span>
         </Stack>
         <Stack gap={3}>
-          <span className={`text-xs font-bold uppercase tracking-wide ${inkClassName("tertiary")}`}>Proof / boundary</span>
+          <Eyebrow>Proof / boundary</Eyebrow>
           <span className={`text-sm ${inkClassName("secondary")}`}>{node.proof}</span>
         </Stack>
       </Stack>
