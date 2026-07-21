@@ -4,7 +4,7 @@
  */
 
 import clsx from "clsx";
-import type { CategoryRole } from "../theme/tokens.js";
+import { categoryBgClassName, type CategoryRole } from "../theme/tokens.js";
 
 export type SwatchProps = {
   /** One of the shared category hues. Matches `categoryClassName` in `theme/tokens.ts`. */
@@ -16,7 +16,7 @@ export type SwatchProps = {
 export function Swatch({ color, className }: SwatchProps): React.JSX.Element {
   return (
     <span
-      className={clsx("h-3 w-3 shrink-0 rounded-none", `bg-category-${color}`, className)}
+      className={clsx("h-3 w-3 shrink-0 rounded-none", categoryBgClassName(color), className)}
       aria-hidden="true"
     />
   );

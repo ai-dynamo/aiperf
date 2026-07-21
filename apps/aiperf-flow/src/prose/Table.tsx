@@ -5,7 +5,12 @@
 
 import type { ReactNode } from "react";
 import clsx from "clsx";
-import { strokeClassName, inkClassName, type CategoryRole } from "../theme/tokens.js";
+import {
+  strokeClassName,
+  inkClassName,
+  categoryBgTintClassName,
+  type CategoryRole,
+} from "../theme/tokens.js";
 
 export type TableColumnAlign = "start" | "center" | "end";
 
@@ -41,7 +46,7 @@ function toneClassName(tone: TableRowTone | undefined): string | undefined {
   if (tone === undefined || tone === "neutral") {
     return undefined;
   }
-  return `bg-category-${toneCategory[tone]}/10`;
+  return categoryBgTintClassName(toneCategory[tone]);
 }
 
 /**

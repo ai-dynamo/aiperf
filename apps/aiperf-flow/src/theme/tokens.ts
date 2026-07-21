@@ -38,3 +38,38 @@ export function accentClassName(role: AccentRole): string {
 export function categoryClassName(role: CategoryRole): string {
   return `text-category-${role}`;
 }
+
+// Tailwind's compiler only picks up classes it can see as literal strings in source, so a
+// dynamically interpolated `bg-category-${role}` would be purged for any role whose exact
+// string doesn't happen to appear verbatim elsewhere. These tables keep every supported role
+// visible as a whole literal string (mirrors `GRID_COLS_CLASSES` in `layout/Grid.tsx`).
+const CATEGORY_BG_CLASSES: Record<CategoryRole, string> = {
+  green: "bg-category-green",
+  yellow: "bg-category-yellow",
+  purple: "bg-category-purple",
+  blue: "bg-category-blue",
+  red: "bg-category-red",
+  orange: "bg-category-orange",
+  cyan: "bg-category-cyan",
+  gray: "bg-category-gray",
+};
+
+const CATEGORY_BG_TINT_CLASSES: Record<CategoryRole, string> = {
+  green: "bg-category-green/10",
+  yellow: "bg-category-yellow/10",
+  purple: "bg-category-purple/10",
+  blue: "bg-category-blue/10",
+  red: "bg-category-red/10",
+  orange: "bg-category-orange/10",
+  cyan: "bg-category-cyan/10",
+  gray: "bg-category-gray/10",
+};
+
+export function categoryBgClassName(role: CategoryRole): string {
+  return CATEGORY_BG_CLASSES[role];
+}
+
+/** 10%-opacity variant of `categoryBgClassName`, used for subtle background tints. */
+export function categoryBgTintClassName(role: CategoryRole): string {
+  return CATEGORY_BG_TINT_CLASSES[role];
+}
