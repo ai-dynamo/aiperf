@@ -148,8 +148,10 @@ class PromptGenerator(BaseGenerator):
         ]
         self._corpus_size = len(self._tokenized_corpus)
         self.debug(
-            lambda: f"Initialized corpus with {self._corpus_size} tokens "
-            f"from {len(chunks)} chunks using {num_threads} thread(s)"
+            lambda: (
+                f"Initialized corpus with {self._corpus_size} tokens "
+                f"from {len(chunks)} chunks using {num_threads} thread(s)"
+            )
         )
 
     def _create_prefix_prompt_pool(self) -> None:
@@ -164,7 +166,9 @@ class PromptGenerator(BaseGenerator):
         pool_size = self.prefix_prompts.pool_size or 0
         self._prefix_prompts = [self.generate_prompt(length) for _ in range(pool_size)]
         self.debug(
-            lambda: f"Initialized prefix prompts pool with {len(self._prefix_prompts)} prompts"
+            lambda: (
+                f"Initialized prefix prompts pool with {len(self._prefix_prompts)} prompts"
+            )
         )
 
     def generate(
@@ -209,16 +213,33 @@ class PromptGenerator(BaseGenerator):
 
         return self._length_rng.sample_positive_normal_integer(mean, stddev)
 
-    def generate_prompt(self, num_tokens: int) -> str:
-        """Generate a prompt containing exactly `num_tokens` number of tokens.
+    def generate_prompt(self, num_tokens: int, *, _max_retries: int = 10) -> str:
+        """Generate a prompt whose re-encoded length matches `num_tokens`.
+
+        Decodes an initial token sequence and re-encodes it to verify the
+        round-trip token count. If the count differs (tokenizer quirks can
+        cause merges or splits), the sequence is trimmed or extended and
+        re-checked, up to `_max_retries` times.  Matches vLLM bench's
+        ``gen_prompt_decode_to_target_len`` contract.
 
         Args:
-            num_tokens: Number of tokens required in the prompt.
+            num_tokens: Target number of tokens in the final prompt.
+            _max_retries: Maximum adjustment iterations before accepting mismatch.
 
         Returns:
             A synthetic prompt as a string.
         """
-        return self.tokenizer.decode(self._sample_tokens(num_tokens))
+        tokens = self._sample_tokens(num_tokens)
+        for _ in range(_max_retries):
+            text = self.tokenizer.decode(tokens)
+            actual = len(self.tokenizer.encode(text))
+            if actual == num_tokens:
+                return text
+            if actual > num_tokens:
+                tokens = tokens[: -(actual - num_tokens)]
+            else:
+                tokens = tokens + self._sample_tokens(num_tokens - actual)
+        return self.tokenizer.decode(tokens)
 
     def _generate_cached_prompt(
         self,
@@ -433,8 +454,10 @@ class PromptGenerator(BaseGenerator):
             new_prompt = self.generate_prompt(length)
             self._user_context_prompts.append(new_prompt)
             self.debug(
-                lambda: f"Generated user context prompt #{len(self._user_context_prompts) - 1} "
-                f"for session {len(self._user_context_prompts) - 1}"
+                lambda: (
+                    f"Generated user context prompt #{len(self._user_context_prompts) - 1} "
+                    f"for session {len(self._user_context_prompts) - 1}"
+                )
             )
 
         return self._user_context_prompts[session_index]
