@@ -72,6 +72,10 @@ _ENDPOINT_FIELD_MAP: dict[str, str] = {
     "download_video_content": "download_video_content",
     "request_content_type": "request_content_type",
     "session_header": "session_header",
+    "aws_region": "aws_region",
+    "aws_profile": "aws_profile",
+    "auth_type": "auth_type",
+    "aws_service": "aws_service",
 }
 
 

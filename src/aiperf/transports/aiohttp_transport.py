@@ -323,11 +323,17 @@ class AioHttpTransport(BaseTransport):
                 request_info.model_endpoint.endpoint.request_content_type
                 == RequestContentType.MULTIPART_FORM_DATA
             )
-            body: bytes | aiohttp.FormData = (
-                self._build_form_data(payload)
-                if use_form_data
-                else orjson.dumps(payload)
-            )
+            body: bytes | aiohttp.FormData
+            if use_form_data:
+                # Request signers (SigV4) sign a fixed byte payload; multipart
+                # form-data bodies aren't signed - out of scope for the
+                # image_edit/video_generation endpoints that use them.
+                body = self._build_form_data(payload)
+            else:
+                signed = await self._sign_if_needed(
+                    "POST", url, headers, orjson.dumps(payload)
+                )
+                url, headers, body = signed.url, signed.headers, signed.body
 
             match reuse_strategy:
                 case ConnectionReuseStrategy.NEVER:
@@ -506,9 +512,14 @@ class AioHttpTransport(BaseTransport):
         """
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
-        body: bytes | aiohttp.FormData = (
-            self._build_form_data(payload) if use_form_data else orjson.dumps(payload)
-        )
+        body: bytes | aiohttp.FormData
+        if use_form_data:
+            body = self._build_form_data(payload)
+        else:
+            signed = await self._sign_if_needed(
+                "POST", url, headers, orjson.dumps(payload)
+            )
+            url, headers, body = signed.url, signed.headers, signed.body
         record = await self.aiohttp_client.post_request(url, body, headers)
         result = self._parse_video_response(record, "submit")
         if isinstance(result, ErrorDetails):
@@ -542,7 +553,8 @@ class AioHttpTransport(BaseTransport):
         poll_start = time.perf_counter_ns()
 
         while (time.perf_counter_ns() - poll_start) / 1e9 < timeout:
-            record = await self.aiohttp_client.get_request(poll_url, headers)
+            signed = await self._sign_if_needed("GET", poll_url, headers)
+            record = await self.aiohttp_client.get_request(signed.url, signed.headers)
             result = self._parse_video_response(record, "poll")
             if isinstance(result, ErrorDetails):
                 return result
@@ -592,7 +604,8 @@ class AioHttpTransport(BaseTransport):
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
         try:
-            record = await self.aiohttp_client.get_request(content_url, headers)
+            signed = await self._sign_if_needed("GET", content_url, headers)
+            record = await self.aiohttp_client.get_request(signed.url, signed.headers)
             if record.error:
                 return ErrorDetails(
                     type="VideoDownloadError",

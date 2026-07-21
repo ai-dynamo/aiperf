@@ -337,6 +337,23 @@ API authentication key for the endpoint. When provided, automatically included i
 Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
 <br/>_Choices: [`http`]_
 
+#### `--aws-region` `<str>`
+
+AWS region for SigV4-signed requests (e.g. `us-east-1`). Required when `--auth-type sigv4`.
+
+#### `--aws-profile` `<str>`
+
+Named AWS credentials profile. Unset uses boto3's default credential chain (environment variables, EC2/ECS instance role, `~/.aws/credentials` default profile).
+
+#### `--auth-type` `<str>`
+
+Request signing method for authentication. When set, the selected `request_signer` plugin signs every HTTP request. Replaces Bearer token auth (`--api-key` is ignored when `--auth-type` is set).
+<br/>_Choices: [`sigv4`]_
+
+#### `--aws-service` `<str>`
+
+AWS service name for SigV4 request signing (e.g. `execute-api`, `sagemaker`, `bedrock-runtime`). Required when `--auth-type sigv4`.
+
 #### `--use-legacy-max-tokens`
 
 Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request payloads. The OpenAI API now prefers 'max_completion_tokens', but some older APIs or implementations may require 'max_tokens'.
@@ -1675,7 +1692,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_observer`, `record_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_observer`, `record_processor`, `request_signer`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -1794,6 +1811,23 @@ API authentication key for the endpoint. When provided, automatically included i
 
 Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
 <br/>_Choices: [`http`]_
+
+#### `--aws-region` `<str>`
+
+AWS region for SigV4-signed requests (e.g. `us-east-1`). Required when `--auth-type sigv4`.
+
+#### `--aws-profile` `<str>`
+
+Named AWS credentials profile. Unset uses boto3's default credential chain (environment variables, EC2/ECS instance role, `~/.aws/credentials` default profile).
+
+#### `--auth-type` `<str>`
+
+Request signing method for authentication. When set, the selected `request_signer` plugin signs every HTTP request. Replaces Bearer token auth (`--api-key` is ignored when `--auth-type` is set).
+<br/>_Choices: [`sigv4`]_
+
+#### `--aws-service` `<str>`
+
+AWS service name for SigV4 request signing (e.g. `execute-api`, `sagemaker`, `bedrock-runtime`). Required when `--auth-type sigv4`.
 
 #### `--use-legacy-max-tokens`
 

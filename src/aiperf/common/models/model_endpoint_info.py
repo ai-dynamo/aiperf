@@ -20,7 +20,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config.endpoint import EndpointDefaults, TemplateConfig
-from aiperf.plugin.enums import EndpointType, TransportType
+from aiperf.plugin.enums import EndpointType, RequestSignerType, TransportType
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -149,6 +149,22 @@ class EndpointInfo(AIPerfBaseModel):
         description="Custom template configuration for template endpoints. "
         "Provides the Jinja2 request body and JMESPath response_field used by TemplateEndpoint.",
     )
+    aws_region: str | None = Field(
+        default=None,
+        description="AWS region for SigV4 requests.",
+    )
+    aws_profile: str | None = Field(
+        default=None,
+        description="Named AWS credentials profile.",
+    )
+    auth_type: RequestSignerType | None = Field(
+        default=None,
+        description="Request signing method (e.g. sigv4).",
+    )
+    aws_service: str | None = Field(
+        default=None,
+        description="AWS service name for SigV4 request signing. Required when auth_type='sigv4'.",
+    )
 
     @property
     def base_url(self) -> str:
@@ -213,6 +229,10 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 collect_trace_chunks=False,
                 template=getattr(ep, "template", None),
                 session_header=getattr(ep, "session_header", None),
+                aws_region=getattr(ep, "aws_region", None),
+                aws_profile=getattr(ep, "aws_profile", None),
+                auth_type=getattr(ep, "auth_type", None),
+                aws_service=getattr(ep, "aws_service", None),
             ),
             transport=ep.transport,
         )

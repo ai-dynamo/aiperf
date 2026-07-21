@@ -30,6 +30,7 @@ from aiperf.config.base import BaseConfig
 from aiperf.config.loader.parsing import normalize_http_urls
 from aiperf.plugin.enums import (
     EndpointType,
+    RequestSignerType,
     TransportType,
     URLSelectionStrategy,
 )
@@ -203,9 +204,43 @@ class EndpointConfig(BaseConfig):
         TransportType | None,
         Field(
             default=None,
-            description="Transport plugin name. Currently only 'http' (aiohttp-based "
-            "HTTP/1.1) is shipped. Auto-detected from URL when unset; explicit "
-            "setting overrides auto-detection.",
+            description="Transport plugin name. Auto-detected from the URL scheme when unset.",
+        ),
+    ]
+
+    aws_region: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="AWS region for the request. Required when auth_type='sigv4'.",
+        ),
+    ]
+
+    aws_profile: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Named AWS credentials profile. Unset uses boto3's default "
+            "credential chain.",
+        ),
+    ]
+
+    auth_type: Annotated[
+        RequestSignerType | None,
+        Field(
+            default=None,
+            description="Request signing method for authentication. When set, the selected "
+            "request_signer plugin signs every HTTP request sent by the HTTP transport. "
+            "Replaces Bearer token auth (api_key is ignored when auth_type is set).",
+        ),
+    ]
+
+    aws_service: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="AWS service name for SigV4 request signing (e.g. 'execute-api', "
+            "'sagemaker', 'bedrock-runtime'). Required when auth_type='sigv4'.",
         ),
     ]
 

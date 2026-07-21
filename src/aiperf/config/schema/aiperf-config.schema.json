@@ -9210,7 +9210,58 @@
             }
           ],
           "default": null,
-          "description": "Transport plugin name. Currently only 'http' (aiohttp-based HTTP/1.1) is shipped. Auto-detected from URL when unset; explicit setting overrides auto-detection."
+          "description": "Transport plugin name. Auto-detected from the URL scheme when unset."
+        },
+        "awsRegion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "AWS region for the request. Required when auth_type='sigv4'.",
+          "title": "Awsregion"
+        },
+        "awsProfile": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Named AWS credentials profile. Unset uses boto3's default credential chain.",
+          "title": "Awsprofile"
+        },
+        "authType": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RequestSignerType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request signing method for authentication. When set, the selected request_signer plugin signs every HTTP request sent by the HTTP transport. Replaces Bearer token auth (api_key is ignored when auth_type is set)."
+        },
+        "awsService": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "AWS service name for SigV4 request signing (e.g. 'execute-api', 'sagemaker', 'bedrock-runtime'). Required when auth_type='sigv4'.",
+          "title": "Awsservice"
         },
         "connectionReuse": {
           "$ref": "#/$defs/ConnectionReuseStrategy",
@@ -13826,6 +13877,13 @@
         "multipart/form-data"
       ],
       "title": "RequestContentType",
+      "type": "string"
+    },
+    "RequestSignerType": {
+      "enum": [
+        "sigv4"
+      ],
+      "title": "RequestSignerType",
       "type": "string"
     },
     "RuntimeConfig": {

@@ -137,6 +137,33 @@ class _APIServerSettings(BaseSettings):
     )
 
 
+class _AWSSettings(BaseSettings):
+    """AWS request-signing settings.
+
+    Controls credential-rotation behavior for the SigV4 request signer
+    (--auth-type sigv4).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_AWS_")
+
+    CREDENTIAL_RERESOLVE_INTERVAL: float = Field(
+        ge=0.0,
+        default=900.0,
+        description="Seconds between full credential-chain re-resolutions "
+        "(new botocore.session.Session, re-run the credential provider chain) "
+        "during a benchmark, on top of botocore's own per-call expiry-based "
+        "refresh (get_frozen_credentials()). Expiry-based refresh alone only "
+        "picks up a NEW credential value from the SAME already-resolved "
+        "provider (e.g. STS/SSO auto-renewal); it does not notice if the "
+        "underlying source changed entirely (e.g. a rotated static key in "
+        "~/.aws/credentials, a re-issued credential_process). Periodic "
+        "re-resolution protects long-running benchmarks (hours) against "
+        "continuing to sign with a leaked/rotated-out credential after its "
+        "replacement is already available. Set to 0 to disable and rely "
+        "solely on expiry-based refresh.",
+    )
+
+
 class _ChatSettings(BaseSettings):
     """Settings for the interactive ``aiperf chat`` command."""
 
@@ -1457,6 +1484,10 @@ class _Environment(BaseSettings):
     ACCURACY: _AccuracySettings = Field(
         default_factory=_AccuracySettings,
         description="Accuracy benchmark settings (dataset version pins, etc.)",
+    )
+    AWS: _AWSSettings = Field(
+        default_factory=_AWSSettings,
+        description="AWS request-signing settings (SigV4 credential rotation)",
     )
     API_SERVER: _APIServerSettings = Field(
         default_factory=_APIServerSettings,
