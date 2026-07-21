@@ -23,7 +23,10 @@ from aiperf.common.environment import Environment
 from aiperf.config.sweep import AdaptiveSearchSweep, Objective
 from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter
 from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
-from aiperf.orchestrator.search_planner._shared_warmup import apply_sla_warmup
+from aiperf.orchestrator.search_planner._shared_warmup import (
+    apply_sla_warmup,
+    find_phase_index,
+)
 
 # ---------------------------------------------------------------------------
 # Strategies
@@ -88,6 +91,16 @@ def _make_cfg_dict(concurrency: int) -> dict[str, Any]:
             }
         ],
     }
+
+
+def test_find_phase_index_matches_named_phase_by_kind() -> None:
+    phases = [
+        {"name": "settle", "kind": "warmup"},
+        {"name": "storm", "kind": "profiling"},
+    ]
+
+    assert find_phase_index(phases, "profiling") == 1
+
 
 
 # ---------------------------------------------------------------------------

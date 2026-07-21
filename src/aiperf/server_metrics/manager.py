@@ -107,6 +107,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         # Task for delayed shutdown, created when no endpoints are reachable
         self._shutdown_task: asyncio.Task[None] | None = None
         self._active_phase: CreditPhase | None = None
+        self._active_phase_token = 0
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -214,6 +215,8 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             if message.phase_kind == "warmup"
             else CreditPhase.PROFILING
         )
+        self._active_phase_token += 1
+        baseline_token = self._active_phase_token
         self._active_phase = boundary_phase
         errors: list[str] = []
         try:
@@ -223,7 +226,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                 except Exception as exc:
                     errors.append(f"{endpoint_url}: {type(exc).__name__}: {exc}")
         finally:
-            if self._active_phase == boundary_phase:
+            if self._active_phase_token == baseline_token and previous_phase is not None:
                 self._active_phase = previous_phase
         if errors:
             raise RuntimeError("; ".join(errors))
@@ -281,6 +284,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
     @on_message(MessageType.CREDIT_PHASE_START)
     async def _on_credit_phase_start(self, message: CreditPhaseStartMessage) -> None:
         """Track which benchmark phase subsequent server-metric scrapes belong to."""
+        self._active_phase_token += 1
         self._active_phase = message.stats.phase
         self.debug(f"Server Metrics: active phase is now {self._active_phase}")
 
@@ -295,11 +299,14 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         after the profiling phase completes and should still tag the final
         scrape as profiling.
         """
+        warmup_complete_token: int | None = None
         if message.stats.phase == CreditPhase.WARMUP and self._collectors:
             self.info(
                 "Server Metrics: Warmup complete, capturing final warmup metrics..."
             )
             previous_phase = self._active_phase
+            self._active_phase_token += 1
+            warmup_complete_token = self._active_phase_token
             self._active_phase = CreditPhase.WARMUP
             try:
                 for endpoint_url, collector in list(self._collectors.items()):
@@ -319,13 +326,18 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                 # so CREDIT_PHASE_START(PROFILING) can land while the scrapes
                 # above are awaited. Blindly restoring/clearing would clobber
                 # the newer phase and tag the whole profiling run as None.
-                if self._active_phase == CreditPhase.WARMUP:
+                if self._active_phase_token == warmup_complete_token:
                     self._active_phase = previous_phase
 
         if (
             message.stats.phase != CreditPhase.PROFILING
             and self._active_phase == message.stats.phase
+            and (
+                message.stats.phase != CreditPhase.WARMUP
+                or self._active_phase_token == warmup_complete_token
+            )
         ):
+            self._active_phase_token += 1
             self._active_phase = None
 
     @on_command(CommandType.PROFILE_COMPLETE)
@@ -355,6 +367,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             return
 
         self.info("Server Metrics: Profiling complete, capturing final metrics...")
+        self._active_phase_token += 1
         self._active_phase = CreditPhase.PROFILING
 
         # Trigger final scrape from all collectors

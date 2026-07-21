@@ -6,8 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import CommandType, CreditPhase
-from aiperf.common.messages import ProfileConfigureCommand, ProfileStartCommand
+from aiperf.common.enums import BaselineKind, CommandType, CreditPhase
+from aiperf.common.messages import (
+    PhaseBaselineRequestMessage,
+    ProfileConfigureCommand,
+    ProfileStartCommand,
+)
 from aiperf.common.messages.server_metrics_messages import ServerMetricsRecordMessage
 from aiperf.common.models import CreditPhaseStats, ErrorDetails
 from aiperf.common.models.server_metrics_models import ServerMetricsRecord
@@ -495,6 +499,105 @@ class TestPhaseTransitionRace:
         )
 
         assert manager._active_phase is None
+
+    @pytest.mark.asyncio
+    async def test_profiling_start_during_start_baseline_scrape_survives(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+
+        scrape_started = asyncio.Event()
+        release_scrape = asyncio.Event()
+
+        async def slow_scrape():
+            scrape_started.set()
+            await release_scrape.wait()
+
+        mock_collector = MagicMock()
+        mock_collector.collect_and_process_metrics = AsyncMock(side_effect=slow_scrape)
+        manager._collectors = {"http://localhost:8000/metrics": mock_collector}
+
+        baseline_task = asyncio.create_task(
+            manager.collect_baseline(
+                PhaseBaselineRequestMessage(
+                    service_id="timing-manager",
+                    phase_id="phase-0",
+                    phase_index=0,
+                    profiling_index=0,
+                    phase_name="first",
+                    phase_kind="profiling",
+                    kind=BaselineKind.START,
+                )
+            )
+        )
+        await scrape_started.wait()
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.PROFILING),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.PROFILING,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                ),
+            )
+        )
+        release_scrape.set()
+        await baseline_task
+
+        assert manager._active_phase == CreditPhase.PROFILING
+
+    @pytest.mark.asyncio
+    async def test_warmup_start_during_start_baseline_scrape_survives_kind_change(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        manager._active_phase = CreditPhase.PROFILING
+
+        scrape_started = asyncio.Event()
+        release_scrape = asyncio.Event()
+
+        async def slow_scrape():
+            scrape_started.set()
+            await release_scrape.wait()
+
+        mock_collector = MagicMock()
+        mock_collector.collect_and_process_metrics = AsyncMock(side_effect=slow_scrape)
+        manager._collectors = {"http://localhost:8000/metrics": mock_collector}
+
+        baseline_task = asyncio.create_task(
+            manager.collect_baseline(
+                PhaseBaselineRequestMessage(
+                    service_id="timing-manager",
+                    phase_id="phase-1",
+                    phase_index=1,
+                    profiling_index=None,
+                    phase_name="gap",
+                    phase_kind="warmup",
+                    kind=BaselineKind.START,
+                )
+            )
+        )
+        await scrape_started.wait()
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.WARMUP),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.WARMUP,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                ),
+            )
+        )
+        release_scrape.set()
+        await baseline_task
+
+        assert manager._active_phase == CreditPhase.WARMUP
 
 
 class TestDisabledServerMetrics:

@@ -1058,9 +1058,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         (set when ``--stats-interval 0`` disables the log block) suppresses the
         log line while still publishing the message for dashboards.
         """
+        phase_stats = self._records_tracker.create_stats_for_phase(
+            CreditPhase.PROFILING
+        )
         # Realtime metrics only need the metric_records accumulators —
         # GPU telemetry / server metrics live on separate fan-outs.
-        raw_metrics = await generate_realtime_metrics(self._metric_record_accumulators)
+        raw_metrics = await generate_realtime_metrics(
+            self._metric_record_accumulators,
+            phase_index=phase_stats.phase_index,
+        )
         if not raw_metrics:
             return
 
@@ -1074,9 +1080,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
         )
 
-        phase_stats = self._records_tracker.create_stats_for_phase(
-            CreditPhase.PROFILING
-        )
         # Realtime block uses the *raw* (unfiltered) metric set so per-user
         # throughput rows can show ``prefill_throughput_per_user`` etc. —
         # those have ``console_group=NONE`` (hidden from the dashboard table)

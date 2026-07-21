@@ -48,6 +48,8 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
         self._start_ns: int | None = None
         self._sent_end_ns: int | None = None
         self._requests_end_ns: int | None = None
+        self._baseline_start_ns: int | None = None
+        self._baseline_end_ns: int | None = None
         # Records processing timestamp fields
         self._records_end_ns: int | None = None
 
@@ -99,6 +101,8 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
             start_ns=self._start_ns,
             sent_end_ns=self._sent_end_ns,
             requests_end_ns=self._requests_end_ns,
+            baseline_start_ns=self._baseline_start_ns,
+            baseline_end_ns=self._baseline_end_ns,
             records_end_ns=self._records_end_ns,
             total_expected_requests=self._total_expected_requests,
             success_records=self._success_records,
@@ -120,6 +124,8 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
         self._start_ns = credit_stats.start_ns
         self._sent_end_ns = credit_stats.sent_end_ns
         self._requests_end_ns = credit_stats.requests_end_ns
+        self._baseline_start_ns = credit_stats.baseline_start_ns
+        self._baseline_end_ns = credit_stats.baseline_end_ns
         self._total_expected_requests = credit_stats.total_expected_requests
         self._final_requests_completed = credit_stats.final_requests_completed
         self._final_requests_cancelled = credit_stats.final_requests_cancelled
@@ -146,6 +152,13 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
         """Increment the error records count for a worker."""
         self._worker_stats[worker_id].error_records += 1
 
+    def _mark_all_records_received(self) -> bool:
+        if self._sent_all_records_received:
+            return False
+        self._records_end_ns = time.time_ns()
+        self._sent_all_records_received = True
+        return True
+
     def check_and_set_all_records_received(self) -> bool:
         """Check if all records have been received and set the flag if so.
         Returns:
@@ -159,8 +172,7 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
             >= self._final_requests_completed
         )
         if all_records_received:
-            self._records_end_ns = time.time_ns()
-            self._sent_all_records_received = True
+            self._mark_all_records_received()
 
         return all_records_received
 
@@ -186,8 +198,13 @@ class RecordsTracker:
         key = (phase, phase_index)
         if key not in self._phase_trackers:
             self._phase_trackers[key] = CreditPhaseRecordsTracker(phase)
-        self._latest_phase_index[phase] = phase_index
         return self._phase_trackers[key]
+
+    def _record_latest_phase_index(
+        self, phase: CreditPhase, phase_index: int | None
+    ) -> None:
+        if phase_index is not None or phase not in self._latest_phase_index:
+            self._latest_phase_index[phase] = phase_index
 
     def _latest_tracker_for_phase(
         self, phase: CreditPhase
@@ -229,7 +246,12 @@ class RecordsTracker:
             for (tracker_phase, phase_index), tracker in self._phase_trackers.items()
             if tracker_phase == phase and phase_index is not None
         ]
-        stats = concrete_stats or [
+        orphan_stats = [
+            tracker.create_stats()
+            for (tracker_phase, phase_index), tracker in self._phase_trackers.items()
+            if tracker_phase == phase and phase_index is None
+        ]
+        stats = (concrete_stats + orphan_stats) or [
             tracker.create_stats()
             for (tracker_phase, _), tracker in self._phase_trackers.items()
             if tracker_phase == phase
@@ -242,6 +264,12 @@ class RecordsTracker:
         request_ends = [
             s.requests_end_ns for s in stats if s.requests_end_ns is not None
         ]
+        baseline_starts = [
+            s.baseline_start_ns for s in stats if s.baseline_start_ns is not None
+        ]
+        baseline_ends = [
+            s.baseline_end_ns for s in stats if s.baseline_end_ns is not None
+        ]
         record_ends = [s.records_end_ns for s in stats if s.records_end_ns is not None]
 
         def optional_sum(values: list[int | None]) -> int | None:
@@ -253,6 +281,8 @@ class RecordsTracker:
             start_ns=min(starts) if starts else None,
             sent_end_ns=max(sent_ends) if sent_ends else None,
             requests_end_ns=max(request_ends) if request_ends else None,
+            baseline_start_ns=min(baseline_starts) if baseline_starts else None,
+            baseline_end_ns=max(baseline_ends) if baseline_ends else None,
             records_end_ns=max(record_ends) if record_ends else None,
             total_expected_requests=optional_sum(
                 [s.total_expected_requests for s in stats]
@@ -278,6 +308,9 @@ class RecordsTracker:
         phase_tracker = self._get_phase_tracker(
             credit_phase_stats.phase, credit_phase_stats.phase_index
         )
+        self._record_latest_phase_index(
+            credit_phase_stats.phase, credit_phase_stats.phase_index
+        )
         phase_tracker.update_from_credit_phase_stats(credit_phase_stats)
 
     def update_from_request(
@@ -288,9 +321,13 @@ class RecordsTracker:
         Drives the per-request lockstep off the request envelope: a request is
         counted as a success when ``error is None``, otherwise as an error.
         """
-        phase_tracker = self._get_phase_tracker(
-            metadata.benchmark_phase, metadata.phase_index
-        )
+        phase_index = metadata.phase_index
+        if phase_index is None:
+            latest_index = self._latest_phase_index.get(metadata.benchmark_phase)
+            if latest_index is not None:
+                phase_index = latest_index
+        phase_tracker = self._get_phase_tracker(metadata.benchmark_phase, phase_index)
+        self._record_latest_phase_index(metadata.benchmark_phase, phase_index)
         if error is None:
             phase_tracker.increment_success_records()
             phase_tracker.increment_worker_success_records(metadata.worker_id)
@@ -330,7 +367,16 @@ class RecordsTracker:
             for (tracker_phase, phase_index), tracker in self._phase_trackers.items()
             if tracker_phase == phase and phase_index is not None
         ]
-        phase_trackers = concrete_phase_trackers or [
+        orphan_phase_trackers = [
+            tracker
+            for (tracker_phase, phase_index), tracker in self._phase_trackers.items()
+            if tracker_phase == phase and phase_index is None
+        ]
+        phase_trackers = (
+            concrete_phase_trackers + orphan_phase_trackers
+            if concrete_phase_trackers
+            else orphan_phase_trackers
+        ) or [
             tracker
             for (tracker_phase, _), tracker in self._phase_trackers.items()
             if tracker_phase == phase
@@ -338,22 +384,16 @@ class RecordsTracker:
         if not phase_trackers:
             return False
 
-        all_counts_received = True
         for tracker in phase_trackers:
             stats = tracker.create_stats()
             if (
                 stats.final_requests_completed is None
                 or stats.total_records < stats.final_requests_completed
             ):
-                all_counts_received = False
-                break
-        if not all_counts_received:
-            return False
+                return False
 
         newly_completed = False
         for tracker in phase_trackers:
-            if tracker._sent_all_records_received:
-                continue
             newly_completed = (
                 tracker.check_and_set_all_records_received() or newly_completed
             )

@@ -130,6 +130,9 @@ class SummaryContext:
     phase: CreditPhase | None = None
     """Credit phase to scope this summary to (e.g. PROFILING for realtime metrics), or None for phase-agnostic full-range summarization."""
 
+    phase_index: int | None = None
+    """Absolute phase index to scope this summary to when ``phase`` is set."""
+
     cancelled: bool = False
     """True when the profile run was cancelled — analyzers may short-circuit."""
 

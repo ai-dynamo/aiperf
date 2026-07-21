@@ -548,6 +548,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 start_ns=ctx.start_ns or None,
                 end_ns=ctx.end_ns or None,
                 phase=ctx.phase,
+                phase_index=ctx.phase_index,
             )
         return self._summarize_for_export_context(export_ctx)
 
