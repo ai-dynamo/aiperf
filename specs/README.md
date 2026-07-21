@@ -87,4 +87,4 @@ read the record for the subsystem you are touching.
 
 | Spec | Purpose |
 |---|---|
-| [aiperf-flow.md](aiperf-flow.md) | Planned `apps/aiperf-flow`: component-native explainer decks authored as plain `.tsx` using React Flow, Motion for React, and Tailwind, replacing `apps/explainers`'s `.flow` DSL and hand-rolled SVG layout/connector/animation engines. |
+| [aiperf-flow.md](aiperf-flow.md) | `apps/aiperf-flow`: component-native explainer decks authored as plain `.tsx` using React Flow, Motion for React, and Tailwind, replacing `apps/explainers`'s `.flow` DSL and hand-rolled SVG layout/connector/animation engines. Component vocabulary, worked example deck, and presentation shell built; the 15-deck `.flow` migration is still pending. |

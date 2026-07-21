@@ -26,91 +26,77 @@ at which point `apps/explainers` is retired and removed.
 
 ## Built
 
-Nothing under `apps/aiperf-flow` exists yet. The following current
-`apps/explainers` assets are reference material / migration sources, not
-prerequisites the new app depends on at runtime:
+`apps/aiperf-flow` exists: Vite + React 19 + TypeScript (strict) + Tailwind
+CSS 4 (`@tailwindcss/vite`, CSS-first `@theme` config), `@xyflow/react` 12,
+`motion` 12, `react-router-dom` 7, Vitest + Testing Library. Design/authoring
+guidance for building on this app lives in the
+`.claude/skills/aiperf-flow-diagrams/SKILL.md` skill — read it before adding
+components or decks.
 
-- `src/core/tokens.ts` — the NVIDIA-deck visual design tokens (flat white
-  slides, NVIDIA green accent, boxy corners, text/surface/accent color roles).
-  These become a Tailwind theme config, not TypeScript constants.
-- `src/core/ExplainerShell.tsx` and friends — the presentation chrome (chapter
-  nav, play/pause, speed control, progress bar, subtitles panel, speaker
-  notes, "Present" fullscreen mode). The chrome's *behavior* is worth keeping;
-  its implementation (bound to the current scene-IR/timeline model) is not.
-- `decks-flow/*.flow` (15 decks, ~340 scenes) — the content to port, not code
-  to reuse. Each deck's narration/eyebrow/title/lede/points/caption text and
-  its visual composition are the source of truth for what the ported `.tsx`
-  deck must reproduce; the `.flow` syntax itself is discarded.
+- **Design tokens** — `src/theme/tokens.ts` + `src/index.css`'s `@theme`
+  block, ported from `apps/explainers/src/core/tokens.ts`'s NVIDIA-deck color
+  roles (surface/ink/stroke/accent/category), exposed as
+  `surfaceClassName`/`inkClassName`/`strokeClassName`/`accentClassName`/
+  `categoryClassName` (plus `categoryBgClassName`/`categoryBgTintClassName`)
+  role-to-Tailwind-class helpers. All helpers use static `Record` lookup
+  tables, not runtime string interpolation — see the SKILL.md's "Tailwind
+  JIT trap" section for why that distinction is load-bearing.
+- **Diagram nodes** (`src/nodes/`) — `Header`, `Panel`, `Card`, `Chip` as
+  React Flow custom node types (`nodeTypes.ts`), each accepting a typed
+  `data` object with an optional `className` merged via `clsx`.
+- **Edges** (`src/edges/`) — `FlowEdge` (`edgeTypes.ts`, `type: "flow"`), an
+  animated dashed-flow custom edge respecting `prefers-reduced-motion`.
+- **Layout primitives** (`src/layout/`) — `Stack`, `Row`, `Grid` (real CSS
+  flex/grid, not diagram nodes) for prose/UI content outside a React Flow
+  canvas.
+- **Prose primitives** (`src/prose/`) — `Callout`, `Table`, `Stat`,
+  `Legend`/`Swatch`.
+- **State/animation** — `useReveal` (`src/reveal/`, staggered slide-entry
+  reveal, restarts correctly when its input order changes mid-lifetime) and
+  `useStepSimulator` (`src/state/`, Play/Pause/Next/Back/Reset over a step
+  array, clamped, auto-stops at the end — the primitive for interactive
+  step-through walkthroughs).
+- **Deck/slide model** (`src/deck/`) — `SlideDefinition`/`DeckDefinition`
+  types, a `registerDeck`/`getDeck` registry (throws on duplicate id),
+  `Slide` (renders one slide's React Flow canvas with reveal-gated node
+  visibility), `DeckRoute` (route-level resolution of `/:deckId`).
+- **Presentation shell** (`src/shell/`) — `PresentationShell` (chapter-dot
+  nav, back/next, progress label, subtitles panel, speaker-notes toggle) for
+  the sequential-slide model; `PageTabs` (tab row for switching between named
+  pages *within* one deck) for tabbed single-view decks.
+- **Worked example deck** (`src/decks/segment-pools/`) — a full, reviewed
+  port of `docs/canvases/segment-pools-and-body-plans.canvas.tsx` (a real,
+  hand-authored Cursor Canvas), proving the stack end-to-end: three pages as
+  real React Flow node/edge graphs (`OverviewPage`, `PrefixPage`,
+  `DispatchPage`), a live interning step-simulator (`PoolPage`), a stateful
+  domain selector (`PayloadsPage`), and a multi-toggle materializer form
+  (`BodyPlanPage`), composed via `SegmentPoolsDeck` + `PageTabs`, routed at
+  `/segment-pools`.
+
+The following `apps/explainers` assets remain reference material for the
+still-pending 15-deck `.flow` migration (see "Migration" below), not
+prerequisites `apps/aiperf-flow` depends on at runtime:
+
+- `src/core/ExplainerShell.tsx` — the original presentation-chrome
+  implementation `PresentationShell` was behaviorally ported from.
+- `decks-flow/*.flow` (15 decks, ~340 scenes) — the content still to port.
+  Each deck's narration/eyebrow/title/lede/points/caption text and visual
+  composition is the source of truth for what the ported `.tsx` deck must
+  reproduce; the `.flow` syntax itself is discarded.
 
 ## Future requirements
 
-### Stack
+### Additional component gaps
 
-- **Vite** — build tool (already the toolchain `apps/explainers` uses; no
-  change here).
-- **Tailwind CSS** — all styling. The current `tokens.ts` color roles become a
-  Tailwind theme extension (`tailwind.config.ts`) so `bg-surface-elevated`,
-  `text-ink-secondary`, `border-accent-primary`, etc. carry the same meanings
-  decks already rely on today.
-- **[React Flow / `@xyflow/react`](https://reactflow.dev/)** — node/edge
-  diagrams. Every box a deck places (panel, chip, card, header, etc.) is a
-  React Flow **node** (a real React component, Tailwind-styled); every
-  arrow/connector between boxes is a React Flow **edge**. React Flow owns
-  measuring node positions and keeping edges visually attached as nodes move
-  or the canvas pans/zooms — the exact problem that caused this session's
-  layout bugs when solved by hand.
-- **[Motion for React](https://motion.dev/docs/react-layout-animations)**
-  (formerly Framer Motion, same API) — all animation. `layout` on a `motion`
-  component auto-animates any position/size change from *any* cause (reflow,
-  conditional render, prop change) using FLIP under the hood. `layoutId`
-  gives shared-element transitions: a node that exists in two different
-  arrangements within one scene (the "move between locations" requirement)
-  animates automatically between them when the arrangement changes — no
-  hand-authored before/after snapshot bookkeeping, no custom interpolation
-  code in the render path.
-- Real CSS (via Tailwind utility classes, plus React Flow's own internal
-  positioning) does all box layout. No custom flex/grid-clone layout engine.
-
-### Authoring model
-
-Decks are `.tsx` modules under `apps/aiperf-flow/src/decks/`, one file (or one
-small folder) per deck, default-exporting a deck definition consumed by the
-app shell. There is no compiler, no IR, no `.flow` grammar, no SDK-expansion
-step — a deck *is* its rendered component tree.
-
-A small, reusable component/hook vocabulary carries the conventions today's
-`.flow` decks rely on (eyebrow/title/lede/points/caption authoring, reveal
-timing, narration/subtitles, chapter structure) as ordinary composable React,
-not a parsed language:
-
-- `<Deck>` / `<Slide>` — top-level structure; a `<Slide>` carries the
-  eyebrow/title/lede/narration/caption text props the presentation chrome
-  reads (chapter nav, subtitles panel, speaker notes).
-- `<Panel>`, `<Header>`, `<Chip>`, `<Card>`, `<BigStat>`, etc. — Tailwind-styled
-  React Flow custom node components, one per visual primitive the current SDK
-  catalog exposes today. These are a direct port of `chrome.ts`/`catalog.ts`'s
-  visual vocabulary, re-implemented as React Flow nodes instead of scene-IR
-  factories.
-- Edges are authored via React Flow's own `edges` array / `<ReactFlow edges=.../>`
-  prop, referencing node `id`s — the same anchor-relative addressing
-  (`source`, `target`, `sourceHandle`, `targetHandle`) `.flow` connectors
-  already use today, just expressed as React Flow's native vocabulary instead
-  of a custom `from = { nodeId, anchor }` shape.
-- `useReveal(order)` / `<Reveal at={0}>` — a thin hook/component pair over
-  Motion's `AnimatePresence`/`variants` that staggers a slide's content in on
-  entry, replacing `.flow`'s `timeline { reveal ... }` blocks. Still plain
-  React — a deck author (human or AI) composes these directly in JSX, there is
-  nothing to parse.
-- Moves between two arrangements of the same node set use `layoutId` directly;
-  no dedicated `<Move>` abstraction is needed since Motion already owns this.
-
-### Presentation shell
-
-Port `ExplainerShell`'s behavior (chapter navigation, play/pause, playback
-speed, progress bar, subtitles, speaker notes, present/fullscreen mode) as new
-`apps/aiperf-flow` components reading the `<Deck>`/`<Slide>` prop data instead
-of resolved scene IR. This is a straightforward port, not a redesign — the UX
-is already correct.
+A survey of 28 of the user's real, hand-authored Cursor Canvas files
+(`.canvas.tsx`) identified further gaps beyond what's built, ranked by
+frequency of use in that corpus: a page/tab-level "open source file" host
+action (may not apply — `aiperf-flow` isn't IDE-embedded, unlike Cursor
+Canvas), auto-DAG-layout helper (lower priority — hand-placed node positions
+are at least as common in real usage even where auto-layout is available),
+`Divider`/`Spacer`, collapsible `Card` sections, and a syntax-highlighted
+`Code` block (currently substituted with a plain monospace `<pre>`, adequate
+fidelity so far). None of these block current work; add as needed.
 
 ### Migration
 
@@ -147,8 +133,17 @@ keeps shipping unchanged.
 
 ## Source anchors
 
-- `apps/explainers/src/core/tokens.ts` (design-token migration source).
+- `.claude/skills/aiperf-flow-diagrams/SKILL.md` — authoring guidance,
+  component vocabulary reference, design rules.
+- `apps/aiperf-flow/src/theme/tokens.ts`, `src/index.css` (design tokens).
+- `apps/aiperf-flow/src/nodes/`, `src/edges/` (diagram node/edge types).
+- `apps/aiperf-flow/src/layout/`, `src/prose/` (layout/prose primitives).
+- `apps/aiperf-flow/src/reveal/`, `src/state/` (animation/state primitives).
+- `apps/aiperf-flow/src/deck/`, `src/shell/` (deck model, presentation
+  shell, page-tab navigation).
+- `apps/aiperf-flow/src/decks/segment-pools/` (worked example: a full port
+  of `docs/canvases/segment-pools-and-body-plans.canvas.tsx`).
 - `apps/explainers/src/core/ExplainerShell.tsx` (presentation-shell port
   source).
-- `apps/explainers/decks-flow/*.flow` (content-migration source, 15 decks).
-- `apps/aiperf-flow/` (new app root, not yet created).
+- `apps/explainers/decks-flow/*.flow` (remaining content-migration source,
+  15 decks).

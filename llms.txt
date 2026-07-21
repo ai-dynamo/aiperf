@@ -513,10 +513,13 @@ Targets:
 
 Developer tooling:
 
-- [`specs/aiperf-flow.md`](specs/aiperf-flow.md) — planned `apps/aiperf-flow`:
+- [`specs/aiperf-flow.md`](specs/aiperf-flow.md) — `apps/aiperf-flow`:
   component-native explainer decks authored as plain `.tsx` using React Flow,
   Motion for React, and Tailwind, replacing `apps/explainers`'s `.flow` DSL
-  and hand-rolled SVG layout/connector/animation engines.
+  and hand-rolled SVG layout/connector/animation engines. Component
+  vocabulary, worked example deck, and presentation shell built; the 15-deck
+  `.flow` migration is still pending. Authoring guidance:
+  [`.claude/skills/aiperf-flow-diagrams/SKILL.md`](.claude/skills/aiperf-flow-diagrams/SKILL.md).
 
 ## Build / test / run
 
