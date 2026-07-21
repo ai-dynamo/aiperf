@@ -232,7 +232,7 @@ class TestFixedScheduleCreditReturn:
         continuation turn (the sticky router defers parent-entry eviction until
         DAG children drain). Regression: from_previous_credit(credit) was called
         without next_meta, so every continuation turn got has_forks=False."""
-        strategy, scheduler, _ = make_strategy([(0, "c1"), (100, "c1")])
+        strategy, _scheduler, _ = make_strategy([(0, "c1"), (100, "c1")])
         await strategy.setup_phase()
         # Mark the next turn (index 1) as fork-bearing.
         meta = strategy._conversation_source._metadata_lookup["c1"]
