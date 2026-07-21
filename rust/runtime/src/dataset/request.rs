@@ -1126,6 +1126,7 @@ pub(crate) fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<Endp
         let media = Media {
             name: group.name.clone(),
             contents,
+            uuids: group.uuids.to_vec(),
         };
         match group.kind {
             MediaKind::Text => resolved.texts.push(media),
@@ -1569,6 +1570,7 @@ mod tests {
                     kind: MediaKind::Text,
                     name: String::new(),
                     handles: smallvec![text],
+                    uuids: smallvec![],
                 }],
                 input_tokens: 2,
                 max_tokens: Some(7),
@@ -1745,6 +1747,7 @@ mod tests {
                     kind: MediaKind::Text,
                     name: String::new(),
                     handles: smallvec![text],
+                    uuids: smallvec![],
                 }],
                 input_tokens: 2,
                 streaming: Some(false),
@@ -1794,6 +1797,7 @@ mod tests {
                     kind: MediaKind::Text,
                     name: String::new(),
                     handles: smallvec![text],
+                    uuids: smallvec![],
                 }],
                 input_tokens: 2,
                 ..Turn::default()
@@ -1853,6 +1857,7 @@ mod tests {
                     kind: MediaKind::Text,
                     name: String::new(),
                     handles: smallvec![text],
+                    uuids: smallvec![],
                 }],
                 extra_body: Some(extra),
                 input_tokens: 2,
@@ -1901,6 +1906,7 @@ mod tests {
                     kind: MediaKind::Text,
                     name: String::new(),
                     handles: smallvec![text],
+                    uuids: smallvec![],
                 }],
                 input_tokens: 2,
                 ..Turn::default()
@@ -1940,12 +1946,14 @@ mod tests {
             kind: MediaKind::Text,
             name: String::new(),
             handles: smallvec![text],
+            uuids: smallvec![],
         }];
         if let Some(image) = image {
             content.push(ContentGroup {
                 kind: MediaKind::Image,
                 name: String::new(),
                 handles: smallvec![image],
+                uuids: smallvec![],
             });
         }
         Turn {
@@ -2086,6 +2094,7 @@ mod tests {
                 kind: MediaKind::Text,
                 name: String::new(),
                 handles: smallvec![text_handle],
+                uuids: smallvec![],
             }],
             input_tokens: 2,
             max_tokens: with_max_tokens.then_some(7),
@@ -2245,6 +2254,7 @@ mod tests {
                 kind: MediaKind::Text,
                 name: String::new(),
                 handles: smallvec![system_turn_text],
+                uuids: smallvec![],
             }],
             input_tokens: 1,
             ..Turn::default()
@@ -2350,6 +2360,7 @@ mod tests {
                     pool.intern_text(None, Role::from("user"), Bytes::from_static(b"ov"), vec![1])
                         .unwrap()
                 ],
+                uuids: smallvec![],
             }],
             input_tokens: 1,
             ..Turn::default()

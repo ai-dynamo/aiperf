@@ -77,6 +77,15 @@ pub struct Media {
     pub name: String,
     /// Batched content strings.
     pub contents: Vec<String>,
+    /// Image-only, vLLM-extension cache UUIDs aligned 1:1 with `contents`.
+    /// Opaque IDs that let the server reuse a cached processed image
+    /// embedding across requests. Empty when unused; when set, always the
+    /// same length as `contents` (validated at load time). Authored UUIDs
+    /// pass through on the chat endpoint even when their paired content is
+    /// empty (a cache-only reference); `--uuid-and-strip` additionally
+    /// blanks content the loader has observed repeated within a session.
+    #[serde(default)]
+    pub uuids: Vec<String>,
 }
 
 impl Media {
@@ -85,6 +94,7 @@ impl Media {
         Self {
             name: String::new(),
             contents: contents.into(),
+            uuids: Vec::new(),
         }
     }
 }

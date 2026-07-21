@@ -180,8 +180,7 @@ impl Composer for AccuracyComposer {
                     ))
                 })?;
                 if let Some(system) = &system_prompt {
-                    messages_array
-                        .insert(0, serde_json::json!({"role":"system","content":system}));
+                    messages_array.insert(0, serde_json::json!({"role":"system","content":system}));
                 }
                 validate_message_values(messages_array, &row.origin)?;
                 let message_wire = Bytes::from(serde_json::to_vec(&messages)?);
@@ -265,6 +264,7 @@ impl Composer for AccuracyComposer {
                     kind: MediaKind::Text,
                     name: String::new(),
                     handles: smallvec![text],
+                    uuids: smallvec![],
                 }],
                 ..Turn::default()
             };
@@ -359,6 +359,7 @@ impl Composer for ShareGptComposer {
                         kind: MediaKind::Text,
                         name: String::new(),
                         handles: smallvec![handle],
+                        uuids: smallvec![],
                     }],
                     ..Turn::default()
                 };
@@ -718,6 +719,7 @@ impl Composer for SpeedBenchComposer {
                         kind: MediaKind::Text,
                         name: String::new(),
                         handles: smallvec![handle],
+                        uuids: smallvec![],
                     }],
                     ..Turn::default()
                 };
@@ -1459,6 +1461,7 @@ fn compose_prompt_lists(
                     kind: MediaKind::Text,
                     name: String::new(),
                     handles: smallvec![handle],
+                    uuids: smallvec![],
                 }],
                 ..Turn::default()
             };
@@ -1519,6 +1522,7 @@ fn compose_media_turn(
                 kind: group.kind,
                 name: group.name,
                 handles,
+                uuids: SmallVec::new(),
             });
         }
     }

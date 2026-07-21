@@ -1184,6 +1184,7 @@ mod tests {
                 kind: MediaKind::Text,
                 name: "text".into(),
                 handles: smallvec::smallvec![text],
+                uuids: smallvec::smallvec![],
             }],
             ..Turn::default()
         });

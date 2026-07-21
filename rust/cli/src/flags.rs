@@ -776,6 +776,16 @@ pub struct ProfileFlags {
     #[arg(long = "inter-turn-delay-cap-seconds")]
     pub inter_turn_delay_cap_seconds: Option<f64>,
 
+    /// Enable AIPerf-managed image stripping for vLLM's multimodal processor
+    /// cache (`--uuid-and-strip`). Dataset-authored image UUIDs, including
+    /// UUID-only cache references, always pass through on the chat endpoint;
+    /// this flag only strips repeated content after AIPerf observes it in the
+    /// same session. Automatic stripping supports only `single_turn` datasets
+    /// with `session_id`-grouped rows; `multi_turn` is rejected. Requires
+    /// endpoint type `chat`.
+    #[arg(long = "uuid-and-strip", default_value_t = false)]
+    pub uuid_and_strip: bool,
+
     /// Synthetic video audio channels (`--video-audio-num-channels`).
     #[arg(long = "video-audio-num-channels")]
     pub video_audio_num_channels: Option<u32>,

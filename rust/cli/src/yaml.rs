@@ -536,6 +536,10 @@ struct DatasetSection {
     /// Inter-turn delay cap, seconds (file/trace datasets).
     #[serde(default, alias = "interTurnDelayCapSeconds")]
     inter_turn_delay_cap_seconds: Option<f64>,
+    /// Strip repeated image content once observed within a session
+    /// (`--uuid-and-strip`), single_turn only.
+    #[serde(default, alias = "uuidAndStrip")]
+    uuid_and_strip: Option<bool>,
     /// Synthetic image generation (`synthetic.images`).
     images: Option<ImageSection>,
     /// Synthetic audio generation (`synthetic.audio`).
@@ -1019,6 +1023,10 @@ impl Benchmark {
         let inter_turn_delay_cap_seconds = dataset
             .as_ref()
             .and_then(|d| d.inter_turn_delay_cap_seconds);
+        let uuid_and_strip = dataset
+            .as_ref()
+            .and_then(|d| d.uuid_and_strip)
+            .unwrap_or(false);
 
         // Multi-turn (turns / inter-turn delay / think-time ratio).
         let turns = dataset
@@ -1482,6 +1490,7 @@ impl Benchmark {
             public_dataset,
             hf_subset,
             inter_turn_delay_cap_seconds,
+            uuid_and_strip,
             fixed_schedule,
             fixed_schedule_start_offset: phase.start_offset,
             fixed_schedule_end_offset: phase.end_offset,

@@ -4190,6 +4190,7 @@ pub(crate) async fn build_file_dataset(
     let mut load = LoadConfig::new(source);
     load.max_rows = spec.entries;
     load.sampling_strategy = Some(spec.sampling.clone());
+    load.options = spec.options.clone();
     if let Some(synthesis) = &spec.synthesis {
         load.max_input_tokens = synthesis.max_isl;
         load.max_output_tokens = synthesis.max_osl;

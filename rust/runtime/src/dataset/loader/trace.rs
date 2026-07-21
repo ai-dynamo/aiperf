@@ -339,6 +339,7 @@ impl Composer for MooncakeTraceComposer {
                             kind: crate::dataset::model::MediaKind::Text,
                             name: "text".into(),
                             handles: smallvec![handle],
+                            uuids: smallvec![],
                         });
                     } else {
                         turn.input_tokens = parsed
@@ -494,6 +495,7 @@ impl Composer for BailianTraceComposer {
                         kind: crate::dataset::model::MediaKind::Text,
                         name: "text".into(),
                         handles: smallvec![handle],
+                        uuids: smallvec![],
                     }]
                 } else {
                     smallvec![]
@@ -680,6 +682,7 @@ impl Composer for BurstGptTraceComposer {
                     kind: crate::dataset::model::MediaKind::Text,
                     name: "text".into(),
                     handles: smallvec![handle],
+                    uuids: smallvec![],
                 }],
                 ..Turn::default()
             };

@@ -1027,9 +1027,13 @@ fn render_turn_content(turn: &Turn, shape: PartShape) -> EndpointResult<Value> {
     extend_parts(&mut parts, &turn.texts, |content| {
         render_text_part(content, shape)
     });
-    extend_parts(&mut parts, &turn.images, |content| {
-        render_image_part(content, shape)
-    });
+    if matches!(shape, PartShape::Chat) {
+        extend_chat_image_parts(&mut parts, &turn.images);
+    } else {
+        extend_parts(&mut parts, &turn.images, |content| {
+            render_image_part(content, shape)
+        });
+    }
     for media in &turn.audios {
         for content in &media.contents {
             if !content.is_empty() {
@@ -1056,6 +1060,33 @@ where
             if !content.is_empty() {
                 parts.push(render(content));
             }
+        }
+    }
+}
+
+/// Append chat image parts, always passing through authored cache UUIDs.
+///
+/// A `Media` with `uuids` set always contributes one `image_url` part per
+/// content/uuid pair, even when content is empty (a cache-only reference
+/// the server resolves by UUID). `Media` without `uuids` keeps the generic
+/// skip-empty behavior. Chat-endpoint-only: mirrors Python's
+/// `ChatEndpoint._extend_image_parts` override.
+fn extend_chat_image_parts(parts: &mut Vec<Value>, media_items: &[Media]) {
+    for media in media_items {
+        if media.uuids.is_empty() {
+            for content in &media.contents {
+                if !content.is_empty() {
+                    parts.push(render_image_part(content, PartShape::Chat));
+                }
+            }
+            continue;
+        }
+        for (content, uuid) in media.contents.iter().zip(&media.uuids) {
+            parts.push(json!({
+                "type": "image_url",
+                "image_url": {"url": content},
+                "uuid": uuid,
+            }));
         }
     }
 }

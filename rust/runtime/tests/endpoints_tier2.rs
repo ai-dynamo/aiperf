@@ -46,6 +46,7 @@ fn named(name: &str, values: &[&str]) -> Media {
     Media {
         name: name.into(),
         contents: values.iter().map(|value| (*value).to_string()).collect(),
+        uuids: vec![],
     }
 }
 

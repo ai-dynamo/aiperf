@@ -185,11 +185,13 @@ impl Composer for HfAsrComposer {
                         kind: MediaKind::Text,
                         name: "text".into(),
                         handles: smallvec![prompt],
+                        uuids: smallvec![],
                     },
                     ContentGroup {
                         kind: MediaKind::Audio,
                         name: "input_audio".into(),
                         handles: smallvec![audio],
+                        uuids: smallvec![],
                     }
                 ],
                 ..Turn::default()

@@ -291,6 +291,7 @@ impl Composer for SyntheticComposer {
                             kind: MediaKind::Text,
                             name: "text".into(),
                             handles,
+                            uuids: SmallVec::new(),
                         });
                     } else {
                         let mut handles = SmallVec::new();
@@ -336,6 +337,7 @@ impl Composer for SyntheticComposer {
                             kind: MediaKind::Text,
                             name: "text".into(),
                             handles,
+                            uuids: SmallVec::new(),
                         });
                     }
                 }
@@ -472,11 +474,13 @@ impl Composer for SyntheticRankingsComposer {
                         kind: MediaKind::Text,
                         name: "query".into(),
                         handles: smallvec::smallvec![query_handle],
+                        uuids: SmallVec::new(),
                     },
                     ContentGroup {
                         kind: MediaKind::Text,
                         name: "passages".into(),
                         handles: passage_handles,
+                        uuids: SmallVec::new(),
                     }
                 ],
                 ..Turn::default()
@@ -795,6 +799,7 @@ fn append_media_batch(
         kind,
         name: name.into(),
         handles,
+        uuids: SmallVec::new(),
     });
     Ok(())
 }

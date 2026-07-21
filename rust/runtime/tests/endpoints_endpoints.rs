@@ -186,6 +186,60 @@ fn chat_formatting_merges_and_preserves_usage_override() {
 }
 
 #[test]
+fn chat_formatting_passes_through_image_uuids_including_cache_only_references() {
+    let req = request(
+        EndpointType::Chat,
+        vec![Turn {
+            texts: vec![Media::new(vec!["describe".to_string()])],
+            images: vec![Media {
+                name: String::new(),
+                // Second slot is a cache-only reference: empty content, real uuid.
+                contents: vec!["http://h/img.png".to_string(), String::new()],
+                uuids: vec!["uuid-a".to_string(), "uuid-b".to_string()],
+            }],
+            ..Turn::default()
+        }],
+    );
+    let body = plan_body(ChatEndpoint.format_payload(&req).unwrap());
+    let content = body["messages"][0]["content"].as_array().unwrap();
+    assert_eq!(content[0], json!({"type":"text","text":"describe"}));
+    assert_eq!(
+        content[1],
+        json!({"type":"image_url","image_url":{"url":"http://h/img.png"},"uuid":"uuid-a"})
+    );
+    // The empty-content slot is NOT dropped (unlike the no-uuid path), because
+    // its uuid is a cache-only reference the server must still see.
+    assert_eq!(
+        content[2],
+        json!({"type":"image_url","image_url":{"url":""},"uuid":"uuid-b"})
+    );
+}
+
+#[test]
+fn chat_formatting_drops_empty_images_without_uuids_as_before() {
+    let req = request(
+        EndpointType::Chat,
+        vec![Turn {
+            texts: vec![Media::new(vec!["describe".to_string()])],
+            images: vec![Media::new(vec![
+                "http://h/img.png".to_string(),
+                String::new(),
+            ])],
+            ..Turn::default()
+        }],
+    );
+    let body = plan_body(ChatEndpoint.format_payload(&req).unwrap());
+    let content = body["messages"][0]["content"].as_array().unwrap();
+    // No uuids: the empty second image is skipped, matching the pre-existing
+    // generic (non-chat-specific) empty-content behavior.
+    assert_eq!(content.len(), 2);
+    assert_eq!(
+        content[1],
+        json!({"type":"image_url","image_url":{"url":"http://h/img.png"}})
+    );
+}
+
+#[test]
 fn responses_formatting_rejects_video_and_filters_replay_unsafe() {
     let req = request(
         EndpointType::Responses,

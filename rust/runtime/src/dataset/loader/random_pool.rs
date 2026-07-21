@@ -457,6 +457,7 @@ fn intern_group(
             kind: group.kind,
             name: group.name,
             handles,
+            uuids: smallvec::smallvec![],
         });
     }
     Ok(())

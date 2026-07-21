@@ -489,6 +489,7 @@ mod tests {
                 kind: crate::dataset::model::MediaKind::Text,
                 name: String::new(),
                 handles: smallvec::smallvec![prompt],
+                uuids: smallvec::smallvec![],
             }],
             ..Turn::default()
         });

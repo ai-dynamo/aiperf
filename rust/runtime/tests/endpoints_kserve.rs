@@ -259,10 +259,12 @@ fn kserve_v2_embeddings_and_rankings_preserve_shape_and_numeric_rules() {
             Media {
                 name: "queries".to_string(),
                 contents: vec!["question".to_string(), "ignored".to_string()],
+                uuids: vec![],
             },
             Media {
                 name: "passages".to_string(),
                 contents: vec!["p0".to_string(), "p1".to_string()],
+                uuids: vec![],
             },
         ],
         ..Turn::default()

@@ -70,6 +70,13 @@ struct SingleTurnRow {
     image: Option<String>,
     #[serde(default)]
     images: Option<AuthoredBatch>,
+    /// Cache UUIDs aligned 1:1 with string-form `images`. Only supported
+    /// when `images` is `AuthoredBatch::Strings`; for grouped batches, use
+    /// per-group content directly. The singular `image` field is not
+    /// supported. vLLM-extension only: opaque IDs that let the server reuse
+    /// cached image embeddings across requests. See `Media::uuids`.
+    #[serde(default)]
+    image_uuids: Option<Vec<String>>,
     #[serde(default)]
     audio: Option<String>,
     #[serde(default)]
@@ -100,11 +107,48 @@ struct SingleTurnRow {
 
 impl SingleTurnRow {
     fn parse(value: Value, origin: &impl std::fmt::Display) -> Result<Self> {
-        let row: Self = serde_json::from_value(value).map_err(|error| {
+        let mut row: Self = serde_json::from_value(value).map_err(|error| {
             DatasetError::Validation(format!("{origin}: invalid single_turn row: {error}"))
         })?;
+        row.normalize_image_uuids(origin)?;
         row.validate(origin)?;
         Ok(row)
+    }
+
+    /// Normalize UUID-only images and reject ambiguous UUID mappings.
+    ///
+    /// Ports Python's `SingleTurn.validate_image_uuids_alignment`.
+    fn normalize_image_uuids(&mut self, origin: &impl std::fmt::Display) -> Result<()> {
+        let Some(uuids) = &self.image_uuids else {
+            return Ok(());
+        };
+        if self.image.is_some() {
+            return Err(DatasetError::Validation(format!(
+                "{origin}: image_uuids cannot be used with the singular image field"
+            )));
+        }
+        if self.images.is_none() {
+            self.images = Some(AuthoredBatch::Strings(vec![String::new(); uuids.len()]));
+        }
+        let Some(AuthoredBatch::Strings(contents)) = &self.images else {
+            return Err(DatasetError::Validation(format!(
+                "{origin}: image_uuids cannot be set when images is provided as grouped \
+                 batches; use per-group content directly instead"
+            )));
+        };
+        if uuids.len() != contents.len() {
+            return Err(DatasetError::Validation(format!(
+                "{origin}: image_uuids length ({}) must match images length ({})",
+                uuids.len(),
+                contents.len()
+            )));
+        }
+        if uuids.iter().any(String::is_empty) {
+            return Err(DatasetError::Validation(format!(
+                "{origin}: image_uuids must not contain empty strings"
+            )));
+        }
+        Ok(())
     }
 
     fn validate(&self, origin: &impl std::fmt::Display) -> Result<()> {
@@ -242,6 +286,36 @@ impl SingleTurnRow {
     }
 }
 
+/// Drop image content for UUIDs repeated within one session (`--uuid-and-strip`).
+///
+/// Images repeated within one row keep their payload (the server resolves
+/// that request's cache misses before populating its cache); only UUIDs
+/// whose content this loader observed in an *earlier* row for the same
+/// session are stripped. Explicit cache-only references (empty content
+/// authored directly) pass through regardless of local history. Ports
+/// Python's `SingleTurnDatasetLoader._dedup_repeated_images_inplace`,
+/// applied per-row here since one `single_turn` row is one turn.
+fn dedup_repeated_images_inplace(
+    row: &mut SingleTurnRow,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    let Some(uuids) = &row.image_uuids else {
+        return;
+    };
+    let Some(AuthoredBatch::Strings(contents)) = &mut row.images else {
+        return;
+    };
+    let mut new_uuids = std::collections::HashSet::new();
+    for (content, uuid) in contents.iter_mut().zip(uuids) {
+        if seen.contains(uuid) {
+            content.clear();
+        } else if !content.is_empty() {
+            new_uuids.insert(uuid.clone());
+        }
+    }
+    seen.extend(new_uuids);
+}
+
 fn batch_has_content(batch: Option<&AuthoredBatch>) -> bool {
     match batch {
         Some(AuthoredBatch::Strings(values)) => values.iter().any(|value| !value.is_empty()),
@@ -316,6 +390,20 @@ impl DatasetLoader for MultiTurnDatasetLoader {
     }
 
     async fn load(&self, config: &LoadConfig) -> Result<Vec<RawRow>> {
+        if config
+            .options
+            .get("uuid_and_strip")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Err(DatasetError::Validation(
+                "--uuid-and-strip is not supported with --custom-dataset-type multi_turn. \
+                 Load-time dedup of repeated images is only implemented for the \
+                 single_turn loader. Use --custom-dataset-type single_turn (with \
+                 session_id-grouped rows) for cache-reuse benchmarks."
+                    .into(),
+            ));
+        }
         let rows = jsonl_rows(&config.source)?;
         for row in &rows {
             MultiTurnRow::parse(row.value.clone(), &row.origin)?;
@@ -341,14 +429,26 @@ impl Composer for SingleTurnComposer {
         let mut conversations = Vec::<Conversation>::new();
         let mut positions = HashMap::<SessionId, usize>::new();
         let mut parents = Vec::<Option<Handle>>::new();
+        let uuid_and_strip = config
+            .format_options
+            .get("uuid_and_strip")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let mut seen_uuids = HashMap::<SessionId, std::collections::HashSet<String>>::new();
 
         for raw in rows {
-            let row = SingleTurnRow::parse(raw.value, &raw.origin)?;
+            let mut row = SingleTurnRow::parse(raw.value, &raw.origin)?;
             let session_id = row
                 .session_id
                 .as_deref()
                 .map(SessionId::from)
                 .unwrap_or_else(|| generator.next_id());
+            if uuid_and_strip {
+                dedup_repeated_images_inplace(
+                    &mut row,
+                    seen_uuids.entry(session_id.clone()).or_default(),
+                );
+            }
             let position = match positions.get(&session_id).copied() {
                 Some(position) => position,
                 None => {
@@ -512,6 +612,7 @@ fn compose_simple_turn(
         MediaKind::Text,
         row.text,
         row.texts,
+        None,
         &role,
         parent,
         state,
@@ -521,6 +622,7 @@ fn compose_simple_turn(
         MediaKind::Image,
         row.image,
         row.images,
+        row.image_uuids,
         &role,
         parent,
         state,
@@ -530,6 +632,7 @@ fn compose_simple_turn(
         MediaKind::Audio,
         row.audio,
         row.audios,
+        None,
         &role,
         parent,
         state,
@@ -539,6 +642,7 @@ fn compose_simple_turn(
         MediaKind::Video,
         row.video,
         row.videos,
+        None,
         &role,
         parent,
         state,
@@ -659,6 +763,7 @@ fn append_modality(
     kind: MediaKind,
     singular: Option<String>,
     plural: Option<AuthoredBatch>,
+    uuids: Option<Vec<String>>,
     role: &str,
     parent: &mut Option<Handle>,
     state: &mut ComposeState<'_>,
@@ -676,6 +781,10 @@ fn append_modality(
         (None, None) => return Ok(()),
         (Some(_), Some(_)) => unreachable!("row validation rejects singular + plural"),
     };
+    // `image_uuids` is only accepted alongside the plain `AuthoredBatch::Strings`
+    // form (see `normalize_image_uuids`), which always lowers to exactly one
+    // group above, so attaching it to the first (only) group is unambiguous.
+    let mut uuids = uuids;
 
     for group in groups {
         let mut handles = SmallVec::new();
@@ -694,6 +803,11 @@ fn append_modality(
                     Bytes::from(content),
                     tokens.into_boxed_slice(),
                 )?
+            } else if content.is_empty() {
+                // A UUID-only cache reference: no payload to resolve as a
+                // local file/URL, just an empty content-addressed slot that
+                // reads back as "" in `content_string`.
+                state.segments.intern_media(*parent, kind, Bytes::new())?
             } else {
                 let bytes = state.config.media_resolver.resolve(kind, &content)?;
                 state.segments.intern_media(*parent, kind, bytes)?
@@ -704,6 +818,7 @@ fn append_modality(
         turn.content.push(ContentGroup {
             kind,
             name: group.name,
+            uuids: uuids.take().map(SmallVec::from_vec).unwrap_or_default(),
             handles,
         });
     }
@@ -767,6 +882,129 @@ mod tests {
             dataset.segments().get(handle).unwrap(),
             Payload::Text { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn image_uuids_normalize_and_thread_through_content_group() {
+        let source = DatasetSource::Inline(json!([
+            {"session_id":"s", "images":["http://a/img1.png", ""], "image_uuids":["uuid-1","uuid-2"]}
+        ]));
+        let load = LoadConfig::new(source);
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(SingleTurnDatasetLoader),
+                Arc::new(SingleTurnComposer),
+            ))
+            .unwrap();
+        let dataset = registry
+            .build_dataset(
+                Some("single-turn"),
+                &load,
+                &config(),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        let turn = &dataset.conversations()[0].turns[0];
+        let group = &turn.content[0];
+        assert_eq!(group.kind, MediaKind::Image);
+        assert_eq!(group.uuids.as_slice(), ["uuid-1", "uuid-2"]);
+        // The uuid-only slot (empty content) interns as an empty, valid segment
+        // rather than erroring as a bad local-file path.
+        let empty_handle = group.handles[1];
+        match dataset.segments().get(empty_handle).unwrap() {
+            Payload::Media { bytes, .. } => assert!(bytes.is_empty()),
+            other => panic!("expected Media payload, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn image_uuids_reject_singular_image_field() {
+        let source = DatasetSource::Inline(json!([
+            {"session_id":"s", "image":"http://a/img.png", "image_uuids":["uuid-1"]}
+        ]));
+        let load = LoadConfig::new(source);
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(SingleTurnDatasetLoader),
+                Arc::new(SingleTurnComposer),
+            ))
+            .unwrap();
+        let error = registry
+            .build_dataset(
+                Some("single-turn"),
+                &load,
+                &config(),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("singular image field"));
+    }
+
+    #[tokio::test]
+    async fn uuid_and_strip_dedups_repeated_uuid_within_a_session_but_not_within_one_row() {
+        let source = DatasetSource::Inline(json!([
+            {"session_id":"s", "images":["http://a/img.png","http://a/img.png"], "image_uuids":["dup","dup"]},
+            {"session_id":"s", "images":["http://a/img.png"], "image_uuids":["dup"]},
+        ]));
+        let load = LoadConfig::new(source);
+        let mut compose = config();
+        compose
+            .format_options
+            .insert("uuid_and_strip".into(), json!(true));
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(SingleTurnDatasetLoader),
+                Arc::new(SingleTurnComposer),
+            ))
+            .unwrap();
+        let dataset = registry
+            .build_dataset(
+                Some("single-turn"),
+                &load,
+                &compose,
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        let turns = &dataset.conversations()[0].turns;
+        // Both repeats within the first row keep their payload -- the server
+        // resolves that request's cache misses before populating its cache.
+        for handle in &turns[0].content[0].handles {
+            match dataset.segments().get(*handle).unwrap() {
+                Payload::Media { bytes, .. } => assert!(!bytes.is_empty()),
+                other => panic!("expected Media payload, got {other:?}"),
+            }
+        }
+        // The second row's repeat of a uuid observed in an earlier row is stripped.
+        let handle = turns[1].content[0].handles[0];
+        match dataset.segments().get(handle).unwrap() {
+            Payload::Media { bytes, .. } => assert!(bytes.is_empty()),
+            other => panic!("expected Media payload, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn uuid_and_strip_is_rejected_for_multi_turn_loader() {
+        let source = DatasetSource::Inline(json!([{"session_id":"s","turns":[{"text":"hi"}]}]));
+        let mut load = LoadConfig::new(source);
+        load.options.insert("uuid_and_strip".into(), json!(true));
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(MultiTurnDatasetLoader),
+                Arc::new(MultiTurnComposer),
+            ))
+            .unwrap();
+        let error = registry
+            .build_dataset(None, &load, &config(), &TiktokenTokenizer::builtin())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("uuid-and-strip"));
     }
 
     #[tokio::test]

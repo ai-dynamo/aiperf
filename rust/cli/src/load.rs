@@ -247,6 +247,9 @@ pub(crate) struct Inputs {
     pub hf_subset: Option<String>,
     /// Inter-turn delay cap, seconds (file datasets).
     pub inter_turn_delay_cap_seconds: Option<f64>,
+    /// Strip repeated image content once observed within a session
+    /// (`--uuid-and-strip`), single_turn only.
+    pub uuid_and_strip: bool,
     /// Fixed-schedule replay (timestamp-driven); carries the auto-offset flag.
     pub fixed_schedule: Option<bool>,
     /// Fixed-schedule start/end offsets.
@@ -602,6 +605,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         public_dataset: flags.public_dataset.clone(),
         hf_subset: flags.hf_subset.clone(),
         inter_turn_delay_cap_seconds: flags.inter_turn_delay_cap_seconds,
+        uuid_and_strip: flags.uuid_and_strip,
         fixed_schedule,
         fixed_schedule_start_offset: flags.fixed_schedule_start_offset,
         fixed_schedule_end_offset: flags.fixed_schedule_end_offset,
@@ -664,6 +668,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             .collect(),
     };
 
+    let endpoint_type_for_dataset_validation = inputs.endpoint_type.clone();
     let endpoint = Endpoint {
         urls: inputs.urls.iter().map(|u| normalize_url(u)).collect(),
         endpoint_type: EndpointType(inputs.endpoint_type),
@@ -750,6 +755,9 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             random_seed: inputs.dataset_random_seed,
         })
     } else if inputs.input_file.is_some() || inputs.inline_records.is_some() {
+        if inputs.uuid_and_strip && endpoint_type_for_dataset_validation != "chat" {
+            anyhow::bail!("--uuid-and-strip requires endpoint type 'chat'");
+        }
         Dataset::File(crate::model::dataset::FileDataset {
             // Path-backed inputs are auto-detected; inline records require a format.
             format: inputs.custom_dataset_type.clone().or_else(|| {
@@ -780,6 +788,9 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                         "inter_turn_delay_cap_seconds".to_string(),
                         serde_json::json!(cap),
                     );
+                }
+                if inputs.uuid_and_strip {
+                    o.insert("uuid_and_strip".to_string(), serde_json::json!(true));
                 }
                 o
             },
