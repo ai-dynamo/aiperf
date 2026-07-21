@@ -5,9 +5,9 @@
 
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DeckRoute } from "./DeckRoute.js";
-import { registerDeck } from "./registry.js";
+import { clearDecks, registerDeck } from "./registry.js";
 import type { DeckDefinition } from "./types.js";
 
 const testDeck: DeckDefinition = {
@@ -30,6 +30,10 @@ const testDeck: DeckDefinition = {
 describe("DeckRoute", () => {
   beforeEach(() => {
     registerDeck(testDeck);
+  });
+
+  afterEach(() => {
+    clearDecks();
   });
 
   it("renders the deck's first slide by id", () => {

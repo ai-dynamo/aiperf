@@ -11,6 +11,8 @@ import { Slide } from "./Slide.js";
 export function DeckRoute(): React.JSX.Element {
   const { deckId } = useParams<{ deckId: string }>();
   const deck = deckId !== undefined ? getDeck(deckId) : undefined;
+  // Intentionally not yet wired to navigation; multi-slide navigation lands
+  // in a subsequent task.
   const [slideIndex] = useState(0);
 
   if (deck === undefined) {
