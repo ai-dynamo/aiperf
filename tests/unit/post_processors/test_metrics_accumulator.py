@@ -1991,6 +1991,75 @@ class TestErrorAdjustedPercentiles:
         # No adj_* MetricResult emitted when there are no errors to inflate.
         assert "adj_request_latency" not in results
 
+    @pytest.mark.asyncio
+    async def test_decode_duration_emits_separate_error_adjusted_metric(
+        self,
+        mock_metric_registry: Mock,
+        mock_run,
+    ) -> None:
+        """Decode duration remains success-only, while ``adj_decode_duration``
+        carries the failure-inflated distribution when errored records exist."""
+        from aiperf.common.enums import MetricFlags
+        from aiperf.common.messages.inference_messages import MetricRecordsData
+        from aiperf.common.models.error_models import ErrorDetails
+        from aiperf.common.models.record_models import MetricRecordMetadata
+        from aiperf.metrics.types.decode_duration_metric import DecodeDurationMetric
+
+        assert DecodeDurationMetric.has_flags(
+            MetricFlags.PERCENTILE_INCLUDES_FAILED_REQUESTS
+        )
+
+        processor = MetricsAccumulator(mock_run)
+        processor._tags_to_types = {DecodeDurationMetric.tag: MetricType.RECORD}
+        processor._metric_classes = {DecodeDurationMetric.tag: DecodeDurationMetric}
+        for i in range(9):
+            meta = MetricRecordMetadata(
+                session_num=i,
+                request_start_ns=1_000_000_000 + i * 1_000_000,
+                request_end_ns=1_000_000_000 + i * 1_000_000 + 100,
+                worker_id="w1",
+                record_processor_id="rp1",
+                benchmark_phase="profiling",
+                turn_index=0,
+            )
+            await processor.process_record(
+                MetricRecordsData(
+                    metadata=meta,
+                    metrics={DecodeDurationMetric.tag: 100},
+                    error=None,
+                )
+            )
+
+        meta_err = MetricRecordMetadata(
+            session_num=9,
+            request_start_ns=1_000_009_000,
+            request_end_ns=1_000_009_000,
+            worker_id="w1",
+            record_processor_id="rp1",
+            benchmark_phase="profiling",
+            turn_index=0,
+        )
+        await processor.process_record(
+            MetricRecordsData(
+                metadata=meta_err,
+                metrics={},
+                error=ErrorDetails(code=500, type="ServerError", message="boom"),
+            )
+        )
+
+        results = processor._compute_results()
+        decode_duration = results.get(DecodeDurationMetric.tag)
+        assert decode_duration is not None
+        assert decode_duration.count == 9
+        assert decode_duration.p95 == pytest.approx(100.0)
+
+        adj = results.get("adj_decode_duration")
+        assert adj is not None
+        assert adj.count == 10
+        assert adj.min == pytest.approx(100.0)
+        assert math.isinf(adj.max)
+        assert math.isinf(adj.p95)
+
 
 class TestPhaseScopedExportCoarseClock:
     """Phase-scoped exports must not drop records on coarse-clock boundary ties.
