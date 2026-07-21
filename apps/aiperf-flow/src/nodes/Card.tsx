@@ -5,6 +5,7 @@
 
 import type { NodeProps, Node } from "@xyflow/react";
 import { Handle, Position } from "@xyflow/react";
+import clsx from "clsx";
 import { surfaceClassName, strokeClassName, inkClassName } from "../theme/tokens.js";
 import type { CardNodeData } from "./types.js";
 
@@ -13,7 +14,12 @@ export type CardNodeType = Node<CardNodeData, "card">;
 export function CardNode({ data }: NodeProps<CardNodeType>): React.JSX.Element {
   return (
     <div
-      className={`min-w-[180px] rounded-none border px-4 py-3 ${surfaceClassName("elevated")} ${strokeClassName(data.strokeRole ?? "primary")}`}
+      className={clsx(
+        "min-w-[180px] rounded-none border px-4 py-3",
+        surfaceClassName("elevated"),
+        strokeClassName(data.strokeRole ?? "primary"),
+        data.className,
+      )}
     >
       <Handle type="target" position={Position.Left} />
       <div className={`text-sm font-semibold ${inkClassName("primary")}`}>{data.title}</div>

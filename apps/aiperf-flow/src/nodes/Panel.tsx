@@ -5,6 +5,7 @@
 
 import type { NodeProps, Node } from "@xyflow/react";
 import { Handle, Position } from "@xyflow/react";
+import clsx from "clsx";
 import { surfaceClassName, strokeClassName, inkClassName } from "../theme/tokens.js";
 import type { PanelNodeData } from "./types.js";
 
@@ -13,7 +14,12 @@ export type PanelNodeType = Node<PanelNodeData, "panel">;
 export function PanelNode({ data }: NodeProps<PanelNodeType>): React.JSX.Element {
   return (
     <div
-      className={`min-w-[150px] rounded-none border px-4 py-3 ${surfaceClassName(data.surfaceRole ?? "elevated")} ${strokeClassName(data.strokeRole ?? "secondary")}`}
+      className={clsx(
+        "min-w-[150px] rounded-none border px-4 py-3",
+        surfaceClassName(data.surfaceRole ?? "elevated"),
+        strokeClassName(data.strokeRole ?? "secondary"),
+        data.className,
+      )}
     >
       <Handle type="target" position={Position.Left} />
       <div className={`text-sm font-semibold ${inkClassName("primary")}`}>{data.title}</div>

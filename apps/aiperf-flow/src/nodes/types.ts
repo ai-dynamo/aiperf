@@ -5,25 +5,30 @@
 
 import type { SurfaceRole, StrokeRole } from "../theme/tokens.js";
 
-export type HeaderNodeData = {
+/** Every node data shape accepts an optional `className`, merged onto the component's own root classes. */
+type BaseNodeData = {
+  className?: string;
+};
+
+export type HeaderNodeData = BaseNodeData & {
   title: string;
   caption?: string;
   surfaceRole?: SurfaceRole;
 };
 
-export type PanelNodeData = {
+export type PanelNodeData = BaseNodeData & {
   title: string;
   detail?: string;
   surfaceRole?: SurfaceRole;
   strokeRole?: StrokeRole;
 };
 
-export type ChipNodeData = {
+export type ChipNodeData = BaseNodeData & {
   label: string;
   strokeRole?: StrokeRole;
 };
 
-export type CardNodeData = {
+export type CardNodeData = BaseNodeData & {
   title: string;
   detail?: string;
   subtitle?: string;

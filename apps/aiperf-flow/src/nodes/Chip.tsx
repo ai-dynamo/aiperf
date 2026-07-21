@@ -4,6 +4,7 @@
  */
 
 import type { NodeProps, Node } from "@xyflow/react";
+import clsx from "clsx";
 import { surfaceClassName, strokeClassName, inkClassName } from "../theme/tokens.js";
 import type { ChipNodeData } from "./types.js";
 
@@ -12,7 +13,13 @@ export type ChipNodeType = Node<ChipNodeData, "chip">;
 export function ChipNode({ data }: NodeProps<ChipNodeType>): React.JSX.Element {
   return (
     <div
-      className={`rounded-none border px-3 py-1 text-xs font-medium ${surfaceClassName("panel")} ${strokeClassName(data.strokeRole ?? "secondary")} ${inkClassName("secondary")}`}
+      className={clsx(
+        "rounded-none border px-3 py-1 text-xs font-medium",
+        surfaceClassName("panel"),
+        strokeClassName(data.strokeRole ?? "secondary"),
+        inkClassName("secondary"),
+        data.className,
+      )}
     >
       {data.label}
     </div>

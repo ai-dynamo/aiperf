@@ -25,4 +25,23 @@ describe("HeaderNode", () => {
     expect(screen.getByText("ROWS IN → WIRE BYTES OUT")).toBeInTheDocument();
     expect(screen.getByText("BUILD · FREEZE · DISPATCH")).toBeInTheDocument();
   });
+
+  it("merges a caller-supplied className onto its own root classes", () => {
+    const { container } = render(
+      <HeaderNode
+        id="header"
+        type="header"
+        data={{ title: "T", className: "extra-header-class" }}
+        selected={false}
+        zIndex={0}
+        isConnectable={false}
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        dragging={false}
+      />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain("extra-header-class");
+    expect(root.className).toContain("rounded-none");
+  });
 });

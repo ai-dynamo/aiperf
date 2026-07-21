@@ -24,4 +24,23 @@ describe("ChipNode", () => {
     );
     expect(screen.getByText("one identity")).toBeInTheDocument();
   });
+
+  it("merges a caller-supplied className onto its own root classes", () => {
+    const { container } = render(
+      <ChipNode
+        id="c"
+        type="chip"
+        data={{ label: "L", className: "extra-chip-class" }}
+        selected={false}
+        zIndex={0}
+        isConnectable={false}
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        dragging={false}
+      />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain("extra-chip-class");
+    expect(root.className).toContain("rounded-none");
+  });
 });

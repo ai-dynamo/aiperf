@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@xyflow/react": "^12.11.2",
+    "clsx": "^2.1.1",
     "motion": "^12.42.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

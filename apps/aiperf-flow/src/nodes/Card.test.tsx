@@ -29,4 +29,25 @@ describe("CardNode", () => {
     expect(screen.getByText("Config v2 request")).toBeInTheDocument();
     expect(screen.getByText("one identity")).toBeInTheDocument();
   });
+
+  it("merges a caller-supplied className onto its own root classes", () => {
+    const { container } = render(
+      <ReactFlowProvider>
+        <CardNode
+          id="c"
+          type="card"
+          data={{ title: "T", className: "extra-card-class" }}
+          selected={false}
+          zIndex={0}
+          isConnectable={false}
+          positionAbsoluteX={0}
+          positionAbsoluteY={0}
+          dragging={false}
+        />
+      </ReactFlowProvider>,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain("extra-card-class");
+    expect(root.className).toContain("rounded-none");
+  });
 });
