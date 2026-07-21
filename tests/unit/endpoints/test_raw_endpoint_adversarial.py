@@ -54,12 +54,6 @@ class TestFormatPayloadEdges:
             model_endpoint=raw_model_endpoint,
             turns=[Turn(role="user", raw_payload=None)],
         )
-        # (b) BENIGN MESSAGE REWORD: v2 RawEndpoint.format_payload keeps the
-        # identical guard (turns present + last-turn raw_payload not None) and
-        # still raises NotImplementedError for None raw_payload, but reworded
-        # the message. v1 src/aiperf/endpoints/raw_endpoint.py:39-42 said
-        # "does not construct payloads"; v2 src/aiperf/endpoints/raw_endpoint.py:44-49
-        # says "...has no raw_payload set." Test intent preserved; match= updated.
         with pytest.raises(NotImplementedError, match="no raw_payload set"):
             raw_endpoint.format_payload(request_info)
 
@@ -69,8 +63,6 @@ class TestFormatPayloadEdges:
             model_endpoint=raw_model_endpoint,
             turns=[],
         )
-        # (b) BENIGN MESSAGE REWORD: same v1->v2 reword as above; empty turns
-        # still raises NotImplementedError (v2 raw_endpoint.py:44-49).
         with pytest.raises(NotImplementedError, match="no raw_payload set"):
             raw_endpoint.format_payload(request_info)
 
