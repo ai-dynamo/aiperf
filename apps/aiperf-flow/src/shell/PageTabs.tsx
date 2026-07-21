@@ -40,10 +40,14 @@ export function PageTabs<T extends string>({
             aria-pressed={isCurrent}
             onClick={() => onChange(page.id)}
             className={clsx(
-              "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+              "rounded-full border px-3.5 py-1.5 text-xs font-semibold tracking-wide transition-colors",
               isCurrent
                 ? "border-accent-primary bg-accent-primary text-white"
-                : clsx(strokeClassName("secondary"), inkClassName("secondary")),
+                : clsx(
+                    "hover:border-stroke-primary hover:text-ink-primary",
+                    strokeClassName("secondary"),
+                    inkClassName("secondary"),
+                  ),
             )}
           >
             {page.label}

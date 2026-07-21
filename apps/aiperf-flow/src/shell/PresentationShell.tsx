@@ -26,14 +26,14 @@ export function PresentationShell({
 
   return (
     <div className="flex h-screen flex-col">
-      <div className={`flex gap-1 border-b px-4 py-2 ${strokeClassName("secondary")}`}>
+      <div className={`flex gap-1.5 border-b px-4 py-3 ${strokeClassName("secondary")}`}>
         {slides.map((s, index) => (
           <button
             key={s.id}
             type="button"
             aria-label={`Go to slide ${index + 1}`}
             onClick={() => onSlideIndexChange(index)}
-            className={`h-1 flex-1 rounded-none ${index === slideIndex ? "bg-accent-primary" : "bg-[--color-stroke-secondary]"}`}
+            className={`h-[3px] flex-1 rounded-none transition-colors ${index === slideIndex ? "bg-accent-primary" : "bg-[--color-stroke-secondary] hover:bg-[--color-stroke-primary]"}`}
           />
         ))}
       </div>
@@ -60,18 +60,18 @@ export function PresentationShell({
           type="button"
           disabled={slideIndex === 0}
           onClick={() => onSlideIndexChange(slideIndex - 1)}
-          className={`px-3 py-1 text-sm disabled:opacity-40 ${inkClassName("primary")}`}
+          className={`px-3 py-1 text-sm font-semibold tracking-wide transition-colors hover:text-accent-primary disabled:opacity-40 disabled:hover:text-ink-primary ${inkClassName("primary")}`}
         >
           ← Back
         </button>
-        <span className={`text-xs ${inkClassName("tertiary")}`}>
+        <span className={`text-xs font-medium tracking-wide ${inkClassName("tertiary")}`}>
           {slideIndex + 1} / {slides.length}
         </span>
         <div className="flex gap-2">
           <button
             type="button"
             onClick={() => setShowNotes((value) => !value)}
-            className={`px-3 py-1 text-xs ${inkClassName("secondary")}`}
+            className={`px-3 py-1 text-xs font-medium uppercase tracking-wide transition-colors hover:text-ink-primary ${inkClassName("secondary")}`}
           >
             Speaker notes
           </button>
@@ -79,7 +79,7 @@ export function PresentationShell({
             type="button"
             disabled={slideIndex === slides.length - 1}
             onClick={() => onSlideIndexChange(slideIndex + 1)}
-            className={`px-3 py-1 text-sm disabled:opacity-40 ${inkClassName("primary")}`}
+            className={`px-3 py-1 text-sm font-semibold tracking-wide transition-colors hover:text-accent-primary disabled:opacity-40 disabled:hover:text-ink-primary ${inkClassName("primary")}`}
           >
             Next →
           </button>

@@ -7,7 +7,7 @@ import { Link } from "react-router-dom";
 import { TopBar } from "../shell/TopBar.js";
 import { Grid } from "../layout/Grid.js";
 import { Stack } from "../layout/Stack.js";
-import { inkClassName, strokeClassName, surfaceClassName } from "../theme/tokens.js";
+import { accentClassName, inkClassName, strokeClassName, surfaceClassName } from "../theme/tokens.js";
 
 export type DeckListing = {
   path: string;
@@ -165,10 +165,14 @@ function DeckCard({ deck }: { deck: DeckListing }): React.JSX.Element {
   return (
     <Link
       to={deck.path}
-      className={`block rounded-none border p-6 transition-colors hover:border-accent-primary ${surfaceClassName("elevated")} ${strokeClassName("primary")}`}
+      className={`group block rounded-none border p-6 transition-colors hover:border-accent-primary hover:bg-surface-panel ${surfaceClassName("elevated")} ${strokeClassName("primary")}`}
     >
       <Stack gap={8}>
-        <h2 className={`text-lg font-semibold ${inkClassName("primary")}`}>{deck.title}</h2>
+        <h2
+          className={`text-lg font-semibold transition-colors group-hover:text-accent-primary ${inkClassName("primary")}`}
+        >
+          {deck.title}
+        </h2>
         <p className={`text-sm ${inkClassName("secondary")}`}>{deck.description}</p>
       </Stack>
     </Link>
@@ -182,8 +186,11 @@ export function Home(): React.JSX.Element {
       <TopBar section="Home" />
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-6xl px-10 py-12">
-          <Stack gap={4} className="mb-10">
-            <h1 className={`text-3xl font-extrabold ${inkClassName("primary")}`}>
+          <Stack gap={5} className="mb-12">
+            <span className={`text-xs font-semibold uppercase tracking-[0.2em] ${accentClassName("primary")}`}>
+              AIPerf
+            </span>
+            <h1 className={`text-4xl font-extrabold tracking-tight ${inkClassName("primary")}`}>
               Explainer decks
             </h1>
             <p className={`max-w-2xl text-sm ${inkClassName("secondary")}`}>
