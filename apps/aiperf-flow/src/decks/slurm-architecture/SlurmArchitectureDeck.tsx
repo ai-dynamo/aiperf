@@ -24,6 +24,7 @@ import { Grid } from "../../layout/Grid.js";
 import { Table, type TableColumn, type TableRow } from "../../prose/Table.js";
 import { Code } from "../../prose/Code.js";
 import { inkClassName, surfaceClassName, strokeClassName } from "../../theme/tokens.js";
+import { Eyebrow } from "../../prose/Eyebrow.js";
 
 type Focus = "all" | "launch" | "control" | "results";
 type Selection = "allocation" | "dispatcher" | "controller" | "cells" | "velo" | "artifacts";
@@ -261,9 +262,7 @@ function Inspector({ selection }: { selection: Selection }): React.JSX.Element {
   const source = SOURCES[selection];
   return (
     <div className={`rounded-none border p-4 ${surfaceClassName("elevated")} ${strokeClassName("secondary")}`}>
-      <div className={`text-xs font-semibold uppercase tracking-wide ${inkClassName("tertiary")}`}>
-        Selected architecture unit
-      </div>
+      <Eyebrow>Selected architecture unit</Eyebrow>
       <Stack gap={10} className="mt-3">
         <div className={`text-sm font-semibold ${inkClassName("primary")}`}>{source.label}</div>
         <div className={`text-sm ${inkClassName("secondary")}`}>{source.detail}</div>

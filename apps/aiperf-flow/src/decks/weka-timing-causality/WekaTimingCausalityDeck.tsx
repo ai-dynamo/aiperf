@@ -31,6 +31,7 @@ import { Code } from "../../prose/Code.js";
 import { Toggle } from "../../prose/Toggle.js";
 import { Button } from "../../prose/Button.js";
 import { inkClassName, strokeClassName } from "../../theme/tokens.js";
+import { Eyebrow } from "../../prose/Eyebrow.js";
 
 // --- interval-order logic (ported verbatim from the source canvas) ----------
 
@@ -667,9 +668,7 @@ export function WekaTimingCausalityDeck(): React.JSX.Element {
                 concurrent.
               </p>
               <Row gap={8} wrap align="center">
-                <span className={`text-xs font-semibold uppercase tracking-wide ${inkClassName("tertiary")}`}>
-                  Source
-                </span>
+                <Eyebrow>Source</Eyebrow>
                 {SOURCE_FILES.map(([label, path]) => (
                   <span key={path} className="inline-flex items-center gap-2">
                     <span className={`text-xs font-semibold ${inkClassName("secondary")}`}>{label}</span>
