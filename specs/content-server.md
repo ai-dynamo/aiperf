@@ -39,9 +39,7 @@ synthetic media generation through the same publisher seam with the inline
 implementation.
 
 Every content-server-hosted media fetch is correlated back to the request and
-media slot that carried it, and surfaced as first-class metrics — closing what
-was previously a gap where the tracker measured each transfer but discarded it
-unattributed.
+media slot that carried it, and surfaced as first-class metrics.
 
 **Correlation key — `(rid, mi)` plus dispatch time, embedded in the media URL.**
 The URL is the only datum that provenance-flows across all three hops (AIPerf →

@@ -39,9 +39,8 @@ server are independent executables.
   (`clock`, `transport`, `endpoints`, `dataset`, `graph`, `metrics_core`,
   `export`, `cellular`, `engine` behind the `engine` feature, and the rest). The
   `dispatch` module carries the transport-neutral `Dispatchable`/`RequestSink`/
-  `RequestObserver`/`TraceCollector` contract (formerly the standalone
-  `loadgen-core` crate). See `docs/module-organization.md` for the full module
-  table.
+  `RequestObserver`/`TraceCollector` contract. See `docs/module-organization.md`
+  for the full module table.
 - `aiperf-cli`: library plus the `aiperf` binary. It owns command routing,
   Config v2 loading and expansion, profile projection, self-execution, cellular
   roles, native searches and sweeps, result rendering, and process signals.
