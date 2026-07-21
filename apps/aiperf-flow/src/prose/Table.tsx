@@ -60,14 +60,14 @@ export function Table({ columns, rows, className }: TableProps): React.JSX.Eleme
   return (
     <table className={clsx("w-full rounded-none border-collapse text-sm", className)}>
       <thead>
-        <tr className={clsx("border-b", strokeClassName("primary"))}>
+        <tr className={clsx("border-b-2", strokeClassName("primary"))}>
           {columns.map((column) => (
             <th
               key={column.key}
               scope="col"
               className={clsx(
-                "px-3 py-2 font-semibold",
-                inkClassName("primary"),
+                "px-3 py-2 text-xs font-bold tracking-wide uppercase",
+                inkClassName("secondary"),
                 alignClassName[column.align ?? "start"],
               )}
             >
@@ -81,7 +81,7 @@ export function Table({ columns, rows, className }: TableProps): React.JSX.Eleme
           <tr
             key={rowIndex}
             className={clsx(
-              "border-b",
+              "border-b transition-colors hover:bg-surface-elevated",
               strokeClassName("secondary"),
               toneClassName(row.tone),
             )}
@@ -90,7 +90,7 @@ export function Table({ columns, rows, className }: TableProps): React.JSX.Eleme
               <td
                 key={column.key}
                 className={clsx(
-                  "px-3 py-2",
+                  "px-3 py-2.5",
                   inkClassName("secondary"),
                   alignClassName[column.align ?? "start"],
                 )}

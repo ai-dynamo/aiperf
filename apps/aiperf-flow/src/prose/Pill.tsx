@@ -33,13 +33,13 @@ export type PillProps = {
  */
 export function Pill({ children, active = false, tone, onClick, className }: PillProps): React.JSX.Element {
   const base = clsx(
-    "inline-flex items-center rounded-none border px-2 py-0.5 text-xs font-semibold",
+    "inline-flex items-center rounded-none border px-2 py-0.5 text-xs font-semibold tracking-wide transition-colors",
     tone
       ? clsx("border-transparent", categoryBgTintClassName(tone), categoryClassName(tone))
       : active
         ? clsx("border-accent-primary", accentClassName("primary"))
         : clsx(strokeClassName("secondary"), inkClassName("secondary")),
-    onClick && "cursor-pointer",
+    onClick && "cursor-pointer hover:border-accent-primary",
     className,
   );
 

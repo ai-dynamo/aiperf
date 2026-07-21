@@ -58,7 +58,7 @@ export function Callout({
   return (
     <div
       className={clsx(
-        "rounded-none border border-l-4 px-4 py-3",
+        "rounded-none border border-l-4 px-4 py-3.5",
         surfaceClassName("elevated"),
         strokeClassName("secondary"),
         CATEGORY_BORDER_L_CLASSES[category],
@@ -66,11 +66,16 @@ export function Callout({
       )}
     >
       {title !== undefined && (
-        <div className={clsx("mb-1 text-sm font-semibold", categoryClassName(category))}>
+        <div
+          className={clsx(
+            "mb-1.5 text-sm font-bold tracking-tight",
+            categoryClassName(category),
+          )}
+        >
           {title}
         </div>
       )}
-      <div className={clsx("text-sm", inkClassName("primary"))}>{children}</div>
+      <div className={clsx("text-sm leading-relaxed", inkClassName("primary"))}>{children}</div>
     </div>
   );
 }

@@ -52,10 +52,12 @@ export function Stat({ label, value, trend, tone = "neutral", className }: StatP
       <div className={`text-[11px] font-bold uppercase tracking-wide ${inkClassName("secondary")}`}>
         {label}
       </div>
-      <div className="mt-1 flex items-baseline gap-2">
-        <span className={`text-2xl font-bold ${inkClassName("primary")}`}>{value}</span>
+      <div className="mt-1.5 flex items-baseline gap-2">
+        <span className={`text-3xl font-extrabold tracking-tight tabular-nums ${inkClassName("primary")}`}>
+          {value}
+        </span>
         {trend !== undefined && (
-          <span className={`text-xs font-semibold ${toneClassName[tone]}`}>{trend}</span>
+          <span className={`text-xs font-bold tabular-nums ${toneClassName[tone]}`}>{trend}</span>
         )}
       </div>
     </div>

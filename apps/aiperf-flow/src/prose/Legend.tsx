@@ -30,9 +30,11 @@ export function Legend({ entries, className }: LegendProps): React.JSX.Element {
   return (
     <div className={clsx("flex flex-wrap gap-4", className)}>
       {entries.map((entry) => (
-        <div key={`${entry.color}-${entry.label}`} className="flex items-center gap-2">
+        <div key={`${entry.color}-${entry.label}`} className="flex items-center gap-2.5">
           <Swatch color={entry.color} />
-          <span className={clsx("text-sm", inkClassName("secondary"))}>{entry.label}</span>
+          <span className={clsx("text-sm font-medium tracking-tight", inkClassName("secondary"))}>
+            {entry.label}
+          </span>
         </div>
       ))}
     </div>
