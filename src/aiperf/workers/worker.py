@@ -761,6 +761,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         Non-FORK and non-parent sessions evict immediately.
         """
+        # Cancelled sessions never dispatch their final turn, so the inline
+        # legacy-'open' discard in the inference client cannot fire; discard
+        # here to keep the tracking set bounded (idempotent, no-op for the
+        # modern path).
+        self.inference_client.discard_dynamo_session(x_correlation_id)
         if (
             credit.parent_correlation_id is not None
             and credit.branch_mode == ConversationBranchMode.FORK

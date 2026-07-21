@@ -570,3 +570,26 @@ class TestPayloadBytesFastPath:
         )
         sent_request_info = mock_worker.inference_client.send_request.call_args.args[0]
         assert sent_request_info.payload_bytes == b'{"p": 1}'
+
+
+# --- Terminal Eviction / Dynamo Session Tracking Tests ---
+
+
+@pytest.mark.asyncio
+class TestReleaseAndEvictForTerminal:
+    """Test suite for Worker's _release_and_evict_for_terminal method."""
+
+    async def test_release_and_evict_for_terminal_cancelled_session_discards_dynamo_open_tracking(
+        self, mock_worker, sample_credit_context
+    ):
+        """A session abandoned before its final turn (e.g. cancellation) must be
+        dropped from the legacy Dynamo 'open' tracking set on terminal eviction,
+        since the inline final-turn discard never fires for it."""
+        credit = sample_credit_context.credit
+        mock_worker.inference_client._dynamo_opened_sessions.add(
+            credit.x_correlation_id
+        )
+
+        mock_worker._release_and_evict_for_terminal(credit, credit.x_correlation_id)
+
+        assert mock_worker.inference_client._dynamo_opened_sessions == set()

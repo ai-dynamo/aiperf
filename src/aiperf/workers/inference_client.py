@@ -21,6 +21,10 @@ from aiperf.common.models import (
 from aiperf.common.redact import redact_headers
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TransportType
+from aiperf.workers.dynamo_session_control import (
+    build_session_control,
+    merge_session_control,
+)
 
 if TYPE_CHECKING:
     from aiperf.transports.base_transports import FirstTokenCallback
@@ -72,6 +76,12 @@ class InferenceClient(AIPerfLifecycleMixin):
         # RecordContext after dispatch (memory optimization for large prompts).
         # Resolved by the worker via record payload-retention auto-detection.
         self.strip_record_payload_bytes = strip_record_payload_bytes
+
+        # Legacy Dynamo session_control only: session_ids this worker has already
+        # sent an 'open' for. 'open' is not idempotent and must be sent exactly
+        # once on the first request the worker makes for a session. Entries are
+        # dropped on 'close' to bound the set to in-flight sessions.
+        self._dynamo_opened_sessions: set[str] = set()
 
         # Detect and set transport type if not explicitly set
         if not model_endpoint.transport:
@@ -125,6 +135,33 @@ class InferenceClient(AIPerfLifecycleMixin):
                 if raw_payload is not None
                 else self.endpoint.format_payload(request_info)
             )
+            # Dynamo conversation-aware routing (opt-in): overlay
+            # nvext.session_control onto the structured request body. Done here,
+            # after the endpoint built the dict, so it is endpoint-agnostic and
+            # never mutates a cached Turn.
+            endpoint = self.model_endpoint.endpoint
+            if endpoint.use_dynamo_conv_aware_routing and isinstance(
+                formatted_payload, dict
+            ):
+                session_id = request_info.x_correlation_id
+                legacy = endpoint.use_legacy_dynamo_session_control
+                session_control = build_session_control(
+                    session_id=session_id,
+                    is_final_turn=request_info.is_final_turn,
+                    timeout_seconds=endpoint.dynamo_session_timeout_seconds,
+                    legacy=legacy,
+                    already_opened=session_id in self._dynamo_opened_sessions,
+                )
+                # Track the open/close lifecycle so legacy 'open' is sent exactly
+                # once per session (modern 'bind' is stateless and ignores this).
+                if legacy:
+                    if session_control.get("action") == "open":
+                        self._dynamo_opened_sessions.add(session_id)
+                    elif request_info.is_final_turn:
+                        self._dynamo_opened_sessions.discard(session_id)
+                formatted_payload = merge_session_control(
+                    formatted_payload, session_control
+                )
         # Canonicalise to bytes and stash on request_info. Two wins: (1) the
         # transport skips its own orjson.dumps on the dict path, (2) the
         # record processor can read the exact wire payload for raw-export.
@@ -148,6 +185,17 @@ class InferenceClient(AIPerfLifecycleMixin):
             payload=wire_payload,
             first_token_callback=first_token_callback,
         )
+
+    def discard_dynamo_session(self, session_id: str) -> None:
+        """Drop a session from the legacy Dynamo 'open' tracking set.
+
+        The inline final-turn discard in ``_send_request_to_transport`` only
+        fires when a final turn is actually dispatched; callers that abandon a
+        session before its final turn (e.g. cancellation) use this to keep the
+        set bounded. Idempotent and a no-op for the modern (non-legacy) path,
+        which never populates this set.
+        """
+        self._dynamo_opened_sessions.discard(session_id)
 
     async def _send_request_internal(
         self,

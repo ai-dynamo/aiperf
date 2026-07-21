@@ -413,6 +413,22 @@ Content type for request body serialization. By default, requests are sent as 'a
 
 HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header with the provided name (e.g., `--session-header X-Session-ID`).
 
+#### `--use-dynamo-conv-aware-routing`, `--use-dynamo-session-control`
+
+Emit Dynamo nvext.session_control in OpenAI-compatible request bodies so Dynamo can bind all turns from the same replayed conversation lineage to the same backend worker. This is only intended for Dynamo frontends that implement session_control.
+<br/>_Flag (no value required)_
+
+#### `--use-legacy-dynamo-session-control`
+
+Emit the legacy Dynamo nvext.session_control lifecycle that released Dynamo (v1.2.x) understands: action 'open' on the first turn, session_id only on intermediate turns, and action 'close' on the final turn. Use this when the target Dynamo predates the 'bind' action (added in v1.3.0-dev); otherwise 'bind' is rejected with an HTTP 400. Requires --use-dynamo-conv-aware-routing, and the Dynamo deployment must expose a worker session_control endpoint for 'open' to take effect.
+<br/>_Flag (no value required)_
+
+#### `--dynamo-session-timeout-seconds` `<int>`
+
+Dynamo nvext.session_control timeout in seconds when --use-dynamo-conv-aware-routing is enabled.
+<br/>_Constraints: ≥ 1_
+<br/>_Default: `300`_
+
 #### `--uuid-and-strip`
 
 Enable AIPerf-managed image stripping for vLLM's multimodal processor cache. Dataset-authored image UUIDs, including UUID-only cache references, always pass through on the chat endpoint; this flag only strips repeated content after AIPerf observes it in the same session. Automatic stripping supports only single_turn datasets with session_id-grouped rows; multi_turn is rejected. The server cache must cover the working set, and requests in a session must reach a replica that retains earlier UUIDs.
@@ -1875,6 +1891,22 @@ Content type for request body serialization. By default, requests are sent as 'a
 #### `--session-header` `<str>`
 
 HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header with the provided name (e.g., `--session-header X-Session-ID`).
+
+#### `--use-dynamo-conv-aware-routing`, `--use-dynamo-session-control`
+
+Emit Dynamo nvext.session_control in OpenAI-compatible request bodies so Dynamo can bind all turns from the same replayed conversation lineage to the same backend worker. This is only intended for Dynamo frontends that implement session_control.
+<br/>_Flag (no value required)_
+
+#### `--use-legacy-dynamo-session-control`
+
+Emit the legacy Dynamo nvext.session_control lifecycle that released Dynamo (v1.2.x) understands: action 'open' on the first turn, session_id only on intermediate turns, and action 'close' on the final turn. Use this when the target Dynamo predates the 'bind' action (added in v1.3.0-dev); otherwise 'bind' is rejected with an HTTP 400. Requires --use-dynamo-conv-aware-routing, and the Dynamo deployment must expose a worker session_control endpoint for 'open' to take effect.
+<br/>_Flag (no value required)_
+
+#### `--dynamo-session-timeout-seconds` `<int>`
+
+Dynamo nvext.session_control timeout in seconds when --use-dynamo-conv-aware-routing is enabled.
+<br/>_Constraints: ≥ 1_
+<br/>_Default: `300`_
 
 #### `--uuid-and-strip`
 

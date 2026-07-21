@@ -389,6 +389,60 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    use_dynamo_conv_aware_routing: Annotated[
+        bool,
+        Field(
+            description=(
+                "Emit Dynamo nvext.session_control in OpenAI-compatible request "
+                "bodies so Dynamo can bind all turns from the same replayed "
+                "conversation lineage to the same backend worker. This is only "
+                "intended for Dynamo frontends that implement session_control."
+            ),
+        ),
+        CLIParameter(
+            name=(
+                "--use-dynamo-conv-aware-routing",
+                "--use-dynamo-session-control",
+            ),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.USE_DYNAMO_CONV_AWARE_ROUTING
+
+    use_legacy_dynamo_session_control: Annotated[
+        bool,
+        Field(
+            description=(
+                "Emit the legacy Dynamo nvext.session_control lifecycle that "
+                "released Dynamo (v1.2.x) understands: action 'open' on the first "
+                "turn, session_id only on intermediate turns, and action 'close' "
+                "on the final turn. Use this when the target Dynamo predates the "
+                "'bind' action (added in v1.3.0-dev); otherwise 'bind' is rejected "
+                "with an HTTP 400. Requires --use-dynamo-conv-aware-routing, and "
+                "the Dynamo deployment must expose a worker session_control "
+                "endpoint for 'open' to take effect."
+            ),
+        ),
+        CLIParameter(
+            name=("--use-legacy-dynamo-session-control",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.USE_LEGACY_DYNAMO_SESSION_CONTROL
+
+    dynamo_session_timeout_seconds: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Dynamo nvext.session_control timeout in seconds when "
+                "--use-dynamo-conv-aware-routing is enabled."
+            ),
+        ),
+        CLIParameter(
+            name=("--dynamo-session-timeout-seconds",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.DYNAMO_SESSION_TIMEOUT_SECONDS
+
     uuid_and_strip: Annotated[
         bool,
         Field(

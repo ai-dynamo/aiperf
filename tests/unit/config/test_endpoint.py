@@ -19,6 +19,7 @@ from __future__ import annotations
 import warnings
 
 import pytest
+from pydantic import ValidationError
 from pytest import param
 
 from aiperf.common.enums import ModelSelectionStrategy
@@ -40,6 +41,48 @@ def test_endpoint_config_normalizes_schemeless_urls() -> None:
 def test_endpoint_config_timeout_uses_endpoint_default() -> None:
     endpoint = EndpointConfig(urls=["http://localhost:8000"])
     assert endpoint.timeout == EndpointDefaults.TIMEOUT
+
+
+def test_endpoint_config_dynamo_session_control_defaults_disabled() -> None:
+    endpoint = EndpointConfig(urls=["http://localhost:8000"])
+    assert endpoint.use_dynamo_conv_aware_routing is False
+    assert endpoint.use_legacy_dynamo_session_control is False
+    assert (
+        endpoint.dynamo_session_timeout_seconds
+        == EndpointDefaults.DYNAMO_SESSION_TIMEOUT_SECONDS
+    )
+
+
+def test_endpoint_config_legacy_dynamo_without_routing_raises_error() -> None:
+    """Legacy session control only selects the wire contract for the routing
+    feature, so enabling it alone is incoherent and must be rejected."""
+    with pytest.raises(
+        ValidationError, match="use-legacy-dynamo-session-control has no effect"
+    ):
+        EndpointConfig(
+            urls=["http://localhost:8000"],
+            use_legacy_dynamo_session_control=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("use_routing", "use_legacy"),
+    [
+        param(True, False, id="modern-routing-only"),
+        param(True, True, id="legacy-with-routing"),
+        param(False, False, id="both-disabled"),
+    ],
+)  # fmt: skip
+def test_endpoint_config_dynamo_session_control_coherent_combos_accepted(
+    use_routing: bool, use_legacy: bool
+) -> None:
+    endpoint = EndpointConfig(
+        urls=["http://localhost:8000"],
+        use_dynamo_conv_aware_routing=use_routing,
+        use_legacy_dynamo_session_control=use_legacy,
+    )
+    assert endpoint.use_dynamo_conv_aware_routing is use_routing
+    assert endpoint.use_legacy_dynamo_session_control is use_legacy
 
 
 def test_uuid_and_strip_rejects_non_chat_endpoint() -> None:
