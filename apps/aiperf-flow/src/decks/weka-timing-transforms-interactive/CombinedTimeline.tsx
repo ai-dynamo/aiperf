@@ -10,7 +10,7 @@
 //! of each trace's absolute timing.
 
 import { LANE_KEYS, MINI_TRACES, derive, laneColorIndex, lanesOf, warmupIds } from "./logic.js";
-import { categoryBgClassName, categoryClassName, inkClassName, strokeClassName } from "../../theme/tokens.js";
+import { categoryClassName, inkClassName, strokeClassName } from "../../theme/tokens.js";
 
 const CATEGORY_TEXT: Record<(typeof LANE_KEYS)[number], string> = {
   blue: "text-category-blue",
@@ -25,10 +25,6 @@ const CATEGORY_TEXT: Record<(typeof LANE_KEYS)[number], string> = {
 
 function laneTextClassName(agent: string, lanes: readonly string[]): string {
   return CATEGORY_TEXT[LANE_KEYS[laneColorIndex(agent, lanes)]!];
-}
-
-function laneFillClassName(agent: string, lanes: readonly string[]): string {
-  return categoryBgClassName(LANE_KEYS[laneColorIndex(agent, lanes)]!);
 }
 
 const LANE_H = 22;
@@ -119,7 +115,7 @@ export function CombinedTimeline({ tStars }: CombinedTimelineProps): React.JSX.E
                     height={LANE_H}
                     fill={profiled && !warm ? "currentColor" : "none"}
                     fillOpacity={profiled && !warm ? 0.12 : undefined}
-                    className={profiled && !warm ? laneFillClassName(r.agent, r.tr.lanes) : strokeCls}
+                    className={profiled && !warm ? laneTextClassName(r.agent, r.tr.lanes) : strokeCls}
                     stroke="currentColor"
                     strokeWidth={warm ? 2 : 1.5}
                     strokeDasharray={!profiled && !warm ? "4 4" : undefined}

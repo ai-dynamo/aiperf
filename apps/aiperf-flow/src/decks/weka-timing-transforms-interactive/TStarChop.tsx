@@ -9,7 +9,7 @@
 //! hand-computed SVG rather than a React Flow graph.
 
 import { LANE_KEYS, fmt, laneColorIndex, warmupIds, type DNode, type EdgeRow } from "./logic.js";
-import { categoryBgClassName, categoryClassName, inkClassName, strokeClassName } from "../../theme/tokens.js";
+import { categoryClassName, inkClassName, strokeClassName } from "../../theme/tokens.js";
 
 const CATEGORY_TEXT: Record<(typeof LANE_KEYS)[number], string> = {
   blue: "text-category-blue",
@@ -24,10 +24,6 @@ const CATEGORY_TEXT: Record<(typeof LANE_KEYS)[number], string> = {
 
 function laneTextClassName(agent: string, lanes: readonly string[]): string {
   return CATEGORY_TEXT[LANE_KEYS[laneColorIndex(agent, lanes)]!];
-}
-
-function laneFillClassName(agent: string, lanes: readonly string[]): string {
-  return categoryBgClassName(LANE_KEYS[laneColorIndex(agent, lanes)]!);
 }
 
 const LANE_H = 24;
@@ -156,7 +152,7 @@ export function TStarChop({ nodes, edges, lanes, tStar, beforeOnly = false }: TS
             x(n.warpStart),
             laneY(beforeTop, n.agent),
             n.id,
-            laneFillClassName(n.agent, lanes),
+            laneTextClassName(n.agent, lanes),
             laneTextClassName(n.agent, lanes),
             droppedIds.has(n.id),
             warmup.has(n.id),
@@ -196,7 +192,7 @@ export function TStarChop({ nodes, edges, lanes, tStar, beforeOnly = false }: TS
                     x(n.warpStart),
                     y,
                     n.id,
-                    laneFillClassName(n.agent, lanes),
+                    laneTextClassName(n.agent, lanes),
                     laneTextClassName(n.agent, lanes),
                     false,
                     false,

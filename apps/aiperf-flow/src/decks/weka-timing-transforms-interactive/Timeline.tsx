@@ -10,7 +10,7 @@
 //! established by `src/prose/Chart.tsx`.
 
 import { LANE_KEYS, fmt, laneColorIndex, type DNode, type Gap } from "./logic.js";
-import { categoryBgClassName, categoryClassName, inkClassName, strokeClassName } from "../../theme/tokens.js";
+import { categoryClassName, inkClassName, strokeClassName } from "../../theme/tokens.js";
 
 const CATEGORY_TEXT: Record<(typeof LANE_KEYS)[number], string> = {
   blue: "text-category-blue",
@@ -25,10 +25,6 @@ const CATEGORY_TEXT: Record<(typeof LANE_KEYS)[number], string> = {
 
 function laneTextClassName(agent: string, lanes: readonly string[]): string {
   return CATEGORY_TEXT[LANE_KEYS[laneColorIndex(agent, lanes)]!];
-}
-
-function laneFillClassName(agent: string, lanes: readonly string[]): string {
-  return categoryBgClassName(LANE_KEYS[laneColorIndex(agent, lanes)]!);
 }
 
 const LEFT = 92;
@@ -92,7 +88,8 @@ export function Timeline({ nodes, gaps, lanes, warpOn }: TimelineProps): React.J
           y={y}
           width={w}
           height={LANE_H}
-          className={laneFillClassName(n.agent, lanes)}
+          fill="currentColor"
+          className={laneTextClassName(n.agent, lanes)}
           fillOpacity={0.18}
           stroke="currentColor"
           strokeWidth={1.5}
