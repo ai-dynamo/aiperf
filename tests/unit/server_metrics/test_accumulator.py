@@ -152,6 +152,33 @@ class TestServerMetricsAccumulator:
         assert result.endpoint_summaries is not None
         assert len(result.endpoint_summaries) == 1
 
+    async def test_phase_scoped_export_does_not_include_final_collection(
+        self,
+        mock_cfg: BenchmarkRun,
+        sample_server_metrics_record: ServerMetricsRecord,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        processor = ServerMetricsAccumulator(mock_cfg)
+        await processor.process_server_metrics_record(sample_server_metrics_record)
+        include_flags: list[bool] = []
+
+        def fake_compute_endpoint_summaries(*args, include_final_collection: bool):
+            include_flags.append(include_final_collection)
+            return {}
+
+        monkeypatch.setattr(
+            processor,
+            "_compute_endpoint_summaries",
+            fake_compute_endpoint_summaries,
+        )
+
+        await processor.export_results(
+            ExportContext(start_ns=1, end_ns=2, is_phase_scoped=True)
+        )
+        await processor.export_results(ExportContext(start_ns=1, end_ns=2))
+
+        assert include_flags == [False, True]
+
     async def test_export_results_unbounded_context_does_not_crash(
         self,
         mock_cfg: BenchmarkRun,
@@ -319,6 +346,91 @@ class TestServerMetricsAccumulator:
 
         assert result is not None
         assert isinstance(result, ServerMetricsResults)
+
+    async def test_aggregate_endpoint_info_keeps_global_window(
+        self,
+        mock_cfg: BenchmarkRun,
+    ) -> None:
+        processor = ServerMetricsAccumulator(mock_cfg)
+
+        for timestamp_ns, value in (
+            (1_000_000_000, 0.1),
+            (2_000_000_000, 0.2),
+            (3_000_000_000, 0.3),
+        ):
+            gauge = MetricFamily(
+                type=PrometheusMetricType.GAUGE,
+                description="KV cache usage",
+                samples=[MetricSample(labels=None, value=value)],
+            )
+            await processor.process_server_metrics_record(
+                ServerMetricsRecord(
+                    endpoint_url="http://node1:8081/metrics",
+                    timestamp_ns=timestamp_ns,
+                    endpoint_latency_ns=10_000_000,
+                    metrics={"cache_usage": gauge},
+                )
+            )
+
+        result = await processor.export_results(
+            ExportContext(start_ns=2_000_000_000, end_ns=3_000_000_000)
+        )
+
+        assert result is not None
+        assert result.endpoint_summaries is not None
+        summary = next(iter(result.endpoint_summaries.values()))
+        assert summary.info.total_fetches == 3
+        assert summary.info.first_fetch_ns == 1_000_000_000
+        assert summary.info.last_fetch_ns == 3_000_000_000
+        assert summary.info.unique_updates == 3
+
+    async def test_phase_scoped_endpoint_info_uses_phase_window(
+        self,
+        mock_cfg: BenchmarkRun,
+    ) -> None:
+        processor = ServerMetricsAccumulator(mock_cfg)
+
+        for timestamp_ns, latency_ns, value in (
+            (1_000_000_000, 10_000_000, 0.1),
+            (2_000_000_000, 20_000_000, 0.2),
+            (3_000_000_000, 30_000_000, 0.3),
+            (4_000_000_000, 40_000_000, 0.4),
+        ):
+            gauge = MetricFamily(
+                type=PrometheusMetricType.GAUGE,
+                description="KV cache usage",
+                samples=[MetricSample(labels=None, value=value)],
+            )
+            await processor.process_server_metrics_record(
+                ServerMetricsRecord(
+                    endpoint_url="http://node1:8081/metrics",
+                    timestamp_ns=timestamp_ns,
+                    endpoint_latency_ns=latency_ns,
+                    metrics={"cache_usage": gauge},
+                )
+            )
+
+        result = await processor.export_results(
+            ExportContext(
+                start_ns=2_000_000_000,
+                end_ns=3_000_000_000,
+                is_phase_scoped=True,
+            )
+        )
+
+        assert result is not None
+        assert result.endpoint_summaries is not None
+        summary = next(iter(result.endpoint_summaries.values()))
+        assert summary.info.total_fetches == 2
+        assert summary.info.first_fetch_ns == 2_000_000_000
+        assert summary.info.last_fetch_ns == 3_000_000_000
+        assert summary.info.avg_fetch_latency_ms == 25.0
+        assert summary.info.unique_updates == 2
+        assert summary.info.first_update_ns == 2_000_000_000
+        assert summary.info.last_update_ns == 3_000_000_000
+        assert summary.info.duration_seconds == 1.0
+        assert summary.info.avg_update_interval_ms == 1000.0
+        assert summary.info.median_update_interval_ms == 1000.0
 
     async def test_export_results_with_error_summary(
         self,
