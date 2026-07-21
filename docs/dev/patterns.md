@@ -441,95 +441,158 @@ A normal `BaseDerivedMetric` computes its value from peer metrics in the
 `MetricResultsDict` via `_derive_value`. Some derived metrics, however, are
 computed from data that never lives in the `MetricResultsDict` at all —
 GPU power and energy come from telemetry scrapes, not from request
-records, so their values must be injected by the accumulator that owns
-the sensor data rather than derived by the standard registry walk.
+records, so their values are injected at summarize time by the
+`EnergyEfficiencyAnalyzer` plugin rather than derived by the standard
+registry walk.
 
-Reference file: [`src/aiperf/metrics/types/power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/types/power_efficiency_metrics.py).
-Injection site: `GPUTelemetryAccumulator.compute_efficiency_metrics`
-([`src/aiperf/gpu_telemetry/accumulator.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/gpu_telemetry/accumulator.py)).
+Reference files:
+- [`src/aiperf/metrics/types/power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/types/power_efficiency_metrics.py) — metric registration classes
+- [`src/aiperf/metrics/energy_efficiency_analyzer.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/energy_efficiency_analyzer.py) — injection site
 
 ### The three-part contract
 
 A metric class that participates in registry listings but is computed
-externally must spell out the contract in three places so future agents
+externally must spell out the contract in three places so future readers
 don't copy-paste the shape as the canonical derived-metric pattern.
 
-**1. `Invariant:` paragraph in the class docstring.** Name the injection
-site and the catching path explicitly:
+The shared base class `_InjectedEnergyMetric` fulfils all three parts for
+the GPU power-efficiency family. Concrete vendor classes inherit from it and
+only declare `tag`, `header`, `unit`, `display_order`, and `console_group`:
 
 ```python
-class TotalGpuEnergyMetric(BaseDerivedMetric[float]):
-    """Sum of GPU energy consumed across all GPUs during the benchmark phase, in joules.
+class _InjectedEnergyMetric(BaseDerivedMetric[float]):
+    """Shared deferred-derivation base for the analyzer-injected energy metrics.
 
-    Invariant: externally injected by
-    `GPUTelemetryAccumulator.compute_efficiency_metrics` from
-    energy_consumption counter deltas. `_derive_value` is intentionally
-    non-functional; `MetricsAccumulator._resolve_derived_metrics` is
-    expected to catch NoMetricValue and skip the tag during its
-    derivation walk.
+    Not registered itself (abstract). Values are injected at summarize time
+    by EnergyEfficiencyAnalyzer via SummaryContext; _derive_value always
+    raises so the standard derivation walk skips these tags.
     """
+
+    __is_abstract__ = True
+
+    def _derive_value(self, metric_results: MetricResultsDict) -> NoReturn:
+        raise NoMetricValue(
+            f"'{self.tag}' is injected post-aggregation by EnergyEfficiencyAnalyzer "
+            "from GPU telemetry + inference token totals; it cannot be derived from "
+            "a single MetricResultsDict. If this surfaces, the derivation walk is "
+            "missing its NoMetricValue handler (MetricsAccumulator."
+            "_resolve_derived_metrics)."
+        )
+
+
+class NvidiaTotalGpuEnergyMetric(_InjectedEnergyMetric):
+    """Sum of NVIDIA GPU energy consumed during the profiling phase, in joules."""
+
+    __is_abstract__ = False
+    tag = "nvidia_total_gpu_energy"
+    header = "Total GPU Energy"
+    unit = EnergyMetricUnit.JOULES
+    display_order = 720
+    flags = MetricFlags.NONE
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_NVIDIA
 ```
 
-**2. `_derive_value` returns `NoReturn`.** The body unconditionally
-raises, so the truthful annotation is `NoReturn` from `typing`. Returning
-`float` would lie to type-checkers and downstream code that assumes the
-derivation succeeded.
+**1. `__is_abstract__ = True` on the base; `False` on each concrete class.**
+This prevents the base from appearing in the metric registry while still
+allowing subclasses to auto-register.
 
-```python
-from typing import NoReturn
-from aiperf.common.exceptions import NoMetricValue
-from aiperf.metrics.metric_dicts import MetricResultsDict
+**2. `_derive_value` returns `NoReturn`.** The body unconditionally raises,
+so the truthful annotation is `NoReturn`. Returning `float` would lie to
+type-checkers and downstream code that assumes derivation succeeded.
 
-def _derive_value(self, metric_results: MetricResultsDict) -> NoReturn:
-    raise NoMetricValue(
-        "Cannot derive 'total_gpu_energy' from MetricResultsDict: this metric "
-        "is externally injected by "
-        "GPUTelemetryAccumulator.compute_efficiency_metrics. If this exception "
-        "surfaces, the derivation walk is missing its NoMetricValue handler "
-        "(see MetricsAccumulator._resolve_derived_metrics)."
-    )
-```
+**3. Error message names the tag, the injection site, and the catching
+path.** A message that only names the source gives debugging agents no clue
+where the contract is enforced:
 
-**3. Error message names the operation, the injection site, and the catching
-path.** A message that only names the source ("X is computed by the GPU
-telemetry accumulator") gives debugging agents no clue where the contract
-is enforced. The recommended shape is:
+- *Tag*: `'{self.tag}'` — which metric failed.
+- *Injection site*: `EnergyEfficiencyAnalyzer` — the source of truth.
+- *Catching path*: `MetricsAccumulator._resolve_derived_metrics` — where
+  `NoMetricValue` is expected to be absorbed. If this fires in production,
+  the catching path has a bug.
 
-- *Operation*: what derivation was attempted (`Cannot derive 'X' from
-  MetricResultsDict`).
-- *Injection site*: which method is the source of truth
-  (`GPUTelemetryAccumulator.compute_efficiency_metrics`).
-- *Catching path*: where the exception is expected to be absorbed
-  (`MetricsAccumulator._resolve_derived_metrics`). If this fires in
-  production, the catching path has a bug.
-
-### Why not just skip the class entirely?
+### Why not skip the class entirely?
 
 The class is still required because the rest of the system reads class
-attributes (`tag`, `header`, `unit`, `display_order`, `flags`) when
-emitting `MetricResult`s, ordering the console table, and gating display
-behavior. The registry entry is structural metadata; the *value* is the
-external injection.
+attributes (`tag`, `header`, `unit`, `display_order`, `flags`,
+`console_group`) when emitting `MetricResult`s, ordering the console table,
+and gating display behavior. The registry entry is structural metadata; the
+*value* is the external injection.
 
 ### Where the injection happens
 
-`RecordsManager._apply_gpu_efficiency_metrics` calls
-`GPUTelemetryAccumulator.compute_efficiency_metrics`, which constructs
-`MetricResult` objects directly with the relevant tags and appends them
-to the records list before `ProcessRecordsResult` is built. The standard
+`EnergyEfficiencyAnalyzer.analyze()` (an `analyzer` plugin, called at
+summarize time via `SummaryContext`) queries `GPUTelemetryAccumulator` for
+per-vendor energy and power, joins them with token/throughput/latency totals
+from `MetricsAccumulator`, and constructs `MetricResult` objects directly
+from the registered class attributes (`tag`, `header`, `unit`). The standard
 `MetricsAccumulator._resolve_derived_metrics` walk sees these tags too,
 raises `NoMetricValue` via `_derive_value`, catches it, and skips — so the
-externally-injected values are not overwritten.
+analyzer-injected values are never overwritten.
 
 ### Test contract
 
-The error-message invariants are pinned by
-[`tests/unit/metrics/test_power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/tests/unit/metrics/test_power_efficiency_metrics.py)
-(parametrized over the three classes): every `_derive_value` call must
-raise `NoMetricValue` with a message that names the tag, the operation
-source (`MetricResultsDict`), and the injection site
-(`compute_efficiency_metrics`). A future weakening of any message fails
-the test rather than silently drifting.
+The `_derive_value` invariants are pinned by
+[`tests/unit/metrics/test_energy_efficiency_analyzer.py`](https://github.com/ai-dynamo/aiperf/blob/main/tests/unit/metrics/test_energy_efficiency_analyzer.py)
+and the property tests in `tests/unit/property/`. The 24 concrete classes
+(12 NVIDIA × 12 AMD) are each exercised: every `_derive_value` call must
+raise `NoMetricValue` with a message naming the tag, the injection site, and
+the catching path. A future weakening of any message fails the test rather
+than silently drifting.
+
+### Adding a new GPU telemetry vendor
+
+To add a third GPU vendor (e.g. Intel) follow these steps:
+
+**1. Define the platform constant** in `src/aiperf/gpu_telemetry/constants.py`:
+
+```python
+INTEL_GPU_TELEMETRY_PLATFORM = "intel"
+```
+
+**2. Add 12 metric classes** to `src/aiperf/metrics/types/power_efficiency_metrics.py`,
+one per role, all inheriting `_InjectedEnergyMetric`. Mirror the NVIDIA or
+AMD block verbatim, substituting `Intel`, `intel_`, `GPU_POWER_EFFICIENCY_INTEL`,
+and `display_order` values starting at the next free band (e.g. 900–965):
+
+```python
+class IntelTotalGpuPowerMetric(_InjectedEnergyMetric):
+    __is_abstract__ = False
+    tag = "intel_total_gpu_power"
+    header = "Total GPU Power"
+    unit = PowerMetricUnit.WATTS
+    display_order = 900
+    flags = MetricFlags.NONE
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_INTEL
+# ... repeat for the other 11 roles
+```
+
+**3. Add the console group** to `MetricConsoleGroup` in
+`src/aiperf/common/enums/enums.py`:
+
+```python
+GPU_POWER_EFFICIENCY_INTEL = "GPU Power Efficiency (Intel)"
+```
+
+**4. Register the console group** in the console exporter that renders this
+section (search for `GPU_POWER_EFFICIENCY_NVIDIA` to find the registration
+point).
+
+**5. Add power/energy field constants** to `src/aiperf/gpu_telemetry/constants.py`
+and extend `_PLATFORM_POWER_FIELDS` / `_PLATFORM_ENERGY_FIELDS` in
+`src/aiperf/gpu_telemetry/accumulator.py` so `total_power_watts` and
+`total_energy_joules` can query the new vendor's fields.
+
+**6. Wire up `_VENDOR_METRICS`** in
+`src/aiperf/metrics/energy_efficiency_analyzer.py` — import the 12 new
+classes and add an entry keyed by `INTEL_GPU_TELEMETRY_PLATFORM`.
+
+**7. Add tests** — extend the parametrize tables in
+`tests/unit/metrics/test_energy_efficiency_analyzer.py` with an Intel stub
+GPU and verify all 12 metric tags are emitted with correct values.
+
+No changes are needed to `EnergyEfficiencyAnalyzer.analyze()` itself: the
+fan-out over `available_platforms()` and the `_VENDOR_METRICS` lookup are
+already vendor-agnostic.
 
 ## Testing Pattern
 
