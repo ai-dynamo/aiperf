@@ -27,6 +27,11 @@ pub struct RequestConfig {
     pub params: BTreeMap<String, String>,
     pub cancel_after_ns: Option<i64>,
     pub correlation_id: Option<String>,
+    /// The parent session's `correlation_id`, when this request is a DAG
+    /// (`dag_jsonl` Fork/Spawn) child of another session. `None` for
+    /// ordinary sampled turns. Feeds `X-Dynamo-Parent-Session-ID` under
+    /// `--dynamo-session-id-from-correlation-id`; see `headers::build_headers`.
+    pub parent_correlation_id: Option<String>,
     pub request_id: Option<String>,
     pub is_final_turn: bool,
     pub reuse: ConnectionReuseStrategy,
@@ -40,6 +45,7 @@ impl RequestConfig {
             params: BTreeMap::new(),
             cancel_after_ns: None,
             correlation_id: None,
+            parent_correlation_id: None,
             request_id: None,
             is_final_turn: true,
             reuse: ConnectionReuseStrategy::Pooled,
@@ -59,6 +65,10 @@ impl RequestConfig {
     }
     pub fn correlation_id(mut self, s: impl Into<String>) -> Self {
         self.correlation_id = Some(s.into());
+        self
+    }
+    pub fn parent_correlation_id(mut self, s: impl Into<String>) -> Self {
+        self.parent_correlation_id = Some(s.into());
         self
     }
     pub fn request_id(mut self, s: impl Into<String>) -> Self {
