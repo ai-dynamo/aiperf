@@ -1522,10 +1522,18 @@
                       "type": "boolean"
                     },
                     "rate": {
-                      "description": "Target request rate in requests per second (must be > 0).",
-                      "exclusiveMinimum": 0,
-                      "title": "Rate",
-                      "type": "number"
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                      "title": "Rate"
                     },
                     "rateRamp": {
                       "anyOf": [
@@ -1538,14 +1546,55 @@
                       ],
                       "default": null,
                       "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "rateSeries": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RateSeriesConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Piecewise-linear request-rate schedule."
                     }
                   },
                   "required": [
-                    "type",
-                    "rate"
+                    "type"
                   ],
                   "title": "PoissonPhase",
-                  "type": "object"
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "oneOf": [
+                        {
+                          "required": [
+                            "rate"
+                          ],
+                          "properties": {
+                            "rate": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "required": [
+                            "rateSeries"
+                          ],
+                          "properties": {
+                            "rateSeries": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
                 },
                 {
                   "additionalProperties": false,
@@ -1846,10 +1895,18 @@
                       "type": "boolean"
                     },
                     "rate": {
-                      "description": "Target request rate in requests per second (must be > 0).",
-                      "exclusiveMinimum": 0,
-                      "title": "Rate",
-                      "type": "number"
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                      "title": "Rate"
                     },
                     "rateRamp": {
                       "anyOf": [
@@ -1862,6 +1919,18 @@
                       ],
                       "default": null,
                       "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "rateSeries": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RateSeriesConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Piecewise-linear request-rate schedule."
                     },
                     "smoothness": {
                       "anyOf": [
@@ -1879,11 +1948,40 @@
                     }
                   },
                   "required": [
-                    "type",
-                    "rate"
+                    "type"
                   ],
                   "title": "GammaPhase",
-                  "type": "object"
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "oneOf": [
+                        {
+                          "required": [
+                            "rate"
+                          ],
+                          "properties": {
+                            "rate": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "required": [
+                            "rateSeries"
+                          ],
+                          "properties": {
+                            "rateSeries": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
                 },
                 {
                   "additionalProperties": false,
@@ -2184,10 +2282,18 @@
                       "type": "boolean"
                     },
                     "rate": {
-                      "description": "Target request rate in requests per second (must be > 0).",
-                      "exclusiveMinimum": 0,
-                      "title": "Rate",
-                      "type": "number"
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                      "title": "Rate"
                     },
                     "rateRamp": {
                       "anyOf": [
@@ -2200,14 +2306,55 @@
                       ],
                       "default": null,
                       "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "rateSeries": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RateSeriesConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Piecewise-linear request-rate schedule."
                     }
                   },
                   "required": [
-                    "type",
-                    "rate"
+                    "type"
                   ],
                   "title": "ConstantPhase",
-                  "type": "object"
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "oneOf": [
+                        {
+                          "required": [
+                            "rate"
+                          ],
+                          "properties": {
+                            "rate": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "required": [
+                            "rateSeries"
+                          ],
+                          "properties": {
+                            "rateSeries": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
                 },
                 {
                   "additionalProperties": false,
@@ -2508,10 +2655,18 @@
                       "type": "boolean"
                     },
                     "rate": {
-                      "description": "Target request rate in requests per second (must be > 0).",
-                      "exclusiveMinimum": 0,
-                      "title": "Rate",
-                      "type": "number"
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                      "title": "Rate"
                     },
                     "rateRamp": {
                       "anyOf": [
@@ -2534,11 +2689,25 @@
                   },
                   "required": [
                     "type",
-                    "rate",
-                    "users"
+                    "users",
+                    "rate"
                   ],
                   "title": "UserCentricPhase",
-                  "type": "object"
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
                 },
                 {
                   "additionalProperties": false,
@@ -4158,10 +4327,18 @@
                   "type": "boolean"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -4174,14 +4351,55 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "PoissonPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
@@ -4482,10 +4700,18 @@
                   "type": "boolean"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -4498,6 +4724,18 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
                 },
                 "smoothness": {
                   "anyOf": [
@@ -4515,11 +4753,40 @@
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "GammaPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
@@ -4820,10 +5087,18 @@
                   "type": "boolean"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -4836,14 +5111,55 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "ConstantPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
@@ -5144,10 +5460,18 @@
                   "type": "boolean"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -5170,11 +5494,25 @@
               },
               "required": [
                 "type",
-                "rate",
-                "users"
+                "users",
+                "rate"
               ],
               "title": "UserCentricPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "required": [
+                    "rate"
+                  ],
+                  "properties": {
+                    "rate": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  }
+                }
+              ]
             },
             {
               "additionalProperties": false,
@@ -6128,10 +6466,18 @@
                   "type": "boolean"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -6144,14 +6490,55 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "PoissonPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
@@ -6452,10 +6839,18 @@
                   "type": "boolean"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -6468,6 +6863,18 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
                 },
                 "smoothness": {
                   "anyOf": [
@@ -6485,11 +6892,40 @@
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "GammaPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
@@ -6790,10 +7226,18 @@
                   "type": "boolean"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -6806,14 +7250,55 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "ConstantPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
@@ -7114,10 +7599,18 @@
                   "type": "boolean"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -7140,11 +7633,25 @@
               },
               "required": [
                 "type",
-                "rate",
-                "users"
+                "users",
+                "rate"
               ],
               "title": "UserCentricPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "required": [
+                    "rate"
+                  ],
+                  "properties": {
+                    "rate": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  }
+                }
+              ]
             },
             {
               "additionalProperties": false,
@@ -8647,14 +9154,13 @@
           "type": "boolean"
         },
         "rate": {
-          "description": "Target request rate in requests per second (must be > 0).",
-          "title": "Rate",
-          "oneOf": [
+          "anyOf": [
             {
-              "description": "Target request rate in requests per second (must be > 0).",
               "exclusiveMinimum": 0,
-              "title": "Rate",
               "type": "number"
+            },
+            {
+              "type": "null"
             },
             {
               "type": "string",
@@ -8667,6 +9173,9 @@
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
+          "default": null,
+          "description": "Target request rate in requests per second. Required unless rate_series is set.",
+          "title": "Rate",
           "x-jinja2-supported": true
         },
         "rateRamp": {
@@ -8691,15 +9200,56 @@
           "default": null,
           "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
+        },
+        "rateSeries": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateSeriesConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Piecewise-linear request-rate schedule."
         }
       },
       "required": [
         "name",
-        "type",
-        "rate"
+        "type"
       ],
       "title": "ConstantPhase",
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "rate"
+              ],
+              "properties": {
+                "rate": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            },
+            {
+              "required": [
+                "rateSeries"
+              ],
+              "properties": {
+                "rateSeries": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
     },
     "ConvergenceConfig": {
       "additionalProperties": false,
@@ -9285,6 +9835,12 @@
           "default": null,
           "description": "HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header. Useful when the inference server expects a custom session-affinity header (e.g. `--session-header X-Session-ID`).",
           "title": "Sessionheader"
+        },
+        "uuidAndStrip": {
+          "default": false,
+          "description": "Enable AIPerf-managed image stripping for vLLM's multimodal processor cache. Dataset-authored image UUIDs, including UUID-only cache references, always pass through on the chat endpoint; this flag only strips repeated content after AIPerf observes it in the same session. Automatic stripping supports only single_turn datasets with session_id-grouped rows; multi_turn is rejected. The server cache must cover the working set, and requests in a session must reach a replica that retains earlier UUIDs.",
+          "title": "Uuidandstrip",
+          "type": "boolean"
         },
         "waitForModelTimeout": {
           "default": 0.0,
@@ -10870,14 +11426,13 @@
           "type": "boolean"
         },
         "rate": {
-          "description": "Target request rate in requests per second (must be > 0).",
-          "title": "Rate",
-          "oneOf": [
+          "anyOf": [
             {
-              "description": "Target request rate in requests per second (must be > 0).",
               "exclusiveMinimum": 0,
-              "title": "Rate",
               "type": "number"
+            },
+            {
+              "type": "null"
             },
             {
               "type": "string",
@@ -10890,6 +11445,9 @@
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
+          "default": null,
+          "description": "Target request rate in requests per second. Required unless rate_series is set.",
+          "title": "Rate",
           "x-jinja2-supported": true
         },
         "rateRamp": {
@@ -10914,6 +11472,18 @@
           "default": null,
           "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
+        },
+        "rateSeries": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateSeriesConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Piecewise-linear request-rate schedule."
         },
         "smoothness": {
           "anyOf": [
@@ -10943,11 +11513,40 @@
       },
       "required": [
         "name",
-        "type",
-        "rate"
+        "type"
       ],
       "title": "GammaPhase",
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "rate"
+              ],
+              "properties": {
+                "rate": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            },
+            {
+              "required": [
+                "rateSeries"
+              ],
+              "properties": {
+                "rateSeries": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
     },
     "GpuTelemetryConfig": {
       "title": "GpuTelemetryConfig",
@@ -13212,14 +13811,13 @@
           "type": "boolean"
         },
         "rate": {
-          "description": "Target request rate in requests per second (must be > 0).",
-          "title": "Rate",
-          "oneOf": [
+          "anyOf": [
             {
-              "description": "Target request rate in requests per second (must be > 0).",
               "exclusiveMinimum": 0,
-              "title": "Rate",
               "type": "number"
+            },
+            {
+              "type": "null"
             },
             {
               "type": "string",
@@ -13232,6 +13830,9 @@
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
+          "default": null,
+          "description": "Target request rate in requests per second. Required unless rate_series is set.",
+          "title": "Rate",
           "x-jinja2-supported": true
         },
         "rateRamp": {
@@ -13256,15 +13857,56 @@
           "default": null,
           "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
+        },
+        "rateSeries": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateSeriesConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Piecewise-linear request-rate schedule."
         }
       },
       "required": [
         "name",
-        "type",
-        "rate"
+        "type"
       ],
       "title": "PoissonPhase",
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "rate"
+              ],
+              "properties": {
+                "rate": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            },
+            {
+              "required": [
+                "rateSeries"
+              ],
+              "properties": {
+                "rateSeries": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
     },
     "PostProcessSpec": {
       "additionalProperties": false,
@@ -13817,6 +14459,122 @@
         }
       },
       "title": "RankingsConfig",
+      "type": "object"
+    },
+    "RateSeriesConfig": {
+      "additionalProperties": false,
+      "description": "Piecewise-linear request-rate schedule.",
+      "properties": {
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JSON file path containing request-rate control points.",
+          "title": "Path"
+        },
+        "points": {
+          "description": "Strictly increasing request-rate control points.",
+          "items": {
+            "$ref": "#/$defs/RateSeriesPoint"
+          },
+          "title": "Points",
+          "type": "array",
+          "minItems": 2
+        }
+      },
+      "title": "RateSeriesConfig",
+      "type": "object",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "path"
+              ],
+              "properties": {
+                "path": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            },
+            {
+              "required": [
+                "points"
+              ],
+              "properties": {
+                "points": {
+                  "minItems": 2
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "RateSeriesPoint": {
+      "additionalProperties": false,
+      "description": "One request-rate control point.",
+      "properties": {
+        "timeS": {
+          "description": "Elapsed time in seconds from the start of the request-rate series, after any request-rate ramp completes.",
+          "title": "Times",
+          "oneOf": [
+            {
+              "description": "Elapsed time in seconds from the start of the request-rate series, after any request-rate ramp completes.",
+              "minimum": 0.0,
+              "title": "Times",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "qps": {
+          "description": "Request rate in queries per second at this point.",
+          "title": "Qps",
+          "oneOf": [
+            {
+              "description": "Request rate in queries per second at this point.",
+              "exclusiveMinimum": 0.0,
+              "title": "Qps",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        }
+      },
+      "required": [
+        "timeS",
+        "qps"
+      ],
+      "title": "RateSeriesPoint",
       "type": "object"
     },
     "RequestContentType": {
@@ -16212,14 +16970,13 @@
           "type": "boolean"
         },
         "rate": {
-          "description": "Target request rate in requests per second (must be > 0).",
-          "title": "Rate",
-          "oneOf": [
+          "anyOf": [
             {
-              "description": "Target request rate in requests per second (must be > 0).",
               "exclusiveMinimum": 0,
-              "title": "Rate",
               "type": "number"
+            },
+            {
+              "type": "null"
             },
             {
               "type": "string",
@@ -16232,6 +16989,9 @@
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
+          "default": null,
+          "description": "Target request rate in requests per second. Required unless rate_series is set.",
+          "title": "Rate",
           "x-jinja2-supported": true
         },
         "rateRamp": {
@@ -16284,11 +17044,25 @@
       "required": [
         "name",
         "type",
-        "rate",
-        "users"
+        "users",
+        "rate"
       ],
       "title": "UserCentricPhase",
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "required": [
+            "rate"
+          ],
+          "properties": {
+            "rate": {
+              "not": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     },
     "UserFile": {
       "description": "One user-declared output file rendered into the run directory before benchmark start.\n\nPath is relative to the run directory; subdirectories are allowed; absolute\npaths and any segment equal to '..' are rejected. Content is rendered with\njinja2 against a documented context (variables: + system-injected names).",
