@@ -8,7 +8,7 @@ sidebar-title: YAML Configuration Files
 
 ## Overview
 
-AIPerf can be driven entirely from a single YAML file instead of a long string of CLI flags. The YAML format is more readable, easier to version-control, and unlocks features that have no CLI equivalent — sweeps, multi-run aggregation, environment variable substitution, and computed values.
+AIPerf can be driven entirely from a single YAML file instead of a long string of CLI flags. The YAML format is more readable, easier to version-control, and unlocks features that have no CLI equivalent — sweeps, multi-run aggregation, [adaptive scale runs](adaptive-scale.md), environment variable substitution, and computed values.
 
 This tutorial walks through what a config file looks like, how to grow it from a tiny example to a full sweep, and how it compares to running everything through `aiperf profile` flags.
 
@@ -48,8 +48,8 @@ benchmark:
     entries: 500
     prompts: {isl: 512, osl: 128}
   phases:
-    - {name: warmup, kind: warmup, type: concurrency, concurrency: 8, requests: 50}
-    - {name: profiling, kind: profiling, type: concurrency, requests: 500}
+    - {name: warmup, type: concurrency, concurrency: 8, requests: 50}
+    - {name: profiling, type: concurrency, requests: 500}
   artifacts:
     dir: ./artifacts/my-test
 
@@ -156,19 +156,34 @@ benchmark:
   datasets:
     - {name: main, type: synthetic, prompts: {isl: 512, osl: 128}}
   phases:
-    - {name: warmup, kind: warmup, type: concurrency, concurrency: 4, requests: 50}
-    - {name: profiling, kind: profiling, type: poisson, rate: 30.0, duration: 120}
+    - {name: warmup, type: concurrency, concurrency: 4, requests: 50}
+    - {name: profiling, type: poisson, rate: 30.0, duration: 120}
 ```
 
-You can mix and match — the loader auto-expands `model:` into a one-element `models:` list, `dataset:` into a one-entry `datasets:` list named `default`, and a flat `phases:` block into a one-element profiling phase named `profiling`. Named phases are additive: existing configs that use canonical phase names such as `warmup` and `profiling` without an explicit `kind` remain valid, and the loader infers the matching semantic kind. Explicit phase lists may set `name` as the unique workflow identifier and `kind` as the semantic (`warmup` or `profiling`); custom names such as `storm_1` must set `kind: profiling` or `kind: warmup`. The normalized `datasets:` form is future-facing but currently accepts exactly one dataset; multiple datasets are a roadmap item.
+#### What the loader normalizes
 
-Named phases are useful for long soaks with multiple profiling windows:
+You can mix shorthand and named forms in the same config. The loader normalizes them before execution:
+
+| Input form | Normalized form |
+| --- | --- |
+| `model:` | One-element `models:` list. |
+| `dataset:` | One-entry `datasets:` list named `default`. |
+| Flat `phases:` mapping | One profiling phase named `profiling`. |
+
+The normalized `datasets:` form is future-facing but currently accepts exactly one dataset. Multiple datasets are a roadmap item.
+
+#### Phase names and kinds
+
+A phase `name` is the unique workflow identifier. A phase `kind` is the semantic role AIPerf uses for behavior and reporting: `warmup` or `profiling`.
+
+For canonical names, `kind` is optional. A phase named `warmup` defaults to `kind: warmup`, and a phase named `profiling` defaults to `kind: profiling`. For custom names, set `kind` explicitly so AIPerf knows the semantic role.
+
+Named phases are useful for long soaks with multiple profiling windows. See [Multi-Phase Workflows](multi-phase-workflows.md) for a full example, multiple warmup phases, artifacts, sweeps, and seamless transitions.
 
 ```yaml
 benchmark:
   phases:
     - name: warmup
-      kind: warmup
       type: concurrency
       duration: 5m
     - name: low_cancel_1
@@ -345,169 +360,11 @@ Each phase is a complete arrival pattern in its own right, with its own concurre
 
 ## Adaptive scale in YAML
 
-Adaptive scale is for single-run boundary discovery. Instead of launching a sweep or separate search trials, AIPerf runs one profiling phase, starts at a low control value, evaluates SLA windows, ramps up while every SLA filter passes, and then sustains near the discovered boundary.
+Adaptive scale is a YAML-only phase feature for single-run boundary discovery. Instead of launching a sweep or separate search trials, AIPerf runs a profiling phase, evaluates SLA windows, ramps up while every SLA filter passes, and then sustains near the discovered boundary.
 
-The canonical adaptive shape uses a nested `control` block. Supported v1 control variables are `concurrency`, `prefill_concurrency`, `request_rate`, and `users`. Existing flat concurrency fields such as `control_variable: concurrency` and `min_concurrency` are still accepted as compatibility aliases, but new configs should use `control.variable`, `control.min`, and `control.max`.
+Configure adaptive scale in the target phase's `adaptive_scale` block and put SLA filters on the phase-level `sla` block. Supported control variables include `concurrency`, `prefill_concurrency`, `request_rate`, and `users`.
 
-```yaml
-schemaVersion: "2.0"
-
-benchmark:
-  model: meta-llama/Llama-3.1-8B-Instruct
-  endpoint:
-    url: http://localhost:8000/v1/chat/completions
-    type: chat
-    streaming: true
-  dataset:
-    type: synthetic
-    entries: 1000
-    prompts: {isl: 512, osl: 128}
-  phases:
-    - name: profiling
-      kind: profiling
-      type: concurrency
-      concurrency: 200
-      prefill_concurrency: 64
-      duration: 3600
-      adaptive_scale:
-        enabled: true
-        control:
-          variable: prefill_concurrency
-          min: 1
-          max: 64
-        assessment_period: 60
-        min_completed_requests: 20
-        sustain_duration: 1800
-        strategy:
-          type: ramp_until_fail
-          step_policy: sla_margin
-          base_step: 10
-          max_step_multiplier: 4
-      sla:
-        request_latency:
-          p95:
-            le: 30000
-        error_rate:
-          avg:
-            le: 0.01
-```
-
-Adaptive scale rejects fixed ramps on the same variable it controls. For example, do not combine `control.variable: prefill_concurrency` with `prefill_ramp`. Fixed ramps for other variables are allowed.
-
-Adaptive scale is a YAML-only phase feature. Configure the control variable, min/max bounds, assessment windows, sustain duration, strategy, and SLA filters in the phase `adaptive_scale` and `sla` blocks, then run the benchmark with `aiperf profile --config <file>`. Existing command-line workflows for other settings and canonical YAML phase shapes remain valid.
-
-Adaptive scale combines SLA filters with simple AND semantics. A window passes only when every configured filter passes. Step sizing uses the smallest normalized passing margin, so the closest SLA boundary controls the next increase. There are no weights, formulas, or multi-objective scoring in single-run adaptive scale.
-
-For lower-is-better SLA filters such as latency, TTFT, error rate, or cancellation rate, use `lt` or `le`:
-
-```yaml
-sla:
-  time_to_first_token:
-    p95:
-      le: 3000
-  cancellation_rate:
-    avg:
-      le: 0.05
-```
-
-For higher-is-better SLA filters such as throughput or adaptive-window success ratio, use `gt` or `ge`:
-
-```yaml
-sla:
-  request_throughput:
-    avg:
-      ge: 80
-  success_rate:
-    avg:
-      ge: 0.95
-```
-
-Quality-qualified adaptive goodput is also higher-is-better, but must be paired with at least one per-request quality filter:
-
-```yaml
-sla:
-  request_latency:
-    p95:
-      le: 30000
-  goodput:
-    avg:
-      ge: 20
-```
-
-For streaming token quality, pair goodput with TTFT and ITL filters:
-
-```yaml
-sla:
-  ttft:
-    p95:
-      le: 2000
-  itl:
-    p95:
-      le: 100
-  goodput:
-    avg:
-      ge: 20
-```
-
-### Adaptive SLA metric support
-
-Timing thresholds use milliseconds. This table is the adaptive SLA metric/stat support matrix:
-
-| Metric family | Metric tags and aliases | Supported stats | Window semantics |
-| --- | --- | --- | --- |
-| E2E latency | `request_latency` | `avg`, `min`, `max`, `p1`, `p5`, `p10`, `p25`, `p50`, `p75`, `p90`, `p95`, `p99` | Per-request latency samples from successful requests. |
-| Time to first token | `time_to_first_token`, `ttft` | `avg`, `min`, `max`, `p1`, `p5`, `p10`, `p25`, `p50`, `p75`, `p90`, `p95`, `p99` | Per-request TTFT samples from successful streaming requests. Missing TTFT samples fail TTFT SLA windows. |
-| Inter-token latency | `inter_token_latency`, `itl`, `tpot` | `avg`, `min`, `max`, `p1`, `p5`, `p10`, `p25`, `p50`, `p75`, `p90`, `p95`, `p99` | Per-request ITL/TPOT samples from successful streaming requests. Missing ITL samples fail ITL SLA windows. |
-| Request throughput | `throughput`, `request_throughput`, `completed_request_throughput` | `avg`, `min`, `max` | Successful completed requests per second in the adaptive window. |
-| Output token throughput | `output_token_throughput` | `avg`, `min`, `max` | Output tokens from successful completed requests per second in the adaptive window. |
-| Quality goodput | `goodput` | `avg`, `min`, `max` | Quality-passing successful requests per second. Requires at least one request-latency, TTFT, or ITL quality filter. |
-| Goodput ratio | `goodput_ratio` | `avg`, `min`, `max` | Quality-passing successful requests divided by total attempts. Requires at least one request-latency, TTFT, or ITL quality filter. |
-| Success rate | `success_rate`, `request_success_rate` | `avg`, `min`, `max` | Successful completed requests divided by total attempts. |
-| Error rate | `error_rate`, `request_error_rate` | `avg`, `min`, `max` | Failed requests divided by total attempts. |
-| Cancellation rate | `cancellation_rate`, `request_cancellation_rate` | `avg`, `min`, `max` | Cancelled requests divided by total attempts. |
-
-For window-level rate and ratio metrics, `avg`, `min`, and `max` currently evaluate the same scalar value for each adaptive window.
-
-Adaptive `users` is valid only on `user_centric` phases. It controls target live simulated user timelines while keeping total QPS fixed; changing users changes per-user turn gap and population pressure rather than acting as another spelling of request rate.
-
-```yaml
-benchmark:
-  phases:
-    - name: profiling
-      type: user_centric
-      users: 5000
-      rate: 100
-      duration: 8h
-      adaptive_scale:
-        enabled: true
-        control:
-          variable: users
-          min: 500
-          max: 5000
-        assessment_period: 300
-        sustain_duration: 6h
-      sla:
-        time_to_first_token:
-          p95:
-            le: 3000
-        cancellation_rate:
-          avg:
-            le: 0.10
-```
-
-Adaptive scale writes phase-scoped timing artifacts plus a manifest into the run directory:
-
-```text
-phases/<phase_name>/adaptive_scale_events.jsonl
-phases/<phase_name>/adaptive_scale_summary.json
-adaptive_scale_manifest.json
-```
-
-A run with multiple adaptive profiling phases gets one event/summary pair per phase and one manifest entry per adaptive phase.
-
-These artifacts use schema version 2 and generic control fields such as `control_variable`, `control_value_before`, `control_value_after`, `boundary_value`, `last_passing_value`, and `first_failing_value`. Every `adaptive_window` event includes all evaluated SLA values and the binding constraint. Dynamo-style pollers should gate fault injection on explicit events such as `sustain_started` rather than fixed sleeps.
-
-Use adaptive scale when you want continuous pressure inside one benchmark invocation. Use `sweep` or `adaptive_search` when you want offline multi-run exploration across many independent trials.
+See [Adaptive Scale](adaptive-scale.md) for full examples, required fields, SLA metric support, artifact paths, and controller semantics.
 
 ## Sweeps in YAML
 

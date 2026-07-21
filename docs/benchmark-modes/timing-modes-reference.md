@@ -27,7 +27,6 @@ When multiple options are specified, AIPerf uses this priority:
 3. `--request-rate` → Rate-based scheduling with arrival patterns
 4. `--concurrency` only → Burst mode (as fast as possible within limits)
 
-`adaptive_scale` is not a scheduling option. It is a YAML-only controller overlay that wraps a duration-based profiling phase after normal scheduling is chosen. It adapts one control variable (`concurrency`, `prefill_concurrency`, `request_rate`, or `users`) and rejects fixed ramps on that same variable. See [Adaptive Scale](../tutorials/adaptive-scale.md) for examples and artifact semantics.
 
 ---
 

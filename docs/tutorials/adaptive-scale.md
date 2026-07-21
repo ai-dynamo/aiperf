@@ -9,6 +9,8 @@ Adaptive scale is a single-run load controller for finding and sustaining an SLA
 
 Use adaptive scale when you want one benchmark invocation to push a service until a latency or throughput constraint starts failing, then keep pressure near that edge. Use `adaptive_search` when you want offline Bayesian optimization across multiple runs, sweeps when you want a fixed experiment grid, fixed ramps when you already know the schedule you want to replay, and static concurrency or request rate when you only need one fixed load point.
 
+Adaptive scale is only configurable in YAML. Put the adaptive settings in the profiling phase's `adaptive_scale` block, define the phase-level `sla` filters, then run the benchmark with `aiperf profile --config <file>`.
+
 ## YAML example
 
 Adaptive scale is configured in YAML because it keeps the control variable, assessment windows, sustain period, and SLA filters together with the phase they control. The examples below set `kind: profiling` explicitly to show the current phase model, but existing configs that use canonical `warmup`/`profiling` names without `kind` remain valid because the loader infers it. The canonical shape uses a nested `adaptive_scale.control` block:
@@ -56,11 +58,11 @@ benchmark:
             ge: 1
 ```
 
-A window passes only when every SLA filter passes. Latency thresholds use milliseconds. Lower-is-better metrics usually use `lt` or `le`; higher-is-better metrics such as request throughput and goodput ratio usually use `gt` or `ge`.
+A window passes only when every SLA filter passes. Latency, TTFT, and ITL thresholds use milliseconds. Lower-is-better metrics usually use `lt` or `le`; higher-is-better metrics such as request throughput, success rate, goodput, and goodput ratio usually use `gt` or `ge`.
 
-The canonical adaptive shape uses `adaptive_scale.control` for the load-control variable and phase-level `sla` for the filters. Existing flat concurrency aliases such as `min_concurrency` and `max_concurrency` are still accepted for compatibility, but new configs should use `control.min` and `control.max`.
+The canonical adaptive shape uses `adaptive_scale.control` for the load-control variable and phase-level `sla` for the filters. `duration`, `adaptive_scale.sustain_duration`, and at least one SLA filter are required when adaptive scale is enabled. Existing flat concurrency aliases such as `min_concurrency` and `max_concurrency`, plus `adaptive_scale.sla`, are still accepted for compatibility, but new configs should use `control.min`, `control.max`, and phase-level `sla`.
 
-Do not combine adaptive scale with a fixed ramp on the same variable. For example, `control.variable: prefill_concurrency` cannot be used with `prefill_ramp`, and `control.variable: request_rate` cannot be used with `rate_ramp`.
+Do not combine adaptive scale with a fixed ramp on the same variable. For example, `control.variable: prefill_concurrency` cannot be used with `prefill_ramp`, and `control.variable: request_rate` cannot be used with `rate_ramp`. Fixed ramps for other variables are allowed.
 
 ## Boundary Example
 
@@ -157,9 +159,66 @@ Exact numbers depend on your server and hardware. If the run passes at `max`, lo
 
 For `users`, adaptive scale changes population pressure rather than acting as another spelling of request rate.
 
+## SLA filters
+
+Adaptive scale supports these SLA metric families in this release:
+
+| Metric family | Metric tags and aliases | Supported stats |
+| --- | --- | --- |
+| E2E latency | `request_latency` | `avg`, `min`, `max`, `p1`, `p5`, `p10`, `p25`, `p50`, `p75`, `p90`, `p95`, `p99` |
+| Time to first token | `time_to_first_token`, `ttft` | `avg`, `min`, `max`, `p1`, `p5`, `p10`, `p25`, `p50`, `p75`, `p90`, `p95`, `p99` |
+| Inter-token latency | `inter_token_latency`, `itl`, `tpot` | `avg`, `min`, `max`, `p1`, `p5`, `p10`, `p25`, `p50`, `p75`, `p90`, `p95`, `p99` |
+| Request throughput | `throughput`, `request_throughput`, `completed_request_throughput` | `avg`, `min`, `max` |
+| Output token throughput | `output_token_throughput` | `avg`, `min`, `max` |
+| Quality goodput | `goodput` | `avg`, `min`, `max` |
+| Goodput ratio | `goodput_ratio` | `avg`, `min`, `max` |
+| Success rate | `success_rate`, `request_success_rate` | `avg`, `min`, `max` |
+| Error rate | `error_rate`, `request_error_rate` | `avg`, `min`, `max` |
+| Cancellation rate | `cancellation_rate`, `request_cancellation_rate` | `avg`, `min`, `max` |
+
+Quality goodput and goodput ratio require at least one request-quality filter, such as `request_latency`, `time_to_first_token`, or `inter_token_latency`, so the controller can decide which successful requests count as quality-passing.
+
 ## YAML-only configuration
 
-Adaptive scale does not expose standalone CLI flags. Put the adaptive settings in the target phase's `adaptive_scale` block and run the benchmark with `aiperf profile --config <file>`. General CLI flags such as `--tokenizer`, `--ui`, and `--output-artifact-dir` can still be used around the YAML benchmark definition.
+Adaptive scale does not expose standalone CLI flags. Put the adaptive settings in the target phase's `adaptive_scale` block, keep SLA filters on the phase-level `sla` block, and run the benchmark with `aiperf profile --config <file>`. General CLI flags such as `--tokenizer`, `--ui`, and `--output-artifact-dir` can still be used around the YAML benchmark definition.
+
+## Multiple adaptive phases
+
+A workflow can include more than one adaptive profiling phase. Give each phase a unique `name`, set `kind: profiling` for custom names, and put each phase's control bounds, assessment windows, sustain duration, strategy, and SLA filters directly in YAML.
+
+```yaml
+benchmark:
+  phases:
+    - name: baseline_search
+      kind: profiling
+      type: concurrency
+      concurrency: 64
+      duration: 30m
+      adaptive_scale:
+        enabled: true
+        control: {variable: concurrency, min: 4, max: 64}
+        assessment_period: 30
+        sustain_duration: 5m
+      sla:
+        request_latency: {p95: {le: 300}}
+
+    - name: storm_search
+      kind: profiling
+      type: concurrency
+      concurrency: 128
+      duration: 30m
+      cancellation: {rate: 25, delay: 0}
+      adaptive_scale:
+        enabled: true
+        control: {variable: concurrency, min: 8, max: 128}
+        assessment_period: 30
+        sustain_duration: 5m
+      sla:
+        request_latency: {p95: {le: 500}}
+        error_rate: {avg: {le: 0.05}}
+```
+
+Each adaptive phase runs its own controller and writes its own phase-scoped event and summary files. Use `adaptive_scale_manifest.json` to discover all adaptive phases in the run and locate their artifacts. For general `name` / `kind` rules and repeated warmup or profiling windows, see [Multi-Phase Workflows](multi-phase-workflows.md).
 
 ## Artifacts
 
@@ -171,7 +230,7 @@ phases/<phase_name>/adaptive_scale_summary.json
 adaptive_scale_manifest.json
 ```
 
-A run with multiple adaptive profiling phases gets one event/summary pair per phase and one manifest entry per adaptive phase.
+A run with multiple adaptive profiling phases gets one event/summary pair per phase and one manifest entry per adaptive phase. Each manifest entry records the phase identity plus `events_path` and `summary_path` for that phase.
 
 `adaptive_scale_events.jsonl` is an event stream for orchestration and post-processing. Each line includes `schema_version`, timestamps, `event`, `control_variable`, `control_value_before`, `control_value_after`, `boundary_value`, `last_passing_value`, `first_failing_value`, `sla_values`, and `binding_sla` fields. Pollers should key off explicit events such as `sustain_started` rather than sleeping for a fixed amount of time.
 
@@ -181,4 +240,4 @@ Artifact fields are intended for orchestration-facing consumers, so treat schema
 
 ## Metric semantics
 
-Use `request_latency` for simple latency-boundary examples. Request throughput aliases and `goodput_ratio` can also be used as adaptive SLA filters. See [Adaptive SLA metric support](yaml-config.md#adaptive-sla-metric-support) for the full metric and statistic matrix.
+Use `request_latency` for simple latency-boundary examples. See [SLA filters](#sla-filters) for the supported adaptive SLA metric and statistic matrix.

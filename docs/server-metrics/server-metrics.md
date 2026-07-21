@@ -295,7 +295,7 @@ Line-delimited JSON with metrics snapshots over time:
 Aggregated statistics from profiling period. Metrics from all endpoints are merged, each series tagged with `endpoint_url`.
 
 > [!NOTE]
-> For named multi-phase workflows, `server_metrics_export.json` remains the backward-compatible aggregate export. Its phase ranges use the legacy semantic phase view and may span gaps between multiple phases of the same kind. For exact phase-scoped server metrics, use `phases/<phase_name>/server_metrics.json`, referenced from `phase_manifest.json`. Phase-scoped telemetry uses AIPerf's recorded phase window and does not block phase traffic on collector scrapes; for extremely short phases, boundary samples may be limited by the server metrics collection interval.
+> In named multi-phase runs, `server_metrics_export.json` remains the run-level export for existing readers. For exact server metrics from one phase, use `phases/<phase_name>/server_metrics.json`; `phase_manifest.json` lists which phase files were written.
 
 ```json
 {
