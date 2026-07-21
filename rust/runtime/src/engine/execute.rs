@@ -4148,39 +4148,60 @@ pub(crate) async fn build_file_dataset(
     compose.format_options = spec.options.clone();
     compose.trace_prompt_storage = trace_prompt_storage;
     if let Some(synthesis) = &spec.synthesis {
-        ensure!(
-            matches!(
-                spec.format.as_str(),
-                "mooncake_trace" | "bailian_trace" | "burst_gpt"
-            ),
-            "trace synthesis is not supported by file format {:?}",
-            spec.format
-        );
-        let block_size = spec
-            .options
-            .get("block_size")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|value| usize::try_from(value).ok())
-            .unwrap_or_else(|| {
-                if spec.format == "bailian_trace" {
-                    16
-                } else {
-                    512
-                }
-            });
-        let native_synthesis = TraceSynthesisConfig {
-            speedup_ratio: synthesis.speedup_ratio,
-            prefix_len_multiplier: synthesis.prefix_len_multiplier,
-            prefix_root_multiplier: synthesis.prefix_root_multiplier,
-            prompt_len_multiplier: synthesis.prompt_len_multiplier,
-            output_len_multiplier: synthesis.output_len_multiplier,
-            max_isl: synthesis.max_isl,
-            max_osl: synthesis.max_osl,
-            block_size,
-        };
-        native_synthesis.validate()?;
-        compose.max_output_tokens = synthesis.max_osl;
-        compose.trace_synthesis = Some(native_synthesis);
+        // baseten_trace replays recorded prompts verbatim over a distinct
+        // composer that never consumes `compose.trace_synthesis`, so it
+        // only honors the isl/osl caps, not the compounding/reshaping
+        // fields. Mirrors baseten_trace.py's own rejection check, which
+        // only guards speedup_ratio and the three prefix/prompt
+        // multipliers (they'd desync the forwarded hash_ids KV hints);
+        // max_isl/max_osl-only synthesis is accepted there.
+        if spec.format == "baseten_trace" {
+            ensure!(
+                synthesis.speedup_ratio == 1.0
+                    && synthesis.prefix_len_multiplier == 1.0
+                    && synthesis.prefix_root_multiplier == 1
+                    && synthesis.prompt_len_multiplier == 1.0,
+                "trace synthesis is not supported by the baseten_trace loader \
+                 beyond max_isl/max_osl: it replays recorded prompts verbatim, \
+                 so hash-reshaping synthesis cannot change the sent prompt and \
+                 would desync the forwarded hash_ids KV hints"
+            );
+            compose.max_output_tokens = synthesis.max_osl;
+        } else {
+            ensure!(
+                matches!(
+                    spec.format.as_str(),
+                    "mooncake_trace" | "bailian_trace" | "burst_gpt"
+                ),
+                "trace synthesis is not supported by file format {:?}",
+                spec.format
+            );
+            let block_size = spec
+                .options
+                .get("block_size")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or_else(|| {
+                    if spec.format == "bailian_trace" {
+                        16
+                    } else {
+                        512
+                    }
+                });
+            let native_synthesis = TraceSynthesisConfig {
+                speedup_ratio: synthesis.speedup_ratio,
+                prefix_len_multiplier: synthesis.prefix_len_multiplier,
+                prefix_root_multiplier: synthesis.prefix_root_multiplier,
+                prompt_len_multiplier: synthesis.prompt_len_multiplier,
+                output_len_multiplier: synthesis.output_len_multiplier,
+                max_isl: synthesis.max_isl,
+                max_osl: synthesis.max_osl,
+                block_size,
+            };
+            native_synthesis.validate()?;
+            compose.max_output_tokens = synthesis.max_osl;
+            compose.trace_synthesis = Some(native_synthesis);
+        }
     }
     let source = match (&spec.path, &spec.records) {
         (Some(path), None) => DatasetSource::Path(path.clone()),
@@ -7945,5 +7966,154 @@ mod tests {
         // A lite build cannot stream Parquet, so a requested sidecar still disqualifies.
         #[cfg(not(feature = "parquet"))]
         assert!(wants_per_record_artifacts(&streamed, false));
+    }
+
+    #[cfg(feature = "parquet")]
+    fn write_baseten_fixture(directory: &std::path::Path) -> PathBuf {
+        use std::sync::Arc as StdArc;
+
+        use parquet::data_type::{ByteArrayType, Int64Type};
+        use parquet::file::writer::SerializedFileWriter;
+        use parquet::schema::parser::parse_message_type;
+
+        let schema = StdArc::new(
+            parse_message_type(
+                "message schema {
+                    REQUIRED INT64 timestamp_start_unix_ms;
+                    REQUIRED BYTE_ARRAY prompt (UTF8);
+                    REQUIRED INT64 input_tokens;
+                    REQUIRED INT64 output_tokens;
+                    REQUIRED BYTE_ARRAY provided_session_id (UTF8);
+                    REQUIRED INT64 duration_e2e_ms;
+                }",
+            )
+            .unwrap(),
+        );
+        let path = directory.join("baseten.parquet");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut writer = SerializedFileWriter::new(file, schema, Default::default()).unwrap();
+        let mut row_group = writer.next_row_group().unwrap();
+
+        let mut column = row_group.next_column().unwrap().unwrap();
+        column
+            .typed::<Int64Type>()
+            .write_batch(&[0_i64], None, None)
+            .unwrap();
+        column.close().unwrap();
+
+        let mut column = row_group.next_column().unwrap().unwrap();
+        column
+            .typed::<ByteArrayType>()
+            .write_batch(
+                &[parquet::data_type::ByteArray::from(b"hi".to_vec())],
+                None,
+                None,
+            )
+            .unwrap();
+        column.close().unwrap();
+
+        let mut column = row_group.next_column().unwrap().unwrap();
+        column
+            .typed::<Int64Type>()
+            .write_batch(&[3_i64], None, None)
+            .unwrap();
+        column.close().unwrap();
+
+        let mut column = row_group.next_column().unwrap().unwrap();
+        column
+            .typed::<Int64Type>()
+            .write_batch(&[100_i64], None, None)
+            .unwrap();
+        column.close().unwrap();
+
+        let mut column = row_group.next_column().unwrap().unwrap();
+        column
+            .typed::<ByteArrayType>()
+            .write_batch(
+                &[parquet::data_type::ByteArray::from(b"s1".to_vec())],
+                None,
+                None,
+            )
+            .unwrap();
+        column.close().unwrap();
+
+        let mut column = row_group.next_column().unwrap().unwrap();
+        column
+            .typed::<Int64Type>()
+            .write_batch(&[0_i64], None, None)
+            .unwrap();
+        column.close().unwrap();
+
+        row_group.close().unwrap();
+        writer.close().unwrap();
+        path
+    }
+
+    #[cfg(feature = "parquet")]
+    #[tokio::test]
+    async fn baseten_trace_accepts_max_isl_max_osl_only_synthesis_and_rejects_reshaping() {
+        // Mirrors baseten_trace.py's __init__ rejection check: only
+        // speedup_ratio and the three prefix/prompt multipliers are
+        // rejected (they'd desync the forwarded hash_ids KV hints);
+        // max_isl/max_osl-only synthesis is accepted.
+        use crate::dataset::compose::MaterializedTracePromptStorage;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = write_baseten_fixture(directory.path());
+        let registry = AIPerfRegistry::builtin().unwrap();
+
+        let accepted: FileDatasetSpec = serde_json::from_value(json!({
+            "path": path,
+            "format": "baseten_trace",
+            "synthesis": {
+                "speedup_ratio": 1.0,
+                "prefix_len_multiplier": 1.0,
+                "prefix_root_multiplier": 1,
+                "prompt_len_multiplier": 1.0,
+                "output_len_multiplier": 1.0,
+                "max_osl": 10
+            }
+        }))
+        .unwrap();
+        let dataset = build_file_dataset(
+            &registry,
+            &accepted,
+            &models(),
+            RngRoot::new(Some(1)),
+            &TiktokenTokenizer::builtin(),
+            Arc::new(MaterializedTracePromptStorage),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(dataset.conversations()[0].turns[0].max_tokens, Some(10));
+
+        let rejected: FileDatasetSpec = serde_json::from_value(json!({
+            "path": path,
+            "format": "baseten_trace",
+            "synthesis": {
+                "speedup_ratio": 2.0,
+                "prefix_len_multiplier": 1.0,
+                "prefix_root_multiplier": 1,
+                "prompt_len_multiplier": 1.0,
+                "output_len_multiplier": 1.0
+            }
+        }))
+        .unwrap();
+        let error = build_file_dataset(
+            &registry,
+            &rejected,
+            &models(),
+            RngRoot::new(Some(1)),
+            &TiktokenTokenizer::builtin(),
+            Arc::new(MaterializedTracePromptStorage),
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("baseten_trace loader"),
+            "unexpected error: {error}"
+        );
     }
 }
