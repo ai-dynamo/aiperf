@@ -629,7 +629,17 @@ impl Composer for BasetenTraceComposer {
                     encode_tokens.into_boxed_slice(),
                 )?;
                 parent = Some(handle);
-                let extra_body = build_request_body(row, &replay);
+                // Cap once and reuse for both max_tokens and the injected
+                // min_tokens hint -- Python applies max_osl capping
+                // (_cap_grouped_traces_max_osl) before building the request
+                // body, so min_tokens reflects the CAPPED length. Using the
+                // raw recorded length for min_tokens here would let it
+                // exceed max_tokens whenever --max-output-tokens caps below
+                // a row's recorded output_tokens, an invalid request.
+                let capped_output_length =
+                    cap_output(Some(row.output_length), config.max_output_tokens)
+                        .unwrap_or(row.output_length);
+                let extra_body = build_request_body(row, capped_output_length, &replay);
                 let extra_body_handle = if extra_body.as_object().is_some_and(|obj| !obj.is_empty())
                 {
                     let bytes = serde_json::to_vec(&extra_body).map_err(DatasetError::from)?;
@@ -643,7 +653,7 @@ impl Composer for BasetenTraceComposer {
                     timestamp_ms: row.timestamp,
                     delay_ms: row.delay,
                     input_tokens: Some(row.input_tokens),
-                    max_tokens: cap_output(Some(row.output_length), config.max_output_tokens),
+                    max_tokens: Some(capped_output_length),
                     extra_body: extra_body_handle,
                     content: smallvec![ContentGroup {
                         kind: MediaKind::Text,
@@ -703,13 +713,19 @@ fn apply_back_pressure(rows: &mut [BasetenRow], replay: &ReplayOptions) {
 }
 
 /// KV-cache-aware routing hints injected per-turn: `min_tokens` from the
-/// recorded output length, plus `hash_ids`/`block_size` unless
-/// `--omit-kv-hints` is set. Inert when there is no routing choice; some
-/// strict frontends reject unknown body params, hence the opt-out.
-fn build_request_body(row: &BasetenRow, replay: &ReplayOptions) -> Value {
+/// max-osl-capped output length (matching `max_tokens`, both derived from
+/// the same value so the pair is never contradictory), plus
+/// `hash_ids`/`block_size` unless `--omit-kv-hints` is set. Inert when
+/// there is no routing choice; some strict frontends reject unknown body
+/// params, hence the opt-out.
+fn build_request_body(
+    row: &BasetenRow,
+    capped_output_length: u32,
+    replay: &ReplayOptions,
+) -> Value {
     let mut body = Map::new();
     if replay.force_min_tokens {
-        body.insert("min_tokens".into(), json!(row.output_length));
+        body.insert("min_tokens".into(), json!(capped_output_length));
     }
     if !replay.omit_kv_hints {
         if !row.total_hashes.is_empty() {
@@ -947,6 +963,52 @@ mod tests {
         };
         let body: Value = serde_json::from_slice(wire).unwrap();
         assert_eq!(body["min_tokens"], json!(5));
+    }
+
+    #[tokio::test]
+    async fn max_output_tokens_cap_applies_to_both_max_tokens_and_min_tokens() {
+        // min_tokens must never exceed max_tokens: Python caps output_length
+        // (max_osl) BEFORE building the request body, so the injected
+        // min_tokens reflects the capped value, not the raw recorded one.
+        let directory = tempfile::tempdir().unwrap();
+        let path = write_fixture(
+            directory.path(),
+            &[FixtureRow {
+                timestamp_start_unix_ms: 0,
+                prompt: "hi",
+                input_tokens: 3,
+                output_tokens: 100,
+                provided_session_id: "s1",
+                duration_e2e_ms: 0,
+            }],
+        );
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(BasetenTraceDatasetLoader),
+                Arc::new(BasetenTraceComposer),
+            ))
+            .unwrap();
+        let load = LoadConfig::new(DatasetSource::Path(path));
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(9)));
+        compose.max_output_tokens = Some(10);
+        let dataset = registry
+            .build_dataset(
+                Some("baseten_trace"),
+                &load,
+                &compose,
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        let turn = &dataset.conversations()[0].turns[0];
+        assert_eq!(turn.max_tokens, Some(10));
+        let Payload::Raw { wire } = dataset.segments().get(turn.extra_body.unwrap()).unwrap()
+        else {
+            panic!("expected raw extra_body payload");
+        };
+        let body: Value = serde_json::from_slice(wire).unwrap();
+        assert_eq!(body["min_tokens"], json!(10));
     }
 
     #[tokio::test]
