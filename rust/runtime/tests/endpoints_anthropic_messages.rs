@@ -320,9 +320,15 @@ fn streaming_event_map_includes_text_reasoning_tool_and_usage() {
     for event in [
         json!({"type":"ping"}),
         json!({"type":"content_block_start"}),
+        json!({"type":"content_block_stop"}),
         json!({"type":"content_block_delta","delta":{"type":"signature_delta","signature":"sig"}}),
         json!({"type":"message_stop"}),
-        json!({"type":"error","error":{"type":"overloaded_error"}}),
+        // No error/type/message fields: exercises the "<missing>" logging fallback.
+        json!({"type":"error"}),
+        json!({"type":"error","error":{"type":"overloaded_error","message":"try again"}}),
+        // Unknown event/delta types are dropped, not treated as errors.
+        json!({"type":"some_future_event"}),
+        json!({"type":"content_block_delta","delta":{"type":"some_future_delta"}}),
     ] {
         assert!(
             MessagesEndpoint

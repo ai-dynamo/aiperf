@@ -29,7 +29,11 @@ const MESSAGE: &str = "message";
 const MESSAGE_START: &str = "message_start";
 const CONTENT_BLOCK_START: &str = "content_block_start";
 const CONTENT_BLOCK_DELTA: &str = "content_block_delta";
+const CONTENT_BLOCK_STOP: &str = "content_block_stop";
 const MESSAGE_DELTA: &str = "message_delta";
+const MESSAGE_STOP: &str = "message_stop";
+const PING: &str = "ping";
+const ERROR: &str = "error";
 
 const TEXT: &str = "text";
 const THINKING: &str = "thinking";
@@ -364,6 +368,27 @@ fn parse_streaming_event(
             sources: None,
         });
     }
+    if normalized_eq(event_type, PING)
+        || normalized_eq(event_type, CONTENT_BLOCK_START)
+        || normalized_eq(event_type, CONTENT_BLOCK_STOP)
+        || normalized_eq(event_type, MESSAGE_STOP)
+    {
+        return None;
+    }
+    if normalized_eq(event_type, ERROR) {
+        let error_detail = object.get("error").and_then(Value::as_object);
+        let error_type = error_detail
+            .and_then(|error| error.get("type"))
+            .and_then(Value::as_str)
+            .unwrap_or("<missing>");
+        let error_message = error_detail
+            .and_then(|error| error.get("message"))
+            .and_then(Value::as_str)
+            .unwrap_or("<missing>");
+        tracing::warn!(error_type, error_message, "Anthropic streaming error");
+        return None;
+    }
+    tracing::debug!(event_type, "unknown Anthropic SSE event type");
     None
 }
 
