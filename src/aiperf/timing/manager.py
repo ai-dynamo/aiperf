@@ -157,7 +157,7 @@ class TimingManager(BaseComponentService):
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if not done:
-                raise asyncio.TimeoutError(
+                raise TimeoutError(
                     f"timed out waiting for dataset configuration after "
                     f"{Environment.DATASET.CONFIGURATION_TIMEOUT}s; check "
                     f"dataset-manager logs and consider raising "

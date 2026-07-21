@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import io
 from typing import TYPE_CHECKING
 
 from rich.console import Console
 
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import (
     ConsoleExporterDisabled,
     DataExporterDisabled,
@@ -133,6 +135,36 @@ class ExporterManager(AIPerfLoggerMixin):
     async def export_console(self, console: Console) -> None:
         self.info("Exporting console data")
 
+        width = Environment.UI.CONSOLE_EXPORT_WIDTH
+
+        # The recording console stays pinned to the configured width so the saved
+        # profile_export_console.txt artifact (and non-tty CI logs) match a fixed
+        # layout regardless of the live terminal size.
+        recording_console = Console(
+            record=True,
+            file=io.StringIO(),
+            force_terminal=True,
+            width=width,
+        )
+        await self._run_console_exporters(recording_console)
+        self._write_console_txt(recording_console)
+
+        if console.is_terminal:
+            # Render a fresh copy at the live terminal's own width so interactive
+            # tables aren't hard-wrapped to the fixed export width.
+            await self._run_console_exporters(console)
+        else:
+            # Without a tty, replay the fixed-width recorded text so non-tty CI
+            # logs match the saved .txt artifact.
+            styled = recording_console.export_text(styles=True)
+            if styled.strip():
+                console.file.write(styled)
+                console.file.flush()
+
+        self.debug("Exporting console data completed")
+
+    async def _run_console_exporters(self, console: Console) -> None:
+        """Run every registered console exporter, rendering into `console`."""
         for exporter_entry, ExporterClass in plugins.iter_all(
             PluginType.CONSOLE_EXPORTER
         ):
@@ -156,4 +188,13 @@ class ExporterManager(AIPerfLoggerMixin):
 
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
-        self.debug("Exporting console data completed")
+
+    def _write_console_txt(self, recording_console: Console) -> None:
+        """Write the recorded console output to a plain-text file."""
+        try:
+            txt_path = self._run.cfg.artifacts.profile_export_console_txt_file
+            plain_text = recording_console.export_text(styles=False, clear=False)
+            txt_path.write_text(plain_text, encoding="utf-8")
+            self.debug(f"Console export written to {txt_path}")
+        except (OSError, ValueError) as e:
+            self.warning(f"Failed to write console export file: {e}")

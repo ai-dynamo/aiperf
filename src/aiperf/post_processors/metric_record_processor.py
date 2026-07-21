@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue
+from aiperf.common.messages import MetricRecordsData
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.common.types import MetricTagT
@@ -56,8 +57,14 @@ class MetricRecordProcessor(BaseMetricsProcessor):
 
     async def process_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
-    ) -> MetricRecordDict:
-        """Process a response record from the inference results parser."""
+    ) -> MetricRecordsData:
+        """Process a response record from the inference results parser.
+
+        Emits a finished ``MetricRecordsData`` (the ``metric_records`` typed
+        channel record) carrying the computed metrics plus the trace_data and
+        error captured off the record, so it ships generically alongside every
+        other producer's typed record.
+        """
         record_metrics: MetricRecordDict = MetricRecordDict()
         parse_funcs = self.valid_parse_funcs if record.valid else self.error_parse_funcs
         # NOTE: Need to parse the record in a loop, as the parse_record function may depend on the results of previous metrics.
@@ -70,4 +77,9 @@ class MetricRecordProcessor(BaseMetricsProcessor):
                 )
             except Exception as e:
                 self.warning(f"Error parsing record for metric '{tag}': {e!r}")
-        return record_metrics
+        return MetricRecordsData(
+            metadata=metadata,
+            metrics=record_metrics,
+            trace_data=record.request.trace_data,
+            error=record.request.error,
+        )

@@ -4,16 +4,32 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
-from typing_extensions import Self
 
 from aiperf.config.sweep.adaptive import SLAFilter
+from aiperf.timing.adaptive_types import AdaptiveControlVariable
+
+_FIRST_TOKEN_SLA_METRICS = frozenset({"time_to_first_token", "ttft"})
+
+
+def is_first_token_sla_metric(metric_tag: str) -> bool:
+    """Return True when an SLA metric requires first-token observations."""
+    return metric_tag in _FIRST_TOKEN_SLA_METRICS
+
+
+def sla_filters_require_first_token_observation(
+    sla_filters: list[SLAFilter] | tuple[SLAFilter, ...],
+) -> bool:
+    """Return True when any SLA filter needs first-token observations."""
+    return any(is_first_token_sla_metric(sla.metric_tag) for sla in sla_filters)
 
 
 def normalize_adaptive_sla(sla: dict[str, object]) -> list[SLAFilter]:
     """Lower compact metric/stat/op SLA YAML into SLAFilter objects."""
+    if not isinstance(sla, dict):
+        raise ValueError("adaptive_scale.sla must be a mapping or list of filters")
     filters: list[SLAFilter] = []
     for metric_tag, stats in sla.items():
         if not isinstance(stats, dict):
@@ -38,8 +54,14 @@ def normalize_adaptive_sla(sla: dict[str, object]) -> list[SLAFilter]:
 _ADAPTIVE_SCALE_FIELD_MAP = {
     "control_variable": "adaptive_control_variable",
     "controlVariable": "adaptive_control_variable",
-    "min_concurrency": "adaptive_scale_min_concurrency",
-    "minConcurrency": "adaptive_scale_min_concurrency",
+    "control_min": "adaptive_control_min",
+    "controlMin": "adaptive_control_min",
+    "control_max": "adaptive_control_max",
+    "controlMax": "adaptive_control_max",
+    "min_concurrency": "adaptive_control_min",
+    "minConcurrency": "adaptive_control_min",
+    "max_concurrency": "adaptive_control_max",
+    "maxConcurrency": "adaptive_control_max",
     "window": "adaptive_assessment_period",
     "assessment_period": "adaptive_assessment_period",
     "assessmentPeriod": "adaptive_assessment_period",
@@ -95,15 +117,30 @@ def lower_adaptive_scale_details(
     lowered["adaptive_scale"] = _parse_enabled(block.get("enabled"))
     _copy_mapped_fields(lowered, block, _ADAPTIVE_SCALE_FIELD_MAP)
 
+    control = block.get("control", {})
+    if not isinstance(control, dict):
+        raise ValueError("adaptive_scale.control must be a mapping")
+    if "variable" in control:
+        lowered["adaptive_control_variable"] = control["variable"]
+    if "min" in control:
+        lowered["adaptive_control_min"] = control["min"]
+    if "max" in control:
+        lowered["adaptive_control_max"] = control["max"]
+
     strategy = block.get("strategy", {})
-    if isinstance(strategy, dict):
-        _copy_mapped_fields(lowered, strategy, _ADAPTIVE_SCALE_STRATEGY_FIELD_MAP)
+    if not isinstance(strategy, dict):
+        raise ValueError("adaptive_scale.strategy must be a mapping")
+    _copy_mapped_fields(lowered, strategy, _ADAPTIVE_SCALE_STRATEGY_FIELD_MAP)
 
     sla = block.get("sla")
+    if sla is None:
+        return
     if isinstance(sla, list):
         lowered["sla"] = sla
     elif isinstance(sla, dict):
         lowered["sla"] = normalize_adaptive_sla(sla)
+    else:
+        raise ValueError("adaptive_scale.sla must be a mapping or list of filters")
 
 
 class AdaptiveScalePhaseMixin:
@@ -145,19 +182,28 @@ class AdaptiveScalePhaseMixin:
     ]
 
     adaptive_control_variable: Annotated[
-        Literal["concurrency"],
+        AdaptiveControlVariable,
         Field(
             default="concurrency",
-            description="Named adaptive control variable. Only concurrency is supported in v1.",
+            description="Named adaptive control variable.",
         ),
     ]
 
-    adaptive_scale_min_concurrency: Annotated[
-        int,
+    adaptive_control_min: Annotated[
+        float,
         Field(
-            ge=1,
+            gt=0,
             default=1,
-            description="Minimum concurrency used by adaptive scale discovery.",
+            description="Minimum adaptive control value.",
+        ),
+    ]
+
+    adaptive_control_max: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            default=None,
+            description="Maximum adaptive control value. Inferred from the phase target when omitted.",
         ),
     ]
 
@@ -228,24 +274,110 @@ class AdaptiveScalePhaseMixin:
     def _validate_adaptive_scale(self) -> Self:
         if not self.adaptive_scale:
             return self
+        self._validate_adaptive_scale_required_fields()
+        variable = self.adaptive_control_variable
+        max_value = self._adaptive_control_max_value(variable)
+        self._validate_adaptive_control_bounds(variable, max_value)
+        return self
+
+    def _validate_adaptive_scale_required_fields(self) -> None:
         if self.duration is None:
             raise ValueError("adaptive_scale requires duration")
         if self.adaptive_sustain_duration is None:
             raise ValueError("adaptive_scale requires adaptive_sustain_duration")
         if not self.sla:
             raise ValueError("adaptive_scale requires sla filters")
+
+    def _adaptive_control_max_value(self, variable: str) -> float:
+        inferred_max = self._infer_adaptive_control_max(variable)
+        max_value = (
+            self.adaptive_control_max
+            if self.adaptive_control_max is not None
+            else inferred_max
+        )
+        if max_value is None:
+            raise ValueError("adaptive_scale control.max could not be inferred")
+        return max_value
+
+    def _infer_adaptive_control_max(self, variable: str) -> float | None:
+        if variable == "concurrency":
+            return self._infer_concurrency_control_max()
+        if variable == "prefill_concurrency":
+            return self._infer_prefill_control_max()
+        if variable == "request_rate":
+            return self._infer_request_rate_control_max()
+        if variable == "users":
+            return self._infer_users_control_max()
+        raise ValueError(f"unsupported adaptive control variable {variable!r}")
+
+    def _infer_concurrency_control_max(self) -> float | None:
         if self.concurrency_ramp is not None:
             raise ValueError(
-                "adaptive_scale cannot be combined with concurrency_ramp. "
-                "adaptive_scale already adjusts concurrency during the phase to "
-                "discover an SLA boundary. Use concurrency_ramp only when you know "
-                "the target concurrency and want to ease into it over a fixed duration."
+                "adaptive_scale cannot be combined with concurrency_ramp; "
+                "control.variable=concurrency already adjusts concurrency"
             )
-        # TODO: AIP-967 - Add adaptive scale control-backend abstraction.
-        if self.adaptive_control_variable != "concurrency":
+        return self.concurrency
+
+    def _infer_prefill_control_max(self) -> float | None:
+        if self.prefill_ramp is not None:
             raise ValueError(
-                "adaptive_scale control variable must be 'concurrency' in this release"
+                "adaptive_scale control.variable=prefill_concurrency cannot be "
+                "combined with prefill_ramp"
             )
-        if self.adaptive_scale_min_concurrency > self.concurrency:
-            raise ValueError("adaptive_scale_min_concurrency must be <= concurrency")
-        return self
+        if self.concurrency is None:
+            raise ValueError("adaptive_scale prefill_concurrency requires concurrency")
+        return self.prefill_concurrency
+
+    def _infer_request_rate_control_max(self) -> float | None:
+        inferred_max = getattr(self, "rate", None)
+        if getattr(self, "rate_ramp", None) is not None:
+            raise ValueError(
+                "adaptive_scale control.variable=request_rate cannot be combined "
+                "with rate_ramp"
+            )
+        if inferred_max is None:
+            raise ValueError(
+                "adaptive_scale request_rate requires a rate-controlled phase"
+            )
+        return inferred_max
+
+    def _infer_users_control_max(self) -> float | None:
+        inferred_max = getattr(self, "users", None)
+        if inferred_max is None:
+            raise ValueError(
+                "adaptive_scale users is only valid on user_centric phases"
+            )
+        return inferred_max
+
+    def _validate_adaptive_control_bounds(
+        self, variable: str, max_value: float
+    ) -> None:
+        if max_value <= self.adaptive_control_min:
+            raise ValueError("adaptive_scale control.max must be > control.min")
+        self._validate_integer_adaptive_bounds(variable, max_value)
+        if self._concurrency_min_exceeds_target(variable):
+            raise ValueError("adaptive_scale control.min must be <= concurrency")
+        if variable == "prefill_concurrency" and max_value > self.concurrency:
+            raise ValueError(
+                "adaptive_scale prefill_concurrency control.max must be <= concurrency"
+            )
+
+    def _validate_integer_adaptive_bounds(
+        self, variable: str, max_value: float
+    ) -> None:
+        if variable in {"concurrency", "prefill_concurrency", "users"}:
+            for field, value in (
+                ("control.min", self.adaptive_control_min),
+                ("control.max", max_value),
+            ):
+                if int(value) != value:
+                    raise ValueError(
+                        f"adaptive_scale {field} must be an integer for {variable}"
+                    )
+
+    def _concurrency_min_exceeds_target(self, variable: str) -> bool:
+        return (
+            variable == "concurrency"
+            and self.concurrency is not None
+            and self.adaptive_control_min > self.concurrency
+        )

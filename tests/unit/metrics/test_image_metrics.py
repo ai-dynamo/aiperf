@@ -56,15 +56,25 @@ def create_record_with_images(
         for n in images_per_turn
     ]
     record.request.request_info.turns = turns
-    record.request.turns = turns
+    # NumImagesMetric now reads record.media_counts (payload-derived in
+    # production via extract_payload_inputs); mirror the per-turn image total.
+    # The full Turn list no longer lives on the RequestRecord itself.
+    record.media_counts.images = sum(images_per_turn)
 
     return record
 
 
 def set_turns_on_record(record: ParsedResponseRecord, turns: list[Turn]) -> None:
-    """Set turns on both request_info and request for a record."""
+    """Set turns on request_info for a record.
+
+    Also mirrors the total image count onto ``media_counts`` -- the production
+    source NumImagesMetric reads (computed from the wire payload, not turns).
+    The full Turn list no longer lives on the RequestRecord itself.
+    """
     record.request.request_info.turns = turns
-    record.request.turns = turns
+    record.media_counts.images = sum(
+        len(image.contents) for turn in turns for image in turn.images
+    )
 
 
 class TestNumImagesMetric:

@@ -164,7 +164,7 @@ class _LightevalBaseGrader(BaseGrader):
             doc = self._build_doc(ground_truth)
             response = ModelResponse(text=[response_text])
             return float(self._metric.compute(doc, response))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _log.debug("lighteval grader exception: %s", exc, exc_info=True)
             return None
 

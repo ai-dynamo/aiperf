@@ -32,7 +32,7 @@ __all__ = [
 
 # Type aliases for format arrays.
 # Narrow to what the codebase actually emits: MetricsJsonExporter writes the
-# summary JSON, RecordExportResultsProcessor writes the records JSONL. No YAML
+# summary JSON, RecordExportJSONLWriter writes the records JSONL. No YAML
 # summary exporter and no records-CSV exporter exist; do not advertise them.
 SummaryExportFormat = Literal["json"]
 RecordsExportFormat = Literal["jsonl"]
@@ -57,6 +57,7 @@ class OutputDefaults:
     )
     PROFILE_EXPORT_JSONL_FILE = Path("profile_export.jsonl")
     PROFILE_EXPORT_RAW_JSONL_FILE = Path("profile_export_raw.jsonl")
+    PROFILE_EXPORT_CONSOLE_TXT_FILE = Path("profile_export_console.txt")
     PROFILE_EXPORT_GPU_TELEMETRY_JSONL_FILE = Path("gpu_telemetry_export.jsonl")
     SERVER_METRICS_EXPORT_JSONL_FILE = Path("server_metrics_export.jsonl")
     SERVER_METRICS_EXPORT_JSON_FILE = Path("server_metrics_export.json")
@@ -239,6 +240,7 @@ class ArtifactsConfig(BaseConfig):
         "_gpu_telemetry.jsonl",
         "_timeslices.csv",
         "_timeslices.json",
+        "_console.txt",
         "_raw.jsonl",
         ".parquet",
         ".csv",
@@ -315,6 +317,13 @@ class ArtifactsConfig(BaseConfig):
         return self.dir / name
 
     @property
+    def profile_export_console_txt_file(self) -> Path:
+        """Path for the plain-text console output capture file."""
+        base = self._base()
+        name = f"{base}_console.txt" if base else "profile_export_console.txt"
+        return self.dir / name
+
+    @property
     def profile_export_gpu_telemetry_jsonl_file(self) -> Path:
         """Path for the GPU telemetry JSONL export file."""
         base = self._base()
@@ -326,6 +335,13 @@ class ArtifactsConfig(BaseConfig):
         """Path for the server metrics JSONL export file."""
         base = self._base()
         name = f"{base}_server_metrics.jsonl" if base else "server_metrics_export.jsonl"
+        return self.dir / name
+
+    @property
+    def accuracy_export_jsonl_file(self) -> Path:
+        """Path for the per-record accuracy JSONL export file."""
+        base = self._base()
+        name = f"{base}_accuracy.jsonl" if base else "accuracy_export.jsonl"
         return self.dir / name
 
     @property

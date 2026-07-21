@@ -38,7 +38,7 @@ def run_export_in_subprocess(
         exporter = WandbDataExporter(exporter_config=exporter_config)
         exporter._export_sync()
         result_queue.put(None)
-    except Exception as exc:  # noqa: BLE001 - all errors must travel back to parent
+    except Exception as exc:  # all errors must travel back to parent
         result_queue.put(repr(exc))
 
 

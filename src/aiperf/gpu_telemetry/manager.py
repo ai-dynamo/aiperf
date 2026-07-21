@@ -5,10 +5,14 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.enums import CommAddress, CommandType
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    make_result_producer_capability,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_init, on_stop
 from aiperf.common.messages import (
@@ -55,6 +59,10 @@ class GPUTelemetryManager(BaseComponentService):
         run: BenchmarkRun carrying the BenchmarkConfig + per-run state.
         service_id: Optional unique identifier for this service instance
     """
+
+    extra_capabilities: ClassVar[tuple[str, ...]] = (
+        make_result_producer_capability("telemetry"),
+    )
 
     def __init__(
         self,
@@ -256,7 +264,7 @@ class GPUTelemetryManager(BaseComponentService):
             except RuntimeError as e:
                 failure_reason = str(e)
                 self.error(f"GPU Telemetry: {e}")
-            except Exception as e:  # noqa: BLE001 - fault-tolerant telemetry
+            except Exception as e:  # fault-tolerant telemetry
                 failure_reason = f"{collector_name} configuration failed: {e}"
                 self.error(
                     f"GPU Telemetry: Failed to configure {collector_name} collector: {e}"
@@ -272,7 +280,7 @@ class GPUTelemetryManager(BaseComponentService):
         self.info(f"GPU Telemetry: Capturing baseline metrics from {source_identifier}")
         try:
             await collector.initialize()
-        except (Exception, asyncio.CancelledError) as e:  # noqa: BLE001
+        except (Exception, asyncio.CancelledError) as e:
             self.warning(
                 f"GPU Telemetry: Failed to initialize {source_identifier} during "
                 f"baseline capture, disabling collector: {e!r}"
@@ -284,7 +292,7 @@ class GPUTelemetryManager(BaseComponentService):
         try:
             await collector.collect_and_process_metrics()
             self.debug(f"GPU Telemetry: Captured baseline from {source_identifier}")
-        except Exception as e:  # noqa: BLE001 - baseline scrape best-effort
+        except Exception as e:  # baseline scrape best-effort
             self.warning(
                 f"GPU Telemetry: Failed to capture baseline from {source_identifier} "
                 f"(collector remains enabled): {e}"
@@ -350,7 +358,7 @@ class GPUTelemetryManager(BaseComponentService):
             try:
                 await collector.start()
                 started_count += 1
-            except Exception as e:  # noqa: BLE001 - fault-tolerant telemetry
+            except Exception as e:  # fault-tolerant telemetry
                 self.error(f"Failed to start collector for {source_url}: {e}")
 
         if started_count == 0:
@@ -444,7 +452,7 @@ class GPUTelemetryManager(BaseComponentService):
         for source_url, collector in self._collectors.items():
             try:
                 await collector.stop()
-            except Exception as e:  # noqa: BLE001 - fault-tolerant telemetry
+            except Exception as e:  # fault-tolerant telemetry
                 self.error(f"Failed to stop collector for {source_url}: {e}")
 
     async def _on_telemetry_records(

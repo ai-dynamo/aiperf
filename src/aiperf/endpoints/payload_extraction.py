@@ -173,18 +173,22 @@ def _walk_item_tool_calls(item: dict[str, Any], result: ExtractedPayload) -> Non
             continue
         fn = tc.get("function") or {}
         if isinstance(fn, dict):
-            _collect_str_fields(fn, ("name", "arguments"), result.texts)
+            collected: list[str] = []
+            _collect_str_fields(fn, ("name", "arguments"), collected)
+            _append_tool_texts(result, collected)
 
 
 def _walk_item_function_call(item: dict[str, Any], result: ExtractedPayload) -> None:
     """Responses-shape replayed ``function_call`` and ``function_call_output``."""
     item_type = item.get("type")
+    collected: list[str] = []
     if item_type == "function_call":
-        _collect_str_fields(item, ("name", "arguments"), result.texts)
+        _collect_str_fields(item, ("name", "arguments"), collected)
     elif item_type == "function_call_output":
         output_text = item.get("output")
         if isinstance(output_text, str) and output_text:
-            result.texts.append(output_text)
+            collected.append(output_text)
+    _append_tool_texts(result, collected)
 
 
 def _walk_tools_schema(payload: dict[str, Any], result: ExtractedPayload) -> None:
@@ -211,13 +215,26 @@ def _walk_tools_schema(payload: dict[str, Any], result: ExtractedPayload) -> Non
 
 def _collect_tool_source(source: dict[str, Any], result: ExtractedPayload) -> None:
     """Collect ``name``/``description`` strings and serialised parameters."""
-    _collect_str_fields(source, ("name", "description"), result.texts)
+    collected: list[str] = []
+    _collect_str_fields(source, ("name", "description"), collected)
     parameters = source.get("parameters")
     if isinstance(parameters, dict):
         # Serialise once; the tokeniser sees the same JSON the server
         # would when prepending the tool schema to the prompt.
         with contextlib.suppress(TypeError):
-            result.texts.append(orjson.dumps(parameters).decode())
+            collected.append(orjson.dumps(parameters).decode())
+    _append_tool_texts(result, collected)
+
+
+def _append_tool_texts(result: ExtractedPayload, collected: list[str]) -> None:
+    """Record tool-derived strings in both text ledgers.
+
+    ``texts`` keeps the bare-text ISL path byte-identical (tool text stays
+    interleaved in walk order); ``tool_texts`` lets the chat-template ISL
+    path count tool text that the role/content ``messages`` view omits.
+    """
+    result.texts.extend(collected)
+    result.tool_texts.extend(collected)
 
 
 def _collect_str_fields(

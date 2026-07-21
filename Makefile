@@ -130,13 +130,13 @@ test-imports-src: #? verify all modules in src/aiperf can be imported.
 test-imports-tests: #? verify all modules in tests/ can be imported.
 	$(activate_venv) && pytest tests/unit/test_imports.py::test_all_test_modules_can_be_imported -q $(args)
 
-check-ergonomics: #? run LLM-ergonomics checks (file/function size, nesting, module state, duplicate classes, wide sigs, pydantic fields, stdlib-json).
+check-ergonomics: #? run LLM-ergonomics checks (nesting, wide sigs, module state, duplicate classes, pydantic fields, stdlib-json, exception messages).
 	$(activate_venv) && python tools/check_ergonomics.py $(args)
 
 regenerate-ergonomics-baseline: #? overwrite tools/ergonomics_baseline.json with current violations.
 	$(activate_venv) && python tools/check_ergonomics.py --regenerate-baseline
 
-check-ruff-baselined: #? run ruff for the LLM-ergonomics rules (PLR0915/PLR0912/C901/TID251) via the out-of-band baseline wrapper.
+check-ruff-baselined: #? run ruff for the LLM-ergonomics rules (C901/TID251/S110/S112/ANN201/D103) via the out-of-band baseline wrapper.
 	$(activate_venv) && python tools/ruff_baselined.py $(args)
 
 regenerate-ruff-baseline: #? overwrite tools/ruff_baseline.json with current ruff violations (grandfather them).

@@ -29,10 +29,18 @@ from aiperf.accuracy.benchmarks.lcb_codegeneration import (
 )
 from aiperf.accuracy.models import BenchmarkProblem
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+from tests.harness.optional_deps import HAS_DATASETS
 from tests.unit.conftest import make_benchmark_run
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+
+# These tests import ``datasets`` directly to monkeypatch its ``__version__``;
+# skip where it has no wheel (Windows-on-ARM). The version-hint code path they
+# exercise is unreachable there anyway -- ``load_dataset`` raises first.
+_needs_datasets = pytest.mark.skipif(
+    not HAS_DATASETS, reason="datasets has no Windows-on-ARM wheel"
+)
 
 
 def _make_run() -> BenchmarkRun:
@@ -318,6 +326,7 @@ class TestPinnedDatasetLoad:
         assert "datasets<4" in msg
         assert "AIPERF_ACCURACY_LCB_RELEASE_TAG" in msg
 
+    @_needs_datasets
     @pytest.mark.asyncio
     async def test_v4_datasets_adds_version_hint(self, monkeypatch) -> None:
         """When ``datasets >= 4`` is installed, the load-failure remap
@@ -340,6 +349,7 @@ class TestPinnedDatasetLoad:
         assert "Detected datasets==4.8.4" in msg
         assert "dropped script-based dataset support" in msg
 
+    @_needs_datasets
     @pytest.mark.asyncio
     async def test_unparseable_datasets_version_omits_hint(self, monkeypatch) -> None:
         """If ``datasets.__version__`` can't be parsed (malformed string,
@@ -360,6 +370,7 @@ class TestPinnedDatasetLoad:
         assert "Detected datasets==" not in msg
         assert "datasets<4" in msg  # generic suffix still emitted
 
+    @_needs_datasets
     @pytest.mark.asyncio
     async def test_v3_datasets_omits_version_hint(self, monkeypatch) -> None:
         """When ``datasets < 4`` is installed, the v4-specific hint is

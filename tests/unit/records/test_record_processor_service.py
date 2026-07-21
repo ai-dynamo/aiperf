@@ -6,10 +6,152 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
-from aiperf.common.messages import BaseServiceErrorMessage
+from aiperf.accuracy.models import AccuracyRecordsData
+from aiperf.common.enums import CreditPhase, ExportLevel
+from aiperf.common.messages import (
+    BaseServiceErrorMessage,
+    MetricRecordsData,
+    RecordsMessage,
+)
 from aiperf.common.utils import compute_time_ns
 from aiperf.records.record_processor_service import RecordProcessor
+from tests.unit.post_processors.conftest import create_metric_metadata
+
+
+def _make_accuracy_record(session_num: int = 0) -> AccuracyRecordsData:
+    return AccuracyRecordsData(
+        session_num=session_num,
+        worker_id="w1",
+        benchmark_phase=CreditPhase.PROFILING,
+        timestamp_ns=1_000,
+        task=None,
+        grader_name="multiple_choice",
+        passed=True,
+        unparsed=False,
+        confidence=1.0,
+        expected="A",
+        actual="A",
+        explanation="ok",
+    )
+
+
+def _make_processor_mock(
+    producers: list[tuple[str, MagicMock]],
+    observers: list[MagicMock] | None = None,
+) -> MagicMock:
+    """Build a RecordProcessor MagicMock wired for the 2-stage generic ship."""
+    mock_self = MagicMock(spec=RecordProcessor)
+    mock_self.service_id = "rp"
+    mock_self.run = MagicMock()
+    mock_self.run.cfg.artifacts.export_level = ExportLevel.RECORDS
+    mock_self.records_push_client = AsyncMock()
+    mock_self.inference_result_parser = MagicMock()
+    mock_self.inference_result_parser.parse_request_record = AsyncMock(
+        return_value=MagicMock()
+    )
+    mock_self._create_metric_record_metadata = MagicMock(
+        return_value=create_metric_metadata(session_num=0)
+    )
+    mock_self._free_record_data = MagicMock(return_value=(None, None))
+    mock_self._producers = producers
+    mock_self._observers = observers or []
+    return mock_self
+
+
+class TestRecordProcessorGenericShip:
+    """Stage 1 producers emit finished typed records grouped by their declared
+    record_type; stage 2 observers view them via a RecordObserverContext; then
+    exactly ONE generic RecordsMessage per inference record ships every produced
+    record on the envelope (no per-type message class, no builder map)."""
+
+    @pytest.mark.asyncio
+    async def test_process_and_forward_ships_single_generic_message(self):
+        """A metric producer + an accuracy producer flatten into one RecordsMessage."""
+        metric_data = MetricRecordsData(
+            metadata=create_metric_metadata(session_num=0), metrics={"some_metric": 1.0}
+        )
+        accuracy_record = _make_accuracy_record()
+
+        metric_producer = MagicMock()
+        metric_producer.process_record = AsyncMock(return_value=metric_data)
+        accuracy_producer = MagicMock()
+        accuracy_producer.process_record = AsyncMock(return_value=accuracy_record)
+
+        mock_self = _make_processor_mock(
+            producers=[
+                ("metric_records", metric_producer),
+                ("accuracy", accuracy_producer),
+            ]
+        )
+
+        await RecordProcessor._process_and_forward_record(
+            mock_self, MagicMock(service_id="w1"), MagicMock(), None
+        )
+
+        mock_self.records_push_client.push.assert_awaited_once()
+        msg = mock_self.records_push_client.push.await_args.args[0]
+        assert isinstance(msg, RecordsMessage)
+        assert metric_data in msg.records
+        assert accuracy_record in msg.records
+        assert len(msg.records) == 2
+
+    @pytest.mark.asyncio
+    async def test_observers_receive_context_with_grouped_produced(self):
+        """Observers get a RecordObserverContext exposing ctx.metrics and
+        ctx.get(record_type), grouped by the producer's declared record_type."""
+        metric_data = MetricRecordsData(
+            metadata=create_metric_metadata(session_num=0), metrics={"some_metric": 1.0}
+        )
+        accuracy_record = _make_accuracy_record()
+
+        metric_producer = MagicMock()
+        metric_producer.process_record = AsyncMock(return_value=metric_data)
+        accuracy_producer = MagicMock()
+        accuracy_producer.process_record = AsyncMock(return_value=accuracy_record)
+
+        observer = MagicMock()
+        observer.observe = AsyncMock()
+
+        mock_self = _make_processor_mock(
+            producers=[
+                ("metric_records", metric_producer),
+                ("accuracy", accuracy_producer),
+            ],
+            observers=[observer],
+        )
+
+        await RecordProcessor._process_and_forward_record(
+            mock_self, MagicMock(service_id="w1"), MagicMock(), None
+        )
+
+        observer.observe.assert_awaited_once()
+        ctx = observer.observe.await_args.args[0]
+        assert ctx.metrics is metric_data
+        assert ctx.get("accuracy") == [accuracy_record]
+
+    @pytest.mark.asyncio
+    async def test_producer_exception_does_not_block_ship(self):
+        """A failing producer is logged and skipped; the record still ships."""
+        accuracy_record = _make_accuracy_record()
+        bad_producer = MagicMock()
+        bad_producer.process_record = AsyncMock(side_effect=RuntimeError("boom"))
+        accuracy_producer = MagicMock()
+        accuracy_producer.process_record = AsyncMock(return_value=accuracy_record)
+
+        mock_self = _make_processor_mock(
+            producers=[
+                ("metric_records", bad_producer),
+                ("accuracy", accuracy_producer),
+            ]
+        )
+
+        await RecordProcessor._process_and_forward_record(
+            mock_self, MagicMock(service_id="w1"), MagicMock(), None
+        )
+
+        mock_self.records_push_client.push.assert_awaited_once()
+        msg = mock_self.records_push_client.push.await_args.args[0]
+        assert msg.records == [accuracy_record]
 
 
 class TestRecordProcessorCreateMetricRecordMetadata:
@@ -144,7 +286,8 @@ class TestRecordProcessorDatasetConfiguredBarrier:
         """_on_dataset_configured must release the barrier once processors are configured."""
         mock_self = MagicMock(spec=RecordProcessor)
         mock_self._dataset_configured_event = asyncio.Event()
-        mock_self.records_processors = []
+        mock_self._producers = []
+        mock_self._observers = []
 
         await RecordProcessor._on_dataset_configured(mock_self, MagicMock())
 
@@ -155,11 +298,10 @@ class TestRecordProcessorDatasetConfiguredBarrier:
         """_on_inference_results must block until the dataset is configured, then proceed."""
         mock_self = MagicMock(spec=RecordProcessor)
         mock_self._dataset_configured_event = asyncio.Event()
-        mock_self.inference_result_parser = MagicMock()
-        # First downstream step after the barrier; raising proves the barrier was passed.
-        mock_self.inference_result_parser.parse_request_record = AsyncMock(
-            side_effect=RuntimeError("REACHED_PROCESSING")
-        )
+        # First downstream step after the barrier; the handler swallows
+        # processing exceptions (lockstep contract), so assert on the call
+        # instead of a raised error.
+        mock_self._process_and_forward_record = AsyncMock()
 
         task = asyncio.create_task(
             RecordProcessor._on_inference_results(mock_self, MagicMock())
@@ -169,12 +311,12 @@ class TestRecordProcessorDatasetConfiguredBarrier:
 
         # Barrier not released: processing has not started.
         assert not task.done()
-        assert not mock_self.inference_result_parser.parse_request_record.called
+        assert not mock_self._process_and_forward_record.called
 
         # Barrier released: processing proceeds past the wait.
         mock_self._dataset_configured_event.set()
-        with pytest.raises(RuntimeError, match="REACHED_PROCESSING"):
-            await asyncio.wait_for(task, timeout=1.0)
+        await asyncio.wait_for(task, timeout=1.0)
+        mock_self._process_and_forward_record.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_on_inference_results_fails_run_on_config_timeout(self, monkeypatch):
@@ -190,7 +332,7 @@ class TestRecordProcessorDatasetConfiguredBarrier:
 
         async def _raise_timeout(coro, *args, **kwargs):
             coro.close()  # avoid "coroutine was never awaited" warning
-            raise asyncio.TimeoutError
+            raise TimeoutError
 
         monkeypatch.setattr(
             "aiperf.records.dataset_gate.asyncio.wait_for", _raise_timeout
@@ -204,3 +346,61 @@ class TestRecordProcessorDatasetConfiguredBarrier:
         assert isinstance(published, BaseServiceErrorMessage)
         # ... and the record is not processed.
         mock_self.inference_result_parser.parse_request_record.assert_not_called()
+
+
+class TestRecordProcessorLockstepGuard:
+    """The lockstep contract requires that every received inference result
+    forwards exactly one RecordsMessage. The error-forward path itself
+    must therefore never drop the record, even when metadata creation fails or
+    the forward call raises -- otherwise the timeout-less RecordsManager
+    completion barrier hangs the run at end-of-phase.
+    """
+
+    @pytest.mark.asyncio
+    async def test_forward_failed_record_metadata_creation_raises_still_pushes_error(
+        self, sample_request_record
+    ):
+        """If _create_metric_record_metadata raises (e.g. request_info None
+        triggering the original failure), _forward_failed_record must fall back
+        to minimal metadata and still push exactly one error record."""
+        mock_self = MagicMock(spec=RecordProcessor)
+        mock_self.service_id = "rp"
+        mock_self.records_push_client = AsyncMock()
+        mock_self._create_metric_record_metadata = MagicMock(
+            side_effect=AttributeError("request_info None")
+        )
+
+        await RecordProcessor._forward_failed_record(
+            mock_self,
+            MagicMock(service_id="w1"),
+            sample_request_record,
+            None,
+            RuntimeError("boom"),
+        )
+
+        mock_self.records_push_client.push.assert_awaited_once()
+        pushed = mock_self.records_push_client.push.await_args.args[0]
+        assert isinstance(pushed, RecordsMessage)
+        assert len(pushed.records) == 1
+        assert pushed.records[0].metrics == {}
+        assert pushed.error is not None
+
+    @pytest.mark.asyncio
+    async def test_on_inference_results_forward_failed_record_raises_does_not_escape(
+        self,
+    ):
+        """A failure inside the error-forward path must be swallowed by the
+        handler's last-resort guard so it cannot escape _on_inference_results."""
+        mock_self = MagicMock(spec=RecordProcessor)
+        mock_self._dataset_configured_event = asyncio.Event()
+        mock_self._dataset_configured_event.set()
+        mock_self._process_and_forward_record = AsyncMock(
+            side_effect=RuntimeError("process boom")
+        )
+        mock_self._forward_failed_record = AsyncMock(
+            side_effect=RuntimeError("forward boom")
+        )
+
+        await RecordProcessor._on_inference_results(mock_self, MagicMock())
+
+        mock_self._forward_failed_record.assert_awaited_once()

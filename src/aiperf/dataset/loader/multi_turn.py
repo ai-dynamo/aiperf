@@ -140,6 +140,15 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
         Returns:
             A list of conversations.
         """
+        if self.run.cfg.endpoint.uuid_and_strip:
+            raise NotImplementedError(
+                "--uuid-and-strip is not supported with "
+                "--custom-dataset-type multi_turn. Load-time dedup of "
+                "repeated images is only implemented for the single_turn "
+                "loader. Use --custom-dataset-type single_turn (with "
+                "session_id-grouped rows) for cache-reuse benchmarks."
+            )
+
         conversations = []
         for session_id, multi_turns in data.items():
             conversation = Conversation(session_id=session_id)

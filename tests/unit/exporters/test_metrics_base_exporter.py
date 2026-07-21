@@ -97,8 +97,10 @@ class TestMetricsBaseExporterInitialization:
 class TestMetricsBaseExporterPrepareMetrics:
     """Tests for _prepare_metrics() method.
 
-    Metrics are already filtered and in display units from summarize().
-    _prepare_metrics() just builds a dict keyed by tag.
+    _prepare_metrics() keys metrics by tag AND drops INTERNAL/EXPERIMENTAL
+    metrics (the accumulator summary engine does not pre-filter, so the file
+    exporters must -- mirroring the console exporter's exclude_flags). Tags not
+    in MetricRegistry (dynamically injected) are kept.
     """
 
     def test_prepare_metrics_returns_dict_keyed_by_tag(self, exporter_config):
@@ -139,6 +141,45 @@ class TestMetricsBaseExporterPrepareMetrics:
         result = exporter._prepare_metrics([])
 
         assert result == {}
+
+    def test_prepare_metrics_drops_internal_and_experimental(self, exporter_config):
+        """INTERNAL/EXPERIMENTAL metrics must be excluded from file exports
+        (default dev flags off); public + unknown-tag metrics are kept.
+
+        Regression guard for the accumulator-summary path: reverting the
+        _prepare_metrics filter would leak internal metrics (e.g.
+        min_request_timestamp, credit_drop_latency) into profile_export_aiperf
+        .json/.csv -- which origin/main excluded.
+        """
+        exporter = ConcreteExporter(exporter_config)
+        metrics = [
+            MetricResult(tag="time_to_first_token", header="TTFT", unit="ms", avg=1.0),
+            MetricResult(tag="min_request_timestamp", header="min", unit="ns", avg=2.0),
+            MetricResult(tag="credit_drop_latency", header="cdl", unit="ms", avg=3.0),
+            MetricResult(tag="stream_setup_latency", header="ssl", unit="ms", avg=4.0),
+            MetricResult(tag="injected_custom_tag", header="inj", unit="ms", avg=5.0),
+        ]
+
+        result = exporter._prepare_metrics(metrics)
+
+        assert "time_to_first_token" in result  # public -> kept
+        assert "injected_custom_tag" in result  # not in registry -> kept
+        assert "min_request_timestamp" not in result  # INTERNAL -> dropped
+        assert "credit_drop_latency" not in result  # INTERNAL -> dropped
+        assert "stream_setup_latency" not in result  # EXPERIMENTAL -> dropped
+
+    def test_prepare_metrics_keeps_internal_when_dev_flag_set(
+        self, exporter_config, monkeypatch
+    ):
+        """With SHOW_INTERNAL_METRICS enabled, INTERNAL metrics are retained."""
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.DEV, "SHOW_INTERNAL_METRICS", True)
+        exporter = ConcreteExporter(exporter_config)
+        result = exporter._prepare_metrics(
+            [MetricResult(tag="min_request_timestamp", header="m", unit="ns", avg=1.0)]
+        )
+        assert "min_request_timestamp" in result
 
 
 class TestMetricsBaseExporterExport:

@@ -5,7 +5,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, ClassVar
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from aiperf.common.enums import (
     ConversationBranchMode,
@@ -98,6 +98,29 @@ class Image(Media):
     """Media that contains image data."""
 
     media_type: ClassVar[MediaTypeT] = MediaType.IMAGE
+
+    uuids: list[str] = Field(
+        default_factory=list,
+        description="Optional cache UUIDs aligned 1:1 with `contents`. "
+        "UUID-only references normalize omitted contents to empty strings; "
+        "otherwise lengths must match. "
+        "vLLM-extension only: opaque IDs that let the server reuse a cached "
+        "processed image embedding across requests. Authored UUIDs pass through "
+        "on the chat endpoint regardless of automatic stripping.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_uuid_alignment(self) -> "Image":
+        if self.uuids and not self.contents:
+            self.contents = [""] * len(self.uuids)
+        elif self.uuids and len(self.uuids) != len(self.contents):
+            raise ValueError(
+                f"Image.uuids length ({len(self.uuids)}) must match "
+                f"contents length ({len(self.contents)}) when set."
+            )
+        if any(uuid == "" for uuid in self.uuids):
+            raise ValueError("Image.uuids must not contain empty strings")
+        return self
 
 
 class Audio(Media):
@@ -192,6 +215,13 @@ class Turn(AIPerfBaseModel):
             "None."
         ),
     )
+    raw_system: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Pre-formatted vendor-shaped ``system`` field (list of "
+        "content blocks). Latest-non-None turn wins. Currently only "
+        "MessagesEndpoint reads this; lets callers attach per-block "
+        "``cache_control`` without going through extra_body.",
+    )
     texts: list[Text] = Field(
         default=[], description="Collection of text data in each turn."
     )
@@ -218,7 +248,8 @@ class Turn(AIPerfBaseModel):
         description="Non-native per-turn request-body fields (temperature, "
         "top_p, seed, stop, vendor tunables like ignore_eos/min_tokens). "
         "Merged into the top level of the chat-completions payload at "
-        "dispatch time, matching the OpenAI SDK's extra_body convention.",
+        "dispatch time, after endpoint-level extra values, matching the "
+        "OpenAI SDK's extra_body convention.",
     )
     extra_headers: dict[str, str] | None = Field(
         default=None,
@@ -257,8 +288,10 @@ class Turn(AIPerfBaseModel):
 
         This preserves text data (needed for tokenization) and raw messages/tools
         (needed for API payload reconstruction) but replaces potentially large
-        image/audio/video contents with small placeholder strings. This is
-        more efficient than a full deep copy followed by stripping.
+        image/audio/video contents with small placeholder strings. Empty image
+        slots are preserved so cache-only UUID references remain distinguishable
+        from images whose content was present on the wire. This is more efficient
+        than a full deep copy followed by stripping.
 
         Returns:
             A new Turn with stripped multimodal contents and messages.
@@ -273,11 +306,16 @@ class Turn(AIPerfBaseModel):
             if self.raw_messages is not None
             else None,
             raw_tools=list(self.raw_tools) if self.raw_tools is not None else None,
+            raw_system=list(self.raw_system) if self.raw_system is not None else None,
             texts=[Text(name=t.name, contents=list(t.contents)) for t in self.texts],
             images=[
                 Image(
                     name=img.name,
-                    contents=[f"image_{i}" for i in range(len(img.contents))],
+                    contents=[
+                        f"image_{i}" if content else ""
+                        for i, content in enumerate(img.contents)
+                    ],
+                    uuids=list(img.uuids),
                 )
                 for img in self.images
             ],

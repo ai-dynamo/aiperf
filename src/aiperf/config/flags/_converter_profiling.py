@@ -1,19 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""CLIConfig -> profiling phase dict.
-
-Reads load-generator fields, dataset/schedule fields, and session-turn count
-directly off the flat ``CLIConfig``.
-
-Each entry in ``_PROF_FIELD_ROUTES`` declares ``(output_key, attr_name)``
-where ``attr_name`` is a top-level field on ``CLIConfig``.
-"""
+"""CLIConfig -> profiling phase dict."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from aiperf.config.flags._adaptive_control_cli import (
+    parse_adaptive_scale_control,
+    reject_mixed_adaptive_control_cli,
+)
 from aiperf.orchestrator.search_planner.parsing import parse_sla_filter
 
 if TYPE_CHECKING:
@@ -22,8 +19,6 @@ if TYPE_CHECKING:
     from aiperf.config.flags import CLIConfig
 
 
-# (output_key, attr_name) — attr_name is the top-level field on CLIConfig
-# whose user-set status we test via ``cli.model_fields_set``.
 _PROF_FIELD_ROUTES: tuple[tuple[str, str], ...] = (
     ("duration", "benchmark_duration"),
     ("grace_period", "benchmark_grace_period"),
@@ -37,20 +32,18 @@ _PROF_FIELD_ROUTES: tuple[tuple[str, str], ...] = (
     ("adaptive_scale", "adaptive_scale"),
     ("adaptive_sustain_duration", "adaptive_sustain_duration"),
     ("adaptive_assessment_period", "adaptive_assessment_period"),
+    ("adaptive_scale_control", "adaptive_scale_control"),
+    ("adaptive_control_variable", "adaptive_control_variable"),
+    ("adaptive_control_min", "adaptive_control_min"),
+    ("adaptive_control_max", "adaptive_control_max"),
 )
 
 
-# Routes whose output keys only exist on GammaPhase. Routed here only when the
-# resolved phase type is GAMMA; otherwise the user-supplied value is rejected
-# with a clear error rather than crashing PhaseConfig with extra_forbidden.
 _GAMMA_ONLY_ROUTES: tuple[tuple[str, str], ...] = (
     ("smoothness", "arrival_smoothness"),
 )
 
 
-# Routes whose output keys only exist on FixedSchedulePhase. Routed here only
-# when the resolved phase type is FIXED_SCHEDULE; otherwise we fail loud
-# instead of silently dropping the offsets the user passed.
 _FIXED_SCHEDULE_ONLY_ROUTES: tuple[tuple[str, str], ...] = (
     ("auto_offset", "fixed_schedule_auto_offset"),
     ("start_offset", "fixed_schedule_start_offset"),
@@ -69,8 +62,6 @@ def _profiling_phase_type(cli: CLIConfig) -> Any:
     from aiperf.config.phases import PhaseType
     from aiperf.plugin.enums import ArrivalPattern
 
-    if cli.adaptive_scale:
-        return PhaseType.CONCURRENCY
     if cli.fixed_schedule:
         return PhaseType.FIXED_SCHEDULE
     if cli.user_centric_rate is not None:
@@ -93,16 +84,39 @@ def _apply_profiling_ramps(prof: dict[str, Any], cli: CLIConfig) -> None:
             prof[key] = {"duration": getattr(cli, field)}
 
 
+def _parse_adaptive_scale_sla_filter(value: str) -> dict[str, Any]:
+    try:
+        return parse_sla_filter(value).model_dump(mode="json")
+    except TypeError as exc:
+        message = str(exc).replace("--search-sla", "--adaptive-scale-sla")
+        raise TypeError(message) from exc
+
+
 def _apply_adaptive_scale_sla(prof: dict[str, Any], cli: CLIConfig) -> None:
-    if not prof.get("adaptive_scale"):
-        return
     if "adaptive_scale_sla" not in cli.model_fields_set or not cli.adaptive_scale_sla:
         return
 
-    prof["sla"] = [
-        parse_sla_filter(value).model_dump(mode="json")
-        for value in cli.adaptive_scale_sla
+    parsed_sla = [
+        _parse_adaptive_scale_sla_filter(value) for value in cli.adaptive_scale_sla
     ]
+    if not prof.get("adaptive_scale"):
+        raise ValueError("--adaptive-scale-sla requires --adaptive-scale")
+
+    prof["sla"] = parsed_sla
+
+
+def _apply_adaptive_scale_control(prof: dict[str, Any], cli: CLIConfig) -> None:
+    reject_mixed_adaptive_control_cli(cli.model_fields_set)
+    if "adaptive_scale_control" not in cli.model_fields_set:
+        if "adaptive_control_variable" in cli.model_fields_set:
+            prof["_adaptive_control_variable_source"] = "--adaptive-control-variable"
+        return
+    if not prof.get("adaptive_scale"):
+        raise ValueError("--adaptive-scale-control requires --adaptive-scale")
+    control = parse_adaptive_scale_control(cli.adaptive_scale_control or "")
+    prof.update(control)
+    prof["_adaptive_control_variable_source"] = "--adaptive-scale-control"
+    prof.pop("adaptive_scale_control", None)
 
 
 def _reject_orphan_load_generator_flags(prof: dict[str, Any], cli: CLIConfig) -> None:
@@ -118,13 +132,30 @@ def _reject_orphan_load_generator_flags(prof: dict[str, Any], cli: CLIConfig) ->
     fields_set = cli.model_fields_set
     phase_type = prof["type"]
 
-    # --num-users only makes sense with --user-centric-rate. Without
-    # user-centric mode the resolved phase has no ``users`` field, so
-    # routing it through would crash PhaseConfig with extra_forbidden.
-    if prof.get("adaptive_scale") and phase_type != PhaseType.CONCURRENCY:
-        raise ValueError("--adaptive-scale requires concurrency timing mode")
-    if prof.get("adaptive_scale") and "concurrency" not in prof:
-        raise ValueError("--adaptive-scale requires --concurrency")
+    if prof.get("adaptive_scale"):
+        variable = prof.get("adaptive_control_variable", "concurrency")
+        required = {
+            "concurrency": ("concurrency", "--concurrency"),
+            "prefill_concurrency": ("prefill_concurrency", "--prefill-concurrency"),
+            "request_rate": ("rate", "--request-rate"),
+            "users": ("users", "--num-users"),
+        }.get(variable)
+        if required is None:
+            source = prof.get(
+                "_adaptive_control_variable_source",
+                "--adaptive-control-variable",
+            )
+            raise ValueError(f"unsupported {source} variable {variable!r}")
+        required_key, required_flag = required
+        if required_key not in prof and "adaptive_control_max" not in prof:
+            if variable == "concurrency":
+                raise ValueError(
+                    "--adaptive-scale requires --concurrency or --adaptive-control-max"
+                )
+            raise ValueError(
+                f"--adaptive-scale control variable {variable!r} requires "
+                f"{required_flag} or --adaptive-control-max"
+            )
     if (
         prof.get("adaptive_scale")
         and "search_sla" in fields_set
@@ -335,26 +366,7 @@ def _maybe_set_dag_root_sessions(
 
 
 def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> None:
-    """CLI-only port of the v1 dataset-aware autodefaults.
-
-    Three behaviors, all conditional on the user's CLI invocation supplying
-    a dataset file (no behavior change for YAML-only configs, which are
-    expected to be complete):
-
-    1. Trace auto-promotion: a trace ``--custom-dataset-type`` whose first
-       record carries a ``timestamp`` field flips the phase to
-       fixed_schedule unless the user passed ``--no-fixed-schedule``.
-    2. fixed_schedule autodefault: when a fixed_schedule phase has no
-       stop condition, fill ``requests`` from the dataset record count
-       (single-pass).
-    3. Forking-dataset autodefault: when the dataset is ``dag_jsonl`` and
-       no stop condition is set, fill ``sessions`` from the DAG root
-       count so the run executes each root once instead of truncating
-       mid-tree.
-
-    Bare-string ``--custom-dataset-type`` (no ``--input-file``) is a no-op
-    for I/O-dependent steps.
-    """
+    """Apply dataset-sensitive CLI defaults for trace/fixed/dag datasets."""
 
     from aiperf.config.phases import PhaseType
 
@@ -376,7 +388,7 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
 
 
 def _first_record_has_timestamp(file_path: object) -> bool:
-    """Return True when the first non-empty JSONL record carries a timestamp."""
+    """Return True when a trace file carries timestamp data."""
     from pathlib import Path
 
     from aiperf.common.utils import load_json_str
@@ -384,8 +396,19 @@ def _first_record_has_timestamp(file_path: object) -> bool:
     path = Path(file_path)
     if not path.is_file():
         return False
+    if path.suffix.lower() == ".parquet":
+        try:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+        except ImportError:
+            return False
+
+        try:
+            return "timestamp_start_unix_ms" in set(pq.read_schema(path).names)
+        except (OSError, pa.ArrowException):
+            return False
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 if not (stripped := line.strip()):
                     continue
@@ -400,7 +423,7 @@ def _first_record_has_timestamp(file_path: object) -> bool:
 
 
 def _count_dataset_records(file_path: object) -> int:
-    """Count non-empty lines across a JSONL file or directory of JSONLs."""
+    """Count records across a JSONL file/directory or Parquet trace file."""
     from pathlib import Path
 
     path = Path(file_path)
@@ -408,31 +431,30 @@ def _count_dataset_records(file_path: object) -> int:
         if path.is_dir():
             total = 0
             for jsonl in path.rglob("*.jsonl"):
-                with open(jsonl) as f:
+                with open(jsonl, encoding="utf-8") as f:
                     total += sum(1 for line in f if line.strip())
             return total
+        if path.suffix.lower() == ".parquet" and path.is_file():
+            try:
+                import pyarrow as pa
+                import pyarrow.parquet as pq
+            except ImportError:
+                return 0
+
+            try:
+                return pq.ParquetFile(path).metadata.num_rows
+            except (OSError, pa.ArrowException):
+                return 0
         if path.is_file():
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 return sum(1 for line in f if line.strip())
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return 0
     return 0
 
 
 def build_profiling(cli: CLIConfig) -> dict[str, Any]:
-    """Produce the canonical profiling-phase dict from ``cli``.
-
-    Reads load-generator settings (concurrency, rate, ramps, cancellation),
-    schedule/replay flags, and session-turn count directly from ``cli``
-    (all fields are top-level post-Task-13). Returns a dict whose ``type``
-    is one of ``PhaseType.{CONCURRENCY, POISSON, GAMMA, CONSTANT,
-    USER_CENTRIC, FIXED_SCHEDULE}`` plus the keys mapped by
-    ``_PROF_FIELD_ROUTES`` and any ramp/cancellation sub-dicts.
-
-    Raises:
-        ValueError: when USER_CENTRIC mode is selected but
-            ``conversation_turn_mean`` is < 2.
-    """
+    """Produce the canonical profiling-phase dict from ``cli``."""
     from aiperf.config.phases import PhaseType
 
     fields_set = cli.model_fields_set
@@ -444,9 +466,11 @@ def build_profiling(cli: CLIConfig) -> dict[str, Any]:
     _apply_profiling_ramps(prof, cli)
 
     prof["type"] = _profiling_phase_type(cli)
+    _apply_adaptive_scale_control(prof, cli)
     _apply_adaptive_scale_sla(prof, cli)
 
     _reject_orphan_load_generator_flags(prof, cli)
+    prof.pop("_adaptive_control_variable_source", None)
 
     _apply_phase_specific_routes(prof, cli)
 

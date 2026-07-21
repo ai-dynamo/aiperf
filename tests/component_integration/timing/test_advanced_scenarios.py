@@ -20,6 +20,7 @@ from tests.component_integration.timing.conftest import (
     TimingTestConfig,
     build_timing_command,
     defaults,
+    skip_on_cloud_windows_timing,
 )
 from tests.harness.analyzers import (
     ConcurrencyAnalyzer,
@@ -207,6 +208,7 @@ class TestBenchmarkDurationAndGracePeriod:
     - Grace period timeout triggers forced cancellation
     """
 
+    @skip_on_cloud_windows_timing
     def test_benchmark_duration_stops_new_credits(self, cli: AIPerfCLI):
         """Test that benchmark duration stops issuing new credits.
 
@@ -240,6 +242,7 @@ class TestBenchmarkDurationAndGracePeriod:
             f"Duration should issue at least 2 requests, got {result.request_count}"
         )
 
+    @skip_on_cloud_windows_timing
     def test_zero_grace_period_immediate_cutoff(self, cli: AIPerfCLI):
         """Test zero grace period cancels in-flight requests immediately.
 
@@ -278,6 +281,7 @@ class TestBenchmarkDurationAndGracePeriod:
         credit_analyzer = CreditFlowAnalyzer(runner)
         assert credit_analyzer.total_credits == len(return_payloads)
 
+    @skip_on_cloud_windows_timing
     def test_multi_turn_with_duration_and_grace(self, cli: AIPerfCLI):
         """Test multi-turn conversations with duration and grace period.
 
