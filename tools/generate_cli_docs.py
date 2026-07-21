@@ -197,11 +197,16 @@ def _extract_param(arg: Any, constraints: dict[str, list[str]]) -> Param:
     long_opts = [n for n in arg.names if n.startswith("--")]
     short_opts = [n for n in arg.names if n.startswith("-") and n not in long_opts]
 
-    # Default value
+    # Default value. Skip sentinels, None, and empty collections: an empty
+    # ``[]`` / ``{}`` default documents nothing useful, and rendering it couples
+    # the output to cyclopts' default-rendering (4.21 began emitting "[]" for
+    # empty-list params where 4.20 emitted nothing, drifting the committed docs).
+    # Suppressing it here keeps generated docs stable across cyclopts versions.
     default = ""
     if arg.show_default:
         val = arg.field_info.default
-        if val is not FieldInfo.empty and val is not None:
+        is_empty_collection = isinstance(val, (list, dict, tuple, set)) and not val
+        if val is not FieldInfo.empty and val is not None and not is_empty_collection:
             default = (
                 str(arg.show_default(val)) if callable(arg.show_default) else str(val)
             )

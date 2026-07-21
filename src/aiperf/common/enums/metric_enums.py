@@ -190,11 +190,17 @@ class GenericMetricUnit(BaseMetricUnit):
     ERRORS = _unit("errors")
     IMAGE = _unit("image")
     IMAGES = _unit("images")
+    GOODPUT_PER_WATT = _unit("good-req/s/W")
+    JOULES_PER_REQUEST = _unit("joules/request")
     JOULES_PER_USER = _unit("joules/user")
+    JOULE_SECONDS = _unit("J*s")
+    MILLIJOULES_PER_TOKEN = _unit("mJ/token")
     PERCENT = _unit("%")
     RATIO = _unit("ratio")
     REQUESTS = _unit("requests")
+    REQUESTS_PER_SECOND_PER_WATT = _unit("requests/sec/W")
     TOKENS = _unit("tokens")
+    TOKENS_PER_SECOND_PER_WATT = _unit("tokens/sec/W")
     TOKENS_PER_JOULE = _unit("tokens/J")
     USER = _unit("user")
     USERS = _unit("users")
@@ -428,6 +434,23 @@ class MetricType(CaseInsensitiveStrEnum):
     DERIVED = "derived"
     """Metrics that are purely derived from other metrics as a summary, and do not require per-request values.
     Examples: request throughput, output token throughput, etc."""
+
+
+class AggregationKind(CaseInsensitiveStrEnum):
+    """Defines how an aggregate metric combines per-record values.
+
+    Used by MetricsAccumulator for vectorized windowed aggregation
+    instead of replaying records through metric instances.
+    """
+
+    SUM = "sum"
+    """Sum all values. Used by counter metrics (request count, error count, etc.)."""
+
+    MAX = "max"
+    """Take the maximum value. Used by max timestamp metrics."""
+
+    MIN = "min"
+    """Take the minimum value. Used by min timestamp metrics."""
 
 
 class PlotMetricDirection(CaseInsensitiveStrEnum):
@@ -667,6 +690,14 @@ class MetricConsoleGroup(CaseInsensitiveStrEnum):
     REASONING = "reasoning"
     """Reasoning token metrics."""
 
+    EFFECTIVE = "effective"
+    """Full-window time-weighted analyzer outputs (sweep-line throughput, concurrency,
+    tokens-in-flight, plus the coordinated-omission-aware effective_latency)."""
+
+    ACTIVE = "active"
+    """Phase-active-only time-weighted analyzer outputs — throughput restricted to
+    intervals where the relevant phase has at least one request in flight."""
+
 
 class MetricFlags(Flag):
     """Defines the possible flags for metrics that are used to determine how they are processed or grouped.
@@ -755,6 +786,25 @@ class MetricFlags(Flag):
 
     PRODUCES_VIDEO_ONLY = 1 << 16
     """Metrics that are only applicable when profiling an endpoint that produces video output."""
+
+    PERCENTILE_INCLUDES_FAILED_REQUESTS = 1 << 17
+    """Record metrics for which percentile rollups should also produce
+    ``adj_*`` percentiles that treat each failed request as ``+inf`` latency.
+    Surfaces honest tail latency under non-trivial error rates — see
+    https://github.com/ai-dynamo/aiperf/issues/688."""
+
+    FIXED_SCHEDULE_ONLY = 1 << 18
+    """Metrics that are only applicable when the profiling phase replays a fixed schedule of
+    absolute timestamps. Turn timestamps also reach records under other timing modes (e.g. a
+    timestamped trace run with --no-fixed-schedule), where schedule-fidelity metrics would be
+    meaningless."""
+
+    DISABLE_ON_ACCURACY = 1 << 19
+    """Metrics that should not be computed when accuracy benchmarking mode is
+    enabled. Accuracy benchmarks set ``max_tokens`` as a generation ceiling that
+    the model is expected to stop well under (chain-of-thought answers finish
+    early), so metrics that assume ``max_tokens`` is a target — notably the
+    OSL-mismatch family — are meaningless there and only produce noise."""
 
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""

@@ -138,6 +138,8 @@ class TestExporterManager:
     async def test_export_console(
         self, endpoint_config, output_config, sample_records, mock_cfg
     ):
+        import io
+
         from rich.console import Console
 
         # Create mock exporter instances for each console exporter type
@@ -172,10 +174,98 @@ class TestExporterManager:
                 run=make_run_from_cli(mock_cfg),
                 telemetry_results=None,
             )
-            await manager.export_console(Console())
+            # Non-terminal console renders the exporter loop exactly once, so the
+            # assert_*_once assertions stay deterministic regardless of pytest -s.
+            await manager.export_console(Console(file=io.StringIO()))
 
         for mock_class, mock_instance in zip(
             mock_classes, mock_instances, strict=False
         ):
             mock_class.assert_called_once()
             mock_instance.export.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_export_console_renders_live_output_at_terminal_width_on_tty(
+        self, endpoint_config, output_config, sample_records, mock_cfg
+    ):
+        import io
+
+        from rich.console import Console
+
+        captured_widths: list[int] = []
+
+        async def _capture_width(*, console: Console) -> None:
+            captured_widths.append(console.width)
+
+        instance = MagicMock()
+        instance.export = AsyncMock(side_effect=_capture_width)
+        mock_class = MagicMock(return_value=instance)
+        mock_entry = MagicMock()
+        mock_entry.name = "mock_console_exporter"
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all",
+            return_value=[(mock_entry, mock_class)],
+        ):
+            manager = ExporterManager(
+                results=ProfileResults(
+                    records=sample_records,
+                    start_ns=0,
+                    end_ns=0,
+                    completed=0,
+                    was_cancelled=False,
+                    error_summary=[],
+                ),
+                run=make_run_from_cli(mock_cfg),
+                telemetry_results=None,
+            )
+            await manager.export_console(
+                Console(force_terminal=True, width=100, file=io.StringIO())
+            )
+
+        # The recording console for the .txt artifact stays pinned at the fixed
+        # export width (140); the live TTY render must also happen at the
+        # terminal's own width (100) — the latter fails on the buggy code.
+        assert 140 in captured_widths
+        assert 100 in captured_widths
+
+    @pytest.mark.asyncio
+    async def test_export_console_replays_fixed_width_on_non_tty(
+        self, endpoint_config, output_config, sample_records, mock_cfg
+    ):
+        import io
+
+        from rich.console import Console
+
+        captured_widths: list[int] = []
+
+        async def _capture_width(*, console: Console) -> None:
+            captured_widths.append(console.width)
+
+        instance = MagicMock()
+        instance.export = AsyncMock(side_effect=_capture_width)
+        mock_class = MagicMock(return_value=instance)
+        mock_entry = MagicMock()
+        mock_entry.name = "mock_console_exporter"
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all",
+            return_value=[(mock_entry, mock_class)],
+        ):
+            manager = ExporterManager(
+                results=ProfileResults(
+                    records=sample_records,
+                    start_ns=0,
+                    end_ns=0,
+                    completed=0,
+                    was_cancelled=False,
+                    error_summary=[],
+                ),
+                run=make_run_from_cli(mock_cfg),
+                telemetry_results=None,
+            )
+            # Non-tty: single render at the fixed export width, then the recorded
+            # text is replayed verbatim (no second render at terminal width).
+            await manager.export_console(Console(file=io.StringIO()))
+
+        assert captured_widths == [140]

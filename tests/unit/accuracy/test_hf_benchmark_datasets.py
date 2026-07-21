@@ -30,11 +30,17 @@ import pkgutil
 from pathlib import Path
 
 import pytest
-from datasets import load_dataset
-from datasets.exceptions import DatasetNotFoundError
-from pytest import param
 
-import aiperf.accuracy.benchmarks as _benchmarks_pkg
+pytest.importorskip(
+    "datasets",
+    reason="HF benchmark dataset tests require datasets (no Windows-on-ARM wheel)",
+)
+
+from datasets import load_dataset  # noqa: E402
+from datasets.exceptions import DatasetNotFoundError  # noqa: E402
+from pytest import param  # noqa: E402
+
+import aiperf.accuracy.benchmarks as _benchmarks_pkg  # noqa: E402
 
 _BENCHMARK_DATASETS = [
     param("openai/gsm8k", "main", "test", ["question", "answer"], False, id="gsm8k"),
@@ -67,6 +73,14 @@ _BENCHMARK_DATASETS = [
         ["question", "choices", "answer"],
         False,
         id="mmlu",
+    ),
+    param(
+        "TIGER-Lab/MMLU-Pro",
+        None,
+        "test",
+        ["question", "options", "answer", "category"],
+        False,
+        id="mmlu_pro",
     ),
     param(
         "Rowan/hellaswag",

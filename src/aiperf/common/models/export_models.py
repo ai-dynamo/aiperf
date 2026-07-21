@@ -125,13 +125,35 @@ class TelemetryExportData(AIPerfBaseModel):
 class TimesliceData(AIPerfBaseModel):
     """Data for a single timeslice.
 
-    Contains metrics for one time slice with dynamic metric fields
-    added via Pydantic's extra="allow" setting.
+    Contains metrics for one time slice with dynamic metric fields added via
+    Pydantic's ``extra="allow"`` setting. ``start_ns`` / ``end_ns`` are
+    populated by the accumulator-engine timeslice exporters from the source
+    :class:`TimesliceResult`; ``is_complete=False`` flags the trailing partial
+    slice. Slice ordering is conveyed by position in the parent ``timeslices``
+    array. ``timeslice_index`` is retained (optional) only for the legacy
+    results-processor timeslice path.
     """
 
     model_config = ConfigDict(extra="allow")
 
-    timeslice_index: int
+    timeslice_index: int | None = None
+    start_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Timeslice start timestamp in nanoseconds",
+    )
+    end_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Timeslice end timestamp in nanoseconds",
+    )
+    is_complete: bool | None = Field(
+        default=None,
+        description="False for partial timeslices (typically the final slice). "
+        "None or True for complete timeslices covering the full configured duration. "
+        "Partial slices should be excluded from aggregate statistics. "
+        "None by default to save space in JSON exports (treated as complete).",
+    )
 
 
 class TimesliceCollectionExportData(AIPerfBaseModel):
@@ -266,7 +288,7 @@ class JsonExportData(AIPerfBaseModel):
     model_config = ConfigDict(extra="allow")
 
     # Increment on breaking changes to the export structure
-    SCHEMA_VERSION: ClassVar[str] = "1.3"
+    SCHEMA_VERSION: ClassVar[str] = "1.4"
 
     schema_version: str | None = Field(
         default=None,
@@ -319,4 +341,9 @@ class JsonExportData(AIPerfBaseModel):
             "errored/truncated, parents suspended/resumed). Present only on "
             "DAG-shaped runs; absent for non-DAG benchmarks."
         ),
+    )
+    warmup_metrics: dict[str, JsonMetricResult] | None = Field(
+        default=None,
+        description="Metrics computed from warmup-phase requests only. Profiling "
+        "metrics remain in the top-level metric fields.",
     )
