@@ -444,7 +444,12 @@ pub struct MockServerConfig {
     /// `--*` flag — every request on `--host:--port` (and `--uds`, if set)
     /// gets the same fixed chat-completion / model-list response. Intended
     /// for saturating a transport or client path, not for behavioral testing.
-    #[arg(long, env = "MOCK_SERVER_LUDICROUS_SPEED", default_value_t = false)]
+    #[arg(
+        long,
+        alias = "plaid",
+        env = "MOCK_SERVER_LUDICROUS_SPEED",
+        default_value_t = false
+    )]
     pub ludicrous_speed: bool,
 
     #[arg(
