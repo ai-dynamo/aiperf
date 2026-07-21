@@ -72,6 +72,35 @@ In addition to the per-metric stats blocks, `profile_export_aiperf.json` include
 | `telemetry_data` | object | GPU telemetry summaries when telemetry collection was active. |
 | `error_summary` | array | Per-error counts collected during the run. |
 
+### `telemetry_data`
+
+Schema 1.4 adds a `platform` field to each GPU summary and vendor-scopes GPU
+telemetry metric names. NVIDIA metrics collected through DCGM or pynvml use
+`nvidia_*` names, and AMD metrics collected through amdsmi use `amd_*` names.
+Metric semantics are platform-specific; cross-platform comparisons require
+validation of the workload, collector behavior, and metric definitions.
+
+```json
+"telemetry_data": {
+  "endpoints": {
+    "localhost:9400": {
+      "gpus": {
+        "gpu_0": {
+          "gpu_index": 0,
+          "gpu_name": "NVIDIA H100",
+          "gpu_uuid": "GPU-...",
+          "platform": "nvidia",
+          "metrics": {
+            "nvidia_power_usage": {"unit": "W", "avg": 310.0},
+            "nvidia_gpu_utilization": {"unit": "%", "avg": 85.0}
+          }
+        }
+      }
+    }
+  }
+}
+```
+
 ### `run_info`
 
 Schema 1.2 introduced `run_info` to surface the seed and sweep coordinates needed to reproduce a run from the JSON file alone, without consulting the internal `run_config.json` handoff file. Schema 1.3 extends it with identifiers and the redacted CLI command.
@@ -115,6 +144,7 @@ The current schema version is exported as the top-level `schema_version` field o
 | `1.2` | Added top-level `run_info` block (`random_seed`, `trial`, `run_label`, `variation_label`, `variation_index`, `variation_values`). Backward-compatible: readers that don't need reproducibility can ignore the field. |
 | `1.3` | Added `benchmark_id`, `sweep_id`, and `cli_command` to `run_info`. `benchmark_id` duplicates the top-level field so `run_info` is self-contained; `sweep_id` (UUID4 of the outer sweep) lets readers join all per-run exports from one plan without consulting the parent multi-run artifact directory; `cli_command` records the redacted command line when available. Backward-compatible: nullable fields default to `null` when unavailable. |
 | `1.4` | Added optional top-level `warmup_metrics`, keyed by metric tag, containing metrics computed only from warmup-phase requests. Existing top-level metric fields remain profiling-only. |
+| `1.5` | Added per-GPU telemetry `platform` and renamed built-in NVIDIA GPU telemetry metrics to `nvidia_*`. AMD telemetry remains under `amd_*`. This is a telemetry metric-name breaking change for consumers of `telemetry_data`. |
 
 ### Other JSON exports use independent schema versions
 

@@ -201,6 +201,8 @@ navigation:
         path: ../pages-dev/environment-variables.md
       - page: AIPerf Metrics Reference
         path: ../pages-dev/metrics-reference.md
+      - page: GPU Telemetry & Power-Efficiency Dataflow
+        path: ../pages-dev/reference/gpu-telemetry-metrics-dataflow.md
       - page: Benchmark Datasets
         path: ../pages-dev/benchmark-datasets.md
       - page: Pre-Flight Tokenizer Auto Detection
