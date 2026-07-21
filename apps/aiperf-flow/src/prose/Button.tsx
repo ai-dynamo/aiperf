@@ -9,11 +9,12 @@ import clsx from "clsx";
 export type ButtonVariant = "primary" | "secondary" | "ghost";
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  primary: "bg-accent-primary text-white border-accent-primary hover:opacity-90",
+  primary:
+    "bg-accent-primary text-white border-accent-primary hover:opacity-90 active:opacity-80",
   secondary:
-    "bg-surface-elevated text-ink-primary border-stroke-primary hover:bg-surface-chrome",
+    "bg-surface-elevated text-ink-primary border-stroke-primary hover:bg-surface-chrome hover:border-stroke-secondary active:bg-surface-panel",
   ghost:
-    "bg-transparent text-ink-secondary border-transparent hover:bg-surface-chrome hover:border-stroke-secondary",
+    "bg-transparent text-ink-secondary border-transparent hover:bg-surface-chrome hover:border-stroke-secondary hover:text-ink-primary active:bg-surface-elevated",
 };
 
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -31,8 +32,9 @@ export function Button({
     <button
       type={type}
       className={clsx(
-        "rounded-none border px-4 py-2 text-sm font-semibold transition-colors",
-        "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-inherit",
+        "rounded-none border px-4 py-2 text-sm font-semibold tracking-wide transition-colors duration-150",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-page",
+        "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-inherit disabled:active:bg-inherit",
         VARIANT_CLASSES[variant],
         className,
       )}

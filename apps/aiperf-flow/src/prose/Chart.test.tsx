@@ -38,7 +38,7 @@ describe("BarChart", () => {
   it("uses categoryBgClassName for the bar fill via a static lookup", () => {
     const { container } = render(<BarChart data={DATA} color="purple" />);
     const rect = container.querySelector("rect");
-    expect(rect?.getAttribute("class")).toContain("bg-category-purple");
+    expect(rect?.getAttribute("class")).toContain("fill-category-purple");
   });
 
   it("does not throw and renders no bars for empty data", () => {
@@ -76,7 +76,7 @@ describe("LineChart", () => {
   it("uses categoryBgClassName-derived color for markers via a static lookup", () => {
     const { container } = render(<LineChart data={DATA} color="blue" />);
     const circle = container.querySelector("circle");
-    expect(circle?.getAttribute("class")).toContain("bg-category-blue");
+    expect(circle?.getAttribute("class")).toContain("fill-category-blue");
   });
 
   it("does not throw and renders no polyline for empty data", () => {

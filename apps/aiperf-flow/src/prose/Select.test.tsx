@@ -43,4 +43,16 @@ describe("Select", () => {
     render(<Select options={OPTIONS} value="a" onChange={vi.fn()} className="extra-class" />);
     expect(screen.getByRole("combobox").className).toContain("extra-class");
   });
+
+  it("suppresses native browser chrome so the control is themed, not browser-default", () => {
+    render(<Select options={OPTIONS} value="a" onChange={vi.fn()} />);
+    expect(screen.getByRole("combobox").className).toContain("appearance-none");
+  });
+
+  it("renders a themed chevron indicator alongside the control", () => {
+    const { container } = render(<Select options={OPTIONS} value="a" onChange={vi.fn()} />);
+    const chevron = container.querySelector("svg");
+    expect(chevron).not.toBeNull();
+    expect(chevron).toHaveAttribute("aria-hidden", "true");
+  });
 });

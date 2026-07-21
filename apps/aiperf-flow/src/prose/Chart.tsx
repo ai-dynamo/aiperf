@@ -8,7 +8,23 @@
 
 import clsx from "clsx";
 import type { CategoryRole } from "../theme/tokens.js";
-import { categoryBgClassName, inkClassName, strokeClassName } from "../theme/tokens.js";
+import { inkClassName, strokeClassName } from "../theme/tokens.js";
+
+// `bg-category-*` (from `categoryBgClassName` in theme/tokens.ts) sets CSS `background-color`,
+// which SVG shapes ignore — only the `fill` property paints a <rect>/<circle>. Tailwind still
+// generates `fill-category-*` utilities for the same `--color-category-*` theme tokens, so this
+// mirrors tokens.ts's own static-lookup pattern (see the Tailwind JIT trap in the skill doc)
+// scoped to this file's SVG-only need, keeping every literal class visible to the scanner.
+const CATEGORY_FILL_CLASSES: Record<CategoryRole, string> = {
+  green: "fill-category-green",
+  yellow: "fill-category-yellow",
+  purple: "fill-category-purple",
+  blue: "fill-category-blue",
+  red: "fill-category-red",
+  orange: "fill-category-orange",
+  cyan: "fill-category-cyan",
+  gray: "fill-category-gray",
+};
 
 export type ChartDatum = {
   label: string;
@@ -48,7 +64,7 @@ export function BarChart({
   const maxValue = Math.max(0, ...data.map((d) => d.value));
   const slotWidth = data.length > 0 ? CHART_WIDTH / data.length : CHART_WIDTH;
   const barWidth = Math.max(0, slotWidth - PLOT_PADDING);
-  const fillClassName = categoryBgClassName(color);
+  const fillClassName = CATEGORY_FILL_CLASSES[color];
 
   return (
     <svg
@@ -113,7 +129,7 @@ export function LineChart({
   const maxValue = values.length > 0 ? Math.max(...values) : 0;
   const minValue = values.length > 0 ? Math.min(...values) : 0;
   const valueRange = maxValue - minValue;
-  const fillClassName = categoryBgClassName(color);
+  const fillClassName = CATEGORY_FILL_CLASSES[color];
 
   const points = data.map((d, i) => {
     const x =
@@ -143,6 +159,8 @@ export function LineChart({
           fill="none"
           stroke="currentColor"
           strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
           className={inkClassName("primary")}
         />
       )}

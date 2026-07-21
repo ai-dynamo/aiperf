@@ -33,14 +33,16 @@ export function CollapsibleSection({
         aria-expanded={open}
         onClick={() => setOpen((prev) => !prev)}
         className={clsx(
-          "flex w-full items-center gap-2 rounded-none py-1 text-left text-sm font-semibold",
+          "flex w-full items-center gap-2 rounded-none px-1 py-1.5 text-left text-sm font-semibold transition-colors duration-150",
+          "hover:bg-surface-chrome",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-page",
           inkClassName("primary"),
         )}
       >
         <svg
           viewBox="0 0 16 16"
           aria-hidden="true"
-          className={clsx("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")}
+          className={clsx("h-3 w-3 shrink-0 transition-transform duration-150", open && "rotate-90")}
         >
           <path d="M5 2 L11 8 L5 14" fill="none" stroke="currentColor" strokeWidth="2" />
         </svg>

@@ -25,8 +25,9 @@ export function Code({ children, inline = false, className }: CodeProps): React.
     return (
       <span
         className={clsx(
-          "rounded-none px-1 py-0.5 font-mono text-[0.9em]",
+          "rounded-none border px-1.5 py-0.5 font-mono text-[0.9em]",
           surfaceClassName("panel"),
+          strokeClassName("tertiary"),
           inkClassName("primary"),
           className,
         )}
@@ -39,7 +40,7 @@ export function Code({ children, inline = false, className }: CodeProps): React.
   return (
     <pre
       className={clsx(
-        "overflow-x-auto whitespace-pre rounded-none border p-2.5 font-mono text-xs leading-[18px]",
+        "overflow-x-auto whitespace-pre rounded-none border p-3 font-mono text-xs leading-[18px]",
         surfaceClassName("panel"),
         strokeClassName("secondary"),
         inkClassName("primary"),
