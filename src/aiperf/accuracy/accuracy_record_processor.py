@@ -182,6 +182,7 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         """
         output_parts: list[str] = []
         thinking_parts: list[str] = []
+        fallback_parts: list[str] = []
         for resp in record.content_responses:
             data = resp.data
             if data is None:
@@ -189,15 +190,17 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
             reasoning = getattr(data, "reasoning", None)
             if reasoning:
                 thinking_parts.append(reasoning)
+                fallback_parts.append(reasoning)
             content = getattr(data, "content", None)
             tool_call_text = getattr(data, "tool_call_text", None)
-            if content is not None:
+            if content:
                 output_parts.append(content)
             if tool_call_text:
                 # Tool-call responses grade on content + tool_call_text; keep both.
                 output_parts.append(tool_call_text)
-            elif content is None and reasoning is None:
+            elif not content and reasoning is None:
                 # Plain text data with no reasoning/tool-call channel.
                 output_parts.append(data.get_text())
         thinking = "".join(thinking_parts) if thinking_parts else None
-        return "".join(output_parts), thinking
+        model_output = "".join(output_parts) or "".join(fallback_parts)
+        return model_output, thinking

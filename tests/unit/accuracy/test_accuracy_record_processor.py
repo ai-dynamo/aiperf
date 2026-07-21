@@ -376,3 +376,25 @@ class TestExtractOutputAndThinking:
         output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
         assert output == ""
         assert thinking is None
+
+    def test_reasoning_only_content_none_falls_back_to_reasoning(self) -> None:
+        """content=None with reasoning present → reasoning used as model_output fallback."""
+        from aiperf.common.models.record_models import ReasoningResponseData
+
+        record = self._record(
+            [ReasoningResponseData(content=None, reasoning="Thinking... True")]
+        )
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == "Thinking... True"
+        assert thinking == "Thinking... True"
+
+    def test_reasoning_only_content_empty_falls_back_to_reasoning(self) -> None:
+        """content='' is treated as missing; reasoning used as model_output fallback."""
+        from aiperf.common.models.record_models import ReasoningResponseData
+
+        record = self._record(
+            [ReasoningResponseData(content="", reasoning="Thinking... True")]
+        )
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == "Thinking... True"
+        assert thinking == "Thinking... True"
