@@ -47,6 +47,7 @@ from aiperf.analysis.sweepline import (
     weighted_concurrency_sweep_line,
 )
 from aiperf.common.constants import NANOS_PER_MILLIS, NANOS_PER_SECOND
+from aiperf.common.path_safety import safe_read_template_path
 from aiperf.config.artifacts import OutputDefaults
 
 PROFILE_JSONL = OutputDefaults.PROFILE_EXPORT_JSONL_FILE.name
@@ -1151,10 +1152,13 @@ def write_swim_lane_html(
     # DecompressionStream; base64 is the safe way to carry the binary blob inside
     # a JS string literal (no "</", quote, or non-UTF8 hazards).
     payload_b64 = base64.b64encode(gzip.compress(orjson.dumps(payload), 6)).decode()
-    html = (
-        VIEWER_TEMPLATE.read_text()
-        .replace("__AIPERF_TITLE__", run_dir.name)
-        .replace("__AIPERF_PAYLOAD_B64__", payload_b64)
+    template = safe_read_template_path(str(VIEWER_TEMPLATE))
+    if template is None:
+        raise FileNotFoundError(
+            f"Swim-lane viewer template not readable: {VIEWER_TEMPLATE}"
+        )
+    html = template.replace("__AIPERF_TITLE__", run_dir.name).replace(
+        "__AIPERF_PAYLOAD_B64__", payload_b64
     )
     out_path = out or (run_dir / "swim_lane.html")
     out_path.write_text(html)

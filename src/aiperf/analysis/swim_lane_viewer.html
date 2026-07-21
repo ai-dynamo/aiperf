@@ -1969,7 +1969,7 @@ function restoreHash() {
 }
 // stack every panel canvas into one image for download
 function exportPng() {
-  const list = [rulerCv, lanesCv, islCv, tputCv, kvCv, navCv];
+  const list = [rulerCv, lanesCv, islCv, tputCv, kvCv, latCv, navCv];
   const out = document.createElement("canvas");
   out.width = Math.max(...list.map((c) => c.width));
   out.height = list.reduce((a, c) => a + c.height, 0);
