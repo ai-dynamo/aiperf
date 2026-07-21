@@ -21,6 +21,7 @@ from aiperf.cli_runner._sweep_table import SweepTableLogger
 from aiperf.common.enums import SweepMode
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config.resolution.plan import BenchmarkConfig, BenchmarkPlan
+from aiperf.config.sweep import SweepVariation
 from aiperf.orchestrator.models import RunResult
 
 _MINIMAL_CONFIG_KWARGS = {
@@ -231,6 +232,46 @@ def test_variation_dir_name_nested_dict_values_uses_label():
         )
     ]
     assert _variation_dir_name(key, "aa-1k", group) == "aa-1k"
+
+
+def test_variation_dir_name_matches_per_run_for_sanitizable_label():
+    """Per-run (`SweepVariation.dir_name`) and aggregate (`_variation_dir_name`)
+    must produce the same directory for a sanitizable-but-allowed label such as
+    ``qps:100`` (valid on Linux/macOS, `:` stripped for portability), so a
+    variation's raw runs and its aggregate stay matched."""
+    label = "qps:100"
+    nested = {"benchmark": {"phases": [{"name": "profiling"}]}}
+    variation = SweepVariation(index=1, label=label, values=nested)
+    key = _variation_key(label, nested)
+    group = [
+        RunResult(
+            label="q",
+            success=True,
+            variation_label=label,
+            variation_values=nested,
+            variation_index=1,
+        )
+    ]
+    assert variation.dir_name == _variation_dir_name(key, label, group) == "qps100"
+
+
+def test_variation_dir_name_empty_label_falls_back_to_index():
+    """An all-consumed label sanitizes to "" on both paths; the shared
+    index-based fallback keeps per-run and aggregate matched and non-empty."""
+    label = ".."
+    nested = {"benchmark": {"phases": [{"name": "profiling"}]}}
+    variation = SweepVariation(index=4, label=label, values=nested)
+    key = _variation_key(label, nested)
+    group = [
+        RunResult(
+            label="x",
+            success=True,
+            variation_label=label,
+            variation_values=nested,
+            variation_index=4,
+        )
+    ]
+    assert variation.dir_name == _variation_dir_name(key, label, group) == "variation_4"
 
 
 @pytest.mark.asyncio

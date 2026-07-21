@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import ClassVar
+
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import ConfigDict, Field
@@ -152,6 +154,8 @@ class TelemetryRecord(GpuMetadata):
 
     Inherits from GpuMetadata to avoid duplicating metadata fields.
     """
+
+    record_type: ClassVar[str] = "gpu_telemetry"
 
     timestamp_ns: int = Field(
         description="Nanosecond wall-clock timestamp when telemetry was collected (time_ns)"

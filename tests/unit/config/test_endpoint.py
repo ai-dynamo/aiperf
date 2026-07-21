@@ -42,6 +42,15 @@ def test_endpoint_config_timeout_uses_endpoint_default() -> None:
     assert endpoint.timeout == EndpointDefaults.TIMEOUT
 
 
+def test_uuid_and_strip_rejects_non_chat_endpoint() -> None:
+    with pytest.raises(ValueError, match="requires endpoint type 'chat'"):
+        EndpointConfig(
+            urls=["http://localhost:8000"],
+            type=EndpointType.COMPLETIONS,
+            uuid_and_strip=True,
+        )
+
+
 def _make_model_endpoint(
     base_url: str, transport: TransportType | None = None
 ) -> ModelEndpointInfo:

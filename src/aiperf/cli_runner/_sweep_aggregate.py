@@ -113,16 +113,21 @@ def _variation_dir_name(
         >>> # nested override -> label
         >>> # scalar override  -> "concurrency_10"
     """
-    from aiperf.config.sweep import _format_dir_name
-
-    has_nested = any(
-        isinstance(value, (dict, list))
-        for result in group
-        for value in result.variation_values.values()
+    from aiperf.config.sweep import (
+        _format_dir_name,
+        _is_nested_override,
+        _label_dir_segment,
     )
-    if has_nested:
-        return variation_label
-    return _format_dir_name(dict(_key_values(key))) or variation_label
+
+    # Sanitize the label identically to `SweepVariation.dir_name` so per-run
+    # and aggregate directories match even for sanitizable labels (e.g.
+    # `qps:100` -> `qps100` on both). `variation_index` mirrors the per-run
+    # variation index for the empty-label fallback.
+    index = group[0].variation_index if group else 0
+    fallback = _label_dir_segment(variation_label, index)
+    if any(_is_nested_override(result.variation_values) for result in group):
+        return fallback
+    return _format_dir_name(dict(_key_values(key))) or fallback
 
 
 def _group_results_by_variation(

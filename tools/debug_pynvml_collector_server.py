@@ -145,7 +145,7 @@ class CollectorPynvmlSampler:
                     status_code=503,
                     detail=f"PyNVML collector sampler failed to start: {exc}",
                 ) from exc
-            except Exception as exc:  # noqa: BLE001 - report collector startup failures over HTTP
+            except Exception as exc:  # report collector startup failures over HTTP
                 await self._cleanup_failed_start(collector)
                 raise HTTPException(
                     status_code=503,

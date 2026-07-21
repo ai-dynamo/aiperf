@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 from rich.console import Console
 from rich.panel import Panel
 
+from aiperf.accuracy.models import AccuracySummary
 from aiperf.cli_utils import (
     print_developer_mode_warning,
     warn_accuracy_temperature,
@@ -21,6 +22,7 @@ from aiperf.common.enums import (
     LifecycleState,
     MessageType,
     ServiceRegistrationStatus,
+    parse_result_producer_capability,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
@@ -32,6 +34,8 @@ from aiperf.common.messages import (
     CommandResponse,
     CommandSuccessResponse,
     HeartbeatMessage,
+    ProcessAccuracyResultMessage,
+    ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
     ProcessServerMetricsResultMessage,
     ProcessTelemetryResultMessage,
@@ -60,6 +64,7 @@ from aiperf.config.artifacts import OutputDefaults
 from aiperf.controller.controller_utils import print_exit_errors
 from aiperf.controller.protocols import ServiceManagerProtocol
 from aiperf.controller.proxy_manager import ProxyManager
+from aiperf.controller.result_join_coordinator import ResultJoinCoordinator
 from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.credit.messages import CreditsCompleteMessage
 from aiperf.exporters.exporter_manager import ExporterManager
@@ -158,9 +163,18 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._exit_errors: list[ExitErrorInfo] = []
         self._telemetry_results: TelemetryExportData | None = None
         self._server_metrics_results: ServerMetricsResults | None = None
-        self._profile_results_received = False
-        self._should_wait_for_telemetry = False
-        self._should_wait_for_server_metrics = False
+        self._accuracy_results: AccuracySummary | None = None
+        self._accuracy_results_injected = False
+        # Shared shutdown barrier: every result-producing service that advertises a
+        # ``result_producer:<domain>`` capability at registration joins here, and
+        # each domain must complete before shutdown. A producer that dies (service
+        # error) or reports itself disabled (telemetry/server-metrics status)
+        # unregisters, so it stops blocking. Replaces the per-gate boolean flags.
+        self._result_join_coordinator = ResultJoinCoordinator()
+        # Set when the accuracy result message lands (even with results=None). The
+        # cancel path awaits this to give a graded summary a bounded chance to
+        # arrive; the normal path relies on the barrier alone.
+        self._accuracy_result_arrived = asyncio.Event()
 
         self._shutdown_triggered = False
         self._shutdown_lock = asyncio.Lock()
@@ -251,14 +265,12 @@ class SystemController(SignalHandlerMixin, BaseService):
             await self.service_manager.run_service(ServiceType.GPU_TELEMETRY_MANAGER)
         else:
             self.info("GPU telemetry disabled via --no-gpu-telemetry")
-            self._should_wait_for_telemetry = False
 
         if self.run.cfg.server_metrics.enabled:
             self.debug("Starting optional ServerMetricsManager service")
             await self.service_manager.run_service(ServiceType.SERVER_METRICS_MANAGER)
         else:
             self.info("Server metrics disabled via --no-server-metrics")
-            self._should_wait_for_server_metrics = False
 
         if self.run.cfg.network_latency.should_probe:
             self.debug("Starting optional NetworkLatencyManager service")
@@ -384,6 +396,14 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.service_manager.service_map[message.service_type] = []
         self.service_manager.service_map[message.service_type].append(service_info)
 
+        # Join every result domain this service advertises into the shutdown
+        # barrier. A telemetry/server-metrics producer may later report it is
+        # disabled via its status message, which unregisters the domain again.
+        for capability in message.capabilities:
+            domain = parse_result_producer_capability(capability)
+            if domain is not None:
+                self._result_join_coordinator.register(domain, message.service_id)
+
         try:
             type_name = ServiceType(message.service_type).name.title().replace("_", " ")
         except (TypeError, ValueError):
@@ -449,6 +469,10 @@ class SystemController(SignalHandlerMixin, BaseService):
                 service_id=message.service_id,
             )
         )
+        # A dead producer can no longer join its result domain; drop it from the
+        # barrier so shutdown isn't blocked forever, then re-check readiness.
+        self._result_join_coordinator.unregister_service(message.service_id)
+        await self._check_and_trigger_shutdown()
 
     @on_message(MessageType.STATUS)
     async def _process_status_message(self, message: StatusMessage) -> None:
@@ -498,9 +522,11 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         self._telemetry_endpoints_configured = message.endpoints_configured
         self._telemetry_endpoints_reachable = message.endpoints_reachable
-        self._should_wait_for_telemetry = message.enabled
 
         if not message.enabled:
+            # Advertised the capability at registration but won't actually produce;
+            # drop the domain from the barrier.
+            self._result_join_coordinator.unregister("telemetry", message.service_id)
             reason_msg = f": {message.reason}" if message.reason else ""
             self.info(f"DCGM telemetry skipped{reason_msg}")
         else:
@@ -522,9 +548,11 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         self._server_metrics_endpoints_configured = message.endpoints_configured
         self._server_metrics_endpoints_reachable = message.endpoints_reachable
-        self._should_wait_for_server_metrics = message.enabled
 
         if not message.enabled:
+            self._result_join_coordinator.unregister(
+                "server_metrics", message.service_id
+            )
             reason_msg = f" - {message.reason}" if message.reason else ""
             self.info(f"Server metrics disabled{reason_msg}")
         else:
@@ -586,6 +614,21 @@ class SystemController(SignalHandlerMixin, BaseService):
         if self.scale_record_processors_with_workers:
             await self.service_manager.stop_service(ServiceType.RECORD_PROCESSOR)
 
+    @on_message(MessageType.PROCESS_ALL_RESULTS)
+    async def _on_process_all_results_message(
+        self, message: ProcessAllResultsMessage
+    ) -> None:
+        """Receive the unified results message from RecordsManager.
+
+        Supplements the per-stream PROCESS_RECORDS_RESULT / PROCESS_TELEMETRY_RESULT
+        / PROCESS_SERVER_METRICS_RESULT handlers — those still own the shutdown
+        trigger.
+        """
+        self.trace_or_debug(
+            lambda: f"Received unified results message: {message}",
+            lambda: "Received unified results message",
+        )
+
     @on_message(MessageType.PROCESS_RECORDS_RESULT)
     async def _on_process_records_result_message(
         self, message: ProcessRecordsResultMessage
@@ -615,8 +658,8 @@ class SystemController(SignalHandlerMixin, BaseService):
                 f"Received process records result message with no records: {message.results.results}"
             )
 
-        self._profile_results_received = True
-        # Coordinate with telemetry results before shutdown
+        self._result_join_coordinator.complete_domain("profile")
+        # Coordinate with the remaining result domains before shutdown
         await self._check_and_trigger_shutdown()
 
     @on_message(MessageType.PROCESS_TELEMETRY_RESULT)
@@ -650,7 +693,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         except Exception as e:
             self.exception(f"Error processing telemetry results message: {e!r}")
         finally:
-            self._should_wait_for_telemetry = False
+            self._result_join_coordinator.complete_domain("telemetry")
             await self._check_and_trigger_shutdown()
 
     @on_message(MessageType.PROCESS_SERVER_METRICS_RESULT)
@@ -690,7 +733,21 @@ class SystemController(SignalHandlerMixin, BaseService):
         except Exception as e:
             self.exception(f"Error processing server metrics results message: {e!r}")
         finally:
-            self._should_wait_for_server_metrics = False
+            self._result_join_coordinator.complete_domain("server_metrics")
+            await self._check_and_trigger_shutdown()
+
+    @on_message(MessageType.PROCESS_ACCURACY_RESULT)
+    async def _on_process_accuracy_result_message(
+        self, message: ProcessAccuracyResultMessage
+    ) -> None:
+        """Handle an accuracy results message."""
+        try:
+            self._accuracy_results = message.accuracy_result.results
+        except Exception as e:
+            self.exception(f"Error processing accuracy results message: {e!r}")
+        finally:
+            self._accuracy_result_arrived.set()
+            self._result_join_coordinator.complete_domain("accuracy")
             await self._check_and_trigger_shutdown()
 
     def _is_api_service_alive(self) -> bool:
@@ -728,26 +785,26 @@ class SystemController(SignalHandlerMixin, BaseService):
         )
 
     async def _check_and_trigger_shutdown(self) -> None:
-        """Check if all required results are received and trigger unified export + shutdown.
+        """Trigger unified export + shutdown once every result domain has joined.
 
-        Coordination logic:
-        1. Always wait for profile results (ProcessRecordsResultMessage)
-        2. If telemetry disabled OR telemetry results received → proceed
-        3. If server metrics disabled OR server metrics results received → proceed
-        4. Otherwise → wait (results arrive nearly simultaneously and will call this method again)
+        Readiness is owned by the ``ResultJoinCoordinator`` shutdown barrier: each
+        result-producing service that advertised a ``result_producer:<domain>``
+        capability at registration must ``complete_domain`` (its result arrived) or
+        drop out (service error / reported-disabled) before the barrier is
+        ``ready``. This is called on every result/status/error message so it
+        re-checks as domains complete.
 
-        Thread safety:
-        Uses self._shutdown_lock to prevent race conditions when ProcessRecordsResultMessage,
-        ProcessTelemetryResultMessage, and ProcessServerMetricsResultMessage arrive concurrently.
-        The lock ensures atomic check-and-set of _shutdown_triggered, preventing double-triggering of stop().
+        Thread safety: ``self._shutdown_lock`` makes the check-and-set of
+        ``_shutdown_triggered`` atomic against concurrently-arriving result
+        messages, preventing double-triggering of stop().
         """
         self.debug(
-            f"_check_and_trigger_shutdown: profile_received={self._profile_results_received}, "
-            f"wait_telemetry={self._should_wait_for_telemetry}, telemetry_results={self._telemetry_results is not None}, "
-            f"wait_server_metrics={self._should_wait_for_server_metrics}, server_metrics_results={self._server_metrics_results is not None}, "
-            f"shutdown_triggered={self._shutdown_triggered}"
+            lambda: (
+                "_check_and_trigger_shutdown: "
+                f"pending_domains={self._result_join_coordinator.pending_domains}, "
+                f"shutdown_triggered={self._shutdown_triggered}"
+            )
         )
-        # Check if we should trigger shutdown (with lock protection)
         should_shutdown = False
         async with self._shutdown_lock:
             if self._shutdown_triggered:
@@ -756,31 +813,15 @@ class SystemController(SignalHandlerMixin, BaseService):
                 )
                 return
 
-            if not self._profile_results_received:
-                self.debug(
-                    "_check_and_trigger_shutdown: profile results not received yet"
-                )
-                return
-
-            telemetry_ready_for_shutdown = (
-                not self._should_wait_for_telemetry
-                or self._telemetry_results is not None
-            )
-
-            server_metrics_ready_for_shutdown = (
-                not self._should_wait_for_server_metrics
-                or self._server_metrics_results is not None
-            )
-
-            if telemetry_ready_for_shutdown and server_metrics_ready_for_shutdown:
+            if self._result_join_coordinator.ready:
                 self._shutdown_triggered = True
                 should_shutdown = True
                 self.info("All results received, initiating shutdown")
-            else:
-                if not telemetry_ready_for_shutdown:
-                    self.info("Waiting for telemetry results...")
-                if not server_metrics_ready_for_shutdown:
-                    self.info("Waiting for server metrics results...")
+            elif (
+                pending_domains
+                := self._result_join_coordinator.pending_domains_changed()
+            ) is not None:
+                self.info(f"Waiting for result domains: {', '.join(pending_domains)}")
 
         # Call stop() OUTSIDE the lock to prevent deadlock
         if should_shutdown:
@@ -926,16 +967,45 @@ class SystemController(SignalHandlerMixin, BaseService):
                         )
                     )
                     self._profile_results = response.data
-                    self._profile_results_received = True
                     break
         except Exception as e:
             # Catch ANY exception during cancellation - we must always proceed to stop().
             self.warning(f"Exception during cancel command (proceeding to stop): {e!r}")
 
+        # The normal completion path holds stop() on the accuracy result domain
+        # until RecordsManager publishes ProcessAccuracyResultMessage; the cancel
+        # path bypasses the barrier, so wait a bounded time here for the graded
+        # summary to arrive before exporting (otherwise a cancelled accuracy run
+        # can export with accuracy.* rows missing).
+        if (
+            should_call_stop
+            and "accuracy" in self._result_join_coordinator.pending_domains
+        ):
+            await self._await_accuracy_results_for_cancel()
+
         # Only call stop() if we were the first to trigger shutdown
         if should_call_stop:
             self.debug("Stopping system controller after profiling cancelled")
             await asyncio.shield(self.stop())
+
+    async def _await_accuracy_results_for_cancel(self) -> None:
+        """Bounded wait for the accuracy summary on the cancel (Ctrl+C) path.
+
+        Waits up to ``Environment.ACCURACY.CANCEL_RESULT_WAIT_SEC`` for
+        RecordsManager's ``ProcessAccuracyResultMessage`` to land, returning as
+        soon as it does. Awaits ``_accuracy_result_arrived`` (set even on a
+        ``results=None`` empty run) so the wait ends on message arrival, not on
+        the results field.
+        """
+        timeout = Environment.ACCURACY.CANCEL_RESULT_WAIT_SEC
+        try:
+            await asyncio.wait_for(self._accuracy_result_arrived.wait(), timeout)
+            self.debug("Accuracy results arrived during cancel wait")
+        except TimeoutError:
+            self.warning(
+                "Accuracy results did not arrive within "
+                f"{timeout}s of cancellation; export may omit accuracy metrics"
+            )
 
     @on_stop
     async def _stop_system_controller(self) -> None:
@@ -999,7 +1069,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             # mask MemoryError, AssertionError from test injection, and any
             # other real bugs in the reporting code path.
             self.error(f"Post-shutdown reporting failed (continuing to exit): {e!r}")
-        except Exception:  # noqa: BLE001 - last-chance guard; logs full traceback
+        except Exception:  # last-chance guard; logs full traceback
             # Anything else: log full traceback to the file handler so the
             # bug is recoverable instead of being reduced to a one-line repr.
             self.exception(
@@ -1019,6 +1089,25 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._print_log_file_info(console)
         console.print()
         console.file.flush()
+
+    def _inject_accuracy_results_into_records(self) -> None:
+        """Materialize the dedicated-channel accuracy summary into the profile records.
+
+        The accuracy computation/transport lives on its own dedicated channel
+        (``AccuracyAccumulator`` -> ``AccuracySummary``), but legacy exporters
+        (perf CSV/JSON + the accuracy CSV/console) read ``accuracy.*`` MetricResults
+        from ``ProfileResults.records``. Convert the summary to those MetricResults
+        and append them at the END (so JSON key order matches legacy: accuracy.*
+        after all perf metrics). Guarded so a re-export cannot double-append.
+        """
+        if self._accuracy_results is None or self._accuracy_results_injected:
+            return
+        if not self._profile_results or self._profile_results.results.records is None:
+            return
+        self._profile_results.results.records.extend(
+            self._accuracy_results.to_metric_results()
+        )
+        self._accuracy_results_injected = True
 
     async def _print_post_benchmark_info_and_metrics(self) -> None:
         """Print post benchmark info and metrics to the console."""
@@ -1069,6 +1158,8 @@ class SystemController(SignalHandlerMixin, BaseService):
         console = Console()
         if console.width < 100:
             console.width = 100
+
+        self._inject_accuracy_results_into_records()
 
         exporter_manager = ExporterManager(
             results=self._profile_results.results,

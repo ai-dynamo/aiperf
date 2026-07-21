@@ -335,7 +335,7 @@ try:  # pragma: no cover -- import-order glue
     SearchRecipeOutput.model_rebuild(
         _types_namespace={"AdaptiveSearchSweep": _AdaptiveSearchSweep}
     )
-except Exception:  # noqa: BLE001, S110 - import-order glue: catch ANY error from a partially-loaded sweep module so we degrade silently. The bottom-of-file hook in `aiperf.config.sweep` re-runs the rebuild once that module finishes initializing; nothing here is recoverable on the failing call, so logging would just spam the import path.
+except Exception:  # noqa: S110 - import-order glue: catch ANY error from a partially-loaded sweep module so we degrade silently. The bottom-of-file hook in `aiperf.config.sweep` re-runs the rebuild once that module finishes initializing; nothing here is recoverable on the failing call, so logging would just spam the import path.
     # Sweep module not yet fully loaded; the rebuild will be re-attempted
     # from the bottom of `aiperf.config.sweep` once it finishes initializing.
     pass

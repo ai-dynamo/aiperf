@@ -459,3 +459,143 @@ class TestSSLVerificationWithServer:
                 assert data["status"] == "ok"
         finally:
             await connector.close()
+
+
+class TestSocketBufferFallback:
+    """Test suite for socket buffer fallback handling."""
+
+    @pytest.fixture(autouse=True)
+    def clear_socket_buffer_fallback_logs(self) -> None:
+        """Reset socket buffer fallback log rate limiting between tests."""
+        from aiperf.transports.http_defaults import SocketDefaults
+
+        SocketDefaults._logged_buffer_fallbacks.clear()
+
+    def test_socket_buffer_falls_back_when_os_rejects_large_value(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test socket buffer setup retries smaller values after ENOBUFS."""
+        import errno
+        import logging
+
+        from aiperf.transports.http_defaults import SocketDefaults
+
+        mock_socket = Mock()
+        mock_socket.setsockopt.side_effect = [
+            OSError(errno.ENOBUFS, "No buffer space available"),
+            OSError(errno.ENOBUFS, "No buffer space available"),
+            None,
+        ]
+
+        with caplog.at_level(logging.WARNING):
+            SocketDefaults._set_socket_buffer(mock_socket, socket.SO_RCVBUF, 4096)
+
+        assert mock_socket.setsockopt.call_args_list == [
+            ((socket.SOL_SOCKET, socket.SO_RCVBUF, 4096),),
+            ((socket.SOL_SOCKET, socket.SO_RCVBUF, 2048),),
+            ((socket.SOL_SOCKET, socket.SO_RCVBUF, 1024),),
+        ]
+        assert (
+            "SO_RCVBUF=4096 was rejected by the OS with ENOBUFS; using 1024 instead"
+        ) in caplog.text
+
+    def test_socket_buffer_reraises_non_buffer_errors(self) -> None:
+        """Test socket buffer setup only handles ENOBUFS."""
+        import errno
+
+        from aiperf.transports.http_defaults import SocketDefaults
+
+        mock_socket = Mock()
+        mock_socket.setsockopt.side_effect = OSError(errno.EPERM, "blocked")
+
+        with pytest.raises(OSError):
+            SocketDefaults._set_socket_buffer(mock_socket, socket.SO_RCVBUF, 4096)
+
+    def test_socket_buffer_logs_error_when_minimum_fallback_fails(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test socket buffer setup logs before raising after minimum fallback."""
+        import errno
+        import logging
+
+        from aiperf.transports.http_defaults import SocketDefaults
+
+        mock_socket = Mock()
+        mock_socket.setsockopt.side_effect = OSError(
+            errno.ENOBUFS, "No buffer space available"
+        )
+
+        with caplog.at_level(logging.ERROR), pytest.raises(OSError):
+            SocketDefaults._set_socket_buffer(mock_socket, socket.SO_SNDBUF, 1024)
+
+        assert (
+            "Failed to set SO_SNDBUF socket buffer at minimum fallback size 1024"
+        ) in caplog.text
+
+    @pytest.mark.parametrize(
+        "option_name,expected_label",
+        [
+            (socket.SO_RCVBUF, "SO_RCVBUF"),
+            (socket.SO_SNDBUF, "SO_SNDBUF"),
+        ],
+    )
+    def test_socket_buffer_fallback_warning_uses_readable_option_label(
+        self,
+        option_name: int,
+        expected_label: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Test socket buffer fallback warnings use readable socket option labels."""
+        import errno
+        import logging
+
+        from aiperf.transports.http_defaults import SocketDefaults
+
+        mock_socket = Mock()
+        mock_socket.setsockopt.side_effect = [
+            OSError(errno.ENOBUFS, "No buffer space available"),
+            None,
+        ]
+
+        with caplog.at_level(logging.WARNING):
+            SocketDefaults._set_socket_buffer(mock_socket, option_name, 4096)
+
+        assert (
+            f"{expected_label}=4096 was rejected by the OS with ENOBUFS; "
+            "using 2048 instead"
+        ) in caplog.text
+
+    def test_unknown_socket_option_label_falls_back_to_numeric_value(self) -> None:
+        """Test unknown socket option labels fall back to their numeric value."""
+        from aiperf.transports.http_defaults import _get_socket_option_label
+
+        assert _get_socket_option_label(999_999) == "999999"
+
+    def test_socket_buffer_fallback_warning_is_logged_once_per_tuple(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test repeated socket buffer fallbacks do not duplicate warnings."""
+        import errno
+        import logging
+
+        from aiperf.transports.http_defaults import SocketDefaults
+
+        first_socket = Mock()
+        first_socket.setsockopt.side_effect = [
+            OSError(errno.ENOBUFS, "No buffer space available"),
+            None,
+        ]
+        second_socket = Mock()
+        second_socket.setsockopt.side_effect = [
+            OSError(errno.ENOBUFS, "No buffer space available"),
+            None,
+        ]
+
+        with caplog.at_level(logging.WARNING):
+            SocketDefaults._set_socket_buffer(first_socket, socket.SO_RCVBUF, 4096)
+            SocketDefaults._set_socket_buffer(second_socket, socket.SO_RCVBUF, 4096)
+
+        warning = (
+            "SO_RCVBUF=4096 was rejected by the OS with ENOBUFS; using 2048 instead"
+        )
+        assert caplog.text.count(warning) == 1

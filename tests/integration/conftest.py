@@ -298,7 +298,7 @@ async def create_server(**kwargs: Any) -> AsyncIterator[AIPerfMockServer]:
                         raise RuntimeError(
                             f"AIPerf Mock Server failed to start (exit code: {process.poll()})"
                         )
-                except (aiohttp.ClientError, asyncio.TimeoutError):
+                except (TimeoutError, aiohttp.ClientError):
                     pass
                 await asyncio.sleep(0.1)
             else:
@@ -312,7 +312,7 @@ async def create_server(**kwargs: Any) -> AsyncIterator[AIPerfMockServer]:
                             asyncio.to_thread(process.join, timeout=5.0),
                             timeout=5.0,
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         process.kill()
                 raise RuntimeError(
                     f"AIPerf Mock Server failed to become healthy after 100 attempts "
@@ -328,7 +328,7 @@ async def create_server(**kwargs: Any) -> AsyncIterator[AIPerfMockServer]:
                     ) as resp:
                         if resp.status == 200:
                             break
-                except (aiohttp.ClientError, asyncio.TimeoutError):
+                except (TimeoutError, aiohttp.ClientError):
                     pass
                 await asyncio.sleep(0.1)
             else:
@@ -353,7 +353,7 @@ async def create_server(**kwargs: Any) -> AsyncIterator[AIPerfMockServer]:
                     asyncio.to_thread(process.join, timeout=5.0),
                     timeout=5.0,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 process.kill()
 
 
@@ -440,7 +440,7 @@ async def aiperf_runner(
             )
             stdout = stdout_bytes.decode("utf-8", errors="replace")
             stderr = stderr_bytes.decode("utf-8", errors="replace")
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             _logger.warning(f"AIPerf timed out after {timeout}s, sending SIGINT")
             _cancel_aiperf_for_timeout(process)
             try:
@@ -449,7 +449,7 @@ async def aiperf_runner(
                 )
                 stdout = stdout_bytes.decode("utf-8", errors="replace")
                 stderr = stderr_bytes.decode("utf-8", errors="replace")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 _logger.warning(
                     "Process did not exit after SIGINT, sending SIGTERM to process group"
                 )
@@ -460,7 +460,7 @@ async def aiperf_runner(
                     )
                     stdout = stdout_bytes.decode("utf-8", errors="replace")
                     stderr = stderr_bytes.decode("utf-8", errors="replace")
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     _logger.warning(
                         "Process did not exit after SIGTERM, sending SIGKILL to process group"
                     )
@@ -567,7 +567,7 @@ class AIPerfSignalCLI:
                             )
                             profiling_started = True
                             break
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         # Timeout reading line, continue checking
                         continue
 
@@ -593,7 +593,7 @@ class AIPerfSignalCLI:
                 # Wait for graceful shutdown
                 try:
                     await asyncio.wait_for(process.wait(), timeout=30.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     _logger.warning(
                         "Process did not exit after SIGINT, sending SIGKILL to process group"
                     )

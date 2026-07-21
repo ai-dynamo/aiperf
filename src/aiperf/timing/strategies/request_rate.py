@@ -285,7 +285,7 @@ class RequestRateStrategy(AIPerfLoggerMixin):
                 await self._branch_orchestrator.on_child_stopped(
                     child_returning_credit.x_correlation_id
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 self.exception(
                     f"on_child_stopped failed for x_correlation_id="
                     f"{child_returning_credit.x_correlation_id}"

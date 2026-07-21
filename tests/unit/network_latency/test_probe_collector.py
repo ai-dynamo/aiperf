@@ -10,7 +10,6 @@ socket. Every probe must produce exactly one NetworkLatencySample and never rais
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -88,7 +87,7 @@ class TestProbeOnceFailure:
         "exc",
         [
             ConnectionRefusedError("refused"),
-            asyncio.TimeoutError(),
+            TimeoutError(),
             OSError("network unreachable"),
         ],
     )  # fmt: skip
@@ -136,7 +135,7 @@ class TestProbeOnceFailure:
 
         with patch(
             "aiperf.network_latency.probe.asyncio.wait_for",
-            AsyncMock(side_effect=asyncio.TimeoutError()),
+            AsyncMock(side_effect=TimeoutError()),
         ):
             await collector.probe_once()
 

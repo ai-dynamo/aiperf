@@ -130,17 +130,13 @@ class AccuracyConsoleExporter(AIPerfLoggerMixin):
             and int(unparsed_overall.sum) >= int(unparsed_overall.count)
         ):
             return
+        # Console-only diagnostic: export() legitimately runs once per target
+        # console (fixed-width recording pass + live terminal pass), so it
+        # must not carry side effects beyond the passed console.
         console.print(
             "[bold yellow]Warning:[/bold yellow] every accuracy "
             "response was unparsed (accuracy=0). The grader could "
             "not extract an answer from any model output. Verify "
             "the inference server returns valid completions for "
             "this benchmark before trusting the accuracy CSV."
-        )
-        self.warning(
-            "All %d accuracy responses were unparsed; grader "
-            "extracted no answers. Likely the inference server "
-            "is returning unexpected output (e.g. mock server). "
-            "accuracy_results.csv will report 0%% for every task.",
-            int(unparsed_overall.count),
         )

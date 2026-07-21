@@ -358,16 +358,29 @@ def assert_concurrency_limit_hit(
     result: AIPerfResults,
     limit: int,
     prefill: bool = False,
+    tolerance: int = 1,
 ) -> None:
     """Assert concurrency limit was actually reached (not artificially low).
 
     This validates that the test configuration was correct and the limit
     was exercised, not just respected.
 
+    The observed peak is allowed to fall up to ``tolerance`` below ``limit``.
+    Hitting the exact ceiling requires a moment where all ``limit`` slots are
+    simultaneously in flight, which is probabilistic under stochastic arrival
+    patterns (Poisson/gamma) and on slower CI runners (e.g. Windows). A peak of
+    ``limit - 1`` still proves the cap was meaningfully exercised; an
+    artificially-low config (peak well below the cap) still fails. Limits of 2
+    or less must be hit exactly, and larger limits never accept a peak below 2,
+    so the assertion always proves at least two requests actually overlapped.
+    The never-exceed invariant is checked separately by
+    ``assert_concurrency_limit_respected``.
+
     Args:
         result: Test result
         limit: Expected concurrency limit that should be reached
         prefill: If True, check prefill concurrency; else check total concurrency
+        tolerance: Max allowed shortfall below ``limit`` (default 1).
     """
     analyzer = ConcurrencyAnalyzer(result)
     max_concurrent = (
@@ -376,8 +389,10 @@ def assert_concurrency_limit_hit(
         else analyzer.get_max_concurrent()
     )
     limit_type = "prefill" if prefill else "total"
-    assert max_concurrent == limit, (
-        f"Max {limit_type} concurrency {max_concurrent} did not reach limit {limit}. "
+    required = max(limit - tolerance, min(limit, 2))
+    assert max_concurrent >= required, (
+        f"Max {limit_type} concurrency {max_concurrent} did not approach limit "
+        f"{limit} (required >= {required}, tolerance {tolerance}). "
         f"Test configuration may be incorrect (QPS too low, not enough sessions, etc.)"
     )
 

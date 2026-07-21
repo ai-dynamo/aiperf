@@ -32,9 +32,10 @@ def _load_cyclopts_parameter() -> type:
     raise ImportError("cyclopts.Parameter is not available in this cyclopts version")
 
 
+from typing import Self  # noqa: E402
+
 from pydantic import Field, model_validator  # noqa: E402
 from pydantic_settings import BaseSettings, SettingsConfigDict  # noqa: E402
-from typing_extensions import Self  # noqa: E402
 
 Parameter = _load_cyclopts_parameter()
 
@@ -372,11 +373,34 @@ class MockServerConfig(BaseSettings):
         Parameter(name=("--fast", "-f")),
     ] = False
 
+    anthropic_split_usage: Annotated[
+        bool,
+        Field(
+            description="Emit the docs-canonical split streaming usage on "
+            "/v1/messages (message_start carries the input side, message_delta "
+            "carries output_tokens only) instead of the modern cumulative "
+            "shape that api.anthropic.com and Dynamo emit today."
+        ),
+        Parameter(name="--anthropic-split-usage"),
+    ] = False
+
     access_logs: Annotated[
         bool,
         Field(description="Enable HTTP access logs"),
         Parameter(name="--access-logs"),
     ] = False
+
+    api_key: Annotated[
+        str | None,
+        Field(description="API key required for inference endpoint requests"),
+        Parameter(name="--api-key"),
+    ] = None
+
+    auth_header_name: Annotated[
+        str,
+        Field(description="Header name used for mock server API key authentication"),
+        Parameter(name="--auth-header-name"),
+    ] = "Authorization"
 
     error_rate: Annotated[
         float,
@@ -534,6 +558,11 @@ class MockServerConfig(BaseSettings):
 server_config: MockServerConfig = MockServerConfig()
 
 
+def public_config_dump(config: MockServerConfig) -> dict[str, Any]:
+    """Return configuration safe for unauthenticated responses and logs."""
+    return config.model_dump(exclude={"api_key"})
+
+
 def set_server_config(config: MockServerConfig) -> None:
     """Set server configuration and propagate to environment variables."""
     global server_config
@@ -547,13 +576,24 @@ def _propagate_config_to_env(config: MockServerConfig) -> None:
         if value is not None:
             env_key = _get_env_key(key)
             env_value = _serialize_env_value(value)
-            logger.debug("Setting environment variable: %s = %s", env_key, env_value)
+            logger.debug(
+                "Setting environment variable: %s = %s",
+                env_key,
+                _env_log_value(key, env_value),
+            )
             os.environ[env_key] = env_value
 
 
 def _get_env_key(config_key: str) -> str:
     """Convert config key to environment variable name."""
     return f"MOCK_SERVER_{config_key.upper()}"
+
+
+def _env_log_value(key: str, value: str) -> str:
+    """Return an environment value safe for debug logs."""
+    if key == "api_key":
+        return "<redacted>"
+    return value
 
 
 def _serialize_env_value(value: Any) -> str:
