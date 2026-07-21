@@ -97,7 +97,7 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --gpu-telemetry {custom_gpu_metrics_csv} {" ".join(aiperf_mock_server.dcgm_urls)} \
                 --benchmark-duration 2 \
@@ -185,7 +185,7 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --gpu-telemetry {custom_gpu_metrics_csv_with_defaults} {" ".join(aiperf_mock_server.dcgm_urls)} \
                 --benchmark-duration 2 \
@@ -231,7 +231,7 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --gpu-telemetry {custom_gpu_metrics_csv_invalid} {" ".join(aiperf_mock_server.dcgm_urls)} \
                 --benchmark-duration 2 \
@@ -263,7 +263,7 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --gpu-telemetry {nonexistent_csv} {" ".join(aiperf_mock_server.dcgm_urls)} \
                 --request-count 10 \
