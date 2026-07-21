@@ -53,12 +53,12 @@ class BasePhaseStats(AIPerfBaseModel):
     baseline_start_ns: int | None = Field(
         default=None,
         ge=0,
-        description="The timestamp after the phase START baseline gate completed, when available.",
+        description="The timestamp after the phase START baseline request was published, when available.",
     )
     baseline_end_ns: int | None = Field(
         default=None,
         ge=0,
-        description="The timestamp after the phase END baseline gate completed, when available.",
+        description="The timestamp after the phase END baseline request was published, when available.",
     )
 
     # Expectation / stop condition fields

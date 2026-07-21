@@ -142,10 +142,10 @@ def make_credit_return(
 
 
 class TestPhaseRegistration:
-    """Tests for phase registration and unregistration."""
+    """Tests for phase registration."""
 
-    def test_register_and_unregister_phase(self, callback_handler):
-        """Register and unregister phase correctly updates handlers."""
+    def test_register_phase_updates_handlers(self, callback_handler):
+        """Register phase correctly updates handlers."""
         progress = MagicMock()
         progress.all_credits_returned_event = asyncio.Event()
 
@@ -158,9 +158,6 @@ class TestPhaseRegistration:
         )
 
         assert CreditPhase.PROFILING in callback_handler._phase_handlers
-
-        callback_handler.unregister_phase(CreditPhase.PROFILING)
-        assert CreditPhase.PROFILING not in callback_handler._phase_handlers
 
     async def test_register_phase_same_kind_phases_uses_runtime_index(
         self,

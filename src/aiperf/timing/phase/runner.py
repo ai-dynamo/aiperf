@@ -293,17 +293,19 @@ class PhaseRunner(TaskManagerMixin):
 
     def _capture_baseline_boundary(self, phase_id: str, kind: BaselineKind) -> int:
         boundary_ns = time.time_ns()
-        self.execute_async(
-            self._phase_publisher.publish_phase_baseline_request(
-                self._config, phase_id, kind
-            )
-        )
+        self.execute_async(self._publish_phase_baseline_request(phase_id, kind))
         return boundary_ns
 
     async def _capture_baseline_boundary_before_completion(
         self, phase_id: str, kind: BaselineKind
     ) -> int:
         boundary_ns = time.time_ns()
+        await self._publish_phase_baseline_request(phase_id, kind)
+        return boundary_ns
+
+    async def _publish_phase_baseline_request(
+        self, phase_id: str, kind: BaselineKind
+    ) -> None:
         try:
             await self._phase_publisher.publish_phase_baseline_request(
                 self._config, phase_id, kind
@@ -313,7 +315,6 @@ class PhaseRunner(TaskManagerMixin):
                 f"Failed to publish {kind.value} phase baseline request for "
                 f"phase {self._config.phase}: {exc}"
             )
-        return boundary_ns
 
     async def run(
         self,

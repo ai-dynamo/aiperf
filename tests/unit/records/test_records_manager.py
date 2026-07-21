@@ -321,6 +321,87 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         assert results[0].telemetry_warnings == []
         assert results[0].server_metrics_warnings == []
 
+    def test_multi_profiling_aggregate_rates_use_active_phase_duration(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        first_tracker = MagicMock()
+        first_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=0,
+            profiling_index=0,
+            phase_name="low",
+            phase_kind="profiling",
+            start_ns=1_000_000_000,
+            requests_end_ns=2_000_000_000,
+        )
+        second_tracker = MagicMock()
+        second_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=2,
+            profiling_index=1,
+            phase_name="storm",
+            phase_kind="profiling",
+            start_ns=7_000_000_000,
+            requests_end_ns=9_000_000_000,
+        )
+        manager._has_multiple_profiling_phases = lambda: True
+        manager._records_tracker = MagicMock()
+        manager._records_tracker._phase_trackers = {
+            (CreditPhase.PROFILING, 0): first_tracker,
+            (CreditPhase.PROFILING, 2): second_tracker,
+        }
+        records = [
+            MetricResult(
+                tag="benchmark_duration",
+                header="Benchmark Duration",
+                unit="ns",
+                avg=8_000_000_000,
+            ),
+            MetricResult(
+                tag="request_count", header="Request Count", unit="requests", avg=60
+            ),
+            MetricResult(
+                tag="request_throughput",
+                header="Request Throughput",
+                unit="requests/sec",
+                avg=7.5,
+            ),
+            MetricResult(
+                tag="total_isl", header="Total ISL", unit="tokens", avg=120
+            ),
+            MetricResult(
+                tag="total_osl", header="Total OSL", unit="tokens", avg=30
+            ),
+            MetricResult(
+                tag="input_token_throughput",
+                header="Input Token Throughput",
+                unit="tokens/sec",
+                avg=15,
+            ),
+            MetricResult(
+                tag="output_token_throughput",
+                header="Output Token Throughput",
+                unit="tokens/sec",
+                avg=3.75,
+            ),
+            MetricResult(
+                tag="total_token_throughput",
+                header="Total Token Throughput",
+                unit="tokens/sec",
+                avg=18.75,
+            ),
+        ]
+
+        RecordsManager._adjust_multi_profiling_aggregate_rates(
+            manager, CreditPhase.PROFILING, records
+        )
+
+        by_tag = {result.tag: result for result in records}
+        assert by_tag["benchmark_duration"].avg == 3
+        assert by_tag["request_throughput"].avg == 20
+        assert by_tag["input_token_throughput"].avg == 40
+        assert by_tag["output_token_throughput"].avg == 10
+        assert by_tag["total_token_throughput"].avg == 50
+
     @pytest.mark.asyncio
     async def test_disabled_observability_skips_phase_exports(self) -> None:
         manager = RecordsManager.__new__(RecordsManager)

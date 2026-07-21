@@ -196,24 +196,6 @@ class CreditCallbackHandler:
             lambda: f"Registered callback handler for phase {phase} key={key}"
         )
 
-    def unregister_phase(
-        self, phase: CreditPhase, phase_index: int | None = None
-    ) -> None:
-        """Unregister phase when done.
-
-        Called by PhaseRunner after phase completes.
-        Late arrivals after unregister are logged but ignored.
-
-        Args:
-            phase: Phase to unregister.
-        """
-        key = self._phase_key(phase, phase_index)
-        if key in self._phase_handlers:
-            del self._phase_handlers[key]
-            _logger.debug(
-                lambda: f"Unregistered callback handler for phase {phase} key={key}"
-            )
-
     async def on_credit_return(
         self, worker_id: str, credit_return: CreditReturn
     ) -> None:

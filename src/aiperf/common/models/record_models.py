@@ -322,12 +322,12 @@ class PhaseProfileResults(AIPerfBaseModel):
     baseline_start_ns: int | None = Field(
         default=None,
         ge=0,
-        description="Phase START baseline gate completion time in nanoseconds, when available.",
+        description="Phase START baseline request publish time in nanoseconds, when available.",
     )
     baseline_end_ns: int | None = Field(
         default=None,
         ge=0,
-        description="Phase END baseline gate completion time in nanoseconds, when available.",
+        description="Phase END baseline request publish time in nanoseconds, when available.",
     )
     was_cancelled: bool = Field(
         default=False, description="Whether this phase was cancelled early."

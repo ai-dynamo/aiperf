@@ -61,6 +61,7 @@ from aiperf.common.models import (
     TimesliceResult,
     WorkerProcessingStats,
 )
+from aiperf.common.types import MetricTagT
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.config.comm import ZMQDualBindConfig
 from aiperf.credit.messages import (
@@ -577,14 +578,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return False
         return sum(1 for phase in phases if phase.kind == "profiling") > 1
 
-    def _check_all_records_received(
-        self, phase: CreditPhase, phase_index: int | None = None
-    ) -> bool:
-        """Check record completion, aggregating only for multi-profiling runs."""
-        if phase == CreditPhase.PROFILING and self._has_multiple_profiling_phases():
-            return self._records_tracker.check_and_set_all_records_received_for_phase(
-                phase
-            )
+    def _check_all_records_received(self, phase: CreditPhase) -> bool:
+        """Check record completion for a phase kind."""
         return self._records_tracker.check_and_set_all_records_received_for_phase(phase)
 
     @on_pull_message(MessageType.RECORDS)
@@ -629,7 +624,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 or not self._has_multiple_profiling_phases()
                 or self._credits_complete_received
             )
-            and self._check_all_records_received(phase, message.metadata.phase_index)
+            and self._check_all_records_received(phase)
         ):
             await self._handle_all_records_received_once(phase)
 
@@ -836,9 +831,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             message.stats.phase != CreditPhase.PROFILING
             or not self._has_multiple_profiling_phases()
             or self._credits_complete_received
-        ) and self._check_all_records_received(
-            message.stats.phase, message.stats.phase_index
-        ):
+        ) and self._check_all_records_received(message.stats.phase):
             await self._handle_all_records_received_once(message.stats.phase)
 
     def _snapshot_branch_stats(self, phase: CreditPhase) -> BranchStats | None:
@@ -1277,7 +1270,74 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
             if ts:
                 timeslices = ts
+        self._adjust_multi_profiling_aggregate_rates(phase, records_results)
         return records_results, timeslices, error_results, summary_ctx
+
+    def _adjust_multi_profiling_aggregate_rates(
+        self, phase: CreditPhase, records_results: list[MetricResult]
+    ) -> None:
+        if phase != CreditPhase.PROFILING or not self._has_multiple_profiling_phases():
+            return
+        duration_ns = self._profiling_active_duration_ns()
+        if not duration_ns:
+            return
+        by_tag = {result.tag: result for result in records_results}
+        duration_sec = duration_ns / NANOS_PER_SECOND
+        self._set_metric_avg(by_tag, "benchmark_duration", duration_sec)
+        self._set_rate_metric(by_tag, "request_throughput", "request_count", duration_sec)
+        self._set_rate_metric(
+            by_tag, "input_token_throughput", "total_isl", duration_sec
+        )
+        self._set_rate_metric(
+            by_tag, "output_token_throughput", "total_osl", duration_sec
+        )
+        self._set_rate_metric(by_tag, "goodput", "good_request_count", duration_sec)
+
+        total_isl = self._metric_avg(by_tag, "total_isl")
+        total_osl = self._metric_avg(by_tag, "total_osl")
+        if total_isl is not None and total_osl is not None:
+            self._set_metric_avg(
+                by_tag, "total_token_throughput", (total_isl + total_osl) / duration_sec
+            )
+
+    def _profiling_active_duration_ns(self) -> int | None:
+        total = 0
+        for stats in self._iter_concrete_phase_stats(CreditPhase.PROFILING):
+            if stats.start_ns is None or stats.requests_end_ns is None:
+                continue
+            duration = stats.requests_end_ns - stats.start_ns
+            if duration > 0:
+                total += duration
+        return total or None
+
+    @staticmethod
+    def _metric_avg(
+        by_tag: dict[MetricTagT, MetricResult], tag: MetricTagT
+    ) -> float | None:
+        result = by_tag.get(tag)
+        value = getattr(result, "avg", None)
+        return float(value) if value is not None else None
+
+    @classmethod
+    def _set_rate_metric(
+        cls,
+        by_tag: dict[MetricTagT, MetricResult],
+        rate_tag: MetricTagT,
+        numerator_tag: MetricTagT,
+        duration_sec: float,
+    ) -> None:
+        numerator = cls._metric_avg(by_tag, numerator_tag)
+        if numerator is None:
+            return
+        cls._set_metric_avg(by_tag, rate_tag, numerator / duration_sec)
+
+    @staticmethod
+    def _set_metric_avg(
+        by_tag: dict[MetricTagT, MetricResult], tag: MetricTagT, value: float
+    ) -> None:
+        result = by_tag.get(tag)
+        if result is not None:
+            result.avg = value
 
     def _create_result_stats_for_phase(self, phase: CreditPhase) -> PhaseRecordsStats:
         if phase == CreditPhase.PROFILING and self._has_multiple_profiling_phases():
