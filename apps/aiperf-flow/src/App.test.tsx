@@ -8,8 +8,9 @@ import { describe, expect, it } from "vitest";
 import { App } from "./App.js";
 
 describe("App", () => {
-  it("renders the placeholder heading", () => {
+  it("renders a not-found message when no deck route matches", () => {
+    window.history.pushState({}, "", "/unregistered-deck");
     render(<App />);
-    expect(screen.getByText("AIPerf Flow")).toBeInTheDocument();
+    expect(screen.getByText(/no deck registered/i)).toBeInTheDocument();
   });
 });

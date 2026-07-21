@@ -3,8 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { FlowSmoke } from "./smoke/FlowSmoke.js";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { DeckRoute } from "./deck/DeckRoute.js";
 
 export function App(): React.JSX.Element {
-  return <FlowSmoke />;
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/:deckId" element={<DeckRoute />} />
+      </Routes>
+    </BrowserRouter>
+  );
 }
