@@ -353,8 +353,8 @@ class TestRecordsManagerMetricRecordDispatchErrors:
             MetricResult(
                 tag="benchmark_duration",
                 header="Benchmark Duration",
-                unit="ns",
-                avg=8_000_000_000,
+                unit="sec",
+                avg=8,
             ),
             MetricResult(
                 tag="request_count", header="Request Count", unit="requests", avg=60
