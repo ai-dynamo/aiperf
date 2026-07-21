@@ -12,11 +12,13 @@
 //! the outgoing request body.
 //!
 //! Scope cut from the Python loader: `--trace-session-sample-ratio` (RNG
-//! session subsampling) and Synthesizer integration are not ported. Python
-//! itself already rejects every synthesis knob except a no-op default for
-//! this loader (prompt reshaping would desync the forwarded `hash_ids` KV
-//! hints), so this loader rejects any non-default synthesis config
-//! up front, matching that same conservative intent.
+//! session subsampling) and Synthesizer integration are not ported. Trace
+//! synthesis is already rejected for this loader before it ever reaches
+//! composition -- `engine/execute.rs`'s `build_file_dataset` only allows
+//! synthesis for `mooncake_trace`/`bailian_trace`/`burst_gpt`, so any
+//! `--synthesis-*` config on `baseten_trace` errors at the engine layer
+//! (matching Python's conservative rejection: prompt reshaping would desync
+//! the forwarded `hash_ids` KV hints from the verbatim-replayed prompt).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -640,7 +642,7 @@ impl Composer for BasetenTraceComposer {
                 let mut turn = Turn {
                     timestamp_ms: row.timestamp,
                     delay_ms: row.delay,
-                    input_tokens: row.input_tokens,
+                    input_tokens: Some(row.input_tokens),
                     max_tokens: cap_output(Some(row.output_length), config.max_output_tokens),
                     extra_body: extra_body_handle,
                     content: smallvec![ContentGroup {
