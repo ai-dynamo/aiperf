@@ -10,7 +10,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::cellular::partition::{CellPartition, ModuloCellPartition};
-use crate::rng::{RandomGenerator, RngRoot};
+use crate::extensions::RegistryId;
+use crate::rng::{RngRoot, RustRandomGenerator};
 
 use crate::dataset::error::{DatasetError, Result};
 use crate::dataset::model::{ConversationMetadata, SessionId};
@@ -79,7 +80,7 @@ impl SamplerFactory for ShuffleSamplerFactory {
 /// Extensible name-to-factory registry used to honor loader sampling policy.
 #[derive(Clone, Default)]
 pub struct SamplerRegistry {
-    factories: HashMap<String, Arc<dyn SamplerFactory>>,
+    factories: HashMap<RegistryId, Arc<dyn SamplerFactory>>,
 }
 
 impl SamplerRegistry {
@@ -107,18 +108,16 @@ impl SamplerRegistry {
 
     /// Register one factory, rejecting duplicate normalized names.
     pub fn register(&mut self, factory: impl SamplerFactory + 'static) -> Result<()> {
-        let name = normalize_name(factory.name());
-        if name.is_empty() {
-            return Err(DatasetError::Validation(
-                "sampler strategy registration name cannot be empty".into(),
-            ));
-        }
-        if self.factories.contains_key(&name) {
+        let id = RegistryId::new(factory.name()).map_err(|_| {
+            DatasetError::Validation("sampler strategy registration name cannot be empty".into())
+        })?;
+        if self.factories.contains_key(&id) {
             return Err(DatasetError::Validation(format!(
-                "duplicate sampler strategy {name:?}"
+                "duplicate sampler strategy {:?}",
+                id.as_str()
             )));
         }
-        self.factories.insert(name, Arc::new(factory));
+        self.factories.insert(id, Arc::new(factory));
         Ok(())
     }
 
@@ -129,11 +128,16 @@ impl SamplerRegistry {
         metadata: &[ConversationMetadata],
         root: RngRoot,
     ) -> Result<Box<dyn Sampler>> {
-        let name = normalize_name(name);
+        let id = RegistryId::new(name)
+            .map_err(|_| DatasetError::Validation(format!("unknown sampler strategy {name:?}")))?;
         self.factories
-            .get(&name)
+            .get(id.as_str())
             .ok_or_else(|| {
-                let mut available = self.factories.keys().cloned().collect::<Vec<_>>();
+                let mut available = self
+                    .factories
+                    .keys()
+                    .map(RegistryId::as_str)
+                    .collect::<Vec<_>>();
                 available.sort();
                 DatasetError::Validation(format!(
                     "unknown sampler strategy {name:?}; registered strategies: {}",
@@ -142,10 +146,6 @@ impl SamplerRegistry {
             })?
             .create(metadata, root)
     }
-}
-
-fn normalize_name(name: &str) -> String {
-    name.trim().to_ascii_lowercase().replace('-', "_")
 }
 
 fn validate_ids(ids: Vec<SessionId>) -> Result<Vec<SessionId>> {
@@ -173,7 +173,7 @@ fn root_ids(metadata: &[ConversationMetadata]) -> Vec<SessionId> {
 /// Uniform random sampling with replacement.
 pub struct RandomSampler {
     ids: Vec<SessionId>,
-    rng: RandomGenerator,
+    rng: RustRandomGenerator,
 }
 
 impl RandomSampler {
@@ -181,7 +181,7 @@ impl RandomSampler {
     pub fn new(ids: Vec<SessionId>, root: RngRoot) -> Result<Self> {
         Ok(Self {
             ids: validate_ids(ids)?,
-            rng: RandomGenerator::from_seed(root.derive_seed("dataset.sampler.random")),
+            rng: RustRandomGenerator::from_seed(root.derive_seed("dataset.sampler.random")),
         })
     }
 
@@ -236,14 +236,14 @@ impl Sampler for SequentialSampler {
 pub struct ShuffleSampler {
     ids: Vec<SessionId>,
     index: usize,
-    rng: RandomGenerator,
+    rng: RustRandomGenerator,
 }
 
 impl ShuffleSampler {
     /// Construct from authored identifiers and shuffle the first cycle immediately.
     pub fn new(ids: Vec<SessionId>, root: RngRoot) -> Result<Self> {
         let mut ids = validate_ids(ids)?;
-        let mut rng = RandomGenerator::from_seed(root.derive_seed("dataset.sampler.shuffle"));
+        let mut rng = RustRandomGenerator::from_seed(root.derive_seed("dataset.sampler.shuffle"));
         rng.shuffle(&mut ids);
         Ok(Self { ids, index: 0, rng })
     }

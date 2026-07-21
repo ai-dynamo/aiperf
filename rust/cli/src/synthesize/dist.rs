@@ -5,7 +5,7 @@
 //! Mixture sampling always draws the selector and both component values before
 //! selecting, preserving the seeded random stream.
 
-use aiperf_runtime::rng::numpy_generator::NumpyGenerator;
+use aiperf_runtime::rng::compat::numpy_generator::NumpyGenerator;
 
 use crate::synthesize::config::{LognormalParams, MixtureDelayConfig};
 

@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+// Portions derived from NumPy (numpy.random), BSD-3-Clause / NCSA. See ATTRIBUTIONS.md.
 
 //! NumPy-compatible `SeedSequence` + PCG64 bit generator.
 //!

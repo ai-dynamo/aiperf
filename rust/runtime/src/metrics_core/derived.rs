@@ -8,15 +8,6 @@ pub fn delta_ms(start_ms: f64, end_ms: f64) -> Option<f64> {
     (start_ms.is_finite() && end_ms.is_finite() && end_ms >= start_ms).then_some(end_ms - start_ms)
 }
 
-/// Returns a latency value adjusted for errored records.
-pub fn error_adjusted_result(value: Option<f64>, errored: bool) -> Option<f64> {
-    if errored {
-        Some(f64::INFINITY)
-    } else {
-        value.filter(|v| v.is_finite())
-    }
-}
-
 /// Subtracts network RTT from a latency while saturating at zero.
 pub fn network_adjusted_ms(latency_ms: f64, mean_rtt_ms: f64) -> Option<f64> {
     (latency_ms.is_finite() && mean_rtt_ms.is_finite())

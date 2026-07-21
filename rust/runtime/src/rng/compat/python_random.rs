@@ -1,39 +1,52 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+// Portions derived from CPython (Lib/random.py), PSF License. See ATTRIBUTIONS.md.
+// Portions derived from NumPy (numpy.random), BSD-3-Clause / NCSA. See ATTRIBUTIONS.md.
 
-//! AgentX random-generator contract.
+//! Byte-exact CPython/numpy composite implementing [`crate::rng::RandomGenerator`].
 //!
-//! CPython Mersenne Twister and NumPy-compatible PCG64 are seeded from the same
-//! child seed, with operations routed as follows:
+//! Mirrors `src/aiperf/common/random_generator.py`'s `RandomGenerator` class:
+//! one CPython Mersenne Twister and one numpy-compatible PCG64, seeded from the
+//! same child seed, with operations routed exactly as the Python class routes
+//! them between `self._python_rng` and `self._numpy_rng`:
 //!
-//! - CPython MT ([`crate::rng::python_mt::PythonMt19937`]): `random`, `choice`,
-//!   `sample`, `randrange`, `randint`, `uniform`, `choices`.
-//! - numpy PCG64 ([`crate::rng::numpy_pcg64::NumpyPcg64`]): `shuffle` (in place).
+//! - CPython MT ([`crate::rng::compat::python_mt::PythonMt19937`]): `random`,
+//!   `choice`, `sample`, `randrange`, `randint`, `uniform`, `choices`,
+//!   `sample_normal` (via `gauss`), `expovariate`, `gammavariate`.
+//! - numpy PCG64 ([`crate::rng::compat::numpy_generator::NumpyGenerator`]):
+//!   `shuffle`, `integers`, `normal`, `random_batch`, `numpy_choice_uniform`,
+//!   `numpy_choice_weighted`.
 //!
 //! Child seeds are derived as
 //! `child = int.from_bytes(sha256(f"{root_seed}:{identifier}").digest()[:8],
-//! "big")`.
+//! "big")`, exactly as `_RNGManager.derive`.
 //!
-//! This is the substrate the procedural coding corpus
-//! (`crate::graph::recorded::coding`) uses for its generated text. The BLAKE3
-//! plus `rand_pcg` stream is intentionally different. Committed golden vectors
-//! (`tests/data/agentx_rng_golden.json`).
+//! [`PythonRandomGenerator`] was originally scoped to the subset of methods the
+//! procedural coding corpus (`crate::graph::recorded::coding`) needs; it now
+//! implements the full [`crate::rng::RandomGenerator`] trait. The BLAKE3 plus
+//! `rand_pcg` native stream (`crate::rng::generator::RustRandomGenerator`) is
+//! intentionally a different, unrelated backend — this one exists purely for
+//! byte-exact parity with `random_generator.py`. Committed golden vectors
+//! (`tests/data/agentx_rng_golden.json`) pin the subset AgentX exercises; new
+//! methods are pinned against a local CPython/numpy interpreter in this file's
+//! tests.
 
 use sha2::{Digest, Sha256};
 
+use crate::rng::RandomGenerator;
+use crate::rng::compat::numpy_generator::NumpyGenerator;
+use crate::rng::compat::python_mt::PythonMt19937;
 use crate::rng::error::{Result, RngError};
-use crate::rng::numpy_pcg64::NumpyPcg64;
-use crate::rng::python_mt::PythonMt19937;
 
-/// agentx `RandomGenerator`: a CPython-MT generator and a numpy-PCG64 generator,
-/// both seeded from one child seed with disjoint operation sets.
+/// `random_generator.py`'s composite: a CPython-MT generator and a numpy-PCG64
+/// generator, both seeded from one child seed with disjoint operation sets.
 pub struct PythonRandomGenerator {
     /// The child seed both backends were constructed from.
     seed: u64,
     /// CPython `random.Random(seed)` — scalar operations.
     mt: PythonMt19937,
-    /// numpy `default_rng(seed)` — array `shuffle`.
-    np: NumpyPcg64,
+    /// numpy `default_rng(seed)` — array/numpy-flavored operations.
+    np: NumpyGenerator,
 }
 
 impl PythonRandomGenerator {
@@ -42,7 +55,7 @@ impl PythonRandomGenerator {
         Self {
             seed,
             mt: PythonMt19937::from_u64_seed(seed),
-            np: NumpyPcg64::from_u64_seed(seed),
+            np: NumpyGenerator::from_seed(seed),
         }
     }
 
@@ -67,14 +80,14 @@ impl PythonRandomGenerator {
     pub const fn seed(&self) -> u64 {
         self.seed
     }
+}
 
-    /// `random.Random.random()`: uniform float in `[0.0, 1.0)` (MT `res53`).
-    pub fn random(&mut self) -> f64 {
+impl RandomGenerator for PythonRandomGenerator {
+    fn random(&mut self) -> f64 {
         self.mt.random()
     }
 
-    /// `random.Random.choice(seq)`: `seq[_randbelow(len(seq))]`.
-    pub fn choice<'a, T>(&mut self, seq: &'a [T]) -> Result<&'a T> {
+    fn choice<'a, T>(&mut self, seq: &'a [T]) -> Result<&'a T> {
         if seq.is_empty() {
             return Err(RngError::EmptySequence { what: "choice" });
         }
@@ -82,16 +95,40 @@ impl PythonRandomGenerator {
         Ok(&seq[idx])
     }
 
-    /// `random.Random.randrange(stop)` (single-arg): `_randbelow(stop)`.
-    pub fn randrange(&mut self, stop: i64) -> Result<i64> {
+    fn randrange(&mut self, stop: i64) -> Result<i64> {
         if stop <= 0 {
             return Err(RngError::EmptyRange { what: "randrange" });
         }
         Ok(self.mt.randbelow(stop as u64) as i64)
     }
 
-    /// `random.Random.randint(a, b)`: `a + _randbelow(b - a + 1)`, inclusive.
-    pub fn randint(&mut self, a: i64, b: i64) -> Result<i64> {
+    fn randrange_step(&mut self, start: i64, stop: i64, step: i64) -> Result<i64> {
+        let width = stop - start;
+        if step == 1 {
+            return if width > 0 {
+                Ok(start + self.mt.randbelow(width as u64) as i64)
+            } else {
+                Err(RngError::EmptyRange { what: "randrange" })
+            };
+        }
+        if step == 0 {
+            return Err(RngError::InvalidParameter {
+                what: "randrange: zero step",
+                value: 0.0,
+            });
+        }
+        let n = if step > 0 {
+            py_floordiv(width + step - 1, step)
+        } else {
+            py_floordiv(width + step + 1, step)
+        };
+        if n <= 0 {
+            return Err(RngError::EmptyRange { what: "randrange" });
+        }
+        Ok(start + step * self.mt.randbelow(n as u64) as i64)
+    }
+
+    fn randint(&mut self, a: i64, b: i64) -> Result<i64> {
         if a > b {
             return Err(RngError::EmptyRange { what: "randint" });
         }
@@ -99,14 +136,11 @@ impl PythonRandomGenerator {
         Ok(a + self.mt.randbelow(width) as i64)
     }
 
-    /// `random.Random.uniform(a, b)`: `a + (b - a) * random()`.
-    pub fn uniform(&mut self, a: f64, b: f64) -> f64 {
+    fn uniform(&mut self, a: f64, b: f64) -> f64 {
         a + (b - a) * self.random()
     }
 
-    /// `random.Random.choices(population, k=k)` (unweighted): `k` draws with
-    /// replacement, each `population[floor(random() * n)]`.
-    pub fn choices<T: Clone>(&mut self, population: &[T], k: usize) -> Result<Vec<T>> {
+    fn choices<T: Clone>(&mut self, population: &[T], k: usize) -> Result<Vec<T>> {
         let n = population.len();
         if n == 0 && k > 0 {
             return Err(RngError::EmptySequence { what: "choices" });
@@ -120,9 +154,7 @@ impl PythonRandomGenerator {
         Ok(out)
     }
 
-    /// `random.Random.sample(population, k)`: CPython 3.12 `Lib/random.py` pool /
-    /// selected-set algorithm, byte-exact in `_randbelow` call count and order.
-    pub fn sample<T: Clone>(&mut self, population: &[T], k: usize) -> Result<Vec<T>> {
+    fn sample<T: Clone>(&mut self, population: &[T], k: usize) -> Result<Vec<T>> {
         let n = population.len();
         if k > n {
             return Err(RngError::SampleTooLarge { k, len: n });
@@ -157,9 +189,101 @@ impl PythonRandomGenerator {
         Ok(result)
     }
 
-    /// `RandomGenerator.shuffle(x)`: numpy `default_rng(seed).shuffle(x)` in place.
-    pub fn shuffle<T>(&mut self, values: &mut [T]) {
+    fn shuffle<T>(&mut self, values: &mut [T]) {
         self.np.shuffle(values);
+    }
+
+    fn random_batch(&mut self, size: usize) -> Vec<f64> {
+        self.np.random_batch(size)
+    }
+
+    fn integers(&mut self, low: i64, high: i64) -> i64 {
+        self.np.integers(low, high)
+    }
+
+    fn integers_batch(&mut self, low: i64, high: i64, size: usize) -> Vec<i64> {
+        self.np.integers_batch(low, high, size)
+    }
+
+    fn normal(&mut self, loc: f64, scale: f64) -> f64 {
+        self.np.normal(loc, scale)
+    }
+
+    fn normal_batch(&mut self, loc: f64, scale: f64, size: usize) -> Vec<f64> {
+        self.np.normal_batch(loc, scale, size)
+    }
+
+    fn numpy_choice_uniform(&mut self, pop_size: i64, size: usize) -> Vec<i64> {
+        self.np.choice_uniform(pop_size, size)
+    }
+
+    fn numpy_choice_weighted(&mut self, weights: &[f64]) -> usize {
+        self.np.choice_weighted(weights)
+    }
+
+    fn numpy_choice_weighted_batch(&mut self, weights: &[f64], size: usize) -> Vec<usize> {
+        self.np.choice_weighted_batch(weights, size)
+    }
+
+    fn numpy_choice_weighted_without_replacement(
+        &mut self,
+        weights: &[f64],
+        size: usize,
+    ) -> Result<Vec<usize>> {
+        self.np.choice_weighted_without_replacement(weights, size)
+    }
+
+    fn sample_normal(&mut self, mean: f64, stddev: f64, lower: f64, upper: f64) -> Result<f64> {
+        if lower > upper {
+            return Err(RngError::InvalidBounds { lower, upper });
+        }
+        const MAX_ITERATIONS: usize = 10_000;
+        for _ in 0..MAX_ITERATIONS {
+            let n = self.mt.gauss(mean, stddev);
+            if lower <= n && n <= upper {
+                return Ok(n);
+            }
+        }
+        Ok(mean.max(lower).min(upper))
+    }
+
+    fn sample_positive_normal(&mut self, mean: f64, stddev: f64) -> Result<f64> {
+        if mean < 0.0 {
+            return Err(RngError::InvalidParameter {
+                what: "sample_positive_normal: mean should be greater than 0",
+                value: mean,
+            });
+        }
+        self.sample_normal(mean, stddev, 0.0, f64::INFINITY)
+    }
+
+    fn sample_positive_normal_integer(&mut self, mean: f64, stddev: f64) -> Result<i64> {
+        if stddev <= 0.0 {
+            return Ok((mean.round() as i64).max(1));
+        }
+        let sample = self.sample_positive_normal(mean, stddev)?;
+        Ok((sample.ceil() as i64).max(1))
+    }
+
+    fn expovariate(&mut self, lambd: f64) -> f64 {
+        self.mt.expovariate(lambd)
+    }
+
+    fn gammavariate(&mut self, alpha: f64, beta: f64) -> Result<f64> {
+        self.mt.gammavariate(alpha, beta)
+    }
+}
+
+/// Python's `//` floor division: rounds toward negative infinity regardless of
+/// operand signs (unlike Rust's truncating `/`), matching `randrange`'s
+/// `(width + step ± 1) // step` step-count computation.
+fn py_floordiv(a: i64, b: i64) -> i64 {
+    let q = a / b;
+    let r = a % b;
+    if r != 0 && (r < 0) != (b < 0) {
+        q - 1
+    } else {
+        q
     }
 }
 

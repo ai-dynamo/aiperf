@@ -5,7 +5,7 @@ mod common;
 
 use std::io::Write;
 
-use aiperf_runtime::rng::{RandomGenerator, RngRoot, namespace};
+use aiperf_runtime::rng::{RngRoot, RustRandomGenerator, namespace};
 use common::*;
 
 const SEED: u64 = 42;
@@ -16,7 +16,7 @@ fn rust_reference_intervals(seed: u64, rate: f64, count: usize) -> Vec<f64> {
     let child = RngRoot::new(Some(seed))
         .derive_seed(namespace::TIMING_REQUEST_POISSON_INTERVAL)
         .expect("seeded root yields a poisson-interval seed");
-    let mut rng = RandomGenerator::from_seed(Some(child));
+    let mut rng = RustRandomGenerator::from_seed(Some(child));
     (0..count)
         .map(|_| rng.expovariate(rate).expect("rate > 0"))
         .collect()

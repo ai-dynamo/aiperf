@@ -7,7 +7,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use aiperf_runtime::rng::RandomGenerator;
+use aiperf_runtime::rng::RustRandomGenerator;
 use aiperf_runtime::transport::core::EventStreamMessage;
 use axum::Json;
 use axum::body::Body;
@@ -1231,7 +1231,7 @@ pub fn generate_embedding(text: &str, dim: usize) -> Vec<f64> {
     hasher.update(text.as_bytes());
     let digest = hasher.finalize();
     let seed: u64 = u64::from_be_bytes(digest[0..8].try_into().unwrap());
-    let mut rng = RandomGenerator::from_seed(Some(seed));
+    let mut rng = RustRandomGenerator::from_seed(Some(seed));
     (0..dim).map(|_| rng.random() - 0.5).collect()
 }
 
@@ -1380,7 +1380,7 @@ fn generate_bounding_boxes(url: &str) -> serde_json::Map<String, Value> {
     hasher.update(url.as_bytes());
     let digest = hasher.finalize();
     let seed = u64::from_be_bytes(digest[0..8].try_into().unwrap());
-    let mut rng = RandomGenerator::from_seed(Some(seed));
+    let mut rng = RustRandomGenerator::from_seed(Some(seed));
     let num_boxes: i64 = rng.randint(1, 5).expect("1..=5 is a valid inclusive range");
     let mut out: serde_json::Map<String, Value> = serde_json::Map::new();
     for _ in 0..num_boxes {

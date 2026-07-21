@@ -73,28 +73,29 @@ fn prepared_request<'a>(turns: &'a [Turn]) -> PreparedRequest<'a> {
 }
 
 #[test]
-fn endpoint_id_accepts_only_the_open_canonical_grammar() {
-    for accepted in ["a", "chat", "chat_2", "a0_b9"] {
-        assert_eq!(EndpointId::new(accepted).unwrap().as_str(), accepted);
+fn endpoint_id_normalizes_case_and_hyphens_and_rejects_only_empty() {
+    for (input, expected) in [
+        ("a", "a"),
+        ("chat", "chat"),
+        ("chat_2", "chat_2"),
+        ("a0_b9", "a0_b9"),
+        ("Chat", "chat"),
+        ("chat-completions", "chat_completions"),
+        ("chat ", "chat"),
+        ("2chat", "2chat"),
+        ("_chat", "_chat"),
+    ] {
+        assert_eq!(EndpointId::new(input).unwrap().as_str(), expected);
         assert_eq!(
-            serde_json::from_value::<EndpointId>(json!(accepted))
+            serde_json::from_value::<EndpointId>(json!(input))
                 .unwrap()
                 .as_str(),
-            accepted
+            expected
         );
     }
-    for rejected in [
-        "",
-        "Chat",
-        "2chat",
-        "_chat",
-        "chat-completions",
-        "chat ",
-        "chät",
-    ] {
+    for rejected in ["", "   "] {
         let error = EndpointId::new(rejected).unwrap_err();
-        assert_eq!(error.value(), rejected);
-        assert!(error.to_string().contains("[a-z][a-z0-9_]*"));
+        assert!(error.to_string().contains("invalid registry ID"));
     }
 }
 

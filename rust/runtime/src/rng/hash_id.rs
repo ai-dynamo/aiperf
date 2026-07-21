@@ -11,14 +11,14 @@
 use std::ops::{Deref, DerefMut};
 
 use crate::rng::derive::derive_seed_parts;
-use crate::rng::generator::RandomGenerator;
+use crate::rng::generator::RustRandomGenerator;
 
 /// Random generator that reseeds per `(trace_id, hash_id)` scope.
 #[derive(Clone, Debug)]
 pub struct HashIdRandomGenerator {
     base_seed: u64,
     trace_id: String,
-    generator: RandomGenerator,
+    generator: RustRandomGenerator,
 }
 
 impl HashIdRandomGenerator {
@@ -27,12 +27,12 @@ impl HashIdRandomGenerator {
     /// If `base` has a deterministic seed, that seed is read without consuming RNG
     /// state, including `Some(0)`. If `base` is seedless, this consumes one `u64`
     /// fallback seed and makes the hash-id generator deterministic from there.
-    pub fn from_base(base: &mut RandomGenerator) -> Self {
+    pub fn from_base(base: &mut RustRandomGenerator) -> Self {
         let base_seed = base.seed().unwrap_or_else(|| base.random_u64());
         Self {
             base_seed,
             trace_id: String::new(),
-            generator: RandomGenerator::from_seed(Some(base_seed)),
+            generator: RustRandomGenerator::from_seed(Some(base_seed)),
         }
     }
 
@@ -71,18 +71,18 @@ impl HashIdRandomGenerator {
     }
 
     /// Borrow the inner generator.
-    pub const fn generator(&self) -> &RandomGenerator {
+    pub const fn generator(&self) -> &RustRandomGenerator {
         &self.generator
     }
 
     /// Mutably borrow the inner generator.
-    pub fn generator_mut(&mut self) -> &mut RandomGenerator {
+    pub fn generator_mut(&mut self) -> &mut RustRandomGenerator {
         &mut self.generator
     }
 }
 
 impl Deref for HashIdRandomGenerator {
-    type Target = RandomGenerator;
+    type Target = RustRandomGenerator;
 
     fn deref(&self) -> &Self::Target {
         &self.generator
@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn from_base_preserves_seed_zero() {
-        let mut base = RandomGenerator::from_seed(Some(0));
+        let mut base = RustRandomGenerator::from_seed(Some(0));
         let derived = HashIdRandomGenerator::from_base(&mut base);
         assert_eq!(derived.base_seed(), 0);
         assert_eq!(derived.generator().seed(), Some(0));
@@ -111,8 +111,8 @@ mod tests {
     #[test]
     fn from_base_seeded_does_not_consume_base_state() {
         for seed in [0, 1, u64::MAX] {
-            let mut base = RandomGenerator::from_seed(Some(seed));
-            let mut fresh = RandomGenerator::from_seed(Some(seed));
+            let mut base = RustRandomGenerator::from_seed(Some(seed));
+            let mut fresh = RustRandomGenerator::from_seed(Some(seed));
             let derived = HashIdRandomGenerator::from_base(&mut base);
             assert_eq!(derived.base_seed(), seed);
             assert_eq!(base.random_u64(), fresh.random_u64());
@@ -121,8 +121,8 @@ mod tests {
 
     #[test]
     fn same_trace_and_hash_id_reproduce_sequences() {
-        let mut base_a = RandomGenerator::from_seed(Some(42));
-        let mut base_b = RandomGenerator::from_seed(Some(42));
+        let mut base_a = RustRandomGenerator::from_seed(Some(42));
+        let mut base_b = RustRandomGenerator::from_seed(Some(42));
         let mut a = HashIdRandomGenerator::from_base(&mut base_a);
         let mut b = HashIdRandomGenerator::from_base(&mut base_b);
 
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn trace_scope_changes_hash_id_seed() {
-        let mut base = RandomGenerator::from_seed(Some(11));
+        let mut base = RustRandomGenerator::from_seed(Some(11));
         let mut hash_rng = HashIdRandomGenerator::from_base(&mut base);
 
         hash_rng.set_trace_id("trace-a");
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn seedless_base_draws_fallback_seed() {
-        let mut base = RandomGenerator::from_seed(None);
+        let mut base = RustRandomGenerator::from_seed(None);
         let mut expected = base.clone();
         let derived = HashIdRandomGenerator::from_base(&mut base);
         assert_eq!(derived.generator().seed(), Some(derived.base_seed()));
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn reseed_uses_same_bytes_as_colon_joined_key() {
-        let mut base = RandomGenerator::from_seed(Some(123));
+        let mut base = RustRandomGenerator::from_seed(Some(123));
         let mut hash_rng = HashIdRandomGenerator::from_base(&mut base);
         hash_rng.reseed_for_hash_id(-9, Some("scope"));
         assert_eq!(
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn default_scope_and_extreme_hash_ids_match_colon_joined_vectors() {
-        let mut base = RandomGenerator::from_seed(Some(u64::MAX));
+        let mut base = RustRandomGenerator::from_seed(Some(u64::MAX));
         let mut hash_rng = HashIdRandomGenerator::from_base(&mut base);
         assert_eq!(hash_rng.trace_id(), "");
 
@@ -192,13 +192,13 @@ mod tests {
 
     #[test]
     fn mutable_generator_access_deref_and_clone_preserve_state() {
-        let mut base = RandomGenerator::from_seed(Some(8));
+        let mut base = RustRandomGenerator::from_seed(Some(8));
         let mut hash_rng = HashIdRandomGenerator::from_base(&mut base);
         hash_rng.set_trace_id(String::from("owned-scope"));
         hash_rng.reseed_for_hash_id(1, None);
 
         let mut cloned = hash_rng.clone();
-        let inner_via_deref: &RandomGenerator = &hash_rng;
+        let inner_via_deref: &RustRandomGenerator = &hash_rng;
         assert_eq!(inner_via_deref.seed(), hash_rng.generator().seed());
         assert_eq!(hash_rng.random_u64(), cloned.random_u64());
         hash_rng.generator_mut().reseed(55);
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn reseeding_is_order_independent_across_interleaved_scopes() {
-        let mut base = RandomGenerator::from_seed(Some(42));
+        let mut base = RustRandomGenerator::from_seed(Some(42));
         let mut rng = HashIdRandomGenerator::from_base(&mut base);
         let scopes = [("trace-a", 7), ("trace-b", -3), ("trace-a", 99)];
         let mut first = Vec::new();

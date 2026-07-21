@@ -7,7 +7,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
-use crate::rng::{RandomGenerator, RngRoot};
+use crate::rng::{RngRoot, RustRandomGenerator};
 use bytes::Bytes;
 
 use super::{
@@ -25,9 +25,9 @@ const SUPPORTED_DEPTHS: &[u16] = &[8, 16, 24, 32];
 /// Rust-native Gaussian-noise audio generator.
 pub struct NativeAudioGenerator {
     config: SyntheticAudioConfig,
-    duration_rng: RandomGenerator,
-    format_rng: RandomGenerator,
-    data_rng: RandomGenerator,
+    duration_rng: RustRandomGenerator,
+    format_rng: RustRandomGenerator,
+    data_rng: RustRandomGenerator,
     publisher: Arc<dyn SyntheticMediaPublisher>,
 }
 
@@ -46,9 +46,11 @@ impl NativeAudioGenerator {
         validate_config(&config)?;
         Ok(Self {
             config,
-            duration_rng: RandomGenerator::from_seed(root.derive_seed("dataset.audio.duration")),
-            format_rng: RandomGenerator::from_seed(root.derive_seed("dataset.audio.format")),
-            data_rng: RandomGenerator::from_seed(root.derive_seed("dataset.audio.data")),
+            duration_rng: RustRandomGenerator::from_seed(
+                root.derive_seed("dataset.audio.duration"),
+            ),
+            format_rng: RustRandomGenerator::from_seed(root.derive_seed("dataset.audio.format")),
+            data_rng: RustRandomGenerator::from_seed(root.derive_seed("dataset.audio.data")),
             publisher,
         })
     }
@@ -156,7 +158,7 @@ pub fn transcode_audio_to_wav(raw: &[u8]) -> Result<(Bytes, f64)> {
 }
 
 pub(crate) fn generate_noise_wav(
-    rng: &mut RandomGenerator,
+    rng: &mut RustRandomGenerator,
     duration_seconds: f64,
     sample_rate_hz: u32,
     bit_depth: u16,

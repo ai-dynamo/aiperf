@@ -970,10 +970,11 @@ impl NativeSessionBackend {
                 cached
             } else {
                 let (_, endpoint) = &prepared_endpoint;
+                // Opaque bodies report absent as 0 at the u64 counter boundary for now.
                 let counted = self.input_token_counter.count_prepared_input_tokens(
                     *endpoint,
                     &materialized.body,
-                    materialized.input_tokens,
+                    materialized.input_tokens.unwrap_or(0),
                 )?;
                 if let Some(key) = static_count_key {
                     self.static_input_count_cache
@@ -1254,7 +1255,8 @@ impl NativeDatasetConversationSource {
                             delay_ms: turn.delay_ms,
                             trace_hash_ids: turn.trace_hash_ids,
                             prompt_text: String::new(),
-                            input_length: usize::try_from(turn.input_tokens)
+                            // Opaque bodies report absent as 0 at the usize observer boundary for now.
+                            input_length: usize::try_from(turn.input_tokens.unwrap_or(0))
                                 .unwrap_or(usize::MAX)
                                 .max(1),
                             max_output_tokens: authored.turns[index]

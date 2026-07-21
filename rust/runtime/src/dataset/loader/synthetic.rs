@@ -9,7 +9,7 @@
 //! Token-native composition uses a no-decode branch: exact IDs enter the segment
 //! arena directly and no temporary text payload is constructed.
 
-use crate::rng::{RandomGenerator, RngRoot};
+use crate::rng::{RngRoot, RustRandomGenerator};
 use async_trait::async_trait;
 use bytes::Bytes;
 use smallvec::SmallVec;
@@ -112,7 +112,7 @@ impl Composer for SyntheticComposer {
         } else {
             None
         };
-        let mut prefix_rng = RandomGenerator::from_seed(
+        let mut prefix_rng = RustRandomGenerator::from_seed(
             config
                 .rng_root
                 .derive_seed("dataset.prompt.prefix.selection"),
@@ -259,7 +259,7 @@ impl Composer for SyntheticComposer {
                     })?;
                     if config.requires_raw_token_ids {
                         let token_ids = generator.generate_token_ids(input_tokens, &[], 1)?;
-                        turn.input_tokens = token_ids.len() as u64;
+                        turn.input_tokens = Some(token_ids.len() as u64);
                         let handle = segments.intern_token_ids(parent, token_ids)?;
                         parent = Some(handle);
                         turn.body = Turn::dispatch_body(None, Some(handle), &[]);
@@ -271,12 +271,16 @@ impl Composer for SyntheticComposer {
                             // is hit exactly and the decoded text carries a
                             // byte-identical leading run across warm prompts.
                             let tokens = reuse.prompt_tokens(generator, input_tokens)?;
-                            turn.input_tokens = turn
-                                .input_tokens
-                                .checked_add(tokens.len() as u64)
-                                .ok_or_else(|| {
-                                    DatasetError::Validation("input token count overflow".into())
-                                })?;
+                            turn.input_tokens = Some(
+                                turn.input_tokens
+                                    .unwrap_or(0)
+                                    .checked_add(tokens.len() as u64)
+                                    .ok_or_else(|| {
+                                        DatasetError::Validation(
+                                            "input token count overflow".into(),
+                                        )
+                                    })?,
+                            );
                             let text = tokenizer.decode(&tokens)?;
                             let handle = segments.intern_text(
                                 parent,
@@ -305,12 +309,16 @@ impl Composer for SyntheticComposer {
                                 |prefix| format!("{prefix} {}", generated.text),
                             );
                             let tokens = tokenizer.encode(&text)?;
-                            turn.input_tokens = turn
-                                .input_tokens
-                                .checked_add(tokens.len() as u64)
-                                .ok_or_else(|| {
-                                    DatasetError::Validation("input token count overflow".into())
-                                })?;
+                            turn.input_tokens = Some(
+                                turn.input_tokens
+                                    .unwrap_or(0)
+                                    .checked_add(tokens.len() as u64)
+                                    .ok_or_else(|| {
+                                        DatasetError::Validation(
+                                            "input token count overflow".into(),
+                                        )
+                                    })?,
+                            );
                             // The full authored text remains one endpoint value, while
                             // the hidden prefix parent makes reuse visible in the
                             // content-addressed chain without changing wire shape.
@@ -468,7 +476,7 @@ impl Composer for SyntheticRankingsComposer {
             }
             let mut turn = Turn {
                 role: Some(Role::from("user")),
-                input_tokens,
+                input_tokens: Some(input_tokens),
                 content: smallvec::smallvec![
                     ContentGroup {
                         kind: MediaKind::Text,
@@ -690,7 +698,7 @@ struct PrefixReuse {
     /// Portion of a reusing prompt's input length taken from the reusable run.
     ratio: f64,
     /// Selection stream deciding reuse, kept apart from the corpus sampling draw.
-    decision: RandomGenerator,
+    decision: RustRandomGenerator,
     /// Reusable prefix ids, held stable once materialized so every hit lines up.
     shared: Vec<u32>,
 }
@@ -701,7 +709,9 @@ impl PrefixReuse {
         (prompt.prefix_reuse_fraction > 0.0).then(|| Self {
             fraction: prompt.prefix_reuse_fraction,
             ratio: prompt.prefix_reuse_ratio,
-            decision: RandomGenerator::from_seed(root.derive_seed("dataset.prompt.prefix.reuse")),
+            decision: RustRandomGenerator::from_seed(
+                root.derive_seed("dataset.prompt.prefix.reuse"),
+            ),
             shared: Vec::new(),
         })
     }
@@ -804,8 +814,8 @@ fn append_media_batch(
     Ok(())
 }
 
-fn component_rng(root: RngRoot, namespace: &str) -> RandomGenerator {
-    RandomGenerator::from_seed(root.derive_seed(namespace))
+fn component_rng(root: RngRoot, namespace: &str) -> RustRandomGenerator {
+    RustRandomGenerator::from_seed(root.derive_seed(namespace))
 }
 
 #[cfg(test)]
@@ -830,7 +840,9 @@ mod tests {
         let mut reuse = PrefixReuse {
             fraction: 1.0,
             ratio: 0.5,
-            decision: RandomGenerator::from_seed(RngRoot::new(Some(19)).derive_seed("test.reuse")),
+            decision: RustRandomGenerator::from_seed(
+                RngRoot::new(Some(19)).derive_seed("test.reuse"),
+            ),
             shared: Vec::new(),
         };
         let first = reuse.prompt_tokens(generator.as_mut(), 10).unwrap();
@@ -858,7 +870,9 @@ mod tests {
         let mut reuse = PrefixReuse {
             fraction: 1.0,
             ratio: 0.5,
-            decision: RandomGenerator::from_seed(RngRoot::new(Some(23)).derive_seed("test.reuse")),
+            decision: RustRandomGenerator::from_seed(
+                RngRoot::new(Some(23)).derive_seed("test.reuse"),
+            ),
             shared: Vec::new(),
         };
         // ratio 0.5 reserves prefixes of 4, 8, and 12 tokens for these lengths.
@@ -1048,7 +1062,7 @@ mod tests {
         let turn = &dataset.conversations()[0].turns[0];
         assert_eq!(turn.content[0].handles.len(), 1);
         assert_eq!(turn.content[1].handles.len(), 3);
-        assert_eq!(turn.input_tokens, 19);
+        assert_eq!(turn.input_tokens, Some(19));
     }
 
     #[tokio::test]
@@ -1135,7 +1149,7 @@ mod tests {
         );
         let turn = &conversation.turns[0];
         assert!(turn.content.is_empty());
-        assert_eq!(turn.input_tokens, 8);
+        assert_eq!(turn.input_tokens, Some(8));
         let handle = *turn.body.first().expect("raw token handle");
         let Payload::TokenIds { token_ids } = dataset.segments().get(handle).unwrap() else {
             panic!("raw-token synthetic prompt must be stored as token IDs");

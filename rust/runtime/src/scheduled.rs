@@ -722,55 +722,6 @@ impl ScheduledRuntime {
         )
     }
 
-    /// Issue one turn with an externally triggered cancellation latch.
-    ///
-    /// The callback runs exactly once whether cancellation wins before
-    /// dispatch, during streaming, or loses the race to a normal terminal.
-    pub fn issue_turn_cancellable(
-        self: &Rc<Self>,
-        turn: TurnToSend,
-        scheduled_ns: i64,
-        user_id: Option<u64>,
-        on_complete: CompletionHandler,
-        cancellation: Rc<dyn DispatchCancellation>,
-    ) -> bool {
-        self.issue_turn_with_hooks_and_cancellation(
-            turn,
-            scheduled_ns,
-            user_id,
-            Box::new(|_ttft_ns| {}),
-            on_complete,
-            Some(cancellation),
-        )
-    }
-
-    /// Issue one turn with live endpoint-normalized response frames and an
-    /// externally triggered cancellation latch.
-    ///
-    /// Returns `false` when ordinary issuance policy rejects the turn. A
-    /// dispatcher that cannot provide true incremental frames fails the
-    /// admitted turn through its normal terminal callback.
-    #[allow(clippy::too_many_arguments)]
-    pub fn issue_turn_streaming_cancellable(
-        self: &Rc<Self>,
-        turn: TurnToSend,
-        scheduled_ns: i64,
-        user_id: Option<u64>,
-        responses: Rc<dyn TurnResponseObserver>,
-        on_complete: CompletionHandler,
-        cancellation: Rc<dyn DispatchCancellation>,
-    ) -> bool {
-        self.issue_turn_internal(
-            turn,
-            scheduled_ns,
-            user_id,
-            Box::new(|_ttft_ns| {}),
-            on_complete,
-            Some(cancellation),
-            Some(responses),
-        )
-    }
-
     /// Whether the injected backend supports true incremental response frames.
     pub fn supports_response_streaming(&self) -> bool {
         self.dispatcher.supports_response_streaming()

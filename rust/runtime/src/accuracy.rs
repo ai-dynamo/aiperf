@@ -1035,7 +1035,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             dataset.dataset().metadata().conversations[0].turns[0].input_tokens,
-            tokenizer.count("first fixture").unwrap() as u64
+            Some(tokenizer.count("first fixture").unwrap() as u64)
         );
         let processor = Rc::new(dataset.record_processor());
         let endpoint_id = crate::endpoints::EndpointId::new("chat").unwrap();

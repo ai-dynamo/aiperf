@@ -70,7 +70,7 @@ use crate::phase_runtime::{
 };
 use crate::request_rate::RequestRateWorkload;
 use crate::rng::{
-    EmpiricalPoint, PeakEntry, RandomGenerator, RngRoot, SamplingDistribution,
+    EmpiricalPoint, PeakEntry, RngRoot, RustRandomGenerator, SamplingDistribution,
     SequenceLengthDistribution, SequenceLengthPair, namespace,
 };
 use crate::scheduled::{
@@ -5209,7 +5209,7 @@ impl ModelSelectorFactory for WeightedModelSelectorFactory {
         Ok(Box::new(WeightedModelSelector {
             models: models.to_vec(),
             weights: self.weights.clone(),
-            rng: RandomGenerator::from_seed(
+            rng: RustRandomGenerator::from_seed(
                 self.rng_root.derive_seed("runner.model.weighted_selection"),
             ),
         }))
@@ -5219,7 +5219,7 @@ impl ModelSelectorFactory for WeightedModelSelectorFactory {
 struct WeightedModelSelector {
     models: Vec<ModelId>,
     weights: Vec<f64>,
-    rng: RandomGenerator,
+    rng: RustRandomGenerator,
 }
 
 impl ModelSelector for WeightedModelSelector {
@@ -6738,7 +6738,7 @@ mod tests {
         assert_eq!(dataset.conversations().len(), 2);
         for conversation in dataset.conversations() {
             assert_eq!(conversation.turns[0].max_tokens, Some(3));
-            assert_eq!(conversation.turns[0].input_tokens, 6);
+            assert_eq!(conversation.turns[0].input_tokens, Some(6));
         }
     }
 
@@ -6771,7 +6771,7 @@ mod tests {
         assert_eq!(turn.content[0].name, "query");
         assert_eq!(turn.content[1].name, "passages");
         assert_eq!(turn.content[1].handles.len(), 2);
-        assert_eq!(turn.input_tokens, 14);
+        assert_eq!(turn.input_tokens, Some(14));
     }
 
     #[test]

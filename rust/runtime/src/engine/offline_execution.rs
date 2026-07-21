@@ -26,11 +26,10 @@ use crate::dynosim::{
     OfflineGraphBackendFactory, OfflineGraphEventSink, OfflineGraphExecution, OfflineGraphReport,
     OfflineGraphRequestRecord, OfflineGraphRunFactory, OfflineKvEventVisibility,
     OfflineMetricParity, OfflineRouterMode, OfflineRunReport, OfflineScheduledExecution,
-    OfflineScheduledExecutionFinalizer, OfflineScheduledReport, OfflineScheduledRunFactory,
-    OfflineTopology, OfflineTraceConfig, TerminalOfflineEventDelivery, run_graph_offline,
+    OfflineScheduledExecutionFinalizer, OfflineScheduledReport, OfflineTopology,
+    OfflineTraceConfig, TerminalOfflineEventDelivery, run_graph_offline,
     run_graph_workload_offline, run_graph_workload_offline_deferred, run_graph_workload_online,
-    run_graph_workload_online_deferred, run_scheduled_backend_offline,
-    run_scheduled_backend_offline_deferred_with_delivery, run_scheduled_backend_online,
+    run_graph_workload_online_deferred, run_scheduled_backend_offline_deferred_with_delivery,
     run_scheduled_backend_online_deferred_with_delivery, run_trace_offline,
     write_dynamo_per_request_jsonl, write_dynamo_report_json, write_dynamo_worker_artifacts_json,
 };
@@ -1775,32 +1774,6 @@ pub struct DynosimExecutor {
 }
 
 impl DynosimExecutor {
-    /// Run any registered scheduled workload over the shared virtual clock and
-    /// dispatcher supplied by `crate::dynosim`.
-    pub fn execute_scheduled(
-        self,
-        workload: Box<dyn OfflineScheduledRunFactory>,
-    ) -> Result<DynosimScheduledOutcome> {
-        ensure!(
-            self.artifacts.worker_artifacts_json.is_none(),
-            "worker_artifacts_json is supported only by canonical trace workloads"
-        );
-        let online = self.online;
-        let report = if online {
-            run_scheduled_backend_online(self.engine.clone(), self.model.clone(), workload)?
-        } else {
-            run_scheduled_backend_offline(self.engine.clone(), self.model.clone(), workload)?
-        };
-        verify_parity_for(online, &report.performance, &report.dynamo, report.parity)?;
-        let artifacts = self.emit_backend_artifacts(&report.dynamo)?;
-        let report_metadata = self.report_metadata(report.parity);
-        Ok(DynosimScheduledOutcome {
-            report,
-            artifacts,
-            run_metadata: report_metadata,
-        })
-    }
-
     /// Run a scheduled workload whose deterministic observer reduction occurs
     /// after the virtual-time driver and its Tokio `LocalSet` have exited.
     pub fn execute_scheduled_deferred(

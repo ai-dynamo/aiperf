@@ -55,7 +55,7 @@ pub type ContentFetchClient = hyper_util::client::legacy::Client<
 >;
 
 pub struct ErrorRng {
-    rng: aiperf_runtime::rng::RandomGenerator,
+    rng: aiperf_runtime::rng::RustRandomGenerator,
 }
 
 impl ErrorRng {
@@ -78,7 +78,7 @@ impl ErrorRng {
 /// `mock.tool_calls` stream (derived off the same `--random-seed` root) so its
 /// draws are reproducible and independent of the error stream.
 pub struct ToolCallRng {
-    rng: aiperf_runtime::rng::RandomGenerator,
+    rng: aiperf_runtime::rng::RustRandomGenerator,
 }
 
 impl ToolCallRng {

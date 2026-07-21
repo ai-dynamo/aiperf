@@ -6,18 +6,17 @@
 //! Streams are derived solely from the run root seed and component identifier
 //! using BLAKE3, then consumed through `Pcg64` wrappers.
 
+pub mod compat;
 pub mod derive;
 pub mod dist;
 pub mod error;
 pub mod generator;
 pub mod hash_id;
 pub mod namespace;
-pub mod numpy_generator;
-pub mod numpy_pcg64;
-pub mod python_mt;
-pub mod python_random;
-pub(crate) mod ziggurat_constants;
+pub mod random_generator;
 
+pub use compat::python_mt::PythonMt19937;
+pub use compat::python_random::PythonRandomGenerator;
 pub use derive::{RngRoot, derive_seed_parts, derive_seed_u64};
 pub use dist::{
     DistributionSampler, EmpiricalDistribution, EmpiricalPoint, FixedDistribution,
@@ -26,7 +25,6 @@ pub use dist::{
     SequenceSampler,
 };
 pub use error::{Result, RngError};
-pub use generator::RandomGenerator;
+pub use generator::RustRandomGenerator;
 pub use hash_id::HashIdRandomGenerator;
-pub use python_mt::PythonMt19937;
-pub use python_random::PythonRandomGenerator;
+pub use random_generator::RandomGenerator;

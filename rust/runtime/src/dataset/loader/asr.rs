@@ -178,7 +178,7 @@ impl Composer for HfAsrComposer {
             )?;
             let mut turn = Turn {
                 role: Some(Role::from("user")),
-                input_tokens: prompt_tokens.len() as u64,
+                input_tokens: Some(prompt_tokens.len() as u64),
                 audio_duration_seconds: Some(duration),
                 content: smallvec![
                     ContentGroup {

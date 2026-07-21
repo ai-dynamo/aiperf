@@ -5,7 +5,7 @@
 //! Random draw order is part of the serialized dataset contract. The two modes
 //! are restart-split and explicit-turn.
 
-use aiperf_runtime::rng::numpy_generator::NumpyGenerator;
+use aiperf_runtime::rng::compat::numpy_generator::NumpyGenerator;
 
 use crate::synthesize::config::{LognormalParams, SessionDistributionConfig};
 use crate::synthesize::dist::{sample_lognormal, sample_mixture_delay};

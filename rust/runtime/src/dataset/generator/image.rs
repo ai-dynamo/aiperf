@@ -8,7 +8,7 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::rng::{RandomGenerator, RngRoot};
+use crate::rng::{RngRoot, RustRandomGenerator};
 use bytes::Bytes;
 use image::imageops::FilterType;
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgb};
@@ -45,10 +45,10 @@ enum SourceImage {
 /// Rust-native synthetic image generator.
 pub struct NativeImageGenerator {
     config: SyntheticImageConfig,
-    dimensions_rng: RandomGenerator,
-    format_rng: RandomGenerator,
-    source_rng: RandomGenerator,
-    noise_rng: RandomGenerator,
+    dimensions_rng: RustRandomGenerator,
+    format_rng: RustRandomGenerator,
+    source_rng: RustRandomGenerator,
+    noise_rng: RustRandomGenerator,
     sources: Vec<SourceImage>,
     available: Vec<usize>,
     shuffle_cycle: Vec<usize>,
@@ -90,12 +90,12 @@ impl NativeImageGenerator {
         let available = (0..sources.len()).collect();
         Ok(Self {
             config,
-            dimensions_rng: RandomGenerator::from_seed(
+            dimensions_rng: RustRandomGenerator::from_seed(
                 root.derive_seed("dataset.image.dimensions"),
             ),
-            format_rng: RandomGenerator::from_seed(root.derive_seed("dataset.image.format")),
-            source_rng: RandomGenerator::from_seed(root.derive_seed("dataset.image.source")),
-            noise_rng: RandomGenerator::from_seed(root.derive_seed("dataset.image.noise")),
+            format_rng: RustRandomGenerator::from_seed(root.derive_seed("dataset.image.format")),
+            source_rng: RustRandomGenerator::from_seed(root.derive_seed("dataset.image.source")),
+            noise_rng: RustRandomGenerator::from_seed(root.derive_seed("dataset.image.noise")),
             sources,
             available,
             shuffle_cycle: Vec::new(),

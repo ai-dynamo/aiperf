@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::extensions::DuplicateName;
+use crate::extensions::{DuplicateName, RegistryId};
 use crate::metrics_core::NativeReport;
 use crate::metrics_core::report::{MetricSeries, ReportValue};
 
@@ -256,7 +256,7 @@ struct OrderedExporter {
 /// which the `BuiltinExportersExtension` populates.
 #[derive(Clone)]
 pub struct ExporterRegistry {
-    entries: BTreeMap<String, OrderedExporter>,
+    entries: BTreeMap<RegistryId, OrderedExporter>,
 }
 
 impl ExporterRegistry {
@@ -275,12 +275,13 @@ impl ExporterRegistry {
         order: u32,
         exporter: Arc<dyn Exporter + Send + Sync>,
     ) -> Result<(), DuplicateName> {
-        let name = exporter.name().to_string();
-        if self.entries.contains_key(&name) {
-            return Err(DuplicateName(name));
+        let name = exporter.name();
+        let id = RegistryId::new(name)
+            .unwrap_or_else(|error| panic!("registry identifier must be valid: {error}"));
+        if self.entries.contains_key(&id) {
+            return Err(DuplicateName(name.to_string()));
         }
-        self.entries
-            .insert(name, OrderedExporter { order, exporter });
+        self.entries.insert(id, OrderedExporter { order, exporter });
         Ok(())
     }
 

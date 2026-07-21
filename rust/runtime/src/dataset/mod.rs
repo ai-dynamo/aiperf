@@ -60,7 +60,8 @@ pub use model::{
     TurnMetadata, TurnPrerequisite,
 };
 pub use prompt::{
-    CorpusPromptGeneratorFactory, GeneratedPrompt, PromptGenerator, PromptGeneratorFactory,
+    CorpusPromptGeneratorFactory, GeneratedPrompt, PreparedCorpusPromptGeneratorFactory,
+    PromptGenerator, PromptGeneratorFactory,
 };
 pub use request::{
     BuiltinEndpointResolver, ConversationSession, EndpointRequestMaterializer, EndpointResolver,

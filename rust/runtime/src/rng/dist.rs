@@ -1,21 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Sampling distributions backed by [`RandomGenerator`].
+//! Sampling distributions backed by [`RustRandomGenerator`].
 //!
 //! These types implement the distribution control flow: post-draw clamping and
 //! integer ceiling; normal, log-normal, multimodal, and empirical raw sampling;
 //! and cumulative probabilities, right-side search, and batch validation.
 
 use crate::rng::error::{Result, RngError};
-use crate::rng::generator::{RandomGenerator, positive_integer_from_f64};
+use crate::rng::generator::{RustRandomGenerator, positive_integer_from_f64};
 
 const PROBABILITY_SUM_REL_TOLERANCE: f64 = 1.0e-6;
 const PROBABILITY_SUM_ABS_TOLERANCE: f64 = 1.0e-6;
 
 /// Random operations required by workload distributions.
 ///
-/// [`RandomGenerator`] and deterministic test sources use this generic seam
+/// [`RustRandomGenerator`] and deterministic test sources use this generic seam
 /// without dynamic dispatch on the hot path.
 pub trait SamplingRng {
     /// Draw a uniform value from `[0, 1)`.
@@ -36,7 +36,7 @@ pub trait SamplingRng {
     fn sample_positive_normal_integer(&mut self, mean: f64, stddev: f64) -> Result<i64>;
 }
 
-impl SamplingRng for RandomGenerator {
+impl SamplingRng for RustRandomGenerator {
     fn random(&mut self) -> f64 {
         Self::random(self)
     }
@@ -63,7 +63,7 @@ impl SamplingRng for RandomGenerator {
 /// `R` is generic because sampling is a hot path. The closed five-way
 /// [`SamplingDistribution`] enum is the configuration adapter; consumers that
 /// provide another distribution can program against this trait directly.
-pub trait DistributionSampler<R: SamplingRng + ?Sized = RandomGenerator> {
+pub trait DistributionSampler<R: SamplingRng + ?Sized = RustRandomGenerator> {
     /// Draw one bounded sample.
     fn sample(&self, rng: &mut R) -> Result<f64>;
 
@@ -80,7 +80,7 @@ pub trait DistributionSampler<R: SamplingRng + ?Sized = RandomGenerator> {
 ///
 /// The trait leaves room for dataset-backed or graph-backed sequence sources
 /// while [`SequenceLengthDistribution`] remains the concrete percentage model.
-pub trait SequenceSampler<R: SamplingRng + ?Sized = RandomGenerator> {
+pub trait SequenceSampler<R: SamplingRng + ?Sized = RustRandomGenerator> {
     /// Draw one `(ISL, OSL)` pair.
     fn sample(&self, rng: &mut R) -> Result<(i64, i64)>;
 
@@ -398,18 +398,18 @@ impl SamplingDistribution {
     }
 
     /// Draw one sample, applying distribution-level bounds after the raw draw.
-    pub fn sample(&self, rng: &mut RandomGenerator) -> Result<f64> {
+    pub fn sample(&self, rng: &mut RustRandomGenerator) -> Result<f64> {
         DistributionSampler::sample(self, rng)
     }
 
     /// Draw one sample and return `max(1, ceil(sample))`.
-    pub fn sample_int(&self, rng: &mut RandomGenerator) -> Result<i64> {
+    pub fn sample_int(&self, rng: &mut RustRandomGenerator) -> Result<i64> {
         DistributionSampler::sample_int(self, rng)
     }
 
     /// Unclamped analytic expected value.
     pub fn expected_value(&self) -> f64 {
-        DistributionSampler::<RandomGenerator>::expected_value(self)
+        DistributionSampler::<RustRandomGenerator>::expected_value(self)
     }
 }
 
@@ -468,7 +468,7 @@ impl<R: SamplingRng + ?Sized> DistributionSampler<R> for MultimodalDistribution 
             .iter()
             .map(|peak| {
                 peak.weight / self.total_weight
-                    * DistributionSampler::<RandomGenerator>::expected_value(&peak.distribution)
+                    * DistributionSampler::<RustRandomGenerator>::expected_value(&peak.distribution)
             })
             .sum()
     }
@@ -503,19 +503,19 @@ impl<R: SamplingRng + ?Sized> DistributionSampler<R> for SamplingDistribution {
     fn expected_value(&self) -> f64 {
         match self {
             Self::Fixed(distribution) => {
-                DistributionSampler::<RandomGenerator>::expected_value(distribution)
+                DistributionSampler::<RustRandomGenerator>::expected_value(distribution)
             }
             Self::Normal(distribution) => {
-                DistributionSampler::<RandomGenerator>::expected_value(distribution)
+                DistributionSampler::<RustRandomGenerator>::expected_value(distribution)
             }
             Self::LogNormal(distribution) => {
-                DistributionSampler::<RandomGenerator>::expected_value(distribution)
+                DistributionSampler::<RustRandomGenerator>::expected_value(distribution)
             }
             Self::Multimodal(distribution) => {
-                DistributionSampler::<RandomGenerator>::expected_value(distribution)
+                DistributionSampler::<RustRandomGenerator>::expected_value(distribution)
             }
             Self::Empirical(distribution) => {
-                DistributionSampler::<RandomGenerator>::expected_value(distribution)
+                DistributionSampler::<RustRandomGenerator>::expected_value(distribution)
             }
         }
     }
@@ -628,14 +628,14 @@ impl SequenceLengthDistribution {
     }
 
     /// Draw one `(ISL, OSL)` pair.
-    pub fn sample(&self, rng: &mut RandomGenerator) -> Result<(i64, i64)> {
+    pub fn sample(&self, rng: &mut RustRandomGenerator) -> Result<(i64, i64)> {
         SequenceSampler::sample(self, rng)
     }
 
     /// Draw `batch_size` samples.
     pub fn sample_batch(
         &self,
-        rng: &mut RandomGenerator,
+        rng: &mut RustRandomGenerator,
         batch_size: usize,
     ) -> Result<Vec<(i64, i64)>> {
         SequenceSampler::sample_batch(self, rng, batch_size)
@@ -874,7 +874,7 @@ mod tests {
 
     #[test]
     fn fixed_distribution_samples_constant_and_clamps() {
-        let mut rng = RandomGenerator::from_seed(Some(1));
+        let mut rng = RustRandomGenerator::from_seed(Some(1));
         let dist = SamplingDistribution::fixed(10.0)
             .unwrap()
             .with_bounds(Some(0.0), Some(5.0))
@@ -953,7 +953,7 @@ mod tests {
             .unwrap(),
             SamplingDistribution::empirical(vec![EmpiricalPoint::new(10.0, 1.0).unwrap()]).unwrap(),
         ];
-        let mut rng = RandomGenerator::from_seed(Some(1));
+        let mut rng = RustRandomGenerator::from_seed(Some(1));
         for distribution in variants {
             let bounded = distribution.with_bounds(Some(2.0), Some(4.0)).unwrap();
             assert_eq!(bounded.sample(&mut rng).unwrap(), 4.0);
@@ -1034,15 +1034,15 @@ mod tests {
         let mut invalid_normal = normal.clone();
         invalid_normal.mean = -1.0;
         assert!(
-            DistributionSampler::<RandomGenerator>::sample(
+            DistributionSampler::<RustRandomGenerator>::sample(
                 &invalid_normal,
-                &mut RandomGenerator::from_seed(Some(1)),
+                &mut RustRandomGenerator::from_seed(Some(1)),
             )
             .is_err()
         );
         assert!(
             SamplingDistribution::Normal(invalid_normal.clone())
-                .sample_int(&mut RandomGenerator::from_seed(Some(10)))
+                .sample_int(&mut RustRandomGenerator::from_seed(Some(10)))
                 .is_err()
         );
 
@@ -1054,9 +1054,9 @@ mod tests {
         let mut invalid_lognormal = lognormal;
         invalid_lognormal.median = f64::NAN;
         assert!(
-            DistributionSampler::<RandomGenerator>::sample(
+            DistributionSampler::<RustRandomGenerator>::sample(
                 &invalid_lognormal,
-                &mut RandomGenerator::from_seed(Some(2)),
+                &mut RustRandomGenerator::from_seed(Some(2)),
             )
             .is_err()
         );
@@ -1073,9 +1073,9 @@ mod tests {
         let mut invalid_multimodal = multimodal;
         invalid_multimodal.peaks[0].distribution = SamplingDistribution::Normal(invalid_normal);
         assert!(
-            DistributionSampler::<RandomGenerator>::sample(
+            DistributionSampler::<RustRandomGenerator>::sample(
                 &invalid_multimodal,
-                &mut RandomGenerator::from_seed(Some(3)),
+                &mut RustRandomGenerator::from_seed(Some(3)),
             )
             .is_err()
         );
@@ -1083,7 +1083,7 @@ mod tests {
 
     #[test]
     fn normal_distribution_uses_positive_normal_semantics() {
-        let mut rng = RandomGenerator::from_seed(Some(2));
+        let mut rng = RustRandomGenerator::from_seed(Some(2));
         let dist = SamplingDistribution::normal(100.0, 10.0).unwrap();
         let samples: Vec<_> = (0..20_000)
             .map(|_| dist.sample(&mut rng).unwrap())
@@ -1126,7 +1126,7 @@ mod tests {
 
     #[test]
     fn lognormal_distribution_derives_sigma_from_mean_and_median() {
-        let mut rng = RandomGenerator::from_seed(Some(3));
+        let mut rng = RustRandomGenerator::from_seed(Some(3));
         let deterministic = SamplingDistribution::lognormal(5.0, 5.0).unwrap();
         assert_eq!(deterministic.sample(&mut rng).unwrap(), 5.0);
 
@@ -1172,7 +1172,7 @@ mod tests {
 
     #[test]
     fn multimodal_distribution_uses_weighted_cumulative_walk() {
-        let mut rng = RandomGenerator::from_seed(Some(4));
+        let mut rng = RustRandomGenerator::from_seed(Some(4));
         let dist = SamplingDistribution::multimodal(vec![
             PeakEntry::new(SamplingDistribution::fixed(1.0).unwrap(), 0.0).unwrap(),
             PeakEntry::new(SamplingDistribution::fixed(9.0).unwrap(), 5.0).unwrap(),
@@ -1217,7 +1217,7 @@ mod tests {
 
     #[test]
     fn empirical_distribution_uses_weighted_values() {
-        let mut rng = RandomGenerator::from_seed(Some(5));
+        let mut rng = RustRandomGenerator::from_seed(Some(5));
         assert!(EmpiricalPoint::new(1.0, 0.0).is_err());
         assert!(SamplingDistribution::empirical(Vec::new()).is_err());
 
@@ -1254,7 +1254,7 @@ mod tests {
 
     #[test]
     fn distribution_integer_sampling_uses_ceil_minimum_and_checked_range() {
-        let mut rng = RandomGenerator::from_seed(Some(33));
+        let mut rng = RustRandomGenerator::from_seed(Some(33));
         assert_eq!(
             SamplingDistribution::fixed(-2.0)
                 .unwrap()
@@ -1347,10 +1347,10 @@ mod tests {
         ])
         .unwrap();
 
-        let mut batch_rng = RandomGenerator::from_seed(Some(7));
+        let mut batch_rng = RustRandomGenerator::from_seed(Some(7));
         let batch = dist.sample_batch(&mut batch_rng, 16).unwrap();
 
-        let mut expected_rng = RandomGenerator::from_seed(Some(7));
+        let mut expected_rng = RustRandomGenerator::from_seed(Some(7));
         let indices: Vec<_> = expected_rng
             .random_batch(16)
             .into_iter()
@@ -1378,7 +1378,7 @@ mod tests {
             SequenceSampler::sample(&dist, &mut scalar).unwrap(),
             (30, 40)
         );
-        let mut inherent = RandomGenerator::from_seed(Some(100));
+        let mut inherent = RustRandomGenerator::from_seed(Some(100));
         assert!([(10, 20), (30, 40)].contains(&dist.sample(&mut inherent).unwrap()));
 
         // StubRng intentionally uses SamplingRng's default random_batch method.
@@ -1432,7 +1432,7 @@ mod tests {
 
     #[test]
     fn sequence_distribution_samples_stddev_pairs() {
-        let mut rng = RandomGenerator::from_seed(Some(6));
+        let mut rng = RustRandomGenerator::from_seed(Some(6));
         let dist = SequenceLengthDistribution::new(vec![
             SequenceLengthPair::new_with_stddev(100, 10.0, 50, 5.0, 100.0).unwrap(),
         ])
@@ -1485,7 +1485,7 @@ mod tests {
             SequenceLengthPair::new_with_stddev(1, 0.0, i64::MAX, 1.0, 100.0).unwrap(),
         ])
         .unwrap();
-        let mut real = RandomGenerator::from_seed(Some(5));
+        let mut real = RustRandomGenerator::from_seed(Some(5));
         assert!(huge_input.sample(&mut real).is_err());
         assert!(huge_output.sample(&mut real).is_err());
     }
@@ -1498,7 +1498,7 @@ mod tests {
             SequenceLengthPair::new(50, 60, 50.0).unwrap(),
         ])
         .unwrap();
-        let mut rng = RandomGenerator::from_seed(Some(919));
+        let mut rng = RustRandomGenerator::from_seed(Some(919));
         let samples = dist.sample_batch(&mut rng, 100_000).unwrap();
         let expected = [((10, 20), 0.2), ((30, 40), 0.3), ((50, 60), 0.5)];
         for (pair, probability) in expected {

@@ -51,7 +51,10 @@ pub struct MaterializedRequest {
     /// Effective response streaming mode.
     pub streaming: bool,
     /// Precomputed input-token count including selected history and captured replies.
-    pub input_tokens: u64,
+    ///
+    /// `None` when the composed turn did not establish a client token count
+    /// (opaque raw request bodies that are not token-native).
+    pub input_tokens: Option<u64>,
     /// Segment handle for exact raw token IDs, retained for token-native
     /// backends that bypass the serialized HTTP body.
     pub raw_token_ids: Option<Handle>,
@@ -995,7 +998,7 @@ impl ConversationSession {
         Ok(out)
     }
 
-    fn input_tokens(&self, store: &dyn SegmentStore) -> Result<u64> {
+    fn input_tokens(&self, store: &dyn SegmentStore) -> Result<Option<u64>> {
         let (conversation, current_turn, current) = self.current()?;
         if raw_body_handle(current_turn, store)?.is_some()
             || token_ids_handle(current_turn, store)?.is_some()
@@ -1006,9 +1009,24 @@ impl ConversationSession {
             ConversationContextMode::DeltasWithoutResponses
             | ConversationContextMode::DeltasWithResponses => conversation.turns[..=current]
                 .iter()
-                .try_fold(0_u64, |count, turn| checked_add(count, turn.input_tokens))?,
+                .try_fold(0_u64, |count, turn| {
+                    checked_add(
+                        count,
+                        turn.input_tokens.ok_or_else(|| {
+                            DatasetError::Validation(
+                                "delta context turn is missing a composed input token count".into(),
+                            )
+                        })?,
+                    )
+                })?,
             ConversationContextMode::MessageArrayWithResponses
-            | ConversationContextMode::MessageArrayWithoutResponses => current_turn.input_tokens,
+            | ConversationContextMode::MessageArrayWithoutResponses => {
+                current_turn.input_tokens.ok_or_else(|| {
+                    DatasetError::Validation(
+                        "message-array turn is missing a composed input token count".into(),
+                    )
+                })?
+            }
         };
         if matches!(
             self.context_mode,
@@ -1034,7 +1052,7 @@ impl ConversationSession {
                 count = checked_add(count, tokens as u64)?;
             }
         }
-        Ok(count)
+        Ok(Some(count))
     }
 }
 
@@ -1383,7 +1401,7 @@ mod tests {
             vec![Turn {
                 body: Turn::dispatch_body(Some(raw), None, &[]),
                 model: Some(ModelId::from("metadata-only")),
-                input_tokens: 7,
+                input_tokens: Some(7),
                 ..Turn::default()
             }],
             pool,
@@ -1400,7 +1418,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(exact.body, wire);
-        assert_eq!(exact.input_tokens, 7);
+        assert_eq!(exact.input_tokens, Some(7));
 
         let mut overrides = Overrides::new();
         overrides.set_stream(true);
@@ -1431,7 +1449,7 @@ mod tests {
                 model: Some(ModelId::from("trace-model")),
                 max_tokens: Some(9),
                 streaming: Some(true),
-                input_tokens: 17,
+                input_tokens: Some(17),
                 trace_hash_ids: Some(hashes),
                 ..Turn::default()
             }],
@@ -1454,7 +1472,7 @@ mod tests {
         assert_eq!(request.model, "trace-model");
         assert_eq!(request.max_tokens, Some(9));
         assert!(request.streaming);
-        assert_eq!(request.input_tokens, 17);
+        assert_eq!(request.input_tokens, Some(17));
         assert_eq!(
             request.endpoint_path.as_deref(),
             Some("/v1/chat/completions")
@@ -1470,7 +1488,7 @@ mod tests {
             vec![Turn {
                 model: Some(ModelId::from("token-model")),
                 max_tokens: Some(9),
-                input_tokens: 3,
+                input_tokens: Some(3),
                 body: Turn::dispatch_body(None, Some(raw_token_ids), &[]),
                 ..Turn::default()
             }],
@@ -1502,7 +1520,7 @@ mod tests {
         assert_eq!(request.model, "token-model");
         assert_eq!(request.max_tokens, Some(9));
         assert!(!request.streaming);
-        assert_eq!(request.input_tokens, 3);
+        assert_eq!(request.input_tokens, Some(3));
         assert_eq!(
             request.endpoint_path.as_deref(),
             Some("/inference/v1/generate")
@@ -1520,7 +1538,7 @@ mod tests {
         let data = dataset(
             ConversationContextMode::MessageArrayWithResponses,
             vec![Turn {
-                input_tokens: 3,
+                input_tokens: Some(3),
                 body: Turn::dispatch_body(Some(raw_payload), Some(raw_token_ids), &[]),
                 ..Turn::default()
             }],
@@ -1548,7 +1566,7 @@ mod tests {
 
         assert_eq!(request.body, wire);
         assert_eq!(request.raw_token_ids, None);
-        assert_eq!(request.input_tokens, 3);
+        assert_eq!(request.input_tokens, Some(3));
     }
 
     #[test]
@@ -1572,7 +1590,7 @@ mod tests {
                     handles: smallvec![text],
                     uuids: smallvec![],
                 }],
-                input_tokens: 2,
+                input_tokens: Some(2),
                 max_tokens: Some(7),
                 ..Turn::default()
             }],
@@ -1625,13 +1643,13 @@ mod tests {
             vec![
                 Turn {
                     body: smallvec![q0],
-                    input_tokens: 2,
+                    input_tokens: Some(2),
                     max_tokens: Some(4),
                     ..Turn::default()
                 },
                 Turn {
                     body: smallvec![q1],
-                    input_tokens: 3,
+                    input_tokens: Some(3),
                     max_tokens: Some(5),
                     audio_duration_seconds: Some(2.5),
                     ..Turn::default()
@@ -1665,7 +1683,7 @@ mod tests {
         assert_eq!(body["messages"][0]["content"], "q0");
         assert_eq!(body["messages"][1]["content"], "a0");
         assert_eq!(body["messages"][2]["content"], "q1");
-        assert_eq!(request.input_tokens, 16);
+        assert_eq!(request.input_tokens, Some(16));
         assert_eq!(request.max_tokens, Some(5));
         assert_eq!(request.audio_duration_seconds, Some(2.5));
         assert_eq!(request.accuracy.unwrap().correlation_id.as_str(), "corr");
@@ -1681,12 +1699,12 @@ mod tests {
             vec![
                 Turn {
                     body: smallvec![q0],
-                    input_tokens: 2,
+                    input_tokens: Some(2),
                     ..Turn::default()
                 },
                 Turn {
                     body: smallvec![q0, q1],
-                    input_tokens: 5,
+                    input_tokens: Some(5),
                     ..Turn::default()
                 },
             ],
@@ -1719,7 +1737,7 @@ mod tests {
         assert_eq!(body["messages"][0]["content"], "q0");
         assert_eq!(body["messages"][1]["content"], "a0");
         assert_eq!(body["messages"][2]["content"], "q1");
-        assert_eq!(request.input_tokens, 12);
+        assert_eq!(request.input_tokens, Some(12));
     }
 
     #[test]
@@ -1749,7 +1767,7 @@ mod tests {
                     handles: smallvec![text],
                     uuids: smallvec![],
                 }],
-                input_tokens: 2,
+                input_tokens: Some(2),
                 streaming: Some(false),
                 extra_headers: Some(headers),
                 request_parameters: Some(params),
@@ -1799,7 +1817,7 @@ mod tests {
                     handles: smallvec![text],
                     uuids: smallvec![],
                 }],
-                input_tokens: 2,
+                input_tokens: Some(2),
                 ..Turn::default()
             }],
             pool,
@@ -1860,7 +1878,7 @@ mod tests {
                     uuids: smallvec![],
                 }],
                 extra_body: Some(extra),
-                input_tokens: 2,
+                input_tokens: Some(2),
                 ..Turn::default()
             }],
             pool,
@@ -1908,7 +1926,7 @@ mod tests {
                     handles: smallvec![text],
                     uuids: smallvec![],
                 }],
-                input_tokens: 2,
+                input_tokens: Some(2),
                 ..Turn::default()
             }],
             pool,
@@ -1959,7 +1977,7 @@ mod tests {
         Turn {
             role: Some(Role::from("user")),
             content,
-            input_tokens: 2,
+            input_tokens: Some(2),
             max_tokens: Some(7),
             ..Turn::default()
         }
@@ -2096,7 +2114,7 @@ mod tests {
                 handles: smallvec![text_handle],
                 uuids: smallvec![],
             }],
-            input_tokens: 2,
+            input_tokens: Some(2),
             max_tokens: with_max_tokens.then_some(7),
             extra_body,
             ..Turn::default()
@@ -2256,7 +2274,7 @@ mod tests {
                 handles: smallvec![system_turn_text],
                 uuids: smallvec![],
             }],
-            input_tokens: 1,
+            input_tokens: Some(1),
             ..Turn::default()
         };
         let mut conversation = Conversation::new("session");
@@ -2362,12 +2380,12 @@ mod tests {
                 ],
                 uuids: smallvec![],
             }],
-            input_tokens: 1,
+            input_tokens: Some(1),
             ..Turn::default()
         };
         let raw_turn = Turn {
             body: Turn::dispatch_body(Some(raw), None, &[]),
-            input_tokens: 1,
+            input_tokens: Some(1),
             ..Turn::default()
         };
         let mut dataset = single_conversation_dataset(

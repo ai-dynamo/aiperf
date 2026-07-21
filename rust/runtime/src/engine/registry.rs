@@ -13,7 +13,9 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use crate::endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType};
-use crate::extensions::{AIPerfExtension, AIPerfRegistry, DuplicateName, ExtensionError};
+use crate::extensions::{
+    AIPerfExtension, AIPerfRegistry, DuplicateName, ExtensionError, RegistryId,
+};
 use crate::failure::OnFailure;
 use crate::metrics_core::{
     NativeReport, ReportEndpointProfileIdentity, ReportExtensionIdentity, ReportPairRunFacts,
@@ -678,9 +680,12 @@ fn validate_resource_requirements(
 fn unknown_component<'a>(
     kind: &str,
     requested: &ComponentId,
-    available: impl Iterator<Item = &'a String>,
+    available: impl Iterator<Item = &'a RegistryId>,
 ) -> anyhow::Error {
-    let choices = available.map(String::as_str).collect::<Vec<_>>().join(", ");
+    let choices = available
+        .map(RegistryId::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
     anyhow!(
         "runner {kind} {:?} is not compiled into this distribution; available: {}",
         requested.as_str(),

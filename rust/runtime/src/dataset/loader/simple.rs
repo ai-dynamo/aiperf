@@ -653,8 +653,10 @@ fn compose_simple_turn(
                 "raw_token_ids cannot be combined with text or media fields".into(),
             ));
         }
-        turn.input_tokens = u64::try_from(token_ids.len())
-            .map_err(|_| DatasetError::Validation("raw token count exceeds u64".into()))?;
+        turn.input_tokens = Some(
+            u64::try_from(token_ids.len())
+                .map_err(|_| DatasetError::Validation("raw token count exceeds u64".into()))?,
+        );
         let handle = state
             .segments
             .intern_token_ids(*parent, token_ids.into_boxed_slice())?;
@@ -791,12 +793,14 @@ fn append_modality(
         for content in group.contents {
             let handle = if kind == MediaKind::Text {
                 let tokens = state.tokenizer.encode(&content)?;
-                turn.input_tokens = turn
-                    .input_tokens
-                    .checked_add(tokens.len() as u64)
-                    .ok_or_else(|| {
-                        DatasetError::Validation("turn input token count overflowed u64".into())
-                    })?;
+                turn.input_tokens = Some(
+                    turn.input_tokens
+                        .unwrap_or(0)
+                        .checked_add(tokens.len() as u64)
+                        .ok_or_else(|| {
+                            DatasetError::Validation("turn input token count overflowed u64".into())
+                        })?,
+                );
                 state.segments.intern_text(
                     *parent,
                     role,
@@ -1183,7 +1187,7 @@ mod tests {
             .unwrap();
 
         let turn = &dataset.conversations()[0].turns[0];
-        assert_eq!(turn.input_tokens, 3);
+        assert_eq!(turn.input_tokens, Some(3));
         assert_eq!(turn.max_tokens, Some(9));
         let token_handle = *turn.body.first().expect("token handle");
         let Payload::TokenIds { token_ids } = dataset.segments().get(token_handle).unwrap() else {

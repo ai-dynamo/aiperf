@@ -12,7 +12,7 @@
 //! The pacer converts a `next_interval_ns()` into an absolute target time and
 //! `clock.sleep`s to it — identical code on real and virtual clocks.
 
-use crate::rng::RandomGenerator;
+use crate::rng::RustRandomGenerator;
 
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 
@@ -53,7 +53,7 @@ pub trait IntervalGenerator {
 /// Poisson process: exponential inter-arrival times with mean `1/rate`.
 pub struct Poisson {
     rate: f64,
-    rng: RandomGenerator,
+    rng: RustRandomGenerator,
 }
 
 impl Poisson {
@@ -62,7 +62,7 @@ impl Poisson {
         assert!(rate > 0.0, "Poisson rate must be > 0, got {rate}");
         Self {
             rate,
-            rng: RandomGenerator::from_seed(Some(seed)),
+            rng: RustRandomGenerator::from_seed(Some(seed)),
         }
     }
 }
@@ -91,12 +91,12 @@ pub struct GammaProcess {
     rate: f64,
     smoothness: f64,
     // Cached scale parameter (shape = smoothness), recomputed only on set_rate.
-    // `RandomGenerator::gammavariate` reconstructs the Marsaglia-Tsang constants
+    // `RustRandomGenerator::gammavariate` reconstructs the Marsaglia-Tsang constants
     // internally per draw; caching the scale keeps the arithmetic off this hot
     // path, and arrival sampling is once-per-request so the rebuild is not a
     // measured bottleneck.
     scale: f64,
-    rng: RandomGenerator,
+    rng: RustRandomGenerator,
 }
 
 impl GammaProcess {
@@ -111,7 +111,7 @@ impl GammaProcess {
             rate,
             smoothness,
             scale: Self::scale(rate, smoothness),
-            rng: RandomGenerator::from_seed(Some(seed)),
+            rng: RustRandomGenerator::from_seed(Some(seed)),
         }
     }
 

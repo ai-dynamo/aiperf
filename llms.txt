@@ -58,6 +58,11 @@ handles and generates synthetic IDs without decoding text, online HTTP maps
 them to `/inference/v1/generate`, and Dynamo-offline resolves the same handle
 without constructing a request body or invoking an encoder. Returned ID arrays
 remain non-text response data and drive exact token/usage observations.
+Verbatim `raw_payload` and `inputs_json` requests remain opaque for ordinary
+endpoints: composition preserves exact wire bytes, performs no BPE encoding,
+and leaves composed input tokens unset (`None` / JSON `null`). Only endpoints
+declaring `requires_raw_token_ids`, including `vllm_generate`, cause authored
+`token_ids` to be validated, interned, and counted as `Some(length)`.
 Direct Graph-IR currently lacks that linear-dataset handle and fails preparation
 for endpoints with the requirement.
 Generated image/video delivery can be externalized through one run-owned native

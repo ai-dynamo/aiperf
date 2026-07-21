@@ -23,12 +23,12 @@ const I64_UPPER_EXCLUSIVE_AS_F64: f64 = 9_223_372_036_854_775_808.0;
 /// A `None` generator seeds from thread/OS entropy and records `None` until it is
 /// explicitly reseeded.
 #[derive(Clone, Debug)]
-pub struct RandomGenerator {
+pub struct RustRandomGenerator {
     seed: Option<u64>,
     rng: Pcg64,
 }
 
-impl RandomGenerator {
+impl RustRandomGenerator {
     /// Construct a generator from a deterministic seed or entropy.
     pub fn from_seed(seed: Option<u64>) -> Self {
         let rng = match seed {
@@ -540,8 +540,8 @@ mod tests {
 
     #[test]
     fn same_seed_reproduces_draw_sequence() {
-        let mut a = RandomGenerator::from_seed(Some(42));
-        let mut b = RandomGenerator::from_seed(Some(42));
+        let mut a = RustRandomGenerator::from_seed(Some(42));
+        let mut b = RustRandomGenerator::from_seed(Some(42));
         let seq_a: Vec<_> = (0..100).map(|_| a.random_u64()).collect();
         let seq_b: Vec<_> = (0..100).map(|_| b.random_u64()).collect();
         assert_eq!(seq_a, seq_b);
@@ -549,8 +549,8 @@ mod tests {
 
     #[test]
     fn different_seeds_change_draw_sequence() {
-        let mut a = RandomGenerator::from_seed(Some(1));
-        let mut b = RandomGenerator::from_seed(Some(2));
+        let mut a = RustRandomGenerator::from_seed(Some(1));
+        let mut b = RustRandomGenerator::from_seed(Some(2));
         let seq_a: Vec<_> = (0..20).map(|_| a.random_u64()).collect();
         let seq_b: Vec<_> = (0..20).map(|_| b.random_u64()).collect();
         assert_ne!(seq_a, seq_b);
@@ -558,7 +558,7 @@ mod tests {
 
     #[test]
     fn clone_fill_bytes_entropy_and_reseed_obey_state_contracts() {
-        let mut original = RandomGenerator::from_seed(Some(123));
+        let mut original = RustRandomGenerator::from_seed(Some(123));
         let _ = original.random_u64();
         let mut cloned = original.clone();
         let mut original_bytes = [0_u8; 37];
@@ -569,12 +569,12 @@ mod tests {
         assert!(original_bytes.iter().any(|byte| *byte != 0));
 
         original.reseed(9);
-        let mut fresh = RandomGenerator::from_seed(Some(9));
+        let mut fresh = RustRandomGenerator::from_seed(Some(9));
         assert_eq!(original.seed(), Some(9));
         assert_eq!(original.random_u64(), fresh.random_u64());
 
-        let mut entropy_a = RandomGenerator::from_seed(None);
-        let mut entropy_b = RandomGenerator::from_seed(None);
+        let mut entropy_a = RustRandomGenerator::from_seed(None);
+        let mut entropy_b = RustRandomGenerator::from_seed(None);
         assert_eq!(entropy_a.seed(), None);
         assert_eq!(entropy_b.seed(), None);
         assert_ne!(
@@ -585,7 +585,7 @@ mod tests {
 
     #[test]
     fn integer_ranges_follow_bound_conventions() {
-        let mut rng = RandomGenerator::from_seed(Some(7));
+        let mut rng = RustRandomGenerator::from_seed(Some(7));
         for _ in 0..1000 {
             let x = rng.randrange(2, 10, 2).unwrap();
             assert!([2, 4, 6, 8].contains(&x));
@@ -601,7 +601,7 @@ mod tests {
 
     #[test]
     fn integer_ranges_cover_extreme_i64_and_u64_bounds_without_overflow() {
-        let mut rng = RandomGenerator::from_seed(Some(70));
+        let mut rng = RustRandomGenerator::from_seed(Some(70));
         for _ in 0..1_000 {
             let full_half_open = rng.randrange(i64::MIN, i64::MAX, 1).unwrap();
             assert!(full_half_open < i64::MAX);
@@ -627,7 +627,7 @@ mod tests {
 
     #[test]
     fn uniform_choice_sample_and_shuffle_cover_boundary_shapes() {
-        let mut rng = RandomGenerator::from_seed(Some(71));
+        let mut rng = RustRandomGenerator::from_seed(Some(71));
         assert_eq!(rng.uniform(4.0, 4.0), 4.0);
         for _ in 0..100 {
             assert!((0.0..1.0).contains(&rng.random()));
@@ -655,8 +655,8 @@ mod tests {
 
         let mut first = [1, 2, 3, 4, 5, 6];
         let mut second = first;
-        let mut a = RandomGenerator::from_seed(Some(72));
-        let mut b = RandomGenerator::from_seed(Some(72));
+        let mut a = RustRandomGenerator::from_seed(Some(72));
+        let mut b = RustRandomGenerator::from_seed(Some(72));
         a.shuffle(&mut first);
         b.shuffle(&mut second);
         assert_eq!(first, second);
@@ -665,7 +665,7 @@ mod tests {
 
     #[test]
     fn choice_and_sampling_validate_empty_or_oversized_inputs() {
-        let mut rng = RandomGenerator::from_seed(Some(1));
+        let mut rng = RustRandomGenerator::from_seed(Some(1));
         assert!(rng.choice::<i32>(&[]).is_err());
         assert!(rng.choices::<i32>(&[], 1).is_err());
         assert_eq!(rng.choices::<i32>(&[], 0).unwrap(), Vec::<i32>::new());
@@ -680,7 +680,7 @@ mod tests {
 
     #[test]
     fn weighted_choice_respects_validation_and_dominant_weight() {
-        let mut rng = RandomGenerator::from_seed(Some(3));
+        let mut rng = RustRandomGenerator::from_seed(Some(3));
         assert!(rng.weighted_choice(&[1, 2], Some(&[1.0])).is_err());
         assert!(rng.weighted_choice(&[1, 2], Some(&[0.0, 0.0])).is_err());
         assert!(
@@ -715,7 +715,7 @@ mod tests {
 
     #[test]
     fn numpy_choice_without_replacement_handles_weights() {
-        let mut rng = RandomGenerator::from_seed(Some(4));
+        let mut rng = RustRandomGenerator::from_seed(Some(4));
         let picked = rng
             .numpy_choice(&[10, 20, 30], 2, Some(&[0.0, 1.0, 1.0]), false)
             .unwrap();
@@ -742,7 +742,7 @@ mod tests {
 
     #[test]
     fn bounded_normal_validates_bounds_and_clamps_degenerate_case() {
-        let mut rng = RandomGenerator::from_seed(Some(5));
+        let mut rng = RustRandomGenerator::from_seed(Some(5));
         assert!(rng.sample_normal(0.0, 1.0, 2.0, 1.0).is_err());
         assert_eq!(rng.sample_normal(10.0, 0.0, 0.0, 5.0).unwrap(), 5.0);
         let n = rng.sample_normal(10.0, 2.0, 8.0, 12.0).unwrap();
@@ -751,7 +751,7 @@ mod tests {
 
     #[test]
     fn bounded_normal_rejects_non_finite_parameters_and_pins_rejection_limit() {
-        let mut rng = RandomGenerator::from_seed(Some(51));
+        let mut rng = RustRandomGenerator::from_seed(Some(51));
         assert!(rng.sample_normal(0.0, 1.0, f64::NAN, 1.0).is_err());
         assert!(rng.sample_normal(0.0, 1.0, 0.0, f64::NAN).is_err());
         assert!(rng.sample_normal(0.0, -1.0, -1.0, 1.0).is_err());
@@ -759,21 +759,21 @@ mod tests {
         assert!(rng.sample_normal(f64::NAN, 1.0, -1.0, 1.0).is_err());
         assert!(rng.sample_normal(f64::INFINITY, 1.0, -1.0, 1.0).is_err());
 
-        let mut actual = RandomGenerator::from_seed(Some(52));
+        let mut actual = RustRandomGenerator::from_seed(Some(52));
         assert_eq!(
             actual.sample_normal(0.0, 1.0, 1_000.0, 1_001.0).unwrap(),
             1_000.0
         );
         let actual_next = actual.random_u64();
 
-        let mut expected = RandomGenerator::from_seed(Some(52));
+        let mut expected = RustRandomGenerator::from_seed(Some(52));
         for _ in 0..NORMAL_REJECTION_LIMIT {
             let rejected = expected.normal(0.0, 1.0).unwrap();
             assert!(rejected < 1_000.0);
         }
         assert_eq!(actual_next, expected.random_u64());
 
-        let mut zero_scale = RandomGenerator::from_seed(Some(53));
+        let mut zero_scale = RustRandomGenerator::from_seed(Some(53));
         let mut untouched = zero_scale.clone();
         assert_eq!(
             zero_scale
@@ -786,7 +786,7 @@ mod tests {
 
     #[test]
     fn positive_normal_integer_preserves_shortcut_semantics() {
-        let mut rng = RandomGenerator::from_seed(Some(6));
+        let mut rng = RustRandomGenerator::from_seed(Some(6));
         assert_eq!(rng.sample_positive_normal_integer(0.1, 0.0).unwrap(), 1);
         assert_eq!(rng.sample_positive_normal_integer(2.5, 0.0).unwrap(), 2);
         assert_eq!(rng.sample_positive_normal_integer(3.5, 0.0).unwrap(), 4);
@@ -806,7 +806,7 @@ mod tests {
 
     #[test]
     fn exponential_and_gamma_sample_means_match_parameterization() {
-        let mut rng = RandomGenerator::from_seed(Some(8));
+        let mut rng = RustRandomGenerator::from_seed(Some(8));
         let exp: Vec<_> = (0..200_000)
             .map(|_| rng.expovariate(4.0).unwrap())
             .collect();
@@ -842,7 +842,7 @@ mod tests {
 
     #[test]
     fn continuous_distributions_validate_parameters_and_normal_moments() {
-        let mut rng = RandomGenerator::from_seed(Some(81));
+        let mut rng = RustRandomGenerator::from_seed(Some(81));
         for lambda in [0.0, -1.0, f64::NAN, f64::INFINITY] {
             assert!(rng.expovariate(lambda).is_err());
         }
@@ -869,7 +869,7 @@ mod tests {
 
     #[test]
     fn batch_methods_follow_scalar_bounds() {
-        let mut rng = RandomGenerator::from_seed(Some(9));
+        let mut rng = RustRandomGenerator::from_seed(Some(9));
         let ints = rng.integers(3, Some(6), 100).unwrap();
         assert!(ints.iter().all(|x| (3..6).contains(x)));
         let from_zero = rng.integers(4, None, 100).unwrap();

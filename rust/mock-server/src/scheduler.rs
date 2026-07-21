@@ -17,7 +17,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use aiperf_runtime::rng::RandomGenerator;
+use aiperf_runtime::rng::RustRandomGenerator;
 use parking_lot::Mutex;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -25,7 +25,7 @@ use tokio::task::JoinHandle;
 use crate::config::MockServerConfig;
 
 /// Mean-1 lognormal multiplier with coefficient of variation `cv` (`cv<=0` -> 1.0).
-fn lognormal(rng: &mut RandomGenerator, cv: f64) -> f64 {
+fn lognormal(rng: &mut RustRandomGenerator, cv: f64) -> f64 {
     if cv <= 0.0 {
         return 1.0;
     }
@@ -68,7 +68,7 @@ pub struct BatchScheduler {
     step_index: AtomicU64,
     stopped: AtomicBool,
     tick: Mutex<Option<JoinHandle<()>>>,
-    admit_rng: Mutex<RandomGenerator>,
+    admit_rng: Mutex<RustRandomGenerator>,
 }
 
 impl BatchScheduler {
@@ -93,8 +93,8 @@ impl BatchScheduler {
             stopped: AtomicBool::new(false),
             tick: Mutex::new(None),
             admit_rng: Mutex::new(match cfg.random_seed {
-                Some(s) => RandomGenerator::from_seed(Some(s ^ 0x5c4ed_u64)),
-                None => RandomGenerator::from_seed(None),
+                Some(s) => RustRandomGenerator::from_seed(Some(s ^ 0x5c4ed_u64)),
+                None => RustRandomGenerator::from_seed(None),
             }),
         })
     }
@@ -183,7 +183,7 @@ impl BatchScheduler {
             eff.div_ceil(self.prefill_chunk_tokens).max(1)
         };
         let chunks = if self.work_cv > 0.0 {
-            let mut rng = RandomGenerator::from_seed(Some(seed ^ 0x9E37_79B9_7F4A_7C15));
+            let mut rng = RustRandomGenerator::from_seed(Some(seed ^ 0x9E37_79B9_7F4A_7C15));
             ((base as f64 * lognormal(&mut rng, self.work_cv)).round() as usize).max(1)
         } else {
             base

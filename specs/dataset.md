@@ -45,7 +45,13 @@ input.
   context injection, model selection, and `max_tokens`.
 - **Sampling strategies** (random, sequential, shuffle) operate on ids and are
   deterministic under a seed.
-- **Tokenization** runs at load so segment ids can be token-keyed.
+- **Tokenization** runs at load when semantic text must become token-keyed
+  segments. Verbatim `raw_payload` and `inputs_json` bodies remain opaque,
+  preserve exact wire bytes, and leave composed `Turn::input_tokens` unset
+  (`None`). Only an endpoint declaring `requires_raw_token_ids` (such as
+  `vllm_generate`) causes those loaders to validate and intern authored
+  `token_ids` and record `Some(length)`; text is never BPE-encoded to
+  synthesize IDs for that path.
 - **Materialization** splices a static segment plus dynamic
   predecessor-reply/live continuation content into the request body.
 

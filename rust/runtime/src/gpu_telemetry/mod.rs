@@ -33,6 +33,3 @@ pub use python_source::{
     PYTHON_GPU_TELEMETRY_PROTOCOL_VERSION, PythonGpuTelemetryConfig, PythonGpuTelemetrySource,
 };
 pub use source::{DcgmTelemetrySource, GpuScrapeMode, GpuTelemetryError, GpuTelemetrySource};
-
-/// Default GPU telemetry collection cadence: 333 milliseconds.
-pub const DEFAULT_COLLECTION_INTERVAL_NS: i64 = 333_000_000;

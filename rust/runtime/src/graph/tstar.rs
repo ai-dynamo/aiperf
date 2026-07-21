@@ -12,8 +12,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::graph::model::{ParsedGraph, TraceRecord};
-use crate::rng::numpy_pcg64::NumpyPcg64;
-use crate::rng::python_mt::PythonMt19937;
+use crate::rng::compat::numpy_pcg64::NumpyPcg64;
+use crate::rng::compat::python_mt::PythonMt19937;
 use sha2::{Digest, Sha256};
 
 /// Draws a deterministic per-trace `t*` (microseconds) for warmup partition.

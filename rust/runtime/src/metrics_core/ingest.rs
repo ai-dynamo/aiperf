@@ -202,12 +202,4 @@ impl RecordIngest {
     pub fn latency_ns(&self) -> i64 {
         self.end_ns - self.start_ns
     }
-
-    /// Returns adjacent token/chunk inter-arrival latencies in nanoseconds.
-    pub fn inter_chunk_latencies_ns(&self) -> Vec<i64> {
-        self.token_arrival_ns
-            .windows(2)
-            .map(|pair| pair[1] - pair[0])
-            .collect()
-    }
 }

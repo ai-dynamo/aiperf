@@ -4374,23 +4374,6 @@ fn offline_scheduled_policies(
     })
 }
 
-/// Replay an authored absolute schedule against the in-process engine.
-pub fn run_fixed_schedule_offline(
-    engine_config: OfflineEngineConfig,
-    model: String,
-    conversations: Box<dyn ConversationSource>,
-    config: FixedScheduleConfig,
-) -> Result<OfflineScheduledReport> {
-    run_fixed_schedule_offline_with_ancillary(
-        engine_config,
-        model,
-        conversations,
-        config,
-        AncillaryTimingConfig::default(),
-        0,
-    )
-}
-
 /// Run authored fixed-schedule replay with Clock-native cancellation policy.
 pub fn run_fixed_schedule_offline_with_ancillary(
     engine_config: OfflineEngineConfig,
@@ -4437,25 +4420,6 @@ pub fn run_single_turn_dataset_offline(
         false,
         ScheduledAncillaryPolicies::default(),
         record_processors,
-    )
-}
-
-/// Run user-centric virtual-history/churn scheduling against the in-process engine.
-pub fn run_user_centric_offline(
-    engine_config: OfflineEngineConfig,
-    model: String,
-    conversations: Box<dyn ConversationSource>,
-    config: UserCentricConfig,
-    stop: StopConfig,
-) -> Result<OfflineScheduledReport> {
-    run_user_centric_offline_with_ancillary(
-        engine_config,
-        model,
-        conversations,
-        config,
-        stop,
-        AncillaryTimingConfig::default(),
-        0,
     )
 }
 
@@ -4533,25 +4497,6 @@ pub fn run_user_centric_offline_with_adaptive_and_ancillary(
         },
     );
     run_scheduled_backend_offline(engine_config, model, factory)
-}
-
-/// Run continuation-priority multi-turn request-rate scheduling against the
-/// in-process engine.
-pub fn run_request_rate_offline(
-    engine_config: OfflineEngineConfig,
-    model: String,
-    conversations: Box<dyn ConversationSource>,
-    config: RequestRateConfig,
-    stop: StopConfig,
-) -> Result<OfflineScheduledReport> {
-    run_request_rate_offline_with_ancillary(
-        engine_config,
-        model,
-        conversations,
-        config,
-        stop,
-        AncillaryTimingConfig::default(),
-    )
 }
 
 /// Run continuation-priority request-rate scheduling with offline cancellation.

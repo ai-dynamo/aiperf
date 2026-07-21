@@ -657,24 +657,6 @@ pub fn total_throughput_sweep_line(
     sweep_line_cumsum_compact(events)
 }
 
-/// Computes decode throughput per active generation request.
-pub fn throughput_per_user_sweep_line(
-    generation_start_ns: &[f64],
-    end_ns: &[f64],
-    throughput: &StepFn,
-) -> StepFn {
-    throughput.divide(&concurrency_sweep_line(generation_start_ns, end_ns))
-}
-
-/// Computes prefill throughput per active prefill request.
-pub fn prefill_throughput_per_user_sweep_line(
-    start_ns: &[f64],
-    generation_start_ns: &[f64],
-    throughput: &StepFn,
-) -> StepFn {
-    throughput.divide(&concurrency_sweep_line(start_ns, generation_start_ns))
-}
-
 /// All request-derived sweep curves, computed once and re-windowed for summaries.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SweepLineCurves {

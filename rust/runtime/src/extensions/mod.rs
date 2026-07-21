@@ -14,8 +14,10 @@ use std::error::Error;
 use std::fmt::{self, Display};
 use std::sync::Arc;
 
+mod registry_id;
 mod transactional;
 
+pub use registry_id::{RegistryId, RegistryIdError};
 pub(crate) use transactional::commit_on_clone;
 pub use transactional::{DuplicateName, TransactionalRegistry};
 

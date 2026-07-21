@@ -34,7 +34,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use aiperf_runtime::rng::{RandomGenerator, derive_seed_parts};
+use aiperf_runtime::rng::{RustRandomGenerator, derive_seed_parts};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -315,7 +315,7 @@ impl AccuracyDataset {
             entry.key_norm.as_bytes(),
             "mock.accuracy".as_bytes(),
         ]);
-        let mut rng = RandomGenerator::from_seed(Some(seed));
+        let mut rng = RustRandomGenerator::from_seed(Some(seed));
         // Fixed draw order — do NOT reorder, it defines the seeded stream.
         let correct = rng.random() < self.correct_rate;
         let cot = rng.random() < self.cot_rate;
@@ -396,7 +396,7 @@ fn format_correct(fmt: AccuracyFormat, gold: &str) -> String {
     }
 }
 
-fn format_wrong(fmt: AccuracyFormat, entry: &Entry, rng: &mut RandomGenerator) -> String {
+fn format_wrong(fmt: AccuracyFormat, entry: &Entry, rng: &mut RustRandomGenerator) -> String {
     let g = entry.gold.trim();
     match fmt {
         AccuracyFormat::Mmlu | AccuracyFormat::MmluPro => {
@@ -409,7 +409,7 @@ fn format_wrong(fmt: AccuracyFormat, entry: &Entry, rng: &mut RandomGenerator) -
     }
 }
 
-fn wrong_letter(fmt: AccuracyFormat, entry: &Entry, rng: &mut RandomGenerator) -> String {
+fn wrong_letter(fmt: AccuracyFormat, entry: &Entry, rng: &mut RustRandomGenerator) -> String {
     let gold = entry.gold.trim().to_ascii_uppercase();
     let pool: Vec<String> = if !entry.choices.is_empty() {
         entry.choices.iter().map(|c| c.trim().to_string()).collect()
@@ -447,7 +447,7 @@ fn bump_number(s: &str) -> String {
     }
 }
 
-fn generate_cot(rng: &mut RandomGenerator, answer: &str) -> String {
+fn generate_cot(rng: &mut RustRandomGenerator, answer: &str) -> String {
     let openers = [
         "Let me work through this step by step.",
         "First, let me analyze the problem carefully.",

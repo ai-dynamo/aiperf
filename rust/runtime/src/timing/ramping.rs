@@ -18,7 +18,7 @@ use std::rc::Rc;
 
 use crate::clock::Clock;
 use crate::rng::namespace::TIMING_RAMP_POISSON;
-use crate::rng::{RandomGenerator, RngRoot};
+use crate::rng::{RngRoot, RustRandomGenerator};
 use tokio::task::JoinHandle;
 
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
@@ -438,7 +438,7 @@ impl PoissonRamp {
         if !expected_rate.is_finite() || expected_rate <= 0.0 {
             return Err(RampConfigError::InvalidPoissonRate(expected_rate));
         }
-        let mut rng = RandomGenerator::from_seed(root.derive_seed(TIMING_RAMP_POISSON));
+        let mut rng = RustRandomGenerator::from_seed(root.derive_seed(TIMING_RAMP_POISSON));
         let mut raw_intervals = Vec::new();
         let mut cumulative = 0.0;
         while cumulative < duration_seconds {

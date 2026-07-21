@@ -150,12 +150,6 @@ impl SlurmTopology {
         Self::new(proc_id, ntasks, controller_host)
     }
 
-    /// Whether a `SLURM_*` allocation is present at all (used to auto-detect the
-    /// SLURM launcher without forcing the user to pass a flag).
-    pub fn is_slurm_allocation() -> bool {
-        std::env::var_os("SLURM_JOB_ID").is_some() || std::env::var_os("SLURM_PROCID").is_some()
-    }
-
     /// This task's global rank (`SLURM_PROCID`).
     pub fn proc_id(&self) -> u32 {
         self.proc_id

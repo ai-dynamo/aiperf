@@ -227,7 +227,11 @@ pub struct Turn {
     pub streaming: Option<bool>,
     /// Load-time token count for this turn's authored request content, excluding
     /// tools supplied by another turn and live assistant replies.
-    pub input_tokens: u64,
+    ///
+    /// `None` means composition did not establish a client token count (for
+    /// example verbatim opaque `raw_payload` / `inputs_json` bodies). Token-native
+    /// endpoints that require authored `token_ids` record `Some(length)`.
+    pub input_tokens: Option<u64>,
     /// Load-time token count for this turn's tool definitions, when present.
     pub tool_tokens: u64,
     /// Absolute authored timestamp in milliseconds.
@@ -286,7 +290,7 @@ impl Default for Turn {
             endpoint: None,
             max_tokens: None,
             streaming: None,
-            input_tokens: 0,
+            input_tokens: None,
             tool_tokens: 0,
             timestamp_ms: None,
             delay_ms: None,
@@ -348,7 +352,9 @@ pub struct TurnMetadata {
     #[serde(default)]
     pub trace_hash_ids: Option<Handle>,
     /// Load-time token count for authored request content.
-    pub input_tokens: u64,
+    ///
+    /// `None` when composition left the count unset (opaque raw bodies).
+    pub input_tokens: Option<u64>,
     /// Declared branch identifiers.
     pub branch_ids: SmallVec<[BranchId; 0]>,
     /// Whether any declared branch is a fork.

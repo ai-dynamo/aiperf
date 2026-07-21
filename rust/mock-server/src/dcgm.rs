@@ -6,7 +6,7 @@
 use std::fmt::Write;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use aiperf_runtime::rng::RandomGenerator;
+use aiperf_runtime::rng::RustRandomGenerator;
 use parking_lot::Mutex;
 
 #[derive(Debug, Clone)]
@@ -110,7 +110,7 @@ pub fn lookup_gpu(name: &str) -> Option<GpuConfig> {
 struct FakeGpuState {
     idx: u32,
     cfg: GpuConfig,
-    rng: RandomGenerator,
+    rng: RustRandomGenerator,
     load_offset: f64,
     uuid: String,
     mem_total: f64,
@@ -137,7 +137,7 @@ struct FakeGpuState {
 }
 
 impl FakeGpuState {
-    fn new(idx: u32, cfg: GpuConfig, mut rng: RandomGenerator, load_offset: f64) -> Self {
+    fn new(idx: u32, cfg: GpuConfig, mut rng: RustRandomGenerator, load_offset: f64) -> Self {
         let mut draw = |lo: u64, hi: u64| {
             rng.randrange_u64(lo, hi)
                 .expect("dcgm uuid ranges are non-empty")
@@ -272,12 +272,12 @@ impl DcgmFaker {
         hostname: &str,
         initial_load: f64,
     ) -> Result<Self, String> {
-        let mut rng = RandomGenerator::from_seed(seed);
+        let mut rng = RustRandomGenerator::from_seed(seed);
         let mut gpus = Vec::with_capacity(num_gpus as usize);
         for i in 0..num_gpus {
             let load_offset: f64 = rng.uniform(-0.05, 0.05);
             let gpu_seed = rng.random_u64();
-            let gpu_rng = RandomGenerator::from_seed(Some(gpu_seed));
+            let gpu_rng = RustRandomGenerator::from_seed(Some(gpu_seed));
             gpus.push(FakeGpuState::new(i, cfg.clone(), gpu_rng, load_offset));
         }
         Ok(DcgmFaker {

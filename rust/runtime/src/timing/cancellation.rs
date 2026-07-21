@@ -12,7 +12,7 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 use crate::rng::namespace::TIMING_REQUEST_CANCELLATION;
-use crate::rng::{RandomGenerator, RngRoot};
+use crate::rng::{RngRoot, RustRandomGenerator};
 
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 
@@ -75,7 +75,7 @@ pub struct BernoulliFixedDelay {
     enabled: bool,
     cancellation_probability: f64,
     delay_ns: i64,
-    rng: RandomGenerator,
+    rng: RustRandomGenerator,
 }
 
 impl BernoulliFixedDelay {
@@ -123,7 +123,7 @@ impl BernoulliFixedDelay {
             enabled: rate_percent != 0.0,
             cancellation_probability: rate_percent / 100.0,
             delay_ns,
-            rng: RandomGenerator::from_seed(root.derive_seed(TIMING_REQUEST_CANCELLATION)),
+            rng: RustRandomGenerator::from_seed(root.derive_seed(TIMING_REQUEST_CANCELLATION)),
         })
     }
 

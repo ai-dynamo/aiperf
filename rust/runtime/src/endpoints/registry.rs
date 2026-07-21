@@ -13,10 +13,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt::{self, Display};
-use std::str::FromStr;
 use std::sync::Arc;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::body_plan::BodyPlan;
@@ -75,92 +74,14 @@ pub(crate) fn legacy_descriptor_for(endpoint_type: EndpointType) -> &'static End
 
 /// Open canonical endpoint identifier.
 ///
-/// Construction validates only the stable `[a-z][a-z0-9_]*` grammar. Registry
-/// membership is deliberately checked later so a syntactically valid ID from a
-/// custom runner distribution survives wire deserialization.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(transparent)]
-pub struct EndpointId(Box<str>);
-
-impl EndpointId {
-    /// Validate and construct an endpoint identifier.
-    pub fn new(value: impl AsRef<str>) -> Result<Self, EndpointIdError> {
-        let value = value.as_ref();
-        let mut chars = value.chars();
-        if !chars.next().is_some_and(|first| first.is_ascii_lowercase())
-            || !chars.all(|character| {
-                character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
-            })
-        {
-            return Err(EndpointIdError {
-                value: value.to_string(),
-            });
-        }
-        Ok(Self(value.into()))
-    }
-
-    /// Borrow the canonical identifier.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Display for EndpointId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-impl FromStr for EndpointId {
-    type Err = EndpointIdError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Self::new(value)
-    }
-}
-
-impl TryFrom<&str> for EndpointId {
-    type Error = EndpointIdError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Self::new(value)
-    }
-}
-
-impl<'de> Deserialize<'de> for EndpointId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        Self::new(&value).map_err(serde::de::Error::custom)
-    }
-}
-
-/// Invalid open endpoint identifier.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EndpointIdError {
-    value: String,
-}
-
-impl EndpointIdError {
-    /// Return the rejected spelling.
-    pub fn value(&self) -> &str {
-        &self.value
-    }
-}
-
-impl Display for EndpointIdError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "invalid endpoint ID {:?}; expected [a-z][a-z0-9_]*",
-            self.value
-        )
-    }
-}
-
-impl Error for EndpointIdError {}
+/// Alias of the shared [`crate::extensions::RegistryId`]: construction
+/// normalizes case and hyphens and rejects only an empty spelling. Registry
+/// membership is deliberately checked later (not at construction) so a
+/// syntactically valid ID from a custom runner distribution survives wire
+/// deserialization.
+pub use crate::extensions::RegistryId as EndpointId;
+/// Invalid (empty) open endpoint identifier.
+pub use crate::extensions::RegistryIdError as EndpointIdError;
 
 /// Endpoint registry construction, lookup, or preparation failure.
 #[derive(Debug)]

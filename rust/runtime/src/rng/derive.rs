@@ -7,7 +7,7 @@
 //! child seed depends only on `(root_seed, identifier)`. The stable contract is
 //! BLAKE3's first eight digest bytes interpreted as a big-endian `u64`.
 
-use crate::rng::generator::RandomGenerator;
+use crate::rng::generator::RustRandomGenerator;
 
 /// Root seed for a reproducible run.
 ///
@@ -32,8 +32,8 @@ impl RngRoot {
     /// Seeded roots produce a fresh deterministic generator whose stream depends
     /// only on `(root, identifier)`. Seedless roots produce a fresh entropy-seeded
     /// generator. Creating or drawing from any other child cannot perturb it.
-    pub fn derive(self, identifier: &str) -> RandomGenerator {
-        RandomGenerator::from_seed(self.derive_seed(identifier))
+    pub fn derive(self, identifier: &str) -> RustRandomGenerator {
+        RustRandomGenerator::from_seed(self.derive_seed(identifier))
     }
 
     /// Derive a child root for a named subsystem.

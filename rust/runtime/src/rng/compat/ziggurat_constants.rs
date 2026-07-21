@@ -1,9 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+// Portions derived from NumPy (numpy.random), BSD-3-Clause / NCSA. See ATTRIBUTIONS.md.
 //! NumPy normal-ziggurat constants, extracted verbatim from numpy's
 //! `src/distributions/ziggurat_constants.h` (numpy 1.26.4 sdist; verified
 //! stable through 2.5.1). Used by `NumpyGenerator::standard_normal` to
 //! reproduce `np.random.default_rng(seed).standard_normal()` bit-for-bit.
+//!
+//! Every literal below is copied verbatim from that C source, so most carry
+//! more decimal digits than an `f64` can hold (harmless — they parse to the
+//! nearest representable `f64` regardless); `excessive_precision` is silenced
+//! file-wide rather than truncated per-literal, to keep this file diffable
+//! against its numpy source.
+
+#![allow(clippy::excessive_precision)]
 
 pub(crate) const ZIGGURAT_NOR_R: f64 = 3.6541528853610087963519472518;
 pub(crate) const ZIGGURAT_NOR_INV_R: f64 = 0.27366123732975827203338247596;

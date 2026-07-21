@@ -26,6 +26,16 @@ pub trait DatasetFetcher: Send + Sync {
     /// Fetch `url`, optionally authenticating with `bearer_token`, and cache the
     /// exact response bytes under `cache_key`.
     async fn fetch(&self, url: &str, cache_key: &str, bearer_token: Option<&str>) -> Result<Bytes>;
+
+    /// Whether revision-pinned Parquet/JSONL may stream through `hf-hub` instead
+    /// of [`Self::fetch`].
+    ///
+    /// The default is `false` so injected fetchers (tests, custom caches) remain
+    /// the exclusive download path. [`HttpDatasetFetcher`] opts in so production
+    /// can stream giant shards without loading them into memory.
+    fn allows_hf_hub_streaming(&self) -> bool {
+        false
+    }
 }
 
 /// Native hyper fetcher with a persistent on-disk exact-byte cache.
@@ -70,6 +80,10 @@ impl DatasetFetcher for HttpDatasetFetcher {
             })??;
         persist_cache(&cache_path, &bytes)?;
         Ok(bytes)
+    }
+
+    fn allows_hf_hub_streaming(&self) -> bool {
+        true
     }
 }
 

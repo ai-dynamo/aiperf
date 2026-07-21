@@ -16,8 +16,8 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::graph::model::{END_NODE_ID, START_NODE_ID};
+use crate::rng::compat::numpy_pcg64::NumpyPcg64;
 use crate::rng::derive_seed_parts;
-use crate::rng::numpy_pcg64::NumpyPcg64;
 
 use super::model::{
     AuthoredConditionalEdge, AuthoredEdge, AuthoredGraph, AuthoredNode, AuthoredTrace,

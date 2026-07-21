@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+// Portions derived from CPython (Lib/random.py, Modules/_randommodule.c), PSF License. See ATTRIBUTIONS.md.
 
 //! Byte-exact CPython `random.Random` Mersenne Twister.
 //!
 //! AgentX random sampling draws with replacement via
 //! `random.Random(seed).choice(ids)`. NumPy-compatible PCG64
-//! ([`crate::rng::numpy_pcg64`]) drives the shuffle/`t*` draws; the with-replacement
+//! ([`crate::rng::compat::numpy_pcg64`]) drives the shuffle/`t*` draws; the with-replacement
 //! `RandomSampler` uses CPython's stdlib `random` instead, a DIFFERENT algorithm,
 //! so it needs its own byte-exact implementation.
 //!
@@ -18,6 +19,18 @@
 //!     `Random.choice` (`seq[_randbelow(len(seq))]`).
 //!
 //! Committed golden vectors pin the stream.
+
+use crate::rng::error::{Result, RngError};
+
+/// `math.log(4.0)`, CPython `random.LOG4` — Cheng's-method constant in
+/// [`PythonMt19937::gammavariate`]'s `alpha > 1.0` branch.
+const LOG4: f64 = 1.386_294_361_119_890_6;
+/// `1.0 + math.log(4.5)`, CPython `random.SG_MAGICCONST` — the same branch's
+/// acceptance-test constant.
+const SG_MAGICCONST: f64 = 2.504_077_396_776_274;
+/// `2.0 * math.pi`, CPython `random.TWOPI` — [`PythonMt19937::gauss`]'s
+/// Box-Muller angle scale.
+const TWOPI: f64 = 6.283_185_307_179_586;
 
 /// Mersenne Twister state size (`N` in `_randommodule.c`).
 const N: usize = 624;
@@ -41,6 +54,10 @@ pub struct PythonMt19937 {
     mt: [u32; N],
     /// Index of the next word to temper; `>= N` forces a fresh twist block.
     index: usize,
+    /// `random.Random.gauss_next`: the cached second Box-Muller variate from the
+    /// previous [`PythonMt19937::gauss`] call, consumed (and cleared) by the next
+    /// one. `None` means the next call must draw a fresh pair.
+    gauss_next: Option<f64>,
 }
 
 impl PythonMt19937 {
@@ -65,6 +82,7 @@ impl PythonMt19937 {
         let mut generator = Self {
             mt: [0u32; N],
             index: N,
+            gauss_next: None,
         };
         generator.init_by_array(&key);
         generator
@@ -196,6 +214,84 @@ impl PythonMt19937 {
         }
         r
     }
+
+    /// `Random.gauss(mu, sigma)`: the cached two-variable Box-Muller transform.
+    ///
+    /// Each pair of draws yields two independent standard-normal variates; the
+    /// second is cached in [`Self::gauss_next`] and returned (scaled) by the
+    /// following call instead of drawing a fresh pair, so the two calls together
+    /// consume exactly two [`Self::random`] draws.
+    pub fn gauss(&mut self, mu: f64, sigma: f64) -> f64 {
+        let z = match self.gauss_next.take() {
+            Some(z) => z,
+            None => {
+                let x2pi = self.random() * TWOPI;
+                let g2rad = (-2.0 * (1.0 - self.random()).ln()).sqrt();
+                let z = x2pi.cos() * g2rad;
+                self.gauss_next = Some(x2pi.sin() * g2rad);
+                z
+            }
+        };
+        mu + z * sigma
+    }
+
+    /// `Random.expovariate(lambd)`: `-ln(1 - random()) / lambd`.
+    pub fn expovariate(&mut self, lambd: f64) -> f64 {
+        -(1.0 - self.random()).ln() / lambd
+    }
+
+    /// `Random.gammavariate(alpha, beta)`: Cheng's method (`alpha > 1.0`), the
+    /// exponential shortcut (`alpha == 1.0`), or Ahrens-Dieter algorithm GS
+    /// (`0 < alpha < 1.0`).
+    pub fn gammavariate(&mut self, alpha: f64, beta: f64) -> Result<f64> {
+        if alpha <= 0.0 || beta <= 0.0 {
+            return Err(RngError::InvalidParameter {
+                what: "gammavariate: alpha and beta must be > 0.0",
+                value: if alpha <= 0.0 { alpha } else { beta },
+            });
+        }
+        if alpha > 1.0 {
+            let ainv = (2.0 * alpha - 1.0).sqrt();
+            let bbb = alpha - LOG4;
+            let ccc = alpha + ainv;
+            loop {
+                let u1 = self.random();
+                if !(1e-7 < u1 && u1 < 0.9999999) {
+                    continue;
+                }
+                let u2 = 1.0 - self.random();
+                let v = (u1 / (1.0 - u1)).ln() / ainv;
+                let x = alpha * v.exp();
+                let z = u1 * u1 * u2;
+                let r = bbb + ccc * v - x;
+                if r + SG_MAGICCONST - 4.5 * z >= 0.0 || r >= z.ln() {
+                    return Ok(x * beta);
+                }
+            }
+        } else if alpha == 1.0 {
+            return Ok(-(1.0 - self.random()).ln() * beta);
+        }
+        // 0 < alpha < 1.0: Ahrens-Dieter algorithm GS.
+        let e = std::f64::consts::E;
+        loop {
+            let u = self.random();
+            let b = (e + alpha) / e;
+            let p = b * u;
+            let x = if p <= 1.0 {
+                p.powf(1.0 / alpha)
+            } else {
+                -((b - p) / alpha).ln()
+            };
+            let u1 = self.random();
+            if p > 1.0 {
+                if u1 <= x.powf(alpha - 1.0) {
+                    return Ok(x * beta);
+                }
+            } else if u1 <= (-x).exp() {
+                return Ok(x * beta);
+            }
+        }
+    }
 }
 
 /// The `mag01` twist term: `MATRIX_A` when `y` is odd, else `0`.
@@ -268,6 +364,143 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Parse a Rust hex-float literal (`0x1.35517978b5bf3p-2`,
+    /// `-0x1.65eb880d86c3cp-2`) into its `f64` value via `f64::from_bits`,
+    /// avoiding any decimal round-trip. Golden values were captured with
+    /// `float.hex()` from a local CPython 3.12.10 interpreter
+    /// (`python3 -c "import random; ..."`), which emits this same syntax.
+    fn hexf(s: &str) -> f64 {
+        let (neg, s) = match s.strip_prefix('-') {
+            Some(rest) => (true, rest),
+            None => (false, s),
+        };
+        let s = s.strip_prefix("0x").expect("hex float prefix");
+        let (mantissa, exp) = s.split_once('p').expect("hex float exponent");
+        let (int_part, frac_part) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+        let int_val = u64::from_str_radix(int_part, 16).expect("hex int part");
+        let mut frac_val = 0.0f64;
+        let mut scale = 1.0f64 / 16.0;
+        for c in frac_part.chars() {
+            frac_val += (c.to_digit(16).expect("hex frac digit") as f64) * scale;
+            scale /= 16.0;
+        }
+        let exp_val: i32 = exp.parse().expect("hex exponent");
+        let value = (int_val as f64 + frac_val) * 2f64.powi(exp_val);
+        if neg { -value } else { value }
+    }
+
+    #[test]
+    fn gauss_matches_cpython() {
+        // python3 -c "import random; r = random.Random(999888777);
+        //   print([r.gauss(0.0, 1.0).hex() for _ in range(8)])"
+        let expected = [
+            "0x1.35517978b5bf3p-2",
+            "-0x1.65eb880d86c3cp-2",
+            "0x1.c81db64ee9223p-1",
+            "-0x1.4f8c93553eee2p+0",
+            "0x1.cc41c0f5400b5p-1",
+            "0x1.f5c4d0bc36ceep-3",
+            "0x1.1e43d46feed4cp-1",
+            "0x1.84209d0647111p-2",
+        ];
+        let mut r = PythonMt19937::from_u64_seed(999_888_777);
+        for (i, hex) in expected.iter().enumerate() {
+            assert_eq!(r.gauss(0.0, 1.0).to_bits(), hexf(hex).to_bits(), "draw {i}");
+        }
+    }
+
+    #[test]
+    fn expovariate_matches_cpython() {
+        // python3 -c "import random; r = random.Random(12345);
+        //   print([r.expovariate(2.0).hex() for _ in range(5)])"
+        let expected = [
+            "0x1.13ecd5daa2246p-2",
+            "0x1.4eede17bc72fep-8",
+            "0x1.be809e3475578p-1",
+            "0x1.6b3f54020f85bp-3",
+            "0x1.d68bc1b7451d2p-3",
+        ];
+        let mut r = PythonMt19937::from_u64_seed(12345);
+        for (i, hex) in expected.iter().enumerate() {
+            assert_eq!(
+                r.expovariate(2.0).to_bits(),
+                hexf(hex).to_bits(),
+                "draw {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn gammavariate_alpha_gt_one_matches_cpython() {
+        // python3 -c "import random; r = random.Random(42424242);
+        //   print([r.gammavariate(3.5, 2.0).hex() for _ in range(5)])"
+        let expected = [
+            "0x1.87a957e064260p+3",
+            "0x1.ad97651fe88c8p+3",
+            "0x1.8e7971d23cea5p+0",
+            "0x1.3355354c9df94p+3",
+            "0x1.318a44c171fbbp+2",
+        ];
+        let mut r = PythonMt19937::from_u64_seed(42_424_242);
+        for (i, hex) in expected.iter().enumerate() {
+            assert_eq!(
+                r.gammavariate(3.5, 2.0).unwrap().to_bits(),
+                hexf(hex).to_bits(),
+                "draw {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn gammavariate_alpha_eq_one_matches_cpython() {
+        // python3 -c "import random; r = random.Random(7);
+        //   print([r.gammavariate(1.0, 1.5).hex() for _ in range(5)])"
+        let expected = [
+            "0x1.2c87a0ff48909p-1",
+            "0x1.f65425ad92286p-3",
+            "0x1.9428877c32687p+0",
+            "0x1.cdfd9c43ddb52p-4",
+            "0x1.26c3c4ae9cb51p+0",
+        ];
+        let mut r = PythonMt19937::from_u64_seed(7);
+        for (i, hex) in expected.iter().enumerate() {
+            assert_eq!(
+                r.gammavariate(1.0, 1.5).unwrap().to_bits(),
+                hexf(hex).to_bits(),
+                "draw {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn gammavariate_alpha_lt_one_matches_cpython() {
+        // python3 -c "import random; r = random.Random(31415);
+        //   print([r.gammavariate(0.5, 1.0).hex() for _ in range(5)])"
+        let expected = [
+            "0x1.f39ffb7f45de7p-2",
+            "0x1.4aa3d348ae418p+0",
+            "0x1.8cd4e298e4b9cp-2",
+            "0x1.7dd94ed2820ebp-1",
+            "0x1.4021cab812a56p-2",
+        ];
+        let mut r = PythonMt19937::from_u64_seed(31415);
+        for (i, hex) in expected.iter().enumerate() {
+            assert_eq!(
+                r.gammavariate(0.5, 1.0).unwrap().to_bits(),
+                hexf(hex).to_bits(),
+                "draw {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn gammavariate_rejects_non_positive_parameters() {
+        let mut r = PythonMt19937::from_u64_seed(0);
+        assert!(r.gammavariate(0.0, 1.0).is_err());
+        assert!(r.gammavariate(1.0, 0.0).is_err());
+        assert!(r.gammavariate(-1.0, 1.0).is_err());
     }
 
     #[test]

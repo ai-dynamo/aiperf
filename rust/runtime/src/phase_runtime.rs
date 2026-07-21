@@ -451,12 +451,6 @@ impl ScheduledPhasePlan {
         self
     }
 
-    /// Allow independent report reducers to execute concurrently after drain.
-    pub fn with_parallel_report_reduction(mut self, enabled: bool) -> Self {
-        self.parallel_report_reduction = enabled;
-        self
-    }
-
     /// Attach observers that span phase boundaries on the shared dispatcher
     /// timeline.
     pub fn with_additional_observers(mut self, observers: Vec<Rc<dyn RequestObserver>>) -> Self {
@@ -628,32 +622,6 @@ impl DeferredAggregateStrategy for SinglePhaseAggregateReuse {
             .performance
             .clone()
     }
-}
-
-/// Run scheduled phases while one collector observes every phase on the
-/// caller-supplied timeline.
-///
-/// This is the backend-neutral contract for a single engine that spans warmup
-/// and profiling. It accumulates original callbacks and never merges already
-/// finalized phase summaries.
-pub async fn run_scheduled_phases_with_aggregate(
-    mut plans: Vec<ScheduledPhasePlan>,
-    clock: Rc<dyn crate::clock::Clock>,
-    start_ns: i64,
-    dispatcher: Rc<dyn TurnDispatcher>,
-    observer: Rc<dyn PhaseObserver>,
-) -> Result<AggregatedPhasedScheduledRunReport> {
-    let collector = Rc::new(CollectorObserver::new(true));
-    let aggregate_observer: Rc<dyn RequestObserver> = collector.clone();
-    for plan in &mut plans {
-        plan.additional_observers.push(aggregate_observer.clone());
-    }
-    let phased = run_scheduled_phases(plans, clock.clone(), dispatcher, observer).await?;
-    let wall_ms = clock.now_ns().saturating_sub(start_ns) as f64 / 1_000_000.0;
-    Ok(AggregatedPhasedScheduledRunReport {
-        phased,
-        performance: collector.finish(wall_ms),
-    })
 }
 
 /// Run scheduled phases to quiescence while deferring all aggregate reduction.

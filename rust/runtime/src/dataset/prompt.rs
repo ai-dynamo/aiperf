@@ -10,9 +10,10 @@
 //! directly, with EOS replaced before engine admission.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::rng::namespace::DATASET_PROMPT_CORPUS;
-use crate::rng::{RandomGenerator, RngRoot};
+use crate::rng::{RngRoot, RustRandomGenerator};
 
 use crate::dataset::corpus::{SHAKESPEARE_CORPUS, tokenize_corpus_chunked};
 use crate::dataset::error::{DatasetError, Result};
@@ -113,6 +114,23 @@ impl CorpusPromptGeneratorFactory {
             corpus: CorpusSource::Custom(corpus),
         })
     }
+
+    /// Tokenize this corpus once and return a factory that creates generators
+    /// without re-tokenizing.
+    ///
+    /// Default [`PromptGeneratorFactory::create`] still tokenizes on every call
+    /// so production callers that never prepare keep today's behavior. Benchmarks
+    /// and multi-compose pipelines that share one tokenizer should call this
+    /// before the timed or hot region, then inject the prepared factory into
+    /// [`crate::dataset::compose::ComposeConfig::prompt_generator`].
+    pub fn prepare(
+        &self,
+        tokenizer: &dyn TextTokenizer,
+    ) -> Result<PreparedCorpusPromptGeneratorFactory> {
+        Ok(PreparedCorpusPromptGeneratorFactory {
+            corpus_tokens: tokenize_corpus_arc(self.corpus.text(), tokenizer)?,
+        })
+    }
 }
 
 impl Default for CorpusPromptGeneratorFactory {
@@ -128,28 +146,73 @@ impl PromptGeneratorFactory for CorpusPromptGeneratorFactory {
         tokenizer: &'a dyn TextTokenizer,
         root: RngRoot,
     ) -> Result<Box<dyn PromptGenerator + 'a>> {
-        let corpus_tokens = tokenize_corpus_chunked(self.corpus.text(), tokenizer)?;
-        if corpus_tokens.is_empty() {
-            return Err(DatasetError::Validation(
-                "prompt generator corpus encoded to zero tokens".into(),
-            ));
-        }
-        Ok(Box::new(CorpusPromptGenerator {
-            corpus_tokens,
-            block_separator: tokenizer.block_separation_token_id(),
+        // Tokenize once into Arc and build the generator directly — avoid the
+        // prepare→create detour that would Arc::clone a temporary factory.
+        Ok(Box::new(CorpusPromptGenerator::from_corpus_tokens(
+            tokenize_corpus_arc(self.corpus.text(), tokenizer)?,
             tokenizer,
-            rng: RandomGenerator::from_seed(root.derive_seed(DATASET_PROMPT_CORPUS)),
-            blocks: HashMap::new(),
-        }))
+            root,
+        )))
     }
 }
 
+/// Prepared corpus tokens shared across many cheap generator creations.
+///
+/// Constructed by [`CorpusPromptGeneratorFactory::prepare`]. Each
+/// [`PromptGeneratorFactory::create`] clones an [`Arc`] of the token stream and
+/// builds fresh RNG / block-cache state; the corpus is not re-tokenized.
+#[derive(Debug, Clone)]
+pub struct PreparedCorpusPromptGeneratorFactory {
+    corpus_tokens: Arc<[u32]>,
+}
+
+impl PromptGeneratorFactory for PreparedCorpusPromptGeneratorFactory {
+    fn create<'a>(
+        &self,
+        tokenizer: &'a dyn TextTokenizer,
+        root: RngRoot,
+    ) -> Result<Box<dyn PromptGenerator + 'a>> {
+        Ok(Box::new(CorpusPromptGenerator::from_corpus_tokens(
+            Arc::clone(&self.corpus_tokens),
+            tokenizer,
+            root,
+        )))
+    }
+}
+
+/// Tokenize a corpus body into a non-empty shared token stream.
+fn tokenize_corpus_arc(corpus: &str, tokenizer: &dyn TextTokenizer) -> Result<Arc<[u32]>> {
+    let corpus_tokens = tokenize_corpus_chunked(corpus, tokenizer)?;
+    if corpus_tokens.is_empty() {
+        return Err(DatasetError::Validation(
+            "prompt generator corpus encoded to zero tokens".into(),
+        ));
+    }
+    Ok(Arc::from(corpus_tokens))
+}
+
 struct CorpusPromptGenerator<'a> {
-    corpus_tokens: Vec<u32>,
+    corpus_tokens: Arc<[u32]>,
     block_separator: Option<u32>,
     tokenizer: &'a dyn TextTokenizer,
-    rng: RandomGenerator,
+    rng: RustRandomGenerator,
     blocks: HashMap<i64, Vec<u32>>,
+}
+
+impl<'a> CorpusPromptGenerator<'a> {
+    fn from_corpus_tokens(
+        corpus_tokens: Arc<[u32]>,
+        tokenizer: &'a dyn TextTokenizer,
+        root: RngRoot,
+    ) -> Self {
+        Self {
+            corpus_tokens,
+            block_separator: tokenizer.block_separation_token_id(),
+            tokenizer,
+            rng: RustRandomGenerator::from_seed(root.derive_seed(DATASET_PROMPT_CORPUS)),
+            blocks: HashMap::new(),
+        }
+    }
 }
 
 impl PromptGenerator for CorpusPromptGenerator<'_> {
@@ -289,10 +352,129 @@ impl CorpusPromptGenerator<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use crate::rng::RngRoot;
 
     use super::*;
     use crate::dataset::tokenizer::TiktokenTokenizer;
+
+    /// Counts `encode` calls so tests can prove corpus tokenization happens in
+    /// [`CorpusPromptGeneratorFactory::prepare`] rather than every `create`.
+    struct CountingTokenizer {
+        inner: TiktokenTokenizer,
+        encodes: AtomicUsize,
+    }
+
+    impl CountingTokenizer {
+        fn new() -> Self {
+            Self {
+                inner: TiktokenTokenizer::builtin(),
+                encodes: AtomicUsize::new(0),
+            }
+        }
+
+        fn encode_count(&self) -> usize {
+            self.encodes.load(Ordering::SeqCst)
+        }
+    }
+
+    impl TextTokenizer for CountingTokenizer {
+        fn encode(&self, text: &str) -> Result<Vec<u32>> {
+            self.encodes.fetch_add(1, Ordering::SeqCst);
+            self.inner.encode(text)
+        }
+
+        fn decode(&self, token_ids: &[u32]) -> Result<String> {
+            self.inner.decode(token_ids)
+        }
+
+        fn bos_token_id(&self) -> Option<u32> {
+            self.inner.bos_token_id()
+        }
+
+        fn eos_token_id(&self) -> Option<u32> {
+            self.inner.eos_token_id()
+        }
+
+        fn vocab_size(&self) -> Option<u32> {
+            self.inner.vocab_size()
+        }
+
+        fn name(&self) -> &str {
+            "counting"
+        }
+    }
+
+    #[test]
+    fn prepared_factory_create_does_not_reencode_corpus() {
+        let tokenizer = CountingTokenizer::new();
+        let factory = CorpusPromptGeneratorFactory::new("alpha beta gamma delta epsilon").unwrap();
+        let prepared = factory.prepare(&tokenizer).unwrap();
+        let encodes_after_prepare = tokenizer.encode_count();
+        assert!(
+            encodes_after_prepare > 0,
+            "prepare must tokenize the corpus"
+        );
+
+        let mut generator = prepared.create(&tokenizer, RngRoot::new(Some(7))).unwrap();
+        assert_eq!(
+            tokenizer.encode_count(),
+            encodes_after_prepare,
+            "create must not re-tokenize a prepared corpus"
+        );
+        let prompt = generator.generate(4, &[], 1).unwrap();
+        assert_eq!(prompt.tokens.len(), 4);
+        assert_eq!(
+            tokenizer.encode_count(),
+            encodes_after_prepare,
+            "generate must sample prepared tokens without corpus encode"
+        );
+    }
+
+    #[test]
+    fn prepared_and_cold_factories_agree_on_generated_prompts() {
+        let tokenizer = TiktokenTokenizer::builtin();
+        let factory = CorpusPromptGeneratorFactory::new("alpha beta gamma delta epsilon").unwrap();
+        let prepared = factory.prepare(&tokenizer).unwrap();
+
+        let cold = factory
+            .create(&tokenizer, RngRoot::new(Some(11)))
+            .unwrap()
+            .generate(8, &[1, 2], 4)
+            .unwrap();
+        let warm = prepared
+            .create(&tokenizer, RngRoot::new(Some(11)))
+            .unwrap()
+            .generate(8, &[1, 2], 4)
+            .unwrap();
+        assert_eq!(cold, warm);
+    }
+
+    #[test]
+    fn prepare_rejects_empty_token_stream() {
+        struct EmptyTokenizer;
+        impl TextTokenizer for EmptyTokenizer {
+            fn encode(&self, _text: &str) -> Result<Vec<u32>> {
+                Ok(Vec::new())
+            }
+            fn decode(&self, _token_ids: &[u32]) -> Result<String> {
+                Ok(String::new())
+            }
+            fn bos_token_id(&self) -> Option<u32> {
+                None
+            }
+            fn eos_token_id(&self) -> Option<u32> {
+                None
+            }
+            fn name(&self) -> &str {
+                "empty"
+            }
+        }
+
+        let factory = CorpusPromptGeneratorFactory::new("fixture").unwrap();
+        assert!(factory.prepare(&EmptyTokenizer).is_err());
+    }
 
     #[test]
     fn exact_lengths_reuse_hash_prefixes() {

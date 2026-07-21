@@ -622,9 +622,9 @@ fn validate_turn(
         let count = u64::try_from(payload.token_count().unwrap_or_default()).map_err(|_| {
             DatasetError::Validation(format!("{} raw token count exceeds u64", context()))
         })?;
-        if turn.input_tokens != count {
+        if turn.input_tokens != Some(count) {
             return Err(DatasetError::Validation(format!(
-                "{} declares input_tokens={} but raw_token_ids contains {count} IDs",
+                "{} declares input_tokens={:?} but raw_token_ids contains {count} IDs",
                 context(),
                 turn.input_tokens
             )));
@@ -1108,7 +1108,7 @@ mod tests {
 
         let mut ok = Conversation::new("ok");
         ok.turns.push(Turn {
-            input_tokens: 3,
+            input_tokens: Some(3),
             body: Turn::dispatch_body(Some(raw), Some(token), &[]),
             ..Turn::default()
         });
@@ -1126,7 +1126,7 @@ mod tests {
 
         let mut bad = Conversation::new("bad");
         bad.turns.push(Turn {
-            input_tokens: 99,
+            input_tokens: Some(99),
             body: Turn::dispatch_body(Some(raw), Some(token), &[]),
             ..Turn::default()
         });

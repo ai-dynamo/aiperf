@@ -117,7 +117,7 @@ Other active implementation seams include `SegmentStore`, `PromptMaterializer`, 
 - Route all measurement and scheduling time through `Clock`.
 - Preserve SSE as bytes until complete lines are available; a UTF-8 code point may span network chunks.
 - HTTP loopback traffic must never use ambient proxy settings.
-- Capture endpoint `usage` verbatim in the `usage_*` metrics; keep absent usage fields absent. The visible token counts (input/output/reasoning sequence lengths) use client tokenization, with endpoint `usage` authoritative for them only under `use_server_token_count`. A server-side tokenizer that offloads token counting to the endpoint's `/tokenize` and `/detokenize` routes is selectable with `--server-tokenizer-url`; local tokenizers remain the default.
+- Capture endpoint `usage` verbatim in the `usage_*` metrics; keep absent usage fields absent. The visible token counts (input/output/reasoning sequence lengths) use client tokenization, with endpoint `usage` authoritative for them only under `use_server_token_count`. Verbatim `raw_payload` and `inputs_json` bodies are opaque and leave composed input tokens unset (`None`) unless the selected endpoint requires authored raw token IDs. A server-side tokenizer that offloads token counting to the endpoint's `/tokenize` and `/detokenize` routes is selectable with `--server-tokenizer-url`; local tokenizers remain the default.
 - Keep numeric values finite or explicitly absent at serialization boundaries.
 - Use strict serde DTOs with unknown-field rejection for protocol-v2 requests.
 - Use `anyhow` in CLI/application layers. Library APIs use explicit error types with `Display` implementations.

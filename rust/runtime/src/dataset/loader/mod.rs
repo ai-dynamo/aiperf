@@ -18,6 +18,7 @@ use crate::dataset::fetch::{DatasetFetcher, HttpDatasetFetcher};
 use crate::dataset::model::{ConversationContextMode, SessionId};
 use crate::dataset::segment::SegmentPool;
 use crate::dataset::tokenizer::TextTokenizer;
+use crate::extensions::RegistryId;
 
 pub mod asr;
 pub mod baseten;
@@ -342,7 +343,7 @@ impl DatasetFormatRegistration {
 #[derive(Clone, Default)]
 pub struct LoaderRegistry {
     formats: Vec<DatasetFormatRegistration>,
-    by_name: HashMap<String, usize>,
+    by_name: HashMap<RegistryId, usize>,
 }
 
 impl LoaderRegistry {
@@ -457,28 +458,26 @@ impl LoaderRegistry {
 
     /// Register a format; duplicate normalized names are rejected.
     pub fn register(&mut self, registration: DatasetFormatRegistration) -> Result<()> {
-        let normalized = normalize_name(&registration.name);
-        if normalized.is_empty() {
-            return Err(DatasetError::Validation(
-                "dataset format registration name cannot be empty".into(),
-            ));
-        }
-        if self.by_name.contains_key(&normalized) {
+        let id = RegistryId::new(&registration.name).map_err(|_| {
+            DatasetError::Validation("dataset format registration name cannot be empty".into())
+        })?;
+        if self.by_name.contains_key(&id) {
             return Err(DatasetError::Validation(format!(
                 "duplicate dataset loader registration {:?}",
                 registration.name
             )));
         }
-        self.by_name.insert(normalized, self.formats.len());
+        self.by_name.insert(id, self.formats.len());
         self.formats.push(registration);
         Ok(())
     }
 
     /// Resolve an explicitly selected format with dash/underscore-insensitive matching.
     pub fn get(&self, name: &str) -> Result<&DatasetFormatRegistration> {
-        let normalized = normalize_name(name);
+        let normalized = RegistryId::new(name)
+            .map_err(|_| DatasetError::LoaderNotFound(format!("format {name:?}")))?;
         self.by_name
-            .get(&normalized)
+            .get(normalized.as_str())
             .map(|index| &self.formats[*index])
             .ok_or_else(|| DatasetError::LoaderNotFound(format!("format {name:?}")))
     }
@@ -565,10 +564,6 @@ impl LoaderRegistry {
             context_mode,
         )
     }
-}
-
-fn normalize_name(name: &str) -> String {
-    name.to_ascii_lowercase().replace('-', "_")
 }
 
 fn probe_file(path: &Path) -> Result<DatasetProbe> {

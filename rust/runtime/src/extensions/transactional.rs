@@ -10,6 +10,8 @@ use std::collections::btree_map::{Keys, Values};
 use std::error::Error;
 use std::fmt::{self, Display};
 
+use super::registry_id::RegistryId;
+
 /// Apply a mutation atomically, leaving `target` unchanged on error.
 pub(crate) fn commit_on_clone<S, E>(
     target: &mut S,
@@ -43,7 +45,7 @@ impl Error for DuplicateName {}
 /// stable across builds.
 #[derive(Clone, Debug)]
 pub struct TransactionalRegistry<T> {
-    entries: BTreeMap<String, T>,
+    entries: BTreeMap<RegistryId, T>,
 }
 
 impl<T> Default for TransactionalRegistry<T> {
@@ -61,12 +63,18 @@ impl<T: Clone> TransactionalRegistry<T> {
     }
 
     /// Insert one entry, rejecting a name that is already present.
-    pub fn insert(&mut self, name: impl Into<String>, value: T) -> Result<(), DuplicateName> {
-        let name = name.into();
-        if self.entries.contains_key(&name) {
-            return Err(DuplicateName(name));
+    ///
+    /// `name` is a static, code-authored identifier (a descriptor ID or
+    /// registration name), never wire input; an empty/invalid spelling is a
+    /// build-time bug, not a runtime data error.
+    pub fn insert(&mut self, name: impl AsRef<str>, value: T) -> Result<(), DuplicateName> {
+        let name = name.as_ref();
+        let id = RegistryId::new(name)
+            .unwrap_or_else(|error| panic!("registry identifier must be valid: {error}"));
+        if self.entries.contains_key(&id) {
+            return Err(DuplicateName(name.to_string()));
         }
-        self.entries.insert(name, value);
+        self.entries.insert(id, value);
         Ok(())
     }
 
@@ -78,23 +86,24 @@ impl<T: Clone> TransactionalRegistry<T> {
         commit_on_clone(self, mutate)
     }
 
-    /// Borrow a registered entry by name.
+    /// Borrow a registered entry by name (case/hyphen-insensitive).
     pub fn get(&self, name: &str) -> Option<&T> {
-        self.entries.get(name)
+        let id = RegistryId::new(name).ok()?;
+        self.entries.get(id.as_str())
     }
 
-    /// Report whether a name is registered.
+    /// Report whether a name is registered (case/hyphen-insensitive).
     pub fn contains(&self, name: &str) -> bool {
-        self.entries.contains_key(name)
+        RegistryId::new(name).is_ok_and(|id| self.entries.contains_key(id.as_str()))
     }
 
     /// Iterate registered names in deterministic order.
-    pub fn keys(&self) -> Keys<'_, String, T> {
+    pub fn keys(&self) -> Keys<'_, RegistryId, T> {
         self.entries.keys()
     }
 
     /// Iterate registered values in deterministic name order.
-    pub fn values(&self) -> Values<'_, String, T> {
+    pub fn values(&self) -> Values<'_, RegistryId, T> {
         self.entries.values()
     }
 
@@ -152,7 +161,10 @@ mod tests {
                 Ok::<(), DuplicateName>(())
             })
             .unwrap();
-        assert_eq!(registry.keys().cloned().collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(
+            registry.keys().map(RegistryId::as_str).collect::<Vec<_>>(),
+            ["a", "b"]
+        );
         assert_eq!(registry.values().copied().collect::<Vec<_>>(), [1, 2]);
     }
 }

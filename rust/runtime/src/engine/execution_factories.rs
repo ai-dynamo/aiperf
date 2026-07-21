@@ -56,15 +56,6 @@ impl ExecutionFactories {
         }
     }
 
-    /// Override isolated control-plane HTTP provider preparation.
-    pub fn with_control_plane_http(
-        mut self,
-        control_plane_http: Arc<dyn ControlPlaneHttpProviderFactory>,
-    ) -> Self {
-        self.control_plane_http = control_plane_http;
-        self
-    }
-
     /// Borrow the HTTP turn-placement factory used below the one dispatcher.
     pub fn http(&self) -> &dyn RequestExecutorFactory {
         self.http.as_ref()
@@ -90,29 +81,14 @@ impl ExecutionFactories {
         self.readiness_plans.as_ref()
     }
 
-    /// Retain the readiness-plan factory in a prepared operation.
-    pub fn readiness_plans_handle(&self) -> Arc<dyn OnlineReadinessPlanFactory> {
-        self.readiness_plans.clone()
-    }
-
     /// Borrow the readiness control-transport factory.
     pub fn readiness_transport(&self) -> &dyn ReadinessTransportFactory {
         self.readiness_transport.as_ref()
     }
 
-    /// Retain the readiness transport factory in a prepared operation.
-    pub fn readiness_transport_handle(&self) -> Arc<dyn ReadinessTransportFactory> {
-        self.readiness_transport.clone()
-    }
-
     /// Borrow the factory for run-local, inference-isolated control handles.
     pub fn control_plane_http(&self) -> &dyn ControlPlaneHttpProviderFactory {
         self.control_plane_http.as_ref()
-    }
-
-    /// Retain the same injected control-plane factory in a prepared operation.
-    pub fn control_plane_http_handle(&self) -> Arc<dyn ControlPlaneHttpProviderFactory> {
-        self.control_plane_http.clone()
     }
 }
 

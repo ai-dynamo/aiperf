@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+// Portions derived from NumPy (numpy.random), BSD-3-Clause / NCSA. See ATTRIBUTIONS.md.
 //! Byte-exact `numpy.random.Generator` compatibility atop
 //! the [`NumpyPcg64`] bit generator.
 //!
@@ -9,12 +10,13 @@
 //! Algorithms follow the NumPy 1.26.4 C source
 //! (`src/distributions/distributions.c`, `_generator.pyx`), cited per method;
 //! the normal-ziggurat tables are extracted verbatim in
-//! `crate::rng::ziggurat_constants`. Golden-vector tested against numpy.
+//! `crate::rng::compat::ziggurat_constants`. Golden-vector tested against numpy.
 
-use crate::rng::numpy_pcg64::NumpyPcg64;
-use crate::rng::ziggurat_constants::{
+use crate::rng::compat::numpy_pcg64::NumpyPcg64;
+use crate::rng::compat::ziggurat_constants::{
     FI_DOUBLE, KI_DOUBLE, WI_DOUBLE, ZIGGURAT_NOR_INV_R, ZIGGURAT_NOR_R,
 };
+use crate::rng::error::{Result, RngError};
 
 /// A numpy `Generator` (PCG64) reproduced bit-for-bit.
 pub struct NumpyGenerator {
@@ -37,6 +39,12 @@ impl NumpyGenerator {
     /// `random(size)` — `size` draws.
     pub fn random_batch(&mut self, size: usize) -> Vec<f64> {
         (0..size).map(|_| self.bit.next_double()).collect()
+    }
+
+    /// `shuffle(x)` — Fisher-Yates in place, delegating to the wrapped
+    /// [`NumpyPcg64`] bit generator.
+    pub fn shuffle<T>(&mut self, x: &mut [T]) {
+        self.bit.shuffle(x);
     }
 
     /// `standard_normal()` — the byte-exact normal ziggurat from
@@ -81,6 +89,11 @@ impl NumpyGenerator {
     /// (`random_normal`).
     pub fn normal(&mut self, loc: f64, scale: f64) -> f64 {
         loc + scale * self.standard_normal()
+    }
+
+    /// `normal(loc, scale, size)` — `size` independent draws.
+    pub fn normal_batch(&mut self, loc: f64, scale: f64, size: usize) -> Vec<f64> {
+        (0..size).map(|_| self.normal(loc, scale)).collect()
     }
 
     /// `lognormal(mean, sigma)` = `exp(normal(mean, sigma))`
@@ -129,6 +142,11 @@ impl NumpyGenerator {
         low + self.bounded_lemire_u32(rng as u32) as i64
     }
 
+    /// `integers(low, high, size)` — `size` independent draws.
+    pub fn integers_batch(&mut self, low: i64, high: i64, size: usize) -> Vec<i64> {
+        (0..size).map(|_| self.integers(low, high)).collect()
+    }
+
     /// `bytes(length)` — `ceil(length/4)` raw uint32 words written little-endian,
     /// truncated to `length` (`integers(0, 2**32, n_uint32, uint32).tobytes()`;
     /// that range hits the `rng == 0xFFFFFFFF` raw-`next_uint32` path).
@@ -149,19 +167,8 @@ impl NumpyGenerator {
     /// `[0, n)` using `cdf = cumsum(p); cdf /= cdf[-1];
     /// idx = cdf.searchsorted(random(), side='right')`.
     pub fn choice_weighted(&mut self, weights: &[f64]) -> usize {
-        let mut cdf: Vec<f64> = Vec::with_capacity(weights.len());
-        let mut acc = 0.0;
-        for &w in weights {
-            acc += w;
-            cdf.push(acc);
-        }
-        let total = *cdf.last().expect("non-empty weights");
-        for c in &mut cdf {
-            *c /= total;
-        }
-        let u = self.bit.next_double();
-        // searchsorted(side='right'): first index with cdf[idx] > u.
-        cdf.iter().position(|&c| c > u).unwrap_or(cdf.len() - 1)
+        let cdf = normalized_cdf(weights);
+        searchsorted_right(&cdf, self.bit.next_double())
     }
 
     /// `choice(pop_size, size)` (replace=True, p=None) — uniform indices via
@@ -169,6 +176,79 @@ impl NumpyGenerator {
     pub fn choice_uniform(&mut self, pop_size: i64, size: usize) -> Vec<i64> {
         (0..size).map(|_| self.integers(0, pop_size)).collect()
     }
+
+    /// `choice(n, size, p=weights)` (replace=True) — `size` weighted indices,
+    /// one shared cdf, one `next_double()` draw per index in order (matches
+    /// `uniform_samples = self.random(shape); idx =
+    /// cdf.searchsorted(uniform_samples, side='right')`).
+    pub fn choice_weighted_batch(&mut self, weights: &[f64], size: usize) -> Vec<usize> {
+        let cdf = normalized_cdf(weights);
+        (0..size)
+            .map(|_| searchsorted_right(&cdf, self.bit.next_double()))
+            .collect()
+    }
+
+    /// `choice(n, size, replace=False, p=weights)` — `size` distinct weighted
+    /// indices, `_generator.pyx`'s rejection-refill loop: each round draws
+    /// `size - n_uniq` uniforms against the cdf of the still-unselected
+    /// weights (previously selected entries zeroed), keeps only the values
+    /// that are the first occurrence of their index within the round
+    /// (`np.unique(..., return_index=True)` + position-sort), and repeats
+    /// until `size` distinct indices are collected.
+    pub fn choice_weighted_without_replacement(
+        &mut self,
+        weights: &[f64],
+        size: usize,
+    ) -> Result<Vec<usize>> {
+        let nonzero = weights.iter().filter(|&&w| w > 0.0).count();
+        if nonzero < size {
+            return Err(RngError::InvalidWeights {
+                reason: "fewer non-zero entries in p than size",
+            });
+        }
+        let mut p = weights.to_vec();
+        let mut found = Vec::with_capacity(size);
+        while found.len() < size {
+            let batch = size - found.len();
+            let draws = self.random_batch(batch);
+            for &idx in &found {
+                p[idx] = 0.0;
+            }
+            let cdf = normalized_cdf(&p);
+            let mut seen = std::collections::HashSet::new();
+            for &x in &draws {
+                let idx = searchsorted_right(&cdf, x);
+                if seen.insert(idx) {
+                    found.push(idx);
+                    if found.len() == size {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(found)
+    }
+}
+
+/// `cdf = cumsum(weights); cdf /= cdf[-1]`.
+fn normalized_cdf(weights: &[f64]) -> Vec<f64> {
+    let mut cdf: Vec<f64> = Vec::with_capacity(weights.len());
+    let mut acc = 0.0;
+    for &w in weights {
+        acc += w;
+        cdf.push(acc);
+    }
+    let total = *cdf.last().expect("non-empty weights");
+    for c in &mut cdf {
+        *c /= total;
+    }
+    cdf
+}
+
+/// `cdf.searchsorted(x, side='right')`: first index with `cdf[idx] > x`,
+/// clamped to the last index (numpy's cdf always ends at exactly `1.0`).
+fn searchsorted_right(cdf: &[f64], x: f64) -> usize {
+    cdf.iter().position(|&c| c > x).unwrap_or(cdf.len() - 1)
 }
 
 #[cfg(test)]

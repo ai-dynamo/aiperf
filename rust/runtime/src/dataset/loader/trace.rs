@@ -281,7 +281,7 @@ impl Composer for MooncakeTraceComposer {
                 MooncakeMode::Payload => {
                     let payload = parsed.payload.expect("mode proves payload");
                     let value: Value = serde_json::from_str(payload.get())?;
-                    turn.input_tokens = input_tokens(&value, tokenizer)?;
+                    turn.input_tokens = Some(input_tokens(&value, tokenizer)?);
                     let handle = segments.intern_raw(
                         parents[position],
                         Bytes::copy_from_slice(payload.get().as_bytes()),
@@ -309,7 +309,7 @@ impl Composer for MooncakeTraceComposer {
                         .tool_texts
                         .iter()
                         .try_fold(0_u64, |count, text| add_tokens(count, text, tokenizer))?;
-                    turn.input_tokens = input_tokens_excluding_tools(&extracted, tokenizer)?;
+                    turn.input_tokens = Some(input_tokens_excluding_tools(&extracted, tokenizer)?);
                 }
                 MooncakeMode::Delta => {
                     if config
@@ -327,7 +327,7 @@ impl Composer for MooncakeTraceComposer {
                                 block_size,
                             )?,
                         };
-                        turn.input_tokens = generated.tokens.len() as u64;
+                        turn.input_tokens = Some(generated.tokens.len() as u64);
                         let handle = segments.intern_text(
                             parents[position],
                             Role::from("user"),
@@ -342,9 +342,11 @@ impl Composer for MooncakeTraceComposer {
                             uuids: smallvec![],
                         });
                     } else {
-                        turn.input_tokens = parsed
-                            .input_length
-                            .expect("hash-backed delta mode has an authored input length");
+                        turn.input_tokens = Some(
+                            parsed
+                                .input_length
+                                .expect("hash-backed delta mode has an authored input length"),
+                        );
                     }
                 }
             }
@@ -505,7 +507,7 @@ impl Composer for BailianTraceComposer {
                 let mut turn = Turn {
                     timestamp_ms: Some(row.timestamp * 1000.0),
                     max_tokens: cap_output(Some(row.output_length), config.max_output_tokens),
-                    input_tokens: row.input_length,
+                    input_tokens: Some(row.input_length),
                     trace_hash_ids: Some(trace_hash_ids),
                     content,
                     ..Turn::default()
@@ -677,7 +679,7 @@ impl Composer for BurstGptTraceComposer {
             let mut turn = Turn {
                 timestamp_ms: Some(row.timestamp * 1000.0),
                 max_tokens: cap_output(Some(row.output_length), config.max_output_tokens),
-                input_tokens: row.input_length,
+                input_tokens: Some(row.input_length),
                 content: smallvec![crate::dataset::model::ContentGroup {
                     kind: crate::dataset::model::MediaKind::Text,
                     name: "text".into(),
@@ -1011,7 +1013,7 @@ impl Composer for SageMakerDataCaptureComposer {
                         .and_then(|value| u32::try_from(value).ok()),
                     config.max_output_tokens,
                 ),
-                input_tokens,
+                input_tokens: Some(input_tokens),
                 tool_tokens,
                 raw_messages: Some(messages_handle),
                 tools: tools_handle,
@@ -1387,7 +1389,7 @@ mod tests {
             synthetic.segments().id(second).unwrap()
         );
         let first_turn = &synthetic.conversations()[0].turns[0];
-        assert_eq!(first_turn.input_tokens, 1023);
+        assert_eq!(first_turn.input_tokens, Some(1023));
         assert!(matches!(
             synthetic
                 .segments()
@@ -1421,7 +1423,7 @@ mod tests {
             .await
             .unwrap();
         let turn = &dataset.conversations()[0].turns[0];
-        assert_eq!(turn.input_tokens, 128);
+        assert_eq!(turn.input_tokens, Some(128));
         assert!(turn.content.is_empty());
         assert!(matches!(
             dataset.segments().get(turn.trace_hash_ids.unwrap()).unwrap(),
@@ -1469,8 +1471,8 @@ mod tests {
         assert_eq!(dataset.conversations().len(), 2);
         let first = &dataset.conversations()[0].turns[0];
         let second = &dataset.conversations()[1].turns[0];
-        assert_eq!(first.input_tokens, 17);
-        assert_eq!(second.input_tokens, 17);
+        assert_eq!(first.input_tokens, Some(17));
+        assert_eq!(second.input_tokens, Some(17));
         assert_eq!(first.timestamp_ms, Some(50.0));
         assert_eq!(second.timestamp_ms, Some(100.0));
         assert_eq!(first.max_tokens, Some(3));
@@ -1560,7 +1562,7 @@ mod tests {
         assert_eq!(dataset.conversations().len(), 1);
         let turn = &dataset.conversations()[0].turns[0];
         assert_eq!(turn.timestamp_ms, Some(1500.0));
-        assert_eq!(turn.input_tokens, 4);
+        assert_eq!(turn.input_tokens, Some(4));
         assert_eq!(turn.max_tokens, Some(3));
         assert_eq!(
             dataset
@@ -1591,7 +1593,7 @@ mod tests {
         .await;
         let turn = &dataset.conversations()[0].turns[0];
         assert_eq!(turn.timestamp_ms, Some(0.0));
-        assert_eq!(turn.input_tokens, 4);
+        assert_eq!(turn.input_tokens, Some(4));
         assert_eq!(turn.max_tokens, Some(9));
         assert!(turn.raw_messages.is_some());
     }

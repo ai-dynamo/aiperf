@@ -12,12 +12,9 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use rayon::prelude::*;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::value::RawValue;
-
-use crate::endpoints::extract_payload;
 
 use crate::dataset::compose::{ComposeConfig, Composer, SessionIdGenerator};
 use crate::dataset::error::{DatasetError, Result};
@@ -114,25 +111,6 @@ impl Composer for RawPayloadComposer {
         let mut positions = HashMap::<String, usize>::new();
         let mut parents = Vec::<Option<crate::dataset::Handle>>::new();
 
-        // Tokenizing each row's payload text (a real BPE encode over the full
-        // prompt) is the dominant per-row cost and is independent per row, so
-        // do it as a parallel pre-pass across every available core instead of
-        // paying for it inline in the loop below. That loop is inherently
-        // sequential (session grouping via `positions`/`parents` and the
-        // shared `SegmentPool` intern calls both have row-to-row data
-        // dependencies), so without this pre-pass a large dataset serializes
-        // every row's tokenizer call onto a single thread regardless of how
-        // many cores the machine has.
-        let precomputed_input_tokens: Vec<Option<u64>> = rows
-            .par_iter()
-            .map(|row| -> Result<Option<u64>> {
-                match raw_token_ids(&row.value, &row.origin)? {
-                    Some(_) => Ok(None),
-                    None => raw_input_tokens(&row.value, tokenizer).map(Some),
-                }
-            })
-            .collect::<Result<Vec<_>>>()?;
-
         for (row_index, row) in rows.into_iter().enumerate() {
             validate_payload_object(&row.value, &row.origin)?;
             let group = row
@@ -158,18 +136,23 @@ impl Composer for RawPayloadComposer {
                     position
                 }
             };
-            let raw_token_ids = raw_token_ids(&row.value, &row.origin)?;
-            let (raw_payload, raw_token_handle, extra_body) = if config.requires_raw_token_ids {
+            let (raw_payload, raw_token_handle, extra_body, input_tokens) = if config
+                .requires_raw_token_ids
+            {
                 validate_token_native_fields(&row.value, &row.origin)?;
-                let token_ids = raw_token_ids.as_ref().ok_or_else(|| {
+                let token_ids = raw_token_ids(&row.value, &row.origin)?.ok_or_else(|| {
                     DatasetError::Validation(format!(
                         "{}: selected endpoint requires a non-empty token_ids array",
                         row.origin
                     ))
                 })?;
+                let input_tokens =
+                    Some(u64::try_from(token_ids.len()).map_err(|_| {
+                        DatasetError::Validation("raw token count exceeds u64".into())
+                    })?);
                 let token_handle = state
                     .segments
-                    .intern_token_ids(parents[position], token_ids.clone())?;
+                    .intern_token_ids(parents[position], token_ids)?;
                 let extra = token_native_extra_body(&row.value)?;
                 let extra_handle = (!extra.is_empty())
                     .then(|| {
@@ -180,7 +163,7 @@ impl Composer for RawPayloadComposer {
                     })
                     .transpose()?;
                 parents[position] = extra_handle.or(Some(token_handle));
-                (None, Some(token_handle), extra_handle)
+                (None, Some(token_handle), extra_handle, input_tokens)
             } else {
                 let wire = row.wire.ok_or_else(|| {
                     DatasetError::Validation(format!(
@@ -189,16 +172,8 @@ impl Composer for RawPayloadComposer {
                     ))
                 })?;
                 let handle = state.segments.intern_raw(parents[position], wire)?;
-                let token_handle = raw_token_ids
-                    .as_ref()
-                    .map(|token_ids| {
-                        state
-                            .segments
-                            .intern_token_ids(Some(handle), token_ids.clone())
-                    })
-                    .transpose()?;
-                parents[position] = token_handle.or(Some(handle));
-                (Some(handle), token_handle, None)
+                parents[position] = Some(handle);
+                (Some(handle), None, None, None)
             };
             let mut turn = Turn {
                 role: Some(Role::from("user")),
@@ -215,19 +190,7 @@ impl Composer for RawPayloadComposer {
                 streaming: row.value.get("stream").and_then(Value::as_bool),
                 body: Turn::dispatch_body(raw_payload, raw_token_handle, &[]),
                 extra_body,
-                input_tokens: raw_token_ids.as_ref().map_or_else(
-                    || {
-                        Ok(precomputed_input_tokens[row_index].expect(
-                            "input tokens are precomputed above for every row without \
-                             raw_token_ids",
-                        ))
-                    },
-                    |token_ids| {
-                        u64::try_from(token_ids.len()).map_err(|_| {
-                            DatasetError::Validation("raw token count exceeds u64".into())
-                        })
-                    },
-                )?,
+                input_tokens,
                 ..Turn::default()
             };
             state.finalize_turn(&mut turn)?;
@@ -257,7 +220,6 @@ fn validate_raw_payload(value: &Value, origin: &impl std::fmt::Display) -> Resul
             "{origin}: raw_payload row requires either messages or token_ids"
         )));
     }
-    raw_token_ids(value, origin)?;
     Ok(())
 }
 
@@ -268,19 +230,6 @@ fn validate_payload_object(value: &Value, origin: &impl std::fmt::Display) -> Re
         )));
     }
     Ok(())
-}
-
-fn raw_input_tokens(value: &Value, tokenizer: &dyn TextTokenizer) -> Result<u64> {
-    let extracted = extract_payload(value);
-    let mut count = extracted.pretokenised_token_count;
-    for text in extracted.texts {
-        count = count
-            .checked_add(tokenizer.encode(&text)?.len() as u64)
-            .ok_or_else(|| {
-                DatasetError::Validation("raw input token count overflowed u64".into())
-            })?;
-    }
-    Ok(count)
 }
 
 fn token_native_extra_body(value: &Value) -> Result<serde_json::Map<String, Value>> {
@@ -551,6 +500,30 @@ mod tests {
     use crate::dataset::segment::Payload;
     use crate::dataset::tokenizer::TiktokenTokenizer;
 
+    struct RejectingTokenizer;
+
+    impl TextTokenizer for RejectingTokenizer {
+        fn encode(&self, text: &str) -> Result<Vec<u32>> {
+            panic!("opaque raw payload unexpectedly tokenized {text:?}")
+        }
+
+        fn decode(&self, _token_ids: &[u32]) -> Result<String> {
+            panic!("opaque raw payload unexpectedly decoded token IDs")
+        }
+
+        fn bos_token_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn eos_token_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn name(&self) -> &str {
+            "rejecting"
+        }
+    }
+
     #[tokio::test]
     async fn raw_jsonl_preserves_authored_bytes_and_one_session_per_line() {
         let input = Bytes::from_static(
@@ -625,6 +598,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn raw_payload_does_not_tokenize_opaque_body() {
+        let input = Bytes::from_static(
+            br#"{"messages":[{"role":"user","content":"do not tokenize"}],"token_ids":"opaque"}"#,
+        );
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(RawPayloadDatasetLoader),
+                Arc::new(RawPayloadComposer),
+            ))
+            .unwrap();
+
+        let dataset = registry
+            .build_dataset(
+                Some("raw_payload"),
+                &LoadConfig::new(DatasetSource::Bytes(input.clone())),
+                &ComposeConfig::new("fallback", RngRoot::new(Some(0))),
+                &RejectingTokenizer,
+            )
+            .await
+            .unwrap();
+
+        let turn = &dataset.conversations()[0].turns[0];
+        assert_eq!(turn.input_tokens, None);
+        assert_eq!(turn.body.len(), 1);
+        let handle = turn.body[0];
+        assert!(matches!(
+            dataset.segments().get(handle).unwrap(),
+            Payload::Raw { .. }
+        ));
+        assert_eq!(
+            dataset
+                .segments()
+                .build_body(&[handle], &crate::dataset::Overrides::new())
+                .unwrap(),
+            input
+        );
+    }
+
+    #[tokio::test]
     async fn token_native_composition_frees_raw_bytes_and_retains_typed_fields() {
         let input = Bytes::from_static(
             br#"{"model":"authored","token_ids":[7,8,9],"max_tokens":5,"sampling_params":{"temperature":0,"max_tokens":7},"stream":false,"request_id":"r-1"}"#,
@@ -656,7 +669,7 @@ mod tests {
             dataset.segments().get(token_handle).unwrap(),
             Payload::Raw { .. }
         ));
-        assert_eq!(turn.input_tokens, 3);
+        assert_eq!(turn.input_tokens, Some(3));
         assert_eq!(turn.max_tokens, Some(7));
         let Payload::TokenIds { token_ids } = dataset.segments().get(token_handle).unwrap() else {
             panic!("raw payload token IDs must be interned in the token domain")

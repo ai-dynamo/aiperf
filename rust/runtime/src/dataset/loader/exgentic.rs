@@ -428,7 +428,7 @@ fn compose_span_turn(
     )?;
     let mut turn = Turn {
         max_tokens: Some(span.max_tokens),
-        input_tokens: span.input_tokens,
+        input_tokens: Some(span.input_tokens),
         timestamp_ms: fixed_start.map(|start| span.start_ms - start),
         delay_ms: delay,
         raw_messages: Some(messages),
@@ -798,7 +798,7 @@ mod tests {
         assert_eq!(conversation.turns[1].delay_ms, Some(1000.0));
         assert!(conversation.turns[0].tools.is_some());
         assert!(conversation.turns[0].extra_headers.is_some());
-        assert_eq!(conversation.turns[0].input_tokens, 10);
+        assert_eq!(conversation.turns[0].input_tokens, Some(10));
     }
 
     #[test]

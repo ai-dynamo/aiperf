@@ -291,12 +291,14 @@ fn ms_to_ns(ms: f64) -> i64 {
 }
 
 /// Deterministic per-request RNG derived from a root seed and salt.
-fn seeded_rng(seed: u64, salt: u64) -> crate::rng::RandomGenerator {
-    crate::rng::RandomGenerator::from_seed(Some(seed ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15)))
+fn seeded_rng(seed: u64, salt: u64) -> crate::rng::RustRandomGenerator {
+    crate::rng::RustRandomGenerator::from_seed(Some(
+        seed ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+    ))
 }
 
 /// Mean-preserving lognormal jitter; non-positive `cv` yields `1.0`.
-fn lognormal_jitter(rng: &mut crate::rng::RandomGenerator, cv: f64) -> f64 {
+fn lognormal_jitter(rng: &mut crate::rng::RustRandomGenerator, cv: f64) -> f64 {
     if cv <= 0.0 {
         return 1.0;
     }

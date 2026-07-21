@@ -252,7 +252,7 @@ impl Composer for AccuracyComposer {
                     segments.intern_raw(Some(text), Bytes::from(serde_json::to_vec(value)?))
                 })
                 .transpose()?;
-            let input_tokens = prepared.input_tokens;
+            let input_tokens = Some(prepared.input_tokens);
             let generation_size = prepared.generation_size;
             let mut turn = Turn {
                 role: Some(Role::from("user")),
@@ -344,7 +344,7 @@ impl Composer for ShareGptComposer {
             let mut conversation = Conversation::new(ids.next_id());
             let mut parent = None;
             for (prompt, tokens, output_tokens) in prepared {
-                let input_tokens = tokens.len() as u64;
+                let input_tokens = Some(tokens.len() as u64);
                 let handle = segments.intern_text(
                     parent,
                     "user",
@@ -704,7 +704,7 @@ impl Composer for SpeedBenchComposer {
             let mut conversation = Conversation::new(prepared.id);
             let mut parent = None;
             for (role, content, tokens) in prepared.turns {
-                let input_tokens = tokens.len() as u64;
+                let input_tokens = Some(tokens.len() as u64);
                 let handle = segments.intern_text(
                     parent,
                     role,
@@ -860,8 +860,14 @@ async fn load_hugging_face_revision_rows(
         // the file through `hf-hub` (cached, resumable, xet-accelerated, shared with
         // the HF cache) and read only the first `remaining` rows from the local file
         // — `BufReader` lines for jsonl, seeked row groups for parquet — never
-        // loading or parsing the whole shard.
-        match load_hf_file_streaming(dataset, commit, &path, remaining, &label).await? {
+        // loading or parsing the whole shard. Injected fetchers opt out so tests
+        // and custom caches stay the exclusive download path.
+        let streamed = if config.fetcher.allows_hf_hub_streaming() {
+            load_hf_file_streaming(dataset, commit, &path, remaining, &label).await?
+        } else {
+            None
+        };
+        match streamed {
             Some(streamed) => rows.extend(streamed),
             None => {
                 let url = hugging_face_resolve_url(dataset, commit, &path)?;
@@ -1447,7 +1453,7 @@ fn compose_prompt_lists(
         let mut conversation = Conversation::new(ids.next_id());
         let mut parent = None;
         for (text, tokens) in prepared {
-            let input_tokens = tokens.len() as u64;
+            let input_tokens = Some(tokens.len() as u64);
             let handle = segments.intern_text(
                 parent,
                 "user",
@@ -1500,10 +1506,12 @@ fn compose_media_turn(
         for content in group.contents {
             let handle = if group.kind == MediaKind::Text {
                 let tokens = tokenizer.encode(&content)?;
-                turn.input_tokens = turn
-                    .input_tokens
-                    .checked_add(tokens.len() as u64)
-                    .ok_or_else(|| DatasetError::Validation("input token overflow".into()))?;
+                turn.input_tokens = Some(
+                    turn.input_tokens
+                        .unwrap_or(0)
+                        .checked_add(tokens.len() as u64)
+                        .ok_or_else(|| DatasetError::Validation("input token overflow".into()))?,
+                );
                 segments.intern_text(
                     parent,
                     "user",

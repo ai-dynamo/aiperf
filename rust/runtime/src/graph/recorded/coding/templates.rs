@@ -7,7 +7,7 @@
 //! shared draw helpers (`pick`/`number`/`sample`/`title_case`/`index`).
 //! [`TemplateKind`] dispatches each category across its structural variants.
 
-use crate::rng::PythonRandomGenerator;
+use crate::rng::{PythonRandomGenerator, RandomGenerator};
 
 use super::{
     cicd_docs, errors_diff, go, json_blocks, ml, prompts_conv, python, rust_lang, sql, tool,
@@ -40,11 +40,11 @@ pub(super) enum TemplateKind {
     TestOutput,
 }
 
-pub(super) struct TemplateRenderer {
-    random: PythonRandomGenerator,
+pub(super) struct TemplateRenderer<R: RandomGenerator = PythonRandomGenerator> {
+    random: R,
 }
 
-impl TemplateRenderer {
+impl TemplateRenderer<PythonRandomGenerator> {
     /// Build a renderer over the CPython-MT and NumPy child stream seed from
     /// `dataset.coding_content.template`.
     pub(super) fn new(seed: u64) -> Self {
@@ -53,10 +53,13 @@ impl TemplateRenderer {
         }
     }
 
-    pub(super) fn shuffle<T>(&mut self, values: &mut [T]) {
-        self.random.shuffle(values);
-    }
-
+    /// Dispatch one category to its structural variant. Lives on the concrete
+    /// `PythonRandomGenerator` specialization (not the generic `impl<R>` block
+    /// below) because every category module's `render`/helper functions are
+    /// themselves written against the concrete, unparameterized
+    /// `TemplateRenderer` (`= TemplateRenderer<PythonRandomGenerator>` via its
+    /// default type parameter) — they draw exclusively through
+    /// [`RandomGenerator`] but are not individually generic over it.
     pub(super) fn render(
         &mut self,
         kind: TemplateKind,
@@ -85,6 +88,49 @@ impl TemplateRenderer {
             TemplateKind::Markdown => cicd_docs::markdown_doc(self),
             TemplateKind::TestOutput => cicd_docs::test_output(self),
         }
+    }
+
+    /// Python `f"{x:.{prec}e}"` scientific notation: Rust's `{:e}` omits the
+    /// exponent sign and zero-padding, so post-process to CPython's form
+    /// (`5.00e-04`, `1.23e+05`) — signed exponent, minimum two digits.
+    pub(super) fn py_sci(x: f64, prec: usize) -> String {
+        let raw = format!("{x:.prec$e}");
+        let (mantissa, exp) = raw.split_once('e').expect("Rust {:e} always emits 'e'");
+        let (sign, digits) = match exp.strip_prefix('-') {
+            Some(rest) => ('-', rest),
+            None => ('+', exp.strip_prefix('+').unwrap_or(exp)),
+        };
+        format!("{mantissa}e{sign}{digits:0>2}")
+    }
+
+    /// Python `str.title()`: uppercase the first letter of each alphabetic run,
+    /// lowercase the rest (word boundaries are non-alphabetic characters).
+    pub(super) fn title_case(value: &str) -> String {
+        let mut output = String::with_capacity(value.len());
+        let mut prev_alpha = false;
+        for ch in value.chars() {
+            if ch.is_alphabetic() {
+                if prev_alpha {
+                    output.extend(ch.to_lowercase());
+                } else {
+                    output.extend(ch.to_uppercase());
+                }
+                prev_alpha = true;
+            } else {
+                output.push(ch);
+                prev_alpha = false;
+            }
+        }
+        output
+    }
+}
+
+/// Draw primitives generic over any [`RandomGenerator`] implementation — the
+/// half of [`TemplateRenderer`] that genuinely doesn't care which backend
+/// supplies the stream.
+impl<R: RandomGenerator> TemplateRenderer<R> {
+    pub(super) fn shuffle<T>(&mut self, values: &mut [T]) {
+        self.random.shuffle(values);
     }
 
     /// Uniformly pick one `&'static str` from a vocabulary slice.
@@ -144,39 +190,5 @@ impl TemplateRenderer {
             .randint(0, high)
             .map_err(|error| RecordedTraceError(error.to_string()))?;
         usize::try_from(value).map_err(|_| RecordedTraceError("negative variant index".into()))
-    }
-
-    /// Python `f"{x:.{prec}e}"` scientific notation: Rust's `{:e}` omits the
-    /// exponent sign and zero-padding, so post-process to CPython's form
-    /// (`5.00e-04`, `1.23e+05`) — signed exponent, minimum two digits.
-    pub(super) fn py_sci(x: f64, prec: usize) -> String {
-        let raw = format!("{x:.prec$e}");
-        let (mantissa, exp) = raw.split_once('e').expect("Rust {:e} always emits 'e'");
-        let (sign, digits) = match exp.strip_prefix('-') {
-            Some(rest) => ('-', rest),
-            None => ('+', exp.strip_prefix('+').unwrap_or(exp)),
-        };
-        format!("{mantissa}e{sign}{digits:0>2}")
-    }
-
-    /// Python `str.title()`: uppercase the first letter of each alphabetic run,
-    /// lowercase the rest (word boundaries are non-alphabetic characters).
-    pub(super) fn title_case(value: &str) -> String {
-        let mut output = String::with_capacity(value.len());
-        let mut prev_alpha = false;
-        for ch in value.chars() {
-            if ch.is_alphabetic() {
-                if prev_alpha {
-                    output.extend(ch.to_lowercase());
-                } else {
-                    output.extend(ch.to_uppercase());
-                }
-                prev_alpha = true;
-            } else {
-                output.push(ch);
-                prev_alpha = false;
-            }
-        }
-        output
     }
 }

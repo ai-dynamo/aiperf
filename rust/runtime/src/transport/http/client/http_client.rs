@@ -21,7 +21,6 @@ use crate::transport::core::eventstream::EventStreamDecoder;
 use crate::transport::core::{
     ErrorDetails, ErrorKind, RequestRecord, Response, TextResponse, TraceData,
 };
-use crate::transport::http::client::cancellation::{CancelOutcome, race_cancel_after_send};
 use crate::transport::http::client::connection::{
     SendCompletion, Sender, TimedBody, establish, with_timeout,
 };
@@ -396,86 +395,6 @@ impl HttpClient {
         if let Err(e) = result {
             trace.error_timestamp_ns = Some(self.clock.now_ns());
             record.error = Some(e);
-        }
-        record.end_ns = Some(self.clock.now_ns());
-        record.trace = Some(trace);
-        record
-    }
-
-    /// Like [`request`](Self::request) but cancels `cancel_after_ns` after send.
-    pub async fn request_cancellable(
-        &self,
-        url: &Url,
-        headers: &BTreeMap<String, String>,
-        body: Bytes,
-        streaming: bool,
-        cancel_after_ns: i64,
-        mut on_first_token: impl FnMut(i64),
-    ) -> RequestRecord {
-        let start_ns = self.clock.now_ns();
-        let body_len = body.len();
-        let mut record = RequestRecord::started(start_ns);
-        let mut trace = TraceData {
-            request_send_start_ns: Some(start_ns),
-            ..TraceData::default()
-        };
-        let completion = Rc::new(SendCompletion::new());
-        let completion_for_dispatch = completion.clone();
-        let completion_for_record = completion.clone();
-        let mut first_token_filter =
-            SynchronousSseMessageFilter::new(|ttft_ns: i64, _message: &SseMessage| {
-                on_first_token(ttft_ns);
-                true
-            });
-        let request = async {
-            let (mut sender, _socket) =
-                establish(url, &self.cfg, self.clock.clone(), &mut trace).await?;
-            self.dispatch_with_method_and_completion(
-                Method::POST,
-                &mut sender,
-                url,
-                headers,
-                body,
-                streaming,
-                &mut trace,
-                &mut record,
-                &mut first_token_filter,
-                body_len,
-                completion_for_dispatch,
-            )
-            .await
-        };
-        let result = match race_cancel_after_send(
-            self.clock.clone(),
-            cancel_after_ns,
-            completion,
-            request,
-        )
-        .await
-        {
-            CancelOutcome::Completed(result) => result,
-            CancelOutcome::Cancelled => {
-                let now = self.clock.now_ns();
-                record.cancellation_ns = Some(now);
-                if let Some(sent_ns) = completion_for_record.sent_ns()
-                    && trace.request_send_end_ns.is_none()
-                {
-                    trace.request_send_end_ns = Some(sent_ns);
-                    trace.request_headers_sent_ns = completion_for_record.headers_ns();
-                    trace.request_bytes_total = body_len as u64;
-                    trace.request_chunks_count = 1;
-                    if self.cfg.collect_trace_chunks {
-                        trace.request_chunks.push((sent_ns, body_len as u64));
-                    }
-                }
-                Err(ErrorDetails::cancelled(format!(
-                    "RequestCancellationError: request cancelled {cancel_after_ns}ns after being sent"
-                )))
-            }
-        };
-        if let Err(error) = result {
-            trace.error_timestamp_ns = Some(self.clock.now_ns());
-            record.error = Some(error);
         }
         record.end_ns = Some(self.clock.now_ns());
         record.trace = Some(trace);

@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-use crate::rng::RandomGenerator;
+use crate::rng::RustRandomGenerator;
 use async_trait::async_trait;
 use bytes::Bytes;
 use serde::Deserialize;
@@ -266,7 +266,7 @@ impl Composer for RandomPoolComposer {
                 .or_default()
                 .push(PoolEntry::parse(row.value, &row.origin)?);
         }
-        let mut rng = RandomGenerator::from_seed(
+        let mut rng = RustRandomGenerator::from_seed(
             config
                 .rng_root
                 .derive_seed("dataset.loader.random_pool.sampling"),
@@ -329,7 +329,7 @@ struct SampledGroup {
 fn sample_associated(
     pools: &BTreeMap<String, Vec<PoolEntry>>,
     count: usize,
-    rng: &mut RandomGenerator,
+    rng: &mut RustRandomGenerator,
 ) -> Result<Vec<Vec<SampledGroup>>> {
     let mut output = vec![Vec::new(); count];
     for (pool_name, entries) in pools {
@@ -369,7 +369,7 @@ fn sample_flattened(
     pools: &BTreeMap<String, Vec<PoolEntry>>,
     count: usize,
     batches: BatchSizes,
-    rng: &mut RandomGenerator,
+    rng: &mut RustRandomGenerator,
 ) -> Result<Vec<Vec<SampledGroup>>> {
     let mut flat = HashMap::<MediaKind, Vec<String>>::new();
     for entries in pools.values() {
@@ -433,12 +433,14 @@ fn intern_group(
     for content in group.contents {
         let handle = if group.kind == MediaKind::Text {
             let tokens = tokenizer.encode(&content)?;
-            turn.input_tokens = turn
-                .input_tokens
-                .checked_add(tokens.len() as u64)
-                .ok_or_else(|| {
-                    DatasetError::Validation("input token count overflowed u64".into())
-                })?;
+            turn.input_tokens = Some(
+                turn.input_tokens
+                    .unwrap_or(0)
+                    .checked_add(tokens.len() as u64)
+                    .ok_or_else(|| {
+                        DatasetError::Validation("input token count overflowed u64".into())
+                    })?,
+            );
             segments.intern_text(
                 *parent,
                 "user",
