@@ -192,6 +192,7 @@ class LocalSubprocessExecutor(RunExecutor):
                 success=False,
                 error=error_msg,
                 artifacts_path=artifacts_path,
+                was_cancelled=was_cancelled,
             )
 
         request_count_metric = summary_metrics.get("request_count")
@@ -208,6 +209,7 @@ class LocalSubprocessExecutor(RunExecutor):
                 success=False,
                 error=error_msg,
                 artifacts_path=artifacts_path,
+                was_cancelled=was_cancelled,
             )
 
         return RunResult(
