@@ -89,7 +89,7 @@ export function PhaserPage(): React.JSX.Element {
           </ReactFlow>
         </div>
 
-        <div className={clsx("rounded-none border p-3", strokeClassName("primary"))}>
+        <div className={clsx("rounded-lg border p-3 shadow-sm", strokeClassName("primary"))}>
           {attach === null ? (
             <p className={clsx("text-sm", inkClassName("tertiary"))}>Attach a subscriber to classify each generation.</p>
           ) : (

@@ -48,9 +48,9 @@ export function SegControl<T extends string>({
             aria-pressed={active}
             onClick={() => onChange(option.id)}
             className={clsx(
-              "rounded-none border px-3 py-1 text-xs font-medium transition-colors",
+              "rounded-md border px-3 py-1 text-xs font-medium shadow-sm transition-colors",
               active
-                ? "border-accent-primary bg-accent-primary text-white"
+                ? "border-accent-primary bg-accent-primary text-white shadow-md"
                 : clsx(strokeClassName("secondary"), inkClassName("secondary")),
             )}
           >
@@ -83,9 +83,9 @@ export function DetailToggle({
             aria-pressed={active}
             onClick={() => onChange(option)}
             className={clsx(
-              "rounded-none border px-2.5 py-1 text-xs font-medium capitalize transition-colors",
+              "rounded-md border px-2.5 py-1 text-xs font-medium capitalize shadow-sm transition-colors",
               active
-                ? "border-accent-primary bg-accent-primary text-white"
+                ? "border-accent-primary bg-accent-primary text-white shadow-md"
                 : clsx(strokeClassName("secondary"), inkClassName("secondary")),
             )}
           >

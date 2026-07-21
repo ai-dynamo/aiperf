@@ -174,8 +174,8 @@ function ModeControl({ mode, onChange }: { mode: Mode; onChange: (mode: Mode) =>
             onClick={() => onChange(option.id)}
             className={
               active
-                ? "rounded-none border border-accent-primary bg-accent-primary px-3 py-1 text-xs font-medium text-white"
-                : `rounded-none border px-3 py-1 text-xs font-medium ${strokeClassName("secondary")} ${inkClassName("secondary")}`
+                ? "rounded-md border border-accent-primary bg-accent-primary px-3 py-1 text-xs font-medium text-white shadow-md"
+                : `rounded-md border px-3 py-1 text-xs font-medium shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`
             }
           >
             {option.label}
@@ -226,7 +226,7 @@ export function OverviewPage(): React.JSX.Element {
         </ReactFlow>
       </div>
 
-      <div className={`rounded-none border px-4 py-3 text-sm ${strokeClassName("secondary")}`}>
+      <div className={`rounded-lg border px-4 py-3 text-sm shadow-sm ${strokeClassName("secondary")}`}>
         <span className={inkClassName("secondary")}>
           first on_token = TTFT + prefill release + graph first-token gate
         </span>

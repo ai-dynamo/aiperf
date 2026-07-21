@@ -103,7 +103,7 @@ export function LoopPage({ level }: { level: Level }): React.JSX.Element {
             <div
               key={name}
               className={clsx(
-                "rounded-none border px-3 py-4 text-center",
+                "rounded-lg border px-3 py-4 text-center shadow-sm",
                 active ? "border-accent-primary bg-accent-primary text-white" : clsx(strokeClassName("primary"), surfaceClassName("elevated")),
               )}
             >
@@ -125,10 +125,12 @@ export function LoopPage({ level }: { level: Level }): React.JSX.Element {
         {frame.cap}
       </Callout>
 
-      <div className={clsx("rounded-none border p-4", strokeClassName("secondary"), surfaceClassName("elevated"))}>
+      <div
+        className={clsx("rounded-lg border p-4 shadow-sm", strokeClassName("secondary"), surfaceClassName("elevated"))}
+      >
         <div className="mb-2 flex items-center justify-between">
           <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Virtual time</span>
-          <span className={`rounded-none border px-2 py-0.5 text-[11px] ${strokeClassName("secondary")} ${inkClassName("tertiary")}`}>
+          <span className={`rounded-md border px-2 py-0.5 text-[11px] ${strokeClassName("secondary")} ${inkClassName("tertiary")}`}>
             SimClock
           </span>
         </div>

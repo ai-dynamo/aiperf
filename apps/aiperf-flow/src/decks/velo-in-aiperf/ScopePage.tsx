@@ -51,7 +51,7 @@ export function ScopePage(): React.JSX.Element {
           return (
             <div
               key={cell}
-              className={clsx("rounded-none border p-3", strokeClassName("primary"), surfaceClassName("elevated"))}
+              className={clsx("rounded-lg border p-3 shadow-sm", strokeClassName("primary"), surfaceClassName("elevated"))}
             >
               <div className="flex items-center justify-between">
                 <span className={clsx("text-xs font-bold uppercase", dead ? inkClassName("tertiary") : inkClassName("primary"))}>

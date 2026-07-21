@@ -91,7 +91,7 @@ export function PressPage(): React.JSX.Element {
         <Button variant="ghost" onClick={sim.reset}>Reset</Button>
       </Row>
 
-      <div className={clsx("rounded-none border p-4", strokeClassName("primary"), surfaceClassName("elevated"))}>
+      <div className={clsx("rounded-lg border p-4 shadow-sm", strokeClassName("primary"), surfaceClassName("elevated"))}>
         <div className={clsx("mb-2 text-center text-xs font-bold uppercase", stage === 1 ? categoryClassName("cyan") : inkClassName("tertiary"))}>
           rmp_serde::to_vec
         </div>

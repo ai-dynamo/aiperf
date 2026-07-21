@@ -93,7 +93,7 @@ export function XrayPage(): React.JSX.Element {
               <li
                 key={step.label}
                 className={clsx(
-                  "rounded-none border px-3 py-2",
+                  "rounded-md border px-3 py-2 shadow-sm",
                   i === trace ? NODE_ACTIVE : clsx("border-stroke-secondary", inkClassName("tertiary")),
                 )}
               >

@@ -30,7 +30,7 @@ export function OfflineCosimulationDeck(): React.JSX.Element {
       <TopBar
         section="Offline Co-simulation"
         actions={
-          <span className="rounded-none border border-stroke-secondary px-2 py-0.5 text-[11px] font-medium text-ink-tertiary">
+          <span className="rounded-md border border-stroke-secondary px-2 py-0.5 text-[11px] font-medium text-ink-tertiary shadow-sm">
             dynosim feature
           </span>
         }

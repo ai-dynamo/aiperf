@@ -53,7 +53,7 @@ export function DatasetPage(): React.JSX.Element {
         <span className={clsx("text-xs font-medium", categoryClassName("cyan"))}>published {safePublished}/6</span>
       </Row>
 
-      <div className={clsx("rounded-none border", strokeClassName("primary"))}>
+      <div className={clsx("rounded-lg border shadow-sm", strokeClassName("primary"))}>
         {[0, 1, 2].map((cell) => {
           const boundary = attach[cell];
           return (
@@ -64,7 +64,7 @@ export function DatasetPage(): React.JSX.Element {
                   disabled={boundary !== null}
                   onClick={() => setAttach((a) => a.map((v, n) => (n === cell ? safePublished : v)))}
                   className={clsx(
-                    "w-full rounded-none border px-2 py-1 text-left text-xs font-semibold",
+                    "w-full rounded-md border px-2 py-1 text-left text-xs font-semibold shadow-sm",
                     boundary !== null ? clsx("border-category-cyan", categoryClassName("cyan")) : clsx(strokeClassName("secondary"), inkClassName("primary")),
                   )}
                 >
