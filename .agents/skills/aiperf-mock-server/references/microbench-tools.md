@@ -38,6 +38,26 @@ Prefer these over fronting `fastmock` with the `aiperf-mock-server --processes N
 that balancer re-execs `aiperf-mock-server` (not `fastmock`) and adds a byte-splicing hop
 that undercuts `fastmock`'s whole reason to exist.
 
+### `--ludicrous-speed` / `--plaid` — the same `fastmock` logic, inside the real binary
+
+`aiperf-mock-server --ludicrous-speed` (alias `--plaid`) is `fastmock`'s exact serving
+code (`content_length`/`drain_requests`/`handle`, blocking `std::net` + thread-per-accept-
+loop, no tokio) ported into the crate as `rust/mock-server/src/fastmock.rs`, so it can be
+launched with the normal `aiperf-mock-server` binary/`--host`/`--port`/`--uds` instead of a
+separate `rustc -O` build. It is a literal port, not a rewrite — an earlier tokio/async
+version of this bypass measured ~2x slower than standalone `fastmock` at matched thread
+counts; only the blocking thread-per-connection version reaches parity (benchmark both with
+`fastclient` before trusting either implementation's throughput).
+
+```bash
+cargo run -p aiperf-mock-server -- --ludicrous-speed --port 8131
+```
+
+Prints a loud startup warning (also in `--help`): **not a realistic mock server** — every
+request gets the same hard-coded response regardless of contents, with no latency
+simulation, routing, token rendering, or endpoint dispatch. Raw-throughput extreme testing
+only, same caveat as standalone `fastmock` above.
+
 ## `fastclient` — a monster load generator for the fast targets
 
 `rust/mock-server/tools/fastclient.rs` is a std-only (`rustc`-compiled) HTTP/1.1 load

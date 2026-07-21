@@ -118,7 +118,7 @@ Each area has a focused reference file under `references/`. Read the one you nee
 | [`references/usage-accounting.md`](references/usage-accounting.md) | The `--usage-*` knobs and the exact extended usage JSON keys (cache write/miss/read, audio tokens+seconds, accepted/rejected prediction, tool-use prompt) |
 | [`references/tool-calls.md`](references/tool-calls.md) | `--tool-call-rate`/`-name`/`-arguments`; non-stream + streamed `delta.tool_calls` shapes; `toolUsePromptTokenCount` |
 | [`references/accuracy.md`](references/accuracy.md) | Ground-truth accuracy dataset mode: format, `--accuracy-*`, matching + `match_key`, adversarial shapes, `/accuracy` + `aiperf_mock_accuracy_*` |
-| [`references/microbench-tools.md`](references/microbench-tools.md) | `fastmock` / `fastclient` / `fastmock-uring` loopback micro-benchmark helpers |
+| [`references/microbench-tools.md`](references/microbench-tools.md) | `fastmock` / `fastclient` / `fastmock-uring` loopback micro-benchmark helpers, plus the in-crate `--ludicrous-speed`/`--plaid` port of `fastmock` |
 
 ## Flags cheat-sheet (all flags, grouped)
 
@@ -132,6 +132,7 @@ Every flag has a `MOCK_SERVER_*` env twin; set the log level dynamically with `A
 | `-p, --port` | 8000 | Listen port |
 | `--host` | 127.0.0.1 | Bind address (`::1`, `0.0.0.0`, …) |
 | `-f, --fast` | off | Zero all latency; bypass scheduler + cache |
+| `--ludicrous-speed` / `--plaid` | off | **NOT a realistic mock server.** Skip the real server entirely; serve one hard-coded response via blocking `std::net` sockets (`src/fastmock.rs`) — raw-throughput extreme testing only, see `references/microbench-tools.md` |
 | `--no-tokenizer` | off | Skip HF tokenizer load (avoids network download) |
 | `-w, --workers` | 0 (=nproc) | Tokio worker threads |
 | `--processes` | 1 | Spawn N child servers behind an L4 round-robin balancer (0=nproc) |
