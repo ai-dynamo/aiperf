@@ -21,6 +21,7 @@ from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.models import TimeRangeFilter
 from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.phases import ConcurrencyPhase
 from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.parquet_exporter import ServerMetricsParquetExporter
@@ -251,6 +252,50 @@ class TestParquetExporterBasics:
 
         with pytest.raises(DataExporterDisabled, match="format not selected"):
             ServerMetricsParquetExporter(mock_accumulator, time_filter)
+
+    def test_parquet_disabled_when_pyarrow_missing(
+        self,
+        mock_cfg: BenchmarkRun,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """On platforms with no pyarrow wheel (e.g. Windows-on-ARM), the exporter
+        self-disables with an actionable message instead of crashing the run."""
+        import aiperf.server_metrics.parquet_exporter as pe
+
+        monkeypatch.setattr(pe, "pa", None)
+        monkeypatch.setattr(pe, "pq", None)
+        hierarchy = build_hierarchy({})
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
+        time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
+
+        with pytest.raises(DataExporterDisabled, match="pyarrow"):
+            ServerMetricsParquetExporter(mock_accumulator, time_filter)
+
+    def test_parquet_module_imports_without_pyarrow(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The module must import on platforms without pyarrow (e.g. Windows-on-ARM).
+
+        This exercises the import-time guard directly: removing the ``try/except``
+        around the top-level pyarrow import would make the module fail to import
+        on WoA (breaking the whole install), which the constructor-guard test
+        above cannot catch because it runs where pyarrow is present.
+        """
+        import importlib
+        import sys
+
+        import aiperf.server_metrics.parquet_exporter as pe
+
+        monkeypatch.setitem(sys.modules, "pyarrow", None)
+        monkeypatch.setitem(sys.modules, "pyarrow.parquet", None)
+        try:
+            importlib.reload(pe)
+            assert pe.pa is None
+            assert pe.pq is None
+        finally:
+            monkeypatch.undo()
+            importlib.reload(pe)
 
     async def test_parquet_file_created(self, mock_cfg, gauge_hierarchy):
         """Parquet file is created with valid schema."""
@@ -1351,6 +1396,29 @@ class TestParquetMetadataFields:
 
         # Verify we have at least 22 keys (might have request_rate too)
         assert len(metadata) >= 22
+
+    @pytest.mark.asyncio
+    async def test_parquet_metadata_stray_rate_attr_on_non_rate_phase_omits_rate(
+        self, mock_cfg, gauge_hierarchy
+    ):
+        """The metadata rate must come from get_phase_rate (isinstance-gated),
+        not attribute probing: a rate-shaped attribute on the concurrency head
+        phase must not emit aiperf.request_rate."""
+        head_phase = mock_cfg.cfg.get_profiling_phases()[0]
+        assert isinstance(head_phase, ConcurrencyPhase)
+        object.__setattr__(head_phase, "rate", 9.0)
+
+        mock_accumulator = create_mock_accumulator(mock_cfg, gauge_hierarchy)
+        time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=3_000_000_000)
+
+        exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
+        await exporter.export()
+
+        parquet_file = mock_cfg.cfg.artifacts.server_metrics_export_parquet_file
+        table = pq.read_table(parquet_file)
+        metadata = table.schema.metadata
+
+        assert b"aiperf.request_rate" not in metadata
 
 
 class TestHistogramWindowGuards:

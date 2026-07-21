@@ -467,7 +467,7 @@
     [
       "C901",
       "src/aiperf/records/records_manager.py",
-      "RecordsManager._process_results"
+      "_render_realtime_block"
     ],
     [
       "C901",

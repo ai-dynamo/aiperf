@@ -21,7 +21,6 @@ from aiperf.common.enums import (
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
 from aiperf.common.growable_array import GrowableArray
 from aiperf.common.models import MetricResult
-from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.common.models.server_metrics_models import (
     CounterMetricData,
     GaugeMetricData,
@@ -43,7 +42,18 @@ from aiperf.server_metrics.storage import (
 )
 
 if TYPE_CHECKING:
+    from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
     from aiperf.config.resolution.plan import BenchmarkRun
+
+_METRIC_DATA_CLASSES: dict[
+    PrometheusMetricType,
+    type[GaugeMetricData | CounterMetricData | HistogramMetricData | UnknownMetricData],
+] = {
+    PrometheusMetricType.GAUGE: GaugeMetricData,
+    PrometheusMetricType.UNKNOWN: UnknownMetricData,
+    PrometheusMetricType.COUNTER: CounterMetricData,
+    PrometheusMetricType.HISTOGRAM: HistogramMetricData,
+}
 
 
 class ServerMetricsAccumulator(BaseMetricsProcessor):
@@ -134,34 +144,33 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         ts = self._timestamps_ns.data
         return (ts >= start_ns) & (ts < end_ns)
 
-    async def export_results(
-        self,
-        start_ns: int,
-        end_ns: int,
-        error_summary: list[ErrorDetailsCount] | None = None,
-        *,
-        warmup_start_ns: int | None = None,
-        warmup_end_ns: int | None = None,
-    ) -> ServerMetricsResults | None:
+    async def export_results(self, ctx: ExportContext) -> ServerMetricsResults | None:
         """Export accumulated server metrics as results for final reporting.
 
         Called at the end of profiling to generate the final ServerMetricsResults
         object containing all computed statistics. Applies time filtering to
         exclude warmup periods and computes per-endpoint summaries with stats.
 
-        The time range [start_ns, end_ns] represents the profiling phase only,
-        excluding warmup. Reference points before start_ns are used for counter
-        and histogram delta calculations.
-
-        Args:
-            start_ns: Profiling phase start time in nanoseconds (excludes warmup period)
-            end_ns: Profiling phase end time in nanoseconds (may extend beyond last collection)
-            error_summary: Optional list of error counts from collection failures
+        Reads the profiling window from ``ctx.start_ns/ctx.end_ns`` (excludes
+        warmup; reference points before start_ns drive counter/histogram deltas)
+        and the warmup window from ``ctx.warmup_start_ns/ctx.warmup_end_ns``.
 
         Returns:
             ServerMetricsResults containing endpoint summaries with computed statistics,
             or None if no endpoints were successfully scraped during profiling.
         """
+        # ExportContext bounds are Optional (None = unbounded). Production callers
+        # always pass concrete ints, but normalize here so a bare
+        # ``export_results(ExportContext())`` can't reach the int-only max()/
+        # comparison in _compute_endpoint_summaries and raise TypeError. 0 means
+        # "from the beginning"; the per-endpoint max(end, last_update) still
+        # captures the final scrape.
+        start_ns = ctx.start_ns or 0
+        end_ns = ctx.end_ns or 0
+        error_summary = ctx.error_summary
+        warmup_start_ns = ctx.warmup_start_ns
+        warmup_end_ns = ctx.warmup_end_ns
+
         if not self._server_metrics_hierarchy.endpoints:
             return None
 
@@ -172,7 +181,11 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             include_final_collection=True,
         )
         warmup_endpoint_summaries = None
-        if warmup_start_ns is not None and warmup_end_ns is not None:
+        if (
+            warmup_start_ns is not None
+            and warmup_end_ns is not None
+            and warmup_start_ns < warmup_end_ns
+        ):
             # Extend the warmup window to include the dedicated end-of-warmup
             # scrape (WARMUP-tagged, captured after CREDIT_PHASE_COMPLETE so
             # its timestamp is strictly past warmup_end_ns). Cap at just
@@ -213,9 +226,15 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 for time_series in self._server_metrics_hierarchy.endpoints.values()
             ),
         )
-        await self._export_parquet_if_enabled(
-            TimeRangeFilter(start_ns=start_ns, end_ns=export_end_ns)
-        )
+        # Skip degenerate windows: TimeRangeFilter rejects start >= end, and a
+        # raise here propagates out of export_results and is swallowed into a
+        # None result (records_manager _publish_server_metrics_results), losing
+        # ALL server metrics. Mirrors the guards at the per-endpoint / warmup /
+        # json_exporter sites.
+        if start_ns < export_end_ns:
+            await self._export_parquet_if_enabled(
+                TimeRangeFilter(start_ns=start_ns, end_ns=export_end_ns)
+            )
 
         return results
 
@@ -268,6 +287,9 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 if include_final_collection
                 else profiling_end_ns
             )
+            # Skip degenerate windows: TimeRangeFilter rejects start >= end.
+            if endpoint_start_ns >= endpoint_end_ns:
+                continue
             time_filter = TimeRangeFilter(
                 start_ns=endpoint_start_ns,
                 end_ns=endpoint_end_ns,
@@ -295,31 +317,17 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 if series_stats is None:
                     continue
 
-                if base_name not in metrics:
-                    # Create appropriate type-specific metric data
-                    match metric_entry.metric_type:
-                        case PrometheusMetricType.GAUGE:
-                            metrics[base_name] = GaugeMetricData(
-                                description=metric_entry.description,
-                                series=[series_stats],
-                            )
-                        case PrometheusMetricType.UNKNOWN:
-                            metrics[base_name] = UnknownMetricData(
-                                description=metric_entry.description,
-                                series=[series_stats],
-                            )
-                        case PrometheusMetricType.COUNTER:
-                            metrics[base_name] = CounterMetricData(
-                                description=metric_entry.description,
-                                series=[series_stats],
-                            )
-                        case PrometheusMetricType.HISTOGRAM:
-                            metrics[base_name] = HistogramMetricData(
-                                description=metric_entry.description,
-                                series=[series_stats],
-                            )
-                else:
+                if base_name in metrics:
                     metrics[base_name].series.append(series_stats)
+                    continue
+                # Create appropriate type-specific metric data; unmapped types
+                # are skipped (same semantics as the previous non-exhaustive match).
+                DataClass = _METRIC_DATA_CLASSES.get(metric_entry.metric_type)
+                if DataClass is not None:
+                    metrics[base_name] = DataClass(
+                        description=metric_entry.description,
+                        series=[series_stats],
+                    )
 
             # Unique update statistics
             unique_count = time_series._unique_update_count
@@ -397,13 +405,16 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             )
 
         except DataExporterDisabled as e:
-            self.debug(f"Parquet export disabled: {e}")
+            # Parquet was explicitly requested (checked above), so surface the
+            # reason it was skipped (e.g. pyarrow unavailable on Windows-on-ARM)
+            # rather than hiding it at debug level.
+            self.warning(f"Parquet export disabled: {e}")
         except ImportError as e:
             self.warning(f"Failed to import Parquet exporter dependencies: {e}")
         except Exception as e:
             self.error(f"Failed to export server metrics to Parquet: {e!r}")
 
-    async def summarize(self) -> list[MetricResult]:
+    async def summarize(self, ctx: SummaryContext | None = None) -> list[MetricResult]:
         """Summarize accumulated metrics into MetricResult list.
 
         Server metrics are exported separately via export_results() rather than

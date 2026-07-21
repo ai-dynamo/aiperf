@@ -3,10 +3,9 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import ClassVar
+from typing import ClassVar, Self
 
 from pydantic import Field, SerializeAsAny, model_validator
-from typing_extensions import Self
 
 from aiperf.common.enums import CreditPhase, PrometheusMetricType
 from aiperf.common.finite import FiniteFloat
@@ -215,6 +214,8 @@ class ServerMetricsRecord(AIPerfBaseModel):
     requests by capturing when the server actually generated the metrics, not just when
     the client received the full response.
     """
+
+    record_type: ClassVar[str] = "server_metrics"
 
     endpoint_url: str = Field(
         description="Source Prometheus metrics endpoint URL (e.g., 'http://localhost:8081/metrics')"

@@ -20,7 +20,7 @@ We'll create a plugin for a hypothetical "Echo API" that returns the input text 
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.11+
 - AIPerf installed (`uv pip install aiperf`)
 - Basic understanding of Python async/await and Pydantic
 
@@ -102,7 +102,7 @@ build-backend = "hatchling.build"
 name = "my-aiperf-plugins"
 version = "0.1.0"
 description = "Custom AIPerf plugins for my use case"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "aiperf",
 ]

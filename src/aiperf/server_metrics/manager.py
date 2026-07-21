@@ -4,10 +4,16 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.enums import CommAddress, CommandType, CreditPhase, MessageType
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    CreditPhase,
+    MessageType,
+    make_result_producer_capability,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_message, on_stop
 from aiperf.common.messages import (
@@ -50,6 +56,10 @@ class ServerMetricsManager(BaseComponentService):
         run: BenchmarkRun carrying the BenchmarkConfig + per-run state.
         service_id: Optional unique identifier for this service instance
     """
+
+    extra_capabilities: ClassVar[tuple[str, ...]] = (
+        make_result_producer_capability("server_metrics"),
+    )
 
     def __init__(
         self,
@@ -269,9 +279,17 @@ class ServerMetricsManager(BaseComponentService):
                             f"Server Metrics: Failed to capture warmup final state from {endpoint_url}: {e}"
                         )
             finally:
-                self._active_phase = previous_phase
+                # Compare-and-set: message handlers run as independent tasks,
+                # so CREDIT_PHASE_START(PROFILING) can land while the scrapes
+                # above are awaited. Blindly restoring/clearing would clobber
+                # the newer phase and tag the whole profiling run as None.
+                if self._active_phase == CreditPhase.WARMUP:
+                    self._active_phase = previous_phase
 
-        if message.stats.phase != CreditPhase.PROFILING:
+        if (
+            message.stats.phase != CreditPhase.PROFILING
+            and self._active_phase == message.stats.phase
+        ):
             self._active_phase = None
 
     @on_command(CommandType.PROFILE_COMPLETE)

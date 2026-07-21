@@ -17,7 +17,28 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from aiperf.config import BenchmarkPlan
+    from aiperf.config import BenchmarkPlan, EndpointConfig
+
+# Anthropic Messages authenticates with x-api-key plus a required
+# anthropic-version header. Bearer auth or a missing version returns a 4xx,
+# which the readiness probe's "status < 500 == ready" rule would misread as
+# ready. Mirrors MessagesEndpoint.get_endpoint_headers().
+_ANTHROPIC_VERSION = "2023-06-01"
+
+
+def _readiness_auth_headers(cfg: EndpointConfig) -> dict[str, str]:
+    """Build readiness-probe headers matching the endpoint's auth scheme."""
+    headers = dict(cfg.headers or {})
+    if str(cfg.type) == "messages":
+        headers.setdefault("anthropic-version", _ANTHROPIC_VERSION)
+        if cfg.api_key:
+            # Hard-assign so --api-key overrides any preconfigured x-api-key,
+            # matching MessagesEndpoint.get_endpoint_headers(); otherwise
+            # preflight would probe a different key than real requests use.
+            headers["x-api-key"] = cfg.api_key
+    elif cfg.api_key:
+        headers["Authorization"] = f"Bearer {cfg.api_key}"
+    return headers
 
 
 def _preflight_artifact_dir(plan: BenchmarkPlan) -> None:
@@ -178,9 +199,7 @@ def _preflight_endpoint_ready(plan: BenchmarkPlan) -> None:
 
     from aiperf.common.readiness_probe import wait_for_endpoint
 
-    headers = dict(cfg.headers or {})
-    if cfg.api_key:
-        headers["Authorization"] = f"Bearer {cfg.api_key}"
+    headers = _readiness_auth_headers(cfg)
 
     asyncio.run(
         wait_for_endpoint(

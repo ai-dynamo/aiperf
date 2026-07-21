@@ -37,11 +37,10 @@ Hierarchical discriminators (same field, multiple levels):
     # Routes directly: Animal.from_json({"type": "poodle"}) -> Poodle instance
 """
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
-from typing_extensions import Self
 
 from aiperf.common.utils import load_json_str
 
@@ -51,6 +50,11 @@ class AutoRoutedModel(BaseModel):
 
     discriminator_field: ClassVar[str | None] = None
     _model_lookup_table: ClassVar[dict[Any, type[Self]]] = {}
+    # When True, an unregistered discriminator value raises instead of falling
+    # back to ``cls.model_validate`` on the base. Set on hierarchies whose base has
+    # no meaningful standalone shape (e.g. RecordData), so a record whose type
+    # isn't registered fails loudly rather than silently dropping its typed fields.
+    strict_routing: ClassVar[bool] = False
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -92,9 +96,12 @@ class AutoRoutedModel(BaseModel):
             else load_json_str(json_or_dict)
         )
 
-        # Only route if THIS class explicitly set a discriminator (not inherited)
+        # Only route if THIS class explicitly set a discriminator (not inherited).
+        # For strict hierarchies, enter even when the lookup table is empty: an
+        # empty table means the producing module isn't imported yet, and strict
+        # routing must still raise rather than silently degrade to the base.
         cls_discriminator = cls.__dict__.get("discriminator_field")
-        if cls_discriminator and cls._model_lookup_table:
+        if cls_discriminator and (cls._model_lookup_table or cls.strict_routing):
             discriminator_value = data.get(cls_discriminator)
 
             if not discriminator_value:
@@ -107,4 +114,18 @@ class AutoRoutedModel(BaseModel):
                 # Recurse for nested routing, otherwise validate
                 return target_class.from_json(data)
 
+            if cls.strict_routing:
+                # No standalone base shape: an unregistered type almost always
+                # means the producing module wasn't imported (registration happens
+                # via __init_subclass__), so fail loudly instead of degrading.
+                raise ValueError(
+                    f"Unknown {cls_discriminator} {discriminator_value!r}: no "
+                    f"{cls.__name__} subclass is registered for it. Ensure the "
+                    "producing module is imported so it registers via "
+                    "__init_subclass__."
+                )
+
+        # An unregistered discriminator falls back to the base class by design:
+        # the command hierarchy routes generic commands (no dedicated subclass) to
+        # the base CommandMessage/CommandSuccessResponse.
         return cls.model_validate(data)

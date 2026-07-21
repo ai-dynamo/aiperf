@@ -3,6 +3,7 @@
 
 import base64
 import io
+import sys
 
 import numpy as np
 import pytest
@@ -16,6 +17,7 @@ from aiperf.config.distributions import NormalDistribution
 from aiperf.dataset.generator import (
     AudioGenerator,
 )
+from aiperf.dataset.generator.audio import import_soundfile
 
 
 def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
@@ -265,3 +267,22 @@ class TestAudioBitDepth:
         assert data_uri.startswith("mp3,")
         audio_data, _ = decode_audio(data_uri)
         assert len(audio_data) > 0
+
+
+class TestSoundfileGuard:
+    """Tests for the lazy soundfile import guard (Windows-on-ARM has no libsndfile)."""
+
+    def test_import_soundfile_returns_module_when_available(self):
+        """On a platform with libsndfile, the helper returns the soundfile module."""
+        assert import_soundfile() is sf
+
+    def test_import_soundfile_missing_raises_configuration_error(self, monkeypatch):
+        """When soundfile/libsndfile cannot load, surface an actionable error.
+
+        Setting ``sys.modules['soundfile'] = None`` forces ``import soundfile``
+        to raise ImportError, simulating the Windows-on-ARM case where the
+        native libsndfile binary is absent.
+        """
+        monkeypatch.setitem(sys.modules, "soundfile", None)
+        with pytest.raises(ConfigurationError, match="libsndfile"):
+            import_soundfile()

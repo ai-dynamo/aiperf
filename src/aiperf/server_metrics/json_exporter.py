@@ -109,15 +109,19 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
             url for url in self._server_metrics_results.endpoints_successful
         ]
 
-        phase_time_ranges = {
-            "profiling": TimeRangeFilter(
+        # Only add phase ranges with start < end: TimeRangeFilter rejects
+        # degenerate windows, and a raise here would drop all server metrics.
+        phase_time_ranges: dict[str, TimeRangeFilter] = {}
+        if self._server_metrics_results.start_ns < self._server_metrics_results.end_ns:
+            phase_time_ranges["profiling"] = TimeRangeFilter(
                 start_ns=self._server_metrics_results.start_ns,
                 end_ns=self._server_metrics_results.end_ns,
             )
-        }
         if (
             self._server_metrics_results.warmup_start_ns is not None
             and self._server_metrics_results.warmup_end_ns is not None
+            and self._server_metrics_results.warmup_start_ns
+            < self._server_metrics_results.warmup_end_ns
         ):
             phase_time_ranges["warmup"] = TimeRangeFilter(
                 start_ns=self._server_metrics_results.warmup_start_ns,

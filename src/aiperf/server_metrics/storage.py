@@ -3,11 +3,10 @@
 
 import logging
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import NamedTuple, Self
 
 import numpy as np
 from numpy.typing import NDArray
-from typing_extensions import Self
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import PrometheusMetricType

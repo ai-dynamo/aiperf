@@ -194,9 +194,9 @@ class FastAPIService(BaseComponentService):
                     self._server_task,
                     timeout=Environment.API_SERVER.SHUTDOWN_TIMEOUT,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._server_task.cancel()
-                with suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                with suppress(asyncio.CancelledError, TimeoutError):
                     await asyncio.wait_for(
                         self._server_task,
                         timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,

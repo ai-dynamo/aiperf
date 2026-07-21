@@ -32,10 +32,11 @@ CLI runner post-run callback behavior. Controls whether OnComplete callback exce
 
 ## ACCURACY
 
-Accuracy benchmark settings. Tunables for the accuracy benchmark loaders. Currently only pins the LiveCodeBench dataset release so accuracy numbers are reproducible across runs without requiring source edits.
+Accuracy benchmark settings. Tunables for accuracy benchmarking: the cancel-path result-wait timeout and the LiveCodeBench dataset release pin, so accuracy behavior and numbers are reproducible across runs without requiring source edits.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
+| `AIPERF_ACCURACY_CANCEL_RESULT_WAIT_SEC` | `5.0` | ≥ 0.0 | Bounded time (seconds) the SystemController waits on the cancel (Ctrl+C) path for the RecordsManager's ProcessAccuracyResultMessage before stopping. The normal completion path blocks on the accuracy shutdown gate indefinitely, but the cancel path must not hang forever, so it waits at most this long for the graded accuracy summary to arrive over pub/sub before proceeding to export. Set to 0 to skip the wait entirely. |
 | `AIPERF_ACCURACY_LCB_RELEASE_TAG` | `'v4_v5'` | — | LiveCodeBench dataset subset (HF config name) passed as the positional ``name`` arg to ``load_dataset("livecodebench/code_generation_lite", name, split="test", trust_remote_code=True)``. Pins which monthly snapshot LCB serves so accuracy numbers are reproducible across runs and branches. Default ``v4_v5`` matches lighteval's base subset; bump (e.g. to ``v6``) when the team rebaselines against a newer snapshot. The loader always passes ``trust_remote_code=True`` so LCB's dataset-loading script can execute on ``datasets`` v4+ (mirrors lighteval's reference opt-in). Consumed by ``aiperf.accuracy.benchmarks.lcb_codegeneration``. |
 
 ## APISERVER
@@ -49,6 +50,15 @@ API server settings. Controls the host and port of the API server.
 | `AIPERF_API_SERVER_CORS_ORIGINS` | `[]` | — | List of CORS origins to allow (empty = no CORS, ['*'] = all origins) |
 | `AIPERF_API_SERVER_SHUTDOWN_TIMEOUT` | `5.0` | ≥ 1.0, ≤ 300.0 | Timeout in seconds for graceful API server shutdown before force-cancelling |
 | `AIPERF_API_SERVER_POST_COMPLETE_GRACE` | `5.0` | ≥ 0.0, ≤ 300.0 | Seconds the API listener stays open after a benchmark terminates so polling clients can observe the final status before the server shuts down. Set to 0 to skip the grace window and shut down immediately. |
+
+## CHAT
+
+Settings for the interactive ``aiperf chat`` command.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_CHAT_CONNECT_TIMEOUT` | `10.0` | > 0.0 | Seconds to wait to establish a connection to the endpoint before a turn fails. Kept short so an unreachable URL fails fast. |
+| `AIPERF_CHAT_READ_TIMEOUT` | `300.0` | > 0.0 | Seconds to wait for the next streamed chunk before a turn fails. No overall (total) timeout is applied, so long generations are never truncated mid-reply; this only fires if the server stalls. |
 
 ## COMPRESSION
 
@@ -119,6 +129,7 @@ HTTP client socket and connection configuration. Controls low-level socket optio
 | `AIPERF_HTTP_REQUEST_CANCELLATION_SEND_TIMEOUT` | `300.0` | ≥ 10.0, ≤ 3600.0 | Safety net timeout in seconds for waiting for HTTP request to be fully sent when request cancellation is enabled. Used as fallback when no explicit timeout is configured to prevent hanging indefinitely while waiting for the request to be written to the socket. |
 | `AIPERF_HTTP_IP_VERSION` | `'4'` | — | IP version for HTTP socket connections. Options: '4' (AF_INET, default), '6' (AF_INET6), or 'auto' (AF_UNSPEC, system chooses). |
 | `AIPERF_HTTP_TRUST_ENV` | `False` | — | Trust environment variables for HTTP client configuration. When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, and NO_PROXY environment variables. |
+| `AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID` | `False` | — | Also send X-Dynamo-Session-ID with the stable X-Correlation-ID value, plus X-Dynamo-Parent-Session-ID on subagent children. Use this with a Dynamo frontend running --router-session-affinity-ttl-secs to pin every turn of a session to the replica holding its KV prefix. |
 | `AIPERF_HTTP_VIDEO_POLL_INTERVAL` | `0.1` | ≥ 0.001, ≤ 10.0 | Interval in seconds between status polls for async video generation jobs. Lower values provide faster completion detection but increase server load. Applies to the aiohttp transport. |
 
 ## LOGGING
@@ -140,6 +151,8 @@ Metrics collection and storage configuration. Controls metrics storage allocatio
 | `AIPERF_METRICS_OSL_MISMATCH_PCT_THRESHOLD` | `5.0` | ≥ 0.0, ≤ 100.0 | Percentage difference threshold for flagging discrepancies between requested and actual output sequence length (default: 5%) |
 | `AIPERF_METRICS_OSL_MISMATCH_MAX_TOKEN_THRESHOLD` | `50` | ≥ 1 | Maximum absolute token threshold for OSL mismatch. The effective threshold is min(requested_osl * pct_threshold, this value). Makes threshold tighter for large OSL values (default: 50 tokens) |
 | `AIPERF_METRICS_TDIGEST_COMPRESSION` | `500` | ≥ 20, ≤ 10000 | t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size. |
+| `AIPERF_METRICS_LIST_BACKEND` | `'ragged'` | — | Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (at most 0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint. |
+| `AIPERF_METRICS_EXPORT_FLUSH_INTERVAL` | `1.0` | ≥ 0.05, ≤ 60.0 | Periodic flush interval (seconds) for buffered JSONL stream exporters (raw record writer, record export, gpu/server-metrics JSONL writers). Bounds the worst-case freshness of low-throughput export files when the in-memory batch never reaches batch_size. |
 
 ## MLFLOW
 
@@ -183,6 +196,7 @@ Record processing and export configuration. Controls batch sizes, processor scal
 | `AIPERF_RECORD_PROCESSOR_SCALE_FACTOR` | `4` | ≥ 1, ≤ 100 | Scale factor for number of record processors to spawn based on worker count. Formula: 1 record processor for every X workers |
 | `AIPERF_RECORD_PROGRESS_REPORT_INTERVAL` | `2.0` | ≥ 0.1, ≤ 600.0 | Interval in seconds between records progress report messages |
 | `AIPERF_RECORD_PROCESS_RECORDS_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for processing record results |
+| `AIPERF_RECORD_STRIP_PAYLOAD_BYTES` | `None` | — | Tri-state control for omitting canonical request payload bytes from RecordContext after a request is sent, which substantially reduces record-pipeline memory for very large prompts. None (default) auto-detects: bytes are stripped only when no downstream record consumer needs them (client-side input tokenization disabled, no synthetic image/audio/video inputs, and raw payload export off). True forces stripping even when a consumer wants the bytes, disabling client-side input tokenization, media counting from request bodies, and raw request payload export. False always retains them. Auto-detection does not see media embedded in custom dataset payloads under server-token-count mode; set False explicitly for that case. |
 
 ## SEARCHPLANNER
 
@@ -266,9 +280,10 @@ User interface and dashboard configuration. Controls refresh rates, update thres
 | `AIPERF_UI_LOG_REFRESH_INTERVAL` | `0.1` | ≥ 0.01, ≤ 100000.0 | Log viewer refresh interval in seconds (default: 10 FPS) |
 | `AIPERF_UI_MIN_UPDATE_PERCENT` | `1.0` | ≥ 0.01, ≤ 100.0 | Minimum percentage difference from last update to trigger a UI update (for non-dashboard UIs) |
 | `AIPERF_UI_NOTIFICATION_TIMEOUT` | `3` | ≥ 1, ≤ 100000 | Duration in seconds to display UI notifications before auto-dismissing |
-| `AIPERF_UI_REALTIME_METRICS_INTERVAL` | `5.0` | ≥ 0.0, ≤ 1000.0 | Interval in seconds between real-time metrics messages. 0 disables realtime reporting. When None, ``realtime_metrics_interval(ui_type)`` auto-defaults to 5.0 under --ui dashboard, 30.0 otherwise. |
+| `AIPERF_UI_REALTIME_METRICS_INTERVAL` | `None` | ≥ 0.0, ≤ 1000.0 | Interval in seconds between real-time metrics messages (and the per-tick stats log block). 0 disables the log block; dashboards still poll. When None, ``realtime_metrics_interval(ui_type)`` auto-defaults to 5.0 under --ui dashboard, 30.0 otherwise. |
 | `AIPERF_UI_REALTIME_METRICS_ENABLED` | `False` | — | Enable real-time metrics collection and reporting despite UI type |
 | `AIPERF_UI_SPINNER_REFRESH_RATE` | `0.1` | ≥ 0.1, ≤ 100.0 | Progress spinner refresh rate in seconds (default: 10 FPS) |
+| `AIPERF_UI_CONSOLE_EXPORT_WIDTH` | `140` | ≥ 40, ≤ 10000 | Fixed column width used to render the post-run console exporter tables. Applied both to the recording console that produces profile_export_console.txt and to the live console when stdout is not a tty (so non-tty CI logs match the saved artifact). |
 
 ## WANDB
 

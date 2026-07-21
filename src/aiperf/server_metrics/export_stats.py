@@ -749,6 +749,11 @@ def _compute_histogram_stats(
             f"Statistics may be inaccurate."
         )
 
+    # Clamp deltas non-negative on reset, mirroring the counter path. A reset that
+    # zeroes count_delta then flows into the empty-histogram branch below.
+    sum_delta = max(sum_delta, 0.0)
+    count_delta = max(count_delta, 0)
+
     # For empty histograms (count=0), still include buckets for API consistency
     if count_delta == 0:
         # Compute bucket deltas (all zeros for empty histogram)

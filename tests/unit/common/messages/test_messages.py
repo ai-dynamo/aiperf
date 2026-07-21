@@ -347,6 +347,38 @@ class TestMessageToJsonBytes:
         restored = message_type.from_json(json_bytes)
         assert restored.message_type == message.message_type
 
+    def test_console_group_survives_to_json_bytes_but_not_public_dump(self):
+        """Reversion guard (db058ce39): MetricResult.console_group is stripped
+        from public dumps but MUST survive the cross-process bus. to_json_bytes()
+        passes context={'include_internal': True}; a plain model_dump_json() (the
+        public/exporter shape) must still drop it. If the opt-in is dropped, an
+        analyzer-injected console_group never reaches the console exporter (a
+        separate process)."""
+        from aiperf.common.enums import MetricConsoleGroup
+        from aiperf.common.messages import RealtimeMetricsMessage
+        from aiperf.common.models import MetricResult
+
+        result = MetricResult(
+            tag="custom_injected_tag",
+            header="Custom",
+            unit="tokens",
+            avg=1.0,
+            console_group=MetricConsoleGroup.USAGE,
+        )
+        message = RealtimeMetricsMessage(
+            service_id="records-manager",
+            service_type=ServiceType.RECORDS_MANAGER,
+            metrics=[result],
+        )
+
+        # IPC path keeps console_group.
+        ipc = orjson.loads(message.to_json_bytes())
+        assert ipc["metrics"][0]["console_group"] == MetricConsoleGroup.USAGE
+
+        # Public path (user-facing exports / REST) strips it.
+        public = json.loads(message.model_dump_json(exclude_none=True))
+        assert "console_group" not in public["metrics"][0]
+
 
 class TestMessageStringRepresentation:
     """Test suite for Message.__str__() method (uses model_dump_json with exclude_none)."""
