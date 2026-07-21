@@ -911,3 +911,100 @@ class TestWarmupProgressHeartbeat:
     def test_warmup_log_interval_env_field_exists(self):
         # 0 disables; default is a positive heartbeat cadence.
         assert Environment.SERVICE.WARMUP_PROGRESS_LOG_INTERVAL >= 0.0
+
+    async def _drive_progress_loop(
+        self,
+        runner: PhaseRunner,
+        pub: MagicMock,
+        monotonic_values: list[float],
+        stop_after_publishes: int,
+    ) -> MagicMock:
+        """Run _progress_report_loop with a controlled clock and stop it after
+        a fixed number of publish_progress calls. Returns the patched info mock.
+        """
+        stats = CreditPhaseStats(phase=runner._config.phase, requests_sent=1)
+        runner._progress.create_stats = MagicMock(return_value=stats)
+
+        publishes = 0
+
+        async def _publish(_stats: CreditPhaseStats) -> None:
+            nonlocal publishes
+            publishes += 1
+            if publishes >= stop_after_publishes:
+                raise asyncio.CancelledError
+
+        pub.publish_progress = AsyncMock(side_effect=_publish)
+
+        clock = iter(monotonic_values)
+        last = [monotonic_values[-1]]
+
+        def _monotonic() -> float:
+            try:
+                return next(clock)
+            except StopIteration:
+                return last[0]
+
+        info_mock = MagicMock()
+        with (
+            patch("aiperf.timing.phase.runner.time.monotonic", new=_monotonic),
+            patch.object(runner, "info", new=info_mock),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await runner._progress_report_loop()
+        return info_mock
+
+    async def test_warmup_heartbeat_throttled_to_once_per_interval(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP), conv_src, pub, router, conc, cancel, cb
+        )
+        # interval=10; setup reads 0 (next_at=10). Loop reads now at 1,5,11,15,22:
+        # fires at 11 (next_at=21) and 22 (next_at=32) -> exactly 2 heartbeats.
+        with patch.object(Environment.SERVICE, "WARMUP_PROGRESS_LOG_INTERVAL", 10.0):
+            info_mock = await self._drive_progress_loop(
+                r, pub, [0, 1, 5, 11, 15, 22], stop_after_publishes=6
+            )
+        assert info_mock.call_count == 2
+
+    async def test_warmup_heartbeat_disabled_when_interval_zero(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP), conv_src, pub, router, conc, cancel, cb
+        )
+        with patch.object(Environment.SERVICE, "WARMUP_PROGRESS_LOG_INTERVAL", 0.0):
+            info_mock = await self._drive_progress_loop(
+                r, pub, [0, 100, 200, 300], stop_after_publishes=3
+            )
+        info_mock.assert_not_called()
+
+    async def test_no_heartbeat_when_phase_not_warmup(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(
+            cfg(phase=CreditPhase.PROFILING), conv_src, pub, router, conc, cancel, cb
+        )
+        with patch.object(Environment.SERVICE, "WARMUP_PROGRESS_LOG_INTERVAL", 10.0):
+            info_mock = await self._drive_progress_loop(
+                r, pub, [0, 11, 22, 33], stop_after_publishes=3
+            )
+        info_mock.assert_not_called()
