@@ -157,6 +157,15 @@ class EndpointInfo(AIPerfBaseModel):
         default=None,
         description="Named AWS credentials profile.",
     )
+    sagemaker_inference_component_name: str | None = Field(
+        default=None,
+        description="SageMaker InferenceComponentName to target.",
+    )
+    sagemaker_target_model: str | None = Field(
+        default=None,
+        description="SageMaker TargetModel value, for multi-model endpoints. Not sent on "
+        "streaming requests.",
+    )
     auth_type: RequestSignerType | None = Field(
         default=None,
         description="Request signing method (e.g. sigv4).",
@@ -231,6 +240,10 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 session_header=getattr(ep, "session_header", None),
                 aws_region=getattr(ep, "aws_region", None),
                 aws_profile=getattr(ep, "aws_profile", None),
+                sagemaker_inference_component_name=getattr(
+                    ep, "sagemaker_inference_component_name", None
+                ),
+                sagemaker_target_model=getattr(ep, "sagemaker_target_model", None),
                 auth_type=getattr(ep, "auth_type", None),
                 aws_service=getattr(ep, "aws_service", None),
             ),

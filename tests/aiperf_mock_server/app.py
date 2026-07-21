@@ -13,12 +13,14 @@ from time import perf_counter
 from typing import Any
 
 import orjson
+from aiperf.transports.sagemaker_eventstream import EVENTSTREAM_CONTENT_TYPE
 from aiperf_mock_server.config import (
     MockServerConfig,
     public_config_dump,
     server_config,
 )
 from aiperf_mock_server.dcgm_faker import DCGMFaker
+from aiperf_mock_server.eventstream import encode_payload_part
 from aiperf_mock_server.metrics import (
     AIPERF_MOCK_REGISTRY,
     DYNAMO_DECODE_REGISTRY,
@@ -382,6 +384,67 @@ async def _chat_stream_wrapper(
     async with async_track_llm_request(ctx, req.model, endpoint):
         async for chunk in stream_chat_completion(ctx, endpoint, req.include_usage):
             yield chunk
+
+
+# ============================================================================
+# SageMaker InvokeEndpoint
+# ============================================================================
+
+
+@app.post("/endpoints/{endpoint_name}/invocations", response_model=None)
+@with_error_injection
+async def sagemaker_invocations(
+    endpoint_name: str,
+    req: ChatCompletionRequest,
+    request: Request,
+) -> ORJSONResponse:
+    """Non-streaming SageMaker ``InvokeEndpoint``.
+
+    Real SageMaker LMI/vLLM containers proxy the container's raw OpenAI-shaped
+    JSON, so this behaves identically to ``/v1/chat/completions`` non-streaming.
+    """
+    endpoint = f"/endpoints/{endpoint_name}/invocations"
+    init_model_config(req.model)
+    ctx = make_ctx(req, endpoint, request.state.start_time)
+
+    with track_llm_request(ctx, req.model, endpoint):
+        await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
+        response_data = _build_chat_response_data(ctx)
+        response_bytes = len(orjson.dumps(response_data))
+        record_request_bytes(endpoint, len(ctx.tokenized.text), response_bytes)
+        return ORJSONResponse(response_data)
+
+
+@app.post("/endpoints/{endpoint_name}/invocations-response-stream", response_model=None)
+@with_error_injection
+async def sagemaker_invocations_response_stream(
+    endpoint_name: str,
+    req: ChatCompletionRequest,
+    request: Request,
+) -> StreamingResponse:
+    """Streaming SageMaker ``InvokeEndpointWithResponseStream``.
+
+    Emits the same per-token chunks as ``/v1/chat/completions`` streaming, but
+    each SSE chunk's bytes are wrapped in one AWS eventstream ``PayloadPart``
+    binary frame and served as ``application/vnd.amazon.eventstream``.
+    """
+    endpoint = f"/endpoints/{endpoint_name}/invocations-response-stream"
+    init_model_config(req.model)
+    ctx = make_ctx(req, endpoint, request.state.start_time)
+    STREAMING_REQUESTS_TOTAL.labels(endpoint=endpoint, model=req.model).inc()
+    return StreamingResponse(
+        _sagemaker_eventstream_wrapper(ctx, req, endpoint),
+        media_type=EVENTSTREAM_CONTENT_TYPE,
+    )
+
+
+async def _sagemaker_eventstream_wrapper(
+    ctx: RequestCtx, req: ChatCompletionRequest, endpoint: str
+):
+    """Wrap each streamed SSE chunk in an eventstream ``PayloadPart`` frame."""
+    async with async_track_llm_request(ctx, req.model, endpoint):
+        async for chunk in stream_chat_completion(ctx, endpoint, req.include_usage):
+            yield encode_payload_part(chunk)
 
 
 # ============================================================================

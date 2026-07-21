@@ -346,6 +346,30 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    sagemaker_inference_component_name: Annotated[
+        str | None,
+        Field(
+            description="SageMaker `InferenceComponentName` to target, for endpoints hosting multiple "
+            "inference components. Used with `--aws-service sagemaker`.",
+        ),
+        CLIParameter(
+            name=("--sagemaker-inference-component-name",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    sagemaker_target_model: Annotated[
+        str | None,
+        Field(
+            description="SageMaker `TargetModel` header value, for multi-model endpoints. Used with "
+            "`--aws-service sagemaker`. Defaults to the request's model name when not set explicitly.",
+        ),
+        CLIParameter(
+            name=("--sagemaker-target-model",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
     use_legacy_max_tokens: Annotated[
         bool,
         Field(

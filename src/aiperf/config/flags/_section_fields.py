@@ -27,6 +27,8 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "model_names",
         "model_selection_strategy",
         "request_content_type",
+        "sagemaker_inference_component_name",
+        "sagemaker_target_model",
         "session_header",
         "streaming",
         "timeout_seconds",

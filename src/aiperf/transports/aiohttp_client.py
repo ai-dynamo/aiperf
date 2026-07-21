@@ -21,6 +21,11 @@ from aiperf.common.models import (
 )
 from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
 from aiperf.transports.http_defaults import AioHttpDefaults, SocketDefaults
+from aiperf.transports.sagemaker_eventstream import (
+    EVENTSTREAM_CONTENT_TYPE,
+    EventStreamReader,
+    SageMakerStreamError,
+)
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
 
 if TYPE_CHECKING:
@@ -173,9 +178,9 @@ class AioHttpClient(AIPerfLoggerMixin):
 
                     record.recv_start_perf_ns = time.perf_counter_ns()
 
-                    if (
-                        method == "POST"
-                        and response.content_type == "text/event-stream"
+                    is_eventstream = response.content_type == EVENTSTREAM_CONTENT_TYPE
+                    if method == "POST" and (
+                        response.content_type == "text/event-stream" or is_eventstream
                     ):
                         # Parse SSE stream with optimal performance
                         # Wrap the content stream to track chunks for trace data
@@ -207,14 +212,27 @@ class AioHttpClient(AIPerfLoggerMixin):
                                 _trace.response_receive_end_perf_ns = chunk_ns
                                 yield chunk
 
+                        # SageMaker's streaming responses are AWS's binary
+                        # eventstream framing, not raw SSE. EventStreamReader
+                        # mirrors AsyncSSEStreamReader's interface exactly
+                        # (__aiter__ yielding a message implementing
+                        # InferenceServerResponse, inspect_message_for_error),
+                        # so the reader class is the only thing that varies
+                        # below -- downstream code only relies on that shared
+                        # protocol, not on SSEMessage specifically.
+                        reader_cls = (
+                            EventStreamReader
+                            if is_eventstream
+                            else AsyncSSEStreamReader
+                        )
+                        sse_messages = reader_cls(tracked_content_stream())
+
                         # Separate code paths for performance: avoid callback checks
                         # when no callback is registered
                         if first_token_callback:
                             first_token_acquired = False
-                            async for message in AsyncSSEStreamReader(
-                                tracked_content_stream()
-                            ):
-                                AsyncSSEStreamReader.inspect_message_for_error(message)
+                            async for message in sse_messages:
+                                reader_cls.inspect_message_for_error(message)
                                 record.responses.append(message)
                                 # Fire callback until it returns True (meaningful content found)
                                 if not first_token_acquired:
@@ -224,10 +242,8 @@ class AioHttpClient(AIPerfLoggerMixin):
                                     )
                         else:
                             # Fast path: no callback, just collect responses
-                            async for message in AsyncSSEStreamReader(
-                                tracked_content_stream()
-                            ):
-                                AsyncSSEStreamReader.inspect_message_for_error(message)
+                            async for message in sse_messages:
+                                reader_cls.inspect_message_for_error(message)
                                 record.responses.append(message)
                         record.end_perf_ns = time.perf_counter_ns()
                     else:
@@ -279,7 +295,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                             f"{method} request to {url} completed in {(record.end_perf_ns - record.start_perf_ns) / NANOS_PER_SECOND} seconds"
                         )
                     )
-        except SSEResponseError as e:
+        except (SSEResponseError, SageMakerStreamError) as e:
             record.end_perf_ns = time.perf_counter_ns()
             self.error(f"Error in SSE response: {e!r}")
             record.error = ErrorDetails.from_exception(e)

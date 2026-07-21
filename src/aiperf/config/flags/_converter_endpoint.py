@@ -76,6 +76,8 @@ _ENDPOINT_FIELD_MAP: dict[str, str] = {
     "aws_profile": "aws_profile",
     "auth_type": "auth_type",
     "aws_service": "aws_service",
+    "sagemaker_inference_component_name": "sagemaker_inference_component_name",
+    "sagemaker_target_model": "sagemaker_target_model",
 }
 
 

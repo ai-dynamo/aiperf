@@ -6,9 +6,12 @@ from pydantic import BaseModel, Field, SerializeAsAny
 
 from aiperf.common.enums import SSEFieldType
 from aiperf.common.models import (
+    AwsEventStreamMessage,
+    BinaryResponse,
     MetricResult,
     ProfileResults,
     SSEMessage,
+    TextResponse,
     TimesliceResult,
 )
 from aiperf.common.models.export_models import JsonMetricResult
@@ -243,6 +246,77 @@ class TestSSEMessageDataclass:
         assert msg.get_text() == '{"key": "value"}'
         json_obj = msg.get_json()
         assert json_obj == {"key": "value"}
+
+
+class TestAwsEventStreamMessageDataclass:
+    """Test that AwsEventStreamMessage dataclass works correctly.
+
+    Distinct from SSEMessage: this represents one already-reassembled
+    PayloadPart line (SageMaker's eventstream format), not a multi-field
+    SSE message -- so there is no `.parse()`/`.packets`, just a flat `line`.
+    """
+
+    def test_get_text_returns_line(self) -> None:
+        msg = AwsEventStreamMessage(
+            perf_ns=1, line='{"key": "value"}', raw_line=b'data: {"key": "value"}\n'
+        )
+        assert msg.get_text() == '{"key": "value"}'
+
+    def test_get_text_returns_none_for_empty_line(self) -> None:
+        msg = AwsEventStreamMessage(perf_ns=1, line="", raw_line=b"\n")
+        assert msg.get_text() is None
+
+    def test_get_raw_returns_raw_line_not_processed_line(self) -> None:
+        """get_raw() must return the undecoded wire bytes, distinct from the
+        processed `line` get_text()/get_json() use -- not a redundant alias
+        for the same processed value."""
+        msg = AwsEventStreamMessage(
+            perf_ns=1, line="raw content", raw_line=b"data: raw content\n"
+        )
+        assert msg.get_raw() == b"data: raw content\n"
+        assert msg.get_raw() != msg.get_text()
+
+    def test_get_json_parses_valid_json(self) -> None:
+        msg = AwsEventStreamMessage(
+            perf_ns=1, line='{"key": "value"}', raw_line=b'{"key": "value"}\n'
+        )
+        assert msg.get_json() == {"key": "value"}
+
+    def test_get_json_returns_none_for_done_sentinel(self) -> None:
+        msg = AwsEventStreamMessage(perf_ns=1, line="[DONE]", raw_line=b"[DONE]\n")
+        assert msg.get_json() is None
+
+    def test_get_json_returns_none_for_empty_line(self) -> None:
+        msg = AwsEventStreamMessage(perf_ns=1, line="", raw_line=b"\n")
+        assert msg.get_json() is None
+
+    def test_get_json_returns_none_for_malformed_json(self) -> None:
+        msg = AwsEventStreamMessage(
+            perf_ns=1, line="{not valid json", raw_line=b"{not valid json\n"
+        )
+        assert msg.get_json() is None
+
+    def test_pydantic_union_roundtrip_preserves_type(self) -> None:
+        """A AwsEventStreamMessage must survive a Pydantic union field
+        roundtrip as itself -- not get misrouted into SSEMessage or
+        TextResponse, which sit in the same RequestRecord.responses union."""
+
+        class Wrapper(BaseModel):
+            responses: SerializeAsAny[
+                list[SSEMessage | AwsEventStreamMessage | TextResponse | BinaryResponse]
+            ] = Field(default_factory=list)
+
+        msg = AwsEventStreamMessage(
+            perf_ns=123, line='{"delta":"tok"}', raw_line=b'data: {"delta":"tok"}\n'
+        )
+        wrapper = Wrapper(responses=[msg])
+        json_bytes = wrapper.model_dump_json().encode()
+        restored = Wrapper.model_validate_json(json_bytes)
+
+        assert isinstance(restored.responses[0], AwsEventStreamMessage)
+        assert restored.responses[0].perf_ns == 123
+        assert restored.responses[0].line == '{"delta":"tok"}'
+        assert restored.responses[0].raw_line == b'data: {"delta":"tok"}\n'
 
 
 class TestMetricResultSumField:

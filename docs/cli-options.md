@@ -354,6 +354,14 @@ Request signing method for authentication. When set, the selected `request_signe
 
 AWS service name for SigV4 request signing (e.g. `execute-api`, `sagemaker`, `bedrock-runtime`). Required when `--auth-type sigv4`.
 
+#### `--sagemaker-inference-component-name` `<str>`
+
+SageMaker `InferenceComponentName` to target, for endpoints hosting multiple inference components. Used with `--aws-service sagemaker`.
+
+#### `--sagemaker-target-model` `<str>`
+
+SageMaker `TargetModel` header value, for multi-model endpoints. Used with `--aws-service sagemaker`. Defaults to the request's model name when not set explicitly.
+
 #### `--use-legacy-max-tokens`
 
 Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request payloads. The OpenAI API now prefers 'max_completion_tokens', but some older APIs or implementations may require 'max_tokens'.
@@ -1833,6 +1841,14 @@ Request signing method for authentication. When set, the selected `request_signe
 #### `--aws-service` `<str>`
 
 AWS service name for SigV4 request signing (e.g. `execute-api`, `sagemaker`, `bedrock-runtime`). Required when `--auth-type sigv4`.
+
+#### `--sagemaker-inference-component-name` `<str>`
+
+SageMaker `InferenceComponentName` to target, for endpoints hosting multiple inference components. Used with `--aws-service sagemaker`.
+
+#### `--sagemaker-target-model` `<str>`
+
+SageMaker `TargetModel` header value, for multi-model endpoints. Used with `--aws-service sagemaker`. Defaults to the request's model name when not set explicitly.
 
 #### `--use-legacy-max-tokens`
 

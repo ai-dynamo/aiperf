@@ -9565,6 +9565,32 @@
           "description": "AWS service name for SigV4 request signing (e.g. 'execute-api', 'sagemaker', 'bedrock-runtime'). Required when auth_type='sigv4'.",
           "title": "Awsservice"
         },
+        "sagemakerInferenceComponentName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "SageMaker InferenceComponentName to target, for endpoints hosting multiple inference components.",
+          "title": "Sagemakerinferencecomponentname"
+        },
+        "sagemakerTargetModel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "SageMaker TargetModel value, for multi-model endpoints. Not sent on streaming requests. Defaults to the request's model name when not set explicitly.",
+          "title": "Sagemakertargetmodel"
+        },
         "connectionReuse": {
           "$ref": "#/$defs/ConnectionReuseStrategy",
           "default": "pooled",

@@ -244,6 +244,25 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    sagemaker_inference_component_name: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="SageMaker InferenceComponentName to target, for endpoints hosting "
+            "multiple inference components.",
+        ),
+    ]
+
+    sagemaker_target_model: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="SageMaker TargetModel value, for multi-model endpoints. Not sent "
+            "on streaming requests. Defaults to the request's model name when not set "
+            "explicitly.",
+        ),
+    ]
+
     connection_reuse: Annotated[
         ConnectionReuseStrategy,
         Field(
@@ -559,4 +578,20 @@ class EndpointConfig(BaseConfig):
                 f"endpoint types that accept form-data (e.g. image_edit, "
                 f"video_generation); endpoint type {self.type} does not."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_auth_type(self) -> Self:
+        """Validate that SigV4 auth has its required AWS fields.
+
+        Deliberately does NOT reject a configured api_key when auth_type is
+        set: BaseEndpoint.get_endpoint_headers already suppresses the Bearer
+        header whenever auth_type is set, so an api_key left over from a
+        config template is harmlessly ignored rather than a hard error.
+        """
+        if self.auth_type == RequestSignerType.SIGV4:
+            if not self.aws_region:
+                raise ValueError("aws_region is required when auth_type is sigv4")
+            if not self.aws_service:
+                raise ValueError("aws_service is required when auth_type is sigv4")
         return self

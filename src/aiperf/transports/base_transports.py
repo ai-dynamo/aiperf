@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from aiperf.auth.base_signer import SignedRequest
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
+    AwsEventStreamMessage,
     RequestInfo,
     RequestRecord,
     SSEMessage,
@@ -22,7 +23,9 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.plugin.schema.schemas import TransportMetadata
 
-FirstTokenCallback = Callable[[int, SSEMessage], Awaitable[bool]]
+FirstTokenCallback = Callable[
+    [int, SSEMessage | AwsEventStreamMessage], Awaitable[bool]
+]
 """
 Type alias for a callback that is called with the ttft_ns and the first SSE message:
 

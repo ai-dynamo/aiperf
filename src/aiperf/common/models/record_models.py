@@ -615,6 +615,62 @@ class SSEMessage:
             return None
 
 
+@dataclass(slots=True)
+class AwsEventStreamMessage:
+    """One decoded PayloadPart line from a SageMaker eventstream response.
+
+    Distinct from SSEMessage: SageMaker's PayloadPart format has no SSE field
+    typing (event/id/retry) and no \\n\\n message delimiter -- it's one line of
+    text per stream chunk (optionally ``data: ``-prefixed by convention, not
+    spec). Modeling it as its own type instead of a fake single-field
+    SSEMessage means it can't silently miss SSEMessage.parse()'s behavior
+    (continuation-line stitching, multi-field parsing) it was never entitled to.
+
+    This is the first vendor-specific type living alongside the generic
+    SSEMessage/TextResponse/BinaryResponse siblings in this file. It belongs
+    here rather than in ``aiperf.transports.sagemaker_eventstream`` (its only
+    producer) because it's a member of the ``RequestRecord``/``RawRecordInfo``
+    ``responses`` unions defined in this module -- those are common models
+    that ``aiperf.transports`` depends on, so the type can't live on the
+    transports side without inverting that dependency direction.
+    """
+
+    # Reject extra fields so Pydantic's union discrimination (e.g. in
+    # RequestRecord.responses) doesn't match the wrong dataclass type. The
+    # field name `line` (not `text`) is deliberate: it must not structurally
+    # overlap with TextResponse's {perf_ns, text, content_type} shape.
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    perf_ns: int
+    """The performance timestamp of the chunk in nanoseconds (perf_counter_ns)."""
+
+    line: str
+    """The decoded PayloadPart text, with any leading `data:` prefix stripped."""
+
+    raw_line: bytes
+    """The undecoded PayloadPart bytes exactly as received, before UTF-8
+    decoding or `data:` prefix stripping. Distinct from `line` so get_raw()
+    returns genuinely raw wire content, not the same processed value get_text()
+    returns."""
+
+    def get_raw(self) -> Any | None:
+        """Get the raw representation of the chunk."""
+        return self.raw_line
+
+    def get_text(self) -> str | None:
+        """Get the text representation of the chunk."""
+        return self.line or None
+
+    def get_json(self) -> JsonObject | None:
+        """Get the JSON representation of the chunk."""
+        if not self.line or self.line == "[DONE]":
+            return None
+        try:
+            return load_json_str(self.line)
+        except orjson.JSONDecodeError:
+            return None
+
+
 class RecordContext(AIPerfBaseModel):
     """Slim per-record context attached to ``RequestRecord``.
 
@@ -827,7 +883,9 @@ class RequestRecord(AIPerfBaseModel):
     # NOTE: We need to use SerializeAsAny to allow for generic subclass support
     # NOTE: The order of the types is important, as that is the order they are type checked.
     #       Start with the most specific types and work towards the most general types.
-    responses: SerializeAsAny[list[SSEMessage | TextResponse | BinaryResponse]] = Field(
+    responses: SerializeAsAny[
+        list[SSEMessage | AwsEventStreamMessage | TextResponse | BinaryResponse]
+    ] = Field(
         default_factory=list,
         description="The raw responses received from the request.",
     )
@@ -1389,7 +1447,9 @@ class RawRecordInfo(AIPerfBaseModel):
         default=None,
         description="The headers of the response.",
     )
-    responses: SerializeAsAny[list[SSEMessage | TextResponse | BinaryResponse]] = Field(
+    responses: SerializeAsAny[
+        list[SSEMessage | AwsEventStreamMessage | TextResponse | BinaryResponse]
+    ] = Field(
         ...,
         description="The raw responses received from the request.",
     )

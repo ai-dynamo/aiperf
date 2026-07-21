@@ -39,6 +39,7 @@ from aiperf.common.messages.dataset_messages import (
 )
 from aiperf.common.mixins import ProcessHealthMixin
 from aiperf.common.models import (
+    AwsEventStreamMessage,
     Conversation,
     ErrorDetails,
     ModelEndpointInfo,
@@ -471,7 +472,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         first_token_callback = None
         if self._first_token_observation_enabled:
 
-            async def first_token_callback(ttft_ns: int, message: SSEMessage) -> bool:
+            async def first_token_callback(
+                ttft_ns: int, message: SSEMessage | AwsEventStreamMessage
+            ) -> bool:
                 parsed = self.inference_client.endpoint.parse_response(message)
                 if parsed is None or parsed.data is None:
                     return False

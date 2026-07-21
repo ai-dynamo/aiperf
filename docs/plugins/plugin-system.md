@@ -127,7 +127,7 @@ AIPerf supports 34 plugin categories organized by function, including `api_route
 |----------|------|-------------|
 | `api_router` | `APIRouterType` | Lifecycle-managed HTTP/WebSocket routers exposed via `BaseRouter` |
 | `endpoint` | `EndpointType` | API endpoint implementations (chat, completions, embeddings, etc.) |
-| `transport` | `TransportType` | Network transport (HTTP via aiohttp) |
+| `transport` | `TransportType` | Network transport (HTTP via aiohttp, AWS SageMaker via boto3) |
 
 ### Processing Categories
 

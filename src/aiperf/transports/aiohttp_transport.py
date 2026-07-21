@@ -39,6 +39,10 @@ from aiperf.transports.base_transports import (
     FirstTokenCallback,
     TransportMetadata,
 )
+from aiperf.transports.sagemaker_headers import (
+    HEADER_ACCEPT_STREAMING,
+    sagemaker_optional_headers,
+)
 
 
 def _has_http_scheme(url: str) -> bool:
@@ -178,22 +182,50 @@ class AioHttpTransport(BaseTransport):
         When request_content_type is multipart/form-data, Content-Type is omitted
         so aiohttp can auto-set it with the correct boundary parameter.
 
+        When the endpoint is SigV4-signed against SageMaker
+        (``aws_service == "sagemaker"``), the header set instead mirrors
+        SageMaker's InvokeEndpoint(WithResponseStream) shape exactly - most
+        notably, streaming's Accept header is the SageMaker-specific
+        ``X-Amzn-SageMaker-Accept``, not the generic ``Accept`` header a
+        plain SSE endpoint would use.
+
         Args:
             request_info: Request context with endpoint configuration
 
         Returns:
-            HTTP headers (Content-Type and Accept)
+            HTTP headers (Content-Type, Accept, and optional SageMaker headers)
         """
-        accept = (
-            "text/event-stream"
-            if request_info.model_endpoint.endpoint.streaming
-            else "application/json"
+        endpoint = request_info.model_endpoint.endpoint
+        is_sagemaker = endpoint.aws_service == "sagemaker"
+
+        if is_sagemaker:
+            accept_header = HEADER_ACCEPT_STREAMING if endpoint.streaming else "Accept"
+        else:
+            accept_header = "Accept"
+        accept_value = (
+            "application/json"
+            if is_sagemaker
+            else ("text/event-stream" if endpoint.streaming else "application/json")
         )
-        headers: dict[str, str] = {"Accept": accept}
-        content_type = request_info.model_endpoint.endpoint.request_content_type
+        headers: dict[str, str] = {accept_header: accept_value}
+
+        content_type = endpoint.request_content_type
         if content_type != RequestContentType.MULTIPART_FORM_DATA:
             headers["Content-Type"] = (
                 content_type or RequestContentType.APPLICATION_JSON
+            )
+
+        if is_sagemaker:
+            model_name = (
+                request_info.turns[-1].model if request_info.turns else None
+            ) or self.model_endpoint.primary_model_name
+            headers.update(
+                sagemaker_optional_headers(
+                    endpoint,
+                    streaming=endpoint.streaming,
+                    model_name=model_name,
+                    x_request_id=request_info.x_request_id,
+                )
             )
         return headers
 
