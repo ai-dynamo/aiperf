@@ -183,6 +183,57 @@ def test_build_result_from_metrics_propagates_was_cancelled(tmp_path):
     assert result.was_cancelled is True
 
 
+def test_build_result_from_metrics_empty_metrics_propagates_was_cancelled(tmp_path):
+    """The empty-summary failure branch must carry ``was_cancelled`` through.
+
+    A run cancelled before any metrics were written classifies as a failure,
+    but the ``was_cancelled`` flag must still reach the RunResult so scenario
+    submissions treat it as invalid rather than a genuine failure.
+    """
+    result = LocalSubprocessExecutor._build_result_from_metrics(
+        {}, "cancelled-empty", tmp_path, was_cancelled=True
+    )
+
+    assert result.success is False
+    assert result.was_cancelled is True
+
+
+def test_build_result_from_metrics_empty_metrics_not_cancelled(tmp_path):
+    """The empty-summary failure branch must not spuriously set ``was_cancelled``."""
+    result = LocalSubprocessExecutor._build_result_from_metrics(
+        {}, "failed-empty", tmp_path
+    )
+
+    assert result.success is False
+    assert result.was_cancelled is False
+
+
+def test_build_result_from_metrics_zero_requests_propagates_was_cancelled(tmp_path):
+    """The zero-request-count failure branch must carry ``was_cancelled`` through."""
+    from aiperf.common.models.export_models import JsonMetricResult
+
+    summary = {"request_count": JsonMetricResult(unit="requests", avg=0.0)}
+    result = LocalSubprocessExecutor._build_result_from_metrics(
+        summary, "cancelled-zero", tmp_path, was_cancelled=True
+    )
+
+    assert result.success is False
+    assert result.was_cancelled is True
+
+
+def test_build_result_from_metrics_zero_requests_not_cancelled(tmp_path):
+    """The zero-request-count failure branch must not spuriously set ``was_cancelled``."""
+    from aiperf.common.models.export_models import JsonMetricResult
+
+    summary = {"request_count": JsonMetricResult(unit="requests", avg=0.0)}
+    result = LocalSubprocessExecutor._build_result_from_metrics(
+        summary, "failed-zero", tmp_path
+    )
+
+    assert result.success is False
+    assert result.was_cancelled is False
+
+
 @pytest.mark.asyncio
 async def test_run_config_never_contains_plaintext_api_key(tmp_path):
     """run_config.json must never contain the plaintext api_key.
