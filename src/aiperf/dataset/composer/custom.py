@@ -133,15 +133,18 @@ class CustomDatasetComposer(BaseDatasetComposer):
 
             # For files, read first non-empty line and use both content and path detection
             with open(file_path, encoding="utf-8") as f:
-                for line in f:
-                    if not (line := line.strip()):
-                        continue
-                    try:
-                        data = load_json_str(line)
-                    except (orjson.JSONDecodeError, UnicodeDecodeError):
-                        # Non-JSON file (e.g. CSV) — fall back to filename-based detection
-                        return self._infer_type(data=None, filename=file_path)
-                    return self._infer_type(data=data, filename=file_path)
+                try:
+                    for line in f:
+                        if not (line := line.strip()):
+                            continue
+                        try:
+                            data = load_json_str(line)
+                        except orjson.JSONDecodeError:
+                            # Non-JSON file (e.g. CSV) — fall back to filename-based detection
+                            return self._infer_type(data=None, filename=file_path)
+                        return self._infer_type(data=data, filename=file_path)
+                except UnicodeDecodeError:
+                    return self._infer_type(data=None, filename=file_path)
 
         except ValueError as e:
             self.exception(

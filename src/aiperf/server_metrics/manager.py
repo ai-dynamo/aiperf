@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, ClassVar
 
 from aiperf.common.base_component_service import BaseComponentService
@@ -17,6 +18,7 @@ from aiperf.common.enums import (
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_message, on_stop
 from aiperf.common.messages import (
+    PhaseBaselineRequestMessage,
     ProfileCancelCommand,
     ProfileCompleteCommand,
     ProfileConfigureCommand,
@@ -25,6 +27,7 @@ from aiperf.common.messages import (
     ServerMetricsStatusMessage,
 )
 from aiperf.common.metric_utils import normalize_metrics_endpoint_url
+from aiperf.common.mixins import BaselineCollectorMixin
 from aiperf.common.models import ErrorDetails, ServerMetricsRecord
 from aiperf.common.protocols import PushClientProtocol
 from aiperf.common.redact import redact_url
@@ -38,7 +41,12 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
-class ServerMetricsManager(BaseComponentService):
+_SERVER_METRICS_SCRAPE_PHASE: ContextVar[CreditPhase | None] = ContextVar(
+    "server_metrics_scrape_phase", default=None
+)
+
+
+class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
     """Coordinates multiple ServerMetricsDataCollector instances for server metrics collection.
 
     The ServerMetricsManager coordinates multiple ServerMetricsDataCollector instances
@@ -105,6 +113,7 @@ class ServerMetricsManager(BaseComponentService):
         # Task for delayed shutdown, created when no endpoints are reachable
         self._shutdown_task: asyncio.Task[None] | None = None
         self._active_phase: CreditPhase | None = None
+        self._active_phase_token = 0
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -133,7 +142,9 @@ class ServerMetricsManager(BaseComponentService):
 
         for endpoint_url in self._server_metrics_endpoints:
             self.debug(
-                lambda url=endpoint_url: f"Server Metrics: Testing reachability of {url}"
+                lambda url=endpoint_url: (
+                    f"Server Metrics: Testing reachability of {url}"
+                )
             )
             collector = ServerMetricsDataCollector(
                 endpoint_url=endpoint_url,
@@ -142,17 +153,22 @@ class ServerMetricsManager(BaseComponentService):
                 error_callback=self._on_server_metrics_error,
                 collector_id=redact_url(endpoint_url),
             )
+            self._attach_phase_scoped_collection(collector)
 
             try:
                 is_reachable = await collector.is_url_reachable()
                 if is_reachable:
                     self._collectors[endpoint_url] = collector
                     self.debug(
-                        lambda url=endpoint_url: f"Server Metrics: Prometheus endpoint {url} is reachable"
+                        lambda url=endpoint_url: (
+                            f"Server Metrics: Prometheus endpoint {url} is reachable"
+                        )
                     )
                 else:
                     self.debug(
-                        lambda url=endpoint_url: f"Server Metrics: Prometheus endpoint {url} is not reachable"
+                        lambda url=endpoint_url: (
+                            f"Server Metrics: Prometheus endpoint {url} is not reachable"
+                        )
                     )
             except Exception as e:
                 self.error(f"Server Metrics: Exception testing {endpoint_url}: {e}")
@@ -178,7 +194,9 @@ class ServerMetricsManager(BaseComponentService):
                 await collector.initialize()
                 await collector.collect_and_process_metrics()
                 self.debug(
-                    lambda url=endpoint_url: f"Server Metrics: Captured baseline from {url}"
+                    lambda url=endpoint_url: (
+                        f"Server Metrics: Captured baseline from {url}"
+                    )
                 )
             except Exception as e:
                 self.warning(
@@ -193,6 +211,26 @@ class ServerMetricsManager(BaseComponentService):
             ],
             endpoints_reachable=reachable_endpoints,
         )
+
+    async def collect_baseline(self, message: PhaseBaselineRequestMessage) -> None:
+        """Capture a one-shot server-metrics scrape for a phase boundary."""
+        if self._server_metrics_disabled or not self._collectors:
+            return
+        boundary_phase = (
+            CreditPhase.WARMUP
+            if message.phase_kind == "warmup"
+            else CreditPhase.PROFILING
+        )
+        errors: list[str] = []
+        for endpoint_url, collector in list(self._collectors.items()):
+            try:
+                await self._collect_and_process_metrics_for_phase(
+                    collector, boundary_phase
+                )
+            except Exception as exc:
+                errors.append(f"{endpoint_url}: {type(exc).__name__}: {exc}")
+        if errors:
+            raise RuntimeError("; ".join(errors))
 
     @on_command(CommandType.PROFILE_START)
     async def _on_start_profiling(self, message: ProfileStartCommand) -> None:
@@ -247,6 +285,7 @@ class ServerMetricsManager(BaseComponentService):
     @on_message(MessageType.CREDIT_PHASE_START)
     async def _on_credit_phase_start(self, message: CreditPhaseStartMessage) -> None:
         """Track which benchmark phase subsequent server-metric scrapes belong to."""
+        self._active_phase_token += 1
         self._active_phase = message.stats.phase
         self.debug(f"Server Metrics: active phase is now {self._active_phase}")
 
@@ -265,31 +304,26 @@ class ServerMetricsManager(BaseComponentService):
             self.info(
                 "Server Metrics: Warmup complete, capturing final warmup metrics..."
             )
-            previous_phase = self._active_phase
-            self._active_phase = CreditPhase.WARMUP
-            try:
-                for endpoint_url, collector in list(self._collectors.items()):
-                    try:
-                        await collector.collect_and_process_metrics()
-                        self.debug(
-                            lambda url=endpoint_url: f"Server Metrics: Captured warmup final state from {url}"
+            for endpoint_url, collector in list(self._collectors.items()):
+                try:
+                    await self._collect_and_process_metrics_for_phase(
+                        collector, CreditPhase.WARMUP
+                    )
+                    self.debug(
+                        lambda url=endpoint_url: (
+                            f"Server Metrics: Captured warmup final state from {url}"
                         )
-                    except Exception as e:  # noqa: BLE001 - one endpoint's scrape failure must not skip the rest
-                        self.warning(
-                            f"Server Metrics: Failed to capture warmup final state from {endpoint_url}: {e}"
-                        )
-            finally:
-                # Compare-and-set: message handlers run as independent tasks,
-                # so CREDIT_PHASE_START(PROFILING) can land while the scrapes
-                # above are awaited. Blindly restoring/clearing would clobber
-                # the newer phase and tag the whole profiling run as None.
-                if self._active_phase == CreditPhase.WARMUP:
-                    self._active_phase = previous_phase
+                    )
+                except Exception as e:  # noqa: BLE001 - one endpoint's scrape failure must not skip the rest
+                    self.warning(
+                        f"Server Metrics: Failed to capture warmup final state from {endpoint_url}: {e}"
+                    )
 
         if (
             message.stats.phase != CreditPhase.PROFILING
             and self._active_phase == message.stats.phase
         ):
+            self._active_phase_token += 1
             self._active_phase = None
 
     @on_command(CommandType.PROFILE_COMPLETE)
@@ -319,14 +353,17 @@ class ServerMetricsManager(BaseComponentService):
             return
 
         self.info("Server Metrics: Profiling complete, capturing final metrics...")
-        self._active_phase = CreditPhase.PROFILING
 
         # Trigger final scrape from all collectors
         for endpoint_url, collector in list(self._collectors.items()):
             try:
-                await collector.collect_and_process_metrics()
+                await self._collect_and_process_metrics_for_phase(
+                    collector, CreditPhase.PROFILING
+                )
                 self.debug(
-                    lambda url=endpoint_url: f"Server Metrics: Captured final state from {url}"
+                    lambda url=endpoint_url: (
+                        f"Server Metrics: Captured final state from {url}"
+                    )
                 )
             except Exception as e:
                 self.warning(
@@ -394,6 +431,33 @@ class ServerMetricsManager(BaseComponentService):
         await asyncio.sleep(Environment.SERVER_METRICS.SHUTDOWN_DELAY)
         await asyncio.shield(self.stop())
 
+    def _attach_phase_scoped_collection(
+        self, collector: ServerMetricsDataCollector
+    ) -> None:
+        original_collect = collector.collect_and_process_metrics
+
+        async def collect_with_phase_snapshot() -> None:
+            if _SERVER_METRICS_SCRAPE_PHASE.get() is not None:
+                await original_collect()
+                return
+
+            token = _SERVER_METRICS_SCRAPE_PHASE.set(self._active_phase)
+            try:
+                await original_collect()
+            finally:
+                _SERVER_METRICS_SCRAPE_PHASE.reset(token)
+
+        collector.collect_and_process_metrics = collect_with_phase_snapshot
+
+    async def _collect_and_process_metrics_for_phase(
+        self, collector: ServerMetricsDataCollector, phase: CreditPhase | None
+    ) -> None:
+        token = _SERVER_METRICS_SCRAPE_PHASE.set(phase)
+        try:
+            await collector.collect_and_process_metrics()
+        finally:
+            _SERVER_METRICS_SCRAPE_PHASE.reset(token)
+
     async def _on_server_metrics_records(
         self, records: list[ServerMetricsRecord], collector_id: str
     ) -> None:
@@ -418,8 +482,9 @@ class ServerMetricsManager(BaseComponentService):
 
         for record in records:
             try:
+                scrape_phase = _SERVER_METRICS_SCRAPE_PHASE.get()
                 record = record.model_copy(
-                    update={"benchmark_phase": self._active_phase}
+                    update={"benchmark_phase": scrape_phase or self._active_phase}
                 )
                 message = ServerMetricsRecordMessage(
                     service_id=self.service_id,

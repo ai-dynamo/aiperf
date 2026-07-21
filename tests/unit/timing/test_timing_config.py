@@ -304,6 +304,13 @@ class TestTimingConfigFromCLIConfig:
             25.0,
             1.5,
         )
+        profiling = next(
+            pc for pc in cfg.phase_configs if pc.phase == CreditPhase.PROFILING
+        )
+        assert (
+            profiling.request_cancellation.rate,
+            profiling.request_cancellation.delay,
+        ) == (25.0, 1.5)
 
     def test_uses_user_centric_rate_when_request_rate_is_none(self) -> None:
         # USER_CENTRIC mode requires multi-turn sessions; the v1 -> v2 resolver
