@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
 import math
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
@@ -8,13 +11,16 @@ from scipy import stats
 
 from aiperf.common import random_generator as rng
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.plugin.enums import ArrivalPattern
+from aiperf.common.enums import CreditPhase
+from aiperf.plugin.enums import ArrivalPattern, TimingMode
+from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.intervals import (
     ConcurrencyBurstIntervalGenerator,
     ConstantIntervalGenerator,
     IntervalGeneratorConfig,
     PoissonIntervalGenerator,
 )
+from aiperf.timing.strategies.request_rate import RequestRateStrategy
 from tests.unit.timing.conftest import OrchestratorHarness, get_session_stats
 
 
@@ -184,6 +190,55 @@ class TestMaxConcurrency:
         s = get_session_stats(h.orchestrator)
         assert s is not None
         assert s.wait_count == 0
+
+
+@pytest.mark.asyncio
+async def test_request_rate_update_wakes_pending_sleep() -> None:
+    class FakeIntervalGenerator:
+        def __init__(self, config):
+            self.rate = config.request_rate
+
+        def next_interval(self) -> float:
+            return 10.0 if self.rate == 0.1 else 0.05
+
+        def set_rate(self, new_rate: float) -> None:
+            self.rate = new_rate
+
+    lifecycle = MagicMock()
+    lifecycle.started_at_perf_ns = int(time.perf_counter() * NANOS_PER_SECOND)
+    conversation_source = MagicMock()
+    conversation_source.next.return_value.build_first_turn.return_value = object()
+    credit_issuer = MagicMock()
+    credit_issuer.try_issue_credit = AsyncMock(return_value=False)
+    stop_checker = MagicMock()
+    stop_checker.can_start_new_session.return_value = True
+
+    config = CreditPhaseConfig(
+        phase=CreditPhase.PROFILING,
+        timing_mode=TimingMode.REQUEST_RATE,
+        request_rate=0.1,
+        total_expected_requests=1,
+    )
+    with patch(
+        "aiperf.timing.strategies.request_rate.plugins.get_class",
+        return_value=FakeIntervalGenerator,
+    ):
+        strategy = RequestRateStrategy(
+            config=config,
+            conversation_source=conversation_source,
+            scheduler=MagicMock(),
+            stop_checker=stop_checker,
+            credit_issuer=credit_issuer,
+            lifecycle=lifecycle,
+        )
+
+    task = asyncio.create_task(strategy.execute_phase())
+    await asyncio.sleep(0)
+
+    strategy.set_request_rate(100.0)
+    await asyncio.wait_for(task, timeout=1.0)
+
+    credit_issuer.try_issue_credit.assert_awaited_once()
 
 
 class TestConcurrencyBurstGenerator:
