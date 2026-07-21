@@ -263,16 +263,85 @@ class ResponsesEndpoint(BaseEndpoint):
         json_obj = response.get_json()
         if not json_obj:
             return None
+        return self._route_parsed_json(json_obj, response.perf_ns)
 
+    def _route_parsed_json(
+        self, json_obj: JsonObject, perf_ns: int
+    ) -> ParsedResponse | None:
+        """Dispatch an already-deserialized response body to the streaming or
+        full-response parser.
+
+        Shared by ``parse_response`` (per-event) and ``extract_response_data``
+        (record-level) so the latter can inspect each body once for the
+        ``response.output_text.done`` de-duplication without re-parsing the
+        JSON a second time.
+        """
         # Streaming: events have a "type" field
         if "type" in json_obj:
-            return self._parse_streaming_event(json_obj, response.perf_ns)
+            return self._parse_streaming_event(json_obj, perf_ns)
 
         # Non-streaming: full response object
         if json_obj.get("object") == "response":
-            return self._parse_full_response(json_obj, response.perf_ns)
+            return self._parse_full_response(json_obj, perf_ns)
 
         return None
+
+    def extract_response_data(self, record: RequestRecord) -> list[ParsedResponse]:
+        """Extract parsed data, de-duplicating the streamed output text.
+
+        A streaming Responses turn carries the assistant text twice: once as
+        the chain of ``response.output_text.delta`` events and again, in full,
+        as the terminal ``response.output_text.done`` event. Tokenising both
+        doubles client-side output tokens (OSL / output-token-throughput ~2x).
+
+        Once a delta has carried text for an output/content part we treat that
+        part's terminal ``done`` as a structural envelope - mirroring the
+        ``response.function_call_arguments.done`` exclusion in
+        ``_streaming_event_data``. Tracking is keyed per
+        ``(output_index, content_index)`` so a done-only part (a server that
+        emits only the ``done`` event for that item, or deltas dropped under
+        load) is NOT suppressed by a sibling part that did stream - it stays the
+        sole text carrier and is still counted exactly once. The same holds for
+        the non-streaming convenience field, which emits no deltas at all.
+
+        The single forward pass is correct because a part's ``done`` event
+        always trails its deltas in SSE arrival order, which ``record.responses``
+        preserves.
+
+        ``parse_response`` itself is intentionally left emitting the ``done``
+        text: the worker's per-event callers (first-token detection, request
+        latency) treat it as a plain data-bearing event and neither sums
+        tokens, so they see no behavioral change.
+        """
+        parsed: list[ParsedResponse] = []
+        streamed_parts: set[tuple[Any, Any]] = set()
+        for response in record.responses:
+            json_obj = response.get_json()
+            if not json_obj:
+                continue
+            if isinstance(json_obj, dict):
+                event_type = json_obj.get("type")
+                part = (json_obj.get("output_index"), json_obj.get("content_index"))
+                if event_type == "response.output_text.delta" and json_obj.get("delta"):
+                    streamed_parts.add(part)
+                elif (
+                    event_type == "response.output_text.done" and part in streamed_parts
+                ):
+                    # This part's deltas already carried the text: drop the
+                    # duplicate TEXT but keep an empty-text response at the done
+                    # timestamp so content-timing metrics (request_latency uses
+                    # content_responses[-1].perf_ns; inter_chunk_latency walks
+                    # the gaps) are byte-for-byte unchanged from the pre-dedup
+                    # behavior. Empty text contributes zero output tokens.
+                    parsed.append(
+                        ParsedResponse(
+                            perf_ns=response.perf_ns, data=TextResponseData(text="")
+                        )
+                    )
+                    continue
+            if result := self._route_parsed_json(json_obj, response.perf_ns):
+                parsed.append(result)
+        return parsed
 
     def _parse_streaming_event(
         self, json_obj: JsonObject, perf_ns: int
@@ -340,6 +409,11 @@ class ResponsesEndpoint(BaseEndpoint):
             return ReasoningResponseData(reasoning=delta) if delta else None
 
         if event_type == "response.output_text.done":
+            # Sole-carrier fallback for the no-delta case (non-streaming
+            # convenience path, or a server that emits only the terminal
+            # event). When deltas already carried this text,
+            # ``extract_response_data`` drops this event before it reaches here
+            # so the output is tokenised exactly once, not doubled.
             text = json_obj.get("text")
             return TextResponseData(text=text) if text else None
 
