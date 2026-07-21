@@ -12,6 +12,10 @@ from aiperf.accuracy.models import (
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
+from aiperf.common.models.record_models import (
+    ReasoningResponseData,
+    ToolCallResponseData,
+)
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 
@@ -187,19 +191,17 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
             data = resp.data
             if data is None:
                 continue
-            reasoning = getattr(data, "reasoning", None)
-            if reasoning:
-                thinking_parts.append(reasoning)
-                fallback_parts.append(reasoning)
-            content = getattr(data, "content", None)
-            tool_call_text = getattr(data, "tool_call_text", None)
-            if content:
-                output_parts.append(content)
-            if tool_call_text:
-                # Tool-call responses grade on content + tool_call_text; keep both.
-                output_parts.append(tool_call_text)
-            elif not content and reasoning is None:
-                # Plain text data with no reasoning/tool-call channel.
+            if isinstance(data, ReasoningResponseData):
+                if data.reasoning:
+                    thinking_parts.append(data.reasoning)
+                    fallback_parts.append(data.reasoning)
+                if data.content:
+                    output_parts.append(data.content)
+            elif isinstance(data, ToolCallResponseData):
+                if data.content:
+                    output_parts.append(data.content)
+                output_parts.append(data.tool_call_text)
+            else:
                 output_parts.append(data.get_text())
         thinking = "".join(thinking_parts) if thinking_parts else None
         model_output = "".join(output_parts) or "".join(fallback_parts)

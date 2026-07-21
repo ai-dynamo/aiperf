@@ -398,3 +398,26 @@ class TestExtractOutputAndThinking:
         output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
         assert output == "Thinking... True"
         assert thinking == "Thinking... True"
+
+    def test_unknown_subclass_uses_get_text_not_content_attr(self) -> None:
+        """Non-Reasoning/ToolCall subclasses go through get_text(), not .content.
+
+        Regression: the old getattr-based implementation would have read the
+        .content attribute directly, returning the wrong value for any
+        BaseResponseData subclass whose .content differs from .get_text().
+        """
+        from dataclasses import dataclass
+
+        from aiperf.common.models.record_models import BaseResponseData
+
+        @dataclass(slots=True)
+        class CustomResponseData(BaseResponseData):
+            content: str = "wrong"
+
+            def get_text(self) -> str:
+                return "correct"
+
+        record = self._record([CustomResponseData()])
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == "correct"
+        assert thinking is None
