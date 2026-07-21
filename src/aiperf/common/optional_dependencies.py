@@ -5,6 +5,7 @@
 MLFLOW_EXTRA = "aiperf[mlflow]"
 WANDB_EXTRA = "aiperf[wandb]"
 OTEL_EXTRA = "aiperf[otel]"
+AWS_EXTRA = "aiperf[aws]"
 OTEL_METRICS_STREAMING_FEATURE = "OpenTelemetry metrics streaming is enabled"
 
 
@@ -31,4 +32,12 @@ def otel_dependency_message(feature: str) -> str:
     return (
         f"{feature} but the optional OpenTelemetry dependencies are not installed. "
         f"{install_optional_dependency_hint(OTEL_EXTRA)}"
+    )
+
+
+def aws_dependency_message(feature: str) -> str:
+    """Error message for a missing optional botocore dependency."""
+    return (
+        f"{feature} but the optional botocore dependency is not installed. "
+        f"{install_optional_dependency_hint(AWS_EXTRA)}"
     )

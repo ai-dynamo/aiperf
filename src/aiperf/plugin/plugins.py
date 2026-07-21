@@ -928,6 +928,7 @@ if TYPE_CHECKING:
     # ruff: noqa: I001
     from aiperf.accuracy.protocols import AccuracyBenchmarkProtocol, AccuracyGraderProtocol
     from aiperf.api.routers.base_router import BaseRouter
+    from aiperf.auth.base_signer import RequestSignerProtocol
     from aiperf.common.accumulator_protocols import AccumulatorProtocol, AnalyzerProtocol, StreamExporterProtocol
     from aiperf.common.protocols import CommunicationClientProtocol, CommunicationProtocol, ServiceProtocol
     from aiperf.controller.protocols import ServiceManagerProtocol
@@ -939,7 +940,7 @@ if TYPE_CHECKING:
     from aiperf.orchestrator.convergence.base import ConvergenceCriterion
     from aiperf.orchestrator.search_planner.base import SearchPlanner
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
-    from aiperf.plugin.enums import APIRouterType, AccumulatorType, AccuracyBenchmarkType, AccuracyGraderType, AnalyzerType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, ConvergenceCriterionType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, PublicDatasetType, RampType, RecordObserverType, RecordProcessorType, SearchPlannerType, SearchRecipePostProcessType, SearchRecipeType, ServiceRunType, ServiceType, StreamExporterType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
+    from aiperf.plugin.enums import APIRouterType, AccumulatorType, AccuracyBenchmarkType, AccuracyGraderType, AnalyzerType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, ConvergenceCriterionType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, PublicDatasetType, RampType, RecordObserverType, RecordProcessorType, RequestSignerType, SearchPlannerType, SearchRecipePostProcessType, SearchRecipeType, ServiceRunType, ServiceType, StreamExporterType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
     from aiperf.post_processors.protocols import RecordObserverProtocol, RecordProcessorProtocol
     from aiperf.search_recipes._base import SearchRecipe
     from aiperf.search_recipes.post_process import PostProcessHandler
@@ -1001,6 +1002,10 @@ if TYPE_CHECKING:
     def get_class(category: Literal[PluginType.TRANSPORT, "transport"], name_or_class_path: TransportType | str) -> type[TransportProtocol]: ...
     @overload
     def iter_all(category: Literal[PluginType.TRANSPORT, "transport"]) -> Iterator[tuple[PluginEntry, type[TransportProtocol]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.REQUEST_SIGNER, "request_signer"], name_or_class_path: RequestSignerType | str) -> type[RequestSignerProtocol]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.REQUEST_SIGNER, "request_signer"]) -> Iterator[tuple[PluginEntry, type[RequestSignerProtocol]]]: ...
     @overload
     def get_class(category: Literal[PluginType.RECORD_PROCESSOR, "record_processor"], name_or_class_path: RecordProcessorType | str) -> type[RecordProcessorProtocol]: ...
     @overload

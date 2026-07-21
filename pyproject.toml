@@ -93,6 +93,9 @@ otel = [
   "opentelemetry-exporter-otlp-proto-http>=1.24.0,<2.0.0",
   "opentelemetry-sdk>=1.24.0,<2.0.0",
 ]
+aws = [
+  "botocore>=1.34.0",
+]
 test = [
   "httpx>=0.27.0",
   # hypothesis 6.156+ ships native (non-universal) wheels with no win_arm64
@@ -113,7 +116,7 @@ test = [
   "trustme>=1.0.0; platform_system != 'Windows' or platform_machine != 'ARM64'",
 ]
 dev = [
-  "aiperf[mlflow,otel,test,wandb]",
+  "aiperf[aws,mlflow,otel,test,wandb]",
   "black>=25.1.0",
   "pre-commit>=4.2.0",
   "ruff>=0.14.0,<0.15.0",

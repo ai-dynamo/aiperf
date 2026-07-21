@@ -20,7 +20,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config.endpoint import EndpointDefaults, TemplateConfig
-from aiperf.plugin.enums import EndpointType, TransportType
+from aiperf.plugin.enums import EndpointType, RequestSignerType, TransportType
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -154,6 +154,22 @@ class EndpointInfo(AIPerfBaseModel):
         description="Enable AIPerf-managed stripping of repeated image content. "
         "Dataset-authored UUIDs pass through independently of this setting.",
     )
+    aws_region: str | None = Field(
+        default=None,
+        description="AWS region for SigV4 requests.",
+    )
+    aws_profile: str | None = Field(
+        default=None,
+        description="Named AWS credentials profile.",
+    )
+    auth_type: RequestSignerType | None = Field(
+        default=None,
+        description="Request signing method (e.g. sigv4).",
+    )
+    aws_service: str | None = Field(
+        default=None,
+        description="AWS service name for SigV4 request signing. Required when auth_type='sigv4'.",
+    )
 
     @property
     def base_url(self) -> str:
@@ -221,6 +237,10 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 uuid_and_strip=getattr(
                     ep, "uuid_and_strip", EndpointDefaults.UUID_AND_STRIP
                 ),
+                aws_region=getattr(ep, "aws_region", None),
+                aws_profile=getattr(ep, "aws_profile", None),
+                auth_type=getattr(ep, "auth_type", None),
+                aws_service=getattr(ep, "aws_service", None),
             ),
             transport=ep.transport,
         )

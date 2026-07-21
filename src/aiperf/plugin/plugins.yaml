@@ -453,6 +453,19 @@ transport:
       url_schemes: [http, https]
 
 # =============================================================================
+# Request Signers
+# =============================================================================
+# Request signers add authentication signatures to outbound requests.
+# Called at the transport layer after headers, URL, and body are finalized.
+# =============================================================================
+request_signer:
+  sigv4:
+    class: aiperf.auth.sigv4_signer:SigV4RequestSigner
+    description: |
+      AWS SigV4 request signing for SageMaker, Bedrock, API Gateway,
+      and any SigV4-protected endpoint. Uses botocore credential chain.
+
+# =============================================================================
 # Dataset Composers
 # =============================================================================
 # Dataset composers create conversation datasets from various sources.

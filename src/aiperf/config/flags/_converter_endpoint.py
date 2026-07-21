@@ -73,6 +73,10 @@ _ENDPOINT_FIELD_MAP: dict[str, str] = {
     "request_content_type": "request_content_type",
     "session_header": "session_header",
     "uuid_and_strip": "uuid_and_strip",
+    "aws_region": "aws_region",
+    "aws_profile": "aws_profile",
+    "auth_type": "auth_type",
+    "aws_service": "aws_service",
 }
 
 

@@ -106,6 +106,14 @@
         "$ref": "#/$defs/TransportPlugin"
       }
     },
+    "request_signer": {
+      "title": "Request Signer Plugins",
+      "type": "object",
+      "description": "Request signers add authentication signatures to outbound requests.\nCalled at the transport layer after headers, URL, and body are finalized.\nSupports AWS SigV4 and extensible to other signing schemes.\nOne-to-one mapping based on auth_type configuration.",
+      "additionalProperties": {
+        "$ref": "#/$defs/RequestSignerPlugin"
+      }
+    },
     "record_processor": {
       "title": "Record Processor Plugins",
       "type": "object",
@@ -1057,6 +1065,47 @@
       ],
       "title": "Transport Plugin",
       "description": "Transports handle the network layer for sending requests to inference servers.\nManages connection pooling, streaming, error handling, and TCP configuration.\nOne-to-one mapping based on transport_type configuration."
+    },
+    "RequestSignerPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Request Signer Plugin",
+      "description": "Request signers add authentication signatures to outbound requests.\nCalled at the transport layer after headers, URL, and body are finalized.\nSupports AWS SigV4 and extensible to other signing schemes.\nOne-to-one mapping based on auth_type configuration."
     },
     "RecordProcessorPlugin": {
       "type": "object",

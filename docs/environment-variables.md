@@ -51,6 +51,14 @@ API server settings. Controls the host and port of the API server.
 | `AIPERF_API_SERVER_SHUTDOWN_TIMEOUT` | `5.0` | ≥ 1.0, ≤ 300.0 | Timeout in seconds for graceful API server shutdown before force-cancelling |
 | `AIPERF_API_SERVER_POST_COMPLETE_GRACE` | `5.0` | ≥ 0.0, ≤ 300.0 | Seconds the API listener stays open after a benchmark terminates so polling clients can observe the final status before the server shuts down. Set to 0 to skip the grace window and shut down immediately. |
 
+## AWS
+
+AWS request-signing settings. Controls credential-rotation behavior for the SigV4 request signer (--auth-type sigv4).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_AWS_CREDENTIAL_RERESOLVE_INTERVAL` | `900.0` | ≥ 0.0 | Seconds between full credential-chain re-resolutions (new botocore.session.Session, re-run the credential provider chain) during a benchmark, on top of botocore's own per-call expiry-based refresh (get_frozen_credentials()). Expiry-based refresh alone only picks up a NEW credential value from the SAME already-resolved provider (e.g. STS/SSO auto-renewal); it does not notice if the underlying source changed entirely (e.g. a rotated static key in ~/.aws/credentials, a re-issued credential_process). Periodic re-resolution protects long-running benchmarks (hours) against continuing to sign with a leaked/rotated-out credential after its replacement is already available. Set to 0 to disable and rely solely on expiry-based refresh. |
+
 ## CHAT
 
 Settings for the interactive ``aiperf chat`` command.
