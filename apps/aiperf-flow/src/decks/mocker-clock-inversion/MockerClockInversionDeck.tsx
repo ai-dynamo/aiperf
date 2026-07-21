@@ -239,7 +239,7 @@ const OPEN_FILE_TARGETS = [
 function CategoryPill({ category, label }: { category: CategoryRole; label: string }): React.JSX.Element {
   return (
     <span
-      className={`rounded-none px-2 py-0.5 text-xs font-semibold ${categoryBgTintClassName(category)} ${categoryClassName(category)}`}
+      className={`rounded-md px-2 py-0.5 text-xs font-semibold shadow-sm ${categoryBgTintClassName(category)} ${categoryClassName(category)}`}
     >
       {label}
     </span>
@@ -254,7 +254,7 @@ function PumpStage({ winner }: { winner: Winner }): React.JSX.Element {
         return (
           <div key={stage.id} className="min-w-0">
             <div
-              className={`mb-2 h-[3px] rounded-none ${active ? categoryBgClassName(WINNER_CATEGORY[stage.id]) : "bg-stroke-tertiary"}`}
+              className={`mb-2 h-[3px] rounded-full ${active ? categoryBgClassName(WINNER_CATEGORY[stage.id]) : "bg-stroke-tertiary"}`}
             />
             <Row gap={7} align="center">
               <span
@@ -284,7 +284,7 @@ function DualQueue({ frame }: { frame: Frame }): React.JSX.Element {
   return (
     <Grid columns="1fr 86px 1fr" gap={12} align="center">
       <div
-        className={`rounded-none border px-4 py-3.5 ${
+        className={`rounded-lg border px-4 py-3.5 shadow-sm ${
           clockActive ? `border-accent-primary ${surfaceClassName("elevated")}` : `${strokeClassName("tertiary")} ${surfaceClassName("chrome")}`
         }`}
       >
@@ -305,7 +305,7 @@ function DualQueue({ frame }: { frame: Frame }): React.JSX.Element {
       </Stack>
 
       <div
-        className={`rounded-none border px-4 py-3.5 ${
+        className={`rounded-lg border px-4 py-3.5 shadow-sm ${
           engineActive ? `border-accent-primary ${surfaceClassName("elevated")}` : `${strokeClassName("tertiary")} ${surfaceClassName("chrome")}`
         }`}
       >
@@ -422,7 +422,7 @@ export function MockerClockInversionDeck(): React.JSX.Element {
           <CategoryPill category="green" label={frame.now} />
         </Row>
 
-        <div className={`rounded-none border px-5 py-4 ${strokeClassName("secondary")} ${surfaceClassName("elevated")}`}>
+        <div className={`rounded-lg border px-5 py-4 shadow-sm ${strokeClassName("secondary")} ${surfaceClassName("elevated")}`}>
           <Row align="center" justify="space-between">
             <h3 className={`text-base font-semibold ${inkClassName("primary")}`}>{frame.title}</h3>
             <span className={`text-xs font-semibold ${inkClassName("tertiary")}`}>
@@ -459,7 +459,7 @@ export function MockerClockInversionDeck(): React.JSX.Element {
           {COMPOSITION_NODES.map((node) => (
             <div
               key={node.title}
-              className={`rounded-none border px-3 py-2.5 ${
+              className={`rounded-lg border px-3 py-2.5 shadow-sm ${
                 node.active ? "border-accent-primary" : strokeClassName("tertiary")
               } ${surfaceClassName("elevated")}`}
             >
@@ -490,7 +490,7 @@ export function MockerClockInversionDeck(): React.JSX.Element {
         {OPEN_FILE_TARGETS.map((target) => (
           <span
             key={target.path}
-            className={`rounded-none border px-3 py-1.5 text-xs font-mono ${strokeClassName("secondary")} ${surfaceClassName("panel")} ${inkClassName("secondary")}`}
+            className={`rounded-md border px-3 py-1.5 text-xs font-mono shadow-sm ${strokeClassName("secondary")} ${surfaceClassName("panel")} ${inkClassName("secondary")}`}
           >
             {target.label} — {target.path}:{target.line}
           </span>

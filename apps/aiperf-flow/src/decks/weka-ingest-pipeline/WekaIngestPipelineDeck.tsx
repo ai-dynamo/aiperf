@@ -136,7 +136,7 @@ export function WekaIngestPipelineDeck(): React.JSX.Element {
       <Stack gap={10}>
         <Row gap={10} align="center" wrap>
           <h1 className="text-xl font-bold">Weka ingest, build, and runtime pipeline</h1>
-          <span className="rounded-none border border-[var(--color-stroke-secondary)] px-2 py-0.5 text-xs font-semibold uppercase tracking-wide">
+          <span className="rounded-md border border-[var(--color-stroke-secondary)] px-2 py-0.5 text-xs font-semibold uppercase tracking-wide shadow-sm">
             segment-trie IR
           </span>
         </Row>
@@ -162,7 +162,7 @@ export function WekaIngestPipelineDeck(): React.JSX.Element {
         </Row>
       </Row>
 
-      <div className="rounded-none border border-[var(--color-stroke-secondary)]">
+      <div className="rounded-lg border border-[var(--color-stroke-secondary)] shadow-sm">
         <div className="border-b border-[var(--color-stroke-secondary)] px-4 py-2 text-sm font-semibold">
           Flow: input to worker
         </div>

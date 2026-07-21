@@ -28,7 +28,7 @@ function SegChip({ id, shared }: { id: string; shared?: boolean }): React.JSX.El
   return (
     <div
       className={clsx(
-        "min-w-[40px] rounded-none border px-2.5 py-1.5 text-center",
+        "min-w-[40px] rounded-md border px-2.5 py-1.5 text-center shadow-sm",
         strokeClassName(shared ? "primary" : "secondary"),
         shared ? surfaceClassName("elevated") : surfaceClassName("panel"),
       )}
@@ -74,7 +74,7 @@ function BranchCard({
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <div className={clsx("rounded-none border px-4 py-3", strokeClassName("secondary"), surfaceClassName("elevated"))}>
+    <div className={clsx("rounded-lg border px-4 py-3 shadow-sm", strokeClassName("secondary"), surfaceClassName("elevated"))}>
       <Row align="center" justify="space-between" gap={10}>
         <span className={clsx("text-sm font-semibold", inkClassName("primary"))}>{title}</span>
         <Badge>{tag}</Badge>
@@ -177,7 +177,7 @@ export function WekaSegmentStoreDeck(): React.JSX.Element {
                 history point at <strong>the same pool entries</strong> — the pool stores each unique
                 segment once.
               </p>
-              <div className={clsx("rounded-none border", strokeClassName("secondary"), surfaceClassName("elevated"))}>
+              <div className={clsx("rounded-lg border shadow-sm", strokeClassName("secondary"), surfaceClassName("elevated"))}>
                 <Row
                   align="center"
                   justify="space-between"
@@ -241,7 +241,7 @@ export function WekaSegmentStoreDeck(): React.JSX.Element {
                 segment-client faces. Blobs are mmap&apos;d read-only so every worker shares one physical
                 copy.
               </p>
-              <div className={clsx("rounded-none border", strokeClassName("secondary"), surfaceClassName("elevated"))}>
+              <div className={clsx("rounded-lg border shadow-sm", strokeClassName("secondary"), surfaceClassName("elevated"))}>
                 <Row
                   align="center"
                   justify="space-between"
@@ -273,7 +273,7 @@ export function WekaSegmentStoreDeck(): React.JSX.Element {
               </h2>
               <div
                 className={clsx(
-                  "self-start rounded-none border px-3 py-2",
+                  "self-start rounded-lg border px-3 py-2 shadow-sm",
                   strokeClassName("primary"),
                   surfaceClassName("elevated"),
                 )}

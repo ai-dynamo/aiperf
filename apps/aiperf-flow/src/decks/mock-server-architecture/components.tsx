@@ -109,7 +109,7 @@ export function SignatureFlow({ page }: { page: FeaturePage }): React.JSX.Elemen
         </span>
       </Row>
       <div
-        className={`rounded-none border ${strokeClassName("secondary")} ${surfaceClassName("panel")}`}
+        className={`rounded-lg border shadow-sm ${strokeClassName("secondary")} ${surfaceClassName("panel")}`}
         style={{ height: 320 }}
       >
         <ReactFlow

@@ -50,7 +50,7 @@ function PassStep({ n, title, sub }: { n: string; title: string; sub: string }):
   return (
     <Stack
       gap={3}
-      className={`min-w-[150px] flex-1 rounded-none border border-t-4 border-t-accent-primary px-3 py-2.5 ${strokeClassName("secondary")}`}
+      className={`min-w-[150px] flex-1 rounded-lg border border-t-4 border-t-accent-primary px-3 py-2.5 shadow-sm ${strokeClassName("secondary")}`}
     >
       <span className={`text-xs font-medium ${inkClassName("tertiary")}`}>pass {n}</span>
       <span className={`text-sm font-semibold ${inkClassName("primary")}`}>{title}</span>
@@ -140,7 +140,7 @@ const RESOLUTION_PICKS: Array<{ req: string; hashes: string; parent: string; why
 function ResolutionChip({ accent, children }: { accent?: boolean; children: React.ReactNode }): React.JSX.Element {
   return (
     <span
-      className={`rounded-none border px-2 py-1 text-xs font-semibold ${
+      className={`rounded-md border px-2 py-1 text-xs font-semibold shadow-sm ${
         accent ? "border-accent-primary text-accent-primary" : `${strokeClassName("secondary")} ${inkClassName("secondary")}`
       }`}
     >
@@ -163,10 +163,10 @@ function ContentParent(): React.JSX.Element {
         Built incrementally — no O(n²) pairwise scan.
       </p>
       <Grid columns="minmax(0, 280px) 1fr" gap={20} align="start">
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div className={`flex items-center justify-between border-b px-3 py-2 ${strokeClassName("secondary")}`}>
             <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Prefix trie</span>
-            <span className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}>
+            <span className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`}>
               accent = terminal
             </span>
           </div>
@@ -187,7 +187,7 @@ function ContentParent(): React.JSX.Element {
         <Stack gap={8}>
           <h3 className={`text-base font-semibold ${inkClassName("primary")}`}>Resolution picks</h3>
           {RESOLUTION_PICKS.map((p) => (
-            <div key={p.req} className={`rounded-none border px-3 py-2.5 ${strokeClassName("secondary")}`}>
+            <div key={p.req} className={`rounded-lg border px-3 py-2.5 shadow-sm ${strokeClassName("secondary")}`}>
               <Row gap={8} align="center" wrap>
                 <ResolutionChip accent>
                   {p.req} {p.hashes}
@@ -223,10 +223,10 @@ function CauseCard({
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+    <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
       <div className={`flex items-center justify-between border-b px-3 py-2 ${strokeClassName("secondary")}`}>
         <span className={`text-sm font-semibold ${inkClassName("primary")}`}>{title}</span>
-        <span className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}>
+        <span className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`}>
           {badge}
         </span>
       </div>
@@ -312,7 +312,7 @@ function DeckHeader(): React.JSX.Element {
       <Row align="center" gap={10} wrap>
         <h1 className={`text-2xl font-bold ${inkClassName("primary")}`}>Inside build_trie_graph</h1>
         <span
-          className={`rounded-none border px-2 py-0.5 text-xs font-semibold border-accent-primary text-accent-primary`}
+          className={`rounded-md border px-2 py-0.5 text-xs font-semibold border-accent-primary text-accent-primary shadow-sm`}
         >
           _weka_trie_build.py
         </span>

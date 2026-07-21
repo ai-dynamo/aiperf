@@ -255,7 +255,7 @@ export function WekaRuntimeStepperDeck(): React.JSX.Element {
                   Async dataflow frontier — interactive stepper
                 </h1>
                 <span
-                  className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${accentClassName("primary")}`}
+                  className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${accentClassName("primary")}`}
                 >
                   weka replay
                 </span>
@@ -300,7 +300,7 @@ export function WekaRuntimeStepperDeck(): React.JSX.Element {
                 >
                   <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Trace graph</span>
                   <span
-                    className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
+                    className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
                   >
                     frontier
                   </span>

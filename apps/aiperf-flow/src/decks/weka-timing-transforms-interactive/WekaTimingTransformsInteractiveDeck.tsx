@@ -102,10 +102,10 @@ function MiniTraceChop({
   const profiled = nodes.length - warmed;
 
   return (
-    <div className="rounded-none border border-stroke-secondary bg-surface-elevated p-4">
+    <div className="rounded-lg border border-stroke-secondary bg-surface-elevated p-4 shadow-sm">
       <Row align="center" justify="space-between">
         <h4 className={`text-sm font-semibold ${inkClassName("primary")}`}>{label}</h4>
-        <span className={`rounded-none border border-stroke-secondary px-2 py-0.5 text-xs ${inkClassName("secondary")}`}>
+        <span className={`rounded-md border border-stroke-secondary px-2 py-0.5 text-xs shadow-sm ${inkClassName("secondary")}`}>
           t* = {fmt(clamped)}s
         </span>
       </Row>
@@ -193,10 +193,10 @@ export function WekaTimingTransformsInteractiveDeck(): React.JSX.Element {
             <Stack gap={10}>
               <Row align="center" gap={10} wrap>
                 <h1 className={`text-2xl font-bold ${inkClassName("primary")}`}>Weka timing transforms</h1>
-                <span className="rounded-none border border-accent-primary bg-accent-primary px-2 py-0.5 text-xs font-semibold text-white">
+                <span className="rounded-md border border-accent-primary bg-accent-primary px-2 py-0.5 text-xs font-semibold text-white shadow-sm">
                   interactive
                 </span>
-                <span className="rounded-none border border-stroke-secondary px-2 py-0.5 text-xs font-medium text-ink-secondary">
+                <span className="rounded-md border border-stroke-secondary px-2 py-0.5 text-xs font-medium text-ink-secondary shadow-sm">
                   warped clock
                 </span>
               </Row>
@@ -234,10 +234,10 @@ export function WekaTimingTransformsInteractiveDeck(): React.JSX.Element {
                 by the excess. Long requests and overlapping subagents are never cut.
               </p>
 
-              <div className="rounded-none border border-stroke-secondary bg-surface-elevated p-4">
+              <div className="rounded-lg border border-stroke-secondary bg-surface-elevated p-4 shadow-sm">
                 <Row align="center" justify="space-between">
                   <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Controls</span>
-                  <span className={`rounded-none border border-stroke-secondary px-2 py-0.5 text-xs ${inkClassName("secondary")}`}>
+                  <span className={`rounded-md border border-stroke-secondary px-2 py-0.5 text-xs shadow-sm ${inkClassName("secondary")}`}>
                     {warpOn ? `cap = ${cap}s` : "warp off"}
                   </span>
                 </Row>
@@ -292,10 +292,10 @@ export function WekaTimingTransformsInteractiveDeck(): React.JSX.Element {
                 <Stat value={cuts.length} label="idle gaps cut" />
               </Grid>
 
-              <div className="rounded-none border border-stroke-secondary bg-surface-elevated p-4">
+              <div className="rounded-lg border border-stroke-secondary bg-surface-elevated p-4 shadow-sm">
                 <Row align="center" justify="space-between">
                   <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Raw vs warped timeline</span>
-                  <span className={`rounded-none border border-stroke-secondary px-2 py-0.5 text-xs ${inkClassName("secondary")}`}>
+                  <span className={`rounded-md border border-stroke-secondary px-2 py-0.5 text-xs shadow-sm ${inkClassName("secondary")}`}>
                     one lane per subagent
                   </span>
                 </Row>
@@ -373,7 +373,7 @@ export function WekaTimingTransformsInteractiveDeck(): React.JSX.Element {
                 before the snapshot, whose KV the survivor still resumes from. The scale below is the{" "}
                 <strong>warped</strong> clock, so it moves with the cap above.
               </p>
-              <div className="rounded-none border border-stroke-secondary bg-surface-elevated p-4">
+              <div className="rounded-lg border border-stroke-secondary bg-surface-elevated p-4 shadow-sm">
                 <Row gap={12} align="center" wrap>
                   <span className={`min-w-[70px] text-sm font-semibold ${inkClassName("primary")}`}>t*</span>
                   <input
@@ -392,10 +392,10 @@ export function WekaTimingTransformsInteractiveDeck(): React.JSX.Element {
                   </span>
                 </Row>
               </div>
-              <div className="rounded-none border border-stroke-secondary bg-surface-elevated p-4">
+              <div className="rounded-lg border border-stroke-secondary bg-surface-elevated p-4 shadow-sm">
                 <Row align="center" justify="space-between">
                   <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Before and after the chop at t*</span>
-                  <span className={`rounded-none border border-stroke-secondary px-2 py-0.5 text-xs ${inkClassName("secondary")}`}>
+                  <span className={`rounded-md border border-stroke-secondary px-2 py-0.5 text-xs shadow-sm ${inkClassName("secondary")}`}>
                     dashed = dropped / re-root
                   </span>
                 </Row>
@@ -450,12 +450,12 @@ export function WekaTimingTransformsInteractiveDeck(): React.JSX.Element {
                 their absolute timing. Drag any slider above and that trace&apos;s lanes slide to keep t* on the
                 line.
               </p>
-              <div className="rounded-none border border-stroke-secondary bg-surface-elevated p-4">
+              <div className="rounded-lg border border-stroke-secondary bg-surface-elevated p-4 shadow-sm">
                 <Row align="center" justify="space-between">
                   <span className={`text-sm font-semibold ${inkClassName("primary")}`}>
                     All warmup + post-t* requests, aligned at t*
                   </span>
-                  <span className={`rounded-none border border-stroke-secondary px-2 py-0.5 text-xs ${inkClassName("secondary")}`}>
+                  <span className={`rounded-md border border-stroke-secondary px-2 py-0.5 text-xs shadow-sm ${inkClassName("secondary")}`}>
                     aligned at t* · one line
                   </span>
                 </Row>

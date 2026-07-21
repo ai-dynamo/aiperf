@@ -142,7 +142,7 @@ export function WekaTimingTransformsDeck(): React.JSX.Element {
             <Stack gap={10}>
               <Row align="center" gap={10} wrap>
                 <h1 className={`text-2xl font-bold ${inkClassName("primary")}`}>Weka timing transforms</h1>
-                <span className="rounded-none border border-stroke-primary bg-surface-elevated px-2 py-0.5 text-xs font-semibold text-ink-primary">
+                <span className="rounded-md border border-stroke-primary bg-surface-elevated px-2 py-0.5 text-xs font-semibold text-ink-primary shadow-sm">
                   warped clock
                 </span>
               </Row>
@@ -164,12 +164,12 @@ export function WekaTimingTransformsDeck(): React.JSX.Element {
                 the cap is collapsed to the cap; everything after shifts left by the excess. No
                 cut ever falls inside a request, so durations and overlaps stay exact.
               </p>
-              <div className="rounded-none border border-stroke-secondary">
+              <div className="rounded-lg border border-stroke-secondary shadow-sm">
                 <div className="flex items-center justify-between border-b border-stroke-secondary px-4 py-2">
                   <span className="text-sm font-semibold text-ink-primary">
                     Active intervals A–D · idle 26s -&gt; 5s
                   </span>
-                  <span className="rounded-none border border-stroke-secondary px-2 py-0.5 text-xs font-medium text-ink-secondary">
+                  <span className="rounded-md border border-stroke-secondary px-2 py-0.5 text-xs font-medium text-ink-secondary shadow-sm">
                     cap = 5s
                   </span>
                 </div>
@@ -212,12 +212,12 @@ export function WekaTimingTransformsDeck(): React.JSX.Element {
                 re-rooted from START at a <strong>t*-relative</strong> offset; edges between two
                 survivors are kept verbatim.
               </p>
-              <div className="rounded-none border border-stroke-secondary">
+              <div className="rounded-lg border border-stroke-secondary shadow-sm">
                 <div className="flex items-center justify-between border-b border-stroke-secondary px-4 py-2">
                   <span className="text-sm font-semibold text-ink-primary">
                     Before and after the chop at t*
                   </span>
-                  <span className="rounded-none border border-stroke-secondary px-2 py-0.5 text-xs font-medium text-ink-secondary">
+                  <span className="rounded-md border border-stroke-secondary px-2 py-0.5 text-xs font-medium text-ink-secondary shadow-sm">
                     dashed = dropped / re-root
                   </span>
                 </div>

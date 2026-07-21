@@ -621,7 +621,7 @@ function DataFlow(): React.JSX.Element {
 // --- shared small helpers for the open bordered sections --------------------
 
 function clsxBorder(): string {
-  return `rounded-none border ${strokeClassName("secondary")}`;
+  return `rounded-lg border shadow-sm ${strokeClassName("secondary")}`;
 }
 
 function borderHeader(): string {
