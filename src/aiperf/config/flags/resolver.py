@@ -34,6 +34,7 @@ from aiperf.config.flags._section_fields import (
     OUTPUT_FIELDS,
     SWEEPING_FIELDS,
 )
+from aiperf.plugin.enums import ArrivalPattern, PhaseType
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -430,6 +431,19 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
     _reject_loadgen_target_collisions(fields_set)
     apply_basic_adaptive_scale_overrides(target, cli)
 
+    if "request_rate_series" in fields_set and cli.request_rate_series is not None:
+        from aiperf.config.rate_series import RateSeriesConfig
+
+        series = RateSeriesConfig(path=str(cli.request_rate_series))
+        target["rate_series"] = series.model_dump(exclude_none=True, exclude={"path"})
+        target.pop("rate", None)
+        if "arrival_pattern" in fields_set:
+            target["type"] = {
+                ArrivalPattern.POISSON: PhaseType.POISSON,
+                ArrivalPattern.GAMMA: PhaseType.GAMMA,
+                ArrivalPattern.CONSTANT: PhaseType.CONSTANT,
+            }.get(cli.arrival_pattern, PhaseType.POISSON)
+
     for attr, key in _LOADGEN_PHASE_FIELD_MAP:
         if attr not in fields_set:
             continue
@@ -451,6 +465,8 @@ def _reject_loadgen_target_collisions(fields_set: set[str]) -> None:
     for attr, key in _LOADGEN_PHASE_FIELD_MAP:
         if attr in fields_set:
             collisions.setdefault(key, []).append(attr)
+    if "request_rate_series" in fields_set:
+        collisions.setdefault("rate", []).append("request_rate_series")
     duplicates = {k: v for k, v in collisions.items() if len(v) > 1}
     if not duplicates:
         return

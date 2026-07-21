@@ -28,6 +28,7 @@ from aiperf.config.loader.duration import (
     _parse_duration,
 )
 from aiperf.config.ramp import RampConfig, RampSpec, _normalize_ramp
+from aiperf.config.rate_series import RateSeriesConfig
 from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.plugin.enums import PhaseType, PhaseTypeStr, RampType
 
@@ -46,6 +47,7 @@ __all__ = [
     "RampConfig",
     "RampSpec",
     "RampType",
+    "RateSeriesConfig",
     "RatePhaseConfig",
     "UserCentricPhase",
     "_normalize_duration",
@@ -309,10 +311,11 @@ class RatePhaseConfig(BasePhaseConfig):
     """Base for rate-controlled phases. Not instantiated directly."""
 
     rate: Annotated[
-        float,
+        float | None,
         Field(
+            default=None,
             gt=0,
-            description="Target request rate in requests per second (must be > 0).",
+            description="Target request rate in requests per second. Required unless rate_series is set.",
         ),
     ]
 
@@ -324,6 +327,23 @@ class RatePhaseConfig(BasePhaseConfig):
             "Can be number (seconds) or {duration, strategy}.",
         ),
     ]
+
+    rate_series: Annotated[
+        RateSeriesConfig | None,
+        Field(
+            default=None,
+            description="Piecewise-linear request-rate schedule.",
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def validate_rate_source(self) -> Self:
+        """Require exactly one of a scalar rate or a rate series."""
+        if self.rate is None and self.rate_series is None:
+            raise ValueError("rate-controlled phases require rate or rate_series")
+        if self.rate is not None and self.rate_series is not None:
+            raise ValueError("rate and rate_series are mutually exclusive")
+        return self
 
 
 class PoissonPhase(RatePhaseConfig):
@@ -387,6 +407,9 @@ class UserCentricPhase(RatePhaseConfig):
     @model_validator(mode="after")
     def validate_user_centric_constraints(self) -> UserCentricPhase:
         """Validate user-centric mode constraints."""
+        if self.rate_series is not None:
+            raise ValueError("user-centric phases do not support rate_series")
+
         if self.sessions is not None and self.sessions < self.users:
             raise ValueError(
                 f"Phase '{self.name}': --num-sessions ({self.sessions}) must be "
@@ -477,4 +500,10 @@ def get_phase_rate(phase: BasePhaseConfig) -> float | None:
     Single accessor for the ``rate`` field so a future rename fails fast here
     instead of being silently swallowed by scattered ``getattr(..., None)`` reads.
     """
-    return phase.rate if isinstance(phase, RatePhaseConfig) else None
+    if not isinstance(phase, RatePhaseConfig):
+        return None
+    if phase.rate is not None:
+        return phase.rate
+    if phase.rate_series is not None:
+        return phase.rate_series.initial_qps
+    return None
