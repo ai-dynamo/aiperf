@@ -17,26 +17,28 @@
   --text-base: 1.0625rem;
   --text-base--line-height: calc(1.6 / 1.0625);
 
-  --color-ink-primary: #fafafb;
-  --color-ink-secondary: #c7cad0;
-  --color-ink-tertiary: #979ba3;
-  --color-ink-quaternary: #6b6f78;
-  --color-ink-link: #a6e639;
+  --color-ink-primary: #e6e6e6;
+  --color-ink-secondary: #b3b3b3;
+  --color-ink-tertiary: #8a8a8a;
+  --color-ink-quaternary: #5c5c5c;
+  --color-ink-link: #7ee08a;
 
-  --color-surface-page: #111318;
-  --color-surface-chrome: #191c22;
-  --color-surface-elevated: #23262e;
-  --color-surface-panel: #2c2f38;
+  /* Neutral charcoal-grey surfaces (a Cursor-editor-like dark theme) instead of near-black —
+     chrome/page/elevated/panel step from darkest to lightest so cards visibly lift off the page. */
+  --color-surface-chrome: #191919;
+  --color-surface-page: #1e1e1e;
+  --color-surface-elevated: #262626;
+  --color-surface-panel: #2f2f2f;
 
-  --color-stroke-primary: #767c88;
-  --color-stroke-secondary: #4c515c;
-  --color-stroke-tertiary: #363a44;
+  --color-stroke-primary: #6e6e6e;
+  --color-stroke-secondary: #454545;
+  --color-stroke-tertiary: #303030;
 
-  --color-accent-primary: #76b900;
-  --color-accent-tint: rgba(118, 185, 0, 0.16);
+  --color-accent-primary: #22c55e;
+  --color-accent-tint: rgba(34, 197, 94, 0.16);
   --color-accent-control: #4fb3d9;
 
-  --color-category-green: #5fc22a;
+  --color-category-green: #4ade80;
   --color-category-yellow: #e0b23d;
   --color-category-purple: #a488e0;
   --color-category-blue: #5b9bf0;

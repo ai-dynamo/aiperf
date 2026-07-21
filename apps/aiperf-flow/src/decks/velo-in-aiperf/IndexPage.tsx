@@ -33,28 +33,33 @@ export const MECHANISMS: ReadonlyArray<{ id: Exclude<VeloPageId, "index">; mark:
   { id: "tree", mark: "T", title: "Aggregator tree" },
 ];
 
-// Constellation offsets around a center core, roughly matching the canvas `.i0..i9` placement.
+// Constellation offsets around a center core, roughly matching the canvas `.i0..i9` placement,
+// scaled down from the original spacing so the ring reads as one coherent cluster instead of ten
+// cards scattered across a mostly-empty canvas.
 const RING: ReadonlyArray<[number, number]> = [
-  [-560, -220],
-  [-190, -300],
-  [520, -210],
-  [-640, 40],
-  [560, 40],
-  [-540, 300],
-  [-150, 360],
-  [520, 300],
-  [-380, -80],
-  [300, 210],
+  [-336, -132],
+  [-114, -180],
+  [312, -126],
+  [-384, 24],
+  [336, 24],
+  [-324, 180],
+  [-90, 216],
+  [312, 180],
+  [-228, -48],
+  [180, 126],
 ];
 
 export function IndexPage({ onSelect }: { onSelect: (id: VeloPageId) => void }): React.JSX.Element {
   const { nodes, edges } = useMemo(() => {
     const nodeList: Node[] = [
       {
+        // `chip` nodes render no Handles (they're not connectable, per the shared node
+        // vocabulary), so edges couldn't attach to a chip-typed hub — this must be a `card` (or
+        // `panel`) for the ten radiating edges below to actually draw.
         id: "core",
-        type: "chip",
+        type: "card",
         position: { x: 0, y: 40 },
-        data: { label: "Velo plane", strokeRole: "primary", className: categoryClassName("cyan") },
+        data: { title: "Velo plane", strokeRole: "secondary", className: categoryClassName("cyan") },
       },
     ];
     const edgeList: Edge[] = [];
