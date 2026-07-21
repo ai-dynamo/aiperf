@@ -5,7 +5,12 @@
 
 import type { ReactNode } from "react";
 import clsx from "clsx";
-import { surfaceClassName, strokeClassName, inkClassName } from "../theme/tokens.js";
+import {
+  surfaceClassName,
+  strokeClassName,
+  inkClassName,
+  categoryClassName,
+} from "../theme/tokens.js";
 import type { CategoryRole } from "../theme/tokens.js";
 
 export type CalloutTone = "info" | "warning" | "danger" | "success";
@@ -46,7 +51,7 @@ export function Callout({
       )}
     >
       {title !== undefined && (
-        <div className={clsx("mb-1 text-sm font-semibold", `text-category-${category}`)}>
+        <div className={clsx("mb-1 text-sm font-semibold", categoryClassName(category))}>
           {title}
         </div>
       )}

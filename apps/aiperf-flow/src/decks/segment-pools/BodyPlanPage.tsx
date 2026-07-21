@@ -19,7 +19,13 @@ import { Callout } from "../../prose/Callout.js";
 import { Table } from "../../prose/Table.js";
 import { Legend } from "../../prose/Legend.js";
 import { Stat } from "../../prose/Stat.js";
-import { inkClassName, surfaceClassName, strokeClassName, categoryBgTintClassName } from "../../theme/tokens.js";
+import {
+  inkClassName,
+  surfaceClassName,
+  strokeClassName,
+  categoryBgTintClassName,
+  categoryClassName,
+} from "../../theme/tokens.js";
 import type { CategoryRole } from "../../theme/tokens.js";
 
 const MSG_WIRE_1 = `{"role":"user","content":"What is 2+2?"}`;
@@ -202,7 +208,7 @@ export function BodyPlanPage(): React.JSX.Element {
                     className={clsx(
                       "rounded-none",
                       tok.kind !== "punc" && "px-0.5 py-px",
-                      color !== "tertiary" ? `text-category-${color}` : inkClassName("tertiary"),
+                      color !== "tertiary" ? categoryClassName(color) : inkClassName("tertiary"),
                       tok.kind === "seg" && categoryBgTintClassName("green"),
                       tok.kind === "tail" && categoryBgTintClassName("yellow"),
                     )}
