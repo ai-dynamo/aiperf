@@ -51,7 +51,7 @@ from aiperf.config.loader.parsing import (
     parse_service_types,
     parse_str_or_csv_list,
 )
-from aiperf.plugin.enums import ServiceType, UIType
+from aiperf.plugin.enums import ServiceType
 
 if TYPE_CHECKING:
     from aiperf.plugin.enums import UIType
