@@ -82,3 +82,9 @@ read the record for the subsystem you are touching.
 | Spec | Purpose |
 |---|---|
 | [mock-server.md](mock-server.md) | `aiperf-mock-server`: the standalone HTTP/gRPC inference target with deterministic generation, latency and error models, telemetry, and request recording. |
+
+### Developer tooling
+
+| Spec | Purpose |
+|---|---|
+| [aiperf-flow.md](aiperf-flow.md) | Planned `apps/aiperf-flow`: component-native explainer decks authored as plain `.tsx` using React Flow, Motion for React, and Tailwind, replacing `apps/explainers`'s `.flow` DSL and hand-rolled SVG layout/connector/animation engines. |
