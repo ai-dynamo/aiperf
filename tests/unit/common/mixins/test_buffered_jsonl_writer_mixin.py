@@ -162,7 +162,7 @@ class TestBufferedJSONLWriterMixin:
         first_flush_failed = asyncio.Event()
         recovered = asyncio.Event()
 
-        async def flaky_flush(buffer_to_flush):
+        async def flaky_flush(buffer_to_flush: list[bytes]) -> None:
             flush_attempts.append(len(buffer_to_flush))
             if len(flush_attempts) == 1:
                 first_flush_failed.set()

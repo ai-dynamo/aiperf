@@ -46,7 +46,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         batch_size: int,
         flush_interval: float = Environment.METRICS.EXPORT_FLUSH_INTERVAL,
         **kwargs,
-    ):
+    ) -> None:
         """Initialize the buffered JSONL writer.
 
         Args:
@@ -152,7 +152,9 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         """
         buffer_to_flush = self._buffer
         self._buffer = []
-        await self._flush_buffer(buffer_to_flush)
+        # Shield so a cancel between detaching the buffer and the write
+        # completing can't silently drop the records we already drained.
+        await asyncio.shield(self._flush_buffer(buffer_to_flush))
 
     async def _flush_buffer(self, buffer_to_flush: list[bytes]) -> None:
         """Write buffered records to disk using bulk write.
@@ -259,7 +261,9 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         self._buffer = []
 
         try:
-            await self._flush_buffer(buffer_to_flush)
+            # Shield the final flush so a shutdown-path cancel can't interrupt
+            # the write and drop records already detached from self._buffer.
+            await asyncio.shield(self._flush_buffer(buffer_to_flush))
         except Exception as e:
             self.error(f"Failed to flush remaining buffer during shutdown: {e}")
 
