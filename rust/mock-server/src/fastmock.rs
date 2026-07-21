@@ -192,7 +192,30 @@ fn auto_parallelism() -> usize {
 /// payload until the process exits, ignoring every other configured
 /// behavior. Blocking — call from `main` before any tokio runtime is built;
 /// this never touches async.
+/// Warn loudly on every startup path: this mode trades every behavioral
+/// guarantee the real mock server makes for raw socket throughput, and a
+/// quiet one-line log is easy to miss/forget once a session is scrolled past.
+fn print_warning_banner() {
+    eprintln!(
+        "\n\
+         \x1b[1;31m########################################################################\x1b[0m\n\
+         \x1b[1;31m#\x1b[0m \x1b[1;33m⚠ WARNING: --ludicrous-speed / --plaid is NOT a realistic mock server\x1b[0m\n\
+         \x1b[1;31m#\x1b[0m\n\
+         \x1b[1;31m#\x1b[0m This is a RAW THROUGHPUT / EXTREME LOAD TEST ONLY.\n\
+         \x1b[1;31m#\x1b[0m Every response is a single HARD-CODED payload:\n\
+         \x1b[1;31m#\x1b[0m   - no latency simulation, no routing, no token rendering\n\
+         \x1b[1;31m#\x1b[0m   - no endpoint dispatch, no per-request behavior of any kind\n\
+         \x1b[1;31m#\x1b[0m   - request contents are ignored entirely\n\
+         \x1b[1;31m#\x1b[0m\n\
+         \x1b[1;31m#\x1b[0m Do NOT use this for behavioral, correctness, or benchmark-accuracy\n\
+         \x1b[1;31m#\x1b[0m testing. Use it ONLY to saturate a transport/client path at the\n\
+         \x1b[1;31m#\x1b[0m absolute ceiling of what the wire can carry.\n\
+         \x1b[1;31m########################################################################\x1b[0m\n"
+    );
+}
+
 pub fn run(config: &MockServerConfig) -> anyhow::Result<()> {
+    print_warning_banner();
     let threads = auto_parallelism();
 
     #[cfg(unix)]
