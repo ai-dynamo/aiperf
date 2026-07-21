@@ -428,6 +428,65 @@ fn responses_parse_event_map_full_precedence_and_replay_union() {
 }
 
 #[test]
+fn responses_extract_response_data_dedups_streamed_output_text() {
+    // A part that streamed via deltas: its terminal `done` must not
+    // re-contribute the full text (that would double-count output tokens),
+    // but must still surface an empty-text ParsedResponse at the `done`
+    // timestamp so content-timing metrics see the same event count.
+    let record = RequestRecord {
+        responses: vec![
+            ServerResponse::from_json(
+                1,
+                json!({"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"Hel"}),
+            ),
+            ServerResponse::from_json(
+                2,
+                json!({"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"lo"}),
+            ),
+            ServerResponse::from_json(
+                3,
+                json!({"type":"response.output_text.done","output_index":0,"content_index":0,"text":"Hello"}),
+            ),
+            // A sibling part that never streamed deltas: its `done` is the
+            // sole carrier and must still contribute its full text.
+            ServerResponse::from_json(
+                4,
+                json!({"type":"response.output_text.done","output_index":1,"content_index":0,"text":"World"}),
+            ),
+        ],
+    };
+    let parsed = ResponsesEndpoint.extract_response_data(&record).unwrap();
+    assert_eq!(parsed.len(), 4);
+    assert_eq!(
+        parsed[0].data,
+        Some(ResponseData::Text {
+            text: "Hel".to_string()
+        })
+    );
+    assert_eq!(
+        parsed[1].data,
+        Some(ResponseData::Text {
+            text: "lo".to_string()
+        })
+    );
+    // Deduped: empty text, not "Hello" again.
+    assert_eq!(
+        parsed[2].data,
+        Some(ResponseData::Text {
+            text: String::new()
+        })
+    );
+    assert_eq!(parsed[2].perf_ns, 3);
+    // Sole carrier: full text preserved.
+    assert_eq!(
+        parsed[3].data,
+        Some(ResponseData::Text {
+            text: "World".to_string()
+        })
+    );
+}
+
+#[test]
 fn completions_and_embeddings_parse_policies() {
     let parsed = CompletionsEndpoint
         .parse_response(&ServerResponse::from_json(

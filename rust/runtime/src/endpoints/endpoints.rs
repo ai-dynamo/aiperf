@@ -3,7 +3,7 @@
 
 //! Core endpoint implementations.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use bytes::Bytes;
 use serde_json::{Map, Value, json};
@@ -414,6 +414,72 @@ impl Endpoint for ResponsesEndpoint {
             );
         }
         Ok(None)
+    }
+
+    /// Parse every response, de-duplicating the streamed output text.
+    ///
+    /// A streaming Responses turn carries the assistant text twice: once as
+    /// the chain of `response.output_text.delta` events and again, in full,
+    /// as the terminal `response.output_text.done` event. Tokenizing both
+    /// doubles client-side output tokens (OSL / output-token-throughput
+    /// ~2x). Once a delta has carried text for an output/content part, that
+    /// part's terminal `done` is treated as a structural envelope. Tracking
+    /// is keyed per `(output_index, content_index)` so a done-only part (a
+    /// server that emits only the `done` event for that item, or deltas
+    /// dropped under load) is NOT suppressed by a sibling part that did
+    /// stream — it stays the sole text carrier and is still counted exactly
+    /// once. The same holds for the non-streaming convenience field, which
+    /// emits no deltas at all.
+    ///
+    /// The single forward pass is correct because a part's `done` event
+    /// always trails its deltas in SSE arrival order, which
+    /// `record.responses` preserves. `parse_response` itself is left
+    /// emitting the `done` text: per-event callers (first-token detection,
+    /// request latency) treat it as a plain data-bearing event and neither
+    /// sums tokens, so they see no behavioral change.
+    fn extract_response_data(&self, record: &RequestRecord) -> EndpointResult<Vec<ParsedResponse>> {
+        let mut parsed = Vec::new();
+        let mut streamed_parts: HashSet<(Option<i64>, Option<i64>)> = HashSet::new();
+        for response in &record.responses {
+            let Some(obj) = response.json.as_ref().and_then(Value::as_object) else {
+                continue;
+            };
+            let event_type = obj.get("type").and_then(Value::as_str);
+            let part = (
+                obj.get("output_index").and_then(Value::as_i64),
+                obj.get("content_index").and_then(Value::as_i64),
+            );
+            if event_type == Some("response.output_text.delta")
+                && obj
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| !s.is_empty())
+            {
+                streamed_parts.insert(part);
+            } else if event_type == Some("response.output_text.done")
+                && streamed_parts.contains(&part)
+            {
+                // This part's deltas already carried the text: drop the
+                // duplicate TEXT but keep an empty-text response at the
+                // done timestamp so content-timing metrics (request_latency
+                // uses the last content response's perf_ns; inter_chunk_latency
+                // walks the gaps) are unchanged from the pre-dedup behavior.
+                // Empty text contributes zero output tokens.
+                parsed.push(ParsedResponse {
+                    perf_ns: response.perf_ns,
+                    data: Some(ResponseData::Text {
+                        text: String::new(),
+                    }),
+                    usage: None,
+                    sources: None,
+                });
+                continue;
+            }
+            if let Some(result) = self.parse_response(response)? {
+                parsed.push(result);
+            }
+        }
+        Ok(parsed)
     }
 
     fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
