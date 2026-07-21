@@ -16,12 +16,14 @@ from aiperf.common.enums import (
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_init, on_stop
 from aiperf.common.messages import (
+    PhaseBaselineRequestMessage,
     ProfileCancelCommand,
     ProfileCompleteCommand,
     ProfileConfigureCommand,
     TelemetryRecordsMessage,
     TelemetryStatusMessage,
 )
+from aiperf.common.mixins import BaselineCollectorMixin
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 from aiperf.common.protocols import PushClientProtocol
 from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
@@ -41,7 +43,7 @@ class _CollectorCandidate:
     kwargs: dict[str, Any]
 
 
-class GPUTelemetryManager(BaseComponentService):
+class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
     """Coordinates multiple TelemetryDataCollector instances for GPU telemetry collection.
 
     The GPUTelemetryManager coordinates multiple TelemetryDataCollector instances
@@ -337,6 +339,19 @@ class GPUTelemetryManager(BaseComponentService):
             endpoints_configured=endpoints_for_display,
             endpoints_reachable=reachable_endpoints,
         )
+
+    async def collect_baseline(self, message: PhaseBaselineRequestMessage) -> None:
+        """Capture a one-shot telemetry scrape for a phase boundary."""
+        if self._telemetry_disabled or not self._collectors:
+            return
+        errors: list[str] = []
+        for source_url, collector in list(self._collectors.items()):
+            try:
+                await collector.collect_and_process_metrics()
+            except Exception as exc:  # one failed endpoint should not skip others
+                errors.append(f"{source_url}: {type(exc).__name__}: {exc}")
+        if errors:
+            raise RuntimeError("; ".join(errors))
 
     @on_command(CommandType.PROFILE_START)
     async def _on_start_profiling(self, message) -> None:

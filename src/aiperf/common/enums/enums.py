@@ -364,6 +364,7 @@ class MessageType(CaseInsensitiveStrEnum):
     INFERENCE_RESULTS = "inference_results"
     RECORDS = "records"
     PARSED_INFERENCE_RESULTS = "parsed_inference_results"
+    PHASE_BASELINE_REQUEST = "phase_baseline_request"
     PROCESSING_STATS = "processing_stats"
     PROCESS_RECORDS_RESULT = "process_records_result"
     PROCESS_TELEMETRY_RESULT = "process_telemetry_result"
