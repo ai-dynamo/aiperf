@@ -157,7 +157,7 @@ export function OverviewPage(): React.JSX.Element {
         </ReactFlow>
       </div>
 
-      <div className="rounded-none border border-[var(--color-stroke-secondary)] px-4 py-3 text-sm">
+      <div className="rounded-lg border border-[var(--color-stroke-secondary)] px-4 py-3 text-sm shadow-sm">
         <div className="font-semibold">The two representations</div>
         <p className="mt-1 text-[var(--color-ink-secondary)]">
           A <code>Handle(u32)</code> is the public address — a dense arena index. A <code>SegmentId([u8;32])</code> is

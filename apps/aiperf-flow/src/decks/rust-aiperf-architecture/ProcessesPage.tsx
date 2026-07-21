@@ -55,7 +55,7 @@ export function ProcessesPage(): React.JSX.Element {
 
       <Grid columns="1.2fr 1fr" gap={16}>
         <Stack gap={8}>
-          <div className="rounded-none border border-stroke-secondary px-4 py-3 text-sm">
+          <div className="rounded-lg border border-stroke-secondary px-4 py-3 text-sm shadow-sm">
             <div className="font-semibold">Dependency direction</div>
             <p className="mt-1 text-ink-secondary">
               <code>aiperf-cli</code> → <code>aiperf</code> → <code>loadgen-core</code>. The entry point re-execs the

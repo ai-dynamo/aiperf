@@ -118,7 +118,7 @@ function DomainOption({ domain, active, onSelect }: DomainOptionProps): React.JS
       aria-pressed={active}
       onClick={onSelect}
       className={clsx(
-        "flex items-center gap-2 rounded-none border px-3 py-1 text-xs font-medium transition-colors",
+        "flex items-center gap-2 rounded-md border px-3 py-1 text-xs font-medium shadow-sm transition-colors",
         surfaceClassName(active ? "elevated" : "panel"),
         strokeClassName(active ? "primary" : "secondary"),
         active ? inkClassName("primary") : inkClassName("secondary"),
@@ -173,12 +173,12 @@ export function PayloadsPage(): React.JSX.Element {
       </Row>
 
       <Grid columns="1fr 1fr" gap={14}>
-        <div className={clsx("rounded-none border p-4", surfaceClassName("elevated"), strokeClassName("primary"))}>
+        <div className={clsx("rounded-lg border p-4 shadow-sm", surfaceClassName("elevated"), strokeClassName("primary"))}>
           <div className="mb-3 flex items-center justify-between">
             <span className={clsx("text-sm font-semibold", inkClassName("primary"))}>Variant</span>
             <span
               className={clsx(
-                "rounded-none border px-2 py-0.5 text-[11px] font-mono",
+                "rounded-md border px-2 py-0.5 text-[11px] font-mono shadow-sm",
                 strokeClassName("secondary"),
                 categoryClassName(domain.color),
               )}
@@ -209,7 +209,7 @@ export function PayloadsPage(): React.JSX.Element {
           </Stack>
         </div>
 
-        <div className={clsx("rounded-none border p-4", surfaceClassName("elevated"), strokeClassName("primary"))}>
+        <div className={clsx("rounded-lg border p-4 shadow-sm", surfaceClassName("elevated"), strokeClassName("primary"))}>
           <div className="mb-3 flex items-center justify-between">
             <span className={clsx("text-sm font-semibold", inkClassName("primary"))}>blake3 recipe</span>
             <span className={clsx("text-[11px] font-mono", inkClassName("tertiary"))}>
@@ -221,7 +221,7 @@ export function PayloadsPage(): React.JSX.Element {
               <div
                 key={`${r.label}-${i}`}
                 className={clsx(
-                  "flex items-center justify-between rounded-none border px-3 py-1.5",
+                  "flex items-center justify-between rounded-md border px-3 py-1.5 shadow-sm",
                   r.faint ? strokeClassName("tertiary") : strokeClassName("primary"),
                   r.faint ? "opacity-70" : undefined,
                   r.faint ? surfaceClassName("panel") : surfaceClassName("elevated"),

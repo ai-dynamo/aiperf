@@ -44,7 +44,7 @@ export function MechanismsSection({ detail }: { detail: Detail }): React.JSX.Ele
             <Row key={title} gap={10} align="start">
               <span
                 className={clsx(
-                  "shrink-0 rounded-none border px-2 py-0.5 text-xs font-bold",
+                  "shrink-0 rounded-md border px-2 py-0.5 text-xs font-bold shadow-sm",
                   surfaceClassName("elevated"),
                   strokeClassName("secondary"),
                   inkClassName("secondary"),

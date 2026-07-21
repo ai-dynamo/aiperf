@@ -83,7 +83,7 @@ function ToggleButton({
       onClick={onClick}
       aria-pressed={active}
       className={clsx(
-        "rounded-none border px-3 py-1 text-xs font-semibold transition-colors",
+        "rounded-md border px-3 py-1 text-xs font-semibold shadow-sm transition-colors",
         strokeClassName("secondary"),
         active
           ? clsx(categoryBgTintClassName("blue"), inkClassName("primary"))
@@ -160,7 +160,7 @@ export function BodyPlanPage(): React.JSX.Element {
       </Row>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div className={clsx("rounded-none border", strokeClassName("secondary"))}>
+        <div className={clsx("rounded-lg border shadow-sm", strokeClassName("secondary"))}>
           <div
             className={clsx(
               "border-b px-3 py-2 text-xs font-semibold uppercase tracking-wide",
@@ -182,7 +182,7 @@ export function BodyPlanPage(): React.JSX.Element {
           </div>
         </div>
 
-        <div className={clsx("rounded-none border", strokeClassName("secondary"))}>
+        <div className={clsx("rounded-lg border shadow-sm", strokeClassName("secondary"))}>
           <div
             className={clsx(
               "border-b px-3 py-2 text-xs font-semibold uppercase tracking-wide",
@@ -195,7 +195,7 @@ export function BodyPlanPage(): React.JSX.Element {
           <div className="p-3">
             <pre
               className={clsx(
-                "whitespace-pre-wrap break-all rounded-none border p-2.5 font-mono text-[11.5px] leading-[19px]",
+                "whitespace-pre-wrap break-all rounded-lg border p-2.5 font-mono text-[11.5px] leading-[19px] shadow-sm",
                 surfaceClassName("panel"),
                 strokeClassName("secondary"),
               )}
@@ -206,7 +206,7 @@ export function BodyPlanPage(): React.JSX.Element {
                   <code
                     key={i}
                     className={clsx(
-                      "rounded-none",
+                      "rounded-md",
                       tok.kind !== "punc" && "px-0.5 py-px",
                       color !== "tertiary" ? categoryClassName(color) : inkClassName("tertiary"),
                       tok.kind === "seg" && categoryBgTintClassName("green"),

@@ -176,7 +176,7 @@ export function Segmented<T extends string>({
               aria-pressed={selected}
               onClick={() => onChange(option.id)}
               className={clsx(
-                "rounded-none border px-3 py-1.5 text-xs font-medium transition-colors",
+                "rounded-md border px-3 py-1.5 text-xs font-medium shadow-sm transition-colors",
                 selected
                   ? clsx("bg-accent-primary text-white", "border-accent-primary")
                   : clsx(surfaceClassName("elevated"), strokeClassName("secondary"), inkClassName("secondary")),
@@ -197,13 +197,13 @@ export type SectionHeadingProps = {
   subtitle: string;
 };
 
-/** Numbered section heading — a boxy (rounded-none) index badge, the title, and a subtitle. */
+/** Numbered section heading — a compact rounded index badge, the title, and a subtitle. */
 export function SectionHeading({ number, title, subtitle }: SectionHeadingProps): React.JSX.Element {
   return (
     <Row gap={12} align="start">
       <div
         className={clsx(
-          "flex h-8 w-8 shrink-0 items-center justify-center rounded-none border text-[11px] font-bold",
+          "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border text-[11px] font-bold shadow-sm",
           surfaceClassName("elevated"),
           strokeClassName("primary"),
           inkClassName("tertiary"),
@@ -243,7 +243,7 @@ export function SourcesRow({ detail, paths }: SourcesRowProps): React.JSX.Elemen
           key={item.path}
           title={item.path}
           className={clsx(
-            "rounded-none border px-2 py-1 font-mono text-[11px]",
+            "rounded-md border px-2 py-1 font-mono text-[11px] shadow-sm",
             surfaceClassName("panel"),
             strokeClassName("secondary"),
             inkClassName("secondary"),

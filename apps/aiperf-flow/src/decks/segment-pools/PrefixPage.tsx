@@ -106,7 +106,7 @@ export function PrefixPage(): React.JSX.Element {
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        <div className="rounded-none border border-[var(--color-stroke-secondary)] px-4 py-3 text-sm">
+        <div className="rounded-lg border border-[var(--color-stroke-secondary)] px-4 py-3 text-sm shadow-sm">
           <div className="font-semibold">resolve_content_parents</div>
           <p className="mt-1 text-[var(--color-ink-secondary)]">
             Walks each node's <code>hash_ids</code> along trie edges; the longest match yields the{" "}
@@ -114,7 +114,7 @@ export function PrefixPage(): React.JSX.Element {
           </p>
           <div className="mt-2 text-xs text-[var(--color-ink-tertiary)]">graph/recorded/trie/parents.rs:18</div>
         </div>
-        <div className="rounded-none border border-[var(--color-stroke-secondary)] px-4 py-3 text-sm">
+        <div className="rounded-lg border border-[var(--color-stroke-secondary)] px-4 py-3 text-sm shadow-sm">
           <div className="font-semibold">rebase on context injection</div>
           <p className="mt-1 text-[var(--color-ink-secondary)]">
             When a system / user_context is injected after compose, <code>rebase_conversation_handles</code> re-interns

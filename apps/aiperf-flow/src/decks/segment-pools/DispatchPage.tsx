@@ -111,7 +111,7 @@ export function DispatchPage(): React.JSX.Element {
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div className="rounded-none border border-[var(--color-stroke-secondary)] px-4 py-3 text-sm">
+        <div className="rounded-lg border border-[var(--color-stroke-secondary)] px-4 py-3 text-sm shadow-sm">
           <div className="font-semibold">dispatch_body precedence</div>
           <pre className="mt-2 overflow-x-auto text-xs leading-[17px] text-[var(--color-ink-secondary)]">
             {`pub fn dispatch_body(
@@ -131,7 +131,7 @@ export function DispatchPage(): React.JSX.Element {
           </pre>
         </div>
 
-        <div className="rounded-none border border-[var(--color-stroke-secondary)] px-4 py-3 text-sm">
+        <div className="rounded-lg border border-[var(--color-stroke-secondary)] px-4 py-3 text-sm shadow-sm">
           <div className="font-semibold">The two seams this feeds</div>
           <div className="mt-2 space-y-2 text-[var(--color-ink-secondary)]">
             <p>

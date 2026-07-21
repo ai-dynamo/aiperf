@@ -131,7 +131,7 @@ export function EvidenceRow({ items }: { items: ReadonlyArray<EvidenceItem> }): 
         {items.map((item) => (
           <span
             key={item.path + item.label}
-            className={`inline-flex items-center gap-2 rounded-none border px-3 py-1 text-xs ${strokeClassName("secondary")}`}
+            className={`inline-flex items-center gap-2 rounded-md border px-3 py-1 text-xs shadow-sm ${strokeClassName("secondary")}`}
           >
             <span className={`font-medium ${inkClassName("secondary")}`}>{item.label}</span>
             <code className={`${inkClassName("tertiary")}`}>{item.path}</code>
