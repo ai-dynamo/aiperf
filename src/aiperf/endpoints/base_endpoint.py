@@ -177,6 +177,13 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         ``payload["messages"]`` for chat endpoints, ``payload["input"]``
         for the Responses API, and any similar shape for plugins.
 
+        When a turn sets ``reset_context=True``, any messages already
+        accumulated from prior turns in this call are discarded before
+        that turn's ``raw_messages`` is applied. This expresses a
+        non-monotonic context change in delta-encoded conversations
+        (e.g. weka's mid-segment LCP cut). The flag only applies when the
+        turn carries ``raw_messages``.
+
         Does NOT prepend shared ``system_message`` or
         ``user_context_message`` - those live on ``RequestInfo`` and are
         placed wherever the endpoint's wire contract dictates (e.g. a
@@ -186,7 +193,10 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         messages: list[dict[str, Any]] = []
         for turn in turns:
             if turn.raw_messages:
-                messages.extend(turn.raw_messages)
+                if turn.reset_context:
+                    messages = list(turn.raw_messages)
+                else:
+                    messages.extend(turn.raw_messages)
                 continue
             messages.append(self._render_turn_message(turn))
         return messages

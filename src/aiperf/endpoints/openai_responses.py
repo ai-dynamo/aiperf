@@ -158,6 +158,14 @@ class ResponsesEndpoint(BaseEndpoint):
         messages: list[dict[str, Any]] = []
         for turn in turns:
             if turn.raw_messages:
+                # reset_context discards everything accumulated from prior turns
+                # before applying this turn's raw_messages (weka's mid-segment
+                # LCP cut). Mirror BaseEndpoint.build_messages -- this override
+                # otherwise duplicates its skeleton and silently dropped the
+                # reset, leaving pre-reset items on the wire (breaking weka
+                # delta-replay ISL and the worker's cache-bust prefix slice).
+                if turn.reset_context:
+                    messages = []
                 for item in turn.raw_messages:
                     if (
                         isinstance(item, dict)
