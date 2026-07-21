@@ -35,6 +35,10 @@ CHOICES = [f" {c}" for c in ascii_uppercase[:4]]
 GENERATION_SIZE = 5
 STOP_SEQUENCE = ["\n"]
 
+# Non-CoT (lighteval parity) budget. CoT needs room for a full reasoning
+# trace before the "The answer is (X)" line, matching MMLU-Pro's budget.
+COT_GENERATION_SIZE = 4000
+
 MMLU_SUBJECTS = [
     "abstract_algebra",
     "anatomy",
@@ -132,6 +136,7 @@ class MMLUBenchmark(AIPerfLoggerMixin):
         enable_cot: bool,
     ) -> list[BenchmarkProblem]:
         few_shots = self._build_few_shots(ds, n_shots)
+        gen_size = COT_GENERATION_SIZE if enable_cot else GENERATION_SIZE
         problems: list[BenchmarkProblem] = []
         for row in ds["test"]:
             prompt = self._format_prompt(row, subject, few_shots, enable_cot)
@@ -150,8 +155,8 @@ class MMLUBenchmark(AIPerfLoggerMixin):
                     task=subject,
                     metadata={
                         "subject": subject,
-                        "generation_size": GENERATION_SIZE,
-                        "stop_sequence": STOP_SEQUENCE,
+                        "generation_size": gen_size,
+                        "stop_sequence": [] if enable_cot else STOP_SEQUENCE,
                     },
                     raw_messages=raw_messages,
                 )
@@ -265,8 +270,14 @@ class MMLUBenchmark(AIPerfLoggerMixin):
         """
         instruction = (
             "The following are multiple choice questions (with answers) "
-            f"about {subject.replace('_', ' ')}.\n\n"
+            f"about {subject.replace('_', ' ')}."
         )
+        if enable_cot:
+            instruction += (
+                " Think step by step and then output the answer in the format of "
+                '"The answer is (X)" at the end.'
+            )
+        instruction += "\n\n"
 
         few_shot_text = "\n\n".join(ex["formatted"] for ex in few_shots)
         if few_shot_text:
@@ -303,8 +314,14 @@ class MMLUBenchmark(AIPerfLoggerMixin):
         """
         instruction = (
             "The following are multiple choice questions (with answers) "
-            f"about {subject.replace('_', ' ')}.\n\n"
+            f"about {subject.replace('_', ' ')}."
         )
+        if enable_cot:
+            instruction += (
+                " Think step by step and then output the answer in the format of "
+                '"The answer is (X)" at the end.'
+            )
+        instruction += "\n\n"
 
         messages: list[AccuracyChatMessage] = []
 

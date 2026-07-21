@@ -144,6 +144,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Request Rate with Max Concurrency](docs/tutorials/request-rate-concurrency.md) - Dual request control
 - [Arrival Patterns](docs/tutorials/arrival-patterns.md) - Constant, Poisson, gamma traffic
 - [Prefill Concurrency](docs/tutorials/prefill-concurrency.md) - Memory-safe long-context benchmarking
+- [Adaptive Scale](docs/tutorials/adaptive-scale.md) - Single-run SLA boundary discovery and sustain
 - [Gradual Ramping](docs/tutorials/ramping.md) - Smooth ramp-up of concurrency and request rate
 - [Warmup Phase](docs/tutorials/warmup.md) - Eliminate cold-start effects
 - [User-Centric Timing](docs/tutorials/user-centric-timing.md) - Per-user rate limiting for KV cache benchmarking
@@ -153,6 +154,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 ### Workloads and Data
 - [Trace Benchmarking](docs/benchmark-modes/trace-replay.md) - Deterministic workload replay
 - [Bailian Traces](docs/tutorials/bailian-trace.md) - Bailian production trace replay
+- [Baseten Traces](docs/tutorials/baseten-trace.md) - Baseten Parquet production trace replay
 - [BurstGPT Traces](docs/tutorials/burst-gpt-trace.md) - BurstGPT real-world bursty traffic trace replay
 - [SageMaker Data Capture](docs/tutorials/sagemaker-data-capture.md) - Replay production traffic from SageMaker endpoints
 - [Custom Prompt Benchmarking](docs/tutorials/custom-prompt-benchmarking.md) - Send exact prompts as-is
@@ -199,6 +201,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Goodput](docs/tutorials/goodput.md) - SLO-based throughput measurement
 - [Parameter Sweeps](docs/tutorials/sweeps.md) - YAML reference for grid/zip/scenarios sweeps + multi-run, with picker for choosing a sweep mode
 - [Adaptive Search](docs/tutorials/adaptive-search.md) - Bayesian-optimization walkthrough (single-objective + multi-objective Pareto)
+- [Adaptive Scale](docs/tutorials/adaptive-scale.md) - Single-run SLA boundary discovery and sustain
 - [Search Recipes](docs/sweeping/search-recipes.md) - Named recipe catalog including `pareto-sweep`, `max-throughput-ttft-sla`, `max-concurrency-under-sla`
 - [HTTP Trace Metrics](docs/tutorials/http-trace-metrics.md) - DNS, TCP/TLS, TTFB timing
 - [Multi-Run Confidence](docs/tutorials/multi-run-confidence.md) - Confidence intervals across repeated runs

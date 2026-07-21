@@ -7,7 +7,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Annotated, Any, AnyStr, Protocol, runtime_checkable
+from typing import Annotated, Any, AnyStr, ClassVar, Protocol, runtime_checkable
 
 import orjson
 from pydantic import (
@@ -39,7 +39,7 @@ from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
-from aiperf.common.types import JsonObject, MetricTagT, TimeSliceT
+from aiperf.common.types import JsonObject, MetricTagT
 from aiperf.common.utils import load_json_str
 
 _logger = AIPerfLogger(__name__)
@@ -121,6 +121,30 @@ class MetricResult(JsonMetricResult):
         for stat in STAT_KEYS:
             setattr(result, stat, getattr(self, stat, None))
         return result
+
+
+class RecordData(AIPerfBaseModel):
+    """Base for typed records that travel on the generic ``RecordsMessage`` envelope.
+
+    Subclasses declare a SERIALIZED ``record_type`` discriminator (a ``Literal``
+    field, not a ClassVar) so AutoRoutedModel can reconstruct the concrete type
+    on the receiving side of the ZMQ boundary. A ClassVar discriminator would not
+    serialize, so the receiver would see bare dicts and fail to route them. This
+    mirrors the ``BaseTraceData`` / ``trace_type`` discriminated-union pattern.
+
+    ``RecordData.from_json(dict)`` routes to the registered subclass by its
+    ``record_type`` value; ``getattr(instance, "record_type")`` returns the field
+    value, so the records-manager routing table keys off instances unchanged.
+    """
+
+    discriminator_field: ClassVar[str] = "record_type"
+    # The base RecordData has no standalone shape (typed fields live on subclasses),
+    # so an unregistered record_type must raise rather than silently degrade.
+    strict_routing: ClassVar[bool] = True
+
+    record_type: str = Field(
+        description="Discriminator: the record_type channel this record routes on.",
+    )
 
 
 class MetricValue(AIPerfBaseModel):
@@ -276,11 +300,6 @@ class ProfileResults(AIPerfBaseModel):
         "bundles the slice's window bounds (start_ns, end_ns, is_complete) "
         "with its metric results. Position in the list is the slice's "
         "chronological index. Produced by the MetricsAccumulator engine.",
-    )
-    timeslice_metric_results: dict[TimeSliceT, list[MetricResult]] | None = Field(
-        default=None,
-        description="The timeslice metric results of the profile (if using the "
-        "legacy timeslice results-processor path)",
     )
     total_expected: int | None = Field(
         default=None,
@@ -1316,7 +1335,7 @@ class MetricRecordInfo(AIPerfBaseModel):
 
     metadata: MetricRecordMetadata = Field(
         ...,
-        description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",
+        description="The metadata of the record. Should match the metadata in the RecordsMessage.",
     )
     metrics: dict[str, MetricValue] = Field(
         ...,
@@ -1339,7 +1358,7 @@ class RawRecordInfo(AIPerfBaseModel):
 
     metadata: MetricRecordMetadata = Field(
         ...,
-        description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",
+        description="The metadata of the record. Should match the metadata in the RecordsMessage.",
     )
     start_perf_ns: int = Field(
         default_factory=time.perf_counter_ns,

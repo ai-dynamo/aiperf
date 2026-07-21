@@ -285,7 +285,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
+<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `messages`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
 <br/>_Default: `chat`_
 
 #### `--streaming`
@@ -379,6 +379,11 @@ Content type for request body serialization. By default, requests are sent as 'a
 
 HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header with the provided name (e.g., `--session-header X-Session-ID`).
 
+#### `--uuid-and-strip`
+
+Enable AIPerf-managed image stripping for vLLM's multimodal processor cache. Dataset-authored image UUIDs, including UUID-only cache references, always pass through on the chat endpoint; this flag only strips repeated content after AIPerf observes it in the same session. Automatic stripping supports only single_turn datasets with session_id-grouped rows; multi_turn is rejected. The server cache must cover the working set, and requests in a session must reach a replica that retains earlier UUIDs.
+<br/>_Flag (no value required)_
+
 ### Tokenizer
 
 #### `--tokenizer` `<str>`
@@ -405,16 +410,14 @@ Apply the HuggingFace tokenizer's chat template when counting input tokens. When
 #### `--extra-inputs` `<list>`
 
 Additional input parameters to include in every API request payload. Specify as `key:value` pairs (e.g., `--extra-inputs temperature:0.7 top_p:0.9`) or as JSON string (e.g., `'{"temperature": 0.7}'`). These parameters are merged with request-specific inputs and sent directly to the endpoint API.
-<br/>_Default: `[]`_
 
 #### `-H`, `--header` `<list>`
 
 Custom HTTP headers to include with every request. Specify as `Header:Value` pairs (e.g., `--header X-Custom-Header:value`) or as JSON string. Can be specified multiple times. Useful for custom authentication, tracking, or API-specific requirements. Combined with auto-generated headers (e.g., `Authorization` from `--api-key`).
-<br/>_Default: `[]`_
 
 #### `--input-file` `<str>`
 
-Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
+Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
 
 #### `--public-dataset` `<str>`
 
@@ -431,8 +434,8 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 
 #### `--custom-dataset-type` `<str>`
 
-Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
+Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -443,6 +446,11 @@ Strategy for selecting entries from dataset during benchmarking. `sequential`: I
 
 Random seed for deterministic data generation. When set, makes synthetic prompts, sampling, delays, and other random operations reproducible across runs. Essential for A/B testing and debugging. Uses system entropy if not specified. Initialized globally at config creation.
 <br/>_Constraints: ≥ 0_
+
+#### `--trace-session-sample-ratio` `<float>`
+
+Fraction of trace sessions to keep for replay, sampled whole-session to preserve multi-turn integrity; deterministic when `--random-seed` is set. Only supported by the baseten_trace loader.
+<br/>_Constraints: > 0.0, ≤ 1.0_
 
 #### `-f`, `--config` `<str>`
 
@@ -523,8 +531,38 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 #### `--inter-turn-delay-cap-seconds` `<float>`
 
-Clamp per-turn replay delays (read from JSONL trace files) to at most this many seconds. ``None`` disables the cap. Used by the DAG JSONL loader to keep long pre-recorded waits from stalling the benchmark; the loader reports the clamp count at end of load. Routes onto the active FileDataset's ``inter_turn_delay_cap_seconds`` field at config-resolution time.
+Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
+
+#### `--max-idle-gap-cap-seconds` `<float>`
+
+Collapse idle gaps between consecutive requests (across all sessions) to at most this many seconds, so a sparse or session-sampled trace does not replay dead air; ``None`` disables the cap. The cap is in replay wall-clock seconds, applied after --replay-speedup compression, so it bounds actual benchmark idle time regardless of speedup. Only supported by the baseten_trace loader. Maps to FileDataset ``max_idle_gap_cap_seconds``.
+<br/>_Constraints: > 0.0_
+
+#### `--replay-speedup` `<float>`
+
+Trace replay wall-clock compression (10 = 10x faster than recorded): divides normalized timestamps and inter-turn delays; ``None`` = real time. Unlike synthesis speedup_ratio, hash_ids stay untouched (KV-cache fidelity). Only supported by the baseten_trace loader. Maps to FileDataset ``replay_speedup``.
+<br/>_Constraints: > 0.0_
+
+#### `--open-loop-replay`, `--no-open-loop-replay`
+
+Open-loop replay (the default): each session starts at its absolute, speedup-scaled recorded timestamp; continuation turns fire at max(recorded timestamp, prior-turn completion). Pass `--no-open-loop-replay` for closed-loop back-pressure: continuation turns fire a think-time (recorded start-to-start gap minus recorded e2e duration) after the prior turn completes, keeping sessions causally ordered when replayed service times differ from recorded (e.g. A/A comparisons). Only honored by the baseten_trace loader. Maps to FileDataset ``open_loop_replay``.
+<br/>_Default: `True`_
+
+#### `--open-loop-strict`
+
+In open-loop replay, fire every trace row at its absolute recorded timestamp as an independent single-turn session, trading away multi-turn grouping and session metrics. Only honored by the baseten_trace loader. Maps to FileDataset ``open_loop_strict``.
+<br/>_Flag (no value required)_
+
+#### `--omit-kv-hints`
+
+Drop recorded KV-cache hints (``hash_ids``, ``block_size``) from replayed request bodies, for strict frontends that reject unknown parameters. Only honored by the baseten_trace loader. Maps to FileDataset ``omit_kv_hints``.
+<br/>_Flag (no value required)_
+
+#### `--force-min-tokens`, `--no-force-min-tokens`
+
+Pin ``min_tokens`` to the recorded output length so replayed generations match recorded lengths; pass `--no-force-min-tokens` to let EOS end generations naturally (some servers reject ``min_tokens``). Only honored by the baseten_trace loader. Maps to FileDataset ``force_min_tokens``.
+<br/>_Default: `True`_
 
 ### Prompt
 
@@ -572,7 +610,7 @@ Standard deviation for synthetic input prompt token lengths. Creates variability
 
 #### `--prompt-input-tokens-block-size`, `--synthetic-input-tokens-block-size`, `--isl-block-size` `<int>`
 
-Token block size for hash-based prompt caching in trace datasets (`mooncake_trace`, `bailian_trace`). When `hash_ids` are provided in trace entries, prompts are divided into blocks of this size. Each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. When not set, the trace loader's `default_block_size` from plugin metadata is used (e.g. 16 for `bailian_trace`, 512 for `mooncake_trace`).
+Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. Only supported with synthetic datasets: with `--input-file` the flag is rejected at convert time, and trace replay loaders always use the `default_block_size` from their plugin metadata (16 for `bailian_trace`, 64 for `baseten_trace`, 512 for `mooncake_trace`).
 <br/>_Constraints: ≥ 1_
 
 #### `--seq-dist`, `--sequence-distribution` `<str>`
@@ -923,7 +961,7 @@ Duration in seconds to ramp request rate from a proportional minimum to target. 
 
 #### `--adaptive-scale`
 
-Enable stable single-run adaptive scale control. Requires --benchmark-duration, --concurrency, --adaptive-sustain-duration, and --adaptive-scale-sla.
+Enable stable single-run adaptive scale control. Use --adaptive-scale-control variable:min,max:type to choose the controlled variable and bounds, and --adaptive-scale-sla metric:stat:op:threshold to define pass/fail criteria. Also requires --benchmark-duration and --adaptive-sustain-duration.
 <br/>_Flag (no value required)_
 
 #### `--adaptive-sustain-duration` `<float>`
@@ -936,9 +974,27 @@ Duration in seconds to sustain load near the discovered adaptive scale boundary.
 Duration in seconds for each adaptive scale SLA assessment window.
 <br/>_Constraints: ≥ 1.0_
 
+#### `--adaptive-scale-control` `<str>`
+
+Compact adaptive scale control spec in variable:min,max:type form. The variable is one of concurrency, prefill_concurrency, request_rate, or users; min and max are required explicit bounds; type is int for discrete controls and float for rate controls. Examples: concurrency:1,1000:int, prefill_concurrency:1,8:int, request_rate:1,200:float, users:10,500:int. Do not combine this with expanded --adaptive-control-* flags.
+
+#### `--adaptive-control-variable` `<str>`
+
+Adaptive scale control variable: concurrency, prefill_concurrency, request_rate, or users.
+
+#### `--adaptive-control-min` `<float>`
+
+Minimum adaptive scale control value.
+<br/>_Constraints: > 0_
+
+#### `--adaptive-control-max` `<float>`
+
+Maximum adaptive scale control value. Inferred from the phase target when omitted.
+<br/>_Constraints: > 0_
+
 #### `--adaptive-scale-sla` `<list>`
 
-SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. For request_latency, stat is one of {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; request throughput and goodput_ratio support {avg, min, max}. op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
+SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. Latency-family metrics (request_latency, time_to_first_token/ttft, inter_token_latency/itl/tpot) support percentile stats; window scalar/rate metrics (request_throughput, output_token_throughput, goodput, goodput_ratio, success_rate, error_rate, cancellation_rate) support {avg, min, max}. Full metric/stat table: [Adaptive SLA metric support](tutorials/yaml-config.md#adaptive-sla-metric-support). op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
 
 ### Warmup
 
@@ -1436,7 +1492,7 @@ Number of log-spaced steps for the decode-itl-curve recipe's OSL grid (default 4
 #### `--accuracy-benchmark` `<str>`
 
 Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accuracy benchmarking mode alongside performance profiling.
-<br/>_Choices: [`mmlu`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gsm8k`, `gpqa_diamond`, `lcb_codegeneration`]_
+<br/>_Choices: [`mmlu`, `mmlu_pro`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gsm8k`, `gpqa_diamond`, `lcb_codegeneration`]_
 
 #### `--accuracy-tasks` `<list>`
 
@@ -1447,7 +1503,7 @@ Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU
 Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation, None uses the benchmark default (e.g. MMLU=5). Maximum 32.
 <br/>_Constraints: ≥ 0, ≤ 32_
 
-#### `--accuracy-enable-cot`
+#### `--accuracy-enable-cot`, `--accuracy-no-enable-cot`
 
 Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt. Defaults to the benchmark's ``default_enable_cot`` metadata when unset (e.g. AIME defaults to True).
 <br/>_Flag (no value required)_
@@ -1455,7 +1511,7 @@ Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instru
 #### `--accuracy-grader` `<str>`
 
 Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader.
-<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`, `lighteval_gsm8k`]_
+<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`, `lighteval_gsm8k`, `mmlu_pro`]_
 
 #### `--accuracy-system-prompt` `<str>`
 
@@ -1624,7 +1680,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `server_metrics_processor`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_observer`, `record_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -1692,7 +1748,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
+<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `messages`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
 <br/>_Default: `chat`_
 
 #### `--streaming`
@@ -1786,6 +1842,11 @@ Content type for request body serialization. By default, requests are sent as 'a
 
 HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header with the provided name (e.g., `--session-header X-Session-ID`).
 
+#### `--uuid-and-strip`
+
+Enable AIPerf-managed image stripping for vLLM's multimodal processor cache. Dataset-authored image UUIDs, including UUID-only cache references, always pass through on the chat endpoint; this flag only strips repeated content after AIPerf observes it in the same session. Automatic stripping supports only single_turn datasets with session_id-grouped rows; multi_turn is rejected. The server cache must cover the working set, and requests in a session must reach a replica that retains earlier UUIDs.
+<br/>_Flag (no value required)_
+
 ### Tokenizer
 
 #### `--tokenizer` `<str>`
@@ -1812,16 +1873,14 @@ Apply the HuggingFace tokenizer's chat template when counting input tokens. When
 #### `--extra-inputs` `<list>`
 
 Additional input parameters to include in every API request payload. Specify as `key:value` pairs (e.g., `--extra-inputs temperature:0.7 top_p:0.9`) or as JSON string (e.g., `'{"temperature": 0.7}'`). These parameters are merged with request-specific inputs and sent directly to the endpoint API.
-<br/>_Default: `[]`_
 
 #### `-H`, `--header` `<list>`
 
 Custom HTTP headers to include with every request. Specify as `Header:Value` pairs (e.g., `--header X-Custom-Header:value`) or as JSON string. Can be specified multiple times. Useful for custom authentication, tracking, or API-specific requirements. Combined with auto-generated headers (e.g., `Authorization` from `--api-key`).
-<br/>_Default: `[]`_
 
 #### `--input-file` `<str>`
 
-Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
+Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
 
 #### `--public-dataset` `<str>`
 
@@ -1838,8 +1897,8 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 
 #### `--custom-dataset-type` `<str>`
 
-Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
+Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -1850,6 +1909,11 @@ Strategy for selecting entries from dataset during benchmarking. `sequential`: I
 
 Random seed for deterministic data generation. When set, makes synthetic prompts, sampling, delays, and other random operations reproducible across runs. Essential for A/B testing and debugging. Uses system entropy if not specified. Initialized globally at config creation.
 <br/>_Constraints: ≥ 0_
+
+#### `--trace-session-sample-ratio` `<float>`
+
+Fraction of trace sessions to keep for replay, sampled whole-session to preserve multi-turn integrity; deterministic when `--random-seed` is set. Only supported by the baseten_trace loader.
+<br/>_Constraints: > 0.0, ≤ 1.0_
 
 #### `-f`, `--config` `<str>`
 
@@ -1930,8 +1994,38 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 #### `--inter-turn-delay-cap-seconds` `<float>`
 
-Clamp per-turn replay delays (read from JSONL trace files) to at most this many seconds. ``None`` disables the cap. Used by the DAG JSONL loader to keep long pre-recorded waits from stalling the benchmark; the loader reports the clamp count at end of load. Routes onto the active FileDataset's ``inter_turn_delay_cap_seconds`` field at config-resolution time.
+Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
+
+#### `--max-idle-gap-cap-seconds` `<float>`
+
+Collapse idle gaps between consecutive requests (across all sessions) to at most this many seconds, so a sparse or session-sampled trace does not replay dead air; ``None`` disables the cap. The cap is in replay wall-clock seconds, applied after --replay-speedup compression, so it bounds actual benchmark idle time regardless of speedup. Only supported by the baseten_trace loader. Maps to FileDataset ``max_idle_gap_cap_seconds``.
+<br/>_Constraints: > 0.0_
+
+#### `--replay-speedup` `<float>`
+
+Trace replay wall-clock compression (10 = 10x faster than recorded): divides normalized timestamps and inter-turn delays; ``None`` = real time. Unlike synthesis speedup_ratio, hash_ids stay untouched (KV-cache fidelity). Only supported by the baseten_trace loader. Maps to FileDataset ``replay_speedup``.
+<br/>_Constraints: > 0.0_
+
+#### `--open-loop-replay`, `--no-open-loop-replay`
+
+Open-loop replay (the default): each session starts at its absolute, speedup-scaled recorded timestamp; continuation turns fire at max(recorded timestamp, prior-turn completion). Pass `--no-open-loop-replay` for closed-loop back-pressure: continuation turns fire a think-time (recorded start-to-start gap minus recorded e2e duration) after the prior turn completes, keeping sessions causally ordered when replayed service times differ from recorded (e.g. A/A comparisons). Only honored by the baseten_trace loader. Maps to FileDataset ``open_loop_replay``.
+<br/>_Default: `True`_
+
+#### `--open-loop-strict`
+
+In open-loop replay, fire every trace row at its absolute recorded timestamp as an independent single-turn session, trading away multi-turn grouping and session metrics. Only honored by the baseten_trace loader. Maps to FileDataset ``open_loop_strict``.
+<br/>_Flag (no value required)_
+
+#### `--omit-kv-hints`
+
+Drop recorded KV-cache hints (``hash_ids``, ``block_size``) from replayed request bodies, for strict frontends that reject unknown parameters. Only honored by the baseten_trace loader. Maps to FileDataset ``omit_kv_hints``.
+<br/>_Flag (no value required)_
+
+#### `--force-min-tokens`, `--no-force-min-tokens`
+
+Pin ``min_tokens`` to the recorded output length so replayed generations match recorded lengths; pass `--no-force-min-tokens` to let EOS end generations naturally (some servers reject ``min_tokens``). Only honored by the baseten_trace loader. Maps to FileDataset ``force_min_tokens``.
+<br/>_Default: `True`_
 
 ### Prompt
 
@@ -1979,7 +2073,7 @@ Standard deviation for synthetic input prompt token lengths. Creates variability
 
 #### `--prompt-input-tokens-block-size`, `--synthetic-input-tokens-block-size`, `--isl-block-size` `<int>`
 
-Token block size for hash-based prompt caching in trace datasets (`mooncake_trace`, `bailian_trace`). When `hash_ids` are provided in trace entries, prompts are divided into blocks of this size. Each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. When not set, the trace loader's `default_block_size` from plugin metadata is used (e.g. 16 for `bailian_trace`, 512 for `mooncake_trace`).
+Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. Only supported with synthetic datasets: with `--input-file` the flag is rejected at convert time, and trace replay loaders always use the `default_block_size` from their plugin metadata (16 for `bailian_trace`, 64 for `baseten_trace`, 512 for `mooncake_trace`).
 <br/>_Constraints: ≥ 1_
 
 #### `--seq-dist`, `--sequence-distribution` `<str>`
@@ -2330,7 +2424,7 @@ Duration in seconds to ramp request rate from a proportional minimum to target. 
 
 #### `--adaptive-scale`
 
-Enable stable single-run adaptive scale control. Requires --benchmark-duration, --concurrency, --adaptive-sustain-duration, and --adaptive-scale-sla.
+Enable stable single-run adaptive scale control. Use --adaptive-scale-control variable:min,max:type to choose the controlled variable and bounds, and --adaptive-scale-sla metric:stat:op:threshold to define pass/fail criteria. Also requires --benchmark-duration and --adaptive-sustain-duration.
 <br/>_Flag (no value required)_
 
 #### `--adaptive-sustain-duration` `<float>`
@@ -2343,9 +2437,27 @@ Duration in seconds to sustain load near the discovered adaptive scale boundary.
 Duration in seconds for each adaptive scale SLA assessment window.
 <br/>_Constraints: ≥ 1.0_
 
+#### `--adaptive-scale-control` `<str>`
+
+Compact adaptive scale control spec in variable:min,max:type form. The variable is one of concurrency, prefill_concurrency, request_rate, or users; min and max are required explicit bounds; type is int for discrete controls and float for rate controls. Examples: concurrency:1,1000:int, prefill_concurrency:1,8:int, request_rate:1,200:float, users:10,500:int. Do not combine this with expanded --adaptive-control-* flags.
+
+#### `--adaptive-control-variable` `<str>`
+
+Adaptive scale control variable: concurrency, prefill_concurrency, request_rate, or users.
+
+#### `--adaptive-control-min` `<float>`
+
+Minimum adaptive scale control value.
+<br/>_Constraints: > 0_
+
+#### `--adaptive-control-max` `<float>`
+
+Maximum adaptive scale control value. Inferred from the phase target when omitted.
+<br/>_Constraints: > 0_
+
 #### `--adaptive-scale-sla` `<list>`
 
-SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. For request_latency, stat is one of {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; request throughput and goodput_ratio support {avg, min, max}. op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
+SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. Latency-family metrics (request_latency, time_to_first_token/ttft, inter_token_latency/itl/tpot) support percentile stats; window scalar/rate metrics (request_throughput, output_token_throughput, goodput, goodput_ratio, success_rate, error_rate, cancellation_rate) support {avg, min, max}. Full metric/stat table: [Adaptive SLA metric support](tutorials/yaml-config.md#adaptive-sla-metric-support). op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
 
 ### Warmup
 
@@ -2843,7 +2955,7 @@ Number of log-spaced steps for the decode-itl-curve recipe's OSL grid (default 4
 #### `--accuracy-benchmark` `<str>`
 
 Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accuracy benchmarking mode alongside performance profiling.
-<br/>_Choices: [`mmlu`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gsm8k`, `gpqa_diamond`, `lcb_codegeneration`]_
+<br/>_Choices: [`mmlu`, `mmlu_pro`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gsm8k`, `gpqa_diamond`, `lcb_codegeneration`]_
 
 #### `--accuracy-tasks` `<list>`
 
@@ -2854,7 +2966,7 @@ Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU
 Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation, None uses the benchmark default (e.g. MMLU=5). Maximum 32.
 <br/>_Constraints: ≥ 0, ≤ 32_
 
-#### `--accuracy-enable-cot`
+#### `--accuracy-enable-cot`, `--accuracy-no-enable-cot`
 
 Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt. Defaults to the benchmark's ``default_enable_cot`` metadata when unset (e.g. AIME defaults to True).
 <br/>_Flag (no value required)_
@@ -2862,7 +2974,7 @@ Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instru
 #### `--accuracy-grader` `<str>`
 
 Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader.
-<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`, `lighteval_gsm8k`]_
+<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`, `lighteval_gsm8k`, `mmlu_pro`]_
 
 #### `--accuracy-system-prompt` `<str>`
 

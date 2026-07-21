@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import pytest
 
+from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.models.server_metrics_models import (
     MetricFamily,
@@ -209,8 +210,10 @@ async def test_export_results_extends_parquet_filter_to_endpoint_last_update(
         )
 
     result = await acc.export_results(
-        start_ns=1_000_000_000,
-        end_ns=2_000_000_000,
+        ExportContext(
+            start_ns=1_000_000_000,
+            end_ns=2_000_000_000,
+        )
     )
 
     assert result is not None

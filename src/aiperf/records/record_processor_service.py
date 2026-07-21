@@ -1,8 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import traceback
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.enums import (
@@ -18,10 +17,11 @@ from aiperf.common.hooks import on_command, on_message, on_pull_message
 from aiperf.common.messages import (
     DatasetConfiguredNotification,
     InferenceResultsMessage,
-    MetricRecordsMessage,
     ProfileCompleteCommand,
     ProfileConfigureCommand,
+    RecordsMessage,
 )
+from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
     MetricRecordMetadata,
@@ -34,10 +34,13 @@ from aiperf.common.models.trace_models import BaseTraceData
 from aiperf.common.protocols import PushClientProtocol
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
-from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
-from aiperf.post_processors.protocols import RecordProcessorProtocol
+from aiperf.post_processors.protocols import (
+    RecordObserverProtocol,
+    RecordProcessorProtocol,
+)
+from aiperf.post_processors.record_observer_context import RecordObserverContext
 from aiperf.records.dataset_gate import await_dataset_configured
 from aiperf.records.inference_result_parser import InferenceResultParser
 
@@ -81,36 +84,68 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         # any record is graded.
         self._dataset_configured_event: asyncio.Event = asyncio.Event()
 
-        self.records_processors: list[RecordProcessorProtocol] = []
+        # Stage 1 - PRODUCERS: parse a record and emit one typed result on the
+        # record_type channel declared in plugins.yaml metadata. Grouped by that
+        # declared channel (no runtime type-sniffing).
+        self._producers: list[tuple[str, RecordProcessorProtocol]] = []
         for entry in plugins.iter_entries(PluginType.RECORD_PROCESSOR):
             try:
-                ProcessorClass = plugins.get_class(
+                ProducerClass = plugins.get_class(
                     PluginType.RECORD_PROCESSOR, entry.name
                 )
-                processor: RecordProcessorProtocol = ProcessorClass(
+                producer: RecordProcessorProtocol = ProducerClass(
                     run=self.run,
                     service_id=self.service_id,
                 )
-                self.records_processors.append(processor)
-                self.attach_child_lifecycle(processor)
+                record_type = entry.metadata["record_type"]
+                self._producers.append((record_type, producer))
+                self.attach_child_lifecycle(producer)
                 self.debug(
-                    f"Created record processor: {entry.name}: {processor.__class__.__name__}"
+                    f"Created record producer: {entry.name} ({record_type}): {producer.__class__.__name__}"
                 )
             except PostProcessorDisabled:
                 self.debug(
-                    f"Record processor {entry.name} is disabled and will not be used"
+                    f"Record producer {entry.name} is disabled and will not be used"
                 )
             except Exception as e:
-                self.exception(f"Error creating record processor: {e!r}")
+                self.exception(f"Error creating record producer: {e!r}")
+                raise
+
+        # Stage 2 - OBSERVERS: view the produced results + the record and act
+        # (e.g. write JSONL). They return nothing and emit no channel record.
+        self._observers: list[RecordObserverProtocol] = []
+        for entry in plugins.iter_entries(PluginType.RECORD_OBSERVER):
+            try:
+                ObserverClass = plugins.get_class(
+                    PluginType.RECORD_OBSERVER, entry.name
+                )
+                observer: RecordObserverProtocol = ObserverClass(
+                    run=self.run,
+                    service_id=self.service_id,
+                )
+                self._observers.append(observer)
+                self.attach_child_lifecycle(observer)
+                self.debug(
+                    f"Created record observer: {entry.name}: {observer.__class__.__name__}"
+                )
+            except PostProcessorDisabled:
+                self.debug(
+                    f"Record observer {entry.name} is disabled and will not be used"
+                )
+            except Exception as e:
+                self.exception(f"Error creating record observer: {e!r}")
                 raise
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(
         self, message: DatasetConfiguredNotification
     ) -> None:
-        for processor in self.records_processors:
-            if hasattr(processor, "on_dataset_configured"):
-                processor.on_dataset_configured(message.metadata)
+        for _record_type, producer in self._producers:
+            if hasattr(producer, "on_dataset_configured"):
+                producer.on_dataset_configured(message.metadata)
+        for observer in self._observers:
+            if hasattr(observer, "on_dataset_configured"):
+                observer.on_dataset_configured(message.metadata)
         self._dataset_configured_event.set()
 
     @on_command(CommandType.PROFILE_CONFIGURE)
@@ -214,7 +249,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """Handle an inference results message.
 
         Lockstep contract: every received message forwards exactly one
-        ``MetricRecordsMessage``. The worker has already returned the credit as
+        ``RecordsMessage``. The worker has already returned the credit as
         completed by the time the record arrives here, so a dropped record
         leaves the RecordsManager completion barrier (``success_records +
         error_records >= final_requests_completed``, which has no timeout)
@@ -262,7 +297,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         record: RequestRecord,
         last_response_perf_ns: int | None,
     ) -> None:
-        """Parse, process, and forward the metric record for a single request."""
+        """Parse, produce, observe, and forward the records for a single request."""
         parsed_record = await self.inference_result_parser.parse_request_record(record)
 
         # Free raw SSE messages now that parsing extracted what it needs.
@@ -274,25 +309,67 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             record, message.service_id, last_response_perf_ns
         )
 
-        raw_results = await self._process_record(parsed_record, metadata)
+        # Stage 1 - producers: run concurrently, group outputs by declared channel.
+        by_type: dict[str, list[Any]] = {}
+        producer_results = await asyncio.gather(
+            *[
+                producer.process_record(parsed_record, metadata)
+                for _record_type, producer in self._producers
+            ],
+            return_exceptions=True,
+        )
+        for (record_type, _producer), result in zip(
+            self._producers, producer_results, strict=True
+        ):
+            if isinstance(result, BaseException):
+                self.error(f"Error in producer for {record_type}: {result!r}")
+                continue
+            if result is None:
+                continue
+            by_type.setdefault(record_type, []).append(result)
 
-        trace_data, error = self._free_record_data(record, parsed_record)
+        # Snapshot the wire payload BEFORE observers run: ``produced`` is read-only
+        # by contract, but a misbehaving observer that mutated ``by_type`` must not
+        # be able to change what RecordsManager ingests.
+        all_records = [record for records in by_type.values() for record in records]
 
-        results = []
-        for result in raw_results:
+        # Stage 2 - observers: view the produced results + the record and act.
+        # Must run BEFORE _free_record_data so they can read the full parsed
+        # record via ctx.record.
+        ctx = RecordObserverContext(
+            record=parsed_record,
+            metadata=metadata,
+            produced=by_type,
+        )
+        observer_results = await asyncio.gather(
+            *[observer.observe(ctx) for observer in self._observers],
+            return_exceptions=True,
+        )
+        for observer, result in zip(self._observers, observer_results, strict=True):
             if isinstance(result, BaseException):
                 self.error(
-                    f"Error processing record: {result!r}: {traceback.format_exception(result)}"
+                    f"Error in observer {observer.__class__.__name__}: {result!r}"
                 )
-            else:
-                results.append(result)
 
+        _trace_data, error = self._free_record_data(record, parsed_record)
+
+        # Ship generically: ONE RecordsMessage per inference record carries the
+        # request envelope (metadata + request-level error) plus every produced
+        # typed record flattened into one list. Each record self-identifies via
+        # its own serialized record_type field, so no per-type message class or
+        # builder map is needed. Always pushed (even when no producer emitted a record)
+        # to keep the RecordsManager completion barrier in lockstep with the
+        # credit. The metric producer already put trace_data inside its
+        # MetricRecordsData, so trace_data is not carried on the envelope.
+        # The push is atomic (whole message serialized, then one NOBLOCK frame
+        # send): a failure delivers nothing, so it propagates to the outer handler
+        # which forwards exactly one error record -- no partial send, no
+        # double-count, and the completion barrier stays in lockstep.
         await self.records_push_client.push(
-            MetricRecordsMessage(
+            RecordsMessage(
                 service_id=self.service_id,
                 metadata=metadata,
-                results=results,
-                trace_data=trace_data,
+                records=all_records,
                 error=error,
             )
         )
@@ -331,13 +408,16 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 record_processor_id=self.service_id,
                 benchmark_phase=benchmark_phase,
             )
+        error = record.error or ErrorDetails.from_exception(exc)
+        # The producers didn't run, so ship a RecordsMessage carrying a single
+        # errored MetricRecordsData (empty metrics) so the accumulator still sees
+        # the record and the records-tracker lockstep counts it.
         await self.records_push_client.push(
-            MetricRecordsMessage(
+            RecordsMessage(
                 service_id=self.service_id,
                 metadata=metadata,
-                results=[],
-                trace_data=None,
-                error=record.error or ErrorDetails.from_exception(exc),
+                records=[MetricRecordsData(metadata=metadata, metrics={}, error=error)],
+                error=error,
             )
         )
 
@@ -347,8 +427,8 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """Free large data structures from the record after all processors have run.
 
         All metrics and post-processors consume these fields during _process_record().
-        The only data sent downstream in MetricRecordsMessage is metadata, results,
-        trace_data, and error -- so everything else can be released here.
+        The only data sent downstream is the typed records produced for this request
+        (metadata, metrics, trace_data, error) -- so everything else can be released here.
 
         We assign None to fields typed as non-optional lists (responses) to let
         the GC reclaim the underlying objects. Using .clear() would keep the empty list
@@ -362,19 +442,6 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         record.request_headers = None
         parsed_record.responses = None
         return trace_data, error
-
-    async def _process_record(
-        self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
-    ) -> list[MetricRecordDict | BaseException]:
-        """Stream a record to the records processors."""
-        tasks = [
-            processor.process_record(record, metadata)
-            for processor in self.records_processors
-        ]
-        results: list[MetricRecordDict | BaseException | None] = await asyncio.gather(
-            *tasks, return_exceptions=True
-        )
-        return [result for result in results if result is not None]
 
 
 def main() -> None:
