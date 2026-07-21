@@ -9,6 +9,7 @@ import "@xyflow/react/dist/style.css";
 import { nodeTypes } from "../../nodes/nodeTypes.js";
 import { edgeTypes } from "../../edges/edgeTypes.js";
 import { Row } from "../../layout/Row.js";
+import { Eyebrow } from "../../prose/Eyebrow.js";
 import { inkClassName, strokeClassName } from "../../theme/tokens.js";
 import type { StrokeRole } from "../../theme/tokens.js";
 
@@ -125,9 +126,7 @@ export interface EvidenceItem {
 export function EvidenceRow({ items }: { items: ReadonlyArray<EvidenceItem> }): React.JSX.Element {
   return (
     <div>
-      <div className={`mb-2 text-xs font-semibold uppercase tracking-wide ${inkClassName("tertiary")}`}>
-        Source anchors
-      </div>
+      <Eyebrow className="mb-2">Source anchors</Eyebrow>
       <Row gap={8} wrap>
         {items.map((item) => (
           <span

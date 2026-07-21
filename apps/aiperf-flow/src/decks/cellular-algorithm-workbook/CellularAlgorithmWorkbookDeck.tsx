@@ -12,6 +12,7 @@ import { useState } from "react";
 import { PageTabs, type PageTabDefinition } from "../../shell/PageTabs.js";
 import { TopBar } from "../../shell/TopBar.js";
 import { inkClassName } from "../../theme/tokens.js";
+import { Eyebrow } from "../../prose/Eyebrow.js";
 import { ALGORITHMS } from "./data.js";
 import { WorkbookPage } from "./WorkbookPage.js";
 import { ComposePage } from "./ComposePage.js";
@@ -34,9 +35,7 @@ export function CellularAlgorithmWorkbookDeck(): React.JSX.Element {
       <TopBar section="Cellular Algorithm Workbook" />
       <div className="border-b border-stroke-secondary bg-surface-page px-8 py-3">
         <div className="mb-2">
-          <span className={`text-xs font-semibold uppercase tracking-wide ${inkClassName("tertiary")}`}>
-            Cellular execution · algorithm workbook
-          </span>
+          <Eyebrow>Cellular execution · algorithm workbook</Eyebrow>
           <h1 className={`text-2xl font-semibold ${inkClassName("primary")}`}>Reason from gate to artifact</h1>
           <p className={`text-sm ${inkClassName("secondary")}`}>
             Study how a run is admitted, partitioned, executed, captured, and merged across cells.
