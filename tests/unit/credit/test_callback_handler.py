@@ -182,6 +182,7 @@ class TestCreditReturnBasicFlow:
             credit.is_final_turn,
             False,  # cancelled=False
             errored=False,
+            is_child=False,  # agent_depth=0 root credit
         )
 
     async def test_on_credit_return_tracks_cancelled_status(
@@ -197,6 +198,7 @@ class TestCreditReturnBasicFlow:
             credit.is_final_turn,
             True,  # cancelled=True
             errored=False,
+            is_child=False,  # agent_depth=0 root credit
         )
 
     async def test_on_credit_return_notifies_result_aware_strategy(
@@ -354,7 +356,7 @@ class TestNextTurnDispatch:
         credit = make_credit(turn_index=0, num_turns=3)
         credit_return = make_credit_return(credit)
         await registered_handler.on_credit_return("worker-1", credit_return)
-        mock_strategy.handle_credit_return.assert_called_once_with(credit)
+        mock_strategy.handle_credit_return.assert_called_once_with(credit, error=None)
 
         # Stop condition reached
         mock_strategy.reset_mock()
@@ -363,6 +365,73 @@ class TestNextTurnDispatch:
         credit_return2 = make_credit_return(credit2)
         await registered_handler.on_credit_return("worker-1", credit_return2)
         mock_strategy.handle_credit_return.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_warmup_open_tree_uses_registry_terminal_path(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+):
+    """Accelerated warmup roots drain through SessionTreeRegistry."""
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    handler = CreditCallbackHandler(mock_concurrency, session_tree_registry=registry)
+    handler.register_phase(
+        phase=CreditPhase.WARMUP,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+    credit = make_credit(phase=CreditPhase.WARMUP)
+
+    await handler.on_credit_return("worker-1", make_credit_return(credit))
+
+    registry.on_root_terminal.assert_called_once_with(
+        credit.effective_root_correlation_id
+    )
+    mock_concurrency.release_session_slot.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cache_warmup_handoff_allows_paused_dag_work(
+    callback_handler,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+    mock_branch_orchestrator,
+):
+    """A drained accelerated-warmup phase completes on in_flight==0 even with
+    the orchestrator still holding paused (handoff) branch work."""
+    mock_progress.increment_returned = MagicMock(return_value=True)
+    mock_progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
+    mock_progress.in_flight = 0
+    mock_lifecycle.is_sending_complete = True
+    mock_strategy.allows_pending_branch_handoff_after_sending_complete = True
+    mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=True)
+    mock_branch_orchestrator.intercept = AsyncMock(return_value=True)
+    callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
+    callback_handler.register_phase(
+        phase=CreditPhase.WARMUP,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+
+    credit = make_credit(
+        phase=CreditPhase.WARMUP,
+        turn_index=0,
+        num_turns=2,
+    )
+    await callback_handler.on_credit_return("worker-1", make_credit_return(credit))
+
+    assert mock_progress.all_credits_returned_event.is_set()
+    mock_branch_orchestrator.has_pending_branch_work.assert_called_once_with()
 
 
 # =============================================================================
@@ -473,7 +542,7 @@ class TestEdgeCases:
         await registered_handler.on_credit_return("worker-1", credit_return)
 
         mock_progress.increment_returned.assert_called_once_with(
-            credit.is_final_turn, cancelled, errored=False
+            credit.is_final_turn, cancelled, errored=False, is_child=False
         )
         if not first_token_sent:
             mock_concurrency.release_prefill_slot.assert_called_once()
@@ -780,3 +849,259 @@ class TestAbortObserverWiring:
         callback()
 
         mock_lifecycle.cancel.assert_not_called()
+
+
+# =============================================================================
+# Test: WARMUP Terminal-Failure Accumulation + Live Early-Abort
+# =============================================================================
+
+
+class TestWarmupFailureRecording:
+    """A terminal WARMUP root failure must be recorded via the strategy hook.
+
+    A WARMUP credit primes turn k_i (the last request before t*); PROFILING
+    resumes the same trajectory at k_i+1, so a warmed turn for a session active
+    at t* is NEVER the trajectory's final turn (is_final_turn is False). The
+    gate must therefore fire on a NON-final WARMUP root credit that returns with
+    a terminal error/cancellation; gating it on is_final_turn made the whole
+    safety mechanism dead.
+    """
+
+    @pytest.fixture
+    def warmup_strategy(self):
+        """Mock strategy exposing the record_warmup_failure hook."""
+        mock = MagicMock()
+        mock.handle_credit_return = AsyncMock()
+        mock.record_warmup_failure = MagicMock()
+        return mock
+
+    @pytest.fixture
+    def warmup_handler(
+        self,
+        callback_handler,
+        mock_progress,
+        mock_lifecycle,
+        mock_stop_checker,
+        warmup_strategy,
+    ):
+        callback_handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=warmup_strategy,
+        )
+        return callback_handler
+
+    async def test_non_final_warmup_credit_error_records_failure(
+        self, warmup_handler, warmup_strategy
+    ):
+        """A NON-final WARMUP root credit returning with an error MUST record a
+        warmup failure (the gate must not require is_final_turn)."""
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        assert not credit.is_final_turn  # the case the old gate silently dropped
+        credit_return = CreditReturn(
+            credit=credit, cancelled=False, first_token_sent=False, error="server 500"
+        )
+
+        await warmup_handler.on_credit_return("worker-1", credit_return)
+
+        warmup_strategy.record_warmup_failure.assert_called_once_with(
+            credit.conversation_id
+        )
+
+    async def test_non_final_warmup_credit_cancelled_records_failure(
+        self, warmup_handler, warmup_strategy
+    ):
+        """Cancellation (not just error) on a non-final WARMUP credit also counts."""
+        credit = make_credit(turn_index=1, num_turns=4, phase=CreditPhase.WARMUP)
+        credit_return = make_credit_return(
+            credit, cancelled=True, first_token_sent=False
+        )
+
+        await warmup_handler.on_credit_return("worker-1", credit_return)
+
+        warmup_strategy.record_warmup_failure.assert_called_once_with(
+            credit.conversation_id
+        )
+
+    async def test_successful_warmup_credit_does_not_record_failure(
+        self, warmup_handler, warmup_strategy
+    ):
+        """A clean WARMUP return (no error, not cancelled) records nothing."""
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = make_credit_return(credit)
+
+        await warmup_handler.on_credit_return("worker-1", credit_return)
+
+        warmup_strategy.record_warmup_failure.assert_not_called()
+
+    async def test_warmup_child_failure_does_not_record(
+        self, warmup_handler, warmup_strategy
+    ):
+        """The gate is root-only (agent_depth == 0): a failed WARMUP child does
+        not count toward trajectory warmup failure."""
+        credit = make_credit(
+            turn_index=0, num_turns=2, agent_depth=1, phase=CreditPhase.WARMUP
+        )
+        credit_return = CreditReturn(
+            credit=credit, cancelled=False, first_token_sent=False, error="server 500"
+        )
+
+        await warmup_handler.on_credit_return("worker-1", credit_return)
+
+        warmup_strategy.record_warmup_failure.assert_not_called()
+
+
+class TestWarmupEarlyAbort:
+    """Live early-abort: the first terminal WARMUP failure fires on_warmup_abort.
+
+    A single terminal warmup failure means PROFILING must not start, so the
+    handler broadcasts ProfileCancelCommand (via the injected callback) on the
+    FIRST failure rather than waiting for the full warmup drain + teardown
+    ``report_warmup_failures`` raise. The callback fires at most once per run.
+    """
+
+    @pytest.fixture
+    def abort_cb(self):
+        return AsyncMock()
+
+    @pytest.fixture
+    def warmup_strategy(self):
+        mock = MagicMock()
+        mock.handle_credit_return = AsyncMock()
+        mock.record_warmup_failure = MagicMock()
+        return mock
+
+    @pytest.fixture
+    def early_abort_handler(
+        self,
+        mock_concurrency,
+        mock_progress,
+        mock_lifecycle,
+        mock_stop_checker,
+        warmup_strategy,
+        abort_cb,
+    ):
+        handler = CreditCallbackHandler(mock_concurrency, on_warmup_abort=abort_cb)
+        handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=warmup_strategy,
+        )
+        return handler
+
+    async def test_first_warmup_failure_fires_abort_once(
+        self, early_abort_handler, abort_cb
+    ):
+        """First terminal warmup failure both records and fires the abort once."""
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = CreditReturn(
+            credit=credit, cancelled=False, first_token_sent=False, error="server 500"
+        )
+
+        await early_abort_handler.on_credit_return("worker-1", credit_return)
+
+        abort_cb.assert_awaited_once()
+
+    async def test_subsequent_warmup_failures_do_not_refire_abort(
+        self, early_abort_handler, abort_cb, warmup_strategy
+    ):
+        """Only the first failure fires the abort; later failures still record."""
+        for idx in range(3):
+            credit = make_credit(
+                credit_id=idx,
+                conversation_id=f"conv{idx}",
+                turn_index=0,
+                num_turns=3,
+                phase=CreditPhase.WARMUP,
+            )
+            credit_return = CreditReturn(
+                credit=credit,
+                cancelled=False,
+                first_token_sent=False,
+                error="server 500",
+            )
+            await early_abort_handler.on_credit_return("worker-1", credit_return)
+
+        abort_cb.assert_awaited_once()
+        assert warmup_strategy.record_warmup_failure.call_count == 3
+
+    async def test_successful_warmup_return_does_not_fire_abort(
+        self, early_abort_handler, abort_cb
+    ):
+        """A clean warmup return never fires the abort."""
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = make_credit_return(credit)
+
+        await early_abort_handler.on_credit_return("worker-1", credit_return)
+
+        abort_cb.assert_not_awaited()
+
+    async def test_publish_failure_resets_trigger_flag(
+        self, mock_concurrency, mock_progress, mock_lifecycle, mock_stop_checker
+    ):
+        """If the abort broadcast raises, the flag resets so a later return retries
+        and the teardown backstop can still fire."""
+        failing_cb = AsyncMock(side_effect=RuntimeError("bus down"))
+        strategy = MagicMock()
+        strategy.handle_credit_return = AsyncMock()
+        strategy.record_warmup_failure = MagicMock()
+        handler = CreditCallbackHandler(mock_concurrency, on_warmup_abort=failing_cb)
+        handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=strategy,
+        )
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = CreditReturn(
+            credit=credit, cancelled=False, first_token_sent=False, error="500"
+        )
+
+        await handler.on_credit_return("worker-1", credit_return)
+
+        failing_cb.assert_awaited_once()
+        strategy.record_warmup_failure.assert_called_once()
+        assert handler._warmup_abort_triggered is False
+
+    def test_on_warmup_abort_property(self, mock_concurrency, abort_cb):
+        """The public property exposes the wired callback (None when unwired)."""
+        assert CreditCallbackHandler(mock_concurrency).on_warmup_abort is None
+        assert (
+            CreditCallbackHandler(
+                mock_concurrency, on_warmup_abort=abort_cb
+            ).on_warmup_abort
+            is abort_cb
+        )
+
+    async def test_unwired_handler_records_but_does_not_abort(
+        self,
+        warmup_strategy,
+        mock_concurrency,
+        mock_progress,
+        mock_lifecycle,
+        mock_stop_checker,
+    ):
+        """With no on_warmup_abort wired, the failure still records (the teardown
+        backstop remains the only abort path)."""
+        handler = CreditCallbackHandler(mock_concurrency)
+        handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=warmup_strategy,
+        )
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = CreditReturn(
+            credit=credit, cancelled=False, first_token_sent=False, error="500"
+        )
+
+        await handler.on_credit_return("worker-1", credit_return)
+
+        warmup_strategy.record_warmup_failure.assert_called_once()
+        assert handler._warmup_abort_triggered is False

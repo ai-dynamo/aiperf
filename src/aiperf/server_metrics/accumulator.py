@@ -186,18 +186,9 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             and warmup_end_ns is not None
             and warmup_start_ns < warmup_end_ns
         ):
-            # Extend the warmup window to include the dedicated end-of-warmup
-            # scrape (WARMUP-tagged, captured after CREDIT_PHASE_COMPLETE so
-            # its timestamp is strictly past warmup_end_ns). Cap at just
-            # before profiling start so profiling samples are never admitted.
-            warmup_summary_end_ns = warmup_end_ns
-            if self._last_warmup_record_ns is not None:
-                warmup_summary_end_ns = max(
-                    warmup_end_ns, min(self._last_warmup_record_ns, start_ns - 1)
-                )
             warmup_endpoint_summaries = self._compute_endpoint_summaries(
                 warmup_start_ns,
-                warmup_summary_end_ns,
+                self._warmup_summary_end_ns(warmup_end_ns, start_ns),
                 self._slice_duration,
                 include_final_collection=False,
             )
@@ -217,8 +208,21 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         )
 
         # Export Parquet file directly from accumulator if format is enabled.
-        # Widen the export window to include the final per-endpoint collection,
-        # which may land after end_ns (e.g. a scrape completing post-benchmark).
+        await self._export_parquet_widened(start_ns, end_ns)
+
+        return results
+
+    async def _export_parquet_widened(self, start_ns: int, end_ns: int) -> None:
+        """Export the Parquet artifact over the collection-widened window.
+
+        Widens the window to include the final per-endpoint collection, which
+        may land after end_ns (e.g. a scrape completing post-benchmark). Skips
+        degenerate windows: TimeRangeFilter rejects start >= end, and a raise
+        here propagates out of export_results and is swallowed into a None
+        result (records_manager _publish_server_metrics_results), losing ALL
+        server metrics. Mirrors the guards at the per-endpoint / warmup /
+        json_exporter sites.
+        """
         export_end_ns = max(
             end_ns,
             *(
@@ -226,17 +230,22 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 for time_series in self._server_metrics_hierarchy.endpoints.values()
             ),
         )
-        # Skip degenerate windows: TimeRangeFilter rejects start >= end, and a
-        # raise here propagates out of export_results and is swallowed into a
-        # None result (records_manager _publish_server_metrics_results), losing
-        # ALL server metrics. Mirrors the guards at the per-endpoint / warmup /
-        # json_exporter sites.
         if start_ns < export_end_ns:
             await self._export_parquet_if_enabled(
                 TimeRangeFilter(start_ns=start_ns, end_ns=export_end_ns)
             )
 
-        return results
+    def _warmup_summary_end_ns(self, warmup_end_ns: int, start_ns: int) -> int:
+        """Resolve the end of the warmup aggregation window.
+
+        Extends the warmup window to include the dedicated end-of-warmup scrape
+        (WARMUP-tagged, captured after CREDIT_PHASE_COMPLETE so its timestamp is
+        strictly past ``warmup_end_ns``). Capped at just before profiling
+        ``start_ns`` so profiling samples are never admitted.
+        """
+        if self._last_warmup_record_ns is None:
+            return warmup_end_ns
+        return max(warmup_end_ns, min(self._last_warmup_record_ns, start_ns - 1))
 
     def _compute_endpoint_summaries(
         self,

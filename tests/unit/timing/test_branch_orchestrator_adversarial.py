@@ -566,9 +566,7 @@ def test_cleanup_with_pending_joins_logs_leak_warning(caplog):
         expected=1, completed=set(), registered=True
     )
     orch._active_joins["leaky"] = pending
-    with caplog.at_level(
-        logging.WARNING, logger="aiperf.timing._branch_orchestrator_logging"
-    ):
+    with caplog.at_level(logging.WARNING, logger="aiperf.timing.branch_orchestrator"):
         orch.cleanup()
 
     leak_records = [r for r in caplog.records if "leaked state" in r.getMessage()]

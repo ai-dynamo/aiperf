@@ -186,6 +186,19 @@ class RecordsTracker:
         phase_tracker = self._get_phase_tracker(phase)
         return phase_tracker.create_stats()
 
+    def total_records_for_phase(self, phase: CreditPhase) -> int:
+        """Return the running total record count for the phase without building a stats model.
+
+        Lightweight int accessor for hot per-record paths (e.g. the
+        failed-request abort check) that only need the counter, avoiding a full
+        validated ``PhaseRecordsStats`` construction per record.
+        """
+        return self._get_phase_tracker(phase).total_records
+
+    def error_records_for_phase(self, phase: CreditPhase) -> int:
+        """Return the running error record count for the phase without building a stats model."""
+        return self._get_phase_tracker(phase)._error_records
+
     def update_phase_info(self, credit_phase_stats: CreditPhaseStats) -> None:
         """Update the phase tracker."""
         phase_tracker = self._get_phase_tracker(credit_phase_stats.phase)

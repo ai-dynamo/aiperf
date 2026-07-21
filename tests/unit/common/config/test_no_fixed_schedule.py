@@ -85,6 +85,27 @@ class TestTraceAutoPromotion:
         # Falls back to the generic 10-requests default for unbounded runs.
         assert prof.get("requests") == 10
 
+    def test_scenario_suppresses_promotion(self, tmp_path):
+        """A --scenario locks its own timing_mode; the auto-derived
+        FIXED_SCHEDULE promotion is skipped so the phase keeps its default
+        shape (only an EXPLICIT --fixed-schedule conflicts with a scenario)."""
+        trace = _write_trace_file(
+            tmp_path,
+            [
+                {"timestamp": 0, "input_length": 100, "output_length": 50},
+                {"timestamp": 100, "input_length": 120, "output_length": 60},
+            ],
+        )
+        cli = _make_cli(
+            input_file=str(trace),
+            custom_dataset_type="mooncake_trace",
+            scenario="inferencex-agentx-mvp",
+        )
+
+        prof = build_profiling(cli)
+
+        assert prof["type"] != PhaseType.FIXED_SCHEDULE
+
     def test_trace_without_timestamps_does_not_promote(self, tmp_path):
         """Trace dataset whose first record lacks ``timestamp`` keeps the type."""
         trace = _write_trace_file(

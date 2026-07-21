@@ -693,7 +693,7 @@ class TestEdgeCases:
             "_wait_for_event_with_timeout",
             new=AsyncMock(return_value=True),
         ):
-            await r._wait_for_returning_complete()
+            await r._wait_for_returning_complete(MagicMock())
 
         router.cancel_all_credits.assert_awaited_once()
         assert r._progress.all_credits_returned_event.is_set()

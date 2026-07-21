@@ -191,6 +191,77 @@ class ConversationContextMode(CaseInsensitiveStrEnum):
     live response merging between turns. Not yet implemented."""
 
 
+class TurnInputKind(CaseInsensitiveStrEnum):
+    """What produced a turn's new input content, for trace replays that record it.
+
+    Classified by trace loaders from the recorded per-request content-block
+    types (``input_types``) and assistant stop reasons (``stop``). Lets
+    downstream consumers distinguish machine-paced agentic-loop continuations
+    from human-paced input turns.
+    """
+
+    USER_INPUT = "user_input"
+    """Genuine user/agent text (or multimodal) input arriving at a yield point
+    (the previous assistant turn ended without calling a tool)."""
+
+    TOOL_RESULT = "tool_result"
+    """Tool output fed back after the assistant stopped with ``tool_use`` --
+    an immediate machine-paced continuation, not human input."""
+
+
+class SubagentType(CaseInsensitiveStrEnum):
+    """Optional sub-agent classification carried on DAG Conversation nodes.
+
+    Used for DAG-benchmark bucket metrics and future routing policies. Unused
+    by core aiperf today; present so externally-authored manifests can
+    round-trip through aiperf models without validation errors.
+    """
+
+    EXPLORE = "explore"
+    """Exploratory agent branch (e.g. breadth-first search child)."""
+
+    GENERAL = "general"
+    """General-purpose agent branch (default when unspecified)."""
+
+    PLAN = "plan"
+    """Planning/decomposition agent branch."""
+
+
+class CacheBustTarget(CaseInsensitiveStrEnum):
+    """Where (and how) to inject a per-conversation cache-bust marker.
+
+    Prefix variants diverge at token 0 of the prompt (most aggressive -- defeats
+    KV-cache prefix matching for the entire prompt). Suffix variants append
+    after existing content (preserves leading-prefix caching).
+    """
+
+    NONE = "none"
+    SYSTEM_PREFIX = "system_prefix"
+    SYSTEM_SUFFIX = "system_suffix"
+    FIRST_TURN_PREFIX = "first_turn_prefix"
+    FIRST_TURN_SUFFIX = "first_turn_suffix"
+
+
+class PromptCorpus(CaseInsensitiveStrEnum):
+    """Corpus used for synthetic prompt text generation."""
+
+    SONNET = "sonnet"
+    """Shakespeare sonnets (default). Classic prose for filler text."""
+
+    CODING = "coding"
+    """Realistic coding content: code, bash output, JSON, error tracebacks, git diffs."""
+
+
+class MemoryMapFormat(CaseInsensitiveStrEnum):
+    """Storage format for memory-mapped dataset files."""
+
+    CONVERSATION = "conversation"
+    """Each entry is a JSON-serialized Conversation object."""
+
+    PAYLOAD_BYTES = "payload_bytes"
+    """Each entry is pre-encoded payload bytes for verbatim API replay."""
+
+
 class ConnectionReuseStrategy(CaseInsensitiveStrEnum):
     """Transport connection reuse strategy. Controls how and when connections are reused across requests."""
 
@@ -221,10 +292,10 @@ class ExportLevel(CaseInsensitiveStrEnum):
     """Export level for benchmark data."""
 
     SUMMARY = "summary"
-    """Export only aggregated/summarized metrics (default, most compact)"""
+    """Export only aggregated/summarized metrics (most compact)"""
 
     RECORDS = "records"
-    """Export per-record metrics after aggregation with display unit conversion"""
+    """Export per-record metrics after aggregation with display unit conversion (CLI default)"""
 
     RAW = "raw"
     """Export raw parsed records with full request/response data (most detailed)"""
@@ -332,16 +403,6 @@ class MediaType(CaseInsensitiveStrEnum):
     IMAGE = "image"
     AUDIO = "audio"
     VIDEO = "video"
-
-
-class MemoryMapFormat(CaseInsensitiveStrEnum):
-    """Storage format for memory-mapped dataset files."""
-
-    CONVERSATION = "conversation"
-    """Each entry is a JSON-serialized Conversation object."""
-
-    PAYLOAD_BYTES = "payload_bytes"
-    """Each entry is pre-encoded payload bytes for verbatim API replay."""
 
 
 class MessageType(CaseInsensitiveStrEnum):

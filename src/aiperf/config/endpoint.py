@@ -30,6 +30,7 @@ from aiperf.config.base import BaseConfig
 from aiperf.config.loader.parsing import normalize_http_urls
 from aiperf.plugin.enums import (
     EndpointType,
+    SessionRoutingType,
     TransportType,
     URLSelectionStrategy,
 )
@@ -56,9 +57,6 @@ class EndpointDefaults:
     CONNECTION_REUSE_STRATEGY = ConnectionReuseStrategy.POOLED
     DOWNLOAD_VIDEO_CONTENT = False
     REQUEST_CONTENT_TYPE = None
-    USE_DYNAMO_CONV_AWARE_ROUTING = False
-    USE_LEGACY_DYNAMO_SESSION_CONTROL = False
-    DYNAMO_SESSION_TIMEOUT_SECONDS = 300
     # Readiness probe defaults. Timeout 0 disables the probe (the default);
     # any positive value enables it. Interval is only consulted when the
     # probe is enabled but is validated positive so mis-configuration
@@ -203,6 +201,8 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    _streaming_explicitly_set: bool = False
+
     transport: Annotated[
         TransportType | None,
         Field(
@@ -320,44 +320,16 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
-    use_dynamo_conv_aware_routing: Annotated[
-        bool,
+    session_routing: Annotated[
+        SessionRoutingType | None,
         Field(
-            default=EndpointDefaults.USE_DYNAMO_CONV_AWARE_ROUTING,
+            default=None,
             description=(
-                "Emit Dynamo nvext.session_control in OpenAI-compatible request "
-                "bodies so Dynamo can bind all turns from the same replayed "
-                "conversation lineage to the same backend worker. This is only "
-                "intended for Dynamo frontends that implement session_control."
-            ),
-        ),
-    ]
-
-    use_legacy_dynamo_session_control: Annotated[
-        bool,
-        Field(
-            default=EndpointDefaults.USE_LEGACY_DYNAMO_SESSION_CONTROL,
-            description=(
-                "Emit the legacy Dynamo nvext.session_control lifecycle that "
-                "released Dynamo (v1.2.x) understands: action 'open' on the first "
-                "turn, session_id only on intermediate turns, and action 'close' "
-                "on the final turn. Use this when the target Dynamo predates the "
-                "'bind' action (added in v1.3.0-dev); otherwise 'bind' is rejected "
-                "with an HTTP 400. Requires use_dynamo_conv_aware_routing, and "
-                "the Dynamo deployment must expose a worker session_control "
-                "endpoint for 'open' to take effect."
-            ),
-        ),
-    ]
-
-    dynamo_session_timeout_seconds: Annotated[
-        int,
-        Field(
-            default=EndpointDefaults.DYNAMO_SESSION_TIMEOUT_SECONDS,
-            ge=1,
-            description=(
-                "Dynamo nvext.session_control timeout in seconds when "
-                "use_dynamo_conv_aware_routing is enabled."
+                "Session-routing transform stamping per-session identity on "
+                "every request so an external router (SGLang Model Gateway, Dynamo, "
+                "generic session-affinity LBs) can pin a session's turns to "
+                "one replica. One mode per run; parameterize with "
+                "--session-routing-opt key=value."
             ),
         ),
     ]
@@ -375,6 +347,20 @@ class EndpointConfig(BaseConfig):
                 "session_id-grouped rows; multi_turn is rejected. The server cache must "
                 "cover the working set, and requests in a session must reach a replica "
                 "that retains earlier UUIDs."
+            ),
+        ),
+    ]
+
+    session_routing_opts: Annotated[
+        dict[str, Any],
+        Field(
+            default_factory=dict,
+            description=(
+                "Mode-specific options for --session-routing, validated "
+                "against the selected plugin's Options model (unknown keys and "
+                "invalid values are rejected at startup). Values are "
+                "canonicalized/coerced to the plugin's Options model types at "
+                "validation, so downstream consumers see typed values."
             ),
         ),
     ]
@@ -470,6 +456,18 @@ class EndpointConfig(BaseConfig):
         return data
 
     @model_validator(mode="after")
+    def _record_streaming_explicit_set_flag(self) -> Self:
+        """Snapshot whether the user explicitly set ``streaming``.
+
+        Scenario validation distinguishes "user explicitly passed
+        --streaming/--no-streaming" (raise on conflict) from "streaming is at
+        default; auto-fill from the scenario spec" (info log). Surface a stable
+        underscore flag for the scenario resolver's defensive ``getattr``.
+        """
+        self._streaming_explicitly_set = "streaming" in self.model_fields_set
+        return self
+
+    @model_validator(mode="after")
     def _validate_endpoint_boundaries(self) -> Self:
         for url in self.urls:
             # Reject leading/trailing whitespace explicitly so that a malformed
@@ -526,23 +524,6 @@ class EndpointConfig(BaseConfig):
     def _validate_template_required(self) -> Self:
         if self.type == EndpointType.TEMPLATE and self.template is None:
             raise ValueError("template is required when endpoint type is 'template'")
-        return self
-
-    @model_validator(mode="after")
-    def validate_dynamo_session_control_coherent(self) -> Self:
-        """Reject legacy Dynamo session control unless conversation-aware routing
-        is enabled, since the legacy flag only selects the wire contract for the
-        session_control that use_dynamo_conv_aware_routing emits.
-        """
-        if (
-            self.use_legacy_dynamo_session_control
-            and not self.use_dynamo_conv_aware_routing
-        ):
-            raise ValueError(
-                "--use-legacy-dynamo-session-control has no effect unless "
-                "--use-dynamo-conv-aware-routing is enabled. Enable conversation-"
-                "aware routing, or drop the legacy flag."
-            )
         return self
 
     @model_validator(mode="after")
@@ -611,4 +592,30 @@ class EndpointConfig(BaseConfig):
                 f"endpoint types that accept form-data (e.g. image_edit, "
                 f"video_generation); endpoint type {self.type} does not."
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_session_routing(self) -> Self:
+        """Fail fast: opts require a mode; opts must satisfy the plugin's Options.
+
+        Canonicalizes the opts to the plugin's Options model types so downstream
+        consumers (including the pickled BenchmarkRun that reaches workers) carry
+        coerced values (e.g. ``{"timeout_seconds": 600}``, not ``"600"``).
+        """
+        if self.session_routing is None:
+            if self.session_routing_opts:
+                raise ValueError(
+                    "--session-routing-opt requires --session-routing to select a mode."
+                )
+            return self
+        from aiperf.plugin import plugins
+        from aiperf.plugin.enums import PluginType
+
+        routing_cls = plugins.get_class(
+            PluginType.SESSION_ROUTING, str(self.session_routing)
+        )
+        options = routing_cls.Options(**self.session_routing_opts)
+        canonical = options.model_dump(mode="json", exclude_unset=True)
+        if canonical != self.session_routing_opts:
+            self.session_routing_opts = canonical
         return self

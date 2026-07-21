@@ -15,7 +15,7 @@ from aiperf.common.models.sequence_distribution import (
     SequenceLengthPair,
 )
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.config.dataset import FileDataset, SyntheticDataset
+from aiperf.config.dataset import SyntheticDataset
 from aiperf.dataset.generator.audio import AudioGenerator
 from aiperf.dataset.generator.image import ImageGenerator
 from aiperf.dataset.generator.prompt import PromptGenerator
@@ -31,6 +31,76 @@ if TYPE_CHECKING:
     )
     from aiperf.config.distributions import SamplingDistribution
     from aiperf.config.resolution.plan import BenchmarkRun
+
+
+_CHAT_TEMPLATE_PROBE_SAMPLES: tuple[str, ...] = (
+    "Hello, how are you today?",
+    "Could you write a Python function to reverse a string?",
+    "What's the difference between TCP and UDP in networking?",
+)
+
+
+def _estimate_chat_template_overheads(
+    tokenizer: Tokenizer | None,
+) -> tuple[int, int]:
+    """Decompose chat-template overhead into (per_request_fixed, per_msg_wrap).
+
+    The chat template renders the entire ``messages`` array in one pass at
+    request time. Total wrapping is::
+
+        wire_tokens =  per_request_fixed
+                     + Σ_{m in messages} (per_msg_wrap + content_tokens(m))
+
+    where ``per_request_fixed`` ≈ BOS + generation-prompt suffix and
+    ``per_msg_wrap`` ≈ role header + end-of-turn marker (averaged over
+    user/assistant). Measuring the two separately lets callers apply the
+    fixed cost only to the first user turn and the per-message wrap to
+    every turn.
+
+    Returns ``(0, 0)`` when the tokenizer is ``None``/has no underlying HF
+    tokenizer, has no ``apply_chat_template`` (e.g. tiktoken), the model has
+    no chat template configured, or a probe yields an implausible (negative)
+    result (defensive: skipping compensation beats over-correcting).
+    """
+    if tokenizer is None:
+        return 0, 0
+    inner = getattr(tokenizer, "_tokenizer", None)
+    apply = getattr(inner, "apply_chat_template", None)
+    if apply is None:
+        return 0, 0
+
+    fixed_costs: list[float] = []
+    wrap_costs: list[float] = []
+    for sample in _CHAT_TEMPLATE_PROBE_SAMPLES:
+        try:
+            single = apply(
+                [{"role": "user", "content": sample}],
+                tokenize=True,
+                add_generation_prompt=True,
+            )
+            triple = apply(
+                [
+                    {"role": "user", "content": sample},
+                    {"role": "assistant", "content": sample},
+                    {"role": "user", "content": sample},
+                ],
+                tokenize=True,
+                add_generation_prompt=True,
+            )
+        except Exception:
+            return 0, 0
+        bare_len = len(tokenizer.encode(sample))
+        avg_wrap = (len(triple) - len(single) - 2 * bare_len) / 2
+        per_request_fixed = len(single) - bare_len - avg_wrap
+        if avg_wrap < 0 or per_request_fixed < 0:
+            return 0, 0
+        wrap_costs.append(avg_wrap)
+        fixed_costs.append(per_request_fixed)
+
+    return (
+        round(sum(fixed_costs) / len(fixed_costs)),
+        round(sum(wrap_costs) / len(wrap_costs)),
+    )
 
 
 class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
@@ -66,11 +136,19 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             synthetic.video if synthetic is not None else None
         )
 
+        # ISL budget compensation — keeps synthetic wire ISL matching the
+        # user's ``--isl`` / ``--shared-system-prompt-length`` once cache-bust
+        # markers and chat-template wrapping are added at request time. All
+        # components resolve to 0 for non-synthetic datasets (weka et al. carry
+        # no ``prompts``/``prefix_prompts``), so this is byte-neutral for trace
+        # replay and only affects the SyntheticComposer's generated text.
+        compensated_prefix_prompts = self._init_isl_compensation(tokenizer)
+
         # Create generators (prompt generator requires a tokenizer)
         self.prompt_generator: PromptGenerator | None = (
             PromptGenerator(
                 prompts=self._synthetic_prompts,
-                prefix_prompts=self._synthetic_prefix_prompts,
+                prefix_prompts=compensated_prefix_prompts,
                 tokenizer=tokenizer,
             )
             if tokenizer
@@ -95,6 +173,119 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         # Cache for turn-level sequence lengths to ensure ISL/OSL pairing consistency
         self._turn_sequence_cache: dict[int, tuple[int, int]] = {}
+
+    def _init_isl_compensation(
+        self, tokenizer: Tokenizer | None
+    ) -> PrefixPromptConfig | None:
+        """Compute synthetic ISL compensation budgets and return prefix prompts.
+
+        Decomposes three components subtracted at request-build time so the
+        wire ISL matches the user's ``--isl`` / ``--shared-system-prompt-length``:
+
+        (a) cache-bust marker token cost (0 for NONE);
+        (b) chat-template wrapping (per-request fixed + per-message wrap), only
+            active under ``--apply-chat-template`` and a real chat template;
+        (c) shared-system-prompt shrink when a SYSTEM_* marker lands on the
+            synthetic system prompt.
+
+        Returns a (possibly ``model_copy``-compensated) ``PrefixPromptConfig``
+        for the PromptGenerator. Non-synthetic datasets have no synthetic
+        prompts, so every budget is 0 and the original prefix prompts pass
+        through unchanged.
+        """
+        from aiperf.common.enums import CacheBustTarget
+        from aiperf.timing.strategies.cache_bust import estimate_marker_token_cost
+
+        prompts = self._synthetic_prompts
+        prefix_prompts = self._synthetic_prefix_prompts
+
+        cache_bust = getattr(prompts, "cache_bust", None) if prompts else None
+        cache_bust_target = (
+            cache_bust.target if cache_bust is not None else CacheBustTarget.NONE
+        )
+        configured_shared_sys_len = (
+            getattr(prefix_prompts, "shared_system_length", None)
+            if prefix_prompts is not None
+            else None
+        )
+        has_synthetic_system_prompt = configured_shared_sys_len is not None
+        is_system_target = cache_bust_target in (
+            CacheBustTarget.SYSTEM_PREFIX,
+            CacheBustTarget.SYSTEM_SUFFIX,
+        )
+
+        # Component (a): cache-bust marker token cost.
+        self._cache_bust_marker_tokens = (
+            estimate_marker_token_cost(cache_bust_target, tokenizer)
+            if cache_bust_target != CacheBustTarget.NONE and tokenizer is not None
+            else 0
+        )
+
+        # Component (a) routing: mirrors ``worker._apply_cache_bust``'s fallback:
+        # SYSTEM_* + system prompt -> marker on system msg; otherwise (incl.
+        # SYSTEM_* with no system message, and FIRST_TURN_*) -> first user turn.
+        marker_on_shared_system_prompt = (
+            is_system_target and has_synthetic_system_prompt
+        )
+        marker_on_first_user_turn = (
+            cache_bust_target != CacheBustTarget.NONE
+            and not marker_on_shared_system_prompt
+        )
+        self._first_turn_cache_bust_marker_tokens = (
+            self._cache_bust_marker_tokens if marker_on_first_user_turn else 0
+        )
+
+        # Component (b): chat-template wrapping. Both 0 when no chat template,
+        # and both 0 when ``--apply-chat-template`` is not set (opt-out).
+        if (
+            self.run.cfg.tokenizer is not None
+            and self.run.cfg.tokenizer.apply_chat_template
+        ):
+            (
+                self._chat_template_per_request_fixed_tokens,
+                self._chat_template_per_msg_wrap_tokens,
+            ) = _estimate_chat_template_overheads(tokenizer)
+        else:
+            self._chat_template_per_request_fixed_tokens = 0
+            self._chat_template_per_msg_wrap_tokens = 0
+
+        # Component (c): shrink the synthetic shared system prompt by the marker
+        # cost so its wire length still matches ``--shared-system-prompt-length``.
+        # Compensate via a model_copy passed to PromptGenerator — never mutate
+        # the user-facing config in place.
+        if marker_on_shared_system_prompt and configured_shared_sys_len is not None:
+            compensated_shared_sys_len = max(
+                1, configured_shared_sys_len - self._cache_bust_marker_tokens
+            )
+            return prefix_prompts.model_copy(
+                update={"shared_system_length": compensated_shared_sys_len}
+            )
+        return prefix_prompts
+
+    @property
+    def first_turn_isl_adjustment(self) -> int:
+        """Total tokens to subtract from the FIRST user turn's synthetic ISL.
+
+        Composed of the per-request chat-template fixed cost (BOS + gen-prompt
+        suffix), the per-message chat-template wrap (role header + EOT), and the
+        cache-bust marker when it lands on the first user turn.
+        """
+        return (
+            self._chat_template_per_request_fixed_tokens
+            + self._chat_template_per_msg_wrap_tokens
+            + self._first_turn_cache_bust_marker_tokens
+        )
+
+    @property
+    def subsequent_turn_isl_adjustment(self) -> int:
+        """Tokens to subtract from each non-first user turn's synthetic ISL.
+
+        Just the per-message chat-template wrap; the per-request fixed cost and
+        the cache-bust marker apply only to the first turn (later turns'
+        raw_messages are not mutated; BOS / gen-prompt suffix emit once per
+        request, not per message).
+        """
+        return self._chat_template_per_msg_wrap_tokens
 
     @abstractmethod
     def create_dataset(self) -> list[Conversation]:
@@ -137,16 +328,14 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
     def _osl_distribution(self) -> SamplingDistribution | None:
         """Resolve the OSL distribution to use as a fallback for max_tokens.
 
-        Synthetic datasets carry OSL on ``PromptConfig.osl``; file datasets
-        carry it on ``FileDataset.osl`` (routed there from ``--osl`` by the
-        CLI converter). Per-line ``output_length`` on a turn always wins
-        over either of these.
+        Synthetic datasets carry OSL on ``PromptConfig.osl``; file AND public
+        (HF-backed weka) trace datasets carry it on the flat ``osl`` field
+        (routed there from ``--osl`` by the CLI converter). Per-line
+        ``output_length`` on a turn always wins over either of these.
         """
         if self._synthetic_prompts is not None and self._synthetic_prompts.osl:
             return self._synthetic_prompts.osl
-        if isinstance(self._dataset, FileDataset):
-            return self._dataset.osl
-        return None
+        return getattr(self._dataset, "osl", None)
 
     def get_default_context_mode(self) -> ConversationContextMode | None:
         """Dataset-level default context mode inferred by the composer or its loader.
@@ -223,10 +412,21 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         the existing value is preserved. Per-line values take precedence over
         global --osl and --seq-dist settings.
 
+        ``max_tokens`` is clamped to a minimum of 1: the OpenAI-compatible
+        chat-completions API rejects ``max_completion_tokens=0`` outright on
+        most servers (and silently produces empty completions on others),
+        which surfaces as opaque request failures during a benchmark.
+
         Args:
             turn: The turn object to finalize.
         """
         if turn.max_tokens is not None:
+            if turn.max_tokens <= 0:
+                self.warning(
+                    f"max_tokens={turn.max_tokens} on turn is invalid (must be > 0); "
+                    "clamping to 1"
+                )
+                turn.max_tokens = 1
             return
 
         if self._seq_distribution is not None:
@@ -245,6 +445,13 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 turn.max_tokens = self._max_tokens_rng.sample_positive_normal_integer(
                     osl_mean, osl_stddev
                 )
+
+        if turn.max_tokens is not None and turn.max_tokens <= 0:
+            self.warning(
+                f"Sampled max_tokens={turn.max_tokens} is invalid (must be > 0); "
+                "clamping to 1"
+            )
+            turn.max_tokens = 1
 
     def _finalize_turn(self, turn: Turn) -> None:
         """Finalize a turn by populating all required metadata fields.

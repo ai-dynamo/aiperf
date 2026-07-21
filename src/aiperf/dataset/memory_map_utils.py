@@ -306,6 +306,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             format=self._format,
             conversation_count=len(self._session_ids),
             total_size_bytes=self._current_offset,
+            compressed=self._compress_only,
             compressed_data_file_path=self._compressed_data_path if self._compress_only else None,
             compressed_index_file_path=self._compressed_index_path if self._compress_only else None,
             compressed_size_bytes=self._compressed_size if self._compress_only else 0,

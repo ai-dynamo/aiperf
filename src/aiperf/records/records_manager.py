@@ -46,6 +46,7 @@ from aiperf.common.messages import (
     StartRealtimeTelemetryCommand,
     TelemetryRecordsMessage,
 )
+from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
     BranchStats,
@@ -71,6 +72,10 @@ from aiperf.credit.messages import (
 )
 from aiperf.gpu_telemetry.protocols import GPUTelemetryAccumulatorProtocol
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
+from aiperf.metrics.cache_reporting_hint import (
+    CACHE_REPORTING_HINT,
+    usage_without_cache_in_record,
+)
 from aiperf.network_latency.accumulator import NetworkLatencyAccumulator
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
@@ -331,6 +336,250 @@ def _render_realtime_block(
     return "\n".join([header, *rows])
 
 
+_LATENCY_LINE_LABELS: tuple[tuple[str, str], ...] = (
+    ("ttft", "time_to_first_token"),
+    # Use the scalar per-record metric (avg gap across the response), not the
+    # list-valued ``inter_chunk_latency``. List metrics don't aggregate into
+    # displayable percentiles in the realtime path, so the row used to show
+    # only dashes mid-run even when the per-record JSONL had real values.
+    ("itl", "inter_token_latency"),
+    ("e2e", "request_latency"),
+)
+_INTERACTIVITY_LABEL: tuple[str, str] = (
+    "intvty",
+    "output_token_throughput_per_user",
+)
+_SEQ_LENGTH_LABELS: tuple[tuple[str, str], ...] = (
+    ("isl", "input_sequence_length"),
+    ("osl", "output_sequence_length"),
+)
+# Each block line is its own log record (carries its own log prefix), so the
+# continuation rows sit at a small fixed indent under the header line rather
+# than aligning under the old inline "[realtime MM:SS profiling] " text.
+_REALTIME_ROW_INDENT = 2
+# Percentile names per row group. Latency/interactivity rows report p95 in the
+# third column; sequence-length rows report p90 there (the agentic long-tail is
+# more interesting at p90 for token counts). Each row keeps its own ``pNN=``
+# labels, so the column can hold p95 on one row and p90 on the next.
+_LATENCY_PERCENTILES: tuple[str, ...] = ("p50", "p75", "p95", "p99")
+_TOKEN_PERCENTILES: tuple[str, ...] = ("p50", "p75", "p90", "p99")
+
+
+def _format_elapsed(seconds: float) -> str:
+    total = int(seconds)
+    if total < 3600:
+        return f"{total // 60:02d}:{total % 60:02d}"
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}"
+
+
+def _format_ms(value: float | None) -> str:
+    if value is None:
+        return "-"
+    if value < 1.0:
+        return "<1ms"
+    return f"{int(round(value)):,}ms"
+
+
+def _format_int(value: float | None) -> str:
+    """Compact int formatter for token-rate percentiles. Returns ``-`` for None."""
+    if value is None:
+        return "-"
+    return f"{int(round(value)):,}"
+
+
+def _render_realtime_block(
+    metric_results: list[MetricResult],
+    phase_stats: PhaseRecordsStats,
+    prev_snapshot: tuple[int, float] | None,
+    server_snapshot: dict[str, float] | None = None,
+) -> str:
+    """Render a compact realtime stats block for the aiperf logger.
+
+    Format (``[realtime MM:SS profiling]`` header, a summary counter row, then
+    one labeled percentile row per metric)::
+
+        [realtime 00:49 profiling]
+          rps=14.2 (avg 13.1)  tput_in=1,097,271/s  tput_out=10,441/s  done=641 ok=641 err=0
+          ttft    p50=   30ms  p75=   48ms  p95=   106ms  p99=   155ms
+          itl     p50=    5ms  p75=    5ms  p95=     5ms  p99=     5ms
+          e2e     p50=2,241ms  p75=4,853ms  p95=13,526ms  p99=22,003ms
+          intvty  p50=    200  p75=    201  p95=     211  p99=     254  (1/tpot tok/s)
+          isl     p50= 67,234  p75= 97,141  p90= 179,564  p99= 384,325  (tokens)
+          osl     p50=    443  p75=    967  p90=   2,034  p99=   4,396  (tokens)
+          tot     in=53,555,186  out=509,605
+          trace   theoretical_prefix_cache_hit=97.5%
+
+    The header sits on its own line and the summary counters drop to the
+    first indented row so the line no longer wraps in narrow terminals; each
+    line is emitted as a separate log record (see ``_report_realtime_metrics``).
+    Every row keeps its own ``pNN=`` labels (so it stays readable even when log
+    lines from other services interleave), while the values are right-aligned in
+    per-column widths so the digits and ``ms`` suffixes line up into a grid.
+
+    Latency MetricResult percentile values are already in display units
+    (milliseconds for time-based metrics, see ``to_display_unit`` and the
+    accumulator's ``summarize`` path), so ``_format_ms`` consumes them as-is.
+    Returns an empty string when no requests have completed yet so callers
+    can suppress the block entirely on the first tick.
+
+    Records-side stats only — ``in_flight_requests`` is a credit-side concept
+    that this function doesn't have access to and is therefore omitted from
+    the output.
+    """
+    if phase_stats.total_records == 0:
+        return ""
+
+    by_tag: dict[str, MetricResult] = {m.tag: m for m in metric_results}
+    elapsed = phase_stats.records_elapsed_time
+
+    rps_avg_mr = by_tag.get("request_throughput")
+    rps_avg = getattr(rps_avg_mr, "avg", None)
+    rps_avg_str = f"{rps_avg:.1f}" if rps_avg is not None else "-"
+
+    if prev_snapshot is not None:
+        prev_completed, prev_elapsed = prev_snapshot
+        dt = elapsed - prev_elapsed
+        rps_delta = (phase_stats.total_records - prev_completed) / dt if dt > 0 else 0.0
+        rps_delta_str = f"{rps_delta:.1f}"
+    else:
+        rps_delta_str = rps_avg_str
+
+    tput_out_mr = by_tag.get("output_token_throughput")
+    tput_out_avg = getattr(tput_out_mr, "avg", None)
+    tput_out_str = f"{int(round(tput_out_avg)):,}" if tput_out_avg is not None else "-"
+
+    tput_in_mr = by_tag.get("input_token_throughput")
+    tput_in_avg = getattr(tput_in_mr, "avg", None)
+    tput_in_str = f"{int(round(tput_in_avg)):,}" if tput_in_avg is not None else "-"
+
+    header = f"[realtime {_format_elapsed(elapsed)} profiling]"
+
+    indent = " " * _REALTIME_ROW_INDENT
+
+    # Build the percentile rows as (label, percentile_names, value_strings,
+    # suffix) tuples first, so column widths can be derived from the actual
+    # rendered values before any line is formatted. Latency/interactivity rows
+    # use ms-formatted values; sequence-length rows use comma-grouped ints.
+    #
+    # Interactivity = 1 / inter-token-latency per request, percentiled across
+    # requests. Characterizes the user-perceived decode speed; tail (low
+    # percentile) is the slowest-decoding user, head (high percentile) is the
+    # snappiest. Aggregate tput_in/tput_out on line 1 are bandwidth.
+    StatRow = tuple[str, tuple[str, ...], list[str], str]
+    stat_rows: list[StatRow] = []
+    for label, tag in _LATENCY_LINE_LABELS:
+        mr = by_tag.get(tag)
+        values = [_format_ms(getattr(mr, p, None)) for p in _LATENCY_PERCENTILES]
+        stat_rows.append((label, _LATENCY_PERCENTILES, values, ""))
+    intvty_label, intvty_tag = _INTERACTIVITY_LABEL
+    mr = by_tag.get(intvty_tag)
+    stat_rows.append(
+        (
+            intvty_label,
+            _LATENCY_PERCENTILES,
+            [_format_int(getattr(mr, p, None)) for p in _LATENCY_PERCENTILES],
+            "(1/tpot tok/s)",
+        )
+    )
+
+    # Sequence-length distribution rows — useful for spotting long-tail
+    # agentic prompts mid-run. Reads the same MetricResults the aggregator
+    # already publishes; no extra plumbing. A row is omitted entirely when its
+    # metric has no data, rather than rendering a row of dashes.
+    for label, tag in _SEQ_LENGTH_LABELS:
+        mr = by_tag.get(tag)
+        values = [_format_int(getattr(mr, p, None)) for p in _TOKEN_PERCENTILES]
+        if all(v == "-" for v in values):
+            continue
+        stat_rows.append((label, _TOKEN_PERCENTILES, values, "(tokens)"))
+
+    label_w = max(len(label) for label, *_ in stat_rows)
+    col_w = [max(len(values[i]) for _, _, values, _ in stat_rows) for i in range(4)]
+
+    rows: list[str] = [
+        f"{indent}rps={rps_delta_str} (avg {rps_avg_str})  "
+        f"tput_in={tput_in_str}/s  "
+        f"tput_out={tput_out_str}/s  "
+        f"done={phase_stats.total_records:,} "
+        f"ok={phase_stats.success_records:,} "
+        f"err={phase_stats.error_records:,}"
+    ]
+    for label, percentiles, values, suffix in stat_rows:
+        cells = "  ".join(
+            f"{name}={value.rjust(col_w[i])}"
+            for i, (name, value) in enumerate(zip(percentiles, values, strict=True))
+        )
+        line = f"{indent}{label:<{label_w}}  {cells}"
+        rows.append(f"{line}  {suffix}" if suffix else line)
+
+    # Cumulative token totals — running counters, useful for spotting
+    # whether the ratio of output:input tokens is matching the workload's
+    # expected agentic pattern.
+    total_isl_mr = by_tag.get("total_isl")
+    total_osl_mr = by_tag.get("total_osl")
+    total_isl = getattr(total_isl_mr, "avg", None)
+    total_osl = getattr(total_osl_mr, "avg", None)
+    if total_isl is not None or total_osl is not None:
+        in_str = f"{int(round(total_isl)):,}" if total_isl is not None else "-"
+        out_str = f"{int(round(total_osl)):,}" if total_osl is not None else "-"
+        rows.append(f"{indent}{'tot':<{label_w}}  in={in_str}  out={out_str}")
+
+    theoretical_prefix_mr = by_tag.get("theoretical_prefix_cache_hit")
+    theoretical_prefix_hit = getattr(theoretical_prefix_mr, "current", None)
+    if theoretical_prefix_hit is None:
+        theoretical_prefix_hit = getattr(theoretical_prefix_mr, "avg", None)
+    if theoretical_prefix_hit is not None:
+        rows.append(
+            f"{indent}{'trace':<{label_w}} theoretical_prefix_cache_hit={theoretical_prefix_hit:.1f}%"
+        )
+
+    # Server-side row — cumulative cache hit rate, KV usage, and scheduler
+    # queue depth from the live ServerMetricsAccumulator snapshot. Sourced
+    # from the /metrics scrape, so populates only when server-metrics
+    # collection is enabled and the inference server actually serves
+    # Prometheus. Each part is rendered only when its backing metric is
+    # present, so e.g. cpu_kv / ext_cache_hit show up only on offload=cpu
+    # runs.
+    if server_snapshot:
+        srv_parts: list[str] = []
+        if "prefix_cache_hit_rate" in server_snapshot:
+            srv_parts.append(
+                f"prefix_cache_hit={server_snapshot['prefix_cache_hit_rate']:.1f}%"
+            )
+        if "unique_input_tokens_srv" in server_snapshot:
+            srv_parts.append(
+                f"unique_in_srv={int(round(server_snapshot['unique_input_tokens_srv'])):,}"
+            )
+        if "external_prefix_cache_hit_rate" in server_snapshot:
+            srv_parts.append(
+                f"ext_cache_hit={server_snapshot['external_prefix_cache_hit_rate']:.1f}%"
+            )
+        if "kv_cache_usage_pct" in server_snapshot:
+            srv_parts.append(f"kv_usage={server_snapshot['kv_cache_usage_pct']:.1f}%")
+        if "cpu_kv_cache_usage_pct" in server_snapshot:
+            srv_parts.append(
+                f"cpu_kv_usage={server_snapshot['cpu_kv_cache_usage_pct']:.1f}%"
+            )
+        if "num_running" in server_snapshot or "num_waiting" in server_snapshot:
+            running = int(server_snapshot.get("num_running", 0))
+            waiting = int(server_snapshot.get("num_waiting", 0))
+            srv_parts.append(f"queue={running}r/{waiting}w")
+        if "input_token_throughput_srv" in server_snapshot:
+            srv_parts.append(
+                f"tput_in_srv={int(round(server_snapshot['input_token_throughput_srv'])):,}/s"
+            )
+        if "output_token_throughput_srv" in server_snapshot:
+            srv_parts.append(
+                f"tput_out_srv={int(round(server_snapshot['output_token_throughput_srv'])):,}/s"
+            )
+        if srv_parts:
+            rows.append(f"{indent}{'srv':<{label_w}} {' '.join(srv_parts)}")
+
+    return "\n".join([header, *rows])
+
+
 @dataclass
 class ErrorTrackingState:
     """State container for tracking errors with counts and thread-safe access.
@@ -422,6 +671,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         self._telemetry_state = ErrorTrackingState()
         self._server_metrics_state = ErrorTrackingState()
+        self._skipped_context_overflow_counts_by_phase: dict[CreditPhase, int] = {
+            CreditPhase.WARMUP: 0,
+            CreditPhase.PROFILING: 0,
+        }
 
         self._gpu_telemetry_accumulator: GPUTelemetryAccumulatorProtocol | None = None
         self._server_metrics_accumulator: ServerMetricsAccumulatorProtocol | None = None
@@ -447,6 +700,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._analyzers: list[LoadedAnalyzer] = load_analyzers(self)
         self._routing_table = self._build_routing_table()
         self._warned_unrouted_record_types: set[str] = set()
+        self._warned_missing_cache_reporting: bool = False
         self._log_routing_table()
 
         # Single-flight guard for _process_results: the background finalize task,
@@ -467,6 +721,23 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             AccumulatorType.SERVER_METRICS
         )
         self._accuracy_accumulator = self._accumulators.get(AccumulatorType.ACCURACY)
+
+        # Count of AGENTIC_REPLAY context-overflow records skipped from metric
+        # accumulation / stream export but still counted toward the phase target.
+        self._skipped_context_overflow_count = 0
+
+        # Failed-request abort threshold (AGENTIC_REPLAY, A5 #7): abort the run
+        # once the profiling failure ratio exceeds the configured threshold.
+        profiling_phases = self.run.cfg.get_profiling_phases()
+        profiling_phase = profiling_phases[0] if profiling_phases else None
+        self._failed_request_threshold: float | None = (
+            profiling_phase.failed_request_threshold if profiling_phase else None
+        )
+        conc_val = profiling_phase.concurrency if profiling_phase else None
+        self._failed_request_grace_floor = max(
+            int(conc_val) if isinstance(conc_val, (int, float)) else 1, 10
+        )
+        self._failed_request_abort_triggered = False
 
     def _build_routing_table(self) -> dict[str, list[Any]]:
         """Build record_type string -> handler mapping from plugin metadata."""
@@ -566,6 +837,65 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             handler_names = [handler.__class__.__name__ for handler in handlers]
             self.debug(lambda rt=record_type, hn=handler_names: f"  {rt} -> {hn}")
 
+    async def _maybe_trigger_failed_request_abort(self, phase: CreditPhase) -> None:
+        """Abort the run when the PROFILING failure rate exceeds the threshold.
+
+        No-op when ``--failed-request-threshold`` is unset, when this method
+        already fired once for this run, or when the total record count has
+        not yet crossed the grace floor (``max(concurrency, 10)``). Otherwise
+        broadcasts ProfileCancelCommand on the message bus -- the existing
+        cancel-path handlers in timing_manager, server_metrics manager, and
+        gpu_telemetry manager stop their work; this manager's own
+        _on_profile_cancel_command marks the phase cancelled and finalizes
+        results with cancelled=True.
+        """
+        if self._failed_request_threshold is None:
+            return
+        if self._failed_request_abort_triggered:
+            return
+        if phase != CreditPhase.PROFILING:
+            return
+
+        total = self._records_tracker.total_records_for_phase(phase)
+        if total < self._failed_request_grace_floor:
+            return
+
+        error_records = self._records_tracker.error_records_for_phase(phase)
+        rate = error_records / total if total > 0 else 0.0
+        if rate <= self._failed_request_threshold:
+            return
+
+        self._failed_request_abort_triggered = True
+        self.warning(
+            f"--failed-request-threshold exceeded: "
+            f"{error_records}/{total} = {rate:.3f} > "
+            f"{self._failed_request_threshold:.3f} "
+            f"(grace floor {self._failed_request_grace_floor}). "
+            "Broadcasting ProfileCancelCommand to terminate the run."
+        )
+        try:
+            await self.publish(ProfileCancelCommand(service_id=self.service_id))
+        except Exception as exc:
+            self.warning(
+                f"Failed to publish ProfileCancelCommand for threshold abort: {exc!r}"
+            )
+            self._failed_request_abort_triggered = False
+
+    def _maybe_hint_missing_cache_reporting(
+        self, record_data: MetricRecordsData
+    ) -> None:
+        """Warn once, mid-run, when the server reports token usage but no prompt-cache
+        reads — the signature of a cache-capable server that hasn't been told to
+        report ``cached_tokens``. Fires on the first qualifying record so a long run
+        can be aborted and re-launched with the flag set; the end-of-run console
+        exporter emits the same hint for anyone who only reads the final summary.
+        """
+        if self._warned_missing_cache_reporting:
+            return
+        if usage_without_cache_in_record(record_data.metrics):
+            self._warned_missing_cache_reporting = True
+            self.warning(CACHE_REPORTING_HINT)
+
     @on_pull_message(MessageType.RECORDS)
     async def _on_records(self, message: RecordsMessage) -> None:
         """Handle a per-request records envelope generically.
@@ -581,11 +911,22 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if self.is_trace_enabled:
             self.trace(f"Received records: {message}")
 
+        phase = message.metadata.benchmark_phase
+
+        # Context-overflow records in AGENTIC_REPLAY scenarios bypass normal
+        # user-facing per-record processing but still advance the records-side
+        # success counter so the completion barrier converges. Keep only a
+        # narrow aggregate side-channel count for runtime submission validation.
+        if getattr(message.metadata, "context_overflow_skip", False):
+            await self._handle_context_overflow_skip(message, phase)
+            return
+
         dispatch_errors: list[BaseException] = []
         for record in message.records:
+            if isinstance(record, MetricRecordsData):
+                self._maybe_hint_missing_cache_reporting(record)
             dispatch_errors.extend(await self._dispatch_record(record))
 
-        phase = message.metadata.benchmark_phase
         self._records_tracker.update_from_request(message.metadata, message.error)
         if message.error:
             self._error_tracker.increment_error_count_for_phase(phase, message.error)
@@ -597,6 +938,26 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 phase, ErrorDetails.from_exception(error)
             )
 
+        await self._maybe_trigger_failed_request_abort(phase)
+
+        if (
+            phase in self._complete_credit_phases
+            and self._records_tracker.check_and_set_all_records_received_for_phase(
+                phase
+            )
+        ):
+            await self._handle_all_records_received(phase)
+
+    async def _handle_context_overflow_skip(
+        self, message: RecordsMessage, phase: CreditPhase
+    ) -> None:
+        """Advance the records-side success counter for a skipped-overflow record."""
+        self._skipped_context_overflow_counts_by_phase[phase] = (
+            self._skipped_context_overflow_counts_by_phase.get(phase, 0) + 1
+        )
+        if phase == CreditPhase.PROFILING:
+            self._skipped_context_overflow_count += 1
+        self._records_tracker.update_from_request(message.metadata, message.error)
         if (
             phase in self._complete_credit_phases
             and self._records_tracker.check_and_set_all_records_received_for_phase(
@@ -1419,6 +1780,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 branch_stats=self._latest_branch_stats
                 if phase == CreditPhase.PROFILING
                 else None,
+                context_overflow_count=self._skipped_context_overflow_count,
             ),
             errors=error_results,
         )

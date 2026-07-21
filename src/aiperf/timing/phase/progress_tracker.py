@@ -107,14 +107,23 @@ class PhaseProgressTracker:
         is_final_turn: bool,
         cancelled: bool,
         errored: bool = False,
+        *,
+        is_child: bool = False,
     ) -> bool:
         """Atomically increment returned count.
 
         Args:
             is_final_turn: Whether this turn is the final turn of a session.
             cancelled: Whether the credit was cancelled.
-            errored: Whether the request returned with a non-None error. Used to
-                surface fault-injected error counts in the phase-complete log.
+            errored: Whether the request returned with a non-None error. Bumps
+                ``request_errors`` (request-level; ticks for children too).
+            is_child: True when the returned credit is a DAG descendant
+                (``credit.agent_depth > 0``). Child returns bump the
+                request-level counters (``requests_completed`` /
+                ``requests_cancelled``) for observability — they're
+                real HTTP requests — but skip session-level bookkeeping
+                (``completed_sessions`` / ``cancelled_sessions``)
+                because children inherit the parent's session slot.
 
         Returns:
             True if ALL credits returned (this was the final return).
@@ -122,11 +131,16 @@ class PhaseProgressTracker:
         CRITICAL: No async calls in this method - preserves atomicity.
 
         If returns True, caller should set all_credits_returned_event.
+        The ``CreditCallbackHandler`` defers the event fire via
+        ``BranchOrchestrator.has_pending_branch_work()`` when the
+        DAG still has in-flight descendants.
 
         Note: Late arrivals (after phase complete) are handled by caller
         checking lifecycle.is_complete before calling this method.
         """
-        return self._counter.increment_returned(is_final_turn, cancelled, errored)
+        return self._counter.increment_returned(
+            is_final_turn, cancelled, errored=errored, is_child=is_child
+        )
 
     def increment_prefill_released(self) -> None:
         """Increment prefill released count.
@@ -136,6 +150,20 @@ class PhaseProgressTracker:
         2. Credit returns without TTFT (prefill never completed)
         """
         self._counter.increment_prefill_released()
+
+    def account_lane_session(self, session_turns: int) -> None:
+        """Count a deferred-lane session that acquires its slot directly.
+
+        Delegates to :meth:`CreditCounter.account_lane_session`. Called by
+        ``CreditIssuer.acquire_lane_credit`` when a gated parent
+        (``root_pending=True``) holds a lane slot directly: the parent's join
+        turn later bumps ``completed_sessions``, so its session is counted in
+        ``sent_sessions`` here to keep ``in_flight_sessions`` non-negative.
+        Mirrors the turn-0 arm of :meth:`increment_sent`.
+
+        CRITICAL: No async calls in this method - preserves atomicity.
+        """
+        self._counter.account_lane_session(session_turns)
 
     # =========================================================================
     # Freezing Methods

@@ -243,8 +243,12 @@ class TestPromptGeneratorComprehensive:
             # Failing cases
             (10, [1, 2, 3], 5, True),  # final_block_size = 0 (should fail)
             (5, [1, 2, 3], 5, True),  # final_block_size = -5 (should fail)
-            (20, [1, 2], 5, True),  # final_block_size = 15 > block_size (should fail)
-            (0, [1], 5, True),  # final_block_size = 0 (should fail)
+            # Prefix-only layout: M*block_size=10 < num_tokens=20, the un-hashed
+            # remainder is a 10-token fresh tail. Valid since the
+            # ``_build_token_sequence`` rewrite (real captured traces list only
+            # the cached prefix in hash_ids).
+            (20, [1, 2], 5, False),
+            (0, [1], 5, True),  # num_tokens = 0 (should fail)
             (10, [1, 2, 3], 0, True),  # block_size = 0 (should fail)
             (10, [1, 2, 3], -1, True),  # negative block_size (should fail)
             # Passing cases
@@ -712,79 +716,14 @@ class TestPromptGeneratorComprehensive:
         assert isinstance(generator._decoded_cache, dict)
         assert len(generator._decoded_cache) == 0
 
-    def test_decoded_cache_populated_on_first_call(self, basic_config):
-        """Test that decoded cache is populated after first call."""
-        tokenizer, prompts, prefix_prompts = basic_config
-        generator = _make_generator(
-            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
-        )
-
-        _ = generator._generate_cached_prompt(10, [1, 2], 5)
-
-        # Should have one entry in decoded cache
-        expected_key = ((1, 2), 10, 5)
-        assert expected_key in generator._decoded_cache
-        assert isinstance(generator._decoded_cache[expected_key], str)
-
-    def test_decoded_cache_hit_on_repeated_call(self, basic_config):
-        """Test that decoded cache is hit on repeated calls with same params."""
-        tokenizer, prompts, prefix_prompts = basic_config
-        generator = _make_generator(
-            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
-        )
-
-        # First call - should populate cache
-        result1 = generator._generate_cached_prompt(10, [1, 2], 5)
-
-        # Second call with same params - should hit cache
-        with patch.object(generator.tokenizer, "decode") as mock_decode:
-            result2 = generator._generate_cached_prompt(10, [1, 2], 5)
-            mock_decode.assert_not_called()  # Decode should NOT be called
-
-        assert result1 == result2
-
-    def test_decoded_cache_miss_different_hash_ids(self, basic_config):
-        """Test that different hash_ids create different cache entries."""
-        tokenizer, prompts, prefix_prompts = basic_config
-        generator = _make_generator(
-            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
-        )
-
-        _ = generator._generate_cached_prompt(10, [1, 2], 5)
-        _ = generator._generate_cached_prompt(10, [3, 4], 5)
-
-        # Both should be cached separately
-        assert ((1, 2), 10, 5) in generator._decoded_cache
-        assert ((3, 4), 10, 5) in generator._decoded_cache
-        assert len(generator._decoded_cache) == 2
-
-    def test_decoded_cache_miss_different_num_tokens(self, basic_config):
-        """Test that different num_tokens creates different cache entry."""
-        tokenizer, prompts, prefix_prompts = basic_config
-        generator = _make_generator(
-            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
-        )
-
-        _ = generator._generate_cached_prompt(10, [1, 2], 5)
-        _ = generator._generate_cached_prompt(8, [1, 2], 5)  # Different final block
-
-        # Should have two separate entries
-        assert ((1, 2), 10, 5) in generator._decoded_cache
-        assert ((1, 2), 8, 5) in generator._decoded_cache
-        assert len(generator._decoded_cache) == 2
-
-    def test_decoded_cache_key_structure(self, basic_config):
-        """Test that cache key is (tuple(hash_ids), num_tokens, block_size)."""
-        tokenizer, prompts, prefix_prompts = basic_config
-        generator = _make_generator(
-            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
-        )
-
-        # 12 tokens = 5 + 5 + 2 (valid final block size)
-        generator._generate_cached_prompt(12, [1, 2, 3], 5)
-
-        expected_key = ((1, 2, 3), 12, 5)
-        assert expected_key in generator._decoded_cache
+    # NOTE: ``_generate_cached_prompt`` no longer reads/writes ``_decoded_cache``.
+    # The hash-id reseed path (WekaTraceLoader + the trace loaders) scopes block
+    # content per-(trace_id, hash_id) and clears ``_cache`` between trace files,
+    # so a cross-trace decoded-cache hit would serve stale bytes and break
+    # byte-exact trace replay. The former decoded-cache population tests
+    # (populated_on_first_call / hit_on_repeated_call / miss_* / key_structure)
+    # are removed: the decode is now always fresh. ``_decoded_cache`` remains a
+    # declared attribute (other call sites still reference it).
 
     # ============================================================================
     # _build_token_sequence Method Tests

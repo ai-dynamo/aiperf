@@ -357,6 +357,15 @@ class CustomDatasetLoaderMetadata(BaseModel):
             "(e.g. 16 for Bailian, 512 for Mooncake)."
         ),
     )
+    default_prompt_corpus: str = Field(
+        default="sonnet",
+        description=(
+            "Default synthetic prompt corpus for this loader. Applied when the "
+            "user does not explicitly pass --prompt-corpus. Loaders for coding "
+            "agent traces (e.g. weka_trace) override to 'coding' so reconstructed "
+            "prompts resemble real tool-use content."
+        ),
+    )
     category: str | None = Field(
         default=None,
         description=(
@@ -390,6 +399,33 @@ class PublicDatasetLoaderMetadata(BaseModel):
     hf_subset: str | None = Field(
         default=None,
         description="HuggingFace dataset subset/config name. Only needed for datasets with multiple configs.",
+    )
+    is_trace: bool = Field(
+        default=False,
+        description=(
+            "Whether this loader handles trace-format datasets. Trace public "
+            "datasets reuse hash_ids-based prompt generation, require a "
+            "tokenizer, and prefer sequential sampling. Mirrors the field of "
+            "the same name on CustomDatasetLoaderMetadata so trace loaders can "
+            "live in either pipeline."
+        ),
+    )
+    default_block_size: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Default token block size for hash-based prompt caching. Used "
+            "when the user does not explicitly set --isl-block-size. Must "
+            "match the block size used to generate the trace's hash_ids."
+        ),
+    )
+    default_prompt_corpus: str = Field(
+        default="sonnet",
+        description=(
+            "Default synthetic prompt corpus for this loader. Applied when "
+            "the user does not explicitly pass --prompt-corpus. Loaders for "
+            "coding agent traces override to 'coding'."
+        ),
     )
     prompt_column: str | None = Field(
         default=None,

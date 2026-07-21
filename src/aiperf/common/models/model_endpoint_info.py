@@ -122,6 +122,14 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.USE_SERVER_TOKEN_COUNT,
         description="Use server-reported token counts from API usage fields instead of client-side tokenization.",
     )
+    session_routing: str | None = Field(
+        default=None,
+        description="Selected session-routing plugin name (None = off).",
+    )
+    session_routing_opts: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Raw opts for the routing plugin's Options model.",
+    )
     connection_reuse_strategy: ConnectionReuseStrategy = Field(
         default=EndpointDefaults.CONNECTION_REUSE_STRATEGY,
         description="Transport connection reuse strategy.",
@@ -138,20 +146,6 @@ class EndpointInfo(AIPerfBaseModel):
         default=None,
         description="HTTP header name to use for the per-session affinity identifier. "
         "When set, replaces the default `X-Correlation-ID` header name with this value.",
-    )
-    use_dynamo_conv_aware_routing: bool = Field(
-        default=EndpointDefaults.USE_DYNAMO_CONV_AWARE_ROUTING,
-        description="Emit Dynamo nvext.session_control for conversation-aware routing.",
-    )
-    use_legacy_dynamo_session_control: bool = Field(
-        default=EndpointDefaults.USE_LEGACY_DYNAMO_SESSION_CONTROL,
-        description="Emit the v1.2.x-compatible open/close session_control lifecycle "
-        "instead of the 'bind' action (which only exists in Dynamo >= v1.3.0-dev).",
-    )
-    dynamo_session_timeout_seconds: int = Field(
-        default=EndpointDefaults.DYNAMO_SESSION_TIMEOUT_SECONDS,
-        ge=1,
-        description="Timeout in seconds for Dynamo nvext.session_control sessions.",
     )
     collect_trace_chunks: bool = Field(
         default=False,
@@ -226,21 +220,16 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 api_key=ep.api_key,
                 use_legacy_max_tokens=ep.use_legacy_max_tokens,
                 use_server_token_count=ep.use_server_token_count,
+                session_routing=(
+                    str(ep.session_routing) if ep.session_routing is not None else None
+                ),
+                session_routing_opts=dict(ep.session_routing_opts),
                 connection_reuse_strategy=ep.connection_reuse,
                 download_video_content=ep.download_video_content,
                 request_content_type=ep.request_content_type,
                 collect_trace_chunks=False,
                 template=getattr(ep, "template", None),
                 session_header=getattr(ep, "session_header", None),
-                use_dynamo_conv_aware_routing=getattr(
-                    ep, "use_dynamo_conv_aware_routing", False
-                ),
-                use_legacy_dynamo_session_control=getattr(
-                    ep, "use_legacy_dynamo_session_control", False
-                ),
-                dynamo_session_timeout_seconds=getattr(
-                    ep, "dynamo_session_timeout_seconds", 300
-                ),
                 uuid_and_strip=getattr(
                     ep, "uuid_and_strip", EndpointDefaults.UUID_AND_STRIP
                 ),

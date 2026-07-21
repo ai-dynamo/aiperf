@@ -18,7 +18,9 @@ from aiperf.config.comm.build import build_comm_config
 if TYPE_CHECKING:
     from aiperf.common.enums import (
         AIPerfLogLevel,
+        CacheBustTarget,
         GPUTelemetryMode,
+        PromptCorpus,
         ServerMetricsFormat,
     )
     from aiperf.config.comm import BaseZMQCommunicationConfig
@@ -73,6 +75,47 @@ class BenchmarkHelpersMixin:
             for phase in self.phases  # type: ignore[attr-defined]
             if phase.exclude_from_results
         ]
+
+    def get_cache_bust_target(self) -> CacheBustTarget:
+        """Resolve the active dataset's cache-bust target (single engine read).
+
+        The DAG/agentic engine threads this one value into the
+        ``BranchOrchestrator`` / conversation source. Home differs by dataset
+        kind:
+
+        - synthetic: ``default_dataset.prompts.cache_bust.target`` (guard a
+          ``None`` ``prompts`` -> NONE);
+        - file: ``default_dataset.cache_bust.target``;
+        - otherwise NONE.
+        """
+        from aiperf.common.enums import CacheBustTarget
+
+        dataset = self.get_default_dataset()
+        prompts = getattr(dataset, "prompts", None)
+        if prompts is not None:
+            cache_bust = getattr(prompts, "cache_bust", None)
+            if cache_bust is not None:
+                return cache_bust.target
+        cache_bust = getattr(dataset, "cache_bust", None)
+        if cache_bust is not None:
+            return cache_bust.target
+        return CacheBustTarget.NONE
+
+    def get_prompt_corpus(self) -> PromptCorpus | None:
+        """Resolve the active dataset's prompt corpus (synthetic text source).
+
+        Mirrors :meth:`get_cache_bust_target`: synthetic reads
+        ``prompts.prompt_corpus``, file reads ``cache_bust``-sibling
+        ``prompt_corpus``; otherwise None (loader default applies). Used by the
+        agentic/weka path for cache-bust marker / wrap-fill text.
+        """
+        dataset = self.get_default_dataset()
+        prompts = getattr(dataset, "prompts", None)
+        if prompts is not None:
+            corpus = getattr(prompts, "prompt_corpus", None)
+            if corpus is not None:
+                return corpus
+        return getattr(dataset, "prompt_corpus", None)
 
     # ==========================================================================
     # CONVENIENCE PROPERTIES

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from aiperf.common.messages import ProfileCancelCommand
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
     CreditPhaseProgressMessage,
@@ -101,4 +102,17 @@ class PhasePublisher:
     async def publish_credits_complete(self) -> None:
         """Publish credits complete event."""
         msg = CreditsCompleteMessage(service_id=self._service_id)
+        await self._pub_client.publish(msg)
+
+    async def publish_profile_cancel(self) -> None:
+        """Broadcast ProfileCancelCommand to abort the run.
+
+        Used by the agentic-replay WARMUP early-abort path: a terminal warmup
+        failure means PROFILING must not start, so we broadcast the same command
+        the profiling teardown abort uses. The timing manager cancels credit
+        issuance, the records manager finalizes, and the system controller shuts
+        down -- instead of warmup running to teardown and hanging the run.
+        Reuses the existing PROFILE_CANCEL handlers across services.
+        """
+        msg = ProfileCancelCommand(service_id=self._service_id)
         await self._pub_client.publish(msg)

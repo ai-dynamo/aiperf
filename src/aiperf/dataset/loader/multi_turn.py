@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from aiperf.common.enums import MediaType
 from aiperf.common.models import Conversation, Turn
+from aiperf.dataset.loader._delay_cap import DelayCapTracker
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import MultiTurn
@@ -93,6 +94,18 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     ```
     """
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        # Clamp recorded inter-turn delays to the active dataset's cap so a
+        # single huge authored delay can't stall the whole conversation.
+        self._delay_cap_tracker = DelayCapTracker(
+            cap_seconds=getattr(
+                self.run.cfg.get_default_dataset(),
+                "inter_turn_delay_cap_seconds",
+                None,
+            )
+        )
+
     @classmethod
     def can_load(
         cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
@@ -164,11 +177,12 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                             audios=media[MediaType.AUDIO],
                             videos=media[MediaType.VIDEO],
                             timestamp=single_turn.timestamp,
-                            delay=single_turn.delay,
+                            delay=self._delay_cap_tracker.clamp(single_turn.delay),
                             role=single_turn.role,
                             max_tokens=single_turn.output_length,
                             extra_body=single_turn.extra,
                         )
                     )
             conversations.append(conversation)
+        self._delay_cap_tracker.log_summary(logger_name=__name__)
         return conversations

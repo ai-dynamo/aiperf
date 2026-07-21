@@ -12,7 +12,9 @@ from aiperf.common.enums import (
     ConversationContextMode,
     MediaType,
     MemoryMapFormat,
+    TurnInputKind,
 )
+from aiperf.common.enums.enums import SubagentType
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch import ConversationBranchInfo
 from aiperf.common.models.prerequisites import TurnPrerequisite
@@ -65,9 +67,17 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
     total_size_bytes: int = Field(
         default=0,
         ge=0,
-        description="Total size of the data file in bytes.",
+        description="Total (uncompressed) size of the data file in bytes.",
     )
-    # Pre-compressed files for Kubernetes HTTP transfer (optional)
+    # Pre-compressed files for Kubernetes HTTP transfer (optional). main's mmap
+    # writer (memory_map_utils.MemoryMapWriter) populates the explicit path
+    # fields; agentx's compress-only mode keys off the ``compressed`` flag.
+    # Both are kept so neither writer/reader breaks during the staged port.
+    compressed: bool = Field(
+        default=False,
+        description="Whether the data/index files referenced here are themselves "
+        "zstd-compressed in place (agentx k8s compress_only mode).",
+    )
     compressed_data_file_path: Path | None = Field(
         default=None,
         description="Path to zstd-compressed data file for HTTP transfer (K8s only).",
@@ -79,7 +89,7 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
     compressed_size_bytes: int = Field(
         default=0,
         ge=0,
-        description="Total size of the compressed data file in bytes.",
+        description="Total size of the compressed data file in bytes. 0 when not compressed.",
     )
 
 
@@ -141,6 +151,13 @@ class Video(Media):
     media_type: ClassVar[MediaTypeT] = MediaType.VIDEO
 
 
+class ReplayTurnReference(AIPerfBaseModel):
+    """Dataset-stable reference to one request in a replay dependency graph."""
+
+    conversation_id: str = Field(description="Referenced conversation ID.")
+    turn_index: int = Field(ge=0, description="Referenced turn index.")
+
+
 class TurnMetadata(AIPerfBaseModel):
     """Metadata of a turn."""
 
@@ -152,6 +169,58 @@ class TurnMetadata(AIPerfBaseModel):
         default=None,
         ge=0,
         description="The delay of the turn in the conversation (in milliseconds).",
+    )
+    api_time_ms: int | float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Recorded server processing duration of this turn in milliseconds "
+            "(the capture's per-request api_time). With timestamp_ms it gives the "
+            "turn's recorded interval [timestamp_ms, timestamp_ms + api_time_ms], "
+            "which happens-before completion gating uses to derive cross-turn "
+            "predecessors and the end-to-start residual. A duration, not warped "
+            "(only inter-request idle gaps are compressed). None for loaders "
+            "without per-request timing."
+        ),
+    )
+    source_trace_id: str | None = Field(
+        default=None,
+        description=(
+            "Original trace/conversation id that produced this reconstructed turn. "
+            "Set by trace loaders when replay conversations are split or reshaped."
+        ),
+    )
+    source_outer_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index of the original top-level source request within "
+            "source_trace_id. Set by Weka trace loaders for turns that map to a "
+            "raw top-level request."
+        ),
+    )
+    source_inner_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index within the nested source request list identified "
+            "by source_outer_idx. Set by Weka trace loaders for subagent child "
+            "requests."
+        ),
+    )
+    source_kind: str | None = Field(
+        default=None,
+        description=(
+            "Loader-specific source classification for the reconstructed turn "
+            "(for example weka_main or weka_flat)."
+        ),
+    )
+    replay_predecessors: list["ReplayTurnReference"] = Field(
+        default_factory=list,
+        description=(
+            "Cross-stream requests that reached a recorded terminal outcome before "
+            "this request began and must complete before agentic replay may issue it."
+        ),
     )
     branch_ids: list[str] = Field(
         default_factory=list,
@@ -172,6 +241,40 @@ class TurnMetadata(AIPerfBaseModel):
         "``ConversationMetadata`` can reach prereqs without holding the full "
         "Turn list.",
     )
+    raw_messages_count: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Number of OpenAI-compatible raw messages on the source Turn. "
+            "None means Turn.raw_messages is None; zero means an explicit empty "
+            "messages delta."
+        ),
+    )
+    theoretical_prefix_cache_hit_blocks: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Number of leading hash-id blocks that would be prefix-cache hits "
+            "for this turn under an infinite per-session cache. None when the "
+            "dataset loader did not provide hash-block metadata."
+        ),
+    )
+    theoretical_prefix_cache_total_blocks: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Number of hash-id blocks considered for theoretical prefix-cache "
+            "hit accounting. Pairs with theoretical_prefix_cache_hit_blocks."
+        ),
+    )
+    input_kind: TurnInputKind | None = Field(
+        default=None,
+        description=(
+            "Classification of what produced this turn's new input: genuine "
+            "user/agent text input vs tool-result continuation. None when the "
+            "dataset loader did not provide the signal."
+        ),
+    )
 
 
 class Turn(AIPerfBaseModel):
@@ -190,6 +293,56 @@ class Turn(AIPerfBaseModel):
     delay: int | float | None = Field(
         default=None,
         description="The delay of the turn in the conversation (in milliseconds).",
+    )
+    api_time_ms: int | float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Recorded server processing duration of this turn in milliseconds "
+            "(capture per-request api_time). Pairs with timestamp to give the "
+            "recorded interval used by happens-before completion gating. A "
+            "duration (not warped). None for loaders without per-request timing."
+        ),
+    )
+    source_trace_id: str | None = Field(
+        default=None,
+        description=(
+            "Original trace/conversation id that produced this reconstructed turn. "
+            "Set by trace loaders when replay conversations are split or reshaped."
+        ),
+    )
+    source_outer_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index of the original top-level source request within "
+            "source_trace_id. Set by Weka trace loaders for turns that map to a "
+            "raw top-level request."
+        ),
+    )
+    source_inner_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index within the nested source request list identified "
+            "by source_outer_idx. Set by Weka trace loaders for subagent child "
+            "requests."
+        ),
+    )
+    source_kind: str | None = Field(
+        default=None,
+        description=(
+            "Loader-specific source classification for the reconstructed turn "
+            "(for example weka_main or weka_flat)."
+        ),
+    )
+    replay_predecessors: list["ReplayTurnReference"] = Field(
+        default_factory=list,
+        exclude=True,
+        description=(
+            "Explicit cross-stream completion frontier inferred from recorded "
+            "request intervals by trace-aware loaders."
+        ),
     )
     max_tokens: int | None = Field(
         default=None,
@@ -279,14 +432,67 @@ class Turn(AIPerfBaseModel):
         description="Duration of the audio content in seconds. Used by ASR-specific "
         "metrics like RTFx. Set by ASR dataset loaders.",
     )
+    reset_context: bool = Field(
+        default=False,
+        description=(
+            "When True, the endpoint formatter discards messages accumulated "
+            "from prior turns in this conversation before applying this turn's "
+            "raw_messages. Used by delta-encoded multi-turn conversations to "
+            "express a non-monotonic context change (e.g. weka's mid-segment "
+            "LCP cut, or any source that needs to rewrite an earlier prefix). "
+            "Has no effect when raw_messages is None or when the surrounding "
+            "Conversation.context_mode is a MESSAGE_ARRAY mode (each turn "
+            "already carries a self-contained array)."
+        ),
+    )
+    theoretical_prefix_cache_hit_blocks: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Number of leading hash-id blocks that would hit an infinite "
+            "per-session prefix cache for this turn. Set by trace loaders that "
+            "already walk hash_ids during reconstruction."
+        ),
+    )
+    theoretical_prefix_cache_total_blocks: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Number of hash-id blocks considered for theoretical prefix-cache "
+            "hit accounting for this turn."
+        ),
+    )
+    input_kind: TurnInputKind | None = Field(
+        default=None,
+        description=(
+            "Classification of what produced this turn's new input: genuine "
+            "user/agent text input vs tool-result continuation. Set by trace "
+            "loaders whose source records the signal (weka input_types/stop); "
+            "None otherwise."
+        ),
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
         return TurnMetadata(
             timestamp_ms=self.timestamp,
             delay_ms=self.delay,
+            api_time_ms=self.api_time_ms,
+            source_trace_id=self.source_trace_id,
+            source_outer_idx=self.source_outer_idx,
+            source_inner_idx=self.source_inner_idx,
+            source_kind=self.source_kind,
+            replay_predecessors=list(self.replay_predecessors),
             branch_ids=list(self.branch_ids),
             prerequisites=list(self.prerequisites),
+            raw_messages_count=None
+            if self.raw_messages is None
+            else len(self.raw_messages),
+            theoretical_prefix_cache_hit_blocks=self.theoretical_prefix_cache_hit_blocks,
+            theoretical_prefix_cache_total_blocks=(
+                self.theoretical_prefix_cache_total_blocks
+            ),
+            input_kind=self.input_kind,
         )
 
     def copy_with_stripped_media(self) -> "Turn":
@@ -345,6 +551,11 @@ class Turn(AIPerfBaseModel):
             branch_ids=list(self.branch_ids),
             audio_duration_seconds=self.audio_duration_seconds,
             reset_context=self.reset_context,
+            theoretical_prefix_cache_hit_blocks=self.theoretical_prefix_cache_hit_blocks,
+            theoretical_prefix_cache_total_blocks=(
+                self.theoretical_prefix_cache_total_blocks
+            ),
+            input_kind=self.input_kind,
         )
 
 
@@ -359,6 +570,22 @@ class ConversationMetadata(AIPerfBaseModel):
         default_factory=list,
         description="The metadata of the turns in the conversation.",
     )
+    system_message: str | None = Field(
+        default=None,
+        description=(
+            "Optional shared system message prepended to the first request. "
+            "Timing strategies use this to decide whether an otherwise empty "
+            "per-turn raw-message delta can still start a valid request."
+        ),
+    )
+    user_context_message: str | None = Field(
+        default=None,
+        description=(
+            "Optional per-conversation user context prepended to the first request. "
+            "Timing strategies use this to decide whether an otherwise empty "
+            "per-turn raw-message delta can still start a valid request."
+        ),
+    )
     branches: list[ConversationBranchInfo] = Field(
         default_factory=list,
         description="Branch descriptors (DAG projection); empty on non-DAG datasets.",
@@ -371,9 +598,20 @@ class ConversationMetadata(AIPerfBaseModel):
         default=0,
         description="DAG nesting level (0 = root). Mirrors Conversation.agent_depth.",
     )
+    subagent_type: SubagentType | None = Field(
+        default=None,
+        description="Optional sub-agent classification (EXPLORE/GENERAL/PLAN) for metrics/routing.",
+    )
     parent_conversation_id: str | None = Field(
         default=None,
         description="DAG child's parent conversation_id; None for roots.",
+    )
+    replay_scope_id: str | None = Field(
+        default=None,
+        description=(
+            "Logical agent/subagent scope whose request intervals participate in "
+            "one replay dependency graph. Independent scopes are never joined."
+        ),
     )
     accuracy_ground_truth: str | None = Field(
         default=None,
@@ -508,41 +746,56 @@ class Conversation(AIPerfBaseModel):
         default=True,
         description="True for sampleable roots; False for fork/spawn children.",
     )
+    subagent_type: SubagentType | None = Field(
+        default=None,
+        description="Optional sub-agent classification (EXPLORE/GENERAL/PLAN) for metrics/routing.",
+    )
     parent_conversation_id: str | None = Field(
         default=None,
         description="DAG child's parent conversation_id; None for roots.",
+    )
+    replay_scope_id: str | None = Field(
+        default=None,
+        exclude=True,
+        description=(
+            "Logical agent/subagent scope used to infer cross-stream replay barriers."
+        ),
     )
 
     def metadata(self) -> ConversationMetadata:
         """Project this Conversation into its DatasetMetadata form.
 
         Used by loaders to invoke ``validate_for_orchestrator_v1`` without
-        round-tripping through DatasetManager.
+        round-tripping through DatasetManager. Each turn's metadata is built
+        via ``Turn.metadata()`` so the additive per-turn fields
+        (raw_messages_count, theoretical_prefix_cache_*, input_kind) flow
+        through; ``has_forks`` is computed here from the branch topology.
         """
         modes = {b.branch_id: b.mode for b in self.branches}
-        turn_metas = [
-            TurnMetadata(
-                timestamp_ms=t.timestamp,
-                delay_ms=t.delay,
-                branch_ids=list(t.branch_ids),
-                has_forks=any(
-                    modes.get(bid) == ConversationBranchMode.FORK
-                    for bid in t.branch_ids
-                ),
-                prerequisites=list(t.prerequisites),
+        turn_metas: list[TurnMetadata] = []
+        for t in self.turns:
+            has_forks = any(
+                modes.get(bid) == ConversationBranchMode.FORK for bid in t.branch_ids
             )
-            for t in self.turns
-        ]
+            turn_metas.append(t.metadata().model_copy(update={"has_forks": has_forks}))
         return ConversationMetadata(
             conversation_id=self.session_id,
             turns=turn_metas,
+            system_message=self.system_message,
+            user_context_message=self.user_context_message,
             branches=list(self.branches),
             is_root=self.is_root,
             agent_depth=self.agent_depth,
+            subagent_type=self.subagent_type,
             parent_conversation_id=self.parent_conversation_id,
+            replay_scope_id=self.replay_scope_id,
             accuracy_ground_truth=self.accuracy_ground_truth,
             accuracy_task=self.accuracy_task,
         )
+
+    def to_metadata(self) -> ConversationMetadata:
+        """Alias for :meth:`metadata` (agentx engine callers use ``to_metadata``)."""
+        return self.metadata()
 
 
 class SessionPayloads(AIPerfBaseModel):

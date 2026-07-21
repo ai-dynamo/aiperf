@@ -106,6 +106,14 @@
         "$ref": "#/$defs/TransportPlugin"
       }
     },
+    "session_routing": {
+      "title": "Session Routing Plugins",
+      "type": "object",
+      "description": "Session-routing transforms stamp per-session identity onto outbound\nrequests (headers or body metadata) so an external router in front of\nmultiple replicas can pin every turn of a session to one worker.\nSelected via --session-routing; parameterized via repeatable\n--session-routing-opt key=value validated against the plugin's\nOptions model. Body-mutating plugins (mutates_body=True) are rejected\nagainst the verbatim PAYLOAD_BYTES mmap fast path.",
+      "additionalProperties": {
+        "$ref": "#/$defs/SessionRoutingPlugin"
+      }
+    },
     "record_processor": {
       "title": "Record Processor Plugins",
       "type": "object",
@@ -657,6 +665,12 @@
               "description": "Default token block size for hash-based prompt caching. Used when the user does not explicitly set --isl-block-size. Must match the block size used to generate the trace's hash_ids (e.g. 16 for Bailian, 512 for Mooncake).",
               "title": "Default Block Size"
             },
+            "default_prompt_corpus": {
+              "default": "sonnet",
+              "description": "Default synthetic prompt corpus for this loader. Applied when the user does not explicitly pass --prompt-corpus. Loaders for coding agent traces (e.g. weka_trace) override to 'coding' so reconstructed prompts resemble real tool-use content.",
+              "title": "Default Prompt Corpus",
+              "type": "string"
+            },
             "category": {
               "anyOf": [
                 {
@@ -741,6 +755,32 @@
               "default": null,
               "description": "HuggingFace dataset subset/config name. Only needed for datasets with multiple configs.",
               "title": "Hf Subset"
+            },
+            "is_trace": {
+              "default": false,
+              "description": "Whether this loader handles trace-format datasets. Trace public datasets reuse hash_ids-based prompt generation, require a tokenizer, and prefer sequential sampling. Mirrors the field of the same name on CustomDatasetLoaderMetadata so trace loaders can live in either pipeline.",
+              "title": "Is Trace",
+              "type": "boolean"
+            },
+            "default_block_size": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Default token block size for hash-based prompt caching. Used when the user does not explicitly set --isl-block-size. Must match the block size used to generate the trace's hash_ids.",
+              "title": "Default Block Size"
+            },
+            "default_prompt_corpus": {
+              "default": "sonnet",
+              "description": "Default synthetic prompt corpus for this loader. Applied when the user does not explicitly pass --prompt-corpus. Loaders for coding agent traces override to 'coding'.",
+              "title": "Default Prompt Corpus",
+              "type": "string"
             },
             "prompt_column": {
               "anyOf": [
@@ -1057,6 +1097,47 @@
       ],
       "title": "Transport Plugin",
       "description": "Transports handle the network layer for sending requests to inference servers.\nManages connection pooling, streaming, error handling, and TCP configuration.\nOne-to-one mapping based on transport_type configuration."
+    },
+    "SessionRoutingPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Session Routing Plugin",
+      "description": "Session-routing transforms stamp per-session identity onto outbound\nrequests (headers or body metadata) so an external router in front of\nmultiple replicas can pin every turn of a session to one worker.\nSelected via --session-routing; parameterized via repeatable\n--session-routing-opt key=value validated against the plugin's\nOptions model. Body-mutating plugins (mutates_body=True) are rejected\nagainst the verbatim PAYLOAD_BYTES mmap fast path."
     },
     "RecordProcessorPlugin": {
       "type": "object",

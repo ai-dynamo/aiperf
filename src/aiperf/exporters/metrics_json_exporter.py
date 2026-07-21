@@ -85,6 +85,37 @@ class MetricsJsonExporter(MetricsBaseExporter):
             warmup_metrics=prepared_warmup_metrics or None,
         )
 
+        from aiperf.dataset.provenance import public_dataset_provenance
+
+        run_metadata: dict[str, object] = {}
+        dataset = public_dataset_provenance(self._cfg)
+        if dataset is not None:
+            run_metadata["dataset"] = dataset
+
+        context_overflow_count = int(
+            getattr(self._results, "context_overflow_count", 0) or 0
+        )
+        if context_overflow_count:
+            existing_context_overflow = prepared_json_metrics.get(
+                "context_overflow_count"
+            )
+            if existing_context_overflow is None:
+                prepared_json_metrics["context_overflow_count"] = JsonMetricResult(
+                    unit="requests",
+                    avg=float(context_overflow_count),
+                )
+            else:
+                prepared_json_metrics["context_overflow_count"] = (
+                    existing_context_overflow.model_copy(
+                        update={
+                            "avg": float(
+                                (existing_context_overflow.avg or 0)
+                                + context_overflow_count
+                            )
+                        }
+                    )
+                )
+
         # Add all prepared metrics dynamically
         for metric_tag, json_result in prepared_json_metrics.items():
             setattr(export_data, metric_tag, json_result)
@@ -96,6 +127,56 @@ class MetricsJsonExporter(MetricsBaseExporter):
         branch_stats = getattr(self._results, "branch_stats", None)
         if branch_stats is not None:
             export_data.branch_stats = branch_stats
+
+        # Stamp scenario submission metadata for single-run exports. Mirrors the
+        # carrier-key contract used by AggregateConfidenceJsonExporter: the
+        # validator outcome lives on ``run.resolved.scenario_outcome`` (set by
+        # ScenarioResolver) and runtime totals are summed from the prepared
+        # metric results. No-ops (metadata omitted) when no --scenario was set
+        # or the outcome is absent.
+        scenario_name = getattr(self._cfg, "scenario", None)
+        resolved = self._run.resolved if self._run is not None else None
+        outcome = getattr(resolved, "scenario_outcome", None)
+        if scenario_name is not None and outcome is not None:
+            from aiperf.exporters.aggregate.aggregate_base_exporter import (
+                _build_run_metadata_dict,
+                compute_submission_outcome,
+            )
+
+            validator_submission_valid = outcome.submission_valid
+            validator_reasons = list(outcome.submission_invalid_reasons)
+
+            def _metric_avg(tag: str) -> int:
+                m = prepared_json_metrics.get(tag)
+                if m is None or m.avg is None:
+                    return 0
+                return int(m.avg)
+
+            context_overflow_count = _metric_avg("context_overflow_count")
+            total_responses = (
+                _metric_avg("request_count")
+                + _metric_avg("error_request_count")
+                + context_overflow_count
+            )
+
+            submission_valid, submission_invalid_reasons = compute_submission_outcome(
+                scenario_name=scenario_name,
+                validator_submission_valid=validator_submission_valid,
+                validator_reasons=validator_reasons,
+                total_responses=total_responses,
+                context_overflow_count=context_overflow_count,
+                was_cancelled=bool(self._results.was_cancelled),
+            )
+            run_metadata.update(
+                _build_run_metadata_dict(
+                    scenario_name=scenario_name,
+                    submission_valid=submission_valid,
+                    submission_invalid_reasons=submission_invalid_reasons,
+                )
+            )
+
+        if run_metadata:
+            export_data.metadata = run_metadata
 
         self.trace_or_debug(
             lambda: f"Exporting data to JSON file: {export_data}",

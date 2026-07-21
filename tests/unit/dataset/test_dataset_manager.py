@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
+from aiperf.common.enums import CacheBustTarget, MemoryMapFormat
 from aiperf.common.exceptions import ServiceError
 from aiperf.common.messages import (
     ConversationRequestMessage,
@@ -16,6 +17,7 @@ from aiperf.common.messages import (
 from aiperf.common.messages.command_messages import ProfileConfigureCommand
 from aiperf.common.models import Conversation, Image, Text, Turn
 from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.dataset import mmap_cache
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.plugin.enums import (
     CustomDatasetType,
@@ -427,12 +429,18 @@ class TestDatasetManagerFallbackHandlers:
 
     @pytest.fixture
     async def dataset_manager_with_entries(self, mock_tokenizer):
-        """Create a configured dataset manager with multiple entries."""
+        """Create a configured dataset manager with multiple entries.
+
+        Uses multi-turn conversations so the dataset uses CONVERSATION mmap
+        format (multi-turn without responses cannot be preformatted into the
+        PAYLOAD_BYTES fast path, which the get_conversation fallback can't serve).
+        """
         cli_config = CLIConfig(
             model_names=["test-model"],
             num_dataset_entries=3,
+            conversation_turn_mean=2,
+            conversation_turn_stddev=0,
         )
-        CLIConfig()
         dataset_manager = DatasetManager(run=make_run_from_cli(cli_config))
 
         await dataset_manager.initialize()
@@ -952,3 +960,112 @@ class TestAccuracyModeSamplingGuards:
         # accuracy datasets is SEQUENTIAL (matching the v1 mutation behavior).
         dataset = manager.run.cfg.get_default_dataset()
         assert dataset.sampling == DatasetSamplingStrategy.SEQUENTIAL
+
+
+# ============================================================================
+# PAYLOAD_BYTES body-mutating feature gates (session-routing + cache-bust)
+# ============================================================================
+
+
+def _raw_payload_conversations() -> list[Conversation]:
+    """Conversations whose turns carry raw_payload (select PAYLOAD_BYTES)."""
+    return [
+        Conversation(session_id="s1", turns=[Turn(role="user", raw_payload={"a": 1})])
+    ]
+
+
+def _payload_bytes_cache_hit(tmp_path: Path) -> mmap_cache.CacheHit:
+    """Minimal CacheHit whose manifest reports PAYLOAD_BYTES.
+
+    The cache-hit gate is the first statement of ``_configure_from_cache_hit``
+    and raises before any file restore, so the on-disk paths need not exist.
+    """
+    manifest = mmap_cache.CacheManifest(
+        cache_key="test-key",
+        created_at=0.0,
+        num_conversations=1,
+        total_size_bytes=1,
+        mmap_format=str(MemoryMapFormat.PAYLOAD_BYTES),
+        dataset_metadata_json="{}",
+    )
+    return mmap_cache.CacheHit(
+        entry_dir=tmp_path,
+        data_path=tmp_path / "dataset.dat",
+        index_path=tmp_path / "index.dat",
+        manifest=manifest,
+    )
+
+
+async def _make_dataset_manager(cli_config: CLIConfig) -> DatasetManager:
+    """Build and initialize a DatasetManager for the given CLIConfig."""
+    CLIConfig()
+    dm = DatasetManager(run=make_run_from_cli(cli_config))
+    await dm.initialize()
+    dm.publish = AsyncMock()
+    return dm
+
+
+class TestPayloadBytesBodyMutatingGates:
+    """PAYLOAD_BYTES is refused whenever a body-mutating feature is active.
+
+    Covers both gates that key off ``_body_mutating_feature``: build-path
+    format selection (``_select_mmap_format``) and cache-hit adoption
+    (``_configure_from_cache_hit`` /
+    ``_reject_body_mutators_for_payload_bytes``).
+    """
+
+    @pytest.mark.asyncio
+    async def test_select_format_rejects_payload_bytes_with_mutating_routing(
+        self, initialized_dataset_manager
+    ) -> None:
+        dm = initialized_dataset_manager
+        dm.run.cfg.endpoint.session_routing = "dynamo_nvext"
+
+        with pytest.raises(ValueError, match="dynamo_nvext"):
+            dm._select_mmap_format(_raw_payload_conversations())
+
+    @pytest.mark.asyncio
+    async def test_select_format_allows_payload_bytes_with_header_routing(
+        self, initialized_dataset_manager
+    ) -> None:
+        dm = initialized_dataset_manager
+        dm.run.cfg.endpoint.session_routing = "dynamo_headers"
+
+        assert (
+            dm._select_mmap_format(_raw_payload_conversations())
+            == MemoryMapFormat.PAYLOAD_BYTES
+        )
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_rejects_payload_bytes_with_mutating_routing(
+        self, initialized_dataset_manager, tmp_path
+    ) -> None:
+        dm = initialized_dataset_manager
+        dm.run.cfg.endpoint.session_routing = "dynamo_nvext"
+
+        with pytest.raises(ValueError, match="dynamo_nvext"):
+            await dm._configure_from_cache_hit(_payload_bytes_cache_hit(tmp_path))
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_rejects_payload_bytes_with_cache_bust(
+        self, mock_tokenizer, tmp_path
+    ) -> None:
+        dm = await _make_dataset_manager(
+            CLIConfig(
+                model_names=["test-model"], cache_bust=CacheBustTarget.SYSTEM_PREFIX
+            )
+        )
+
+        with pytest.raises(ValueError, match="cache-bust"):
+            await dm._configure_from_cache_hit(_payload_bytes_cache_hit(tmp_path))
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_allows_payload_bytes_when_clean(
+        self, initialized_dataset_manager
+    ) -> None:
+        dm = initialized_dataset_manager
+        # No routing, no cache-bust: the pre-check must pass (no raise).
+        assert dm.run.cfg.endpoint.session_routing is None
+        assert dm.run.cfg.get_cache_bust_target() == CacheBustTarget.NONE
+
+        dm._reject_body_mutators_for_payload_bytes(MemoryMapFormat.PAYLOAD_BYTES)

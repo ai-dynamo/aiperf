@@ -164,6 +164,14 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = False
         manager._error_tracker = ErrorTracker()
         manager._complete_credit_phases = set()
+        manager._warned_missing_cache_reporting = False
+        manager._failed_request_threshold = None
+        manager._failed_request_abort_triggered = False
+        manager._skipped_context_overflow_counts_by_phase = {
+            CreditPhase.WARMUP: 0,
+            CreditPhase.PROFILING: 0,
+        }
+        manager._skipped_context_overflow_count = 0
         return manager
 
     def _records_message(self) -> RecordsMessage:
@@ -302,6 +310,14 @@ def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager.trace = MagicMock()
     manager.is_enabled_for = MagicMock(return_value=False)
     manager._handle_all_records_received = AsyncMock()
+    manager._warned_missing_cache_reporting = False
+    manager._failed_request_threshold = None
+    manager._failed_request_abort_triggered = False
+    manager._skipped_context_overflow_counts_by_phase = {
+        CreditPhase.WARMUP: 0,
+        CreditPhase.PROFILING: 0,
+    }
+    manager._skipped_context_overflow_count = 0
     return manager
 
 
@@ -625,6 +641,7 @@ class TestRecordsManagerAnalyzerMetrics:
         manager.service_id = "records-manager-test"
         manager._latest_branch_stats = None
         manager.publish = AsyncMock()
+        manager._skipped_context_overflow_count = 0
 
         manager.run = MagicMock()
         manager.run.cfg.gpu_telemetry_disabled = True
@@ -796,6 +813,7 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         manager._dispatch_record = AsyncMock(
             side_effect=RuntimeError("REACHED_PROCESSING")
         )
+        manager._warned_missing_cache_reporting = False
         message = _metric_records_message()
 
         task = asyncio.create_task(manager._on_records(message))

@@ -32,9 +32,11 @@ from aiperf.common.enums import (
 from aiperf.config.base import BaseConfig
 from aiperf.config.dataset.content import (
     AudioConfig,
+    CacheBustConfig,
     ImageConfig,
     PrefixPromptConfig,
     PromptConfig,
+    PromptCorpus,
     RankingsConfig,
 )
 from aiperf.config.dataset.trace import (
@@ -54,6 +56,7 @@ _logger = AIPerfLogger(__name__)
 __all__ = [
     "VIDEO_AUDIO_CODEC_MAP",
     "AudioConfig",
+    "CacheBustConfig",
     "DatasetConfig",
     "FileDataset",
     "ImageConfig",
@@ -486,6 +489,134 @@ class FileDataset(BaseConfig):
         ),
     ]
 
+    block_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description="Hash-id block granularity for trace replay (--isl-block-size). "
+            "hash-id trace loaders (mooncake_trace, bailian_trace, burst_gpt_trace, "
+            "sagemaker_data_capture) decode each hash_id into a cached block of this "
+            "many tokens; total ISL = (num_hash_ids - 1) * block_size + final_block_size. "
+            "When unset, the loader's plugin-metadata default applies (e.g. 512 for "
+            "mooncake_trace, 16 for bailian_trace). Not used by weka, which carries its "
+            "own inline per-block sizes.",
+        ),
+    ]
+
+    trace_idle_gap_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description="Hard ceiling (seconds) for idle gaps within each individual trace. "
+            "For Weka trace replay, AIPerf looks at all parent and subagent request "
+            "submission timestamps within one root trace, compresses long gaps between "
+            "consecutive request submissions, and derives turn delays from the "
+            "compressed per-trace timeline. Original request api_time values are not "
+            "used to decide these idle gaps. When set for Weka, this takes precedence over "
+            "`--inter-turn-delay-cap-seconds` so individual parent/subagent-line "
+            "delays are not separately capped. Defaults to None (no per-trace "
+            "idle-gap compression).",
+        ),
+    ]
+
+    ignore_trace_delays: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Strip per-turn timestamps and inter-turn delays from trace datasets at load time. "
+            "With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / "
+            "request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded "
+            "user think-time gaps. No effect under fixed-schedule (timestamps drive that mode before "
+            "they could be ignored -- combine with --no-fixed-schedule if you want both behaviors). "
+            "Mutually exclusive with use_think_time_only.",
+        ),
+    ]
+
+    use_think_time_only: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` "
+            "(client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. "
+            "Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of "
+            "each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to "
+            "the full delta for turns whose recorded `think_time` is null. Mutually exclusive with "
+            "ignore_trace_delays. No effect on non-weka trace loaders.",
+        ),
+    ]
+
+    use_end_to_start_delays: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="For weka_trace inputs, emit Turn.delay as the end-to-start "
+            "idle gap `t_curr - (t_prev + api_time_prev)` instead of the start-to-start "
+            "delta `t_curr - t_prev`. The replay dispatches each turn after the previous "
+            "turn COMPLETES, so adding the start-to-start gap (which already contains the "
+            "previous request's server time) double-counts `api_time` and makes each "
+            "stream's clock drift later turn-by-turn, fabricating cross-stream concurrency. "
+            "End-to-start is the faithful inter-turn idle and reproduces the recording's "
+            "concurrency exactly at replay-speed parity. Computed from `t`/`api_time` "
+            "(unlike `use_think_time_only`, which trusts the recorded `think_time` field "
+            "that can disagree with the timeline). Floors at 0 for recorded overlap. No "
+            "effect on non-weka loaders.",
+        ),
+    ]
+
+    max_context_length: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description="Maximum input context length (tokens) per conversation. "
+            "DatasetManager tokenizes each conversation's combined content and drops "
+            "those exceeding the limit before mmap. No-op without a tokenizer.",
+        ),
+    ]
+
+    cache_bust: Annotated[
+        CacheBustConfig,
+        Field(
+            default_factory=CacheBustConfig,
+            description="Per-conversation cache-bust marker injection for trace "
+            "replay (mirror of the synthetic dataset's prompts.cache_bust). The "
+            "engine reads the active dataset's target via "
+            "``BenchmarkConfig.get_cache_bust_target()``; 'none' (default) "
+            "disables it.",
+        ),
+    ]
+
+    prompt_corpus: Annotated[
+        PromptCorpus | None,
+        Field(
+            default=None,
+            description="Source corpus for any synthetic text this trace loader "
+            "needs to generate (e.g. weka cache-bust markers / wrap-fill). When "
+            "None the loader's registered ``default_prompt_corpus`` applies.",
+        ),
+    ]
+
+    _use_think_time_only_explicitly_set: bool = False
+    _use_end_to_start_delays_explicitly_set: bool = False
+
+    @model_validator(mode="after")
+    def _validate_trace_delay_exclusivity(self) -> FileDataset:
+        """Reject the mutually-exclusive trace-delay flags and snapshot intent."""
+        self._use_think_time_only_explicitly_set = (
+            "use_think_time_only" in self.model_fields_set
+        )
+        self._use_end_to_start_delays_explicitly_set = (
+            "use_end_to_start_delays" in self.model_fields_set
+        )
+        if self.ignore_trace_delays and self.use_think_time_only:
+            raise ValueError(
+                "ignore_trace_delays and use_think_time_only "
+                "(--ignore-trace-delays and --use-think-time-only) cannot be used together"
+            )
+        return self
+
     @model_validator(mode="after")
     def _validate_source_xor(self) -> FileDataset:
         path_set = self.path is not None
@@ -624,6 +755,216 @@ class PublicDataset(BaseConfig):
             "Supported keys and values depend on the selected dataset.",
         ),
     ]
+
+    hf_weka_dataset: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="HuggingFace dataset repo for the generic Weka loader (e.g. "
+            "`semianalysisai/cc-traces-weka-061526`). Only applies with "
+            "`dataset: weka_hf`; setting it with any other public dataset is an error. "
+            "Passing `--hf-weka-dataset` on the CLI auto-selects `--public-dataset weka_hf`, "
+            "so the repo flag works on its own. Pinned Weka public dataset aliases keep "
+            "their registry-defined repo names.",
+        ),
+    ]
+
+    inter_turn_delay_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description="Clamp per-turn replay delays to at most this many "
+            "seconds for HF-backed Weka trace replay (mirror of "
+            "``FileDataset.inter_turn_delay_cap_seconds``). ``None`` disables "
+            "the cap.",
+        ),
+    ]
+
+    trace_idle_gap_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description="Hard ceiling (seconds) for idle gaps within each "
+            "individual trace for HF-backed Weka replay (mirror of "
+            "``FileDataset.trace_idle_gap_cap_seconds``). When set, takes "
+            "precedence over ``inter_turn_delay_cap_seconds``. Defaults to "
+            "None (no per-trace idle-gap compression).",
+        ),
+    ]
+
+    ignore_trace_delays: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Strip per-turn timestamps and inter-turn delays from "
+            "HF-backed Weka trace replay at load time (mirror of "
+            "``FileDataset.ignore_trace_delays``). Mutually exclusive with "
+            "use_think_time_only.",
+        ),
+    ]
+
+    use_think_time_only: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="For HF-backed Weka replay, emit Turn.delay using only "
+            "the recorded per-request ``think_time`` instead of the full "
+            "inter-request delta (mirror of ``FileDataset.use_think_time_only``). "
+            "Mutually exclusive with ignore_trace_delays.",
+        ),
+    ]
+
+    use_end_to_start_delays: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="For HF-backed Weka replay, emit Turn.delay as the "
+            "end-to-start idle gap `t_curr - (t_prev + api_time_prev)` instead of "
+            "the start-to-start delta (mirror of "
+            "``FileDataset.use_end_to_start_delays``). Prevents per-stream clock "
+            "drift that fabricates cross-stream concurrency on completion-gated "
+            "replay. No effect on non-weka loaders.",
+        ),
+    ]
+
+    max_context_length: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description="Maximum input context length (tokens) per conversation "
+            "for HF-backed Weka replay; drops over-length conversations at load "
+            "(mirror of ``FileDataset.max_context_length``).",
+        ),
+    ]
+
+    cache_bust: Annotated[
+        CacheBustConfig,
+        Field(
+            default_factory=CacheBustConfig,
+            description="Per-conversation cache-bust marker injection for "
+            "HF-backed Weka trace replay (mirror of "
+            "``FileDataset.cache_bust``). 'none' (default) disables it.",
+        ),
+    ]
+
+    prompt_corpus: Annotated[
+        PromptCorpus | None,
+        Field(
+            default=None,
+            description="Source corpus for any synthetic text the HF-backed "
+            "Weka loader needs to generate (mirror of "
+            "``FileDataset.prompt_corpus``). When None the loader's registered "
+            "``default_prompt_corpus`` applies.",
+        ),
+    ]
+
+    synthesis: Annotated[
+        SynthesisConfig | None,
+        Field(
+            default=None,
+            description="Trace synthesis/transformation configuration for "
+            "HF-backed Weka trace replay (mirror of ``FileDataset.synthesis``). "
+            "``--max-isl``/``--max-osl`` cap the per-conversation input/output "
+            "lengths of the replayed HF Weka traces; without this they applied "
+            "only to file-based traces. ``None`` disables synthesis.",
+        ),
+    ]
+
+    osl: Annotated[
+        SamplingDistribution | None,
+        Field(
+            default=None,
+            description="Output sequence length to apply when records do not "
+            "specify one (mirror of ``FileDataset.osl``). Can be a fixed integer "
+            "or {mean, stddev} distribution. Per-record output lengths always "
+            "take precedence.",
+        ),
+    ]
+
+    entries_explicit: Annotated[
+        bool,
+        Field(
+            default=False,
+            exclude=True,
+            alias="_entries_explicit",
+            description=(
+                "Internal provenance flag: True when the user explicitly chose the "
+                "entry count, gating the num_dataset_entries key in public-dataset "
+                "provenance. The CLI converter sets the ``_entries_explicit`` "
+                "sentinel to the true intent whenever it writes ``entries`` (which "
+                "otherwise absorbs the --num-conversations / --request-count "
+                "fallback and cannot signal intent). A YAML/programmatic config "
+                "that sets ``entries`` directly (no sentinel) is treated as "
+                "explicit by ``_resolve_entries_explicit``. Excluded from "
+                "serialization."
+            ),
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def _resolve_entries_explicit(self) -> PublicDataset:
+        """Treat a direct (sentinel-less) ``entries`` set as explicit intent.
+
+        The CLI converter always pins ``_entries_explicit`` when it writes
+        ``entries``, so ``entries_explicit in model_fields_set`` is True for any
+        CLI-derived config and the sentinel value stands. A YAML/programmatic
+        config sets ``entries`` with no sentinel; there, a present ``entries``
+        means the author named the count on purpose (cquil's model_fields_set
+        semantics), so promote it to explicit.
+        """
+        if (
+            "entries_explicit" not in self.model_fields_set
+            and "entries" in self.model_fields_set
+        ):
+            self.entries_explicit = True
+        return self
+
+    @model_validator(mode="after")
+    def _validate_trace_delay_exclusivity(self) -> PublicDataset:
+        """Reject the mutually-exclusive trace-delay flags and snapshot intent."""
+        self._use_think_time_only_explicitly_set = (
+            "use_think_time_only" in self.model_fields_set
+        )
+        self._use_end_to_start_delays_explicitly_set = (
+            "use_end_to_start_delays" in self.model_fields_set
+        )
+        if self.ignore_trace_delays and self.use_think_time_only:
+            raise ValueError(
+                "ignore_trace_delays and use_think_time_only "
+                "(--ignore-trace-delays and --use-think-time-only) cannot be used together"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_weka_hf(self) -> PublicDataset:
+        """Fail fast on weka_hf <-> hf_weka_dataset inconsistency.
+
+        The CLI path is safe (the converter auto-selects weka_hf only when
+        --hf-weka-dataset is set), but a config file declaring
+        ``dataset: weka_hf`` with no ``hf_weka_dataset`` would otherwise reach
+        the generic Weka loader's required repo argument as None and surface an
+        opaque TypeError. Mirror v1's composer-level guard at config-load time.
+        Pinned Weka aliases (semianalysis_*) are distinct enum values and keep
+        their registry-defined repos, so they are untouched here.
+        """
+        is_weka_hf = self.dataset == PublicDatasetType.WEKA_HF
+        if self.hf_weka_dataset is not None and not is_weka_hf:
+            raise ValueError(
+                "hf_weka_dataset (--hf-weka-dataset) can only be used with "
+                "dataset weka_hf (--public-dataset weka_hf)"
+            )
+        if is_weka_hf:
+            repo = (self.hf_weka_dataset or "").strip()
+            if not repo:
+                raise ValueError(
+                    "dataset weka_hf (--public-dataset weka_hf) requires a "
+                    "non-empty hf_weka_dataset (--hf-weka-dataset) HuggingFace repo"
+                )
+            self.hf_weka_dataset = repo
+        return self
 
 
 # Union type for all dataset variants using discriminated union

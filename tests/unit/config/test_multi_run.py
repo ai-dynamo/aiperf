@@ -187,3 +187,40 @@ class TestConvergenceMinRunsBoundary:
             convergence=ConvergenceConfig(metric="ttft", min_runs=5),
         )
         assert cfg.convergence.min_runs == cfg.num_runs == 5
+
+
+class TestRepeatTrialFlagsRequireMultipleRuns:
+    """v1 parity: across-trial flags (--set-consistent-seed,
+    --profile-run-disable-warmup-after-first, --profile-run-cooldown-seconds)
+    have no meaning at a single profiling run and must fail loud, not silently
+    build a no-op single-run multi_run block. The port routed them but dropped
+    v1's num_profile_runs==1 guard.
+    """
+
+    @pytest.mark.parametrize(
+        "kwargs, flag_fragment",
+        [
+            ({"set_consistent_seed": True}, "--set-consistent-seed"),
+            (
+                {"profile_run_disable_warmup_after_first": True},
+                "--profile-run-disable-warmup-after-first",
+            ),
+            ({"profile_run_cooldown_seconds": 5.0}, "--profile-run-cooldown-seconds"),
+        ],
+    )
+    def test_flag_without_multiple_runs_raises(self, kwargs, flag_fragment):
+        from aiperf.config.flags._converter_optionals import build_multi_run
+        from aiperf.config.flags.cli_config import CLIConfig
+
+        with pytest.raises(ValueError, match=flag_fragment):
+            build_multi_run(CLIConfig(model_names=["m"], **kwargs))
+
+    def test_flag_with_multiple_runs_is_accepted(self):
+        from aiperf.config.flags._converter_optionals import build_multi_run
+        from aiperf.config.flags.cli_config import CLIConfig
+
+        mr = build_multi_run(
+            CLIConfig(model_names=["m"], num_profile_runs=5, set_consistent_seed=True)
+        )
+        assert mr["num_runs"] == 5
+        assert mr["set_consistent_seed"] is True

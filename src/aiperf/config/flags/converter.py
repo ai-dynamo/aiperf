@@ -559,6 +559,7 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
     artifacts["plot_required"] = plot_required
 
     _assemble_optional(nested, cli, recipe_output=recipe_output)
+    _apply_scenario_fields(nested, cli)
     _apply_recipe_sweep_parameters(nested, recipe_output, cli)
     _apply_recipe_scenarios(nested, recipe_output, cli)
     sweep_type = getattr(cli, "sweep_type", "grid")
@@ -567,6 +568,22 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
     _apply_parameter_sweep_meta_to_sweep(nested, cli)
 
     return _wrap_under_envelope(nested)
+
+
+def _apply_scenario_fields(nested: dict[str, Any], cli: CLIConfig) -> None:
+    """Write the scenario-lock fields onto the benchmark body.
+
+    ``scenario`` / ``unsafe_override`` are plain data on ``BenchmarkConfig``
+    (the lock is applied later by ``ScenarioResolver``). They are NOT envelope
+    keys, so ``_wrap_under_envelope`` moves them under ``benchmark:``. Only
+    written when the user explicitly set them, to keep ``model_fields_set``
+    clean for downstream "was this set?" checks.
+    """
+    set_fields = cli.model_fields_set
+    if "scenario" in set_fields:
+        nested["scenario"] = cli.scenario
+    if "unsafe_override" in set_fields:
+        nested["unsafe_override"] = cli.unsafe_override
 
 
 def _apply_parameter_sweep_meta_to_sweep(

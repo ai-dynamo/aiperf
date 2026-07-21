@@ -303,6 +303,17 @@ class StopConditionChecker:
         """
         return all(func() for func in self._can_send_dag_child_turn_funcs)
 
+    def can_send_child_turn(self) -> bool:
+        """Alias for :meth:`can_send_dag_child_turn`.
+
+        The agentx engine (``CreditIssuer``/``CreditCallbackHandler``) gates
+        reactive child dispatch via ``can_send_child_turn``; main's #891 DAG
+        path (``request_rate`` -> ``CreditIssuer._dispatch_dag_turn``) gates via
+        ``can_send_dag_child_turn``. Both resolve to the same root-target-aware
+        child gating so dag_jsonl and AGENTIC_REPLAY share one stop policy.
+        """
+        return self.can_send_dag_child_turn()
+
     def can_start_new_session(self) -> bool:
         """True if phase can start a NEW session (more restrictive).
 

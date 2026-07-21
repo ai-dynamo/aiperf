@@ -391,7 +391,7 @@ class TestStickySessionRace:
             )
         )
         w0 = r._router_client.send_to.call_args[0][0]
-        assert r._sticky_sessions[xcid] == w0
+        assert r._sticky_sessions[xcid].worker_id == w0
         r._cancellation_pending = True
         r._unregister_worker(w0)
         r._min_load = 10

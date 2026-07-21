@@ -53,6 +53,20 @@ class UserSession(AIPerfBaseModel):
         description="Resolved context mode for this session. "
         "Set at creation from conversation-level override, dataset default, or DELTAS_WITHOUT_RESPONSES.",
     )
+    parent_correlation_id: str | None = Field(
+        default=None,
+        description="Parent session's x_correlation_id when this is a DAG child "
+        "(set at ``create_and_store`` time for FORK/SPAWN children). ``None`` "
+        "for root sessions. Read by the worker's cache-bust path (FORK children "
+        "inherit the parent's already-busted shared turns and must not re-bust).",
+    )
+    branch_mode: ConversationBranchMode | None = Field(
+        default=None,
+        description="Relationship to the parent (FORK / SPAWN) when this is a DAG "
+        "child, else ``None``. FORK children inherit the parent's shared Turn "
+        "objects (and its cache-bust marker); SPAWN children start fresh and are "
+        "busted normally.",
+    )
     is_fork_parent: bool = Field(
         default=False,
         description="Whether this session declares any FORK-mode branch and "
@@ -83,8 +97,18 @@ class UserSession(AIPerfBaseModel):
     )
 
     def advance_turn(self, turn_index: int) -> Turn:
-        """
-        Advance the turn list to the next turn.
+        """Append the next turn onto ``turn_list`` and return it.
+
+        Mutates ``turn_list`` in place:
+        - Under ``MESSAGE_ARRAY_WITH_RESPONSES`` the list is replaced with
+          ``[turn]`` (each turn carries its own full history; prior turns are
+          dropped so the endpoint sends the turn's messages as-authored).
+        - Under every other mode the turn is appended. Callers that only need
+          per-turn overrides can read ``turn_list[-1]`` after this call.
+          When jumping ahead past untraversed turns (e.g. agentic_replay's
+          mid-trajectory resume at ``k_i > 0``), prior turns 0..turn_index-1
+          are seeded first so the endpoint accumulator reproduces the full
+          chat prefix from the trace's delta-encoded turns.
 
         Args:
             turn_index: The index of the turn to advance to.
@@ -103,6 +127,23 @@ class UserSession(AIPerfBaseModel):
         if self.context_mode == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES:
             self.turn_list = [turn]
         else:
+            # Delta-encoded modes accumulate. For ``DELTAS_WITH_RESPONSES``
+            # (e.g. weka agentic_replay), if a caller skips ahead past
+            # untraversed turns (agentic_replay warmup resumes at k_i > 0
+            # without going through turns 0..k_i-1), seed those first so
+            # the endpoint's build_messages reproduces the full chat prefix
+            # from the trace's pre-canned delta turns.
+            #
+            # ``DELTAS_WITHOUT_RESPONSES`` is left unchanged: that mode
+            # captures live responses via ``store_response`` and assumes
+            # linear traversal; pre-seeding from trace turns would inject
+            # placeholder responses that the live-capture flow never wrote.
+            if (
+                self.context_mode == ConversationContextMode.DELTAS_WITH_RESPONSES
+                and len(self.turn_list) < turn_index
+            ):
+                for missing_idx in range(len(self.turn_list), turn_index):
+                    self.turn_list.append(self.conversation.turns[missing_idx])
             self.turn_list.append(turn)
         self.turn_index = turn_index
         return turn
@@ -132,6 +173,11 @@ class UserSessionManager:
         self._cache: dict[str, UserSession] = {}
         self._default_context_mode: ConversationContextMode | None = None
 
+    @property
+    def default_context_mode(self) -> ConversationContextMode | None:
+        """The dataset-level default context mode, if one was set by the loader."""
+        return self._default_context_mode
+
     def set_default_context_mode(self, mode: ConversationContextMode | None) -> None:
         """Set the dataset-level default context mode from the loader."""
         self._default_context_mode = mode
@@ -142,6 +188,8 @@ class UserSessionManager:
         conversation: Conversation,
         num_turns: int,
         url_index: int | None = None,
+        parent_correlation_id: str | None = None,
+        branch_mode: ConversationBranchMode | None = None,
     ) -> UserSession:
         """
         Create and store user session.
@@ -153,6 +201,13 @@ class UserSessionManager:
                 len(conversation.turns) for ramp-up users who start mid-session.
             url_index: URL index for multi-URL load balancing. All turns in this session
                 will use this index to ensure they hit the same backend server.
+            parent_correlation_id: Parent session's correlation id for DAG
+                children (FORK/SPAWN), else ``None``. Stamped onto the session so
+                the worker's cache-bust path can tell FORK children apart from
+                roots. Seeding is performed separately by ``seed_from_parent``.
+            branch_mode: DAG branch mode (FORK / SPAWN), else ``None``. Stamped
+                onto the session for the cache-bust FORK no-op. Ignored when
+                ``parent_correlation_id`` is None.
 
         Raises:
             ValueError: If num_turns exceeds the actual conversation length.
@@ -208,6 +263,8 @@ class UserSessionManager:
             turn_list=[],
             context_mode=context_mode,
             is_fork_parent=is_fork_parent,
+            parent_correlation_id=parent_correlation_id,
+            branch_mode=branch_mode if parent_correlation_id is not None else None,
         )
         self.store(x_correlation_id, user_session)
         return user_session

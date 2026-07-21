@@ -21,10 +21,7 @@ from aiperf.common.models import (
 from aiperf.common.redact import redact_headers
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TransportType
-from aiperf.workers.dynamo_session_control import (
-    build_session_control,
-    merge_session_control,
-)
+from aiperf.workers.session_routing import RoutingContext, SessionRoutingBase
 
 if TYPE_CHECKING:
     from aiperf.transports.base_transports import FirstTokenCallback
@@ -77,11 +74,18 @@ class InferenceClient(AIPerfLifecycleMixin):
         # Resolved by the worker via record payload-retention auto-detection.
         self.strip_record_payload_bytes = strip_record_payload_bytes
 
-        # Legacy Dynamo session_control only: session_ids this worker has already
-        # sent an 'open' for. 'open' is not idempotent and must be sent exactly
-        # once on the first request the worker makes for a session. Entries are
-        # dropped on 'close' to bound the set to in-flight sessions.
-        self._dynamo_opened_sessions: set[str] = set()
+        # Session-routing plugin (selected via --session-routing): one instance
+        # per worker, invoked at the request-serialization chokepoint to stamp
+        # per-session identity (headers and/or body). None when routing is off.
+        self._routing: SessionRoutingBase | None = None
+        endpoint_info = model_endpoint.endpoint
+        if endpoint_info.session_routing is not None:
+            routing_cls = plugins.get_class(
+                PluginType.SESSION_ROUTING, endpoint_info.session_routing
+            )
+            self._routing = routing_cls(
+                routing_cls.Options(**endpoint_info.session_routing_opts)
+            )
 
         # Detect and set transport type if not explicitly set
         if not model_endpoint.transport:
@@ -99,6 +103,17 @@ class InferenceClient(AIPerfLifecycleMixin):
         )
         self.transport = TransportClass(model_endpoint=self.model_endpoint)
         self.attach_child_lifecycle(self.transport)
+
+    def notify_session_end(self, x_correlation_id: str) -> None:
+        """Post-session pass-through to the routing plugin (idempotent hook).
+
+        Called by the worker terminal-eviction path on ANY terminal outcome
+        (final turn, cancellation, terminal context overflow, cancel-before-
+        start). Idempotency is the plugin's responsibility -- this hook does not
+        dedupe. No-op when session routing is unset.
+        """
+        if self._routing is not None:
+            self._routing.on_session_end(x_correlation_id)
 
     async def _send_request_to_transport(
         self,
@@ -124,43 +139,49 @@ class InferenceClient(AIPerfLifecycleMixin):
         """
         request_info.endpoint_headers = self.endpoint.get_endpoint_headers(request_info)
         request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
+        # Session-routing chokepoint: build the per-request routing context once
+        # and let the plugin stamp its headers now (merged onto the endpoint
+        # headers). The same context feeds the structured body transform below.
+        routing_ctx: RoutingContext | None = None
+        if self._routing is not None:
+            routing_ctx = RoutingContext(
+                x_correlation_id=request_info.x_correlation_id,
+                parent_correlation_id=request_info.parent_correlation_id,
+                root_correlation_id=request_info.root_correlation_id,
+                is_final_turn=request_info.is_final_turn,
+                is_parent_final=request_info.is_parent_final,
+                is_tree_final=request_info.is_tree_final,
+            )
+            request_info.endpoint_headers.update(self._routing.headers(routing_ctx))
+
         if request_info.payload_bytes is not None:
-            # PAYLOAD_BYTES fast path: the mmap dataset ships pre-encoded wire
-            # bytes; send them verbatim without decoding or re-encoding.
+            # PAYLOAD_BYTES fast path: bytes were validated at dataset-load time
+            # by the mmap loader / DatasetManager. A body-mutating routing plugin
+            # cannot rewrite opaque bytes without a reparse/redump that defeats
+            # the fast path, so it is refused here (the raise is converted to an
+            # error record by _send_request_internal). Header-based routing is
+            # compatible and was already applied above.
+            if self._routing is not None and self._routing.mutates_body:
+                raise ValueError(
+                    f"session-routing mode "
+                    f"{self.model_endpoint.endpoint.session_routing!r} mutates "
+                    "request bodies and is incompatible with the verbatim PAYLOAD_BYTES "
+                    "fast path; choose a headers-based mode or a structured-turn dataset."
+                )
             formatted_payload: dict[str, Any] | bytes = request_info.payload_bytes
         else:
-            raw_payload = request_info.turns[-1].raw_payload
-            formatted_payload = (
-                raw_payload
-                if raw_payload is not None
-                else self.endpoint.format_payload(request_info)
-            )
-            # Dynamo conversation-aware routing (opt-in): overlay
-            # nvext.session_control onto the structured request body. Done here,
-            # after the endpoint built the dict, so it is endpoint-agnostic and
-            # never mutates a cached Turn.
-            endpoint = self.model_endpoint.endpoint
-            if endpoint.use_dynamo_conv_aware_routing and isinstance(
-                formatted_payload, dict
-            ):
-                session_id = request_info.x_correlation_id
-                legacy = endpoint.use_legacy_dynamo_session_control
-                session_control = build_session_control(
-                    session_id=session_id,
-                    is_final_turn=request_info.is_final_turn,
-                    timeout_seconds=endpoint.dynamo_session_timeout_seconds,
-                    legacy=legacy,
-                    already_opened=session_id in self._dynamo_opened_sessions,
-                )
-                # Track the open/close lifecycle so legacy 'open' is sent exactly
-                # once per session (modern 'bind' is stateless and ignores this).
-                if legacy:
-                    if session_control.get("action") == "open":
-                        self._dynamo_opened_sessions.add(session_id)
-                    elif request_info.is_final_turn:
-                        self._dynamo_opened_sessions.discard(session_id)
-                formatted_payload = merge_session_control(
-                    formatted_payload, session_control
+            current_turn = request_info.turns[-1] if request_info.turns else None
+            if current_turn and current_turn.raw_payload is not None:
+                formatted_payload = current_turn.raw_payload
+            else:
+                formatted_payload = self.endpoint.format_payload(request_info)
+            # Body-based session routing (e.g. Dynamo nvext.session_control):
+            # overlay onto the structured body after the endpoint built the dict,
+            # so it is endpoint-agnostic and never mutates a cached Turn
+            # (transform_body returns a copy).
+            if routing_ctx is not None and isinstance(formatted_payload, dict):
+                formatted_payload = self._routing.transform_body(
+                    formatted_payload, routing_ctx
                 )
         # Canonicalise to bytes and stash on request_info. Two wins: (1) the
         # transport skips its own orjson.dumps on the dict path, (2) the
@@ -185,17 +206,6 @@ class InferenceClient(AIPerfLifecycleMixin):
             payload=wire_payload,
             first_token_callback=first_token_callback,
         )
-
-    def discard_dynamo_session(self, session_id: str) -> None:
-        """Drop a session from the legacy Dynamo 'open' tracking set.
-
-        The inline final-turn discard in ``_send_request_to_transport`` only
-        fires when a final turn is actually dispatched; callers that abandon a
-        session before its final turn (e.g. cancellation) use this to keep the
-        set bounded. Idempotent and a no-op for the modern (non-legacy) path,
-        which never populates this set.
-        """
-        self._dynamo_opened_sessions.discard(session_id)
 
     async def _send_request_internal(
         self,
@@ -295,30 +305,36 @@ class InferenceClient(AIPerfLifecycleMixin):
         record: RequestRecord,
         request_info: RequestInfo,
     ) -> RequestRecord:
-        """Enrich a RequestRecord with the original request info."""
+        """Enrich a RequestRecord with the original request info.
+
+        The hoisted metric inputs ``max_tokens`` and ``audio_duration_seconds``
+        live only on the originating turn — they are NOT ``RecordContext``
+        fields on ``request_info`` and so are not copied by the downcast in
+        ``_enrich_request_record``. Populate them explicitly so the record
+        processor (``osl_mismatch`` / ``audio_duration`` metrics) reads them
+        directly off the slim record without the full ``turns`` list on the
+        wire: ``max_tokens`` from the dispatch (last) turn,
+        ``audio_duration_seconds`` from the first turn (ASR requests are
+        single-turn; mirrors the pre-hoist ``turns[0]`` read).
+        """
         last_turn = request_info.turns[-1] if request_info.turns else None
-        record.model_name = (
-            last_turn.model if last_turn else None
-        ) or self.model_endpoint.primary_model_name
-        # Hoist per-turn scalars onto the RecordContext so the record
-        # processor's metrics (requested_osl, audio_duration) can read them
-        # without walking turns: max_tokens from the dispatch turn,
-        # audio_duration_seconds from the first turn (ASR requests are
-        # single-turn; mirrors the pre-hoist turns[0] read). Guarded for the
-        # payload-bytes fast path, which dispatches with an empty turns list.
         first_turn = request_info.turns[0] if request_info.turns else None
-        request_info.max_tokens = last_turn.max_tokens if last_turn else None
-        request_info.audio_duration_seconds = (
-            first_turn.audio_duration_seconds if first_turn else None
-        )
+        turn_model = last_turn.model if last_turn else None
+        record.model_name = turn_model or self.model_endpoint.primary_model_name
         self._enrich_request_record(record, request_info)
 
-        # When stripping is enabled (large-prompt memory optimization,
-        # resolved by the worker's payload-retention auto-detection), drop
-        # the canonical request payload bytes from the slim record context
-        # after dispatch.
-        if self.strip_record_payload_bytes and record.request_info is not None:
-            record.request_info.payload_bytes = None
+        if record.request_info is not None:
+            record.request_info.max_tokens = last_turn.max_tokens if last_turn else None
+            record.request_info.audio_duration_seconds = (
+                first_turn.audio_duration_seconds if first_turn else None
+            )
+
+            # When stripping is enabled (large-prompt memory optimization,
+            # resolved by the worker's payload-retention auto-detection), drop
+            # the canonical request payload bytes from the slim record context
+            # after dispatch.
+            if self.strip_record_payload_bytes:
+                record.request_info.payload_bytes = None
 
         # If this is the first turn, calculate the credit drop latency
         if request_info.turn_index == 0 and request_info.drop_perf_ns is not None:

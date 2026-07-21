@@ -156,8 +156,8 @@ class TestDynamoSessionControlDetector:
         assert insight is not None
         assert "bind" in insight.title
         assert "session_control" in insight.problem
-        assert any("--use-dynamo-conv-aware-routing" in c for c in insight.causes)
-        assert any("--use-legacy-dynamo-session-control" in f for f in insight.fixes)
+        assert any("--session-routing dynamo_nvext" in c for c in insight.causes)
+        assert any("--session-routing dynamo_headers" in f for f in insight.fixes)
 
     @pytest.mark.parametrize(
         "message",
@@ -215,4 +215,4 @@ class TestDynamoSessionControlDetector:
         panel = args[0]
         assert "Unsupported Dynamo session_control action: bind" in str(panel.title)
         panel_text = str(panel.renderable)
-        assert "--use-legacy-dynamo-session-control" in panel_text
+        assert "--session-routing dynamo_headers" in panel_text

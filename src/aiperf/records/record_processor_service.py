@@ -32,6 +32,7 @@ from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.trace_models import BaseTraceData
 from aiperf.common.protocols import PushClientProtocol
+from aiperf.common.scenario import get_scenario
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
 from aiperf.plugin import plugins
@@ -77,6 +78,24 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         self.inference_result_parser = InferenceResultParser(
             run=self.run,
         )
+        # Cache: flag context-overflow records for the records-side "skip" path
+        # (not dropped -- they still count toward total_records) when the active
+        # scenario uses AGENTIC_REPLAY timing. The trajectory is already
+        # terminated by the timing strategy via the separate CreditReturn path,
+        # so the overflow event is intentionally tolerated and kept out of every
+        # user-facing metric while the run still terminates cleanly.
+        self._drop_agentic_overflow_records: bool = False
+        scenario_name = self.run.cfg.scenario
+        if scenario_name is not None:
+            try:
+                spec = get_scenario(scenario_name)
+                self._drop_agentic_overflow_records = (
+                    str(spec.timing_mode) == "agentic_replay"
+                )
+            except Exception:
+                # Unknown scenario names are validated elsewhere; record
+                # processing degrades to default error-emission behavior here.
+                self._drop_agentic_overflow_records = False
 
         # DatasetConfiguredNotification (SUB) and inference results (PULL) arrive on
         # independent channels with no ordering guarantee. Gate record processing on
@@ -231,6 +250,10 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             request_end_ns=request_end_ns,
             conversation_id=record.request_info.conversation_id,
             turn_index=record.request_info.turn_index,
+            source_trace_id=record.request_info.source_trace_id,
+            source_outer_idx=record.request_info.source_outer_idx,
+            source_inner_idx=record.request_info.source_inner_idx,
+            source_kind=record.request_info.source_kind,
             record_processor_id=self.service_id,
             benchmark_phase=record.request_info.credit_phase,
             x_request_id=record.request_info.x_request_id,
@@ -308,6 +331,28 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         metadata = self._create_metric_record_metadata(
             record, message.service_id, last_response_perf_ns
         )
+
+        # Flag context-overflow records for the records-side "skip" path when
+        # the active scenario uses AGENTIC_REPLAY. RecordsManager will count
+        # the record toward ``total_records`` (so the records-side counter
+        # stays in lockstep with credit-side ``final_requests_completed``
+        # and the completion barrier converges -- returning early here instead
+        # would break that invariant in one direction only and hang the run at
+        # end-of-phase) but skip the error tracker, accumulators, and stream
+        # exporters so the overflow event doesn't show up in any user-facing
+        # metric.
+        if self._drop_agentic_overflow_records and getattr(
+            record, "context_overflow", False
+        ):
+            metadata = metadata.model_copy(update={"context_overflow_skip": True})
+            self.debug(
+                lambda r=record: (
+                    f"AGENTIC_REPLAY: flagging context-overflow record as "
+                    f"metrics-skip (credit={r.request_info.credit_num} "
+                    f"conv={r.request_info.conversation_id} "
+                    f"turn={r.request_info.turn_index})"
+                )
+            )
 
         # Stage 1 - producers: run concurrently, group outputs by declared channel.
         by_type: dict[str, list[Any]] = {}

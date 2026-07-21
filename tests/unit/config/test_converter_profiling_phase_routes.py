@@ -46,15 +46,33 @@ def _make_user(
 
 
 class TestArrivalSmoothnessGating:
-    def test_smoothness_without_gamma_raises_clear_error(self):
-        """--arrival-smoothness with default poisson pattern must error."""
+    def test_smoothness_without_explicit_pattern_auto_promotes_to_gamma(self):
+        """v1 parity: --request-rate + --arrival-smoothness (or --vllm-burstiness)
+        with NO explicit --arrival-pattern auto-promotes to gamma instead of
+        falling through to poisson and being hard-rejected. The cutover dropped
+        this auto-promote, making --vllm-burstiness unusable on its own."""
         loadgen = CLIConfig(
             request_rate=100.0,
             arrival_smoothness=1.5,
             request_count=10,
         )
         user = _make_user(loadgen=loadgen)
-        with pytest.raises(ValueError, match="--arrival-smoothness"):
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.GAMMA
+        assert prof["smoothness"] == 1.5
+        assert prof["rate"] == 100.0
+
+    def test_explicit_poisson_pattern_with_smoothness_raises(self):
+        """An EXPLICIT non-gamma pattern + smoothness still errors clearly (the
+        auto-promote only fires when the pattern was not user-supplied)."""
+        loadgen = CLIConfig(
+            request_rate=100.0,
+            arrival_pattern=ArrivalPattern.POISSON,
+            arrival_smoothness=1.5,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="arrival-pattern gamma"):
             build_profiling(user)
 
     def test_smoothness_with_constant_pattern_raises(self):
@@ -254,6 +272,48 @@ class TestRateRampRequiresRequestRate:
         user = _make_user(loadgen=loadgen)
         prof = build_profiling(user)
         assert prof.get("rate_ramp") == {"duration": 30}
+
+
+# ---------------------------------------------------------------------------
+# AGENTIC_REPLAY auto-warmup grace routing
+# ---------------------------------------------------------------------------
+
+
+class TestAgenticWarmupGracePeriodRouting:
+    def test_agentic_warmup_grace_routes_onto_profiling_phase(self):
+        """--agentic-warmup-grace-period is an AGENTIC_REPLAY route: it lands on
+        the profiling phase dict (the agentic auto-warmup reads it from there),
+        unlike --warmup-grace-period which feeds the user-declared warmup phase
+        and requires --warmup-duration."""
+        loadgen = CLIConfig(
+            concurrency=8,
+            request_count=10,
+            agentic_warmup_grace_period=30.0,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["agentic_warmup_grace_period"] == 30.0
+
+    def test_agentic_warmup_grace_absent_when_unset(self):
+        """Unset --agentic-warmup-grace-period leaves the profiling phase dict
+        without the key (so the warmup barrier defaults to infinite)."""
+        loadgen = CLIConfig(concurrency=8, request_count=10)
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert "agentic_warmup_grace_period" not in prof
+
+    def test_agentic_warmup_grace_does_not_require_duration(self):
+        """Unlike grace_period (the profiling tail), the agentic warmup grace is
+        not duration-gated -- it applies to a CONCURRENCY_BURST warmup with no
+        duration, so it must route without a duration set."""
+        loadgen = CLIConfig(
+            concurrency=8,
+            request_count=10,
+            agentic_warmup_grace_period=0.0,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["agentic_warmup_grace_period"] == 0.0
 
 
 class TestAdaptiveScaleRoutes:

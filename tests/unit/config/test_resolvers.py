@@ -22,6 +22,7 @@ from aiperf.config.resolution.resolvers import (
     ConfigResolverChain,
     DatasetResolver,
     GpuMetricsResolver,
+    ScenarioResolver,
     TimingResolver,
     TokenizerResolver,
     _describe_phase,
@@ -730,17 +731,21 @@ class TestBuildDefaultResolverChain:
     def test_returns_chain_with_all_resolvers(self):
         chain = build_default_resolver_chain()
         assert isinstance(chain, ConfigResolverChain)
-        assert len(chain._resolvers) == 6
+        assert len(chain._resolvers) == 7
 
     def test_resolver_order(self):
         chain = build_default_resolver_chain()
         types = [type(r) for r in chain._resolvers]
+        # ScenarioResolver sits AFTER DatasetResolver (needs resolved
+        # dataset_types for the loader-identity check) and BEFORE TimingResolver
+        # (locks per-phase timing_mode / duration before the duration sum).
         assert types == [
             ArtifactDirResolver,
             TokenizerResolver,
             GpuMetricsResolver,
             CommConfigResolver,
             DatasetResolver,
+            ScenarioResolver,
             TimingResolver,
         ]
 

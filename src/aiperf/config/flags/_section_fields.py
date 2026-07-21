@@ -20,19 +20,18 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "connection_reuse_strategy",
         "custom_endpoint",
         "download_video_content",
-        "dynamo_session_timeout_seconds",
         "model_names",
         "model_selection_strategy",
         "request_content_type",
         "session_header",
+        "session_routing",
+        "session_routing_opt",
         "streaming",
         "timeout_seconds",
         "transport",
         "endpoint_type",
         "url_selection_strategy",
         "urls",
-        "use_dynamo_conv_aware_routing",
-        "use_legacy_dynamo_session_control",
         "use_legacy_max_tokens",
         "use_server_token_count",
         "uuid_and_strip",
@@ -57,8 +56,13 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "goodput",
         "headers",
         "hf_dataset_subset",
+        "hf_weka_dataset",
+        "ignore_trace_delays",
+        "max_context_length",
         "public_dataset",
         "random_seed",
+        "use_end_to_start_delays",
+        "use_think_time_only",
         # ----- conversation modality -----
         "conversation_num",
         "conversation_num_dataset_entries",
@@ -68,7 +72,9 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "conversation_turn_delay_stddev",
         "conversation_turn_delay_ratio",
         # ----- prompt modality -----
+        "cache_bust",
         "prompt_batch_size",
+        "prompt_corpus",
         "prompt_input_tokens_mean",
         "prompt_input_tokens_stddev",
         "prompt_input_tokens_block_size",
@@ -163,8 +169,10 @@ LOADGEN_FIELDS: frozenset[str] = frozenset(
         "arrival_smoothness",
         "benchmark_duration",
         "benchmark_grace_period",
+        "burst_phase_starts",
         "concurrency",
         "concurrency_ramp_duration",
+        "failed_request_threshold",
         "num_users",
         "prefill_concurrency",
         "prefill_concurrency_ramp_duration",
@@ -173,6 +181,9 @@ LOADGEN_FIELDS: frozenset[str] = frozenset(
         "request_count",
         "request_rate",
         "request_rate_ramp_duration",
+        "trace_idle_gap_cap_seconds",
+        "trajectory_start_max_ratio",
+        "trajectory_start_min_ratio",
         "user_centric_rate",
         "warmup_arrival_pattern",
         "warmup_concurrency",
@@ -253,5 +264,16 @@ ACCURACY_FIELDS: frozenset[str] = frozenset(
         "accuracy_system_prompt",
         "accuracy_tasks",
         "accuracy_verbose",
+    }
+)
+
+# Scenario-lock fields land on the top-level BenchmarkConfig body (not a
+# nested section), so they are NOT part of the seven-way partition checked by
+# test_section_fields_partition_cli_config. Grouped here for symmetry; the
+# converter reads them off ``cli.model_fields_set`` directly.
+SCENARIO_FIELDS: frozenset[str] = frozenset(
+    {
+        "scenario",
+        "unsafe_override",
     }
 )

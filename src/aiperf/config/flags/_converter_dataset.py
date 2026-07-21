@@ -79,6 +79,10 @@ def _build_prompts(cli: CLIConfig) -> dict[str, Any]:
         prompts["block_size"] = cli.prompt_input_tokens_block_size
     if "prompt_batch_size" in s:
         prompts["batch_size"] = cli.prompt_batch_size
+    if "cache_bust" in s:
+        prompts["cache_bust"] = {"target": cli.cache_bust}
+    if "prompt_corpus" in s and cli.prompt_corpus is not None:
+        prompts["prompt_corpus"] = cli.prompt_corpus
     return prompts
 
 
@@ -335,10 +339,18 @@ def _apply_dataset_type(d: dict[str, Any], cli: CLIConfig, needs_text: bool) -> 
     from aiperf.common.enums import DatasetType
 
     entries = _resolve_entries(cli)
+    # ``entries`` legitimately absorbs the --num-conversations / --request-count
+    # fallback (see _resolve_entries), so its mere presence cannot tell whether
+    # the user actually named --num-dataset-entries. Public-dataset provenance
+    # must report num_dataset_entries ONLY for explicit intent, so whenever the
+    # converter writes ``entries`` from a fallback it pins the
+    # ``_entries_explicit`` sentinel to the true intent.
+    entries_explicit = "conversation_num_dataset_entries" in cli.model_fields_set
     if cli.public_dataset:
         d["type"] = DatasetType.PUBLIC
         if entries is not None:
             d["entries"] = entries
+            d["_entries_explicit"] = entries_explicit
         # PublicDataset doesn't carry per-modality subtables.
         for key in (
             "prompts",
@@ -428,7 +440,7 @@ def _apply_synthesis(d: dict[str, Any], cli: CLIConfig) -> None:
     """
     from aiperf.common.enums import DatasetType
 
-    if d.get("type") != DatasetType.FILE:
+    if d.get("type") not in (DatasetType.FILE, DatasetType.PUBLIC):
         return
     set_fields = cli.model_fields_set
     out: dict[str, Any] = {}
@@ -498,11 +510,13 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
         "prompt_prefix_user_context_length",
         "--user-context-prompt-length",
     ),
-    # ISL / prompt-shaping flags only apply to synthetic generation. File
-    # datasets (including mooncake_trace) source ISL from the trace records
-    # themselves — silently dropping these flags hid bugs (e.g. trace replay
-    # using the hardcoded block_size=512 fallback while ignoring user's
-    # --isl-block-size). Reject at convert-time with a clear error.
+    # ISL mean/stddev only apply to synthetic generation. File datasets
+    # (including mooncake_trace) source ISL from the trace records themselves --
+    # silently dropping these flags hid bugs. Reject at convert-time with a clear
+    # error. NOTE: --isl-block-size is NOT here -- it is the hash-id block
+    # granularity that the trace loaders DO consume, so it is routed onto
+    # FileDataset.block_size by _apply_block_size (and rejected only for weka,
+    # which carries its own inline per-block sizes).
     (
         "prompt_input_tokens_mean",
         "--isl/--prompt-input-tokens-mean/--synthetic-input-tokens-mean",
@@ -511,10 +525,6 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
         "prompt_input_tokens_stddev",
         "--isl-stddev/--prompt-input-tokens-stddev/--synthetic-input-tokens-stddev",
     ),
-    (
-        "prompt_input_tokens_block_size",
-        "--isl-block-size/--prompt-input-tokens-block-size/--synthetic-input-tokens-block-size",
-    ),
     ("prompt_batch_size", "--prompt-batch-size/--batch-size-text"),
     ("prompt_sequence_distribution", "--seq-dist/--sequence-distribution"),
     ("image_batch_size", "--image-batch-size"),
@@ -522,24 +532,34 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
     ("image_source_sampling", "--image-source-sampling"),
     ("audio_batch_size", "--audio-batch-size"),
     ("video_batch_size", "--video-batch-size"),
+    # Multi-turn conversation GENERATION knobs: synthetic-only. Trace datasets
+    # carry their own turn structure, so these previously crashed FileDataset
+    # validation with extra_forbidden. Reject with a clear message instead.
+    ("conversation_turn_mean", "--conversation-turn-mean/--session-turns-mean"),
+    ("conversation_turn_stddev", "--conversation-turn-stddev/--session-turns-stddev"),
+    ("conversation_turn_delay_mean", "--conversation-turn-delay-mean"),
+    ("conversation_turn_delay_stddev", "--conversation-turn-delay-stddev"),
+    ("conversation_turn_delay_ratio", "--conversation-turn-delay-ratio"),
 )
 
 
 def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
-    """Reject synthetic-only flags when --input-file is set.
+    """Reject synthetic-only flags on FILE or PUBLIC (trace) datasets.
 
     Flags rejected: prefix prompts, ISL shaping (--isl/--isl-stddev/
-    --isl-block-size), --prompt-batch-size, --seq-dist, multimodal
-    batch_size. These are only meaningful for synthetic datasets; on file
-    datasets they were previously silently dropped by the strip in
-    ``_apply_dataset_type`` (or worse, leaked through and crashed
-    AIPerfConfig validation with ``extra_forbidden`` on the
-    FileDataset). Surface a clear message instead.
+    --isl-block-size), --prompt-batch-size, --seq-dist, multimodal batch_size,
+    and multi-turn conversation generation (--conversation-turn-*). These are
+    only meaningful for synthetic datasets; on file/public trace datasets the
+    value source is the trace, so they were previously silently dropped by the
+    ``_apply_dataset_type`` strip (or worse, leaked through and crashed
+    AIPerfConfig validation with ``extra_forbidden``). Surface a clear message
+    instead.
 
     --osl / --osl-stddev are NOT rejected — they're routed onto
-    ``FileDataset.osl`` by ``_apply_file_osl`` as a per-record fallback.
+    ``FileDataset.osl`` / ``PublicDataset.osl`` by ``_apply_file_osl`` as a
+    per-record fallback.
     """
-    if not cli.input_file:
+    if not cli.input_file and not cli.public_dataset:
         return
     s = cli.model_fields_set
     violations = [
@@ -548,8 +568,9 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
     if violations:
         raise ValueError(
             f"{', '.join(violations)} is only supported with synthetic datasets; "
-            "use a synthetic dataset (no --input-file) to apply synthetic-only "
-            "prompt shaping (ISL, prefix prompts, multimodal generation, etc)."
+            "remove --input-file / --public-dataset (use a synthetic dataset) to "
+            "apply synthetic-only prompt shaping (ISL, prefix prompts, multimodal "
+            "generation, multi-turn conversation, etc)."
         )
 
 
@@ -697,15 +718,16 @@ def _reject_baseten_trace_extra_input_collisions(cli: CLIConfig) -> None:
 
 
 def _apply_file_osl(d: dict[str, Any], cli: CLIConfig) -> None:
-    """Route ``--osl`` onto ``FileDataset.osl`` when --input-file is set.
+    """Route ``--osl`` onto ``FileDataset.osl`` / ``PublicDataset.osl``.
 
     Synthetic datasets carry OSL on ``prompts.osl`` (handled by
-    ``_build_prompts``). For file datasets, route the same value to the
-    flat ``FileDataset.osl`` field as a per-record fallback.
+    ``_build_prompts``). For file AND public (HF-backed weka) trace datasets,
+    route the same value to the flat ``osl`` field as a per-record fallback
+    (both models carry it).
     """
     from aiperf.common.enums import DatasetType
 
-    if d.get("type") != DatasetType.FILE:
+    if d.get("type") not in (DatasetType.FILE, DatasetType.PUBLIC):
         return
     s = cli.model_fields_set
     if "prompt_output_tokens_mean" not in s or cli.prompt_output_tokens_mean is None:
@@ -721,15 +743,17 @@ def _apply_file_osl(d: dict[str, Any], cli: CLIConfig) -> None:
 
 
 def _apply_inter_turn_delay_cap(d: dict[str, Any], cli: CLIConfig) -> None:
-    """Route ``--inter-turn-delay-cap-seconds`` onto ``FileDataset``.
+    """Route ``--inter-turn-delay-cap-seconds`` onto ``FileDataset``/``PublicDataset``.
 
-    The cap clamps per-turn replay delays (read from JSONL trace files)
-    so long pre-recorded waits don't stall the benchmark. Only meaningful
-    on file datasets (synthetic datasets compute their own delays).
+    The cap clamps per-turn replay delays (read from trace records) so long
+    pre-recorded waits don't stall the benchmark. Meaningful on file-based
+    trace datasets AND the HF-backed ``weka_hf`` public dataset (both replay
+    traces); synthetic datasets compute their own delays. ``PublicDataset``
+    carries the same field, so route there too.
     """
     from aiperf.common.enums import DatasetType
 
-    if d.get("type") != DatasetType.FILE:
+    if d.get("type") not in (DatasetType.FILE, DatasetType.PUBLIC):
         return
     if (
         "inter_turn_delay_cap_seconds" not in cli.model_fields_set
@@ -737,6 +761,68 @@ def _apply_inter_turn_delay_cap(d: dict[str, Any], cli: CLIConfig) -> None:
     ):
         return
     d["inter_turn_delay_cap_seconds"] = cli.inter_turn_delay_cap_seconds
+
+
+# FILE custom_dataset_types whose loaders decode hash_ids into token blocks of
+# ``block_size`` (the BaseTraceDatasetLoader family). These CONSUME
+# --isl-block-size. weka is excluded deliberately: it carries its own inline
+# per-block sizes in the trace, so a global override is meaningless there.
+_BLOCK_SIZE_TRACE_FORMATS = frozenset(
+    {
+        "mooncake_trace",
+        "bailian_trace",
+        "burst_gpt_trace",
+        "sagemaker_data_capture",
+    }
+)
+
+
+def _apply_block_size(d: dict[str, Any], cli: CLIConfig) -> None:
+    """Route ``--isl-block-size`` onto ``FileDataset.block_size`` for hash-id
+    trace datasets.
+
+    block_size is fundamentally a TRACE field: the mooncake/bailian/burst_gpt/
+    sagemaker loaders decode each ``hash_id`` into a cached block of this many
+    tokens (default 512 / 16 from plugin metadata). Synthetic datasets carry it
+    on ``prompts.block_size`` (written by ``_build_prompts``, then stripped for
+    FILE/PUBLIC by ``_apply_dataset_type``), so for FILE traces it must be
+    re-routed onto the flat field here -- after the strip -- or it silently
+    no-ops (the loader falls back to the hardcoded default, ignoring the user).
+
+    Weka datasets REJECT it: weka traces carry their own inline per-block sizes,
+    so an override would be wrong. Public datasets reject it too (the only
+    public traces are weka; non-trace public datasets do not decode hash blocks).
+    """
+    from aiperf.common.enums import DatasetType
+
+    s = cli.model_fields_set
+    if (
+        "prompt_input_tokens_block_size" not in s
+        or not cli.prompt_input_tokens_block_size
+    ):
+        return
+    # Synthetic: handled by _build_prompts -> prompts.block_size.
+    if d.get("type") not in (DatasetType.FILE, DatasetType.PUBLIC):
+        return
+
+    fmt = str(d["format"]) if d.get("format") is not None else None
+    public = str(d["dataset"]) if d.get("dataset") is not None else None
+    is_weka = fmt == "weka_trace" or (public is not None and "weka" in public.lower())
+    if is_weka:
+        raise ValueError(
+            "--isl-block-size is not supported with weka datasets: weka traces "
+            "carry their own inline per-block sizes. Drop --isl-block-size to "
+            "replay the trace's own block sizes."
+        )
+    if fmt in _BLOCK_SIZE_TRACE_FORMATS:
+        d["block_size"] = cli.prompt_input_tokens_block_size
+        return
+    raise ValueError(
+        "--isl-block-size only applies to synthetic generation or hash-id trace "
+        "replay (mooncake_trace, bailian_trace, burst_gpt_trace, "
+        "sagemaker_data_capture). The selected dataset does not decode hash-id "
+        "token blocks; drop --isl-block-size."
+    )
 
 
 # --- text-endpoint validation -------------------------------------------
@@ -840,6 +926,32 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     _apply_implicit_media_batch(d, cli)
     _apply_file_osl(d, cli)
     _apply_inter_turn_delay_cap(d, cli)
+    _apply_block_size(d, cli)
+    _apply_corpus_and_cache_bust(d, cli)
     if "random_seed" in cli.model_fields_set:
         d["random_seed"] = cli.random_seed
     return d
+
+
+def _apply_corpus_and_cache_bust(d: dict[str, Any], cli: CLIConfig) -> None:
+    """Route ``--prompt-corpus`` and ``--cache-bust`` onto FILE/PUBLIC datasets.
+
+    For synthetic datasets these live on ``prompts.{prompt_corpus,cache_bust}``
+    (written by ``_build_prompts``). FILE/PUBLIC datasets drop the entire
+    ``prompts`` subtable in ``_apply_dataset_type``, so the values must be
+    routed to the flat top-level ``FileDataset``/``PublicDataset`` fields here
+    -- AFTER the strip -- or ``--prompt-corpus`` and ``--cache-bust`` silently
+    no-op on trace replay (the corpus reconstruction falls back to the loader
+    default and KV-cache-bust experiments do nothing). Both fields exist on
+    ``FileDataset`` and ``PublicDataset``; ``cache_bust`` is a ``CacheBustConfig``
+    keyed by ``target`` (same shape ``_build_prompts`` uses for synthetic).
+    """
+    from aiperf.common.enums import DatasetType
+
+    if d.get("type") not in (DatasetType.FILE, DatasetType.PUBLIC):
+        return
+    s = cli.model_fields_set
+    if "prompt_corpus" in s and cli.prompt_corpus is not None:
+        d["prompt_corpus"] = cli.prompt_corpus
+    if "cache_bust" in s:
+        d["cache_bust"] = {"target": cli.cache_bust}

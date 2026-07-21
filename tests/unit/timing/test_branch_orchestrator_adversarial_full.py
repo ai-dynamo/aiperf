@@ -37,6 +37,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.enums import (
+    CacheBustTarget,
     ConversationBranchMode,
     PrerequisiteKind,
 )
@@ -441,9 +442,7 @@ def test_cleanup_clears_pre_dispatched_and_logs_leak(caplog):
     orch._descendant_counts["ghost-parent"] = 3
     orch._pre_dispatched_branches.add(("conv-x", "branch-y"))
 
-    with caplog.at_level(
-        logging.WARNING, logger="aiperf.timing._branch_orchestrator_logging"
-    ):
+    with caplog.at_level(logging.WARNING, logger="aiperf.timing.branch_orchestrator"):
         orch.cleanup()
 
     leak_warnings = [r for r in caplog.records if "leaked state" in r.getMessage()]
@@ -1457,7 +1456,9 @@ async def test_pre_session_child_runs_its_own_second_level_dag():
 
     await orch.dispatch_pre_session_branches()
     # Pre child fired.
-    cs.start_pre_session_child.assert_called_once_with("middle")
+    cs.start_pre_session_child.assert_called_once_with(
+        "middle", cache_bust_marker=None, cache_bust_target=CacheBustTarget.NONE
+    )
     assert issuer.dispatch_first_turn.await_count == 1
 
     # Pre child's turn 0 returns at agent_depth=1. The orchestrator's
@@ -1592,7 +1593,9 @@ async def test_pre_session_mixed_roots_only_root_pre_fires():
 
     await orch.dispatch_pre_session_branches()
 
-    cs.start_pre_session_child.assert_called_once_with("child_a")
+    cs.start_pre_session_child.assert_called_once_with(
+        "child_a", cache_bust_marker=None, cache_bust_target=CacheBustTarget.NONE
+    )
     cs.start_pre_session_child.assert_called_once()
     assert ("root", "root:pre") in orch._pre_dispatched_branches
     assert ("rogue", "rogue:pre") not in orch._pre_dispatched_branches
