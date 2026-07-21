@@ -662,11 +662,108 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             .clone()
             .unwrap_or_else(|| PathBuf::from("artifacts")),
     };
+    validate_baseten_extra_input_collisions(flags)?;
     build(inputs)
 }
 
+/// Reject `--extra-inputs` keys the baseten_trace loader injects per-turn.
+///
+/// Ports Python's `_reject_baseten_trace_extra_input_collisions`:
+/// loader-injected per-turn values (`min_tokens` from the recorded output
+/// length, `hash_ids`/`block_size` KV hints) overwrite endpoint-level
+/// extras, so the user's value would be silently clobbered on the wire.
+/// `max_tokens` is not guarded: user extras win over the loader for that key.
+///
+/// Scope cut: only covers the CLI-flags path (`--extra-inputs`), not
+/// `endpoint.extra` authored in a YAML config -- the shared `Inputs` bag
+/// `build()` receives doesn't currently carry raw extra-inputs pairs, and
+/// threading that through the YAML path safely wasn't done here.
+fn validate_baseten_extra_input_collisions(flags: &ProfileFlags) -> anyhow::Result<()> {
+    if flags.custom_dataset_type.as_deref() != Some("baseten_trace") {
+        return Ok(());
+    }
+    let extra = parse_extra_inputs(&flags.extra_inputs)?;
+    let mut collisions: Vec<(&str, &str)> = Vec::new();
+    let force_min_tokens = flags.force_min_tokens && !flags.no_force_min_tokens;
+    if force_min_tokens && extra.contains_key("min_tokens") {
+        collisions.push(("min_tokens", "--no-force-min-tokens"));
+    }
+    if !flags.omit_kv_hints {
+        for key in ["hash_ids", "block_size"] {
+            if extra.contains_key(key) {
+                collisions.push((key, "--omit-kv-hints"));
+            }
+        }
+    }
+    if collisions.is_empty() {
+        return Ok(());
+    }
+    let message = collisions
+        .iter()
+        .map(|(key, flag)| {
+            format!(
+                "--extra-inputs {key} is overwritten per-turn by the baseten_trace loader; \
+                 pass {flag} to send your value instead"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    anyhow::bail!(message)
+}
+
 /// Build one run from normalized inputs.
+/// Reject baseten_trace-only replay knobs on incompatible datasets.
+///
+/// Ports Python's `_reject_baseten_only_trace_flags`: these knobs are only
+/// consumed by the baseten_trace loader; on any other dataset they would
+/// silently no-op, hiding user error. Scope cut from Python: Python's check
+/// fires on any *explicit* mention of a flag (via `model_fields_set`), even
+/// one matching its own default (e.g. an explicit `--force-min-tokens`
+/// redundant with the default). Rust has no equivalent "was this flag
+/// explicitly passed" signal on parsed bools without deeper clap
+/// introspection, so this instead fires on a *non-default value* -- it
+/// catches every case that would actually change behavior on the wrong
+/// loader, just not a redundant explicit default.
+fn validate_baseten_only_trace_flags(inputs: &Inputs) -> anyhow::Result<()> {
+    let mut set_flags = Vec::new();
+    if inputs.replay_speedup.is_some() {
+        set_flags.push("--replay-speedup");
+    }
+    if inputs.max_idle_gap_cap_seconds.is_some() {
+        set_flags.push("--max-idle-gap-cap-seconds");
+    }
+    if !inputs.open_loop_replay {
+        set_flags.push("--open-loop-replay/--no-open-loop-replay");
+    }
+    if inputs.open_loop_strict {
+        set_flags.push("--open-loop-strict");
+    }
+    if inputs.omit_kv_hints {
+        set_flags.push("--omit-kv-hints");
+    }
+    if !inputs.force_min_tokens {
+        set_flags.push("--force-min-tokens/--no-force-min-tokens");
+    }
+    if set_flags.is_empty() {
+        return Ok(());
+    }
+    let msg = format!(
+        "{} is only supported by the baseten_trace loader",
+        set_flags.join(", ")
+    );
+    if inputs.public_dataset.is_some() || inputs.input_file.is_none() {
+        anyhow::bail!("{msg}; provide --input-file and --custom-dataset-type baseten_trace.");
+    }
+    if let Some(format) = &inputs.custom_dataset_type
+        && format != "baseten_trace"
+    {
+        anyhow::bail!("{msg}, but --custom-dataset-type is {format}.");
+    }
+    Ok(())
+}
+
 pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
+    validate_baseten_only_trace_flags(&inputs)?;
     let primary_model = inputs.model_names[0].clone();
 
     let models = Models {
@@ -2035,5 +2132,144 @@ mod tests {
             "http://localhost:8000",
         ]);
         assert!(a.dataset_analysis_path.is_none());
+    }
+
+    fn parse(args: &[&str]) -> crate::flags::ProfileFlags {
+        crate::flags::ProfileFlags::parse_from_args(
+            &args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        )
+        .expect("parse flags")
+    }
+
+    /// `resolve` builds the full (large) BenchmarkConfig on the stack, which
+    /// overflows the default test-thread stack; run on a generous one.
+    fn run_on_big_stack(body: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(body)
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+
+    #[test]
+    fn baseten_only_flags_rejected_without_baseten_trace() {
+        run_on_big_stack(baseten_only_flags_rejected_without_baseten_trace_body);
+    }
+
+    fn baseten_only_flags_rejected_without_baseten_trace_body() {
+        // Wrong --custom-dataset-type.
+        let flags = parse(&[
+            "-m",
+            "mock-model",
+            "--endpoint-type",
+            "chat",
+            "-u",
+            "http://localhost:8000",
+            "--input-file",
+            "trace.jsonl",
+            "--custom-dataset-type",
+            "mooncake_trace",
+            "--replay-speedup",
+            "2.0",
+        ]);
+        let error = super::resolve(&flags).unwrap_err();
+        assert!(error.to_string().contains("baseten_trace loader"));
+        assert!(error.to_string().contains("mooncake_trace"));
+
+        // No --input-file at all (synthetic dataset).
+        let flags = parse(&[
+            "-m",
+            "mock-model",
+            "--endpoint-type",
+            "chat",
+            "-u",
+            "http://localhost:8000",
+            "--open-loop-strict",
+        ]);
+        let error = super::resolve(&flags).unwrap_err();
+        assert!(error.to_string().contains("baseten_trace loader"));
+        assert!(error.to_string().contains("--input-file"));
+    }
+
+    #[test]
+    fn baseten_only_flags_accepted_with_baseten_trace() {
+        run_on_big_stack(baseten_only_flags_accepted_with_baseten_trace_body);
+    }
+
+    fn baseten_only_flags_accepted_with_baseten_trace_body() {
+        let flags = parse(&[
+            "-m",
+            "mock-model",
+            "--endpoint-type",
+            "chat",
+            "-u",
+            "http://localhost:8000",
+            "--input-file",
+            "trace.parquet",
+            "--custom-dataset-type",
+            "baseten_trace",
+            "--replay-speedup",
+            "2.0",
+            "--omit-kv-hints",
+        ]);
+        // Validation passes; may still fail later for unrelated reasons (no
+        // real file on disk), but never with a baseten-only-flags message.
+        if let Err(error) = super::resolve(&flags) {
+            assert!(!error.to_string().contains("baseten_trace loader"));
+        }
+    }
+
+    #[test]
+    fn baseten_extra_input_collisions_are_rejected_and_opt_outable() {
+        run_on_big_stack(baseten_extra_input_collisions_are_rejected_and_opt_outable_body);
+    }
+
+    fn baseten_extra_input_collisions_are_rejected_and_opt_outable_body() {
+        let flags = parse(&[
+            "-m",
+            "mock-model",
+            "--endpoint-type",
+            "chat",
+            "-u",
+            "http://localhost:8000",
+            "--input-file",
+            "trace.parquet",
+            "--custom-dataset-type",
+            "baseten_trace",
+            "--extra-inputs",
+            "min_tokens:5",
+            "--extra-inputs",
+            "hash_ids:1",
+        ]);
+        let error = super::resolve(&flags).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("min_tokens"));
+        assert!(message.contains("--no-force-min-tokens"));
+        assert!(message.contains("hash_ids"));
+        assert!(message.contains("--omit-kv-hints"));
+
+        // The opt-out flags let the same extras through.
+        let flags = parse(&[
+            "-m",
+            "mock-model",
+            "--endpoint-type",
+            "chat",
+            "-u",
+            "http://localhost:8000",
+            "--input-file",
+            "trace.parquet",
+            "--custom-dataset-type",
+            "baseten_trace",
+            "--extra-inputs",
+            "min_tokens:5",
+            "--extra-inputs",
+            "hash_ids:1",
+            "--no-force-min-tokens",
+            "--omit-kv-hints",
+        ]);
+        if let Err(error) = super::resolve(&flags) {
+            assert!(!error.to_string().contains("overwritten per-turn"));
+        }
     }
 }
