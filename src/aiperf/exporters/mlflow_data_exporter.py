@@ -16,6 +16,7 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.optional_dependencies import mlflow_dependency_message
 from aiperf.common.redact import redact_cli_command, redact_url
 from aiperf.config.mlflow import MLflowDefaults
+from aiperf.config.phases import get_phase_rate
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.mlflow_metadata import (
     MLflowExportMetadata,
@@ -369,8 +370,9 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             params["timing.mode"] = str(phase.type)
             if getattr(phase, "concurrency", None) is not None:
                 params["loadgen.concurrency"] = str(phase.concurrency)
-            if getattr(phase, "request_rate", None) is not None:
-                params["loadgen.request_rate"] = str(phase.request_rate)
+            rate = get_phase_rate(phase)
+            if rate is not None:
+                params["loadgen.request_rate"] = str(rate)
             if phase.requests is not None:
                 params["loadgen.request_count"] = str(phase.requests)
             if phase.duration is not None:

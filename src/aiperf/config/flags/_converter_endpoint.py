@@ -75,6 +75,7 @@ _ENDPOINT_FIELD_MAP: dict[str, str] = {
     "use_dynamo_conv_aware_routing": "use_dynamo_conv_aware_routing",
     "use_legacy_dynamo_session_control": "use_legacy_dynamo_session_control",
     "dynamo_session_timeout_seconds": "dynamo_session_timeout_seconds",
+    "uuid_and_strip": "uuid_and_strip",
 }
 
 

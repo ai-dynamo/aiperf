@@ -10,7 +10,7 @@ Endpoint - Server connection and API configuration
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlparse
 
 from pydantic import (
@@ -20,7 +20,6 @@ from pydantic import (
     field_serializer,
     model_validator,
 )
-from typing_extensions import Self
 
 from aiperf.common.enums import (
     ConnectionReuseStrategy,
@@ -67,6 +66,7 @@ class EndpointDefaults:
     WAIT_FOR_MODEL_TIMEOUT = 0.0
     WAIT_FOR_MODEL_INTERVAL = 5.0
     WAIT_FOR_MODEL_MODE = "inference"
+    UUID_AND_STRIP = False
 
 
 class TemplateConfig(BaseConfig):
@@ -362,6 +362,23 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    uuid_and_strip: Annotated[
+        bool,
+        Field(
+            default=EndpointDefaults.UUID_AND_STRIP,
+            description=(
+                "Enable AIPerf-managed image stripping for vLLM's multimodal processor "
+                "cache. Dataset-authored image UUIDs, including UUID-only cache "
+                "references, always pass through on the chat endpoint; this flag only "
+                "strips repeated content after AIPerf observes it in the same session. "
+                "Automatic stripping supports only single_turn datasets with "
+                "session_id-grouped rows; multi_turn is rejected. The server cache must "
+                "cover the working set, and requests in a session must reach a replica "
+                "that retains earlier UUIDs."
+            ),
+        ),
+    ]
+
     wait_for_model_timeout: Annotated[
         float,
         Field(
@@ -526,6 +543,13 @@ class EndpointConfig(BaseConfig):
                 "--use-dynamo-conv-aware-routing is enabled. Enable conversation-"
                 "aware routing, or drop the legacy flag."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_uuid_and_strip(self) -> Self:
+        """Require image UUID reuse to use the Chat Completions endpoint."""
+        if self.uuid_and_strip and self.type != EndpointType.CHAT:
+            raise ValueError("--uuid-and-strip requires endpoint type 'chat'")
         return self
 
     @model_validator(mode="after")

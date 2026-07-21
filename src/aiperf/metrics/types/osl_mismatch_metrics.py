@@ -53,11 +53,13 @@ class RequestedOSLMetric(BaseRecordMetric[int]):
             NoMetricValue: If max_tokens is not set in the request.
         """
         request_info = record.request.request_info
-        if request_info is None or not request_info.turns:
-            raise NoMetricValue("Request info or turns not available in record.")
+        if request_info is None:
+            raise NoMetricValue("Request info not available in record.")
 
-        # Get max_tokens from the last turn (the one that was sent)
-        max_tokens = request_info.turns[-1].max_tokens
+        # ``request_info.turns`` is dropped before the ZMQ hop to the record
+        # processor (see ``inference_client._finalize_request_record``), so the
+        # last turn's ``max_tokens`` is hoisted onto ``RequestInfo`` itself.
+        max_tokens = request_info.max_tokens
         if max_tokens is None:
             raise NoMetricValue("max_tokens not set in request (--osl not used).")
 
@@ -89,7 +91,7 @@ class OSLMismatchDiffMetric(BaseRecordMetric[float]):
     short_header = "OSL Diff"
     short_header_hide_unit = True
     unit = GenericMetricUnit.PERCENT
-    flags = MetricFlags.PRODUCES_TOKENS_ONLY
+    flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.DISABLE_ON_ACCURACY
     console_group = MetricConsoleGroup.NONE
     required_metrics: ClassVar[set[str]] = {
         RequestedOSLMetric.tag,
@@ -153,7 +155,11 @@ class OSLMismatchCountMetric(BaseAggregateCounterMetric[int]):
     short_header = "OSL Mismatches"
     short_header_hide_unit = True
     unit = GenericMetricUnit.REQUESTS
-    flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.NO_INDIVIDUAL_RECORDS
+    flags = (
+        MetricFlags.PRODUCES_TOKENS_ONLY
+        | MetricFlags.NO_INDIVIDUAL_RECORDS
+        | MetricFlags.DISABLE_ON_ACCURACY
+    )
     console_group = MetricConsoleGroup.NONE
     required_metrics: ClassVar[set[str]] = {
         OSLMismatchDiffMetric.tag,

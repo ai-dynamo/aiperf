@@ -55,7 +55,7 @@ class BranchOrchestratorDrainMixin:
             return
         try:
             observer()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("drain observer raised: %s", exc)
 
     def _notify_abort(self) -> None:
@@ -65,5 +65,5 @@ class BranchOrchestratorDrainMixin:
             return
         try:
             observer()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("abort observer raised: %s", exc)

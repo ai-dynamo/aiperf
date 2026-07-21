@@ -1451,8 +1451,8 @@ class PlotGenerator:
         if "std" in df.columns and (np.any(normal_mask) or np.any(outlier_mask)):
             fig.add_trace(
                 go.Scatter(
-                    x=[-999999, -999999],
-                    y=[0, 1],
+                    x=[None],
+                    y=[None],
                     mode="lines",
                     line=dict(
                         color=primary_color,

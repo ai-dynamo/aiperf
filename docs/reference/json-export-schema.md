@@ -31,7 +31,7 @@ A run with 20 requests against a streaming chat endpoint produces entries shaped
 
 ```json
 {
-  "schema_version": "1.3",
+  "schema_version": "1.4",
   "request_latency": {
     "unit": "ms",
     "avg": 2620.71,
@@ -114,6 +114,7 @@ The current schema version is exported as the top-level `schema_version` field o
 | `1.1` | Added `count` and `sum` to per-metric stats blocks. Backward-compatible for readers that ignore unknown fields; the new fields are present only on record-type metrics, omitted on derived/aggregate. |
 | `1.2` | Added top-level `run_info` block (`random_seed`, `trial`, `run_label`, `variation_label`, `variation_index`, `variation_values`). Backward-compatible: readers that don't need reproducibility can ignore the field. |
 | `1.3` | Added `benchmark_id`, `sweep_id`, and `cli_command` to `run_info`. `benchmark_id` duplicates the top-level field so `run_info` is self-contained; `sweep_id` (UUID4 of the outer sweep) lets readers join all per-run exports from one plan without consulting the parent multi-run artifact directory; `cli_command` records the redacted command line when available. Backward-compatible: nullable fields default to `null` when unavailable. |
+| `1.4` | Added optional top-level `warmup_metrics`, keyed by metric tag, containing metrics computed only from warmup-phase requests. Existing top-level metric fields remain profiling-only. |
 
 ### Other JSON exports use independent schema versions
 

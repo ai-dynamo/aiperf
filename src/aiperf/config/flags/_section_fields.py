@@ -35,6 +35,7 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "use_legacy_dynamo_session_control",
         "use_legacy_max_tokens",
         "use_server_token_count",
+        "uuid_and_strip",
         "wait_for_model_interval",
         "wait_for_model_mode",
         "wait_for_model_timeout",
@@ -141,6 +142,7 @@ OUTPUT_FIELDS: frozenset[str] = frozenset(
 
 TOKENIZER_FIELDS: frozenset[str] = frozenset(
     {
+        "apply_chat_template",
         "tokenizer_name",
         "tokenizer_revision",
         "trust_remote_code",
@@ -150,7 +152,11 @@ TOKENIZER_FIELDS: frozenset[str] = frozenset(
 LOADGEN_FIELDS: frozenset[str] = frozenset(
     {
         "adaptive_assessment_period",
+        "adaptive_control_max",
+        "adaptive_control_min",
+        "adaptive_control_variable",
         "adaptive_scale",
+        "adaptive_scale_control",
         "adaptive_scale_sla",
         "adaptive_sustain_duration",
         "arrival_pattern",

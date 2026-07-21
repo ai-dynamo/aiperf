@@ -129,7 +129,7 @@ class NetworkLatencyManager(BaseComponentService):
                 await collector.start()
                 self._collectors[key] = collector
                 started_count += 1
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 self.error(f"Failed to start probe collector for {key}: {e!r}")
 
         if started_count == 0:
@@ -173,7 +173,7 @@ class NetworkLatencyManager(BaseComponentService):
                 # just stop topping up this collector.
                 try:
                     await collector.probe_once()
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     self.warning(
                         f"Network Latency: Final top-up probe failed for {key}: {e!r}"
                     )
@@ -210,7 +210,7 @@ class NetworkLatencyManager(BaseComponentService):
             # leave the remaining collectors running or fail service teardown.
             try:
                 await collector.stop()
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 self.error(f"Failed to stop probe collector for {key}: {e!r}")
 
     async def _delayed_shutdown(self) -> None:
@@ -235,7 +235,7 @@ class NetworkLatencyManager(BaseComponentService):
                     error=None,
                 )
                 await self.records_push_client.push(message)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 self.error(
                     f"Failed to send network latency sample from {collector_id}: {e!r}"
                 )
@@ -248,7 +248,7 @@ class NetworkLatencyManager(BaseComponentService):
                         error=ErrorDetails.from_exception(e),
                     )
                     await self.records_push_client.push(error_message)
-                except Exception as nested_error:  # noqa: BLE001
+                except Exception as nested_error:
                     self.error(
                         f"Failed to send error message after sample send failure: {nested_error!r}"
                     )
@@ -267,7 +267,7 @@ class NetworkLatencyManager(BaseComponentService):
                 error=error,
             )
             await self.records_push_client.push(error_message)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             self.error(f"Failed to send network latency error message: {e!r}")
 
 

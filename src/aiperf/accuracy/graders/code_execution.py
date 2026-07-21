@@ -109,7 +109,7 @@ class CodeExecutionGrader(BaseGrader):
         """
         try:
             return str(extract_code(response_text) or "")
-        except Exception as exc:  # pragma: no cover - defensive  # noqa: BLE001
+        except Exception as exc:  # pragma: no cover - defensive
             _log.debug("extract_code raised: %s", exc, exc_info=True)
             return ""
 
@@ -153,7 +153,7 @@ class CodeExecutionGrader(BaseGrader):
             metrics, _ = await asyncio.to_thread(
                 _run_codegen_metrics, evaluation_sample, generated_code
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _log.debug("lighteval codegen_metrics raised: %s", exc, exc_info=True)
             return _grading_failure(
                 response_text, ground_truth, f"sandboxed exec failed: {exc}"
@@ -339,7 +339,7 @@ def _decode_private_test_cases(raw: Any) -> list[dict[str, Any]]:
     ):
         try:
             return translate_private_test_cases(raw)
-        except Exception:  # noqa: BLE001 - graceful fallback to legacy plain-JSON shape
+        except Exception:  # graceful fallback to legacy plain-JSON shape
             _log.debug(
                 "translate_private_test_cases couldn't decode raw private_test_cases; "
                 "falling back to plain JSON parse",

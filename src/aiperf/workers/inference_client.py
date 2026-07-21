@@ -60,10 +60,21 @@ def detect_transport_from_url(url: str) -> str:
 class InferenceClient(AIPerfLifecycleMixin):
     """Inference client for the worker."""
 
-    def __init__(self, model_endpoint: ModelEndpointInfo, service_id: str, **kwargs):
+    def __init__(
+        self,
+        model_endpoint: ModelEndpointInfo,
+        service_id: str,
+        *,
+        strip_record_payload_bytes: bool = False,
+        **kwargs,
+    ):
         super().__init__(model_endpoint=model_endpoint, service_id=service_id, **kwargs)
         self.model_endpoint = model_endpoint
         self.service_id = service_id
+        # When True, omit canonical request payload bytes from the slim
+        # RecordContext after dispatch (memory optimization for large prompts).
+        # Resolved by the worker via record payload-retention auto-detection.
+        self.strip_record_payload_bytes = strip_record_payload_bytes
 
         # Legacy Dynamo session_control only: session_ids this worker has already
         # sent an 'open' for. 'open' is not idempotent and must be sent exactly
@@ -259,7 +270,23 @@ class InferenceClient(AIPerfLifecycleMixin):
         record.model_name = (
             request_info.turns[-1].model or self.model_endpoint.primary_model_name
         )
+        # Hoist per-turn scalars onto the RecordContext so the record
+        # processor's metrics (requested_osl, audio_duration) can read them
+        # without walking turns: max_tokens from the dispatch turn,
+        # audio_duration_seconds from the first turn (ASR requests are
+        # single-turn; mirrors the pre-hoist turns[0] read).
+        request_info.max_tokens = request_info.turns[-1].max_tokens
+        request_info.audio_duration_seconds = request_info.turns[
+            0
+        ].audio_duration_seconds
         self._enrich_request_record(record, request_info)
+
+        # When stripping is enabled (large-prompt memory optimization,
+        # resolved by the worker's payload-retention auto-detection), drop
+        # the canonical request payload bytes from the slim record context
+        # after dispatch.
+        if self.strip_record_payload_bytes and record.request_info is not None:
+            record.request_info.payload_bytes = None
 
         # Copy turns with stripped multimodal data to avoid mutating original session
         # and reduce memory usage (placeholders instead of large image/audio/video data)

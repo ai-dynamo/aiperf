@@ -145,7 +145,7 @@ class FdEdgeReader:
                 events = self._socket.getsockopt(zmq.EVENTS)
         except (zmq.ContextTerminated, zmq.ZMQError):
             return
-        except Exception as e:  # noqa: BLE001 - drain boundary; report this pass
+        except Exception as e:  # drain boundary; report this pass
             # A non-ZMQ failure (e.g. a malformed frame that fails to decode) has
             # already consumed its frame. Re-arm before returning: the FD is
             # edge-triggered and POLLIN may still be set, so without re-checking

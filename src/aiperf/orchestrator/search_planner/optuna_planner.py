@@ -322,7 +322,7 @@ class OptunaSearchPlanner(SearchPlanner):
                 if self._terminator.should_terminate(study=self._study):
                     self._convergence_reason = self._terminator_reason
                     return True
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 # Optuna's terminator can raise mid-run when its GP fails to
                 # fit (e.g. degenerate observations); a stop-rule failure is
                 # not a planner failure -- log and fall through to "not
@@ -626,7 +626,7 @@ class OptunaSearchPlanner(SearchPlanner):
             return
         try:
             hv = compute_hypervolume(observed, self._cfg.objectives, ref_point)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug(
                 "compute_hypervolume failed at iter %d: %r; skipping plateau update.",
                 self._iter,

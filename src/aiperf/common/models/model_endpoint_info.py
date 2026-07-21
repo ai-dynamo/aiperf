@@ -163,6 +163,11 @@ class EndpointInfo(AIPerfBaseModel):
         description="Custom template configuration for template endpoints. "
         "Provides the Jinja2 request body and JMESPath response_field used by TemplateEndpoint.",
     )
+    uuid_and_strip: bool = Field(
+        default=EndpointDefaults.UUID_AND_STRIP,
+        description="Enable AIPerf-managed stripping of repeated image content. "
+        "Dataset-authored UUIDs pass through independently of this setting.",
+    )
 
     @property
     def base_url(self) -> str:
@@ -235,6 +240,9 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 ),
                 dynamo_session_timeout_seconds=getattr(
                     ep, "dynamo_session_timeout_seconds", 300
+                ),
+                uuid_and_strip=getattr(
+                    ep, "uuid_and_strip", EndpointDefaults.UUID_AND_STRIP
                 ),
             ),
             transport=ep.transport,

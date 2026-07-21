@@ -52,7 +52,13 @@ from tests.harness import (
 )
 from tests.harness.fake_communication import CapturedPayload
 from tests.harness.fake_tokenizer import TOKEN, TOKEN_LEN
+from tests.harness.optional_deps import collect_ignore_for_unavailable_deps
 from tests.harness.utils import AIPerfCLI, AIPerfRunnerFn, AIPerfRunnerResult
+
+# Skip component-integration tests whose top-level imports need a native dep
+# with no Windows-on-ARM build (statically scanned; see optional_deps.py).
+# Empty wherever those deps are present.
+collect_ignore: list[str] = collect_ignore_for_unavailable_deps(Path(__file__).parent)
 
 COMPONENT_INTEGRATION_PROCESS_TITLE = "aiperf component_integration_test"
 

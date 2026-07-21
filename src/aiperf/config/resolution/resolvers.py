@@ -152,7 +152,7 @@ class ArtifactDirResolver:
 
             metadata = plugins.get_endpoint_metadata(cfg.endpoint.type)
             parts.append(f"{metadata.service_kind}-{cfg.endpoint.type}")
-        except Exception:  # noqa: BLE001 - missing/partial plugin registry must not fail artifact-dir naming; falls back to str(endpoint.type)
+        except Exception:  # missing/partial plugin registry must not fail artifact-dir naming; falls back to str(endpoint.type)
             parts.append(str(cfg.endpoint.type))
 
         # 3. Stimulus from the first non-warmup phase
@@ -202,7 +202,9 @@ def _describe_user_centric(phase: object) -> str:
 
 def _describe_rate_phase(phase: object) -> str:
     """Rate phases (poisson, gamma, constant) - render by attribute presence."""
-    rate = getattr(phase, "request_rate", None)
+    from aiperf.config.phases import get_phase_rate
+
+    rate = get_phase_rate(phase)  # type: ignore[arg-type]
     concurrency = getattr(phase, "concurrency", None)
     parts: list[str] = []
     if concurrency is not None:

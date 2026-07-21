@@ -48,6 +48,7 @@ class PhaseCallbackContext:
     strategy: TimingStrategyProtocol
     concurrency_manager: ConcurrencyManager
     handle_credit_result: Callable[[CreditReturn], Awaitable[None]] | None = None
+    handle_first_token: Callable[[FirstToken], Awaitable[None]] | None = None
 
 
 # =============================================================================
@@ -168,6 +169,7 @@ class CreditCallbackHandler:
             strategy: Timing strategy for dispatching next turns.
         """
         handle_credit_result = getattr(strategy, "handle_credit_result", None)
+        handle_first_token = getattr(strategy, "handle_first_token", None)
         self._phase_handlers[phase] = PhaseCallbackContext(
             progress=progress,
             lifecycle=lifecycle,
@@ -176,6 +178,9 @@ class CreditCallbackHandler:
             concurrency_manager=self._concurrency_manager,
             handle_credit_result=handle_credit_result
             if inspect.iscoroutinefunction(handle_credit_result)
+            else None,
+            handle_first_token=handle_first_token
+            if inspect.iscoroutinefunction(handle_first_token)
             else None,
         )
         _logger.debug(lambda: f"Registered callback handler for phase {phase}")
@@ -267,14 +272,18 @@ class CreditCallbackHandler:
         handler = self._phase_handlers.get(phase)
         if not handler:
             _logger.debug(
-                lambda: f"Credit return for unregistered phase {phase}, "
-                f"credit_id={credit.id}, worker={worker_id}"
+                lambda: (
+                    f"Credit return for unregistered phase {phase}, "
+                    f"credit_id={credit.id}, worker={worker_id}"
+                )
             )
             return None
         if handler.lifecycle.is_complete:
             _logger.warning(
-                lambda: f"Credit return after phase {phase} complete, "
-                f"credit_id={credit.id}, worker={worker_id}"
+                lambda: (
+                    f"Credit return after phase {phase} complete, "
+                    f"credit_id={credit.id}, worker={worker_id}"
+                )
             )
             return None
         return handler
@@ -332,7 +341,7 @@ class CreditCallbackHandler:
         try:
             if self._branch_orchestrator.get_branch_ids(credit):
                 return True
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
         return False
 
@@ -368,11 +377,13 @@ class CreditCallbackHandler:
                 await self._branch_orchestrator.on_child_leaf_reached(
                     credit.x_correlation_id
                 )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _logger.warning(
-                lambda exc=exc: f"BranchOrchestrator child-completion "
-                f"hook failed for x_correlation_id="
-                f"{credit.x_correlation_id}: {exc}"
+                lambda exc=exc: (
+                    f"BranchOrchestrator child-completion "
+                    f"hook failed for x_correlation_id="
+                    f"{credit.x_correlation_id}: {exc}"
+                )
             )
 
     async def _intercept_for_dag(self, credit: Credit) -> bool:
@@ -386,10 +397,11 @@ class CreditCallbackHandler:
             return False
         try:
             return await self._branch_orchestrator.intercept(credit)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _logger.warning(
-                lambda exc=exc: f"BranchOrchestrator intercept failed for "
-                f"credit {credit.id}: {exc}"
+                lambda exc=exc: (
+                    f"BranchOrchestrator intercept failed for credit {credit.id}: {exc}"
+                )
             )
             return False
 
@@ -430,7 +442,9 @@ class CreditCallbackHandler:
             in_flight = handler.progress.in_flight_sessions
             if in_flight > 0:
                 _logger.debug(
-                    lambda: f"Releasing {in_flight} in-flight session slots for phase {phase}"
+                    lambda: (
+                        f"Releasing {in_flight} in-flight session slots for phase {phase}"
+                    )
                 )
                 for _ in range(in_flight):
                     concurrency.release_session_slot(phase)
@@ -454,10 +468,15 @@ class CreditCallbackHandler:
 
         if not handler:
             _logger.debug(
-                lambda: f"TTFT for unregistered phase {phase}, "
-                f"credit_id={first_token.credit_id}"
+                lambda: (
+                    f"TTFT for unregistered phase {phase}, "
+                    f"credit_id={first_token.credit_id}"
+                )
             )
             return
+
+        if handler.handle_first_token is not None:
+            await handler.handle_first_token(first_token)
 
         # Track the release
         handler.progress.increment_prefill_released()

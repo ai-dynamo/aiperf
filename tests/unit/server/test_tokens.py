@@ -10,6 +10,7 @@ from aiperf_mock_server.models import (
 )
 from aiperf_mock_server.tokens import (
     TokenizedText,
+    _generate_seed,
     _tokenize,
     count_tokens,
     tokenize,
@@ -383,3 +384,25 @@ class TestMinTokens:
         )
         result = tokenize_request(req)
         assert min_tokens <= result.count <= max_tokens
+
+
+class TestSeedDeterminism:
+    """_generate_seed must be stable across processes and platforms.
+
+    The previous hash()-based seed was salted per-process via PYTHONHASHSEED,
+    so output lengths varied per CI job; when the salted seed landed exactly
+    on the max_tokens budget (~1/1000 jobs), finish_reason flipped from
+    "stop" to "length" and count assertions flaked (reproducible with
+    PYTHONHASHSEED=960 on the old implementation). The pinned constants
+    below fail under any per-process-salted implementation.
+    """
+
+    def test_generate_seed_is_salt_independent(self):
+        assert _generate_seed(["Shor", "t"]) == 390
+
+    def test_generate_seed_empty_prompt_is_zero(self):
+        assert _generate_seed([]) == 0
+
+    def test_generate_seed_uses_first_five_tokens_only(self):
+        base = ["a", "b", "c", "d", "e"]
+        assert _generate_seed(base) == _generate_seed(base + ["f", "g"])

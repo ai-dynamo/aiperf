@@ -207,7 +207,7 @@ class MultiRunOrchestrator:
                 getattr(variation, "label", None) or "", variation.values
             )
             self._cell_callback(variation_key, cell)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("cell_callback raised; suppressing", exc_info=True)
 
     def _maybe_write_sampling_design(self, plan: BenchmarkPlan) -> None:
@@ -717,4 +717,5 @@ class MultiRunOrchestrator:
         if run.variation is not None:
             result.variation_label = run.variation.label
             result.variation_values = dict(run.variation.values)
+            result.variation_index = run.variation.index
         result.trial_index = trial_index
