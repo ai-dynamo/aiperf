@@ -29,7 +29,7 @@ class TestGpuTelemetry:
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --gpu-telemetry {" ".join(aiperf_mock_server.dcgm_urls)} \
                 --streaming \
@@ -78,7 +78,7 @@ class TestGpuTelemetry:
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --gpu-telemetry {" ".join(aiperf_mock_server.dcgm_urls)} \
                 --streaming \
@@ -135,7 +135,7 @@ class TestGpuTelemetry:
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --gpu-telemetry {" ".join(aiperf_mock_server.dcgm_urls)} \
                 --streaming \
@@ -173,7 +173,7 @@ class TestGpuTelemetry:
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --streaming \
                 --request-count 25 \

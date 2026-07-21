@@ -30,7 +30,7 @@ class TestDashboardUI:
                 aiperf profile \
                     --model {defaults.model} \
                     --url {aiperf_mock_server.url} \
-                    --tokenizer gpt2 \
+                    --tokenizer builtin \
                     --endpoint-type chat \
                     --ui dashboard \
                     --benchmark-duration 5 \
