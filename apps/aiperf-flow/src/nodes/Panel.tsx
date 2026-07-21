@@ -11,22 +11,27 @@ import type { PanelNodeData } from "./types.js";
 
 export type PanelNodeType = Node<PanelNodeData, "panel">;
 
+const HANDLE_CLASS_NAME = "!rounded-none !border-stroke-primary !bg-accent-primary !h-2 !w-2";
+
 export function PanelNode({ data }: NodeProps<PanelNodeType>): React.JSX.Element {
   return (
     <div
       className={clsx(
-        "min-w-[150px] rounded-none border px-4 py-3",
+        "min-w-[150px] rounded-none border border-l-2 px-4 py-3",
         surfaceClassName(data.surfaceRole ?? "elevated"),
         strokeClassName(data.strokeRole ?? "secondary"),
+        "border-l-accent-primary",
         data.className,
       )}
     >
-      <Handle type="target" position={Position.Left} />
-      <div className={`text-sm font-semibold ${inkClassName("primary")}`}>{data.title}</div>
+      <Handle type="target" position={Position.Left} className={HANDLE_CLASS_NAME} />
+      <div className={`text-sm font-semibold tracking-tight ${inkClassName("primary")}`}>
+        {data.title}
+      </div>
       {data.detail !== undefined && (
-        <div className={`mt-1 text-xs ${inkClassName("secondary")}`}>{data.detail}</div>
+        <div className={`mt-1.5 text-xs ${inkClassName("secondary")}`}>{data.detail}</div>
       )}
-      <Handle type="source" position={Position.Right} />
+      <Handle type="source" position={Position.Right} className={HANDLE_CLASS_NAME} />
     </div>
   );
 }
