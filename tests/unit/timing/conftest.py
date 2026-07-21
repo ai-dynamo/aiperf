@@ -72,8 +72,8 @@ class MockCreditRouter:
                 CreditReturn(credit=credit, cancelled=False, first_token_sent=True),
             )
 
-    async def cancel_all_credits(self) -> None:
-        pass
+    async def cancel_all_credits(self) -> set[int]:
+        return set()
 
     def mark_credits_complete(self) -> None:
         pass
@@ -505,8 +505,9 @@ class MockCreditSender:
     async def send_credit(self, credit: Credit) -> None:
         self.sent_credits.append(credit)
 
-    async def cancel_all_credits(self) -> None:
+    async def cancel_all_credits(self) -> set[int]:
         self.cancelled = True
+        return set()
 
     def reset(self) -> None:
         self.sent_credits.clear()

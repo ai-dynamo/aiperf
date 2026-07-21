@@ -72,6 +72,14 @@ def mock_results(sample_records):
             return False
 
         @property
+        def sent_request_count(self):
+            return None
+
+        @property
+        def abandoned_request_count(self):
+            return None
+
+        @property
         def error_summary(self):
             return []
 
@@ -172,6 +180,14 @@ class TestMetricsJsonExporter:
             @property
             def was_cancelled(self):
                 return False
+
+            @property
+            def sent_request_count(self):
+                return None
+
+            @property
+            def abandoned_request_count(self):
+                return None
 
             @property
             def error_summary(self):
@@ -960,6 +976,8 @@ class TestMetricsJsonExporterWarmupMetrics:
             start_ns = None
             end_ns = None
             was_cancelled = False
+            sent_request_count = None
+            abandoned_request_count = None
             error_summary = []
             branch_stats = None
 

@@ -331,6 +331,18 @@ class JsonExportData(AIPerfBaseModel):
     input_config: BenchmarkConfig | None = None
     run_info: RunInfo | None = None
     was_cancelled: bool | None = None
+    sent_request_count: int | None = Field(
+        default=None,
+        ge=0,
+        description="The total number of inference requests sent to the workers, "
+        "including any that were abandoned in flight (if known)",
+    )
+    abandoned_request_count: int | None = Field(
+        default=None,
+        ge=0,
+        description="The number of sent requests that were abandoned in flight "
+        "and never contributed a completed/error record, if known",
+    )
     error_summary: list[ErrorDetailsCount] | None = None
     start_time: datetime | None = None
     end_time: datetime | None = None

@@ -52,6 +52,7 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
         self._error_records: int = 0
 
         # Final count fields
+        self._final_requests_sent: int | None = None
         self._final_requests_completed: int | None = None
         self._final_requests_cancelled: int | None = None
         self._final_request_errors: int | None = None
@@ -95,6 +96,7 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
             total_expected_requests=self._total_expected_requests,
             success_records=self._success_records,
             error_records=self._error_records,
+            final_requests_sent=self._final_requests_sent,
             final_requests_completed=self._final_requests_completed,
             final_requests_cancelled=self._final_requests_cancelled,
             final_request_errors=self._final_request_errors,
@@ -109,6 +111,7 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
         self._sent_end_ns = credit_stats.sent_end_ns
         self._requests_end_ns = credit_stats.requests_end_ns
         self._total_expected_requests = credit_stats.total_expected_requests
+        self._final_requests_sent = credit_stats.final_requests_sent
         self._final_requests_completed = credit_stats.final_requests_completed
         self._final_requests_cancelled = credit_stats.final_requests_cancelled
         self._final_request_errors = credit_stats.final_request_errors

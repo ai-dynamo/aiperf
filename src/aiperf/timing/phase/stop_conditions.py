@@ -137,12 +137,23 @@ class DagLifecycleStopCondition(StopCondition):
 
 
 class RequestCountStopCondition(StopCondition):
-    """Request count based stop condition."""
+    """Request count based stop condition.
+
+    Bypassed when ``overshoot_poll_interval`` is set (Locust-equivalent stop
+    strategy): issuance keeps going past ``requests`` sent and a separate
+    poller (``OvershootAbandonPoller``) stops the phase based on COMPLETED
+    count instead, then abandons in-flight work immediately rather than
+    draining it. See ``BasePhaseConfig.overshoot_poll_interval``.
+    """
 
     @classmethod
     def should_use(cls, config: CreditPhaseConfig) -> bool:
-        """Returns True if a request count limit is configured."""
-        return config.total_expected_requests is not None
+        """Returns True if a request count limit is configured and overshoot
+        polling is not — the poller takes over the stop decision instead."""
+        return (
+            config.total_expected_requests is not None
+            and config.overshoot_poll_interval_sec is None
+        )
 
     def can_send_any_turn(self) -> bool:
         """Returns True if the request count limit has not been reached."""

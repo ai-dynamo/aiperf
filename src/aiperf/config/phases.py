@@ -194,6 +194,23 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         ),
     ]
 
+    overshoot_poll_interval: Annotated[
+        float | None,
+        Field(
+            ge=0,
+            default=None,
+            description="Locust-equivalent stop strategy for 'requests'-bound phases: "
+            "instead of stopping issuance once 'requests' credits have been SENT and "
+            "then draining in-flight work, keep issuing continuously and poll the "
+            "COMPLETED count every N seconds. The moment completed >= requests, "
+            "issuance stops and all in-flight credits are abandoned immediately "
+            "(no grace/drain wait) rather than waited-for. This produces the same "
+            "'overshoot-then-abandon' shape as Locust's periodic worker-report "
+            "check + runner.quit(), for direct comparison against Locust runs. "
+            "Only meaningful when 'requests' is set; ignored otherwise.",
+        ),
+    ]
+
     cancellation: Annotated[
         CancellationConfig | None,
         Field(
@@ -268,6 +285,11 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         if self.grace_period is not None and self.duration is None:
             raise ValueError(
                 f"Phase '{self.name}': grace_period requires duration to be set"
+            )
+        if self.overshoot_poll_interval is not None and self.requests is None:
+            raise ValueError(
+                f"Phase '{self.name}': overshoot_poll_interval requires "
+                "'requests' to be set"
             )
         return self
 

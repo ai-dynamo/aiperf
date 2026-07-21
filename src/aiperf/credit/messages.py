@@ -61,6 +61,14 @@ class CreditPhaseCompleteMessage(BaseServiceMessage):
         "RecordsManager forwards this to ProfileResults so the JSON "
         "exporter can splice it into profile_export_aiperf.json.",
     )
+    abandoned_credit_ids: list[int] = Field(
+        default_factory=list,
+        description="Credit IDs that were still in flight when the phase "
+        "abandoned them (overshoot-abandon stop strategy, or a grace-period "
+        "timeout drain cancel). RecordsManager uses this to refuse-ingest "
+        "or purge any late record for these IDs, since they were excluded "
+        "from the phase's final completed/cancelled counts.",
+    )
 
 
 class CreditsCompleteMessage(BaseServiceMessage):

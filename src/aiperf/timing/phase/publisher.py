@@ -75,6 +75,7 @@ class PhasePublisher:
         self,
         phase_stats: CreditPhaseStats,
         branch_stats: BranchStats | None = None,
+        abandoned_credit_ids: set[int] | None = None,
     ) -> None:
         """Publish phase complete event.
 
@@ -82,11 +83,15 @@ class PhasePublisher:
             phase_stats: Phase counters at completion.
             branch_stats: Optional DAG branch orchestration counters
                 (BranchOrchestrator snapshot). None for non-DAG runs.
+            abandoned_credit_ids: Credit IDs cancelled in flight and excluded
+                from the final completed/cancelled counts. Empty for a
+                normal drain-to-completion phase.
         """
         msg = CreditPhaseCompleteMessage(
             service_id=self._service_id,
             stats=phase_stats,
             branch_stats=branch_stats,
+            abandoned_credit_ids=sorted(abandoned_credit_ids or ()),
         )
         await self._pub_client.publish(msg)
 

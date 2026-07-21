@@ -78,6 +78,8 @@ class MetricsJsonExporter(MetricsBaseExporter):
             input_config=self._cfg,
             run_info=RunInfo.from_run(self._run),
             was_cancelled=self._results.was_cancelled,
+            sent_request_count=self._results.sent_request_count,
+            abandoned_request_count=self._results.abandoned_request_count,
             error_summary=self._results.error_summary,
             start_time=start_time,
             end_time=end_time,

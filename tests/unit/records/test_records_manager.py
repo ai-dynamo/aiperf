@@ -163,6 +163,7 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = False
         manager._error_tracker = ErrorTracker()
         manager._complete_credit_phases = set()
+        manager._abandoned_credit_ids_by_phase = {}
         return manager
 
     def _records_message(self) -> RecordsMessage:
@@ -294,6 +295,7 @@ def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager._complete_credit_phases = set()
     manager._phase_branch_stats = {}
     manager._latest_branch_stats = None
+    manager._abandoned_credit_ids_by_phase = {}
     manager._dispatch_record = AsyncMock(return_value=[])
     manager.info = MagicMock()
     manager.notice = MagicMock()
@@ -388,6 +390,7 @@ class TestRecordsManagerTimingDispatch:
         manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
             total_records=64,
             final_requests_completed=64,
+            final_requests_abandoned=0,
         )
 
         await manager._on_credit_phase_complete(
@@ -406,6 +409,7 @@ class TestRecordsManagerTimingDispatch:
         manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
             total_records=64,
             final_requests_completed=64,
+            final_requests_abandoned=0,
         )
 
         await manager._on_records(_metric_records_message())
@@ -439,6 +443,7 @@ class TestRecordsManagerTimingDispatch:
         manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
             total_records=64,
             final_requests_completed=64,
+            final_requests_abandoned=0,
         )
 
         await manager._on_credits_complete(
@@ -483,6 +488,7 @@ class TestRecordsManagerTimingDispatch:
         manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
             total_records=63,
             final_requests_completed=64,
+            final_requests_abandoned=0,
         )
 
         await manager._on_credit_phase_complete(
@@ -607,6 +613,86 @@ class TestRecordsManagerTimingDispatch:
         manager._handle_all_records_received.assert_awaited_once_with(
             CreditPhase.PROFILING
         )
+
+
+class TestRecordsManagerAbandonedCredits:
+    """Abandoned-credit-ID reconciliation: refuse-ingest for late records that
+    arrive after the phase's abandoned set is known, and purge for records
+    that were already ingested before it arrived."""
+
+    @pytest.mark.asyncio
+    async def test_credit_phase_complete_records_abandoned_ids_and_purges(
+        self,
+    ) -> None:
+        manager = _create_manager_for_timing_dispatch()
+        manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = False
+        manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
+            total_records=0,
+            final_requests_completed=0,
+            final_requests_abandoned=1,
+        )
+        accumulator = MagicMock()
+        accumulator.purge_by_session_nums.return_value = 1
+        manager._metric_record_accumulators = [accumulator]
+
+        stats = _create_credit_phase_stats().model_copy(
+            update={"final_requests_completed": 0}
+        )
+        await manager._on_credit_phase_complete(
+            CreditPhaseCompleteMessage(
+                service_id="timing-manager",
+                stats=stats,
+                abandoned_credit_ids=[17],
+            )
+        )
+
+        assert manager._abandoned_credit_ids_by_phase[CreditPhase.PROFILING] == {17}
+        accumulator.purge_by_session_nums.assert_called_once_with({17})
+
+    @pytest.mark.asyncio
+    async def test_credit_phase_complete_without_abandoned_ids_does_not_purge(
+        self,
+    ) -> None:
+        manager = _create_manager_for_timing_dispatch()
+        manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = False
+        manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
+            total_records=0,
+            final_requests_completed=0,
+            final_requests_abandoned=0,
+        )
+        accumulator = MagicMock()
+        manager._metric_record_accumulators = [accumulator]
+
+        stats = _create_credit_phase_stats().model_copy(
+            update={"final_requests_completed": 0}
+        )
+        await manager._on_credit_phase_complete(
+            CreditPhaseCompleteMessage(service_id="timing-manager", stats=stats)
+        )
+
+        assert manager._abandoned_credit_ids_by_phase == {}
+        accumulator.purge_by_session_nums.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_records_refuses_ingest_for_abandoned_session_num(self) -> None:
+        manager = _create_manager_for_timing_dispatch()
+        manager._abandoned_credit_ids_by_phase = {CreditPhase.PROFILING: {17}}
+
+        await manager._on_records(_metric_records_message())
+
+        manager._dispatch_record.assert_not_called()
+        manager._records_tracker.update_from_request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_records_ingests_when_session_num_not_abandoned(self) -> None:
+        manager = _create_manager_for_timing_dispatch()
+        manager._abandoned_credit_ids_by_phase = {CreditPhase.PROFILING: {99}}
+        manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = False
+
+        await manager._on_records(_metric_records_message())
+
+        manager._dispatch_record.assert_awaited_once()
+        manager._records_tracker.update_from_request.assert_called_once()
 
 
 class TestRecordsManagerAnalyzerMetrics:
@@ -792,6 +878,7 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         manager._records_tracker = MagicMock()
         manager._error_tracker = MagicMock()
         manager._complete_credit_phases = set()
+        manager._abandoned_credit_ids_by_phase = {}
         manager._dispatch_record = AsyncMock(
             side_effect=RuntimeError("REACHED_PROCESSING")
         )

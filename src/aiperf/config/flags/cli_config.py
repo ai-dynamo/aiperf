@@ -1857,6 +1857,29 @@ class CLIConfig(BaseConfig):
         ),
     ] = 30.0
 
+    overshoot_poll_interval: Annotated[
+        float | None,
+        Field(
+            ge=0,
+            description="Overshoot-then-abandon stop strategy for requests-bound runs. Only "
+            "applies when --request-count is set. Instead of stopping issuance the moment N "
+            "requests have been SENT and then draining in-flight work, keep issuing "
+            "continuously; once completed reaches the target, issuance stops and all "
+            "in-flight requests are abandoned immediately (no drain wait). Two modes: "
+            "a value > 0 polls the COMPLETED count every N seconds, matching Locust's "
+            "periodic worker-report check + runner.quit() (the cutoff can overshoot by "
+            "however many requests complete between polls); 0 stops on the EXACT credit "
+            "return that pushes completed to the target, with no polling delay at all "
+            "(tighter than Locust can express, useful when you want the precise Nth "
+            "completion rather than Locust's specific cadence). Unset (default): AIPerf's "
+            "normal behavior (issue exactly --request-count, wait for all of them to return).",
+        ),
+        CLIParameter(
+            name=("--overshoot-poll-interval",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
     concurrency: Annotated[
         Any,
         Field(

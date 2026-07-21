@@ -21,6 +21,7 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TimingMode
 from aiperf.timing.branch_orchestrator import BranchOrchestrator
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
+from aiperf.timing.phase.overshoot_poller import OvershootAbandonPoller
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
 from aiperf.timing.ramping import Ramper, RamperConfig, RampType
@@ -134,12 +135,24 @@ class PhaseRunner(TaskManagerMixin):
         )
         self._credit_issuer = self._build_credit_issuer(url_selection_strategy)
         self._maybe_construct_branch_orchestrator(conversation_source)
+        self._overshoot_poller = OvershootAbandonPoller(
+            config=self._config,
+            lifecycle=self._lifecycle,
+            counter=self._progress.counter,
+            progress=self._progress,
+            credit_router=self._credit_router,
+        )
 
         self._execution_task: asyncio.Task | None = None
         self._progress_task: asyncio.Task | None = None
         self._return_wait_task: asyncio.Task | None = None
         self._was_cancelled = False
         self._rampers: list[Ramper] = []
+        # Populated by the grace-period-timeout drain path in
+        # _wait_for_returning_complete; the overshoot-abandon path's own set
+        # lives on self._overshoot_poller.abandoned_credit_ids. Unioned at
+        # the final publish_phase_complete call.
+        self._abandoned_credit_ids: set[int] = set()
 
     def _build_credit_issuer(
         self, url_selection_strategy: URLSelectionStrategyProtocol | None
@@ -264,6 +277,7 @@ class PhaseRunner(TaskManagerMixin):
         for ramper in self._rampers:
             ramper.stop()
         self._scheduler.cancel_all()
+        self._overshoot_poller.stop()
 
     def _on_return_wait_complete(self, task: asyncio.Task) -> None:
         """Handle completion of background return wait task (seamless mode).
@@ -379,6 +393,7 @@ class PhaseRunner(TaskManagerMixin):
         await self._phase_publisher.publish_phase_start(self._config, stats)
 
         self._progress_task = self.execute_async(self._progress_report_loop())
+        self._overshoot_poller.start()
 
         # Start rampers BEFORE execution to ensure concurrency limits are
         # applied from the start. Otherwise, credits could be issued at full
@@ -568,10 +583,13 @@ class PhaseRunner(TaskManagerMixin):
         """Format a concise log message for phase complete."""
         parts = [f"Phase {stats.phase} complete"]
         parts.append(
+            f"sent={stats.final_requests_sent:,}, "
             f"completed={stats.final_requests_completed:,}, "
             f"cancelled={stats.final_requests_cancelled:,}, "
             f"errors={stats.final_request_errors:,}"
         )
+        if stats.final_requests_abandoned:
+            parts.append(f"abandoned={stats.final_requests_abandoned:,}")
         if stats.final_sent_sessions and stats.final_sent_sessions > 0:
             parts.append(
                 f"sessions: completed={stats.final_completed_sessions:,}, "
@@ -654,7 +672,9 @@ class PhaseRunner(TaskManagerMixin):
                     f"cancelled={stats.requests_cancelled}, "
                     f"in_flight={stats.in_flight_requests}"
                 )
-                await self._credit_router.cancel_all_credits()
+                self._abandoned_credit_ids = (
+                    await self._credit_router.cancel_all_credits()
+                )
                 stats = self._progress.create_stats(self._lifecycle)
                 need = (
                     stats.final_requests_sent
@@ -695,7 +715,10 @@ class PhaseRunner(TaskManagerMixin):
             self.notice(self._format_phase_complete(stats))
             await self._phase_publisher.publish_progress(stats)
             await self._phase_publisher.publish_phase_complete(
-                stats, branch_stats=self._snapshot_branch_stats()
+                stats,
+                branch_stats=self._snapshot_branch_stats(),
+                abandoned_credit_ids=self._abandoned_credit_ids
+                | self._overshoot_poller.abandoned_credit_ids,
             )
 
     def _release_stuck_slots(self) -> None:

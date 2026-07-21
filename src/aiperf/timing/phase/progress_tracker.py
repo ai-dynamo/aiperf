@@ -11,6 +11,7 @@ Wraps CreditCounter and adds:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -54,6 +55,19 @@ class PhaseProgressTracker:
         # Events for synchronization
         self.all_credits_sent_event: asyncio.Event = asyncio.Event()
         self.all_credits_returned_event: asyncio.Event = asyncio.Event()
+
+        # Exact-cutoff overshoot stop (overshoot_poll_interval_sec == 0):
+        # invoked synchronously the instant requests_completed reaches
+        # total_expected_requests, rather than on a poll interval. See
+        # OvershootAbandonPoller and set_exact_overshoot_callback below.
+        self._exact_overshoot_callback: Callable[[], None] | None = None
+        self._exact_overshoot_fired = False
+
+    def set_exact_overshoot_callback(self, callback: Callable[[], None]) -> None:
+        """Register the callback fired the instant requests_completed hits
+        total_expected_requests, for overshoot_poll_interval_sec == 0
+        (exact-cutoff mode). Only ever fires once."""
+        self._exact_overshoot_callback = callback
 
     # =========================================================================
     # Counter Properties (delegated to CreditCounter via protocol)
@@ -126,7 +140,25 @@ class PhaseProgressTracker:
         Note: Late arrivals (after phase complete) are handled by caller
         checking lifecycle.is_complete before calling this method.
         """
-        return self._counter.increment_returned(is_final_turn, cancelled, errored)
+        result = self._counter.increment_returned(is_final_turn, cancelled, errored)
+        self._maybe_fire_exact_overshoot()
+        return result
+
+    def _maybe_fire_exact_overshoot(self) -> None:
+        """Fire the exact-cutoff overshoot callback the instant
+        requests_completed reaches total_expected_requests (once only).
+
+        Checked after every return so the cutoff lands on the precise
+        credit that crosses the target, rather than up to
+        overshoot_poll_interval_sec late. No-op unless a callback is
+        registered (i.e. overshoot_poll_interval_sec == 0).
+        """
+        if self._exact_overshoot_callback is None or self._exact_overshoot_fired:
+            return
+        target = self._config.total_expected_requests
+        if target is not None and self._counter.requests_completed >= target:
+            self._exact_overshoot_fired = True
+            self._exact_overshoot_callback()
 
     def increment_prefill_released(self) -> None:
         """Increment prefill released count.

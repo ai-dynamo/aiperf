@@ -1168,6 +1168,20 @@
                       "ge": 0,
                       "title": "Graceperiod"
                     },
+                    "overshootPollInterval": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                      "title": "Overshootpollinterval"
+                    },
                     "cancellation": {
                       "anyOf": [
                         {
@@ -1472,6 +1486,20 @@
                       "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
                       "ge": 0,
                       "title": "Graceperiod"
+                    },
+                    "overshootPollInterval": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                      "title": "Overshootpollinterval"
                     },
                     "cancellation": {
                       "anyOf": [
@@ -1796,6 +1824,20 @@
                       "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
                       "ge": 0,
                       "title": "Graceperiod"
+                    },
+                    "overshootPollInterval": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                      "title": "Overshootpollinterval"
                     },
                     "cancellation": {
                       "anyOf": [
@@ -2135,6 +2177,20 @@
                       "ge": 0,
                       "title": "Graceperiod"
                     },
+                    "overshootPollInterval": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                      "title": "Overshootpollinterval"
+                    },
                     "cancellation": {
                       "anyOf": [
                         {
@@ -2458,6 +2514,20 @@
                       "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
                       "ge": 0,
                       "title": "Graceperiod"
+                    },
+                    "overshootPollInterval": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                      "title": "Overshootpollinterval"
                     },
                     "cancellation": {
                       "anyOf": [
@@ -2789,6 +2859,20 @@
                       "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
                       "ge": 0,
                       "title": "Graceperiod"
+                    },
+                    "overshootPollInterval": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                      "title": "Overshootpollinterval"
                     },
                     "cancellation": {
                       "anyOf": [
@@ -3804,6 +3888,20 @@
                   "ge": 0,
                   "title": "Graceperiod"
                 },
+                "overshootPollInterval": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                  "title": "Overshootpollinterval"
+                },
                 "cancellation": {
                   "anyOf": [
                     {
@@ -4108,6 +4206,20 @@
                   "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
                   "ge": 0,
                   "title": "Graceperiod"
+                },
+                "overshootPollInterval": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                  "title": "Overshootpollinterval"
                 },
                 "cancellation": {
                   "anyOf": [
@@ -4432,6 +4544,20 @@
                   "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
                   "ge": 0,
                   "title": "Graceperiod"
+                },
+                "overshootPollInterval": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                  "title": "Overshootpollinterval"
                 },
                 "cancellation": {
                   "anyOf": [
@@ -4771,6 +4897,20 @@
                   "ge": 0,
                   "title": "Graceperiod"
                 },
+                "overshootPollInterval": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                  "title": "Overshootpollinterval"
+                },
                 "cancellation": {
                   "anyOf": [
                     {
@@ -5094,6 +5234,20 @@
                   "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
                   "ge": 0,
                   "title": "Graceperiod"
+                },
+                "overshootPollInterval": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                  "title": "Overshootpollinterval"
                 },
                 "cancellation": {
                   "anyOf": [
@@ -5425,6 +5579,20 @@
                   "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
                   "ge": 0,
                   "title": "Graceperiod"
+                },
+                "overshootPollInterval": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                  "title": "Overshootpollinterval"
                 },
                 "cancellation": {
                   "anyOf": [
@@ -5774,6 +5942,20 @@
                   "ge": 0,
                   "title": "Graceperiod"
                 },
+                "overshootPollInterval": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                  "title": "Overshootpollinterval"
+                },
                 "cancellation": {
                   "anyOf": [
                     {
@@ -6078,6 +6260,20 @@
                   "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
                   "ge": 0,
                   "title": "Graceperiod"
+                },
+                "overshootPollInterval": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                  "title": "Overshootpollinterval"
                 },
                 "cancellation": {
                   "anyOf": [
@@ -6402,6 +6598,20 @@
                   "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
                   "ge": 0,
                   "title": "Graceperiod"
+                },
+                "overshootPollInterval": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                  "title": "Overshootpollinterval"
                 },
                 "cancellation": {
                   "anyOf": [
@@ -6741,6 +6951,20 @@
                   "ge": 0,
                   "title": "Graceperiod"
                 },
+                "overshootPollInterval": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                  "title": "Overshootpollinterval"
+                },
                 "cancellation": {
                   "anyOf": [
                     {
@@ -7064,6 +7288,20 @@
                   "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
                   "ge": 0,
                   "title": "Graceperiod"
+                },
+                "overshootPollInterval": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                  "title": "Overshootpollinterval"
                 },
                 "cancellation": {
                   "anyOf": [
@@ -7395,6 +7633,20 @@
                   "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
                   "ge": 0,
                   "title": "Graceperiod"
+                },
+                "overshootPollInterval": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+                  "title": "Overshootpollinterval"
                 },
                 "cancellation": {
                   "anyOf": [
@@ -8071,6 +8323,31 @@
           "title": "Graceperiod",
           "x-jinja2-supported": true
         },
+        "overshootPollInterval": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+          "title": "Overshootpollinterval",
+          "x-jinja2-supported": true
+        },
         "cancellation": {
           "anyOf": [
             {
@@ -8596,6 +8873,31 @@
           "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
           "ge": 0,
           "title": "Graceperiod",
+          "x-jinja2-supported": true
+        },
+        "overshootPollInterval": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+          "title": "Overshootpollinterval",
           "x-jinja2-supported": true
         },
         "cancellation": {
@@ -10281,6 +10583,31 @@
           "title": "Graceperiod",
           "x-jinja2-supported": true
         },
+        "overshootPollInterval": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+          "title": "Overshootpollinterval",
+          "x-jinja2-supported": true
+        },
         "cancellation": {
           "anyOf": [
             {
@@ -10870,6 +11197,31 @@
           "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
           "ge": 0,
           "title": "Graceperiod",
+          "x-jinja2-supported": true
+        },
+        "overshootPollInterval": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+          "title": "Overshootpollinterval",
           "x-jinja2-supported": true
         },
         "cancellation": {
@@ -13212,6 +13564,31 @@
           "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
           "ge": 0,
           "title": "Graceperiod",
+          "x-jinja2-supported": true
+        },
+        "overshootPollInterval": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+          "title": "Overshootpollinterval",
           "x-jinja2-supported": true
         },
         "cancellation": {
@@ -16219,6 +16596,31 @@
           "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
           "ge": 0,
           "title": "Graceperiod",
+          "x-jinja2-supported": true
+        },
+        "overshootPollInterval": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Locust-equivalent stop strategy for 'requests'-bound phases: instead of stopping issuance once 'requests' credits have been SENT and then draining in-flight work, keep issuing continuously and poll the COMPLETED count every N seconds. The moment completed >= requests, issuance stops and all in-flight credits are abandoned immediately (no grace/drain wait) rather than waited-for. This produces the same 'overshoot-then-abandon' shape as Locust's periodic worker-report check + runner.quit(), for direct comparison against Locust runs. Only meaningful when 'requests' is set; ignored otherwise.",
+          "title": "Overshootpollinterval",
           "x-jinja2-supported": true
         },
         "cancellation": {

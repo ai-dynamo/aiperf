@@ -420,6 +420,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._phase_branch_stats: dict[CreditPhase, BranchStats] = {}
         self._complete_credit_phases: set[CreditPhase] = set()
 
+        # Credit IDs abandoned in flight (overshoot-abandon stop strategy, or
+        # a grace-period timeout drain cancel), keyed by phase. Populated
+        # from CreditPhaseCompleteMessage.abandoned_credit_ids. Late records
+        # for these IDs are refused at ingest (_on_records) and, for any
+        # that already landed, purged from the metric accumulators.
+        self._abandoned_credit_ids_by_phase: dict[CreditPhase, set[int]] = {}
+
         self._telemetry_state = ErrorTrackingState()
         self._server_metrics_state = ErrorTrackingState()
 
@@ -580,6 +587,20 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return
         if self.is_trace_enabled:
             self.trace(f"Received records: {message}")
+
+        abandoned_ids = self._abandoned_credit_ids_by_phase.get(
+            message.metadata.benchmark_phase
+        )
+        if abandoned_ids and message.metadata.session_num in abandoned_ids:
+            self.debug(
+                lambda: (
+                    f"Refusing to ingest record for abandoned credit "
+                    f"{message.metadata.session_num} in phase "
+                    f"{message.metadata.benchmark_phase} (raced with the "
+                    "abandon cutoff; already excluded from final counts)."
+                )
+            )
+            return
 
         dispatch_errors: list[BaseException] = []
         for record in message.records:
@@ -763,6 +784,20 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._records_tracker.update_phase_info(message.stats)
         await self._dispatch_record(message.stats, warn_if_unrouted=False)
         self._complete_credit_phases.add(message.stats.phase)
+        if message.abandoned_credit_ids:
+            abandoned_ids = set(message.abandoned_credit_ids)
+            self._abandoned_credit_ids_by_phase[message.stats.phase] = abandoned_ids
+            purged = sum(
+                accumulator.purge_by_session_nums(abandoned_ids)
+                for accumulator in self._metric_record_accumulators
+                if hasattr(accumulator, "purge_by_session_nums")
+            )
+            if purged:
+                self.info(
+                    f"Purged {purged} already-ingested record(s) for "
+                    f"{len(abandoned_ids)} abandoned credit(s) in phase "
+                    f"{message.stats.phase}."
+                )
         # Capture per-phase BranchStats for any phase that publishes them.
         if message.branch_stats is not None:
             self._phase_branch_stats[message.stats.phase] = message.branch_stats
@@ -780,9 +815,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     f"Received CREDIT_PHASE_COMPLETE message, Phase complete: {phase_stats!r}"
                 )
             )
+            abandoned_note = (
+                f" ({phase_stats.final_requests_abandoned:,} requests abandoned in flight)"
+                if phase_stats.final_requests_abandoned
+                else ""
+            )
             self.notice(
                 f"All requests have completed, please wait for the results to be processed "
-                f"(currently {phase_stats.total_records:,} of {phase_stats.final_requests_completed:,} records processed)..."
+                f"(currently {phase_stats.total_records:,} of {phase_stats.final_requests_completed:,} records processed)"
+                f"{abandoned_note}..."
             )
 
         # This check is to prevent a race condition where the records manager processes
@@ -1416,6 +1457,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 was_cancelled=cancelled,
                 successful_request_count=phase_stats.success_records,
                 error_request_count=phase_stats.error_records,
+                sent_request_count=phase_stats.final_requests_sent,
+                abandoned_request_count=phase_stats.final_requests_abandoned,
                 branch_stats=self._latest_branch_stats
                 if phase == CreditPhase.PROFILING
                 else None,

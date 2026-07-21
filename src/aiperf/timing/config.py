@@ -193,6 +193,18 @@ class CreditPhaseConfig(AIPerfBaseModel):
         "have returned before the phase is considered complete. "
         "If None, the grace period is disabled.",
     )
+    overshoot_poll_interval_sec: float | None = Field(
+        default=None,
+        ge=0,
+        description="Locust-equivalent stop strategy. When set (requires "
+        "total_expected_requests), issuance is NOT gated on requests sent — "
+        "credits keep going out continuously. A poller instead checks every "
+        "N seconds whether requests COMPLETED has reached "
+        "total_expected_requests; the instant it has, issuance stops and all "
+        "in-flight credits are abandoned immediately (no grace/drain wait), "
+        "matching Locust's periodic worker-report check + runner.quit(). "
+        "If None, disabled (default request-count stop behavior applies).",
+    )
     num_users: int | None = Field(
         default=None,
         ge=1,
@@ -406,6 +418,7 @@ def _build_profiling_config(
         arrival_smoothness=getattr(phase, "smoothness", None),
         seamless=phase.seamless,
         grace_period_sec=phase.grace_period,
+        overshoot_poll_interval_sec=getattr(phase, "overshoot_poll_interval", None),
         num_users=getattr(phase, "users", None),
         concurrency_ramp_duration_sec=_ramp_duration(phase.concurrency_ramp),
         prefill_concurrency_ramp_duration_sec=_ramp_duration(phase.prefill_ramp),

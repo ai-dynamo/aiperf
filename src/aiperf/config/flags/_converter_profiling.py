@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 _PROF_FIELD_ROUTES: tuple[tuple[str, str], ...] = (
     ("duration", "benchmark_duration"),
     ("grace_period", "benchmark_grace_period"),
+    ("overshoot_poll_interval", "overshoot_poll_interval"),
     ("concurrency", "concurrency"),
     ("prefill_concurrency", "prefill_concurrency"),
     ("requests", "request_count"),
@@ -486,6 +487,16 @@ def build_profiling(cli: CLIConfig) -> dict[str, Any]:
             "--benchmark-grace-period requires --benchmark-duration to be set. "
             "Grace period only applies after a duration-bounded run; drop "
             "--benchmark-grace-period or pass --benchmark-duration as well."
+        )
+
+    # overshoot_poll_interval (Locust-equivalent stop strategy) only makes
+    # sense against a requests-bound target; same loud-refusal pattern as
+    # grace_period above.
+    if "overshoot_poll_interval" in prof and prof.get("requests") is None:
+        raise ValueError(
+            "--overshoot-poll-interval requires --request-count to be set. "
+            "This flag only applies to requests-bound runs; drop "
+            "--overshoot-poll-interval or pass --request-count as well."
         )
 
     _validate_profiling(prof, cli)

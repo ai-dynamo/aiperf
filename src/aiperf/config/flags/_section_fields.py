@@ -166,6 +166,7 @@ LOADGEN_FIELDS: frozenset[str] = frozenset(
         "concurrency",
         "concurrency_ramp_duration",
         "num_users",
+        "overshoot_poll_interval",
         "prefill_concurrency",
         "prefill_concurrency_ramp_duration",
         "request_cancellation_delay",

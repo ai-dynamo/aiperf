@@ -227,6 +227,38 @@ class MetricsAccumulator(BaseMetricsProcessor):
             self._warned_missing_cache_reporting = True
             self.warning(CACHE_REPORTING_HINT)
 
+    def purge_by_session_nums(self, session_nums: set[int]) -> int:
+        """Purge already-ingested records matching ``session_nums`` (credit IDs).
+
+        Marks matching rows' ``start_ns`` as NaN, the same "missing record"
+        sentinel every mask/count in this class already treats as absent
+        (``record_count``, ``_mask_for_export_context``, ``query_time_range``)
+        -- so a purged row disappears from every downstream computation
+        without any other code needing to know about purging.
+
+        Used to reconcile the race where a record for a credit that was
+        abandoned in flight (see ``OvershootAbandonPoller``) had already been
+        ingested here before the phase's abandoned-ID set arrived.
+
+        Returns:
+            Number of rows actually purged.
+        """
+        if not session_nums:
+            return 0
+        n = self._column_store.count
+        if n == 0:
+            return 0
+        session_num_col = self._column_store.metadata_numeric("session_num")[:n]
+        start_ns_col = self._column_store.start_ns[:n]
+        valid = ~np.isnan(start_ns_col)
+        match = valid & np.isin(
+            session_num_col, np.fromiter(session_nums, dtype=np.float64)
+        )
+        purged = int(np.count_nonzero(match))
+        if purged:
+            start_ns_col[match] = np.nan
+        return purged
+
     def query_time_range(self, start_ns: int, end_ns: int) -> BoolArray:
         """Return a boolean mask where True marks records in [start_ns, end_ns)."""
         n = self._column_store.count

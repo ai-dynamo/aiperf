@@ -321,6 +321,19 @@ class ProfileResults(AIPerfBaseModel):
         ge=0,
         description="The number of inference requests that returned errors",
     )
+    sent_request_count: int | None = Field(
+        default=None,
+        ge=0,
+        description="The total number of inference requests sent to the workers, "
+        "including any that were abandoned in flight (if known)",
+    )
+    abandoned_request_count: int | None = Field(
+        default=None,
+        ge=0,
+        description="The number of sent requests that were abandoned in flight "
+        "(e.g. via the overshoot-abandon stop strategy) and never "
+        "contributed a completed/error record, if known",
+    )
     error_summary: list[ErrorDetailsCount] = Field(
         default_factory=list,
         description="A list of the unique error details and their counts",

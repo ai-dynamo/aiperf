@@ -105,6 +105,36 @@ class TestBasePhaseStatsProperties:
         assert stats.is_requests_complete == expected
 
 
+class TestBasePhaseStatsFinalRequestsAbandoned:
+    """Test BasePhaseStats.final_requests_abandoned computed property."""
+
+    @pytest.mark.parametrize(
+        "final_requests_sent,final_requests_completed,final_requests_cancelled,expected",
+        [
+            (None, 5, 0, None),
+            (10, None, 0, None),
+            (10, 5, None, None),
+            (10, 10, 0, 0),
+            (10, 7, 1, 2),
+            (10, 6, 4, 0),
+        ],  # fmt: skip
+    )
+    def test_final_requests_abandoned(
+        self,
+        base_phase_stats,
+        final_requests_sent,
+        final_requests_completed,
+        final_requests_cancelled,
+        expected,
+    ) -> None:
+        stats = base_phase_stats(
+            final_requests_sent=final_requests_sent,
+            final_requests_completed=final_requests_completed,
+            final_requests_cancelled=final_requests_cancelled,
+        )
+        assert stats.final_requests_abandoned == expected
+
+
 class TestBasePhaseStatsValidation:
     """Test BasePhaseStats field validation."""
 

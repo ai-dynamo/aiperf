@@ -109,6 +109,30 @@ class BasePhaseStats(AIPerfBaseModel):
     )
 
     @property
+    def final_requests_abandoned(self) -> int | None:
+        """The final number of sent requests that were abandoned in flight.
+
+        Abandoned requests are credits that were sent but never contributed a
+        completed/cancelled/error record because the phase finalized its
+        counts before their cancellation was reflected back (e.g. the
+        Locust-equivalent overshoot-abandon stop strategy). ``None`` unless
+        all three underlying final counts are known; 0 for a normal
+        drain-to-completion phase.
+        """
+        if (
+            self.final_requests_sent is None
+            or self.final_requests_completed is None
+            or self.final_requests_cancelled is None
+        ):
+            return None
+        return max(
+            0,
+            self.final_requests_sent
+            - self.final_requests_completed
+            - self.final_requests_cancelled,
+        )
+
+    @property
     def is_started(self) -> bool:
         return self.start_ns is not None
 

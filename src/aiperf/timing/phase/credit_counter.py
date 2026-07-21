@@ -184,6 +184,25 @@ class CreditCounter:
     # Atomic Operations (lock-free - no await between read and write)
     # =========================================================================
 
+    def _request_count_cap_reached(self, new_sent_count: int) -> bool:
+        """True if ``new_sent_count`` has reached ``total_expected_requests``.
+
+        Always False when ``overshoot_poll_interval_sec`` is set (Locust-
+        equivalent stop strategy, see ``OvershootAbandonPoller``): issuance
+        must not be gated by requests SENT at all in that mode — the poller
+        stops the phase based on requests COMPLETED instead, on its own
+        schedule, so this cap is disabled here as well as in
+        ``RequestCountStopCondition`` (which alone would not be enough,
+        since this counter's ``is_final_credit`` is an independent gate
+        checked by ``CreditIssuer`` regardless of the stop-condition list).
+        """
+        if self._config.overshoot_poll_interval_sec is not None:
+            return False
+        return (
+            self._config.total_expected_requests is not None
+            and new_sent_count >= self._config.total_expected_requests
+        )
+
     def increment_sent(self, turn_to_send: TurnToSend) -> tuple[int, bool]:
         """Atomically increment sent count and return (credit_index, is_final_credit).
 
@@ -216,10 +235,7 @@ class CreditCounter:
             # on this child increment so the strategy loop and phase
             # runner unblock the same way they would for a root.
             self._requests_sent = new_sent_count
-            is_final_credit = (
-                self._config.total_expected_requests is not None
-                and new_sent_count >= self._config.total_expected_requests
-            )
+            is_final_credit = self._request_count_cap_reached(new_sent_count)
             return credit_index, is_final_credit
 
         new_sent_sessions_count = self._sent_sessions
@@ -236,10 +252,7 @@ class CreditCounter:
         # spuriously satisfy the predicate the moment the first child wire
         # lands and the strategy loop would exit before the parent's
         # remaining turns could dispatch.
-        is_final_credit = (
-            self._config.total_expected_requests is not None
-            and new_sent_count >= self._config.total_expected_requests
-        ) or (
+        is_final_credit = self._request_count_cap_reached(new_sent_count) or (
             self._config.expected_num_sessions is not None
             and new_sent_sessions_count >= self._config.expected_num_sessions
             and new_root_sent >= new_total_session_turns

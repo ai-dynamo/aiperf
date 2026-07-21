@@ -112,10 +112,14 @@ class CreditRouterProtocol(Protocol):
         """
         ...
 
-    async def cancel_all_credits(self) -> None:
+    async def cancel_all_credits(self) -> set[int]:
         """Cancel all in-flight credits.
 
         Used during phase timeout or system shutdown.
+
+        Returns:
+            The set of credit IDs cancellation was requested for (the
+            authoritative in-flight snapshot at cancel time).
         """
         ...
 
@@ -400,8 +404,16 @@ class StickyCreditRouter(CommunicationMixin):
 
         await self._router_client.send_to(worker_id, credit)
 
-    async def cancel_all_credits(self) -> None:
-        """Send cancellation requests to all workers with in-flight credits."""
+    async def cancel_all_credits(self) -> set[int]:
+        """Send cancellation requests to all workers with in-flight credits.
+
+        Returns:
+            The union of credit IDs cancellation was requested for -- the
+            authoritative in-flight snapshot taken atomically before any
+            cancel message is sent. Callers use this to know precisely
+            which requests were abandoned, rather than inferring it from
+            counters that can race with in-flight completions.
+        """
         # Mark cancellation first, so we suppress warnings for workers that unregister with in-flight credits.
         self._cancellation_pending = True
 
@@ -418,6 +430,7 @@ class StickyCreditRouter(CommunicationMixin):
                 to_cancel[worker_load.worker_id] = worker_load.active_credit_ids.copy()
 
         total_cancelled_credits = 0
+        all_cancelled_credit_ids: set[int] = set()
         for worker_id, credit_ids in to_cancel.items():
             if self.is_debug_enabled:
                 self.debug(
@@ -429,6 +442,7 @@ class StickyCreditRouter(CommunicationMixin):
                 CancelCredits(credit_ids=credit_ids),
             )
             total_cancelled_credits += len(credit_ids)
+            all_cancelled_credit_ids |= credit_ids
 
         if total_cancelled_credits > 0:
             self.info(
@@ -436,6 +450,8 @@ class StickyCreditRouter(CommunicationMixin):
             )
         else:
             self.debug("No in-flight credits to cancel")
+
+        return all_cancelled_credit_ids
 
     def mark_credits_complete(self) -> None:
         """Mark credits complete - suppresses orphan warnings during shutdown."""

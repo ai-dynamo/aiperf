@@ -357,6 +357,10 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # not a numeric leaf — same shape as the baselined endpoint_summaries
     # sibling; per-summary numeric fields carry their own bounds.
     "ServerMetricsResults.warmup_endpoint_summaries",
+    # CreditPhaseCompleteMessage.abandoned_credit_ids: list[int] of credit
+    # IDs (identifiers, not measured quantities) -- ge=0 not expressible
+    # per-element via Field on a list, and IDs can't be NaN/Inf anyway.
+    "CreditPhaseCompleteMessage.abandoned_credit_ids",
 }
 
 

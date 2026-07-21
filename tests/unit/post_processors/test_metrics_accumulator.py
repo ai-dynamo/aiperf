@@ -168,6 +168,48 @@ class TestMetricsAccumulator:
         assert processor.record_count == 2
 
     @pytest.mark.asyncio
+    async def test_purge_by_session_nums_excludes_matching_records(
+        self, mock_metric_registry: Mock, mock_run
+    ) -> None:
+        """Purged records must vanish from record_count and future exports,
+        matching the abandoned-credit reconciliation path used when a late
+        record for an already-abandoned credit was ingested before the
+        phase's abandoned-ID set arrived."""
+        processor = MetricsAccumulator(mock_run)
+        processor._tags_to_types = {}
+
+        msg0 = create_metric_records_data(x_request_id="test-0", session_num=0)
+        msg1 = create_metric_records_data(
+            x_request_id="test-1", session_num=1, request_start_ns=1_000_000_001
+        )
+        msg2 = create_metric_records_data(
+            x_request_id="test-2", session_num=2, request_start_ns=1_000_000_002
+        )
+        await processor.process_record(msg0)
+        await processor.process_record(msg1)
+        await processor.process_record(msg2)
+        assert processor.record_count == 3
+
+        purged = processor.purge_by_session_nums({1})
+
+        assert purged == 1
+        assert processor.record_count == 2
+
+    @pytest.mark.asyncio
+    async def test_purge_by_session_nums_no_match_is_noop(
+        self, mock_metric_registry: Mock, mock_run
+    ) -> None:
+        processor = MetricsAccumulator(mock_run)
+        processor._tags_to_types = {}
+        await processor.process_record(
+            create_metric_records_data(x_request_id="test-0", session_num=0)
+        )
+
+        assert processor.purge_by_session_nums({99}) == 0
+        assert processor.record_count == 1
+        assert processor.purge_by_session_nums(set()) == 0
+
+    @pytest.mark.asyncio
     async def test_export_results_separates_warmup_and_profiling_with_reused_session_num(
         self, mock_metric_registry: Mock, mock_run
     ) -> None:

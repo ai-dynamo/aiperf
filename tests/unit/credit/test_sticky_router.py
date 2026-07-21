@@ -520,13 +520,16 @@ class TestStickyCreditRouterCancellation:
         # worker-2 has 0 in-flight credits
         router._workers["worker-2"].in_flight_credits = 0
 
-        await router.cancel_all_credits()
+        abandoned_ids = await router.cancel_all_credits()
 
         # Should only send to worker-1
         assert router._router_client.send_to.call_count == 1
         call_args = router._router_client.send_to.call_args[0]
         assert call_args[0] == "worker-1"
         assert call_args[1].credit_ids == {1, 2, 3}
+        # Return value is the authoritative snapshot of cancelled credit IDs,
+        # so callers can report exactly which requests were abandoned.
+        assert abandoned_ids == {1, 2, 3}
 
     async def test_cancel_all_credits_no_workers_with_in_flight(
         self, benchmark_run
@@ -538,10 +541,11 @@ class TestStickyCreditRouterCancellation:
         router._register_worker("worker-1")
         router._workers["worker-1"].in_flight_credits = 0
 
-        await router.cancel_all_credits()
+        abandoned_ids = await router.cancel_all_credits()
 
         # Should not send any messages
         router._router_client.send_to.assert_not_called()
+        assert abandoned_ids == set()
 
     async def test_cancel_sets_cancellation_pending_flag(self, benchmark_run) -> None:
         """Test that cancel_all_credits sets _cancellation_pending flag."""
