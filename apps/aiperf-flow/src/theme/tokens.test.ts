@@ -8,6 +8,7 @@ import {
   surfaceClassName,
   inkClassName,
   strokeClassName,
+  categoryClassName,
   categoryBgClassName,
   categoryBgTintClassName,
 } from "./tokens.js";
@@ -37,5 +38,12 @@ describe("theme role class helpers", () => {
     expect(categoryBgTintClassName("orange")).toBe("bg-category-orange/10");
     expect(categoryBgTintClassName("cyan")).toBe("bg-category-cyan/10");
     expect(categoryBgTintClassName("gray")).toBe("bg-category-gray/10");
+  });
+
+  it("maps every category role to a literal text color class, including the ones that were previously JIT-invisible", () => {
+    expect(categoryClassName("purple")).toBe("text-category-purple");
+    expect(categoryClassName("orange")).toBe("text-category-orange");
+    expect(categoryClassName("cyan")).toBe("text-category-cyan");
+    expect(categoryClassName("gray")).toBe("text-category-gray");
   });
 });

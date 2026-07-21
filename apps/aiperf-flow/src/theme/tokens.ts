@@ -35,14 +35,21 @@ export function accentClassName(role: AccentRole): string {
   return `text-accent-${role}`;
 }
 
-export function categoryClassName(role: CategoryRole): string {
-  return `text-category-${role}`;
-}
-
 // Tailwind's compiler only picks up classes it can see as literal strings in source, so a
 // dynamically interpolated `bg-category-${role}` would be purged for any role whose exact
 // string doesn't happen to appear verbatim elsewhere. These tables keep every supported role
 // visible as a whole literal string (mirrors `GRID_COLS_CLASSES` in `layout/Grid.tsx`).
+const CATEGORY_TEXT_CLASSES: Record<CategoryRole, string> = {
+  green: "text-category-green",
+  yellow: "text-category-yellow",
+  purple: "text-category-purple",
+  blue: "text-category-blue",
+  red: "text-category-red",
+  orange: "text-category-orange",
+  cyan: "text-category-cyan",
+  gray: "text-category-gray",
+};
+
 const CATEGORY_BG_CLASSES: Record<CategoryRole, string> = {
   green: "bg-category-green",
   yellow: "bg-category-yellow",
@@ -64,6 +71,10 @@ const CATEGORY_BG_TINT_CLASSES: Record<CategoryRole, string> = {
   cyan: "bg-category-cyan/10",
   gray: "bg-category-gray/10",
 };
+
+export function categoryClassName(role: CategoryRole): string {
+  return CATEGORY_TEXT_CLASSES[role];
+}
 
 export function categoryBgClassName(role: CategoryRole): string {
   return CATEGORY_BG_CLASSES[role];
