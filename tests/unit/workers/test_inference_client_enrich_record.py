@@ -38,11 +38,14 @@ class TestEnrichRequestRecord:
         assert type(enriched.request_info) is RecordContext
 
     def test_dag_fields_propagate(self):
-        ri = _make_request_info(agent_depth=3, parent_correlation_id="p")
+        ri = _make_request_info(
+            agent_depth=3, parent_correlation_id="p", root_correlation_id="root-1"
+        )
         record = RequestRecord()
         enriched = InferenceClient._enrich_request_record(record, ri)
         assert enriched.request_info.agent_depth == 3
         assert enriched.request_info.parent_correlation_id == "p"
+        assert enriched.request_info.root_correlation_id == "root-1"
 
     def test_transport_extras_dropped(self):
         ri = _make_request_info()
