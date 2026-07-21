@@ -115,6 +115,8 @@ navigation:
             path: ../pages-dev/tutorials/prefill-concurrency.md
           - page: Adaptive Scale
             path: ../pages-dev/tutorials/adaptive-scale.md
+          - page: Multi-Phase Workflows
+            path: ../pages-dev/tutorials/multi-phase-workflows.md
           - page: Time-Based Benchmarking
             path: ../pages-dev/tutorials/time-based-benchmarking.md
           - page: Multi-URL Load Balancing
