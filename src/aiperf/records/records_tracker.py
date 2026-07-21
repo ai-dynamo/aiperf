@@ -203,7 +203,11 @@ class RecordsTracker:
     def _record_latest_phase_index(
         self, phase: CreditPhase, phase_index: int | None
     ) -> None:
-        if phase_index is not None or phase not in self._latest_phase_index:
+        if phase_index is None:
+            self._latest_phase_index.setdefault(phase, None)
+            return
+        current = self._latest_phase_index.get(phase)
+        if current is None or phase_index >= current:
             self._latest_phase_index[phase] = phase_index
 
     def _latest_tracker_for_phase(
@@ -362,33 +366,35 @@ class RecordsTracker:
             phase_tracker = self._get_phase_tracker(phase, phase_index)
             return phase_tracker.check_and_set_all_records_received()
 
-        concrete_phase_trackers = [
-            tracker
+        concrete_phase_items = [
+            (phase_index, tracker)
             for (tracker_phase, phase_index), tracker in self._phase_trackers.items()
             if tracker_phase == phase and phase_index is not None
         ]
-        orphan_phase_trackers = [
-            tracker
+        orphan_phase_items = [
+            (phase_index, tracker)
             for (tracker_phase, phase_index), tracker in self._phase_trackers.items()
             if tracker_phase == phase and phase_index is None
         ]
-        phase_trackers = (
-            concrete_phase_trackers + orphan_phase_trackers
-            if concrete_phase_trackers
-            else orphan_phase_trackers
+        phase_items = (
+            concrete_phase_items + orphan_phase_items
+            if concrete_phase_items
+            else orphan_phase_items
         ) or [
-            tracker
-            for (tracker_phase, _), tracker in self._phase_trackers.items()
+            (tracked_phase_index, tracker)
+            for (tracker_phase, tracked_phase_index), tracker in self._phase_trackers.items()
             if tracker_phase == phase
         ]
-        if not phase_trackers:
+        if not phase_items:
             return False
 
         gated_trackers: list[CreditPhaseRecordsTracker] = []
-        for tracker in phase_trackers:
+        for tracked_phase_index, tracker in phase_items:
             stats = tracker.create_stats()
             if stats.final_requests_completed is None:
-                continue
+                if tracked_phase_index is None:
+                    continue
+                return False
             gated_trackers.append(tracker)
             if stats.total_records < stats.final_requests_completed:
                 return False

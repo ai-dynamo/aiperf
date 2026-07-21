@@ -826,10 +826,16 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     f"Received CREDIT_PHASE_COMPLETE message, Phase complete: {phase_stats!r}"
                 )
             )
-            self.notice(
-                f"All requests have completed, please wait for the results to be processed "
-                f"(currently {phase_stats.total_records:,} of {phase_stats.final_requests_completed:,} records processed)..."
-            )
+            if phase_stats.final_requests_completed is None:
+                self.notice(
+                    "Phase completion observed before final request count was available; "
+                    f"waiting for final phase stats (currently {phase_stats.total_records:,} records processed)..."
+                )
+            else:
+                self.notice(
+                    "All requests have completed, please wait for the results to be processed "
+                    f"(currently {phase_stats.total_records:,} of {phase_stats.final_requests_completed:,} records processed)..."
+                )
 
         # This check is to prevent a race condition where the records manager processes
         # all records before the timing manager has sent the final completed count.
@@ -1384,7 +1390,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self, phase: CreditPhase, cancelled: bool
     ) -> list[PhaseProfileResults] | None:
         concrete_phase_stats = self._iter_concrete_phase_stats()
-        if not concrete_phase_stats:
+        if len(concrete_phase_stats) <= 1:
             return None
 
         acc_items = [
@@ -1839,15 +1845,24 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 results=None,
             )
 
-        # Get timing from profiling phase stats
-        # Note: end_ns is left None to include the final telemetry scrape that
-        # occurs after PROFILE_COMPLETE but before export_results is called.
-        # If start_ns is None (no profiling phase), include all data.
+        # Get timing from profiling phase stats. Bound the aggregate window while
+        # preserving the trailing scrape that often closes GPU counter deltas.
+        # If start_ns/end_ns is None (no profiling phase), include all data.
         phase_stats = self._records_tracker.create_aggregate_stats_for_phase(
             CreditPhase.PROFILING
         )
+        profiling_end_ns = (
+            phase_stats.requests_end_ns + Environment.GPU.FINAL_SCRAPE_GRACE_NS
+            if phase_stats.requests_end_ns is not None
+            else None
+        )
         telemetry_export_data = await self._gpu_telemetry_accumulator.export_results(
-            ExportContext(start_ns=phase_stats.start_ns, error_summary=error_summary)
+            ExportContext(
+                start_ns=phase_stats.start_ns,
+                end_ns=profiling_end_ns,
+                phase=CreditPhase.PROFILING,
+                error_summary=error_summary,
+            )
         )
 
         return ProcessTelemetryResult(
