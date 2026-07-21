@@ -11,6 +11,7 @@ pub mod app;
 pub mod balancer;
 pub mod config;
 pub mod dcgm;
+pub mod fastmock;
 pub mod grpc;
 pub mod grpc_riva;
 pub mod handlers;

@@ -16,6 +16,14 @@ fn main() -> anyhow::Result<()> {
 
     init_tracing(&config.log_level);
 
+    if config.ludicrous_speed {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .thread_name("aiperf-mock-fastmock")
+            .build()?;
+        return runtime.block_on(async move { aiperf_mock_server::fastmock::run(&config).await });
+    }
+
     // `0` selects one child per available CPU; `1` serves directly.
     let processes = if config.processes == 0 {
         num_cpus::get().max(1)

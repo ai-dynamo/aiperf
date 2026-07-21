@@ -437,6 +437,16 @@ pub struct MockServerConfig {
     #[arg(short = 'f', long, env = "MOCK_SERVER_FAST", default_value_t = false)]
     pub fast: bool,
 
+    /// Skip the real mock server entirely and serve a single static payload
+    /// (`fastmock.rs`) at ultra-low latency instead. Unlike `--fast` (which
+    /// still runs full request handling with simulated delays zeroed), this
+    /// bypasses routing, latency simulation, token rendering, and every other
+    /// `--*` flag — every request on `--host:--port` (and `--uds`, if set)
+    /// gets the same fixed chat-completion / model-list response. Intended
+    /// for saturating a transport or client path, not for behavioral testing.
+    #[arg(long, env = "MOCK_SERVER_LUDICROUS_SPEED", default_value_t = false)]
+    pub ludicrous_speed: bool,
+
     #[arg(
         long,
         env = "MOCK_SERVER_ACCESS_LOGS",
