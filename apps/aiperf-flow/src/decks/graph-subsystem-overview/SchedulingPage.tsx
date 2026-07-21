@@ -52,13 +52,13 @@ function TimelineVisual(): React.JSX.Element {
             type="button"
             aria-pressed={r.id === sel}
             onClick={() => setSel(r.id)}
-            className={clsx("rounded-none border px-2.5 py-0.5 text-xs font-medium", strokeClassName(r.id === sel ? "primary" : "secondary"), r.id === sel ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("secondary")))}
+            className={clsx("rounded-md border px-2.5 py-0.5 text-xs font-medium shadow-sm", strokeClassName(r.id === sel ? "primary" : "secondary"), r.id === sel ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("secondary")))}
           >
             {r.id}
           </button>
         ))}
       </Row>
-      <div className={clsx("rounded-none border px-3 py-3", strokeClassName("secondary"), surfaceClassName("elevated"))}>
+      <div className={clsx("rounded-lg border px-3 py-3 shadow-sm", strokeClassName("secondary"), surfaceClassName("elevated"))}>
         <Stack gap={6}>
           {TIMELINE.map((r) => {
             const isSel = r.id === sel;
@@ -69,7 +69,7 @@ function TimelineVisual(): React.JSX.Element {
                 <div className={clsx("w-8 shrink-0 text-xs font-semibold", isSel ? inkClassName("primary") : inkClassName("tertiary"))}>{r.id}</div>
                 <div className="relative h-6 flex-1">
                   <div
-                    className={clsx("absolute top-0 flex h-6 items-center rounded-none border px-2 text-[10px] font-medium", strokeClassName("secondary"), categoryBgTintClassName(color), inkClassName("primary"))}
+                    className={clsx("absolute top-0 flex h-6 items-center rounded-md border px-2 text-[10px] font-medium shadow-sm", strokeClassName("secondary"), categoryBgTintClassName(color), inkClassName("primary"))}
                     style={{ left: `${(r.start / maxT) * 100}%`, width: `${((r.end - r.start) / maxT) * 100}%` }}
                   >
                     {r.id} [{r.start},{r.end}]
@@ -109,14 +109,14 @@ function IntervalFrontier(): React.JSX.Element {
   const maxT = 8;
   return (
     <Stack gap={12}>
-      <div className={clsx("rounded-none border px-3 py-3", strokeClassName("secondary"), surfaceClassName("elevated"))}>
+      <div className={clsx("rounded-lg border px-3 py-3 shadow-sm", strokeClassName("secondary"), surfaceClassName("elevated"))}>
         <Stack gap={6}>
           {FRONTIER_ROWS.map((r) => (
             <Row key={r.id} gap={8} align="center">
               <div className={clsx("w-8 shrink-0 text-xs font-semibold", inkClassName("tertiary"))}>{r.id}</div>
               <div className="relative h-6 flex-1">
                 <div
-                  className={clsx("absolute top-0 flex h-6 items-center rounded-none border px-2 text-[10px] font-medium", strokeClassName("secondary"), categoryBgTintClassName(r.color), inkClassName("primary"), r.role === "dropped" && "opacity-60")}
+                  className={clsx("absolute top-0 flex h-6 items-center rounded-md border px-2 text-[10px] font-medium shadow-sm", strokeClassName("secondary"), categoryBgTintClassName(r.color), inkClassName("primary"), r.role === "dropped" && "opacity-60")}
                   style={{ left: `${(r.s / maxT) * 100}%`, width: `${((r.e - r.s) / maxT) * 100}%` }}
                 >
                   {r.role}
@@ -163,11 +163,11 @@ function IdleGapWarp(): React.JSX.Element {
         <span className={clsx("text-xs", inkClassName("tertiary"))}>Cap idle gaps</span>
         <Toggle checked={warp} onChange={setWarp} />
       </Row>
-      <div className={clsx("relative h-10 w-full rounded-none border", strokeClassName("secondary"), surfaceClassName("elevated"))}>
+      <div className={clsx("relative h-10 w-full rounded-lg border shadow-sm", strokeClassName("secondary"), surfaceClassName("elevated"))}>
         {data.map((r, i) => (
           <div
             key={r.id}
-            className={clsx("absolute top-2 flex h-6 items-center rounded-none px-1.5 text-[10px] font-semibold", inkClassName("primary"), i >= 2 ? categoryBgTintClassName("orange") : categoryBgTintClassName("blue"))}
+            className={clsx("absolute top-2 flex h-6 items-center rounded-md px-1.5 text-[10px] font-semibold shadow-sm", inkClassName("primary"), i >= 2 ? categoryBgTintClassName("orange") : categoryBgTintClassName("blue"))}
             style={{ left: `${(r.s / maxT) * 100}%`, width: `${((r.e - r.s) / maxT) * 100}%` }}
           >
             {r.id}
@@ -210,13 +210,13 @@ function TStarChop(): React.JSX.Element {
             type="button"
             aria-pressed={tstar === v}
             onClick={() => setTstar(v)}
-            className={clsx("rounded-none border px-2.5 py-0.5 text-xs font-medium", strokeClassName(tstar === v ? "primary" : "secondary"), tstar === v ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("secondary")))}
+            className={clsx("rounded-md border px-2.5 py-0.5 text-xs font-medium shadow-sm", strokeClassName(tstar === v ? "primary" : "secondary"), tstar === v ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("secondary")))}
           >
             {v}
           </button>
         ))}
       </Row>
-      <div className={clsx("relative h-12 w-full rounded-none border", strokeClassName("secondary"), surfaceClassName("elevated"))}>
+      <div className={clsx("relative h-12 w-full rounded-lg border shadow-sm", strokeClassName("secondary"), surfaceClassName("elevated"))}>
         <div className={clsx("absolute top-0 h-full", categoryBgTintClassName("gray"))} style={{ left: 0, width: `${(t / maxT) * 100}%` }} />
         <div className={clsx("absolute top-0 h-full border-l-2", strokeClassName("primary"))} style={{ left: `${(t / maxT) * 100}%` }} />
         {TSTAR_NODES.map((n) => {
@@ -224,7 +224,7 @@ function TStarChop(): React.JSX.Element {
           return (
             <div
               key={n.id}
-              className={clsx("absolute top-3 flex h-6 w-6 -translate-x-1/2 items-center justify-center rounded-none border text-[10px] font-bold", strokeClassName("secondary"), warm ? clsx(categoryBgClassName("green"), "text-white") : clsx(categoryBgClassName("blue"), "text-white"))}
+              className={clsx("absolute top-3 flex h-6 w-6 -translate-x-1/2 items-center justify-center rounded-full border text-[10px] font-bold shadow-sm", strokeClassName("secondary"), warm ? clsx(categoryBgClassName("green"), "text-white") : clsx(categoryBgClassName("blue"), "text-white"))}
               style={{ left: `${(n.off / maxT) * 100}%` }}
             >
               {n.id}

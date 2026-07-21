@@ -152,7 +152,7 @@ function ConcurrencyLanes(): React.JSX.Element {
             <div className={clsx("w-16 shrink-0 text-xs", inkClassName("tertiary"))}>lane {li + 1}</div>
             <Row gap={6} align="center">
               {[0, 1, 2, 3].map((d) => (
-                <div key={d} className={clsx("h-3.5 w-3.5 rounded-none border", strokeClassName("secondary"), d === 1 || d === 2 ? categoryBgTintClassName("blue") : surfaceClassName("elevated"))} />
+                <div key={d} className={clsx("h-3.5 w-3.5 rounded-md border shadow-sm", strokeClassName("secondary"), d === 1 || d === 2 ? categoryBgTintClassName("blue") : surfaceClassName("elevated"))} />
               ))}
               <span className={clsx("ml-1 text-xs", inkClassName("tertiary"))}>2 nodes ready</span>
             </Row>
@@ -182,7 +182,7 @@ function ChannelLog(): React.JSX.Element {
       <Row gap={6} align="center" wrap>
         <span className={clsx("text-xs", inkClassName("tertiary"))}>ChannelRequirement.count =</span>
         {["1", "2", "all"].map((c) => (
-          <button key={c} type="button" aria-pressed={count === c} onClick={() => setCount(c)} className={clsx("rounded-none border px-2.5 py-0.5 text-xs font-medium", strokeClassName(count === c ? "primary" : "secondary"), count === c ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("secondary")))}>{c}</button>
+          <button key={c} type="button" aria-pressed={count === c} onClick={() => setCount(c)} className={clsx("rounded-md border px-2.5 py-0.5 text-xs font-medium shadow-sm", strokeClassName(count === c ? "primary" : "secondary"), count === c ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("secondary")))}>{c}</button>
         ))}
       </Row>
       <Row gap={8} wrap>
@@ -190,7 +190,7 @@ function ChannelLog(): React.JSX.Element {
           const on = !w.seed && w.seq <= target;
           return (
             <div key={w.seq} className="flex flex-col items-center gap-1">
-              <div className={clsx("min-w-[88px] rounded-none border px-3 py-2 text-center text-xs font-semibold", strokeClassName("secondary"), w.seed ? clsx(surfaceClassName("panel"), inkClassName("primary")) : on ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("primary")))}>{w.who}</div>
+              <div className={clsx("min-w-[88px] rounded-md border px-3 py-2 text-center text-xs font-semibold shadow-sm", strokeClassName("secondary"), w.seed ? clsx(surfaceClassName("panel"), inkClassName("primary")) : on ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("primary")))}>{w.who}</div>
               <span className={clsx("text-xs", inkClassName("tertiary"))}>seq {w.seq}{w.seed ? " · seed" : ""}</span>
             </div>
           );
@@ -218,17 +218,17 @@ function ReducerVisual(): React.JSX.Element {
     <Stack gap={10}>
       <Row gap={6} wrap>
         {Object.keys(REDUCERS).map((k) => (
-          <button key={k} type="button" aria-pressed={reducer === k} onClick={() => setReducer(k)} className={clsx("rounded-none border px-3 py-1 text-xs font-medium", strokeClassName(reducer === k ? "primary" : "secondary"), reducer === k ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("secondary")))}>{k}</button>
+          <button key={k} type="button" aria-pressed={reducer === k} onClick={() => setReducer(k)} className={clsx("rounded-md border px-3 py-1 text-xs font-medium shadow-sm", strokeClassName(reducer === k ? "primary" : "secondary"), reducer === k ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("secondary")))}>{k}</button>
         ))}
       </Row>
       <Row gap={10} align="center" wrap>
         <Row gap={6}>
           {r.in.map((v, i) => (
-            <div key={i} className={clsx("rounded-none border px-2.5 py-1.5 text-xs", strokeClassName("secondary"), surfaceClassName("panel"), inkClassName("primary"))}>{v}</div>
+            <div key={i} className={clsx("rounded-md border px-2.5 py-1.5 text-xs shadow-sm", strokeClassName("secondary"), surfaceClassName("panel"), inkClassName("primary"))}>{v}</div>
           ))}
         </Row>
         <span className={inkClassName("tertiary")}>→</span>
-        <div className={clsx("rounded-none px-3 py-1.5 text-xs font-semibold", categoryBgTintClassName("green"), inkClassName("primary"))}>{r.out}</div>
+        <div className={clsx("rounded-md px-3 py-1.5 text-xs font-semibold shadow-sm", categoryBgTintClassName("green"), inkClassName("primary"))}>{r.out}</div>
       </Row>
       <p className={clsx("text-sm", inkClassName("secondary"))}>{r.note}</p>
     </Stack>
@@ -261,10 +261,10 @@ function MaterializationDecision(): React.JSX.Element {
         {MAT_BRANCHES.map((b) => {
           const on = b.id === activeId;
           return (
-            <div key={b.id} className={clsx("rounded-none border px-4 py-3", strokeClassName(on ? "primary" : "secondary"), on ? categoryBgTintClassName("blue") : surfaceClassName("elevated"))}>
+            <div key={b.id} className={clsx("rounded-lg border px-4 py-3 shadow-sm", strokeClassName(on ? "primary" : "secondary"), on ? categoryBgTintClassName("blue") : surfaceClassName("elevated"))}>
               <Row align="center" justify="space-between">
                 <span className={clsx("text-sm font-semibold", inkClassName("primary"))}>{b.title}</span>
-                {on && <span className={clsx("rounded-none border px-1.5 py-0.5 text-[10px] font-medium", strokeClassName("primary"), inkClassName("primary"))}>selected</span>}
+                {on && <span className={clsx("rounded-md border px-1.5 py-0.5 text-[10px] font-medium shadow-sm", strokeClassName("primary"), inkClassName("primary"))}>selected</span>}
               </Row>
               <div className="mt-1"><Code inline>{b.fn}</Code></div>
               <p className={clsx("mt-1 text-xs", inkClassName("secondary"))}>{b.desc}</p>
@@ -304,7 +304,7 @@ function BarrierPolicyVisual(): React.JSX.Element {
       <Row gap={6} wrap align="center">
         <span className={clsx("text-xs", inkClassName("tertiary"))}>BarrierNode.policy =</span>
         {(["all", "any", "quorum", "timeout"] as BarrierPolicy[]).map((p) => (
-          <button key={p} type="button" aria-pressed={policy === p} onClick={() => setPolicy(p)} className={clsx("rounded-none border px-3 py-1 text-xs font-medium", strokeClassName(policy === p ? "primary" : "secondary"), policy === p ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("secondary")))}>{p === "timeout" ? "all + timeout" : p}</button>
+          <button key={p} type="button" aria-pressed={policy === p} onClick={() => setPolicy(p)} className={clsx("rounded-md border px-3 py-1 text-xs font-medium shadow-sm", strokeClassName(policy === p ? "primary" : "secondary"), policy === p ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("secondary")))}>{p === "timeout" ? "all + timeout" : p}</button>
         ))}
       </Row>
       <Row gap={10} wrap>
@@ -314,7 +314,7 @@ function BarrierPolicyVisual(): React.JSX.Element {
           const color: CategoryRole | null = state === "counted" ? "green" : state === "cancelled" ? "orange" : null;
           return (
             <div key={p.id} className="flex flex-col items-center gap-1">
-              <div className={clsx("min-w-[56px] rounded-none border px-4 py-2 text-center text-xs font-semibold", strokeClassName("secondary"), color ? clsx(categoryBgTintClassName(color), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("primary")))}>{p.id}</div>
+              <div className={clsx("min-w-[56px] rounded-md border px-4 py-2 text-center text-xs font-semibold shadow-sm", strokeClassName("secondary"), color ? clsx(categoryBgTintClassName(color), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("primary")))}>{p.id}</div>
               <span className={clsx("text-xs", inkClassName("tertiary"))}>{state}</span>
             </div>
           );
@@ -342,20 +342,20 @@ function LoopAggregatorVisual(): React.JSX.Element {
     <Stack gap={12}>
       <Row gap={6} wrap>
         {(["last", "list", "concat"] as LoopAgg[]).map((a) => (
-          <button key={a} type="button" aria-pressed={agg === a} onClick={() => setAgg(a)} className={clsx("rounded-none border px-3 py-1 text-xs font-medium", strokeClassName(agg === a ? "primary" : "secondary"), agg === a ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("secondary")))}>{a}</button>
+          <button key={a} type="button" aria-pressed={agg === a} onClick={() => setAgg(a)} className={clsx("rounded-md border px-3 py-1 text-xs font-medium shadow-sm", strokeClassName(agg === a ? "primary" : "secondary"), agg === a ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("secondary")))}>{a}</button>
         ))}
       </Row>
       <Row gap={10} align="center" wrap>
         <Row gap={6}>
           {iters.map((v, i) => (
             <div key={i} className="flex flex-col items-center gap-1">
-              <div className={clsx("rounded-none border px-3 py-1.5 text-xs font-semibold", strokeClassName("secondary"), surfaceClassName("panel"), inkClassName("primary"))}>{v}</div>
+              <div className={clsx("rounded-md border px-3 py-1.5 text-xs font-semibold shadow-sm", strokeClassName("secondary"), surfaceClassName("panel"), inkClassName("primary"))}>{v}</div>
               <span className={clsx("text-xs", inkClassName("tertiary"))}>iter {i + 1}</span>
             </div>
           ))}
         </Row>
         <span className={inkClassName("tertiary")}>→</span>
-        <div className={clsx("rounded-none px-3.5 py-2 text-xs font-bold", categoryBgTintClassName("green"), inkClassName("primary"))}>{out}</div>
+        <div className={clsx("rounded-md px-3.5 py-2 text-xs font-bold shadow-sm", categoryBgTintClassName("green"), inkClassName("primary"))}>{out}</div>
       </Row>
       <p className={clsx("text-sm", inkClassName("secondary"))}>{LOOP_NOTE[agg]}</p>
       <Callout tone="info">
@@ -379,7 +379,7 @@ function SpawnLifetime(): React.JSX.Element {
         <Toggle checked={cascade} onChange={setCascade} />
       </Row>
       <Grid columns={2} gap={12}>
-        <div className={clsx("rounded-none border", strokeClassName("secondary"))}>
+        <div className={clsx("rounded-lg border shadow-sm", strokeClassName("secondary"))}>
           <div className={clsx("flex items-center justify-between border-b px-4 py-2", strokeClassName("secondary"))}>
             <span className={clsx("text-sm font-semibold", inkClassName("primary"))}>Owning TaskGroup</span>
             <Code inline>{cascade ? "ctx.tg" : "ctx.phase_tg"}</Code>
@@ -389,7 +389,7 @@ function SpawnLifetime(): React.JSX.Element {
             {cascade ? "It lives inside the per-trace TaskGroup, so a parent unwind cascades cancellation to the child." : "It lives on the phase-scoped TaskGroup, so the child outlives its parent trace and is only cancelled at phase teardown."}
           </p>
         </div>
-        <div className={clsx("rounded-none border", strokeClassName("secondary"))}>
+        <div className={clsx("rounded-lg border shadow-sm", strokeClassName("secondary"))}>
           <div className={clsx("flex items-center justify-between border-b px-4 py-2", strokeClassName("secondary"))}>
             <span className={clsx("text-sm font-semibold", inkClassName("primary"))}>Await + timeout</span>
             <Code inline>AwaitNode</Code>
@@ -445,7 +445,7 @@ function BranchResolutionLadder(): React.JSX.Element {
           const skipped = i < winner;
           return (
             <Row key={i} gap={10} align="center">
-              <div className={clsx("flex h-6 w-6 shrink-0 items-center justify-center rounded-none border text-[11px] font-bold", strokeClassName("secondary"), isWinner ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("tertiary")))}>{i + 1}</div>
+              <div className={clsx("flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-[11px] font-bold shadow-sm", strokeClassName("secondary"), isWinner ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("tertiary")))}>{i + 1}</div>
               <div>
                 <Code inline>{s.label}</Code>
                 <div className={clsx("text-xs", skipped ? clsx(inkClassName("quaternary"), "line-through") : inkClassName("tertiary"))}>

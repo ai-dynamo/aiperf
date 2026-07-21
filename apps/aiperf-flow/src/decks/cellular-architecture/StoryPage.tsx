@@ -70,9 +70,9 @@ function StoryRail({ page, onPage }: { page: number; onPage: (page: number) => v
                   title={`Page ${number}: ${STORY_STEPS[number - 1].title}`}
                   onClick={() => onPage(number)}
                   className={
-                    "h-6 w-6 rounded-none border text-xs font-semibold transition-colors " +
+                    "h-6 w-6 rounded-md border text-xs font-semibold shadow-sm transition-colors " +
                     (isCurrent
-                      ? "border-accent-primary bg-accent-primary text-white"
+                      ? "border-accent-primary bg-accent-primary text-white shadow-md"
                       : isPast
                         ? "border-category-green text-category-green"
                         : "border-stroke-secondary text-ink-secondary")
@@ -114,7 +114,7 @@ function ScaleBoundaryStrip(): React.JSX.Element {
     <Stack gap={8}>
       <Row gap={10} align="center" wrap>
         <Eyebrow>Cellular fidelity ladder</Eyebrow>
-        <span className="rounded-none border border-category-yellow px-2 py-0.5 text-xs font-semibold text-category-yellow">
+        <span className="rounded-md border border-category-yellow px-2 py-0.5 text-xs font-semibold text-category-yellow shadow-sm">
           Scheduled duration/unbounded rejected · graph duration built
         </span>
       </Row>

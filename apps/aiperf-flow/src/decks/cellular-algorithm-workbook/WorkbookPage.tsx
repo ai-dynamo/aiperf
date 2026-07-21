@@ -89,7 +89,7 @@ function StateTrace({
 
   return (
     <div
-      className={`rounded-none border ${strokeClassName("tertiary")}`}
+      className={`rounded-lg border shadow-sm ${strokeClassName("tertiary")}`}
       style={{ height: 200 }}
       aria-label={`${algorithm.title}: ${frame.label}`}
     >
@@ -122,7 +122,7 @@ function PseudocodePanel({
   activeLineId: string;
 }): React.JSX.Element {
   return (
-    <div className={`rounded-none border ${strokeClassName("tertiary")} ${surfaceClassName("elevated")}`}>
+    <div className={`rounded-lg border shadow-sm ${strokeClassName("tertiary")} ${surfaceClassName("elevated")}`}>
       {lines.map((line) => {
         const active = line.id === activeLineId;
         return (
@@ -375,7 +375,7 @@ function WorkbookIndex({
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Source, invariant, failure…"
-          className={`w-full rounded-none border px-2 py-1 text-sm ${strokeClassName("secondary")} ${surfaceClassName("page")} ${inkClassName("primary")}`}
+          className={`w-full rounded-md border px-2 py-1 text-sm shadow-sm ${strokeClassName("secondary")} ${surfaceClassName("page")} ${inkClassName("primary")}`}
         />
       </Stack>
       <Select

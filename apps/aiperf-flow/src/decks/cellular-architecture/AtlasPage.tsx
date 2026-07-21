@@ -63,7 +63,7 @@ function CellCrossSection({
     <Stack gap={10}>
       <Row justify="space-between" align="center">
         <h3 className={`text-sm font-semibold ${inkClassName("primary")}`}>Inside one cell</h3>
-        <span className="rounded-none border border-stroke-secondary px-2 py-0.5 text-xs font-semibold text-ink-secondary">
+        <span className="rounded-md border border-stroke-secondary px-2 py-0.5 text-xs font-semibold text-ink-secondary shadow-sm">
           {workload === "graph" ? "whole traces" : "global request slots"}
         </span>
       </Row>
@@ -103,15 +103,15 @@ function CellCrossSection({
       </div>
       <Divider />
       <Row gap={10} align="center" wrap>
-        <span className="rounded-none border border-stroke-secondary px-3 py-2 text-sm text-ink-secondary">
+        <span className="rounded-md border border-stroke-secondary px-3 py-2 text-sm text-ink-secondary shadow-sm">
           worker 0 · local 0,2,…
         </span>
         <span className={inkClassName("tertiary")}>→</span>
-        <span className="rounded-none border border-stroke-secondary px-3 py-2 text-sm text-ink-secondary">
+        <span className="rounded-md border border-stroke-secondary px-3 py-2 text-sm text-ink-secondary shadow-sm">
           worker 1 · local 1,3,…
         </span>
         <span className={inkClassName("tertiary")}>→</span>
-        <span className="rounded-none border border-category-purple px-3 py-2 text-sm font-semibold text-ink-primary">
+        <span className="rounded-md border border-category-purple px-3 py-2 text-sm font-semibold text-ink-primary shadow-sm">
           {result}
         </span>
       </Row>
@@ -222,9 +222,9 @@ export function AtlasPage(): React.JSX.Element {
                 aria-pressed={recipe === id}
                 onClick={() => selectRecipe(id)}
                 className={
-                  "rounded-none border px-3 py-1.5 text-xs font-semibold transition-colors " +
+                  "rounded-md border px-3 py-1.5 text-xs font-semibold shadow-sm transition-colors " +
                   (recipe === id
-                    ? "border-accent-primary bg-accent-primary text-white"
+                    ? "border-accent-primary bg-accent-primary text-white shadow-md"
                     : "border-stroke-secondary text-ink-secondary")
                 }
               >

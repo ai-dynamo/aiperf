@@ -56,9 +56,9 @@ function AudienceToggle({ audience, onChange }: { audience: Audience; onChange: 
           aria-pressed={audience === a}
           onClick={() => onChange(a)}
           className={clsx(
-            "rounded-none border px-3 py-1 text-xs font-medium capitalize",
+            "rounded-md border px-3 py-1 text-xs font-medium capitalize shadow-sm",
             audience === a
-              ? "border-accent-primary bg-accent-primary text-white"
+              ? "border-accent-primary bg-accent-primary text-white shadow-md"
               : clsx("border-stroke-secondary", inkClassName("secondary")),
           )}
         >

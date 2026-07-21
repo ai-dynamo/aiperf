@@ -66,7 +66,7 @@ function CreditWalkthrough(): React.JSX.Element {
           <Row key={p.id} gap={8} align="center">
             <div
               className={clsx(
-                "rounded-none border px-3 py-2 text-xs font-semibold",
+                "rounded-md border px-3 py-2 text-xs font-semibold shadow-sm",
                 activeIds.has(p.id)
                   ? clsx(categoryBgTintClassName("blue"), strokeClassName("primary"), inkClassName("primary"))
                   : clsx(surfaceClassName("elevated"), strokeClassName("secondary"), inkClassName("secondary")),
@@ -79,7 +79,7 @@ function CreditWalkthrough(): React.JSX.Element {
         ))}
       </Row>
 
-      <div className={clsx("rounded-none border px-4 py-3", strokeClassName("primary"), surfaceClassName("elevated"))}>
+      <div className={clsx("rounded-lg border px-4 py-3 shadow-sm", strokeClassName("primary"), surfaceClassName("elevated"))}>
         <Row align="center" gap={10}>
           <span className={clsx("text-sm font-semibold", inkClassName("primary"))}>
             Step {step + 1} / {WALK_STEPS.length}
@@ -122,7 +122,7 @@ function DispatchOutcomeVisual(): React.JSX.Element {
             aria-pressed={o === outcome}
             onClick={() => setOutcome(o)}
             className={clsx(
-              "rounded-none border px-3 py-1 text-xs font-medium",
+              "rounded-md border px-3 py-1 text-xs font-medium shadow-sm",
               strokeClassName(o === outcome ? "primary" : "secondary"),
               o === outcome ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("secondary")),
             )}
@@ -131,7 +131,7 @@ function DispatchOutcomeVisual(): React.JSX.Element {
           </button>
         ))}
       </Row>
-      <div className={clsx("rounded-none border", strokeClassName("primary"))}>
+      <div className={clsx("rounded-lg border shadow-sm", strokeClassName("primary"))}>
         <div className={clsx("flex items-center justify-between border-b px-4 py-2", strokeClassName("secondary"))}>
           <span className={clsx("text-sm font-semibold", inkClassName("primary"))}>resolve(credit, error, cancelled)</span>
           <span className={clsx("text-xs", inkClassName("tertiary"))}>outcome: {outcome}</span>
@@ -159,7 +159,7 @@ function OverlapBarrier(): React.JSX.Element {
   const box = (label: string, sub: string, tone: "neutral" | "park" | "issue") => (
     <div
       className={clsx(
-        "rounded-none border px-3.5 py-2.5 text-center",
+        "rounded-md border px-3.5 py-2.5 text-center shadow-sm",
         strokeClassName("secondary"),
         tone === "issue" ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : tone === "park" ? clsx(categoryBgTintClassName("orange"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("primary")),
       )}
@@ -223,7 +223,7 @@ function BackpressureMeters(): React.JSX.Element {
             <span className={clsx("text-sm font-medium", inkClassName("primary"))}>{m.label}</span>
             <span className={clsx("text-xs", inkClassName("tertiary"))}>{m.right}</span>
           </Row>
-          <div className={clsx("mt-1 h-3 w-full rounded-none border", strokeClassName("secondary"), categoryBgTintClassName(m.color))}>
+          <div className={clsx("mt-1 h-3 w-full rounded-md border shadow-sm", strokeClassName("secondary"), categoryBgTintClassName(m.color))}>
             <div className={clsx("h-full", categoryBgClassName(m.color))} style={{ width: `${(m.used / m.total) * 100}%` }} />
           </div>
         </div>

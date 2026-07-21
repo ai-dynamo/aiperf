@@ -38,7 +38,7 @@ export function Inspector({ selectedId }: { selectedId: string }): React.JSX.Ele
     const from = NODE_BY_ID.get(edge.from);
     const to = NODE_BY_ID.get(edge.to);
     return (
-      <div className="rounded-none border border-stroke-secondary px-4 py-3">
+      <div className="rounded-lg border border-stroke-secondary px-4 py-3 shadow-sm">
         <Row justify="space-between" align="center">
           <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Selected flow</span>
           <StatusPill status={edge.status} />
@@ -56,7 +56,7 @@ export function Inspector({ selectedId }: { selectedId: string }): React.JSX.Ele
 
   const node = NODE_BY_ID.get(selectedId) ?? NODES[2];
   return (
-    <div className="rounded-none border border-stroke-secondary px-4 py-3">
+    <div className="rounded-lg border border-stroke-secondary px-4 py-3 shadow-sm">
       <Row justify="space-between" align="center">
         <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Engineer inspector</span>
         <StatusPill status={node.status} />

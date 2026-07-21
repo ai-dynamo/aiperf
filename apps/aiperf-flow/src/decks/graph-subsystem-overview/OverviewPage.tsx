@@ -240,7 +240,7 @@ export function OverviewPage({ audience }: { audience: Audience }): React.JSX.El
         <h2 className={clsx("text-lg font-semibold", inkClassName("primary"))}>The concept in four beats</h2>
         <Grid columns={4} gap={12}>
           {BEATS.map((b) => (
-            <div key={b.n} className={clsx("rounded-none border px-4 py-3", surfaceClassName("elevated"), strokeClassName("secondary"))}>
+            <div key={b.n} className={clsx("rounded-lg border px-4 py-3 shadow-sm", surfaceClassName("elevated"), strokeClassName("secondary"))}>
               <div className={clsx("text-sm font-bold", inkClassName("secondary"))}>{b.n}</div>
               <div className={clsx("mt-1 text-sm font-semibold", inkClassName("primary"))}>{b.t}</div>
               <p className={clsx("mt-1 text-xs", inkClassName("secondary"))}>{b.d}</p>
@@ -264,7 +264,7 @@ export function OverviewPage({ audience }: { audience: Audience }): React.JSX.El
               aria-pressed={s.id === stage}
               onClick={() => setStage(s.id)}
               className={clsx(
-                "rounded-none border px-3 py-1 text-xs font-medium",
+                "rounded-md border px-3 py-1 text-xs font-medium shadow-sm",
                 strokeClassName(s.id === stage ? "primary" : "secondary"),
                 s.id === stage ? clsx(categoryBgTintClassName(s.color), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("secondary")),
               )}
@@ -280,7 +280,7 @@ export function OverviewPage({ audience }: { audience: Audience }): React.JSX.El
           to focus its stage.
         </p>
 
-        <div className={clsx("rounded-none border", strokeClassName("primary"))}>
+        <div className={clsx("rounded-lg border shadow-sm", strokeClassName("primary"))}>
           <div className={clsx("flex items-center justify-between border-b px-4 py-2", strokeClassName("secondary"))}>
             <span className={clsx("text-sm font-semibold", inkClassName("primary"))}>{active.label.replace(/^\d+ · /, "")}</span>
             <span className={clsx("text-xs", inkClassName("tertiary"))}>{active.plane}</span>
@@ -369,7 +369,7 @@ export function OverviewPage({ audience }: { audience: Audience }): React.JSX.El
               <div
                 key={a.id}
                 className={clsx(
-                  "rounded-none border px-4 py-3",
+                  "rounded-lg border px-4 py-3 shadow-sm",
                   strokeClassName(on ? "primary" : "secondary"),
                   on ? categoryBgTintClassName("blue") : surfaceClassName("elevated"),
                 )}
@@ -397,7 +397,7 @@ export function OverviewPage({ audience }: { audience: Audience }): React.JSX.El
             { title: "DatasetManager", sub: "build proc" },
             { title: "TimingManager", sub: "schedule proc" },
           ].map((c) => (
-            <div key={c.title} className={clsx("rounded-none border", strokeClassName("secondary"))}>
+            <div key={c.title} className={clsx("rounded-lg border shadow-sm", strokeClassName("secondary"))}>
               <div className={clsx("flex items-center justify-between border-b px-4 py-2", strokeClassName("secondary"))}>
                 <span className={clsx("text-sm font-semibold", inkClassName("primary"))}>{c.title}</span>
                 <span className={clsx("text-xs", inkClassName("tertiary"))}>{c.sub}</span>
@@ -408,7 +408,7 @@ export function OverviewPage({ audience }: { audience: Audience }): React.JSX.El
                   <span className={clsx("text-xs", inkClassName("tertiary"))}>↓</span>
                   <Code inline>trie_node_ordinals(...)</Code>
                   <span className={clsx("text-xs", inkClassName("tertiary"))}>↓</span>
-                  <div className={clsx("rounded-none px-3 py-1.5 text-sm", surfaceClassName("panel"), inkClassName("primary"))}>
+                  <div className={clsx("rounded-md px-3 py-1.5 text-sm shadow-sm", surfaceClassName("panel"), inkClassName("primary"))}>
                     t-1 → {"{"} n0, n1, n2 {"}"}
                   </div>
                 </Stack>
@@ -432,7 +432,7 @@ export function OverviewPage({ audience }: { audience: Audience }): React.JSX.El
             { t: "Two concurrency dials", d: "Cross-trace lanes and in-trace ready-node fan-out are independent knobs. A fan-out-heavy graph needs both sized." },
             ...(dev ? [{ t: "Zero-copy dispatch", d: "When cache-busting is off, workers send pre-serialized request bytes straight from mmap slices — no decode/re-encode of the messages array." }] : []),
           ].map((c) => (
-            <div key={c.t} className={clsx("rounded-none border px-4 py-3", surfaceClassName("elevated"), strokeClassName("secondary"))}>
+            <div key={c.t} className={clsx("rounded-lg border px-4 py-3 shadow-sm", surfaceClassName("elevated"), strokeClassName("secondary"))}>
               <div className={clsx("text-sm font-semibold", inkClassName("primary"))}>{c.t}</div>
               <p className={clsx("mt-1 text-xs", inkClassName("secondary"))}>{c.d}</p>
             </div>

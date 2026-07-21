@@ -68,7 +68,7 @@ function DedupVisual(): React.JSX.Element {
             <div key={b.key} className="flex flex-col items-center gap-1">
               <div
                 className={clsx(
-                  "min-w-[62px] rounded-none border px-3 py-2 text-center text-xs font-semibold",
+                  "min-w-[62px] rounded-md border px-3 py-2 text-center text-xs font-semibold shadow-sm",
                   strokeClassName("secondary"),
                   shared ? clsx(categoryBgTintClassName("green"), inkClassName("primary")) : fresh ? clsx(categoryBgTintClassName("orange"), inkClassName("primary")) : clsx(surfaceClassName("panel"), inkClassName("primary")),
                 )}
@@ -84,7 +84,7 @@ function DedupVisual(): React.JSX.Element {
   );
 
   return (
-    <div className={clsx("rounded-none border px-4 py-4", strokeClassName("primary"), surfaceClassName("elevated"))}>
+    <div className={clsx("rounded-lg border px-4 py-4 shadow-sm", strokeClassName("primary"), surfaceClassName("elevated"))}>
       <Stack gap={14}>
         <Row align="center" gap={10}>
           <span className={clsx("text-sm font-semibold", inkClassName("primary"))}>{dedup ? "Segment-trie dedup" : "Naive replay"}</span>
@@ -172,7 +172,7 @@ function BlockGeometry(): React.JSX.Element {
     <div className="flex flex-col items-center gap-1">
       <div
         className={clsx(
-          "min-w-[40px] rounded-none border px-2.5 py-1.5 text-center text-[11px] font-semibold",
+          "min-w-[40px] rounded-md border px-2.5 py-1.5 text-center text-[11px] font-semibold shadow-sm",
           strokeClassName("secondary"),
           tone === "prev" ? clsx(surfaceClassName("panel"), inkClassName("primary")) : clsx(categoryBgTintClassName(tone), inkClassName("primary")),
         )}
@@ -194,7 +194,7 @@ function BlockGeometry(): React.JSX.Element {
               type="button"
               aria-pressed={prevOut === v}
               onClick={() => setPrevOut(v)}
-              className={clsx("rounded-none border px-2.5 py-0.5 text-xs font-medium", strokeClassName(prevOut === v ? "primary" : "secondary"), prevOut === v ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("secondary")))}
+              className={clsx("rounded-md border px-2.5 py-0.5 text-xs font-medium shadow-sm", strokeClassName(prevOut === v ? "primary" : "secondary"), prevOut === v ? clsx(categoryBgTintClassName("blue"), inkClassName("primary")) : clsx(surfaceClassName("elevated"), inkClassName("secondary")))}
             >
               {v}
             </button>
@@ -248,7 +248,7 @@ const STORE_FILES = [
 function UnifiedStore(): React.JSX.Element {
   return (
     <Stack gap={12}>
-      <div className={clsx("rounded-none border", strokeClassName("primary"))}>
+      <div className={clsx("rounded-lg border shadow-sm", strokeClassName("primary"))}>
         <div className={clsx("flex items-center justify-between border-b px-4 py-2", strokeClassName("secondary"))}>
           <span className={clsx("text-sm font-semibold", inkClassName("primary"))}>A2 interned layout</span>
           <Code inline>aiperf_graph_segments_&lt;id&gt;/</Code>
@@ -284,20 +284,20 @@ function WarmupVariant(): React.JSX.Element {
         <Toggle checked={warmup} onChange={setWarmup} />
       </Row>
       <Grid columns={2} gap={12}>
-        <div className={clsx("rounded-none border", strokeClassName("secondary"))}>
+        <div className={clsx("rounded-lg border shadow-sm", strokeClassName("secondary"))}>
           <div className={clsx("border-b px-4 py-2 text-sm font-semibold", strokeClassName("secondary"), inkClassName("primary"))}>Store lookup</div>
           <p className={clsx("px-4 py-3 text-sm", inkClassName("secondary"))}>
             Both variants read the <strong>same</strong> profiling envelope bytes:{" "}
             <Code inline>lookup = &quot;profiling&quot; if warmup else phase_variant</Code>. No duplicate warmup store.
           </p>
         </div>
-        <div className={clsx("rounded-none border", strokeClassName("secondary"))}>
+        <div className={clsx("rounded-lg border shadow-sm", strokeClassName("secondary"))}>
           <div className={clsx("border-b px-4 py-2 text-sm font-semibold", strokeClassName("secondary"), inkClassName("primary"))}>Output cap</div>
           <div className="px-4 py-3">
             <Row gap={8} align="center">
               <Code inline>max_tokens</Code>
               <span className={inkClassName("tertiary")}>=</span>
-              <span className={clsx("rounded-none px-3 py-1 text-sm font-bold", warmup ? categoryBgTintClassName("orange") : categoryBgTintClassName("blue"), inkClassName("primary"))}>
+              <span className={clsx("rounded-md px-3 py-1 text-sm font-bold shadow-sm", warmup ? categoryBgTintClassName("orange") : categoryBgTintClassName("blue"), inkClassName("primary"))}>
                 {warmup ? "1" : "512 (recorded)"}
               </span>
             </Row>
