@@ -522,15 +522,17 @@ total_token_throughput = (total_isl + total_osl) / benchmark_duration_seconds
 
 **Type:** [Record Metric](#record-metrics)
 
-The number of images in the request, summed across all turns. This is the foundation metric used by Image Throughput and Image Latency.
+The number of logical image references in the wire request. This is the foundation metric used by Image Throughput and Image Latency.
 
 **Formula:**
 ```python
-num_images = sum(len(image.contents) for turn in request.turns for image in turn.images)
+num_images = count_image_content_parts(wire_payload)
 ```
 
 **Notes:**
 - Requires at least one image in at least one turn.
+- Counts UUID cache-only references as logical images even when their URL is empty.
+- Does not measure uploaded image bytes or cache misses.
 - Not displayed in console output (`console_group = MetricConsoleGroup.NONE`).
 
 ---
