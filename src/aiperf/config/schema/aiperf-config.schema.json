@@ -3719,6 +3719,20 @@
                   "default": null,
                   "description": "Output sequence length to apply when records do not specify one. Can be a fixed integer or {mean, stddev} distribution. Per-line `output_length` values in the file always take precedence.",
                   "title": "Osl"
+                },
+                "blockSize": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Token block size for hash-based prompt reconstruction from `hash_ids` in trace datasets. Overrides the loader's `default_block_size` plugin metadata. Governs how the recorded `input_length` is partitioned into cache blocks (mooncake_trace and other hash-reconstructing loaders); it has no effect on loaders that replay literal recorded prompts (baseten_trace). Set this when a trace was recorded at a block size different from its loader default, e.g. a Mooncake-format trace recorded at block size 16. None uses the loader default.",
+                  "title": "Blocksize"
                 }
               },
               "required": [
@@ -10527,6 +10541,31 @@
           "default": null,
           "description": "Output sequence length to apply when records do not specify one. Can be a fixed integer or {mean, stddev} distribution. Per-line `output_length` values in the file always take precedence.",
           "title": "Osl"
+        },
+        "blockSize": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Token block size for hash-based prompt reconstruction from `hash_ids` in trace datasets. Overrides the loader's `default_block_size` plugin metadata. Governs how the recorded `input_length` is partitioned into cache blocks (mooncake_trace and other hash-reconstructing loaders); it has no effect on loaders that replay literal recorded prompts (baseten_trace). Set this when a trace was recorded at a block size different from its loader default, e.g. a Mooncake-format trace recorded at block size 16. None uses the loader default.",
+          "title": "Blocksize",
+          "x-jinja2-supported": true
         }
       },
       "required": [
