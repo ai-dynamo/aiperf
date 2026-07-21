@@ -16,7 +16,8 @@ import { Grid } from "../../layout/Grid.js";
 import { Table, type TableColumn, type TableRow } from "../../prose/Table.js";
 import { Callout } from "../../prose/Callout.js";
 import { Stat } from "../../prose/Stat.js";
-import { surfaceClassName, strokeClassName, inkClassName } from "../../theme/tokens.js";
+import { Button } from "../../prose/Button.js";
+import { surfaceClassName, inkClassName } from "../../theme/tokens.js";
 
 /** One dataset row to intern, mirroring the canvas source's `Step` shape. */
 type DatasetRow = {
@@ -177,18 +178,12 @@ export function PoolPage(): React.JSX.Element {
         </p>
       </div>
 
-      <Row gap={8} align="center" wrap>
-        <button
-          type="button"
-          className={`rounded-none border px-3 py-1.5 text-sm font-medium ${surfaceClassName("elevated")} ${strokeClassName("primary")} ${inkClassName("primary")}`}
-          onClick={sim.next}
-          disabled={sim.isLast}
-        >
+      <Row gap={12} align="center" wrap>
+        <Button variant="primary" onClick={sim.next} disabled={sim.isLast}>
           Intern next
-        </button>
-        <button
-          type="button"
-          className={`rounded-none border px-3 py-1.5 text-sm font-medium ${surfaceClassName("elevated")} ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
+        </Button>
+        <Button
+          variant="secondary"
           onClick={() => {
             // `sim.next()` schedules a state update rather than mutating `sim` in place, so a
             // `while (!sim.isLast)` loop here would spin forever on the stale closed-over
@@ -200,15 +195,11 @@ export function PoolPage(): React.JSX.Element {
           }}
         >
           Run all
-        </button>
-        <button
-          type="button"
-          className={`rounded-none border px-3 py-1.5 text-sm font-medium ${surfaceClassName("panel")} ${strokeClassName("secondary")} ${inkClassName("tertiary")}`}
-          onClick={sim.reset}
-        >
+        </Button>
+        <Button variant="ghost" onClick={sim.reset}>
           Reset
-        </button>
-        <span className={`text-xs ${inkClassName("tertiary")}`}>
+        </Button>
+        <span className={`text-xs font-medium ${inkClassName("tertiary")}`}>
           {upTo}/{DATASET_ROWS.length} steps
         </span>
       </Row>

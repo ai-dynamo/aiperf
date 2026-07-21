@@ -56,6 +56,7 @@ export function FlowEdge({
 
   const color = data?.color ?? DEFAULT_COLOR;
   const duration = SPEED_DURATIONS[data?.speed ?? "normal"];
+  const markerId = `flow-edge-arrow-${id}`;
 
   return (
     <>
@@ -76,12 +77,25 @@ export function FlowEdge({
           }
         `}
       </style>
+      <defs>
+        <marker
+          id={markerId}
+          markerWidth={10}
+          markerHeight={10}
+          refX={8}
+          refY={5}
+          orient="auto-start-reverse"
+        >
+          <path d="M0,0 L10,5 L0,10 Z" fill={color} />
+        </marker>
+      </defs>
       <BaseEdge
         id={id}
         path={edgePath}
-        markerEnd={markerEnd}
+        markerEnd={markerEnd ?? `url(#${markerId})`}
         className="flow-edge__path"
         stroke={color}
+        strokeWidth={2}
         strokeDasharray="8 8"
         style={{ "--flow-edge-duration": duration } as React.CSSProperties}
       />
