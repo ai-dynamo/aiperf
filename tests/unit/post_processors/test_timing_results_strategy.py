@@ -11,7 +11,7 @@ import pytest
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import CreditPhaseStats
 from aiperf.post_processors.strategies.timing_results import TimingResultsStrategy
-from tests.unit.post_processors.conftest import create_metric_records_message
+from tests.unit.post_processors.conftest import create_metric_records_data
 
 
 @dataclass
@@ -118,9 +118,7 @@ class TestTimingResultsStrategy:
     def test_supports_only_credit_phase_stats(self) -> None:
         strategy = TimingResultsStrategy(_TimingStrategyContext(attributes={}))
         timing_stats = _create_credit_phase_stats()
-        metric_record = create_metric_records_message(
-            results=[{"request_latency_ns": 1}]
-        ).to_data()
+        metric_record = create_metric_records_data(results=[{"request_latency_ns": 1}])
 
         assert strategy.supports(timing_stats) is True
         assert strategy.supports(metric_record) is False
@@ -217,7 +215,7 @@ class TestTimingResultsStrategy:
         context = _TimingStrategyContext(attributes={})
         strategy = TimingResultsStrategy(context)
 
-        await strategy.process(create_metric_records_message(results=[]).to_data())
+        await strategy.process(create_metric_records_data(results=[]))
 
         assert context.build_timing_attributes_calls == []
         assert context.counter_delta_calls == []

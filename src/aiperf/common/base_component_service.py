@@ -3,7 +3,7 @@
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from aiperf.common.base_service import BaseService
 from aiperf.common.enums import CommandType, LifecycleState
@@ -39,6 +39,11 @@ class BaseComponentService(BaseService):
     It extends the BaseService by adding heartbeat and registration functionality, as well as
     publishing the current state of the service to the system controller.
     """
+
+    # Capability tags advertised to the SystemController at registration. Result
+    # producers override this (e.g. ``make_result_producer_capability("telemetry")``)
+    # so the controller can join their result on shutdown.
+    extra_capabilities: ClassVar[tuple[str, ...]] = ()
 
     def __init__(
         self,
@@ -77,6 +82,7 @@ class BaseComponentService(BaseService):
             # Target the system controller directly to avoid broadcasting to all services.
             target_service_type=ServiceType.SYSTEM_CONTROLLER,
             state=self.state,
+            capabilities=tuple(self.extra_capabilities),
         )
         max_attempts = Environment.SERVICE.REGISTRATION_MAX_ATTEMPTS
         registration_interval = Environment.SERVICE.REGISTRATION_INTERVAL

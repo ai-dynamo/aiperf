@@ -5,10 +5,11 @@ import time
 from collections import defaultdict
 
 from aiperf.common.enums import CreditPhase
-from aiperf.common.messages import MetricRecordsData
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     CreditPhaseStats,
+    ErrorDetails,
+    MetricRecordMetadata,
     PhaseRecordsStats,
     WorkerProcessingStats,
 )
@@ -190,17 +191,21 @@ class RecordsTracker:
         phase_tracker = self._get_phase_tracker(credit_phase_stats.phase)
         phase_tracker.update_from_credit_phase_stats(credit_phase_stats)
 
-    def update_from_record_data(self, record_data: MetricRecordsData) -> None:
-        """Update the phase tracker from a record data."""
-        phase_tracker = self._get_phase_tracker(record_data.metadata.benchmark_phase)
-        if record_data.valid:
+    def update_from_request(
+        self, metadata: MetricRecordMetadata, error: ErrorDetails | None
+    ) -> None:
+        """Update the phase tracker for one completed request.
+
+        Drives the per-request lockstep off the request envelope: a request is
+        counted as a success when ``error is None``, otherwise as an error.
+        """
+        phase_tracker = self._get_phase_tracker(metadata.benchmark_phase)
+        if error is None:
             phase_tracker.increment_success_records()
-            phase_tracker.increment_worker_success_records(
-                record_data.metadata.worker_id
-            )
+            phase_tracker.increment_worker_success_records(metadata.worker_id)
         else:
             phase_tracker.increment_error_records()
-            phase_tracker.increment_worker_error_records(record_data.metadata.worker_id)
+            phase_tracker.increment_worker_error_records(metadata.worker_id)
 
     def was_phase_cancelled(self, phase: CreditPhase) -> bool:
         """Check if the phase was cancelled."""

@@ -602,6 +602,8 @@ def _compute_histogram_timeslices(
         raise ValueError("slice_duration must be positive")
 
     reference_idx, final_idx = time_series.get_indices_for_filter(time_filter)
+    if final_idx is None:
+        return None
 
     timestamps = time_series.timestamps
     sums = time_series.sums
@@ -711,6 +713,8 @@ def _compute_histogram_stats(
         return None
 
     reference_idx, final_idx = time_series.get_indices_for_filter(time_filter)
+    if final_idx is None:
+        return None
 
     # Reference values
     if reference_idx is not None:
@@ -744,6 +748,11 @@ def _compute_histogram_stats(
             f"Sum delta: {sum_delta:.2f}, Count delta: {count_delta}. "
             f"Statistics may be inaccurate."
         )
+
+    # Clamp deltas non-negative on reset, mirroring the counter path. A reset that
+    # zeroes count_delta then flows into the empty-histogram branch below.
+    sum_delta = max(sum_delta, 0.0)
+    count_delta = max(count_delta, 0)
 
     # For empty histograms (count=0), still include buckets for API consistency
     if count_delta == 0:

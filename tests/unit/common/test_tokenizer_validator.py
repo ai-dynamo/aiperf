@@ -476,6 +476,19 @@ class TestValidatorFakeModelFallback:
 class TestInitWorker:
     """_init_worker must not raise and must configure the root logger."""
 
+    @pytest.fixture(autouse=True)
+    def _restore_root_logger(self):
+        # _init_worker mutates the process-global root logger (level +
+        # handlers). Snapshot and restore so a raised level (e.g. ERROR) can't
+        # leak into later tests and silently swallow their caplog assertions.
+        root = logging.getLogger()
+        level, handlers = root.level, root.handlers[:]
+        try:
+            yield
+        finally:
+            root.setLevel(level)
+            root.handlers[:] = handlers
+
     @pytest.mark.parametrize(
         "level",
         ["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -486,12 +499,8 @@ class TestInitWorker:
 
     def test_init_worker_configures_root_logger(self) -> None:
         root = logging.getLogger()
-        original_level = root.level
-        try:
-            _init_worker("WARNING")
-            assert root.level == logging.WARNING
-        finally:
-            root.setLevel(original_level)
+        _init_worker("WARNING")
+        assert root.level == logging.WARNING
 
 
 @pytest.mark.network

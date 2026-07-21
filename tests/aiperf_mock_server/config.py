@@ -373,6 +373,17 @@ class MockServerConfig(BaseSettings):
         Parameter(name=("--fast", "-f")),
     ] = False
 
+    anthropic_split_usage: Annotated[
+        bool,
+        Field(
+            description="Emit the docs-canonical split streaming usage on "
+            "/v1/messages (message_start carries the input side, message_delta "
+            "carries output_tokens only) instead of the modern cumulative "
+            "shape that api.anthropic.com and Dynamo emit today."
+        ),
+        Parameter(name="--anthropic-split-usage"),
+    ] = False
+
     access_logs: Annotated[
         bool,
         Field(description="Enable HTTP access logs"),
