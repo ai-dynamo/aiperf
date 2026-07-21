@@ -4,7 +4,7 @@
  */
 
 import { useState, type ReactNode } from "react";
-import { inkClassName, strokeClassName, surfaceClassName } from "../theme/tokens.js";
+import { inkClassName, strokeClassName } from "../theme/tokens.js";
 import type { SlideDefinition } from "../deck/types.js";
 
 export function PresentationShell({
@@ -33,7 +33,7 @@ export function PresentationShell({
             type="button"
             aria-label={`Go to slide ${index + 1}`}
             onClick={() => onSlideIndexChange(index)}
-            className={`h-1 flex-1 rounded-none ${index === slideIndex ? surfaceClassName("elevated") + " bg-accent-primary" : "bg-neutral-200"}`}
+            className={`h-1 flex-1 rounded-none ${index === slideIndex ? "bg-accent-primary" : "bg-[--color-stroke-secondary]"}`}
           />
         ))}
       </div>
