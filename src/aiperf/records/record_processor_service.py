@@ -241,6 +241,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             cancellation_time_ns=cancellation_time_ns,
             agent_depth=record.request_info.agent_depth,
             parent_correlation_id=record.request_info.parent_correlation_id,
+            root_correlation_id=record.request_info.root_correlation_id,
         )
 
     @on_pull_message(MessageType.INFERENCE_RESULTS)
@@ -429,7 +430,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         The only data sent downstream is the typed records produced for this request
         (metadata, metrics, trace_data, error) -- so everything else can be released here.
 
-        We assign None to fields typed as non-optional lists (turns, responses) to let
+        We assign None to fields typed as non-optional lists (responses) to let
         the GC reclaim the underlying objects. Using .clear() would keep the empty list
         alive, and reassigning [] would allocate a new object for no reason.
         """
@@ -437,13 +438,8 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         error = record.error
         if self.run.cfg.artifacts.export_level != ExportLevel.RAW:
             record.responses = None
-        record.turns = None
         record.trace_data = None
         record.request_headers = None
-        if record.request_info:
-            record.request_info.turns = None
-            record.request_info.system_message = None
-            record.request_info.user_context_message = None
         parsed_record.responses = None
         return trace_data, error
 
