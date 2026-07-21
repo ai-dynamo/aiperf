@@ -182,11 +182,42 @@ class RuntimeConfig(BaseConfig):
         ),
     ]
 
+    stats_interval: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            le=1000.0,
+            description=(
+                "Interval in seconds between realtime stats publishes (dashboards "
+                "and the per-tick log block). 0 disables the log block while "
+                "dashboards continue to poll. Defaults to 5s under --ui dashboard, "
+                "30s otherwise. Overrides AIPERF_UI_REALTIME_METRICS_INTERVAL."
+            ),
+        ),
+    ]
+
     @model_validator(mode="after")
     def _validate_api_host_requires_port(self) -> Self:
         if self.api_host is not None and self.api_port is None:
             raise ValueError("api_host requires api_port to be set")
         return self
+
+    def realtime_metrics_interval(self, ui_type: UIType) -> float:
+        """Resolve the realtime stats tick interval for this config.
+
+        Precedence: ``stats_interval`` (this config), then
+        ``AIPERF_UI_REALTIME_METRICS_INTERVAL``, then the per-UI auto-default
+        (5s under ``--ui dashboard``, 30s otherwise). Scoped to the config so
+        one run's ``--stats-interval`` cannot leak into a later config built
+        in the same process; child services see the value via the serialized
+        ``BenchmarkRun`` config, not process globals.
+        """
+        if self.stats_interval is not None:
+            return self.stats_interval
+        from aiperf.common.environment import Environment  # local import: avoid cycle
+
+        return Environment.UI.realtime_metrics_interval(ui_type)
 
 
 __all__ = [

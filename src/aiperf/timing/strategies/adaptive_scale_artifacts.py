@@ -19,7 +19,7 @@ from aiperf.timing.strategies.adaptive_scale_sla import percentile_value
 from aiperf.timing.strategies.adaptive_scale_types import WindowStats
 
 _LOGGER = logging.getLogger(__name__)
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _iso_utc_from_ns(timestamp_ns: int) -> str:
@@ -34,6 +34,7 @@ class AdaptiveScaleArtifactWriter:
     def __init__(self) -> None:
         self._queue: asyncio.Queue[Callable[[], None]] | None = None
         self._task: asyncio.Task[None] | None = None
+        self._write_error: Exception | None = None
 
     async def start(self) -> None:
         if self._task is not None:
@@ -45,16 +46,20 @@ class AdaptiveScaleArtifactWriter:
         if self._queue is None:
             return
         await self._queue.join()
+        if self._write_error is not None:
+            raise self._write_error
 
     async def close(self) -> None:
         if self._queue is None or self._task is None:
             return
-        await self.flush()
-        self._task.cancel()
-        with suppress(asyncio.CancelledError):
-            await self._task
-        self._queue = None
-        self._task = None
+        try:
+            await self.flush()
+        finally:
+            self._task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._task
+            self._queue = None
+            self._task = None
 
     async def _drain(self) -> None:
         if self._queue is None:
@@ -63,24 +68,23 @@ class AdaptiveScaleArtifactWriter:
             write = await self._queue.get()
             try:
                 await asyncio.to_thread(write)
-            except Exception:
+            except Exception as exc:
+                if self._write_error is None:
+                    self._write_error = exc
                 _LOGGER.exception("adaptive scale artifact write failed")
             finally:
                 self._queue.task_done()
 
     def _schedule_write(self, write: Callable[[], None]) -> None:
         if self._queue is None:
-            write()
-            return
+            raise RuntimeError("adaptive scale artifact writer was not started")
         self._queue.put_nowait(write)
 
     @staticmethod
     def resolve_path(artifact_dir: Path | None, filename: str) -> Path | None:
         if artifact_dir is None:
             return None
-        path = artifact_dir / filename
-        path.parent.mkdir(parents=True, exist_ok=True)
-        return path
+        return artifact_dir / filename
 
     @staticmethod
     def correlation_payload(
@@ -89,8 +93,8 @@ class AdaptiveScaleArtifactWriter:
         phase_id: str,
         phase_name: str | None,
         adaptive_iteration: int,
-        candidate_concurrency: int,
-        accepted_concurrency: int,
+        candidate_value: float,
+        accepted_value: float,
         phase_start_ts: str | None = None,
         phase_end_ts: str | None = None,
         fault_window_id: str | None = None,
@@ -102,8 +106,8 @@ class AdaptiveScaleArtifactWriter:
             "phase_start_ts": phase_start_ts,
             "phase_end_ts": phase_end_ts,
             "adaptive_iteration": adaptive_iteration,
-            "candidate_concurrency": candidate_concurrency,
-            "accepted_concurrency": accepted_concurrency,
+            "candidate_value": candidate_value,
+            "accepted_value": accepted_value,
             "fault_window_id": fault_window_id,
         }
 
@@ -111,7 +115,7 @@ class AdaptiveScaleArtifactWriter:
     def candidate_payload(
         *,
         adaptive_iteration: int,
-        candidate_concurrency: int,
+        candidate_value: float,
         stats: WindowStats,
         accepted: bool,
         rejection_reason: str,
@@ -123,11 +127,14 @@ class AdaptiveScaleArtifactWriter:
                 return 0.0
             return percentile_value(stats.samples, pct) / 1_000_000
 
+        ttft_samples = stats.ttfts if isinstance(stats.ttfts, list) else []
+        itl_samples = stats.itls if isinstance(stats.itls, list) else []
         success_count = len(stats.samples)
         request_count = stats.total
         return {
             "adaptive_iteration": adaptive_iteration,
-            "candidate_concurrency": candidate_concurrency,
+            "candidate_value": candidate_value,
+            "control_value": candidate_value,
             "start_ts": _iso_utc_from_ns(stats.start_ns)
             if stats.start_ns is not None
             else None,
@@ -137,15 +144,31 @@ class AdaptiveScaleArtifactWriter:
             "duration_s": stats.elapsed_sec,
             "request_count": request_count,
             "error_count": stats.errors,
+            "cancelled": stats.cancelled,
             "success_count": success_count,
-            "goodput_ratio": success_count / request_count if request_count else 0.0,
+            "success_rate": success_count / request_count if request_count else 0.0,
             "throughput_rps": stats.throughput,
             "latency_p50_ms": percentile_ms(50),
             "latency_p95_ms": percentile_ms(95),
             "latency_p99_ms": percentile_ms(99),
-            "ttft_p50_ms": 0.0,
-            "ttft_p95_ms": 0.0,
-            "ttft_p99_ms": 0.0,
+            "ttft_p50_ms": percentile_value(ttft_samples, 50) / 1_000_000
+            if ttft_samples
+            else 0.0,
+            "ttft_p95_ms": percentile_value(ttft_samples, 95) / 1_000_000
+            if ttft_samples
+            else 0.0,
+            "ttft_p99_ms": percentile_value(ttft_samples, 99) / 1_000_000
+            if ttft_samples
+            else 0.0,
+            "itl_p50_ms": percentile_value(itl_samples, 50) / 1_000_000
+            if itl_samples
+            else 0.0,
+            "itl_p95_ms": percentile_value(itl_samples, 95) / 1_000_000
+            if itl_samples
+            else 0.0,
+            "itl_p99_ms": percentile_value(itl_samples, 99) / 1_000_000
+            if itl_samples
+            else 0.0,
             "accepted": accepted,
             "rejection_reason": None if accepted else rejection_reason,
             "latency_avg_ms": sum(samples_ms) / len(samples_ms) if samples_ms else 0.0,
@@ -157,11 +180,12 @@ class AdaptiveScaleArtifactWriter:
         timestamp_ns: int,
         event: str,
         phase: str,
-        current_concurrency: int,
+        control_value: float,
+        control_snapshot: dict[str, Any],
         control_variable: str,
-        boundary_concurrency: int | None,
-        last_good_concurrency: int | None,
-        first_failing_concurrency: int | None,
+        boundary_value: float | None,
+        last_passing_value: float | None,
+        first_failing_value: float | None,
         primary_sla: SLAFilter,
         strategy_type: str,
         step_policy: str,
@@ -170,9 +194,12 @@ class AdaptiveScaleArtifactWriter:
         throughput: float,
         sample_count: int,
         error_count: int,
-        before: int | None = None,
+        cancelled_count: int = 0,
+        before: float | None = None,
         passed: bool | None = None,
-        step_size: int | None = None,
+        step_size: float | None = None,
+        sla_values: dict[str, float] | None = None,
+        binding_sla: str | None = None,
     ) -> dict[str, Any]:
         return {
             "schema_version": SCHEMA_VERSION,
@@ -181,25 +208,27 @@ class AdaptiveScaleArtifactWriter:
             "timestamp_utc": _iso_utc_from_ns(timestamp_ns),
             "event": event,
             "phase": phase,
-            "concurrency_before": current_concurrency if before is None else before,
-            "concurrency_after": current_concurrency,
             "control_variable": control_variable,
-            "control_value": current_concurrency,
-            "active_concurrency": current_concurrency,
-            "boundary_concurrency": boundary_concurrency,
-            "last_passing_value": last_good_concurrency,
-            "first_failing_value": first_failing_concurrency,
+            "control_value_before": control_value if before is None else before,
+            "control_value_after": control_value,
+            "control_value": control_value,
+            "control": control_snapshot,
+            "boundary_value": boundary_value,
+            "last_passing_value": last_passing_value,
+            "first_failing_value": first_failing_value,
             "sla_metric": primary_sla.metric_tag,
             "sla_stat": primary_sla.stat,
             "sla_op": primary_sla.op,
             "sla_value": sla_value,
             "sla_bound": primary_sla.threshold,
+            "sla_values": sla_values or {},
+            "binding_sla": binding_sla,
             "throughput": throughput,
             "sample_count": sample_count,
             "completed": sample_count,
-            "sent": sample_count + error_count,
+            "sent": sample_count + error_count + cancelled_count,
             "in_flight": None,
-            "cancelled": None,
+            "cancelled": cancelled_count,
             "errored": error_count,
             "error_count": error_count,
             "sla_passed": passed,
@@ -213,10 +242,11 @@ class AdaptiveScaleArtifactWriter:
     def summary_payload(
         *,
         control_variable: str,
-        current_concurrency: int,
-        boundary_concurrency: int | None,
-        last_good_concurrency: int | None,
-        first_failing_concurrency: int | None,
+        control_value: float,
+        control_snapshot: dict[str, Any],
+        boundary_value: float | None,
+        last_passing_value: float | None,
+        first_failing_value: float | None,
         sustain_started_at_ns: int | None,
         sustain_duration: float,
         completed_reason: str | None,
@@ -226,6 +256,7 @@ class AdaptiveScaleArtifactWriter:
         throughput: float,
         sample_count: int,
         error_count: int,
+        cancelled_count: int = 0,
         candidates: list[dict[str, Any]] | None = None,
         primary_sla: SLAFilter,
         strategy_type: str,
@@ -234,20 +265,18 @@ class AdaptiveScaleArtifactWriter:
         max_step_multiplier: int,
         step_percent: float,
     ) -> dict[str, Any]:
-        boundary_value = boundary_concurrency
         return {
             "schema_version": SCHEMA_VERSION,
             "status": status,
             "control_variable": control_variable,
-            "control_value": current_concurrency,
-            "active_concurrency": current_concurrency,
-            "boundary_concurrency": boundary_concurrency,
-            "last_passing_value": last_good_concurrency,
-            "first_failing_value": first_failing_concurrency,
-            "last_good_concurrency": last_good_concurrency,
+            "control_value": control_value,
+            "control": control_snapshot,
+            "boundary_value": boundary_value,
+            "last_passing_value": last_passing_value,
+            "first_failing_value": first_failing_value,
             "result": {
-                "last_passing_value": last_good_concurrency,
-                "first_failing_value": first_failing_concurrency,
+                "last_passing_value": last_passing_value,
+                "first_failing_value": first_failing_value,
                 "boundary_value": boundary_value,
             },
             "sustain_started_at": sustain_started_at_ns,
@@ -269,10 +298,10 @@ class AdaptiveScaleArtifactWriter:
                 "bound": primary_sla.threshold,
             },
             "totals": {
-                "sent": sample_count + error_count,
+                "sent": sample_count + error_count + cancelled_count,
                 "completed": sample_count,
                 "errored": error_count,
-                "cancelled": None,
+                "cancelled": cancelled_count,
             },
             "throughput": throughput,
             "candidates": candidates or [],
@@ -288,6 +317,7 @@ class AdaptiveScaleArtifactWriter:
             return
 
         def write() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("ab") as f:
                 f.write(orjson.dumps(payload, option=orjson.OPT_SORT_KEYS) + b"\n")
 
@@ -298,6 +328,7 @@ class AdaptiveScaleArtifactWriter:
             return
 
         def write() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
             encoded = orjson.dumps(
                 summary, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS
             )

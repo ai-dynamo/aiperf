@@ -43,10 +43,10 @@ def _percentile_stats(rtts_ns: list[int]) -> dict[str, float | None]:
 class NetworkLatencyAccumulator:
     """Accumulates RTT probe samples and computes per-target + aggregate stats.
 
-    Instantiated directly by the RecordsManager (not a plugin results processor)
-    because the aggregate ``mean_ns`` must be delivered to every
-    MetricResultsProcessor via ``set_network_rtt_ns`` before ``summarize()`` is
-    called, rather than flowing through the standard summarize pipeline.
+    Instantiated directly by the RecordsManager because the aggregate
+    ``mean_ns`` must be delivered to MetricsAccumulator via ``set_network_rtt_ns``
+    before ``summarize()`` is called, rather than flowing through the standard
+    summarize pipeline.
     """
 
     def __init__(self, benchmark_id: str | None = None) -> None:
