@@ -36,7 +36,7 @@ Validate an AIPerf config file.
 
 Run the Profile subcommand.
 
-[Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [Network Latency](#network-latency) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication)
+[Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Scenario](#scenario) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [Network Latency](#network-latency) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication)
 
 ### [`plot`](#aiperf-plot)
 
@@ -50,7 +50,11 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 
 Run an AIPerf service in a single process.
 
-[Parameters](#parameters) • [Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [Network Latency](#network-latency) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication)
+[Parameters](#parameters) • [Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Scenario](#scenario) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [Network Latency](#network-latency) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication)
+
+### [`slurm generate`](#aiperf-slurm-generate)
+
+Generate an sbatch job script for a native cellular AIPerf benchmark
 
 ### [`speed-bench-report`](#aiperf-speed-bench-report)
 
@@ -284,13 +288,13 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 
 #### `--endpoint-type` `<str>`
 
-The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `messages`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
+Endpoint dialect identifier compiled into the selected aiperf runner. Common stock identifiers include `chat`, `messages`, and `responses`; custom runner distributions may add more.
+<br/>_Constraints: min: 1_
 <br/>_Default: `chat`_
 
 #### `--streaming`
 
-Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. Automatically disabled if the selected endpoint type does not support streaming. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
+Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. The selected runner validates and normalizes endpoint support. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
 <br/>_Flag (no value required)_
 
 #### `-u`, `--url` `<list>`
@@ -331,11 +335,6 @@ Seconds between endpoint readiness probe attempts.
 #### `--api-key` `<str>`
 
 API authentication key for the endpoint. When provided, automatically included in request headers as `Authorization: Bearer <api_key>`.
-
-#### `--transport`, `--transport-type` `<str>`
-
-Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
-<br/>_Choices: [`http`]_
 
 #### `--use-legacy-max-tokens`
 
@@ -422,7 +421,7 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
+<br/>_Choices: [`weka_cc_traces_062126`, `exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
 
 #### `--hf-subset` `<str>`
 
@@ -435,7 +434,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `dynamo_trace`, `weka_trace`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -905,6 +904,32 @@ Maximum input sequence length for filtering. Traces with input_length > max_isl 
 Maximum output sequence length cap. Traces with output_length > max_osl are capped to max_osl.
 <br/>_Constraints: ≥ 1_
 
+#### `--synthesis-idle-gap-cap` `<float>`
+
+True-idle gap cap in seconds for weka_trace/dynamo_trace replay; caps long idle gaps between recorded turns so replay does not stall on multi-minute think times. Null disables warping (recorded gaps replay verbatim). Unset selects the 60s default.
+<br/>_Constraints: ≥ 0.0_
+
+#### `--trajectory-start-min-ratio` `<float>`
+
+Lower bound of the recorded-graph trajectory-start (t*) snapshot window, as a fraction of each trace's total duration. Replay begins at a per-trace offset sampled in [min, max] of the trace's duration (an active t* window) rather than at t=0. 0/0 disables it.
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+
+#### `--trajectory-start-max-ratio` `<float>`
+
+Upper bound of the recorded-graph trajectory-start (t*) snapshot window, as a fraction of each trace's total duration. Paired with --trajectory-start-min-ratio; must be >= it. 0 disables the window (every trace starts at t=0).
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+
+### Scenario
+
+#### `--scenario` `<str>`
+
+Lock all benchmark invariants for a named scenario (e.g. 'inferencex-agentx-mvp'). Conflicts with the locked invariants raise ScenarioLockError at startup unless --unsafe-override is also passed. Distinct from the sweep ``scenarios`` strategy (hand-picked named runs).
+
+#### `--unsafe-override`
+
+Convert scenario lock errors to warnings; stamps submission_valid=false in the resolved scenario outcome. No-op without --scenario.
+<br/>_Flag (no value required)_
+
 ### Load Generator
 
 #### `--benchmark-duration` `<str>`
@@ -1052,6 +1077,11 @@ Duration in seconds to ramp warmup prefill concurrency from 1 to target. If not 
 Duration in seconds to ramp warmup request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration). If not set, uses `--request-rate-ramp-duration` value.
 <br/>_Constraints: > 0_
 
+#### `--agentic-cache-warmup-duration` `<float>`
+
+Extended cache-pressure warmup duration in seconds for recorded-graph (agentic/weka) replay. When set, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. This flag is self-triggering: it auto-builds a self-bounding CONCURRENCY_BURST warmup phase carrying only this duration. Do NOT combine it with a manual warmup trigger (--warmup-request-count / --num-warmup-sessions / --warmup-duration); a session/request/duration cap cancels the cache-pressure recycle and is rejected.
+<br/>_Constraints: > 0_
+
 ### User-Centric Rate
 
 #### `--user-centric-rate` `<float>`
@@ -1143,7 +1173,7 @@ MLflow run name.
 
 #### `--mlflow-tag` `<list>`
 
-Additional MLflow run tags to attach on upload. Specify as key:value pairs (e.g., --mlflow-tag team:perf) or as JSON string.
+Additional MLflow run tags to attach on upload. Specify as key:value pairs (e.g., --mlflow-tag team:perf env:staging) or as a JSON string.
 
 #### `--mlflow-parent-run-id` `<str>`
 
@@ -1576,6 +1606,16 @@ Interval in seconds between realtime stats publishes (dashboards and the per-tic
 
 Maximum number of workers to create. If not specified, the number of workers will be determined by the formula `min(concurrency, (num CPUs * 0.75) - 1)`, with a default max cap of 32. Any value provided will still be capped by the concurrency value (if specified), but not by the max cap.
 <br/>_Constraints: ≥ 1_
+
+#### `--cells` `<int>`
+
+Number of native execution cells to partition the run across (cellular mode). 1 (default) runs the ordinary single-process native path, byte-for-byte unchanged. With cells > 1 the launched aiperf runner becomes a controller that spawns that many `aiperf --cell` subprocesses over a (cell_id, cell_count) partition of the request budget and merges their records in global dispatch order into one report. Supported only for the scheduled HTTP transport over seeded, single-turn synthetic datasets against a single endpoint URL with request-bounded phases; the run fails closed on any other shape.
+<br/>_Constraints: ≥ 1_
+
+#### `--sketch-metrics`
+
+Opt-in bounded-memory metrics mode (equivalent to AIPERF_METRICS_SKETCH=1). Stream each per-record metric value into a t-digest sketch instead of retaining every value, so the native aiperf runner's metric memory stays O(1) in the request count at very high request rates. Counts, sums, averages, and min/max stay exact; percentiles become approximate. Per-record artifacts (records/raw/outputs JSONL, per-record OTLP) and per-row-only trend outputs (timeslices, per-model/endpoint inference series, sweep curves) are unavailable and are dropped from the run request.
+<br/>_Flag (no value required)_
 
 ### ZMQ Communication
 
@@ -1747,13 +1787,13 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 
 #### `--endpoint-type` `<str>`
 
-The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `messages`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
+Endpoint dialect identifier compiled into the selected aiperf runner. Common stock identifiers include `chat`, `messages`, and `responses`; custom runner distributions may add more.
+<br/>_Constraints: min: 1_
 <br/>_Default: `chat`_
 
 #### `--streaming`
 
-Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. Automatically disabled if the selected endpoint type does not support streaming. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
+Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. The selected runner validates and normalizes endpoint support. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
 <br/>_Flag (no value required)_
 
 #### `-u`, `--url` `<list>`
@@ -1794,11 +1834,6 @@ Seconds between endpoint readiness probe attempts.
 #### `--api-key` `<str>`
 
 API authentication key for the endpoint. When provided, automatically included in request headers as `Authorization: Bearer <api_key>`.
-
-#### `--transport`, `--transport-type` `<str>`
-
-Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
-<br/>_Choices: [`http`]_
 
 #### `--use-legacy-max-tokens`
 
@@ -1885,7 +1920,7 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
+<br/>_Choices: [`weka_cc_traces_062126`, `exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
 
 #### `--hf-subset` `<str>`
 
@@ -1898,7 +1933,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `dynamo_trace`, `weka_trace`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -2368,6 +2403,32 @@ Maximum input sequence length for filtering. Traces with input_length > max_isl 
 Maximum output sequence length cap. Traces with output_length > max_osl are capped to max_osl.
 <br/>_Constraints: ≥ 1_
 
+#### `--synthesis-idle-gap-cap` `<float>`
+
+True-idle gap cap in seconds for weka_trace/dynamo_trace replay; caps long idle gaps between recorded turns so replay does not stall on multi-minute think times. Null disables warping (recorded gaps replay verbatim). Unset selects the 60s default.
+<br/>_Constraints: ≥ 0.0_
+
+#### `--trajectory-start-min-ratio` `<float>`
+
+Lower bound of the recorded-graph trajectory-start (t*) snapshot window, as a fraction of each trace's total duration. Replay begins at a per-trace offset sampled in [min, max] of the trace's duration (an active t* window) rather than at t=0. 0/0 disables it.
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+
+#### `--trajectory-start-max-ratio` `<float>`
+
+Upper bound of the recorded-graph trajectory-start (t*) snapshot window, as a fraction of each trace's total duration. Paired with --trajectory-start-min-ratio; must be >= it. 0 disables the window (every trace starts at t=0).
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+
+### Scenario
+
+#### `--scenario` `<str>`
+
+Lock all benchmark invariants for a named scenario (e.g. 'inferencex-agentx-mvp'). Conflicts with the locked invariants raise ScenarioLockError at startup unless --unsafe-override is also passed. Distinct from the sweep ``scenarios`` strategy (hand-picked named runs).
+
+#### `--unsafe-override`
+
+Convert scenario lock errors to warnings; stamps submission_valid=false in the resolved scenario outcome. No-op without --scenario.
+<br/>_Flag (no value required)_
+
 ### Load Generator
 
 #### `--benchmark-duration` `<str>`
@@ -2515,6 +2576,11 @@ Duration in seconds to ramp warmup prefill concurrency from 1 to target. If not 
 Duration in seconds to ramp warmup request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration). If not set, uses `--request-rate-ramp-duration` value.
 <br/>_Constraints: > 0_
 
+#### `--agentic-cache-warmup-duration` `<float>`
+
+Extended cache-pressure warmup duration in seconds for recorded-graph (agentic/weka) replay. When set, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. This flag is self-triggering: it auto-builds a self-bounding CONCURRENCY_BURST warmup phase carrying only this duration. Do NOT combine it with a manual warmup trigger (--warmup-request-count / --num-warmup-sessions / --warmup-duration); a session/request/duration cap cancels the cache-pressure recycle and is rejected.
+<br/>_Constraints: > 0_
+
 ### User-Centric Rate
 
 #### `--user-centric-rate` `<float>`
@@ -2606,7 +2672,7 @@ MLflow run name.
 
 #### `--mlflow-tag` `<list>`
 
-Additional MLflow run tags to attach on upload. Specify as key:value pairs (e.g., --mlflow-tag team:perf) or as JSON string.
+Additional MLflow run tags to attach on upload. Specify as key:value pairs (e.g., --mlflow-tag team:perf env:staging) or as a JSON string.
 
 #### `--mlflow-parent-run-id` `<str>`
 
@@ -3040,6 +3106,16 @@ Interval in seconds between realtime stats publishes (dashboards and the per-tic
 Maximum number of workers to create. If not specified, the number of workers will be determined by the formula `min(concurrency, (num CPUs * 0.75) - 1)`, with a default max cap of 32. Any value provided will still be capped by the concurrency value (if specified), but not by the max cap.
 <br/>_Constraints: ≥ 1_
 
+#### `--cells` `<int>`
+
+Number of native execution cells to partition the run across (cellular mode). 1 (default) runs the ordinary single-process native path, byte-for-byte unchanged. With cells > 1 the launched aiperf runner becomes a controller that spawns that many `aiperf --cell` subprocesses over a (cell_id, cell_count) partition of the request budget and merges their records in global dispatch order into one report. Supported only for the scheduled HTTP transport over seeded, single-turn synthetic datasets against a single endpoint URL with request-bounded phases; the run fails closed on any other shape.
+<br/>_Constraints: ≥ 1_
+
+#### `--sketch-metrics`
+
+Opt-in bounded-memory metrics mode (equivalent to AIPERF_METRICS_SKETCH=1). Stream each per-record metric value into a t-digest sketch instead of retaining every value, so the native aiperf runner's metric memory stays O(1) in the request count at very high request rates. Counts, sums, averages, and min/max stay exact; percentiles become approximate. Per-record artifacts (records/raw/outputs JSONL, per-record OTLP) and per-row-only trend outputs (timeslices, per-model/endpoint inference series, sweep curves) are unavailable and are dropped from the run request.
+<br/>_Flag (no value required)_
+
 ### ZMQ Communication
 
 #### `--zmq-host` `<str>`
@@ -3055,6 +3131,60 @@ Directory path for ZMQ IPC (Inter-Process Communication) socket files. When usin
 
 Select the ZMQ dual-bind communication backend (IPC + TCP). All dual-bind knobs are cluster-managed; this flag only selects the discriminator and the converter routes downstream to the default.
 <br/>_Flag (no value required)_
+
+<hr/>
+
+## `aiperf slurm generate`
+
+Generate an sbatch job script for a native cellular AIPerf benchmark
+
+#### `--config` `<str>` _(Required)_
+
+Path to the AIPerf Config v2 YAML file.
+
+#### `--cells` `<int>` _(Required)_
+
+Number of load-generating cells (controller is an extra task).
+
+#### `--job-name` `<str>`
+
+SLURM job name.
+<br/>_Default: `aiperf`_
+
+#### `--partition` `<str>`
+
+SLURM partition.
+
+#### `--account` `<str>`
+
+SLURM account.
+
+#### `--time` `<str>`
+
+Job time limit (HH:MM:SS).
+<br/>_Default: `01:00:00`_
+
+#### `--nodes` `<int>`
+
+Node count (default: cells + 1).
+
+#### `--ntasks-per-node` `<int>`
+
+Tasks per node.
+<br/>_Default: `1`_
+
+#### `--gpus-per-node` `<int>`
+
+GPUs per node (optional).
+
+#### `--controller-port` `<int>`
+
+Velo bootstrap port for the controller (AIPERF_CONTROLLER_PORT).
+<br/>_Default: `9500`_
+
+#### `--output` `<str>`
+
+Write the script to this file instead of stdout.
 
 <hr/>
 

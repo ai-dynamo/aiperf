@@ -602,7 +602,10 @@
           "anyOf": [
             {
               "items": {
-                "const": "json",
+                "enum": [
+                  "json",
+                  "genai_perf"
+                ],
                 "type": "string"
               },
               "type": "array"
@@ -619,7 +622,11 @@
           "anyOf": [
             {
               "items": {
-                "const": "jsonl",
+                "enum": [
+                  "jsonl",
+                  "csv",
+                  "parquet"
+                ],
                 "type": "string"
               },
               "type": "array"
@@ -629,7 +636,7 @@
               "type": "boolean"
             }
           ],
-          "description": "Per-request records export formats. Only 'jsonl' is wired up today. Set to false to disable the per-record JSONL file.",
+          "description": "Per-request records export formats. 'jsonl' writes the row-oriented `profile_export.jsonl`; 'csv' writes a flat `profile_export_records.csv` (one row per request, a `{metric}_value`/`{metric}_unit` column pair per metric); 'parquet' writes a wide, columnar `profile_export.parquet` sidecar. Combine them (`[jsonl, csv, parquet]`) or select any subset. Parquet requires an `aiperf` built with the `parquet` feature (the default build). Set to false to disable per-record export entirely.",
           "title": "Records"
         },
         "raw": {
@@ -852,6 +859,14 @@
         "endpoint": {
           "$ref": "#/$defs/EndpointConfig",
           "description": "Endpoint configuration for connecting to inference server(s). Includes URLs, API type, authentication, timeout, and connection settings."
+        },
+        "endpointProfiles": {
+          "additionalProperties": {
+            "$ref": "#/$defs/EndpointConfig"
+          },
+          "description": "Additional named protocol-v2 endpoint profiles. The existing endpoint section remains the required 'default' profile; evaluation routes reference either 'default' or one of these names.",
+          "title": "Endpointprofiles",
+          "type": "object"
         },
         "datasets": {
           "description": "Dataset configuration as a single-element list. The list shape exists to share the schema between YAML and the AIPerfSweep CRD; the runtime currently loads exactly one dataset. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
@@ -1108,6 +1123,20 @@
                       "default": null,
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
+                    },
+                    "agenticCacheWarmupDuration": {
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                      "title": "Agenticcachewarmupduration"
                     },
                     "concurrency": {
                       "default": 1,
@@ -1406,6 +1435,20 @@
                       "default": null,
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
+                    },
+                    "agenticCacheWarmupDuration": {
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                      "title": "Agenticcachewarmupduration"
                     },
                     "concurrency": {
                       "anyOf": [
@@ -1730,6 +1773,20 @@
                       "default": null,
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
+                    },
+                    "agenticCacheWarmupDuration": {
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                      "title": "Agenticcachewarmupduration"
                     },
                     "concurrency": {
                       "anyOf": [
@@ -2069,6 +2126,20 @@
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
                     },
+                    "agenticCacheWarmupDuration": {
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                      "title": "Agenticcachewarmupduration"
+                    },
                     "concurrency": {
                       "anyOf": [
                         {
@@ -2392,6 +2463,20 @@
                       "default": null,
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
+                    },
+                    "agenticCacheWarmupDuration": {
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                      "title": "Agenticcachewarmupduration"
                     },
                     "concurrency": {
                       "anyOf": [
@@ -2724,6 +2809,20 @@
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
                     },
+                    "agenticCacheWarmupDuration": {
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                      "title": "Agenticcachewarmupduration"
+                    },
                     "concurrency": {
                       "anyOf": [
                         {
@@ -2967,6 +3066,23 @@
           "$ref": "#/$defs/RuntimeConfig",
           "description": "Runtime configuration for worker processes and inter-process communication."
         },
+        "failurePolicy": {
+          "anyOf": [
+            {
+              "enum": [
+                "continue",
+                "abort"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How the run reacts to a failed request. 'continue' records the failure and keeps running (resilient); 'abort' fails the whole benchmark on the first non-cancellation failure (fail-fast). When unset, each execution path applies its historical default: scheduled runs are resilient, graph (DAG) runs are fail-fast. Cancellations are never treated as failures.",
+          "title": "Failurepolicy"
+        },
         "logging": {
           "$ref": "#/$defs/LoggingConfig"
         },
@@ -2985,6 +3101,83 @@
           ],
           "default": null,
           "description": "Accuracy benchmarking configuration. When set, enables accuracy evaluation alongside performance profiling."
+        },
+        "scenario": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Lock all benchmark invariants for a named scenario (e.g. 'inferencex-agentx-mvp'). Plain data here; the lock is applied by the ScenarioResolver step in the pre-bootstrap resolver chain (auto-fills defaults, validates, raises ScenarioLockError on conflict). Distinct from the sweep ``scenarios`` strategy (SweepConfig), which expands hand-picked named runs -- this field is a single invariant LOCK, not a sweep.",
+          "title": "Scenario"
+        },
+        "unsafeOverride": {
+          "default": false,
+          "description": "Convert scenario lock errors to warnings; stamps submission_valid=false in the resolved scenario outcome. No-op without ``scenario``. Plain data; consumed by the ScenarioResolver.",
+          "title": "Unsafeoverride",
+          "type": "boolean"
+        },
+        "trajectoryStartMinRatio": {
+          "default": 0.0,
+          "description": "Lower bound of the recorded-graph trajectory-start (t*) snapshot window, expressed as a fraction of each recorded trace's total duration. The native runner samples a per-trace start offset in [min_ratio, max_ratio] of the trace's duration so replay begins mid-trajectory (an active t* window) rather than at t=0. 0.0 (with a 0.0 max) disables the window and starts every trace at its beginning.",
+          "title": "Trajectorystartminratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Lower bound of the recorded-graph trajectory-start (t*) snapshot window, expressed as a fraction of each recorded trace's total duration. The native runner samples a per-trace start offset in [min_ratio, max_ratio] of the trace's duration so replay begins mid-trajectory (an active t* window) rather than at t=0. 0.0 (with a 0.0 max) disables the window and starts every trace at its beginning.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartminratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMaxRatio": {
+          "default": 0.0,
+          "description": "Upper bound of the recorded-graph trajectory-start (t*) snapshot window, expressed as a fraction of each recorded trace's total duration. Paired with trajectory_start_min_ratio; must be >= it. 0.0 disables the window (every trace starts at t=0).",
+          "title": "Trajectorystartmaxratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Upper bound of the recorded-graph trajectory-start (t*) snapshot window, expressed as a fraction of each recorded trace's total duration. Paired with trajectory_start_min_ratio; must be >= it. 0.0 disables the window (every trace starts at t=0).",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartmaxratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "cacheBustTarget": {
+          "default": "none",
+          "description": "Recorded-graph cache-bust marker target. Auto-filled by the submission scenario's ``require_cache_bust`` lock (validator._apply_require_cache_bust). ``\"none\"`` (the default) sends recorded content verbatim; ``\"first_turn_prefix\"`` prepends a per-conversation ``[rid:<digest>]`` marker to the first user message so shared-trace lanes send distinct prefixes and the scenario-required ISL accounting matches. Projected onto the recorded dataset's ``synthesis`` block by ``rust_wire`` and consumed by the native runner (``CacheBustTarget``); ignored on non-recorded-graph datasets.",
+          "title": "Cachebusttarget",
+          "type": "string"
         },
         "model": {
           "description": "Shorthand for 'models'. Accepts a single value which will be converted to a list/dict. Model configuration. Accepts a single model name string, a list of model names, or an advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced.",
@@ -3278,7 +3471,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/bailian_trace, Parquet for baseten_trace, directories for random_pool.",
+                  "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/bailian_trace, Parquet for baseten_trace, JSON/directory WEKA traces, JSONL/gzip/segmented Dynamo captures, and directories for random_pool.",
                   "title": "Path"
                 },
                 "records": {
@@ -3311,7 +3504,7 @@
                 "format": {
                   "$ref": "#/$defs/DatasetFormat",
                   "default": "single_turn",
-                  "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
+                  "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: timestamped trace files for replay. weka_trace / dynamo_trace: Rust-native recorded graphs. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
                 },
                 "sampling": {
                   "$ref": "#/$defs/DatasetSamplingStrategy",
@@ -3328,7 +3521,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Applies to trace formats such as mooncake_trace and baseten_trace, except speedup_ratio, which is rejected for baseten_trace (use replay_speedup / --replay-speedup to scale replay pacing there)."
+                  "description": "Trace synthesis/transformation configuration. Allows scaling trace replay and configuring Rust-native WEKA/Dynamo graph reconstruction. Applies to trace formats such as mooncake_trace and baseten_trace, except speedup_ratio, which is rejected for baseten_trace (use replay_speedup / --replay-speedup to scale replay pacing there)."
                 },
                 "entries": {
                   "anyOf": [
@@ -3745,6 +3938,20 @@
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
                 },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
+                },
                 "concurrency": {
                   "default": 1,
                   "description": "Max concurrent in-flight requests (must be >= 1). Primary control for concurrency phases.",
@@ -4042,6 +4249,20 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
+                },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -4366,6 +4587,20 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
+                },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -4705,6 +4940,20 @@
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
                 },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
+                },
                 "concurrency": {
                   "anyOf": [
                     {
@@ -5028,6 +5277,20 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
+                },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -5359,6 +5622,20 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
+                },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -5715,6 +5992,20 @@
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
                 },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
+                },
                 "concurrency": {
                   "default": 1,
                   "description": "Max concurrent in-flight requests (must be >= 1). Primary control for concurrency phases.",
@@ -6012,6 +6303,20 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
+                },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -6336,6 +6641,20 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
+                },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -6675,6 +6994,20 @@
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
                 },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
+                },
                 "concurrency": {
                   "anyOf": [
                     {
@@ -6998,6 +7331,20 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
+                },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -7329,6 +7676,20 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
+                },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -7950,6 +8311,31 @@
           "title": "Sessions",
           "x-jinja2-supported": true
         },
+        "agenticCacheWarmupDuration": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+          "title": "Agenticcachewarmupduration",
+          "x-jinja2-supported": true
+        },
         "concurrency": {
           "default": 1,
           "description": "Max concurrent in-flight requests (must be >= 1). Primary control for concurrency phases.",
@@ -8477,6 +8863,31 @@
           "title": "Sessions",
           "x-jinja2-supported": true
         },
+        "agenticCacheWarmupDuration": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+          "title": "Agenticcachewarmupduration",
+          "x-jinja2-supported": true
+        },
         "concurrency": {
           "anyOf": [
             {
@@ -8810,6 +9221,8 @@
         "raw_payload",
         "inputs_json",
         "dag_jsonl",
+        "dynamo_trace",
+        "weka_trace",
         "sagemaker_data_capture",
         "multi_turn",
         "random_pool",
@@ -9126,7 +9539,7 @@
       "description": "Endpoint configuration for connecting to inference servers.\n\nThis section configures how AIPerf connects to and communicates\nwith the target inference server(s). It supports multiple URLs\nfor load-balanced deployments and various API types.",
       "properties": {
         "urls": {
-          "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Example: ['http://localhost:8000/v1/chat/completions']",
+          "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Protocol-v2 native gRPC backends accept explicit ``grpc://`` or ``grpcs://`` targets. Example: ['http://localhost:8000']",
           "items": {
             "type": "string"
           },
@@ -9140,9 +9553,11 @@
           "description": "Strategy for distributing requests across multiple URLs. round_robin cycles through URLs in order."
         },
         "type": {
-          "$ref": "#/$defs/EndpointType",
           "default": "chat",
-          "description": "API endpoint type determining request/response format. chat: OpenAI chat completions, completions: OpenAI completions, embeddings: vector embeddings, rankings: reranking, template: custom format, and others — see `aiperf plugins` for the full list."
+          "description": "Endpoint dialect identifier compiled into the selected aiperf runner. The portable config accepts any non-empty string; execution validates availability against that exact runner.",
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
         },
         "path": {
           "anyOf": [
@@ -9200,22 +9615,87 @@
           "title": "Streaming",
           "type": "boolean"
         },
-        "transport": {
+        "connectionReuse": {
+          "$ref": "#/$defs/ConnectionReuseStrategy",
+          "default": "pooled",
+          "description": "HTTP connection management strategy. pooled: shared connection pool (fastest), never: new connection per request (includes TCP overhead), sticky-user-sessions: dedicated connection per user session."
+        },
+        "http2": {
+          "default": false,
+          "description": "Force HTTP/2 for this endpoint profile. Cleartext HTTP uses h2c prior knowledge; HTTPS requires HTTP/2 over TLS.",
+          "title": "Http2",
+          "type": "boolean"
+        },
+        "sslVerify": {
+          "default": true,
+          "description": "Verify HTTPS certificate chains and hostnames. Disabling verification is insecure and intended only for explicitly trusted test environments.",
+          "title": "Sslverify",
+          "type": "boolean"
+        },
+        "udsPath": {
           "anyOf": [
             {
-              "$ref": "#/$defs/TransportType"
+              "type": "string"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Transport plugin name. Currently only 'http' (aiohttp-based HTTP/1.1) is shipped. Auto-detected from URL when unset; explicit setting overrides auto-detection."
+          "description": "Connect over this Unix-domain socket path instead of TCP. The endpoint URL still supplies the request path and Host header, so keep it a normal http:// value (the socket carries the transport). HTTP/1.1 only; intended for local co-located inference servers.",
+          "title": "Udspath"
         },
-        "connectionReuse": {
-          "$ref": "#/$defs/ConnectionReuseStrategy",
-          "default": "pooled",
-          "description": "HTTP connection management strategy. pooled: shared connection pool (fastest), never: new connection per request (includes TCP overhead), sticky-user-sessions: dedicated connection per user session."
+        "connectionLimit": {
+          "default": 2500,
+          "description": "Maximum simultaneous HTTP/1 connections per origin and runner worker. HTTP/2 multiplexes concurrent streams over one connection.",
+          "title": "Connectionlimit",
+          "oneOf": [
+            {
+              "default": 2500,
+              "description": "Maximum simultaneous HTTP/1 connections per origin and runner worker. HTTP/2 multiplexes concurrent streams over one connection.",
+              "maximum": 65000,
+              "minimum": 1,
+              "title": "Connectionlimit",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "keepaliveTimeout": {
+          "default": 300.0,
+          "description": "Maximum seconds an idle pooled connection remains eligible for reuse. Zero disables idle connection reuse.",
+          "title": "Keepalivetimeout",
+          "oneOf": [
+            {
+              "default": 300.0,
+              "description": "Maximum seconds an idle pooled connection remains eligible for reuse. Zero disables idle connection reuse.",
+              "maximum": 10000.0,
+              "minimum": 0.0,
+              "title": "Keepalivetimeout",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
         },
         "useLegacyMaxTokens": {
           "default": false,
@@ -9239,7 +9719,7 @@
             }
           ],
           "default": null,
-          "description": "Custom template configuration for template endpoint type. Only used when type='template'. Defines request body format and response parsing."
+          "description": "Optional request/response template configuration forwarded unchanged for interpretation by the selected runner adapter."
         },
         "headers": {
           "additionalProperties": {
@@ -9354,13 +9834,13 @@
           "type": "string"
         },
         "url": {
-          "description": "Shorthand for 'urls'. Accepts a single value which will be converted to a list/dict. List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Example: ['http://localhost:8000/v1/chat/completions']",
+          "description": "Shorthand for 'urls'. Accepts a single value which will be converted to a list/dict. List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Protocol-v2 native gRPC backends accept explicit ``grpc://`` or ``grpcs://`` targets. Example: ['http://localhost:8000']",
           "oneOf": [
             {
               "type": "string"
             },
             {
-              "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Example: ['http://localhost:8000/v1/chat/completions']",
+              "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Protocol-v2 native gRPC backends accept explicit ``grpc://`` or ``grpcs://`` targets. Example: ['http://localhost:8000']",
               "items": {
                 "type": "string"
               },
@@ -9392,30 +9872,6 @@
         }
       ]
     },
-    "EndpointType": {
-      "enum": [
-        "chat",
-        "cohere_rankings",
-        "completions",
-        "responses",
-        "messages",
-        "chat_embeddings",
-        "embeddings",
-        "hf_tei_rankings",
-        "huggingface_generate",
-        "image_generation",
-        "image_edit",
-        "video_generation",
-        "image_retrieval",
-        "nim_embeddings",
-        "nim_rankings",
-        "solido_rag",
-        "raw",
-        "template"
-      ],
-      "title": "EndpointType",
-      "type": "string"
-    },
     "FileDataset": {
       "additionalProperties": false,
       "description": "File-based dataset configuration.\n\nLoads prompts from a local file in various formats.\nSupports trace replay and custom sampling strategies.",
@@ -9443,7 +9899,7 @@
             }
           ],
           "default": null,
-          "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/bailian_trace, Parquet for baseten_trace, directories for random_pool.",
+          "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/bailian_trace, Parquet for baseten_trace, JSON/directory WEKA traces, JSONL/gzip/segmented Dynamo captures, and directories for random_pool.",
           "title": "Path"
         },
         "records": {
@@ -9476,7 +9932,7 @@
         "format": {
           "$ref": "#/$defs/DatasetFormat",
           "default": "single_turn",
-          "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
+          "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: timestamped trace files for replay. weka_trace / dynamo_trace: Rust-native recorded graphs. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
         },
         "sampling": {
           "$ref": "#/$defs/DatasetSamplingStrategy",
@@ -9493,7 +9949,7 @@
             }
           ],
           "default": null,
-          "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Applies to trace formats such as mooncake_trace and baseten_trace, except speedup_ratio, which is rejected for baseten_trace (use replay_speedup / --replay-speedup to scale replay pacing there)."
+          "description": "Trace synthesis/transformation configuration. Allows scaling trace replay and configuring Rust-native WEKA/Dynamo graph reconstruction. Applies to trace formats such as mooncake_trace and baseten_trace, except speedup_ratio, which is rejected for baseten_trace (use replay_speedup / --replay-speedup to scale replay pacing there)."
         },
         "entries": {
           "anyOf": [
@@ -10115,6 +10571,31 @@
           "title": "Sessions",
           "x-jinja2-supported": true
         },
+        "agenticCacheWarmupDuration": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+          "title": "Agenticcachewarmupduration",
+          "x-jinja2-supported": true
+        },
         "concurrency": {
           "anyOf": [
             {
@@ -10704,6 +11185,31 @@
           "default": null,
           "description": "Stop after this many sessions completed (must be >= 1).",
           "title": "Sessions",
+          "x-jinja2-supported": true
+        },
+        "agenticCacheWarmupDuration": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+          "title": "Agenticcachewarmupduration",
           "x-jinja2-supported": true
         },
         "concurrency": {
@@ -13048,6 +13554,31 @@
           "title": "Sessions",
           "x-jinja2-supported": true
         },
+        "agenticCacheWarmupDuration": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+          "title": "Agenticcachewarmupduration",
+          "x-jinja2-supported": true
+        },
         "concurrency": {
           "anyOf": [
             {
@@ -13646,6 +14177,7 @@
     },
     "PublicDatasetType": {
       "enum": [
+        "weka_cc_traces_062126",
         "exgentic_v2",
         "exgentic",
         "sharegpt",
@@ -13866,6 +14398,31 @@
           "default": null,
           "description": "Total worker processes across the deployment (the maximum, ramped up to from `workers_min`). null = auto-detect based on CPU cores. Distinct from `workers_per_pod` (per-Kubernetes-pod fan-out) and `workers_min` (lower bound for adaptive ramp).",
           "title": "Workers",
+          "x-jinja2-supported": true
+        },
+        "cells": {
+          "default": 1,
+          "description": "Number of native execution cells the run is partitioned across (cellular mode). 1 (default) runs the ordinary single-process native path, byte-for-byte unchanged. With cells > 1 the launched `aiperf` becomes a controller that spawns that many `aiperf --cell` subprocesses over a `(cell_id, cell_count)` partition of the request budget, merges their records in global dispatch order into one report, and fails the run closed on any unsupported shape. Supported only for the scheduled HTTP transport over seeded, single-turn synthetic datasets against a single endpoint URL with request-bounded phases; see the cellular roadmap spec.",
+          "title": "Cells",
+          "oneOf": [
+            {
+              "default": 1,
+              "description": "Number of native execution cells the run is partitioned across (cellular mode). 1 (default) runs the ordinary single-process native path, byte-for-byte unchanged. With cells > 1 the launched `aiperf` becomes a controller that spawns that many `aiperf --cell` subprocesses over a `(cell_id, cell_count)` partition of the request budget, merges their records in global dispatch order into one report, and fails the run closed on any unsupported shape. Supported only for the scheduled HTTP transport over seeded, single-turn synthetic datasets against a single endpoint URL with request-bounded phases; see the cellular roadmap spec.",
+              "minimum": 1,
+              "title": "Cells",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
           "x-jinja2-supported": true
         },
         "recordProcessors": {
@@ -14963,7 +15520,7 @@
     },
     "SynthesisConfig": {
       "additionalProperties": false,
-      "description": "Configuration for trace synthesis/transformation.\n\nUsed with mooncake_trace format to transform production trace\ndata before replay. Allows scaling timestamps, token lengths,\nand radix tree structure.",
+      "description": "Configuration for trace synthesis/transformation.\n\nMooncake fields scale production replay timestamps, token lengths, and\nradix-tree structure. Recorded WEKA/Dynamo fields bound whole-trace\nselection, idle-gap warping, canonical native content, and corpus wrapping.",
       "properties": {
         "speedupRatio": {
           "default": 1.0,
@@ -15139,6 +15696,86 @@
           "description": "Maximum output sequence length cap. Traces with output_length > max_osl are capped to this value (not filtered).",
           "title": "Maxosl",
           "x-jinja2-supported": true
+        },
+        "maxContextLength": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Maximum per-trace input-plus-output context for recorded graph selection.",
+          "title": "Maxcontextlength",
+          "x-jinja2-supported": true
+        },
+        "allowDatasetWrap": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Whether a finite recorded graph corpus may wrap during selection.",
+          "title": "Allowdatasetwrap"
+        },
+        "idleGapCapSeconds": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": 60.0,
+          "description": "True-idle gap cap for weka_trace/dynamo_trace; null disables warping.",
+          "title": "Idlegapcapseconds",
+          "x-jinja2-supported": true
+        },
+        "corpus": {
+          "anyOf": [
+            {
+              "enum": [
+                "coding",
+                "sonnet"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Content corpus for recorded graph prompt reconstruction.",
+          "title": "Corpus"
         }
       },
       "title": "SynthesisConfig",
@@ -15610,7 +16247,7 @@
     },
     "TemplateConfig": {
       "additionalProperties": false,
-      "description": "Configuration for custom template-based endpoints.\n\nWhen endpoint type is \"template\", this configures how requests\nare formatted and responses are parsed.",
+      "description": "Optional request/response template policy for a runner adapter.",
       "properties": {
         "body": {
           "description": "Jinja2 template string for request body. Variables: {{prompt}}, {{max_tokens}}, {{model}}, {{messages}}, etc.",
@@ -15684,13 +16321,6 @@
       ],
       "title": "TokenizerOverride",
       "type": "object"
-    },
-    "TransportType": {
-      "enum": [
-        "http"
-      ],
-      "title": "TransportType",
-      "type": "string"
     },
     "UIType": {
       "enum": [
@@ -16046,6 +16676,31 @@
           "default": null,
           "description": "Stop after this many sessions completed (must be >= 1).",
           "title": "Sessions",
+          "x-jinja2-supported": true
+        },
+        "agenticCacheWarmupDuration": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+          "title": "Agenticcachewarmupduration",
           "x-jinja2-supported": true
         },
         "concurrency": {
