@@ -91,7 +91,9 @@ comparison tables. Real CSS flex/grid, not diagram nodes.
 - `Table` (`src/prose/Table.tsx`) — real `<table>`, `{ columns: {key,label,align?}[], rows: (Record<string,ReactNode> & {tone?: "neutral"|"success"|"warning"|"danger"})[], className? }`
 - `Stat` (`src/prose/Stat.tsx`) — KPI tile, `{ label, value, trend?, tone?: "neutral"|"positive"|"negative", className? }`
 - `Legend` / `Swatch` (`src/prose/Legend.tsx`, `Swatch.tsx`) — color-key rows, `{ entries: { color: CategoryRole; label: string }[] }`
-- `Pill` (`src/prose/Pill.tsx`) — compact tag/status chip, `{ children, active?: boolean, tone?: CategoryRole, onClick?: () => void, className? }`. Renders a `<span>`, or a `<button>` with `aria-pressed={active}` when `onClick` is given. `tone` colors it by `CategoryRole` (ports a source canvas's colored status tag); omit `tone` for the plain neutral/active-accent chip (a selected filter, a status tag, a source-file badge). **Use this instead of writing a local `Pill`/`Badge`/`Tag`/`TonePill` component** — four independent deck ports each built the identical shape from scratch before this was consolidated; check here first.
+- `Pill` (`src/prose/Pill.tsx`) — compact tag/status chip, `{ children, active?: boolean, tone?: CategoryRole, onClick?: () => void, ariaLabel?: string, className? }`. Renders a `<span>`, or a `<button>` with `aria-pressed={active}` when `onClick` is given. `tone` colors it by `CategoryRole` (ports a source canvas's colored status tag); omit `tone` for the plain neutral/active-accent chip (a selected filter, a status tag, a source-file badge). Pass `ariaLabel` when the visible text alone doesn't convey the chip's meaning (e.g. a red "Rejected" chip whose accessible name should say what was rejected). **Use this instead of writing a local `Pill`/`Badge`/`Tag`/`TonePill` component** — four independent deck ports each built the identical shape from scratch before this was consolidated; check here first.
+- `Eyebrow` (`src/prose/Eyebrow.tsx`) — small uppercase, letter-spaced label, `{ children, tone?: CategoryRole, className? }`. Defaults to tertiary ink; pass `tone` for a colored status word (a "Built"/"Rejected" kicker, a category tag). This is the `text-xs font-semibold uppercase tracking-wide` span pattern — it was independently hand-rolled 17+ times across ported decks before being consolidated here. **Reach for this before writing that span by hand** — it's for section kickers, field labels ("Symbol", "Source"), and short status words, not for anything clickable or chip-shaped (that's `Pill`).
+- `Framed` (`src/prose/Framed.tsx`) — soft-bordered content panel for grouping prose without the weight of a `Callout` or diagram `Card`, `{ children, surfaceRole?: SurfaceRole, className? }` (defaults to the `"page"` surface role).
 
 Note `Callout`/`Table`/`Stat` use three *different* tone vocabularies
 (`Callout`: info/warning/danger/success/neutral; `Table`: neutral/success/warning/danger;
@@ -174,7 +176,9 @@ Before considering a deck/component done:
    diagrams other than the last-mounted one.
 7. Wrote a new `Pill`/`Badge`/`Tag`/status-chip? Check `src/prose/Pill.tsx`
    first — it already covers plain, active/toggle, clickable, and
-   category-tone-colored variants.
+   category-tone-colored variants. Wrote an uppercase/tracking-wide label
+   span (a section kicker, a field label, a status word)? Check
+   `src/prose/Eyebrow.tsx` first, likewise.
 
 ## Worked example
 
