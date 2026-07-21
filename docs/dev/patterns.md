@@ -117,12 +117,11 @@ Then:
 
 ## Adaptive Scale Implementation Pattern
 
-Adaptive scale is a timing strategy plus CLI/YAML configuration surface. When changing adaptive control variables, SLA semantics, artifacts, or CLI/YAML precedence, update [Adaptive Scale](../tutorials/adaptive-scale.md) and keep these invariants intact:
+Adaptive scale is a YAML-only timing strategy configured on the phase it controls. When changing adaptive control variables, SLA semantics, artifacts, or YAML normalization, update [Adaptive Scale](../tutorials/adaptive-scale.md) and keep these invariants intact:
 
 - Exactly one adaptive control variable is active per phase. Supported variables are `concurrency`, `prefill_concurrency`, `request_rate`, and `users`.
-- Compact `--adaptive-scale-control variable:min,max:type` flags and expanded `--adaptive-control-*` flags are mutually exclusive.
-- `--adaptive-scale-sla` requires `--adaptive-scale`; it must raise a configuration error rather than silently no-op.
-- Canonical YAML stores adaptive SLA filters on phase-level `sla`; CLI SLA overrides must update that phase `sla` and any compatibility `adaptive_scale.sla` mirror before YAML lowering.
+- Adaptive scale settings stay attached to the concrete phase they control; do not add CLI-level adaptive overrides unless they include unambiguous phase targeting.
+- Canonical YAML stores adaptive SLA filters on phase-level `sla`; any compatibility `adaptive_scale.sla` mirror must stay aligned before YAML lowering.
 - Keep adaptive SLA docs aligned with `adaptive_scale_sla.SUPPORTED_METRICS_MESSAGE`; do not document a controller SLA metric until the runtime supports it.
 - TTFT adaptive SLA requires `FirstToken` observations even when no static `prefill_concurrency` is configured.
 - Ratio metrics such as `goodput_ratio` and `success_rate` are ratios rather than throughput values.
