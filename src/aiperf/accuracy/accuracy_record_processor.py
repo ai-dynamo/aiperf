@@ -100,7 +100,8 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         ground_truth = self._ground_truths[
             metadata.session_num % len(self._ground_truths)
         ]
-        response_text = self._extract_response_text(record)
+        model_output, model_thinking = self._extract_output_and_thinking(record)
+        response_text = model_output
 
         result: GradingResult = await self.grader.grade(response_text, ground_truth)
 
@@ -111,8 +112,6 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         )
 
         self._log_grading_detail(metadata.session_num, response_text, result)
-
-        model_output, model_thinking = self._extract_output_and_thinking(record)
 
         return AccuracyRecordsData(
             session_num=metadata.session_num,
@@ -167,16 +166,6 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
             self.debug(_detail)
 
     @staticmethod
-    def _extract_response_text(record: ParsedResponseRecord) -> str:
-        parts: list[str] = []
-        for resp in record.content_responses:
-            if resp.data:
-                text = resp.data.get_text()
-                if text:
-                    parts.append(text)
-        return "".join(parts)
-
-    @staticmethod
     def _extract_output_and_thinking(
         record: ParsedResponseRecord,
     ) -> tuple[str, str | None]:
@@ -187,9 +176,9 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         ``tool_call_text``); ``model_thinking`` is the concatenated
         ``reasoning_content`` from any ``ReasoningResponseData`` chunks, or None
         when the model emitted no separate reasoning channel. For reasoning models
-        this deliberately splits the two channels: grading scores the full
-        ``get_text()`` (reasoning + content), while the export keeps ``model_output``
-        to the answer content and routes reasoning to ``model_thinking``.
+        this splits the two channels: grading scores only ``model_output``
+        (the final answer content) so that CoT preamble does not poison
+        exact-match and similar graders; ``model_thinking`` is exported separately.
         """
         output_parts: list[str] = []
         thinking_parts: list[str] = []

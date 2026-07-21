@@ -222,6 +222,52 @@ class TestAccuracyRecordProcessorSessionBounds:
         assert result.task is None
         assert result.passed is True
 
+    async def test_process_record_grades_reasoning_model_on_content_only(
+        self, monkeypatch
+    ) -> None:
+        """Grader receives only the answer content, not reasoning + content.
+
+        Regression test for https://github.com/ai-dynamo/aiperf/issues/1136:
+        reasoning models returned 0% because the CoT preamble was concatenated
+        with the final answer before exact-match comparison.
+        """
+        from aiperf.common.models.record_models import ReasoningResponseData
+
+        processor = _make_processor(monkeypatch)
+        processor._ground_truths = ["True"]
+
+        grading_result = GradingResult(
+            correct=True,
+            confidence=1.0,
+            reasoning="Correct",
+            extracted_answer="True",
+            ground_truth="True",
+        )
+        processor.grader.grade = AsyncMock(return_value=grading_result)
+
+        reasoning_record = MagicMock(spec=ParsedResponseRecord)
+        reasoning_record.content_responses = [
+            ParsedResponse(
+                perf_ns=0,
+                data=ReasoningResponseData(
+                    reasoning="Thinking Process:\n\n1. Analyze the request... True",
+                    content="\n\nTrue",
+                ),
+            ),
+        ]
+
+        metadata = create_metric_metadata(session_num=0)
+        result = await processor.process_record(reasoning_record, metadata)
+
+        assert result.passed is True
+        # Grader must have received only the answer content, not the CoT preamble.
+        processor.grader.grade.assert_awaited_once_with("\n\nTrue", "True")
+        assert result.model_output == "\n\nTrue"
+        assert (
+            result.model_thinking
+            == "Thinking Process:\n\n1. Analyze the request... True"
+        )
+
     async def test_process_record_raises_if_not_configured(
         self, monkeypatch, sample_parsed_record
     ) -> None:
