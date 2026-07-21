@@ -33,10 +33,12 @@ export function TopBar({
       className={`flex items-center justify-between border-b bg-surface-page px-8 py-3 ${strokeClassName("secondary")}`}
     >
       <div className="flex items-center gap-3">
-        <BrandMark />
-        <span className={`text-sm font-bold tracking-wide ${inkClassName("primary")}`}>
-          AIPERF
-        </span>
+        <a href="/" className="flex items-center gap-3">
+          <BrandMark />
+          <span className={`text-sm font-bold tracking-wide ${inkClassName("primary")}`}>
+            AIPERF
+          </span>
+        </a>
         <span className={`text-sm ${inkClassName("tertiary")}`}>·</span>
         <span className={`text-sm font-medium uppercase tracking-wide ${inkClassName("secondary")}`}>
           {section}

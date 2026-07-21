@@ -18,4 +18,9 @@ describe("TopBar", () => {
     render(<TopBar section="Segment Pools" actions={<button type="button">Export</button>} />);
     expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
   });
+
+  it("links the brand mark back to the home page", () => {
+    render(<TopBar section="Segment Pools" />);
+    expect(screen.getByRole("link", { name: "AIPERF" })).toHaveAttribute("href", "/");
+  });
 });
