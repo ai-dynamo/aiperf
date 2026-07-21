@@ -191,14 +191,14 @@ class TestBaseTransport:
 
         transport = ConflictingTransport(model_endpoint=request_info.model_endpoint)
         request_info.endpoint_headers = {
-            "X-Dynamo-Session-ID": "endpoint-session",
-            "X-Dynamo-Parent-Session-ID": "endpoint-parent",
+            "x-dynamo-session-id": "endpoint-session",
+            "x-dynamo-parent-session-id": "endpoint-parent",
         }
         request_info.turns = [
             Turn(
                 extra_headers={
-                    "X-Dynamo-Session-ID": "turn-session",
-                    "X-Dynamo-Parent-Session-ID": "turn-parent",
+                    "X-Dynamo-Session-Id": "turn-session",
+                    "X-Dynamo-Parent-Session-Id": "turn-parent",
                 }
             )
         ]
@@ -206,7 +206,8 @@ class TestBaseTransport:
         headers = transport.build_headers(request_info)
 
         assert headers["X-Dynamo-Session-ID"] == "test-correlation-id"
-        assert "X-Dynamo-Parent-Session-ID" not in headers
+        assert not any(k.lower() == "x-dynamo-parent-session-id" for k in headers)
+        assert sum(k.lower() == "x-dynamo-session-id" for k in headers) == 1
 
     def test_build_headers_dynamo_session_header_child_wins_over_every_layer(
         self,
@@ -230,14 +231,14 @@ class TestBaseTransport:
         transport = ConflictingTransport(model_endpoint=request_info.model_endpoint)
         request_info.parent_correlation_id = "parent-correlation-id"
         request_info.endpoint_headers = {
-            "X-Dynamo-Session-ID": "endpoint-session",
-            "X-Dynamo-Parent-Session-ID": "endpoint-parent",
+            "x-dynamo-session-id": "endpoint-session",
+            "x-dynamo-parent-session-id": "endpoint-parent",
         }
         request_info.turns = [
             Turn(
                 extra_headers={
-                    "X-Dynamo-Session-ID": "turn-session",
-                    "X-Dynamo-Parent-Session-ID": "turn-parent",
+                    "X-Dynamo-Session-Id": "turn-session",
+                    "X-Dynamo-Parent-Session-Id": "turn-parent",
                 }
             )
         ]
@@ -246,6 +247,8 @@ class TestBaseTransport:
 
         assert headers["X-Dynamo-Session-ID"] == "test-correlation-id"
         assert headers["X-Dynamo-Parent-Session-ID"] == "parent-correlation-id"
+        assert sum(k.lower() == "x-dynamo-session-id" for k in headers) == 1
+        assert sum(k.lower() == "x-dynamo-parent-session-id" for k in headers) == 1
 
     def test_build_headers_dynamo_session_header_child_adds_parent(
         self,
