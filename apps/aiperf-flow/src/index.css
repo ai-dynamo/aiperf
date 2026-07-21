@@ -5,23 +5,23 @@
   --font-sans: "Manrope", system-ui, sans-serif;
   --font-mono: "Roboto Mono", monospace;
 
-  --color-ink-primary: #f5f5f5;
-  --color-ink-secondary: #a9adb4;
-  --color-ink-tertiary: #75797f;
-  --color-ink-quaternary: #4a4d52;
+  --color-ink-primary: #f2f3f5;
+  --color-ink-secondary: #b7bac1;
+  --color-ink-tertiary: #868a91;
+  --color-ink-quaternary: #585c63;
   --color-ink-link: #9ede2f;
 
-  --color-surface-page: #0a0a0a;
-  --color-surface-chrome: #121214;
-  --color-surface-elevated: #18191c;
-  --color-surface-panel: #1e1f22;
+  --color-surface-page: #111318;
+  --color-surface-chrome: #191c22;
+  --color-surface-elevated: #23262e;
+  --color-surface-panel: #2c2f38;
 
-  --color-stroke-primary: #3a3d42;
-  --color-stroke-secondary: #26282c;
-  --color-stroke-tertiary: #1c1d20;
+  --color-stroke-primary: #767c88;
+  --color-stroke-secondary: #4c515c;
+  --color-stroke-tertiary: #363a44;
 
   --color-accent-primary: #76b900;
-  --color-accent-tint: rgba(118, 185, 0, 0.12);
+  --color-accent-tint: rgba(118, 185, 0, 0.16);
   --color-accent-control: #4fb3d9;
 
   --color-category-green: #5fc22a;
@@ -36,10 +36,16 @@
   --radius-none: 0px;
 }
 
+html {
+  background-color: var(--color-surface-page);
+}
+
 body {
   margin: 0;
   font-family: var(--font-sans);
   color-scheme: dark;
+  background-color: var(--color-surface-page);
+  color: var(--color-ink-primary);
 }
 
 /* React Flow's built-in default edge (used by a handful of intentionally
