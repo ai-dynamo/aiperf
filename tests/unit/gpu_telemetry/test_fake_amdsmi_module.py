@@ -72,13 +72,13 @@ class TestDormancyGate:
 class TestAMDHardwareGuard:
     def test_raises_when_kfd_present(self, load_fake_amdsmi, monkeypatch):
         amdsmi = load_fake_amdsmi()
-        monkeypatch.setattr(amdsmi.Path, "exists", lambda self: str(self) == "/dev/kfd")
+        monkeypatch.setattr(amdsmi, "_amd_hardware_present", lambda: True)
         with pytest.raises(RuntimeError, match="real AMD GPU hardware"):
             amdsmi.amdsmi_init()
 
     def test_no_error_when_kfd_absent(self, load_fake_amdsmi, monkeypatch):
         amdsmi = load_fake_amdsmi()
-        monkeypatch.setattr(amdsmi.Path, "exists", lambda self: False)
+        monkeypatch.setattr(amdsmi, "_amd_hardware_present", lambda: False)
         amdsmi.amdsmi_init()
 
 
