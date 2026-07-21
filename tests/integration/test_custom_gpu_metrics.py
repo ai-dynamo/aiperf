@@ -15,7 +15,7 @@ from aiperf.common.enums import (
 from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 
 # DCGMFaker provides 8 of the 12 default metrics defined in GPU_TELEMETRY_METRICS_CONFIG.
-# Missing from DCGMFaker: encoder_utilization, decoder_utilization, sm_utilization, jpg_utilization
+# Missing from DCGMFaker: nvidia_encoder_utilization, nvidia_decoder_utilization, nvidia_sm_utilization, nvidia_jpg_utilization
 DCGM_FAKER_DEFAULT_METRIC_COUNT = 8
 
 
@@ -45,7 +45,7 @@ DCGM_FI_DEV_MEM_CLOCK, gauge, Memory clock frequency (in MHz)
 # Custom temperature metrics (DCGMFaker returns this)
 DCGM_FI_DEV_MEMORY_TEMP, gauge, Memory temperature (in °C)
 
-# This is already a default metric (maps to mem_utilization), included to test deduplication
+# This is already a default metric (maps to nvidia_memory_utilization), included to test deduplication
 DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory copy utilization (in %)
 """
         csv_path.write_text(csv_content)
@@ -119,8 +119,8 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
             for gpu_data in endpoint_data.gpus.values():
                 assert gpu_data.metrics is not None
 
-                # 8 defaults from DCGMFaker + 3 custom (sm_clock, mem_clock, memory_temp)
-                # Note: DCGM_FI_DEV_MEM_COPY_UTIL maps to default "mem_utilization", not added as custom
+                # 8 defaults from DCGMFaker + 3 custom (nvidia_sm_clock, nvidia_mem_clock, nvidia_memory_temp)
+                # Note: DCGM_FI_DEV_MEM_COPY_UTIL maps to default "nvidia_memory_utilization", not added as custom
                 expected_min_metrics = DCGM_FAKER_DEFAULT_METRIC_COUNT + 3
 
                 assert len(gpu_data.metrics) >= expected_min_metrics, (
@@ -128,11 +128,11 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
                     f"got {len(gpu_data.metrics)}"
                 )
 
-                # These are the actual custom metrics added (mem_copy_util is a default as mem_utilization)
+                # These are the actual custom metrics added (mem_copy_util is a default as nvidia_memory_utilization)
                 custom_metric_names = [
-                    "sm_clock",
-                    "mem_clock",
-                    "memory_temp",
+                    "nvidia_sm_clock",
+                    "nvidia_mem_clock",
+                    "nvidia_memory_temp",
                 ]
                 for metric_name in custom_metric_names:
                     assert metric_name in gpu_data.metrics, (
@@ -148,29 +148,29 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
                     )
 
                 assert (
-                    gpu_data.metrics["sm_clock"].unit
+                    gpu_data.metrics["nvidia_sm_clock"].unit
                     == FrequencyMetricUnit.MEGAHERTZ.value
                 ), (
-                    f"sm_clock unit is {gpu_data.metrics['sm_clock'].unit}, expected {FrequencyMetricUnit.MEGAHERTZ.value}"
+                    f"nvidia_sm_clock unit is {gpu_data.metrics['nvidia_sm_clock'].unit}, expected {FrequencyMetricUnit.MEGAHERTZ.value}"
                 )
                 assert (
-                    gpu_data.metrics["mem_clock"].unit
+                    gpu_data.metrics["nvidia_mem_clock"].unit
                     == FrequencyMetricUnit.MEGAHERTZ.value
                 ), (
-                    f"mem_clock unit is {gpu_data.metrics['mem_clock'].unit}, expected {FrequencyMetricUnit.MEGAHERTZ.value}"
+                    f"nvidia_mem_clock unit is {gpu_data.metrics['nvidia_mem_clock'].unit}, expected {FrequencyMetricUnit.MEGAHERTZ.value}"
                 )
                 assert (
-                    gpu_data.metrics["memory_temp"].unit
+                    gpu_data.metrics["nvidia_memory_temp"].unit
                     == TemperatureMetricUnit.CELSIUS.value
                 ), (
-                    f"memory_temp unit is {gpu_data.metrics['memory_temp'].unit}, expected {TemperatureMetricUnit.CELSIUS.value}"
+                    f"nvidia_memory_temp unit is {gpu_data.metrics['nvidia_memory_temp'].unit}, expected {TemperatureMetricUnit.CELSIUS.value}"
                 )
-                # DCGM_FI_DEV_MEM_COPY_UTIL maps to default "mem_utilization" (not "mem_copy_util")
+                # DCGM_FI_DEV_MEM_COPY_UTIL maps to default "nvidia_memory_utilization" (not "mem_copy_util")
                 assert (
-                    gpu_data.metrics["mem_utilization"].unit
+                    gpu_data.metrics["nvidia_memory_utilization"].unit
                     == GenericMetricUnit.PERCENT.value
                 ), (
-                    f"mem_utilization unit is {gpu_data.metrics['mem_utilization'].unit}, expected {GenericMetricUnit.PERCENT.value}"
+                    f"nvidia_memory_utilization unit is {gpu_data.metrics['nvidia_memory_utilization'].unit}, expected {GenericMetricUnit.PERCENT.value}"
                 )
 
     async def test_custom_metrics_deduplication(
@@ -207,13 +207,13 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
                     f"Found duplicate metrics. Metrics list: {metric_names}"
                 )
 
-                assert "gpu_utilization" in gpu_data.metrics
-                assert "gpu_power_usage" in gpu_data.metrics
+                assert "nvidia_gpu_utilization" in gpu_data.metrics
+                assert "nvidia_power_usage" in gpu_data.metrics
 
-                assert "sm_clock" in gpu_data.metrics
-                assert "mem_clock" in gpu_data.metrics
+                assert "nvidia_sm_clock" in gpu_data.metrics
+                assert "nvidia_mem_clock" in gpu_data.metrics
 
-                # 8 defaults from DCGMFaker + 2 custom (sm_clock, mem_clock)
+                # 8 defaults from DCGMFaker + 2 custom (nvidia_sm_clock, nvidia_mem_clock)
                 # GPU_UTIL and POWER_USAGE from CSV are already defaults, so not added as custom
                 expected_min_metrics = DCGM_FAKER_DEFAULT_METRIC_COUNT + 2
 
@@ -246,9 +246,9 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
         for dcgm_url in result.json.telemetry_data.endpoints:
             endpoint_data = result.json.telemetry_data.endpoints[dcgm_url]
             for gpu_data in endpoint_data.gpus.values():
-                assert "sm_clock" in gpu_data.metrics
+                assert "nvidia_sm_clock" in gpu_data.metrics
 
-                # 8 defaults from DCGMFaker + 1 valid custom (sm_clock)
+                # 8 defaults from DCGMFaker + 1 valid custom (nvidia_sm_clock)
                 expected_min_metrics = DCGM_FAKER_DEFAULT_METRIC_COUNT + 1
                 assert len(gpu_data.metrics) >= expected_min_metrics
 

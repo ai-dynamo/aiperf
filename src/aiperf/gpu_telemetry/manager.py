@@ -321,7 +321,7 @@ class GPUTelemetryManager(BaseComponentService):
             reason = failure_reason or (
                 f"{self._collector_type} not available or no GPUs found"
                 if is_local
-                else "no DCGM endpoints reachable"
+                else "no telemetry sources reachable"
             )
             await self._send_telemetry_status(
                 enabled=False,
@@ -394,7 +394,8 @@ class GPUTelemetryManager(BaseComponentService):
 
         Ensures GPU telemetry captures final state for accurate counter deltas.
         This final scrape provides the end-point values needed for metrics like
-        energy_consumption which are computed as (final - baseline).
+        nvidia_energy_consumption and amd_energy_consumption, which are computed
+        as (final - baseline).
 
         Args:
             message: Profile complete command from SystemController
@@ -527,9 +528,9 @@ class GPUTelemetryManager(BaseComponentService):
 
         Args:
             enabled: Whether telemetry collection is enabled/available
-            reason: Optional human-readable reason for status (e.g., "no DCGM endpoints reachable")
-            endpoints_configured: List of DCGM endpoint URLs in configured scope for display
-            endpoints_reachable: List of DCGM endpoint URLs that are accessible
+            reason: Optional human-readable reason for status
+            endpoints_configured: Telemetry source URLs in configured scope for display
+            endpoints_reachable: Telemetry source URLs that are accessible
         """
         try:
             status_message = TelemetryStatusMessage(
