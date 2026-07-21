@@ -7,11 +7,13 @@ from pydantic import ValidationError
 
 from aiperf.common.enums import CreditPhase
 from aiperf.config.flags.cli_config import CLIConfig
-from aiperf.plugin.enums import ArrivalPattern, TimingMode
+from aiperf.config.phases import ConcurrencyPhase, ConstantPhase
+from aiperf.plugin.enums import ArrivalPattern, PhaseType, TimingMode
 from aiperf.timing.config import (
     CreditPhaseConfig,
     RequestCancellationConfig,
     TimingConfig,
+    _phase_request_rate,
 )
 from tests.unit.conftest import make_run_from_cli
 
@@ -316,3 +318,25 @@ class TestTimingConfigFromCLIConfig:
         cfg = _make_timing_config(**kwargs)
         warmup = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.WARMUP)
         assert warmup.grace_period_sec == expected
+
+
+class TestPhaseRequestRate:
+    """``_phase_request_rate`` must delegate to ``get_phase_rate`` so only
+    genuine RatePhaseConfig rates flow into the credit phase configs."""
+
+    def test_phase_request_rate_rate_phase_returns_rate(self) -> None:
+        phase = ConstantPhase(
+            name="profiling", type=PhaseType.CONSTANT, rate=5.0, requests=10
+        )
+        assert _phase_request_rate(phase) == 5.0
+
+    def test_phase_request_rate_stray_rate_attr_on_non_rate_phase_returns_none(
+        self,
+    ) -> None:
+        """A rate-shaped attribute on a non-rate phase must not leak into the
+        timing config, as the pre-helper getattr probe would have allowed."""
+        phase = ConcurrencyPhase(
+            name="profiling", type=PhaseType.CONCURRENCY, concurrency=4, requests=10
+        )
+        object.__setattr__(phase, "rate", 7.5)
+        assert _phase_request_rate(phase) is None

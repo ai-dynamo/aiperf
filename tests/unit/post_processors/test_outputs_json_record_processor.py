@@ -17,6 +17,7 @@ from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.outputs_json_record_processor import (
     OutputsJsonRecordProcessor,
 )
+from aiperf.post_processors.record_observer_context import RecordObserverContext
 from tests.unit.post_processors.conftest import aiperf_lifecycle
 
 
@@ -93,7 +94,9 @@ class TestOutputsJsonRecordProcessorProcessRecord:
             run=MagicMock(cfg=config),
         )
         async with aiperf_lifecycle(processor) as proc:
-            await proc.process_record(record, metadata)
+            await proc.observe(
+                RecordObserverContext(record=record, metadata=metadata, produced={})
+            )
 
         assert proc.lines_written == 1
 
@@ -125,7 +128,9 @@ class TestOutputsJsonRecordProcessorProcessRecord:
             run=MagicMock(cfg=config),
         )
         async with aiperf_lifecycle(processor) as proc:
-            await proc.process_record(record, metadata)
+            await proc.observe(
+                RecordObserverContext(record=record, metadata=metadata, produced={})
+            )
 
         # Read the written fragment file and verify response_text
         output_file = proc.output_file
@@ -159,7 +164,9 @@ class TestOutputsJsonRecordProcessorProcessRecord:
             run=MagicMock(cfg=config),
         )
         async with aiperf_lifecycle(processor) as proc:
-            await proc.process_record(record, metadata)
+            await proc.observe(
+                RecordObserverContext(record=record, metadata=metadata, produced={})
+            )
 
         # Read the written fragment file and verify response_text is absent (exclude_none=True)
         output_file = proc.output_file
