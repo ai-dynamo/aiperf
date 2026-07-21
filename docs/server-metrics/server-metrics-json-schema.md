@@ -59,22 +59,26 @@ data["metrics"]["metric_name"]["series"][0]["stats"]["p99"]
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "aiperf_version": "0.11.0",
   "benchmark_id": "550e8400-e29b-41d4-a716-446655440000",
   "summary": { ... },
+  "metrics_phase": "profiling",
   "metrics": { ... },
+  "warmup_metrics": { ... },
   "input_config": { ... }
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schema_version` | string | Schema version for this export format (e.g., `"1.0"`) |
+| `schema_version` | string | Schema version for this export format (e.g., `"1.1"`) |
 | `aiperf_version` | string or null | AIPerf version that generated this export (e.g., `"0.11.0"`). `null` if version unavailable. |
 | `benchmark_id` | string or null | Unique UUID identifying this benchmark run. `null` if not available. |
-| [`summary`](#summary-section) | object | Collection metadata and endpoint information |
+| [`summary`](#summary-section) | object | Collection metadata and endpoint information (includes `phase_time_ranges` when phase-scoped aggregation ran) |
+| `metrics_phase` | string | Benchmark phase represented by the top-level `metrics` field. Always `"profiling"` (kept for backward compatibility). |
 | [`metrics`](#metrics-section) | object | Metrics keyed by name, each containing type info and series data |
+| `warmup_metrics` | object or absent | Same shape as `metrics`, computed only over the warmup window. Present only when a warmup phase ran. Added in schema `1.1`. |
 | `input_config` | object | Serialized user configuration used for this benchmark run |
 
 ---

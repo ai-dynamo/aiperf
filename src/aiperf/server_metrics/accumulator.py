@@ -13,7 +13,11 @@ from aiperf.common.constants import (
     NANOS_PER_MILLIS,
     NANOS_PER_SECOND,
 )
-from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
+from aiperf.common.enums import (
+    CreditPhase,
+    PrometheusMetricType,
+    ServerMetricsFormat,
+)
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
 from aiperf.common.growable_array import GrowableArray
 from aiperf.common.models import MetricResult
@@ -99,6 +103,11 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         self._slice_duration: float | None = self.run.cfg.artifacts.slice_duration
         # Lightweight timestamp storage for query_time_range() (analyzer support)
         self._timestamps_ns = GrowableArray(initial_capacity=1024, dtype=np.int64)
+        # Latest WARMUP-tagged scrape timestamp. The end-of-warmup scrape is
+        # captured after the warmup CREDIT_PHASE_COMPLETE message, so it lands
+        # strictly after warmup_end_ns and would otherwise be excluded from
+        # warmup aggregation.
+        self._last_warmup_record_ns: int | None = None
 
     def get_hierarchy_for_export(self) -> ServerMetricsHierarchy:
         """Get server metrics hierarchy for export purposes.
@@ -118,6 +127,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             record: ServerMetricsRecord containing Prometheus metrics and metadata
         """
         self._timestamps_ns.append(record.timestamp_ns)
+        if record.benchmark_phase == CreditPhase.WARMUP:
+            self._last_warmup_record_ns = max(
+                self._last_warmup_record_ns or 0, record.timestamp_ns
+            )
         self._server_metrics_hierarchy.add_record(record)
 
     async def process_record(self, record: ServerMetricsRecord) -> None:
@@ -173,9 +186,18 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             and warmup_end_ns is not None
             and warmup_start_ns < warmup_end_ns
         ):
+            # Extend the warmup window to include the dedicated end-of-warmup
+            # scrape (WARMUP-tagged, captured after CREDIT_PHASE_COMPLETE so
+            # its timestamp is strictly past warmup_end_ns). Cap at just
+            # before profiling start so profiling samples are never admitted.
+            warmup_summary_end_ns = warmup_end_ns
+            if self._last_warmup_record_ns is not None:
+                warmup_summary_end_ns = max(
+                    warmup_end_ns, min(self._last_warmup_record_ns, start_ns - 1)
+                )
             warmup_endpoint_summaries = self._compute_endpoint_summaries(
                 warmup_start_ns,
-                warmup_end_ns,
+                warmup_summary_end_ns,
                 self._slice_duration,
                 include_final_collection=False,
             )
