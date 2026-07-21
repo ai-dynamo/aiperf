@@ -88,7 +88,7 @@ EOF
 ```bash
 aiperf profile \
   --model black-forest-labs/FLUX.1-dev \
-  --tokenizer gpt2 \
+  --tokenizer builtin \
   --url http://localhost:30000 \
   --endpoint-type image_generation \
   --input-file image_prompts.jsonl \
@@ -119,7 +119,7 @@ aiperf profile \
 ```bash
 aiperf profile \
   --model black-forest-labs/FLUX.1-dev \
-  --tokenizer gpt2 \
+  --tokenizer builtin \
   --url http://localhost:30000 \
   --endpoint-type image_generation \
   --extra-inputs size:512x512 \
@@ -179,7 +179,7 @@ EOF
 ```bash
 aiperf profile \
   --model black-forest-labs/FLUX.1-dev \
-  --tokenizer gpt2 \
+  --tokenizer builtin \
   --url http://localhost:30000 \
   --endpoint-type image_generation \
   --input-file image_prompts.jsonl \
