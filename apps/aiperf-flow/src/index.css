@@ -5,11 +5,11 @@
   --font-sans: "Manrope", system-ui, sans-serif;
   --font-mono: "Roboto Mono", monospace;
 
-  --color-ink-primary: #f2f3f5;
-  --color-ink-secondary: #b7bac1;
-  --color-ink-tertiary: #868a91;
-  --color-ink-quaternary: #585c63;
-  --color-ink-link: #9ede2f;
+  --color-ink-primary: #fafafb;
+  --color-ink-secondary: #c7cad0;
+  --color-ink-tertiary: #979ba3;
+  --color-ink-quaternary: #6b6f78;
+  --color-ink-link: #a6e639;
 
   --color-surface-page: #111318;
   --color-surface-chrome: #191c22;
@@ -46,6 +46,10 @@ body {
   color-scheme: dark;
   background-color: var(--color-surface-page);
   color: var(--color-ink-primary);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 /* React Flow's built-in default edge (used by a handful of intentionally
