@@ -389,6 +389,26 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    uuid_and_strip: Annotated[
+        bool,
+        Field(
+            description=(
+                "Enable AIPerf-managed image stripping for vLLM's multimodal processor "
+                "cache. Dataset-authored image UUIDs, including UUID-only cache "
+                "references, always pass through on the chat endpoint; this flag only "
+                "strips repeated content after AIPerf observes it in the same session. "
+                "Automatic stripping supports only single_turn datasets with "
+                "session_id-grouped rows; multi_turn is rejected. The server cache must "
+                "cover the working set, and requests in a session must reach a replica "
+                "that retains earlier UUIDs."
+            ),
+        ),
+        CLIParameter(
+            name=("--uuid-and-strip",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.UUID_AND_STRIP
+
     @property
     def url(self) -> str:
         """Return the first URL for backward compatibility."""
@@ -2054,6 +2074,17 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--adaptive-scale-sla",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
+    request_rate_series: Annotated[
+        Path | None,
+        Field(
+            description="JSON file containing request-rate points for piecewise-linear request-rate control.",
+        ),
+        CLIParameter(
+            name=("--request-rate-series",),
             group=Groups.LOAD_GENERATOR,
         ),
     ] = None

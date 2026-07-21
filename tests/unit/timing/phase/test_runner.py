@@ -14,6 +14,7 @@ from aiperf.common.models import (
     DatasetMetadata,
     TurnMetadata,
 )
+from aiperf.config.rate_series import RateSeriesConfig
 from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import ArrivalPattern, DatasetSamplingStrategy, TimingMode
@@ -62,6 +63,14 @@ class MockStrategy:
         self.handle_credit_return_calls.append(credit)
 
 
+@dataclass
+class MockRateSettableStrategy(MockStrategy):
+    rate_updates: list[float] = field(default_factory=list)
+
+    def set_request_rate(self, rate: float) -> None:
+        self.rate_updates.append(rate)
+
+
 def mock_conc_mgr() -> MagicMock:
     m = MagicMock()
     m.configure_for_phase = MagicMock()
@@ -99,6 +108,7 @@ def cfg(
     conc_ramp: float | None = None,
     prefill_ramp: float | None = None,
     rate_ramp: float | None = None,
+    rate_series: RateSeriesConfig | None = None,
 ) -> CreditPhaseConfig:
     return CreditPhaseConfig(
         phase=phase,
@@ -114,6 +124,7 @@ def cfg(
         concurrency_ramp_duration_sec=conc_ramp,
         prefill_concurrency_ramp_duration_sec=prefill_ramp,
         request_rate_ramp_duration_sec=rate_ramp,
+        request_rate_series=rate_series,
     )
 
 
@@ -391,6 +402,66 @@ class TestRamperCreation:
     ) -> None:
         r = make_runner(
             cfg(rate=100.0, rate_ramp=10.0), conv_src, pub, router, conc, cancel, cb
+        )
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
+        ):
+            r._progress.all_credits_sent_event.set()
+            r._progress.all_credits_returned_event.set()
+            await r.run(is_final_phase=True)
+            assert len(r._rampers) == 0
+
+    async def test_rate_series_controller_created_for_rate_settable_strategy(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        rate_series = RateSeriesConfig(
+            points=[{"time_s": 0, "qps": 5}, {"time_s": 10, "qps": 15}]
+        )
+        r = make_runner(
+            cfg(rate=5.0, rate_series=rate_series),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
+        )
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockRateSettableStrategy(),
+        ):
+            r._progress.all_credits_sent_event.set()
+            r._progress.all_credits_returned_event.set()
+            await r.run(is_final_phase=True)
+            assert len(r._rampers) == 1
+
+    async def test_rate_series_requires_rate_settable_strategy(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        rate_series = RateSeriesConfig(
+            points=[{"time_s": 0, "qps": 5}, {"time_s": 10, "qps": 15}]
+        )
+        r = make_runner(
+            cfg(rate=5.0, rate_series=rate_series),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
         )
         with patch(
             "aiperf.timing.phase.runner.plugins.get_class",

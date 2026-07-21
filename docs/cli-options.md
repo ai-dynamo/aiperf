@@ -379,6 +379,11 @@ Content type for request body serialization. By default, requests are sent as 'a
 
 HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header with the provided name (e.g., `--session-header X-Session-ID`).
 
+#### `--uuid-and-strip`
+
+Enable AIPerf-managed image stripping for vLLM's multimodal processor cache. Dataset-authored image UUIDs, including UUID-only cache references, always pass through on the chat endpoint; this flag only strips repeated content after AIPerf observes it in the same session. Automatic stripping supports only single_turn datasets with session_id-grouped rows; multi_turn is rejected. The server cache must cover the working set, and requests in a session must reach a replica that retains earlier UUIDs.
+<br/>_Flag (no value required)_
+
 ### Tokenizer
 
 #### `--tokenizer` `<str>`
@@ -990,6 +995,10 @@ Maximum adaptive scale control value. Inferred from the phase target when omitte
 #### `--adaptive-scale-sla` `<list>`
 
 SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. Latency-family metrics (request_latency, time_to_first_token/ttft, inter_token_latency/itl/tpot) support percentile stats; window scalar/rate metrics (request_throughput, output_token_throughput, goodput, goodput_ratio, success_rate, error_rate, cancellation_rate) support {avg, min, max}. Full metric/stat table: [Adaptive SLA metric support](tutorials/yaml-config.md#adaptive-sla-metric-support). op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
+
+#### `--request-rate-series` `<str>`
+
+JSON file containing request-rate points for piecewise-linear request-rate control.
 
 ### Warmup
 
@@ -1837,6 +1846,11 @@ Content type for request body serialization. By default, requests are sent as 'a
 
 HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header with the provided name (e.g., `--session-header X-Session-ID`).
 
+#### `--uuid-and-strip`
+
+Enable AIPerf-managed image stripping for vLLM's multimodal processor cache. Dataset-authored image UUIDs, including UUID-only cache references, always pass through on the chat endpoint; this flag only strips repeated content after AIPerf observes it in the same session. Automatic stripping supports only single_turn datasets with session_id-grouped rows; multi_turn is rejected. The server cache must cover the working set, and requests in a session must reach a replica that retains earlier UUIDs.
+<br/>_Flag (no value required)_
+
 ### Tokenizer
 
 #### `--tokenizer` `<str>`
@@ -2448,6 +2462,10 @@ Maximum adaptive scale control value. Inferred from the phase target when omitte
 #### `--adaptive-scale-sla` `<list>`
 
 SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. Latency-family metrics (request_latency, time_to_first_token/ttft, inter_token_latency/itl/tpot) support percentile stats; window scalar/rate metrics (request_throughput, output_token_throughput, goodput, goodput_ratio, success_rate, error_rate, cancellation_rate) support {avg, min, max}. Full metric/stat table: [Adaptive SLA metric support](tutorials/yaml-config.md#adaptive-sla-metric-support). op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
+
+#### `--request-rate-series` `<str>`
+
+JSON file containing request-rate points for piecewise-linear request-rate control.
 
 ### Warmup
 
