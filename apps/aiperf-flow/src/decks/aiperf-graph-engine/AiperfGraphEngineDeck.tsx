@@ -370,7 +370,7 @@ function PipelineStage({
   return (
     <div
       className={clsx(
-        "flex flex-col gap-2 rounded-none border px-4 py-3",
+        "flex flex-col gap-2 rounded-lg border px-4 py-3 shadow-sm",
         surfaceClassName("elevated"),
         strokeClassName("secondary"),
       )}
@@ -405,7 +405,7 @@ function Collaborator({
   return (
     <div
       className={clsx(
-        "flex flex-col gap-2 rounded-none border px-4 py-3",
+        "flex flex-col gap-2 rounded-lg border px-4 py-3 shadow-sm",
         surfaceClassName("elevated"),
         strokeClassName("secondary"),
       )}
@@ -453,7 +453,7 @@ function GraphDiagram(): React.JSX.Element {
         </div>
         <div
           className={clsx(
-            "flex flex-shrink-0 flex-col gap-2 rounded-none border px-4 py-3",
+            "flex flex-shrink-0 flex-col gap-2 rounded-lg border px-4 py-3 shadow-sm",
             surfaceClassName("elevated"),
             strokeClassName("secondary"),
           )}
@@ -660,7 +660,7 @@ export function AiperfGraphEngineDeck(): React.JSX.Element {
                     <span
                       key={c}
                       className={clsx(
-                        "rounded-none border px-2 py-1 text-xs font-medium",
+                        "rounded-md border px-2 py-1 text-xs font-medium shadow-sm",
                         surfaceClassName("panel"),
                         strokeClassName("secondary"),
                         inkClassName("secondary"),

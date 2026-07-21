@@ -246,7 +246,7 @@ function RankRibbon({ onSelect }: { onSelect: (selection: Selection) => void }):
             key={rank}
             type="button"
             onClick={() => onSelect(selection)}
-            className={`rounded-none border border-t-2 px-3 py-2.5 text-left ${surfaceClassName("elevated")} ${strokeClassName("secondary")}`}
+            className={`rounded-lg border border-t-2 px-3 py-2.5 text-left shadow-sm ${surfaceClassName("elevated")} ${strokeClassName("secondary")}`}
           >
             <div className={`text-xs font-semibold ${inkClassName("tertiary")}`}>{rank}</div>
             <div className={`mt-1 text-sm font-semibold ${inkClassName("primary")}`}>{role}</div>
@@ -261,7 +261,7 @@ function RankRibbon({ onSelect }: { onSelect: (selection: Selection) => void }):
 function Inspector({ selection }: { selection: Selection }): React.JSX.Element {
   const source = SOURCES[selection];
   return (
-    <div className={`rounded-none border p-4 ${surfaceClassName("elevated")} ${strokeClassName("secondary")}`}>
+    <div className={`rounded-lg border p-4 shadow-sm ${surfaceClassName("elevated")} ${strokeClassName("secondary")}`}>
       <Eyebrow>Selected architecture unit</Eyebrow>
       <Stack gap={10} className="mt-3">
         <div className={`text-sm font-semibold ${inkClassName("primary")}`}>{source.label}</div>
@@ -424,8 +424,8 @@ export function SlurmArchitectureDeck(): React.JSX.Element {
                   onClick={() => setFocus(id)}
                   className={
                     focus === id
-                      ? "rounded-none border border-accent-primary bg-accent-primary px-3 py-1 text-xs font-semibold text-white"
-                      : `rounded-none border px-3 py-1 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`
+                      ? "rounded-md border border-accent-primary bg-accent-primary px-3 py-1 text-xs font-semibold text-white shadow-md"
+                      : `rounded-md border px-3 py-1 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`
                   }
                 >
                   {label}
@@ -437,7 +437,7 @@ export function SlurmArchitectureDeck(): React.JSX.Element {
             </Row>
 
             <div className="grid grid-cols-1 gap-[18px] lg:grid-cols-[1.65fr_0.55fr]">
-              <div className={`overflow-x-auto rounded-none border ${strokeClassName("secondary")}`} style={{ height: 760 }}>
+              <div className={`overflow-x-auto rounded-lg border shadow-sm ${strokeClassName("secondary")}`} style={{ height: 760 }}>
                 <ReactFlow
                   nodeTypes={nodeTypes}
                   edgeTypes={edgeTypes}

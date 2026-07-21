@@ -60,13 +60,13 @@ function EffectCard({
   traits: string[];
 }): React.JSX.Element {
   return (
-    <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+    <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
       <div
         className={`flex items-center justify-between border-b px-4 py-2 ${strokeClassName("secondary")}`}
       >
         <span className={`text-sm font-semibold ${inkClassName("primary")}`}>{kind}</span>
         <span
-          className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
+          className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
         >
           effect = &quot;{tag}&quot;
         </span>
@@ -154,7 +154,7 @@ const objectModelEdges: Edge[] = [
 // diagram gets its own local provider here.
 function ObjectModelDiagram(): React.JSX.Element {
   return (
-    <div className={`rounded-none border ${strokeClassName("secondary")}`} style={{ height: 480 }}>
+    <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`} style={{ height: 480 }}>
       <ReactFlowProvider>
         <ReactFlow
           nodeTypes={nodeTypes}
@@ -202,7 +202,7 @@ const projectionEdges: Edge[] = [
 
 function ProjectionDiagram(): React.JSX.Element {
   return (
-    <div className={`rounded-none border ${strokeClassName("secondary")}`} style={{ height: 220 }}>
+    <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`} style={{ height: 220 }}>
       <ReactFlowProvider>
         <ReactFlow
           nodeTypes={nodeTypes}
@@ -280,7 +280,7 @@ function Header(): React.JSX.Element {
       <Row gap={10} align="center" wrap>
         <h1 className={`text-2xl font-bold ${inkClassName("primary")}`}>Step / Dispatch / Emit IR</h1>
         <span
-          className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
+          className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
         >
           graph-lane-internal
         </span>
@@ -310,7 +310,7 @@ function OneVertexTwoEffects(): React.JSX.Element {
         edge / <Code inline>pre_wait</Code> delays elapse. The single irreducible split is whether its effect
         touches the network.
       </p>
-      <div className={`rounded-none border ${strokeClassName("secondary")} px-4 py-3`}>
+      <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")} px-4 py-3`}>
         <Stack gap={6}>
           <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Step</span>
           <FieldTable
@@ -374,7 +374,7 @@ function ObjectModel(): React.JSX.Element {
       </p>
       <ObjectModelDiagram />
       <Grid columns={2} gap={12}>
-        <div className={`rounded-none border ${strokeClassName("secondary")} px-4 py-3`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")} px-4 py-3`}>
           <Stack gap={6}>
             <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Edge</span>
             <FieldTable
@@ -388,7 +388,7 @@ function ObjectModel(): React.JSX.Element {
             />
           </Stack>
         </div>
-        <div className={`rounded-none border ${strokeClassName("secondary")} px-4 py-3`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")} px-4 py-3`}>
           <Stack gap={6}>
             <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Trace</span>
             <FieldTable
@@ -412,7 +412,7 @@ function TwoPlanes(): React.JSX.Element {
     <Stack gap={10}>
       <h2 className={`text-lg font-semibold ${inkClassName("primary")}`}>Two planes</h2>
       <Grid columns={2} gap={12}>
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div
             className={`flex items-center justify-between border-b px-4 py-2 ${strokeClassName("secondary")}`}
           >
@@ -420,7 +420,7 @@ function TwoPlanes(): React.JSX.Element {
               Plane 1 — dependency / timing
             </span>
             <span
-              className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
+              className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
             >
               serialized IR
             </span>
@@ -431,7 +431,7 @@ function TwoPlanes(): React.JSX.Element {
             <Code inline>validate_workload</Code> checks and what gets serialized with <Code inline>msgspec</Code>.
           </p>
         </div>
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div
             className={`flex items-center justify-between border-b px-4 py-2 ${strokeClassName("secondary")}`}
           >
@@ -439,7 +439,7 @@ function TwoPlanes(): React.JSX.Element {
               Plane 2 — content / cache
             </span>
             <span
-              className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
+              className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
             >
               runtime companion
             </span>
@@ -493,7 +493,7 @@ function RuntimeFiring(): React.JSX.Element {
         <Code inline>TaskGroup</Code> task creation. Each node walks the same nine-step path in the{" "}
         <Code inline>TraceExecutor</Code>.
       </p>
-      <div className={`rounded-none border ${strokeClassName("secondary")} px-4 py-2`}>
+      <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")} px-4 py-2`}>
         <Stack gap={0}>
           {FIRING_STEPS.map(([label, desc], i) => (
             <FiringStep key={label} n={i + 1} label={label} desc={desc} />
@@ -501,7 +501,7 @@ function RuntimeFiring(): React.JSX.Element {
         </Stack>
       </div>
       <Grid columns={2} gap={12}>
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div className={`border-b px-4 py-2 text-sm font-semibold ${strokeClassName("secondary")} ${inkClassName("primary")}`}>
             Dispatch execution
           </div>
@@ -512,7 +512,7 @@ function RuntimeFiring(): React.JSX.Element {
             <Code inline>AIPERF_GRAPH_DISPATCH_TIMEOUT_S</Code> once it reaches the adapter.
           </p>
         </div>
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div className={`border-b px-4 py-2 text-sm font-semibold ${strokeClassName("secondary")} ${inkClassName("primary")}`}>
             Emit execution
           </div>
@@ -536,7 +536,7 @@ function StructuralValidation(): React.JSX.Element {
         cleanly-checkable base-IR invariants.
       </p>
       <Grid columns={3} gap={12}>
-        <div className={`rounded-none border ${strokeClassName("secondary")} px-4 py-3`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")} px-4 py-3`}>
           <Stack gap={6}>
             <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Effect coherence</span>
             <p className={`text-sm ${inkClassName("secondary")}`}>
@@ -545,7 +545,7 @@ function StructuralValidation(): React.JSX.Element {
             </p>
           </Stack>
         </div>
-        <div className={`rounded-none border ${strokeClassName("secondary")} px-4 py-3`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")} px-4 py-3`}>
           <Stack gap={6}>
             <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Reference integrity</span>
             <p className={`text-sm ${inkClassName("secondary")}`}>
@@ -554,7 +554,7 @@ function StructuralValidation(): React.JSX.Element {
             </p>
           </Stack>
         </div>
-        <div className={`rounded-none border ${strokeClassName("secondary")} px-4 py-3`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")} px-4 py-3`}>
           <Stack gap={6}>
             <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Acyclicity</span>
             <p className={`text-sm ${inkClassName("secondary")}`}>

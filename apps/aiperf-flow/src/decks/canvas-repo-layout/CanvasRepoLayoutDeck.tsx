@@ -152,7 +152,7 @@ export function CanvasRepoLayoutDeck(): React.JSX.Element {
         </div>
         <Grid columns={3} gap={12}>
           {FLOW_STEPS.map((step) => (
-            <div key={step.id} className="rounded-none border border-stroke-secondary px-4 py-3">
+            <div key={step.id} className="rounded-lg border border-stroke-secondary px-4 py-3 shadow-sm">
               <Row justify="space-between" align="center">
                 <div className="text-sm font-semibold text-ink-primary">{step.title}</div>
                 <TonePill tone={step.tone} />
@@ -189,13 +189,13 @@ export function CanvasRepoLayoutDeck(): React.JSX.Element {
       <Stack gap={8}>
         <h2 className="text-lg font-semibold text-ink-primary">Adding a new canvas</h2>
         <Grid columns={2} gap={12}>
-          <div className="rounded-none border border-stroke-secondary px-4 py-3">
+          <div className="rounded-lg border border-stroke-secondary px-4 py-3 shadow-sm">
             <div className="text-sm font-semibold text-ink-primary">1. Create source in repo</div>
             <p className="mt-2 text-sm text-ink-secondary">
               Add docs/canvases/my-topic.canvas.tsx. Import only from cursor/canvas and default-export one component.
             </p>
           </div>
-          <div className="rounded-none border border-stroke-secondary px-4 py-3">
+          <div className="rounded-lg border border-stroke-secondary px-4 py-3 shadow-sm">
             <div className="text-sm font-semibold text-ink-primary">2. Bridge to Cursor</div>
             <div className="mt-2">
               <Code>{SYMLINK_COMMAND}</Code>
@@ -204,7 +204,7 @@ export function CanvasRepoLayoutDeck(): React.JSX.Element {
         </Grid>
       </Stack>
 
-      <div className="rounded-none border border-stroke-secondary bg-surface-elevated px-4 py-3">
+      <div className="rounded-lg border border-stroke-secondary bg-surface-elevated px-4 py-3 shadow-sm">
         <h3 className="text-base font-semibold text-ink-primary">Companion planning docs</h3>
         <p className="mt-1.5 text-sm text-ink-secondary">
           Markdown storyboards for some canvases already live under docs/superpowers/plans/. Keep narrative/planning

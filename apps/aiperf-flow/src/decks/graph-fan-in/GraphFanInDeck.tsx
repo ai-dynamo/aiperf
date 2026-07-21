@@ -150,7 +150,7 @@ function Header(): React.JSX.Element {
           Fan-in in the graph dataflow runtime
         </h1>
         <span
-          className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
+          className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
         >
           VersionedChannelStore
         </span>
@@ -187,13 +187,13 @@ function GraphSection(): React.JSX.Element {
           { color: "gray", label: "skipped producer (wrote=False)" },
         ]}
       />
-      <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+      <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
         <div
           className={`flex items-center justify-between border-b px-4 py-2 ${strokeClassName("secondary")}`}
         >
           <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Fan-in firing</span>
           <span
-            className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
+            className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
           >
             count=2 of 3
           </span>
@@ -363,7 +363,7 @@ function Determinism(): React.JSX.Element {
     <Stack gap={10}>
       <h2 className={`text-lg font-semibold ${inkClassName("primary")}`}>Why the join is deterministic</h2>
       <Grid columns={2} gap={16}>
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div className={`border-b px-4 py-2 text-sm font-semibold ${strokeClassName("secondary")} ${inkClassName("primary")}`}>
             Reduce order
           </div>
@@ -377,7 +377,7 @@ function Determinism(): React.JSX.Element {
             </p>
           </div>
         </div>
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div className={`border-b px-4 py-2 text-sm font-semibold ${strokeClassName("secondary")} ${inkClassName("primary")}`}>
             Init seed vs. arrival
           </div>

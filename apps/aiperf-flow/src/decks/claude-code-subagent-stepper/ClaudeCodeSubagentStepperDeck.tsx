@@ -302,7 +302,7 @@ function RequestLog({ t }: { t: number }): React.JSX.Element {
           return (
             <div
               key={n.id}
-              className={`rounded-none px-3 py-2 ${isLive ? "border-2 border-accent-primary" : "border border-stroke-secondary"} ${
+              className={`rounded-lg px-3 py-2 shadow-sm ${isLive ? "border-2 border-accent-primary" : "border border-stroke-secondary"} ${
                 isLive ? surfaceClassName("elevated") : surfaceClassName("panel")
               }`}
             >
@@ -319,7 +319,7 @@ function RequestLog({ t }: { t: number }): React.JSX.Element {
                   )}
                 </Row>
                 {isLive ? (
-                  <div className={`h-1 overflow-hidden rounded-none ${surfaceClassName("chrome")}`}>
+                  <div className={`h-1 overflow-hidden rounded-md ${surfaceClassName("chrome")}`}>
                     <div className="h-full bg-accent-primary" style={{ width: `${pct}%` }} />
                   </div>
                 ) : null}
@@ -366,7 +366,7 @@ function GateBar({
           {have} / {need} arrived
         </span>
       </Row>
-      <div className={`h-2 overflow-hidden rounded-none ${surfaceClassName("chrome")}`}>
+      <div className={`h-2 overflow-hidden rounded-md ${surfaceClassName("chrome")}`}>
         <div className="h-full bg-accent-primary" style={{ width: `${pct}%` }} />
       </div>
       <span className={`text-xs ${inkClassName("tertiary")}`}>{have < need ? waitNote : releasedNote}</span>
@@ -471,7 +471,7 @@ export function ClaudeCodeSubagentStepperDeck(): React.JSX.Element {
 
         <Grid columns="1fr minmax(0, 300px)" gap={20} align="start">
           <Stack gap={16} className="min-w-0">
-            <div className={`border ${strokeClassName("secondary")} rounded-none`}>
+            <div className={`border ${strokeClassName("secondary")} rounded-lg shadow-sm`}>
               <div className={`border-b px-4 py-2 text-sm font-semibold ${strokeClassName("secondary")} ${inkClassName("primary")}`}>
                 Conversation graph
               </div>
@@ -529,26 +529,26 @@ export function ClaudeCodeSubagentStepperDeck(): React.JSX.Element {
               <Row gap={16} wrap align="center">
                 <span className={`min-w-24 text-xs font-medium ${inkClassName("tertiary")}`}>node kind</span>
                 <Row gap={6} align="center">
-                  <div className="h-3.5 w-5 rounded-none border border-accent-primary bg-surface-elevated" />
+                  <div className="h-3.5 w-5 rounded-md border border-accent-primary bg-surface-elevated" />
                   <span className={`text-xs ${inkClassName("secondary")}`}>Dispatch — real agent turn (LLM, credit)</span>
                 </Row>
                 <Row gap={6} align="center">
-                  <div className={`h-3.5 w-5 rounded-none border border-dashed ${strokeClassName("tertiary")} ${surfaceClassName("panel")}`} />
+                  <div className={`h-3.5 w-5 rounded-md border border-dashed ${strokeClassName("tertiary")} ${surfaceClassName("panel")}`} />
                   <span className={`text-xs ${inkClassName("secondary")}`}>Emit — tool call, not a turn (no credit)</span>
                 </Row>
               </Row>
               <Row gap={16} wrap align="center">
                 <span className={`min-w-24 text-xs font-medium ${inkClassName("tertiary")}`}>state</span>
                 <Row gap={6} align="center">
-                  <div className="h-3.5 w-5 rounded-none border-2 border-accent-primary bg-surface-elevated" />
+                  <div className="h-3.5 w-5 rounded-md border-2 border-accent-primary bg-surface-elevated" />
                   <span className={`text-xs ${inkClassName("secondary")}`}>firing (thick border)</span>
                 </Row>
                 <Row gap={6} align="center">
-                  <div className={`h-3.5 w-5 rounded-none border ${strokeClassName("secondary")} ${surfaceClassName("panel")}`} />
+                  <div className={`h-3.5 w-5 rounded-md border ${strokeClassName("secondary")} ${surfaceClassName("panel")}`} />
                   <span className={`text-xs ${inkClassName("secondary")}`}>already ran</span>
                 </Row>
                 <Row gap={6} align="center">
-                  <div className={`h-3.5 w-5 rounded-none border ${strokeClassName("tertiary")} ${surfaceClassName("panel")}`} />
+                  <div className={`h-3.5 w-5 rounded-md border ${strokeClassName("tertiary")} ${surfaceClassName("panel")}`} />
                   <span className={`text-xs ${inkClassName("secondary")}`}>pending</span>
                 </Row>
                 <Row gap={6} align="center">
@@ -563,7 +563,7 @@ export function ClaudeCodeSubagentStepperDeck(): React.JSX.Element {
           </Stack>
 
           <div>
-            <div className={`border ${strokeClassName("secondary")} rounded-none`}>
+            <div className={`border ${strokeClassName("secondary")} rounded-lg shadow-sm`}>
               <div className={`border-b px-4 py-2 text-sm font-semibold ${strokeClassName("secondary")} ${inkClassName("primary")}`}>
                 In-flight requests
               </div>

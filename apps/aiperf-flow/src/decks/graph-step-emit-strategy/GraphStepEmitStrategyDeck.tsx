@@ -192,7 +192,7 @@ function StepEmitIR(): React.JSX.Element {
         never runtime types.
       </p>
       <Grid columns={2} gap={16}>
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div className={`flex items-center justify-between border-b px-4 py-2 ${strokeClassName("secondary")}`}>
             <span className={`text-sm font-semibold ${inkClassName("primary")}`}>effect: Dispatch</span>
             <Pill>weka + dynamo</Pill>
@@ -209,7 +209,7 @@ function StepEmitIR(): React.JSX.Element {
             </Stack>
           </div>
         </div>
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div className={`flex items-center justify-between border-b px-4 py-2 ${strokeClassName("secondary")}`}>
             <span className={`text-sm font-semibold ${inkClassName("primary")}`}>effect: Emit</span>
             <Pill>dynamo only</Pill>
@@ -228,7 +228,7 @@ function StepEmitIR(): React.JSX.Element {
         </div>
       </Grid>
       <Grid columns={2} gap={16}>
-        <div className={`rounded-none border ${strokeClassName("secondary")} px-4 py-3`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")} px-4 py-3`}>
           <Stack gap={4}>
             <Row align="center" gap={8}>
               <span className={`text-sm font-semibold ${inkClassName("primary")}`}>
@@ -244,7 +244,7 @@ function StepEmitIR(): React.JSX.Element {
             </p>
           </Stack>
         </div>
-        <div className={`rounded-none border ${strokeClassName("secondary")} px-4 py-3`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")} px-4 py-3`}>
           <Stack gap={4}>
             <Row align="center" gap={8}>
               <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Plane 2 — content</span>
@@ -397,7 +397,7 @@ function NodeZoo(): React.JSX.Element {
         pre-unrolled DAG (needs a static max-iteration cap).
       </Callout>
       <Grid columns={3} gap={16}>
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div className={`flex items-center justify-between border-b px-4 py-2 ${strokeClassName("secondary")}`}>
             <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Deletable (Tier 1)</span>
             <Pill>now</Pill>
@@ -428,7 +428,7 @@ function NodeZoo(): React.JSX.Element {
             </Stack>
           </div>
         </div>
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div className={`flex items-center justify-between border-b px-4 py-2 ${strokeClassName("secondary")}`}>
             <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Judgment (Tier 2)</span>
             <Pill>decide</Pill>
@@ -448,7 +448,7 @@ function NodeZoo(): React.JSX.Element {
             </Stack>
           </div>
         </div>
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div className={`flex items-center justify-between border-b px-4 py-2 ${strokeClassName("secondary")}`}>
             <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Not deletable</span>
             <Pill>output, not precondition</Pill>

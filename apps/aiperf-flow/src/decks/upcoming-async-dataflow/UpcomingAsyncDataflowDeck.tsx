@@ -149,7 +149,7 @@ function Header(): React.JSX.Element {
           Upcoming Async Dataflow — Step/Emit runtime
         </h1>
         <span
-          className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
+          className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
         >
           target
         </span>
@@ -191,13 +191,13 @@ function GraphSection(): React.JSX.Element {
           <span className={`text-sm ${inkClassName("secondary")}`}>frontier loop (back-edge)</span>
         </Row>
       </Row>
-      <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+      <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
         <div className={`flex items-center justify-between border-b px-4 py-2 ${strokeClassName("secondary")}`}>
           <span className={`text-sm font-semibold ${inkClassName("primary")}`}>
             TraceExecutor frontier · one Step firing
           </span>
           <span
-            className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
+            className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
           >
             scrolls
           </span>
@@ -232,11 +232,11 @@ function EffectSplit(): React.JSX.Element {
         The dispatch leaf — the only thing that changes
       </h2>
       <Grid columns={2} gap={16}>
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div className={`flex items-center justify-between border-b px-4 py-2 ${strokeClassName("secondary")}`}>
             <span className={`text-sm font-semibold ${inkClassName("primary")}`}>effect: Dispatch</span>
             <span
-              className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
+              className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
             >
               weka + dynamo
             </span>
@@ -256,11 +256,11 @@ function EffectSplit(): React.JSX.Element {
             </Stack>
           </div>
         </div>
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div className={`flex items-center justify-between border-b px-4 py-2 ${strokeClassName("secondary")}`}>
             <span className={`text-sm font-semibold ${inkClassName("primary")}`}>effect: Emit</span>
             <span
-              className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
+              className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
             >
               dynamo only
             </span>
@@ -305,11 +305,11 @@ function TypedResolution(): React.JSX.Element {
         waiter. Drain is a monotone, forward-only flip — never a reset arc.
       </p>
       <Grid columns={3} gap={16}>
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div className={`flex items-center justify-between border-b px-4 py-2 ${strokeClassName("secondary")}`}>
             <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Produced a value</span>
             <span
-              className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
+              className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
             >
               real
             </span>
@@ -320,11 +320,11 @@ function TypedResolution(): React.JSX.Element {
             </p>
           </div>
         </div>
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div className={`flex items-center justify-between border-b px-4 py-2 ${strokeClassName("secondary")}`}>
             <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Ran, produced nothing</span>
             <span
-              className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
+              className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
             >
               FAILED
             </span>
@@ -336,11 +336,11 @@ function TypedResolution(): React.JSX.Element {
             </p>
           </div>
         </div>
-        <div className={`rounded-none border ${strokeClassName("secondary")}`}>
+        <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}>
           <div className={`flex items-center justify-between border-b px-4 py-2 ${strokeClassName("secondary")}`}>
             <span className={`text-sm font-semibold ${inkClassName("primary")}`}>Never will run</span>
             <span
-              className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
+              className={`rounded-md border px-2 py-0.5 text-xs font-semibold shadow-sm ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
             >
               WILL_NOT_PRODUCE
             </span>
