@@ -10,21 +10,16 @@
 //! established by `src/prose/Chart.tsx`.
 
 import { LANE_KEYS, fmt, laneColorIndex, type DNode, type Gap } from "./logic.js";
-import { categoryClassName, inkClassName, strokeClassName } from "../../theme/tokens.js";
+import {
+  categoryClassName,
+  categoryFillClassName,
+  categoryStrokeClassName,
+  inkClassName,
+  type CategoryRole,
+} from "../../theme/tokens.js";
 
-const CATEGORY_TEXT: Record<(typeof LANE_KEYS)[number], string> = {
-  blue: "text-category-blue",
-  green: "text-category-green",
-  purple: "text-category-purple",
-  orange: "text-category-orange",
-  red: "text-category-red",
-  cyan: "text-category-cyan",
-  yellow: "text-category-yellow",
-  gray: "text-category-gray",
-};
-
-function laneTextClassName(agent: string, lanes: readonly string[]): string {
-  return CATEGORY_TEXT[LANE_KEYS[laneColorIndex(agent, lanes)]!];
+function laneCategory(agent: string, lanes: readonly string[]): CategoryRole {
+  return LANE_KEYS[laneColorIndex(agent, lanes)]!;
 }
 
 const LEFT = 92;
@@ -71,7 +66,7 @@ export function Timeline({ nodes, gaps, lanes, warpOn }: TimelineProps): React.J
         y={laneY(top, agent) + LANE_H / 2 + 4}
         fontSize={10.5}
         fontWeight={600}
-        className={laneTextClassName(agent, lanes)}
+        className={categoryClassName(laneCategory(agent, lanes))}
         fill="currentColor"
       >
         {agent}
@@ -81,6 +76,7 @@ export function Timeline({ nodes, gaps, lanes, warpOn }: TimelineProps): React.J
   const bar = (n: DNode, top: number, s: number, e: number) => {
     const w = Math.max((e - s) * px, 10);
     const y = laneY(top, n.agent);
+    const cat = laneCategory(n.agent, lanes);
     return (
       <g key={`${n.id}-${top}`}>
         <rect
@@ -88,10 +84,8 @@ export function Timeline({ nodes, gaps, lanes, warpOn }: TimelineProps): React.J
           y={y}
           width={w}
           height={LANE_H}
-          fill="currentColor"
-          className={laneTextClassName(n.agent, lanes)}
+          className={`${categoryFillClassName(cat)} ${categoryStrokeClassName(cat)}`}
           fillOpacity={0.18}
-          stroke="currentColor"
           strokeWidth={1.5}
         />
         <text
@@ -120,7 +114,7 @@ export function Timeline({ nodes, gaps, lanes, warpOn }: TimelineProps): React.J
               width={Math.max(x(gp.end) - x(gp.start), 2)}
               height={blockH + 8}
               fill="none"
-              className={gp.capped ? categoryClassName("orange") : strokeClassName("tertiary")}
+              className={gp.capped ? categoryClassName("orange") : inkClassName("tertiary")}
               stroke="currentColor"
               strokeWidth={1}
               strokeDasharray="4 4"
@@ -144,17 +138,17 @@ export function Timeline({ nodes, gaps, lanes, warpOn }: TimelineProps): React.J
         {laneLabels(rawTop)}
         {nodes.map((n) => bar(n, rawTop, n.rawStart, n.rawEnd))}
 
-        <line x1={8} y1={rawBottom + 12} x2={width - 12} y2={rawBottom + 12} className={strokeClassName("tertiary")} stroke="currentColor" strokeWidth={1} />
+        <line x1={8} y1={rawBottom + 12} x2={width - 12} y2={rawBottom + 12} className={inkClassName("tertiary")} stroke="currentColor" strokeWidth={1} />
         <text x={8} y={warpTitleY} fontSize={11} fontWeight={700} className={inkClassName("secondary")} fill="currentColor">
           {warpOn ? "warped clock" : "warped clock (no cap)"}
         </text>
         {laneLabels(warpTop)}
         {nodes.map((n) => bar(n, warpTop, n.warpStart, n.warpEnd))}
 
-        <line x1={LEFT} y1={axisY} x2={width - 12} y2={axisY} className={strokeClassName("secondary")} stroke="currentColor" strokeWidth={1} />
+        <line x1={LEFT} y1={axisY} x2={width - 12} y2={axisY} className={inkClassName("secondary")} stroke="currentColor" strokeWidth={1} />
         {ticks.map((t) => (
           <g key={`tick-${t}`}>
-            <line x1={x(t)} y1={axisY - 3} x2={x(t)} y2={axisY + 3} className={strokeClassName("secondary")} stroke="currentColor" strokeWidth={1} />
+            <line x1={x(t)} y1={axisY - 3} x2={x(t)} y2={axisY + 3} className={inkClassName("secondary")} stroke="currentColor" strokeWidth={1} />
             <text x={x(t)} y={axisY + 15} textAnchor="middle" fontSize={10} className={inkClassName("tertiary")} fill="currentColor">
               {t}s
             </text>

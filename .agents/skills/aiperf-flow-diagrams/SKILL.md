@@ -168,6 +168,54 @@ Use those instead of writing a new lookup table when a category color is
 what you need. `layout/Grid.tsx`'s `GRID_COLS_CLASSES` is the same pattern
 for grid columns.
 
+### SVG shapes need `fill-*`/`stroke-*` classes, not `bg-*`/`border-*`
+
+Several decks hand-draw custom SVG charts (`aiperf-metrics-accumulator`'s
+sweep-line Gantt, `weka-timing-transforms-interactive`'s swimlane views,
+`prose/Chart.tsx`). A `<rect>`/`<path>`/`<circle>`/`<polygon>`/`<ellipse>`/
+`<polyline>` is painted by the CSS `fill`/`stroke` properties — `background-
+color`/`border-color` (what `categoryBgClassName()`/`surfaceClassName()`/
+`strokeClassName()` emit) have **no effect** on it. Two ways this shipped as
+a real bug (not just a Tailwind-JIT purge) before being caught:
+
+1. Applying `categoryBgClassName(color)` (or `surfaceClassName(...)`) as an
+   SVG shape's `className` with no `fill`/`stroke` attribute at all — the
+   shape falls back to SVG's initial `fill: black`, rendering solid black
+   regardless of the intended color.
+2. Setting `fill="currentColor"` (or `stroke="currentColor"`) explicitly,
+   but pairing it with a `bg-*`/`border-*` class instead of a `text-*`
+   class — `currentColor` resolves the CSS `color` property, which
+   `background-color`/`border-color` classes never set, so the shape
+   inherits whatever `color` its ancestor happens to have (often the wrong
+   value, or a washed-out default) instead of the intended category color.
+
+Use `categoryFillClassName(role)`/`categoryStrokeClassName(role)` from
+`theme/tokens.ts` instead — these emit real `fill-category-*`/`stroke-
+category-*` utility classes that set `fill`/`stroke` directly, so no
+`fill="currentColor"`/`stroke="currentColor"` attribute is needed at all:
+
+```tsx
+// WRONG — background-color has no effect on SVG; renders solid black
+<rect className={categoryBgClassName("blue")} />
+
+// WRONG — sets `color`, but fill="currentColor" needs a text-* class here,
+// and even then it's an indirection categoryFillClassName avoids entirely
+<rect fill="currentColor" className={categoryClassName("blue")} />
+
+// RIGHT — fill-category-blue sets the `fill` CSS property directly
+<rect className={categoryFillClassName("blue")} />
+```
+
+For a non-category (role-based) stroke on a plain SVG line/rect divider,
+`strokeClassName()`/`surfaceClassName()` are equally inert — use
+`inkClassName(role)` with an explicit `stroke="currentColor"`/
+`fill="currentColor"` attribute instead (there's no ink-based `fill-*`/
+`stroke-*` helper, since `InkRole`/`StrokeRole` aren't `CategoryRole`).
+This bug class shipped three times before being traced to this root cause
+(`Chart.tsx`, `AiperfMetricsAccumulatorDeck.tsx`'s sweep-line chart,
+`TStarChop.tsx`/`Timeline.tsx`/`CombinedTimeline.tsx`'s lane boxes) —
+whenever you touch a hand-drawn SVG element's color, check this section.
+
 ## Pre-delivery self-check
 
 Before considering a deck/component done:
@@ -197,6 +245,11 @@ Before considering a deck/component done:
    category-tone-colored variants. Wrote an uppercase/tracking-wide label
    span (a section kicker, a field label, a status word)? Check
    `src/prose/Eyebrow.tsx` first, likewise.
+9. Colored a hand-drawn `<rect>`/`<path>`/`<circle>`/etc.? Used
+   `categoryFillClassName()`/`categoryStrokeClassName()` (or `inkClassName()`
+   with an explicit `fill`/`stroke="currentColor"` attribute), never
+   `categoryBgClassName()`/`surfaceClassName()`/`strokeClassName()` — see
+   "SVG shapes need fill-/stroke- classes" above.
 
 ## Worked example
 

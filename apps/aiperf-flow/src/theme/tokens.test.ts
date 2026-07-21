@@ -11,6 +11,8 @@ import {
   categoryClassName,
   categoryBgClassName,
   categoryBgTintClassName,
+  categoryFillClassName,
+  categoryStrokeClassName,
 } from "./tokens.js";
 
 describe("theme role class helpers", () => {
@@ -45,5 +47,21 @@ describe("theme role class helpers", () => {
     expect(categoryClassName("orange")).toBe("text-category-orange");
     expect(categoryClassName("cyan")).toBe("text-category-cyan");
     expect(categoryClassName("gray")).toBe("text-category-gray");
+  });
+
+  it("maps every category role to a literal SVG fill class", () => {
+    expect(categoryFillClassName("green")).toBe("fill-category-green");
+    expect(categoryFillClassName("purple")).toBe("fill-category-purple");
+    expect(categoryFillClassName("orange")).toBe("fill-category-orange");
+    expect(categoryFillClassName("cyan")).toBe("fill-category-cyan");
+    expect(categoryFillClassName("gray")).toBe("fill-category-gray");
+  });
+
+  it("maps every category role to a literal SVG stroke class", () => {
+    expect(categoryStrokeClassName("green")).toBe("stroke-category-green");
+    expect(categoryStrokeClassName("purple")).toBe("stroke-category-purple");
+    expect(categoryStrokeClassName("orange")).toBe("stroke-category-orange");
+    expect(categoryStrokeClassName("cyan")).toBe("stroke-category-cyan");
+    expect(categoryStrokeClassName("gray")).toBe("stroke-category-gray");
   });
 });

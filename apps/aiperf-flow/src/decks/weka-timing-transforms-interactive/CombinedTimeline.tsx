@@ -10,21 +10,16 @@
 //! of each trace's absolute timing.
 
 import { LANE_KEYS, MINI_TRACES, derive, laneColorIndex, lanesOf, warmupIds } from "./logic.js";
-import { categoryClassName, inkClassName, strokeClassName } from "../../theme/tokens.js";
+import {
+  categoryClassName,
+  categoryFillClassName,
+  categoryStrokeClassName,
+  inkClassName,
+  type CategoryRole,
+} from "../../theme/tokens.js";
 
-const CATEGORY_TEXT: Record<(typeof LANE_KEYS)[number], string> = {
-  blue: "text-category-blue",
-  green: "text-category-green",
-  purple: "text-category-purple",
-  orange: "text-category-orange",
-  red: "text-category-red",
-  cyan: "text-category-cyan",
-  yellow: "text-category-yellow",
-  gray: "text-category-gray",
-};
-
-function laneTextClassName(agent: string, lanes: readonly string[]): string {
-  return CATEGORY_TEXT[LANE_KEYS[laneColorIndex(agent, lanes)]!];
+function laneCategory(agent: string, lanes: readonly string[]): CategoryRole {
+  return LANE_KEYS[laneColorIndex(agent, lanes)]!;
 }
 
 const LANE_H = 22;
@@ -89,7 +84,7 @@ export function CombinedTimeline({ tStars }: CombinedTimelineProps): React.JSX.E
             y={rowY(i) + LANE_H / 2 + 4}
             fontSize={10}
             fontWeight={600}
-            className={laneTextClassName(r.agent, r.tr.lanes)}
+            className={categoryClassName(laneCategory(r.agent, r.tr.lanes))}
             fill="currentColor"
           >
             {r.tr.key}·{r.agent}
@@ -104,7 +99,8 @@ export function CombinedTimeline({ tStars }: CombinedTimelineProps): React.JSX.E
               const warm = r.tr.warmup.has(n.id);
               const w = Math.max((n.warpEnd - n.warpStart) * px, 10);
               const bx = xRel(n.warpStart, r.tr.tStar);
-              const strokeCls = warm ? categoryClassName("orange") : profiled ? laneTextClassName(r.agent, r.tr.lanes) : strokeClassName("tertiary");
+              const cat = laneCategory(r.agent, r.tr.lanes);
+              const strokeCls = warm ? categoryStrokeClassName("orange") : profiled ? categoryStrokeClassName(cat) : inkClassName("tertiary");
               const textCls = warm ? categoryClassName("orange") : profiled ? inkClassName("primary") : inkClassName("tertiary");
               return (
                 <g key={`cn-${r.tr.key}-${n.id}`}>
@@ -113,9 +109,9 @@ export function CombinedTimeline({ tStars }: CombinedTimelineProps): React.JSX.E
                     y={rowY(i)}
                     width={w}
                     height={LANE_H}
-                    fill={profiled && !warm ? "currentColor" : "none"}
+                    fill={profiled && !warm ? undefined : "none"}
                     fillOpacity={profiled && !warm ? 0.12 : undefined}
-                    className={profiled && !warm ? laneTextClassName(r.agent, r.tr.lanes) : strokeCls}
+                    className={profiled && !warm ? categoryFillClassName(cat) : undefined}
                     stroke="currentColor"
                     strokeWidth={warm ? 2 : 1.5}
                     strokeDasharray={!profiled && !warm ? "4 4" : undefined}
@@ -129,10 +125,10 @@ export function CombinedTimeline({ tStars }: CombinedTimelineProps): React.JSX.E
             }),
         )}
 
-        <line x1={LEFT - 4} y1={axisY} x2={width - 12} y2={axisY} className={strokeClassName("secondary")} stroke="currentColor" strokeWidth={1} />
+        <line x1={LEFT - 4} y1={axisY} x2={width - 12} y2={axisY} className={inkClassName("secondary")} stroke="currentColor" strokeWidth={1} />
         {ticks.map((v) => (
           <g key={`ct-${v}`}>
-            <line x1={xRel(v, 0)} y1={axisY - 3} x2={xRel(v, 0)} y2={axisY + 3} className={strokeClassName("secondary")} stroke="currentColor" strokeWidth={1} />
+            <line x1={xRel(v, 0)} y1={axisY - 3} x2={xRel(v, 0)} y2={axisY + 3} className={inkClassName("secondary")} stroke="currentColor" strokeWidth={1} />
             <text x={xRel(v, 0)} y={axisY + 15} textAnchor="middle" fontSize={10} className={inkClassName("tertiary")} fill="currentColor">
               {v > 0 ? `+${v}` : v}s
             </text>

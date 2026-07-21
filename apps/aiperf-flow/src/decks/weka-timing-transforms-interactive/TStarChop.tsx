@@ -9,21 +9,16 @@
 //! hand-computed SVG rather than a React Flow graph.
 
 import { LANE_KEYS, fmt, laneColorIndex, warmupIds, type DNode, type EdgeRow } from "./logic.js";
-import { categoryClassName, inkClassName, strokeClassName } from "../../theme/tokens.js";
+import {
+  categoryClassName,
+  categoryFillClassName,
+  categoryStrokeClassName,
+  inkClassName,
+  type CategoryRole,
+} from "../../theme/tokens.js";
 
-const CATEGORY_TEXT: Record<(typeof LANE_KEYS)[number], string> = {
-  blue: "text-category-blue",
-  green: "text-category-green",
-  purple: "text-category-purple",
-  orange: "text-category-orange",
-  red: "text-category-red",
-  cyan: "text-category-cyan",
-  yellow: "text-category-yellow",
-  gray: "text-category-gray",
-};
-
-function laneTextClassName(agent: string, lanes: readonly string[]): string {
-  return CATEGORY_TEXT[LANE_KEYS[laneColorIndex(agent, lanes)]!];
+function laneCategory(agent: string, lanes: readonly string[]): CategoryRole {
+  return LANE_KEYS[laneColorIndex(agent, lanes)]!;
 }
 
 const LANE_H = 24;
@@ -35,13 +30,14 @@ function laneBox(
   cx: number,
   y: number,
   label: string,
-  fillClassName: string | undefined,
-  textClassName: string,
+  fillCategory: CategoryRole | undefined,
+  textCategory: CategoryRole,
   dropped: boolean,
   warmup: boolean,
   w = BOX_W,
 ) {
-  const strokeCls = warmup ? categoryClassName("orange") : dropped ? strokeClassName("tertiary") : textClassName;
+  const filled = fillCategory !== undefined && !warmup && !dropped;
+  const strokeCls = warmup ? categoryStrokeClassName("orange") : dropped ? inkClassName("tertiary") : categoryStrokeClassName(textCategory);
   return (
     <g key={key}>
       <rect
@@ -49,9 +45,9 @@ function laneBox(
         y={y}
         width={w}
         height={LANE_H}
-        fill={warmup || dropped ? "none" : "currentColor"}
-        fillOpacity={warmup || dropped ? undefined : 0.12}
-        className={warmup || dropped ? undefined : fillClassName}
+        fill={filled ? undefined : "none"}
+        fillOpacity={filled ? 0.12 : undefined}
+        className={filled ? categoryFillClassName(fillCategory) : undefined}
         stroke="currentColor"
         strokeWidth={warmup ? 2 : 1.5}
         strokeDasharray={dropped && !warmup ? "4 4" : undefined}
@@ -119,7 +115,7 @@ export function TStarChop({ nodes, edges, lanes, tStar, beforeOnly = false }: TS
         y={laneY(top, agent) + LANE_H / 2 + 4}
         fontSize={10.5}
         fontWeight={600}
-        className={laneTextClassName(agent, lanes)}
+        className={categoryClassName(laneCategory(agent, lanes))}
         fill="currentColor"
       >
         {agent}
@@ -152,8 +148,8 @@ export function TStarChop({ nodes, edges, lanes, tStar, beforeOnly = false }: TS
             x(n.warpStart),
             laneY(beforeTop, n.agent),
             n.id,
-            laneTextClassName(n.agent, lanes),
-            laneTextClassName(n.agent, lanes),
+            laneCategory(n.agent, lanes),
+            laneCategory(n.agent, lanes),
             droppedIds.has(n.id),
             warmup.has(n.id),
           ),
@@ -161,12 +157,12 @@ export function TStarChop({ nodes, edges, lanes, tStar, beforeOnly = false }: TS
 
         {!beforeOnly && (
           <g>
-            <line x1={8} y1={beforeBottom + 12} x2={width - 12} y2={beforeBottom + 12} className={strokeClassName("tertiary")} stroke="currentColor" strokeWidth={1} />
+            <line x1={8} y1={beforeBottom + 12} x2={width - 12} y2={beforeBottom + 12} className={inkClassName("tertiary")} stroke="currentColor" strokeWidth={1} />
             <text x={8} y={afterTitleY} fontSize={11} fontWeight={700} className={inkClassName("secondary")} fill="currentColor">
               after
             </text>
             {laneLabels(afterTop)}
-            {laneBox("start", starX, starMidY, "S*", undefined, categoryClassName("blue"), false, false, starW)}
+            {laneBox("start", starX, starMidY, "S*", undefined, "blue", false, false, starW)}
             {survivors.map((n) => {
               const e = edgeOf(n.id);
               const bindingDropped = e.rootsAtStart || droppedIds.has(e.firesAfter);
@@ -192,8 +188,8 @@ export function TStarChop({ nodes, edges, lanes, tStar, beforeOnly = false }: TS
                     x(n.warpStart),
                     y,
                     n.id,
-                    laneTextClassName(n.agent, lanes),
-                    laneTextClassName(n.agent, lanes),
+                    laneCategory(n.agent, lanes),
+                    laneCategory(n.agent, lanes),
                     false,
                     false,
                   )}

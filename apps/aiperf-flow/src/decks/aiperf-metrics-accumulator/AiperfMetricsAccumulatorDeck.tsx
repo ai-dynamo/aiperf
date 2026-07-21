@@ -24,6 +24,7 @@ import { TopBar } from "../../shell/TopBar.js";
 import {
   categoryBgClassName,
   categoryClassName,
+  categoryFillClassName,
   inkClassName,
   strokeClassName,
   surfaceClassName,
@@ -489,8 +490,8 @@ function SweepLineView(): React.JSX.Element {
               <text x={xLeft - 8} y={yTop + barH - 2} textAnchor="end" fontSize={11} fontWeight={600} className={inkClassName("secondary")} fill="currentColor">
                 {r.id}
               </text>
-              <rect x={x(r.start)} y={yTop} width={Math.max(1, x(r.gen) - x(r.start))} height={barH} className={categoryClassName("gray")} fill="currentColor" />
-              <rect x={x(r.gen)} y={yTop} width={Math.max(1, x(r.end) - x(r.gen))} height={barH} className={categoryClassName("blue")} fill="currentColor" opacity={dim ? 0.25 : 0.85} />
+              <rect x={x(r.start)} y={yTop} width={Math.max(1, x(r.gen) - x(r.start))} height={barH} className={categoryFillClassName("gray")} />
+              <rect x={x(r.gen)} y={yTop} width={Math.max(1, x(r.end) - x(r.gen))} height={barH} className={categoryFillClassName("blue")} opacity={dim ? 0.25 : 0.85} />
             </g>
           );
         })}
@@ -506,7 +507,7 @@ function SweepLineView(): React.JSX.Element {
           </g>
         ))}
 
-        <path d={`${stepPathD(pts, x, y, 0, T_MAX)} L ${x(T_MAX)} ${y(0)} L ${x(0)} ${y(0)} Z`} className={categoryClassName("blue")} fill="currentColor" opacity={0.12} />
+        <path d={`${stepPathD(pts, x, y, 0, T_MAX)} L ${x(T_MAX)} ${y(0)} L ${x(0)} ${y(0)} Z`} className={categoryFillClassName("blue")} opacity={0.12} />
         <path d={stepPathD(pts, x, y, 0, T_MAX)} fill="none" className={categoryClassName("blue")} stroke="currentColor" strokeWidth={2} />
 
         {evts.map((e, k) => (
@@ -652,7 +653,7 @@ function TimeSliceView(): React.JSX.Element {
             <g key={`slice${k}`}>
               <rect x={x(start)} y={top} width={x(clipped) - x(start)} height={ganttH} className={k % 2 === 0 ? inkClassName("quaternary") : ""} fill={k % 2 === 0 ? "currentColor" : "transparent"} opacity={k % 2 === 0 ? 0.4 : 1} />
               {incomplete && (
-                <rect x={x(clipped)} y={top} width={x(rawEnd) - x(clipped)} height={ganttH} className={categoryClassName("orange")} fill="currentColor" opacity={0.15} />
+                <rect x={x(clipped)} y={top} width={x(rawEnd) - x(clipped)} height={ganttH} className={categoryFillClassName("orange")} opacity={0.15} />
               )}
               <line x1={x(start)} y1={top} x2={x(start)} y2={axisY} className={strokeClassName("secondary")} stroke="currentColor" strokeDasharray="2 2" />
               <text x={(x(start) + x(clipped)) / 2} y={axisY + 16} textAnchor="middle" fontSize={10} className={incomplete ? categoryClassName("orange") : inkClassName("tertiary")} fill="currentColor">
@@ -670,7 +671,7 @@ function TimeSliceView(): React.JSX.Element {
           const color = SLICE_PALETTE[bin % SLICE_PALETTE.length];
           return (
             <g key={r.id}>
-              <rect x={x(r.start)} y={yTop} width={Math.max(2, x(r.end) - x(r.start))} height={barH} className={categoryClassName(color)} fill="currentColor" opacity={0.85} />
+              <rect x={x(r.start)} y={yTop} width={Math.max(2, x(r.end) - x(r.start))} height={barH} className={categoryFillClassName(color)} opacity={0.85} />
               <circle cx={x(r.start)} cy={yTop + barH / 2} r={3} className={inkClassName("primary")} fill="currentColor" />
               <text x={x(r.start) + 6} y={yTop + barH - 1} fontSize={10} fill="white" fontWeight={600}>
                 {r.id}
