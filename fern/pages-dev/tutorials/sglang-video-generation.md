@@ -148,7 +148,7 @@ EOF
 ```bash
 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
-    --tokenizer gpt2 \
+    --tokenizer builtin \
     --url http://localhost:30010 \
     --endpoint-type video_generation \
     --input-file video_prompts.jsonl \
@@ -181,7 +181,7 @@ Generate videos using synthetic prompts with configurable token lengths:
 ```bash
 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
-    --tokenizer gpt2 \
+    --tokenizer builtin \
     --url http://localhost:30010 \
     --endpoint-type video_generation \
     --extra-inputs "size:1280x720" \
@@ -214,7 +214,7 @@ Use `--download-video-content` to include video content download in the benchmar
 ```bash
 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
-    --tokenizer gpt2 \
+    --tokenizer builtin \
     --url http://localhost:30010 \
     --endpoint-type video_generation \
     --input-file video_prompts.jsonl \
@@ -230,7 +230,7 @@ aiperf profile \
 ```bash
 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
-    --tokenizer gpt2 \
+    --tokenizer builtin \
     --url http://localhost:30010 \
     --endpoint-type video_generation \
     --input-file video_prompts.jsonl \
@@ -258,7 +258,7 @@ AIPerf automatically handles polling for video generation. Configure polling beh
 # Set slower polling (0.5s) with 20 minute timeout
 AIPERF_HTTP_VIDEO_POLL_INTERVAL=0.5 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
-    --tokenizer gpt2 \
+    --tokenizer builtin \
     --url http://localhost:30010 \
     --endpoint-type video_generation \
     --input-file video_prompts.jsonl \
@@ -278,7 +278,7 @@ To extract and save the generated videos, use `--export-level raw` to capture th
 ```bash
 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
-    --tokenizer gpt2 \
+    --tokenizer builtin \
     --url http://localhost:30010 \
     --endpoint-type video_generation \
     --input-file video_prompts.jsonl \
@@ -367,7 +367,7 @@ Test maximum throughput with multiple concurrent requests:
 ```bash
 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
-    --tokenizer gpt2 \
+    --tokenizer builtin \
     --url http://localhost:30010 \
     --endpoint-type video_generation \
     --extra-inputs "size:720x480" \
@@ -385,7 +385,7 @@ Test single-request latency for different video sizes:
 # Short 4-second video
 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
-    --tokenizer gpt2 \
+    --tokenizer builtin \
     --url http://localhost:30010 \
     --endpoint-type video_generation \
     --extra-inputs "size:1280x720" \
@@ -397,7 +397,7 @@ aiperf profile \
 # Longer 8-second video
 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
-    --tokenizer gpt2 \
+    --tokenizer builtin \
     --url http://localhost:30010 \
     --endpoint-type video_generation \
     --extra-inputs "size:1280x720" \
@@ -415,7 +415,7 @@ Compare generation quality at different inference step counts:
 # Fast generation (fewer steps)
 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
-    --tokenizer gpt2 \
+    --tokenizer builtin \
     --url http://localhost:30010 \
     --endpoint-type video_generation \
     --extra-inputs "size:1280x720" \
@@ -428,7 +428,7 @@ aiperf profile \
 # High quality (more steps)
 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
-    --tokenizer gpt2 \
+    --tokenizer builtin \
     --url http://localhost:30010 \
     --endpoint-type video_generation \
     --extra-inputs "size:1280x720" \
