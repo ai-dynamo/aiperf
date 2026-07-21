@@ -447,8 +447,8 @@ class TestRecordsManagerMetricRecordDispatchErrors:
             start_ns=7_000_000_000,
             requests_end_ns=9_000_000_000,
         )
-        manager._has_multiple_phase_instances = (
-            lambda phase: phase == CreditPhase.PROFILING
+        manager._has_multiple_phase_instances = lambda phase: (
+            phase == CreditPhase.PROFILING
         )
         manager._records_tracker = MagicMock()
         manager._records_tracker._phase_trackers = {
@@ -524,8 +524,8 @@ class TestRecordsManagerMetricRecordDispatchErrors:
             start_ns=7_000_000_000,
             requests_end_ns=9_000_000_000,
         )
-        manager._has_multiple_phase_instances = (
-            lambda phase: phase == CreditPhase.WARMUP
+        manager._has_multiple_phase_instances = lambda phase: (
+            phase == CreditPhase.WARMUP
         )
         manager._records_tracker = MagicMock()
         manager._records_tracker._phase_trackers = {
