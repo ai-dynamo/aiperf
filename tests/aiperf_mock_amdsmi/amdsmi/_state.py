@@ -59,11 +59,17 @@ class _Config:
     """Resolved fake-amdsmi configuration for one ``amdsmi_init()`` session."""
 
     num_gpus: int
+    """Number of fake GPUs to expose; clamped to >= 1 by ``from_env``."""
     spec: AMDGpuSpec
+    """Static per-model spec (product name, power, VRAM, temps) for this GPU model."""
     gfx_activity_pct: float
+    """GFX engine utilization in percent (0–100), overridable via ``AIPERF_MOCK_AMDSMI_GFX_ACTIVITY``."""
     power_w: float
+    """Reported socket power in watts, overridable via ``AIPERF_MOCK_AMDSMI_POWER_W``."""
     junction_temp_c: float
+    """Junction/hotspot temperature in Celsius, overridable via ``AIPERF_MOCK_AMDSMI_TEMP_C``."""
     vram_used_fraction: float
+    """Fraction of total VRAM reported as used (0.0–1.0), overridable via ``AIPERF_MOCK_AMDSMI_VRAM_USED_FRACTION``."""
 
     @classmethod
     def from_env(cls) -> "_Config":
@@ -98,8 +104,11 @@ class _Handle:
     """
 
     index: int
+    """Zero-based GPU index; used to derive UUID and BDF."""
     config: _Config
+    """Shared configuration resolved at ``amdsmi_init()`` time."""
     _energy_ticks: int = field(default=_ENERGY_BASE_TICKS)
+    """Monotonically advancing energy accumulator in counter ticks; advances each call to ``next_energy_ticks``."""
 
     @property
     def uuid(self) -> str:

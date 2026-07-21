@@ -10,10 +10,13 @@ not ``aiperf-mock-amdsmi`` is pip-installed. The final test confirms the real
 
 import importlib
 import sys
+import types
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from pytest import MonkeyPatch, param
 
 _PKG_PARENT = Path(__file__).resolve().parents[3] / "tests" / "aiperf_mock_amdsmi"
 _FAKE_MODULES = ("amdsmi", "amdsmi._state", "amdsmi._models")
@@ -25,7 +28,7 @@ def _purge_fake() -> None:
 
 
 @pytest.fixture
-def load_fake_amdsmi(monkeypatch):
+def load_fake_amdsmi(monkeypatch: MonkeyPatch) -> Callable[..., types.ModuleType]:
     """Import a fresh fake ``amdsmi`` module configured via the given env vars."""
 
     _KNOWN_VARS = (
@@ -38,7 +41,7 @@ def load_fake_amdsmi(monkeypatch):
         "AIPERF_MOCK_AMDSMI_VRAM_USED_FRACTION",
     )
 
-    def _load(**env: object):
+    def _load(**env: object) -> types.ModuleType:
         for var in _KNOWN_VARS:
             monkeypatch.delenv(var, raising=False)
         env.setdefault("AIPERF_MOCK_AMDSMI", "1")
@@ -105,13 +108,18 @@ class TestModelSpecs:
     @pytest.mark.parametrize(
         ("model", "product_name"),
         [
-            ("mi300x", "AMD Instinct MI300X OAM"),
-            ("mi325x", "AMD Instinct MI325X OAM"),
-            ("mi355x", "AMD Instinct MI355X OAM"),
-            ("mi250x", "AMD Instinct MI250X"),
+            param("mi300x", "AMD Instinct MI300X OAM", id="mi300x"),
+            param("mi325x", "AMD Instinct MI325X OAM", id="mi325x"),
+            param("mi355x", "AMD Instinct MI355X OAM", id="mi355x"),
+            param("mi250x", "AMD Instinct MI250X", id="mi250x"),
         ],
-    )
-    def test_product_name_per_model(self, load_fake_amdsmi, model, product_name):
+    )  # fmt: skip
+    def test_product_name_per_model(
+        self,
+        load_fake_amdsmi: Callable[..., types.ModuleType],
+        model: str,
+        product_name: str,
+    ) -> None:
         amdsmi = load_fake_amdsmi(AIPERF_MOCK_AMDSMI_MODEL=model)
         amdsmi.amdsmi_init()
         handle = amdsmi.amdsmi_get_processor_handles()[0]
@@ -127,7 +135,9 @@ class TestModelSpecs:
 
 class TestReadingQuirks:
     @pytest.fixture
-    def amdsmi(self, load_fake_amdsmi):
+    def amdsmi(
+        self, load_fake_amdsmi: Callable[..., types.ModuleType]
+    ) -> types.ModuleType:
         mod = load_fake_amdsmi(AIPERF_MOCK_AMDSMI_MODEL="mi300x")
         mod.amdsmi_init()
         return mod
@@ -204,7 +214,7 @@ class TestCollectorConsumesFake:
 
         records = []
 
-        async def record_cb(recs, _collector_id):
+        async def record_cb(recs: list, _collector_id: str) -> None:
             records.extend(recs)
 
         with patch.object(amdsmi_collector, "amdsmi", fake):
