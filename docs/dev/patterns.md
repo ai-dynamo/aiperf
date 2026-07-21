@@ -464,7 +464,7 @@ class TotalGpuEnergyMetric(BaseDerivedMetric[float]):
     Invariant: externally injected by
     `GPUTelemetryAccumulator.compute_efficiency_metrics` from
     energy_consumption counter deltas. `_derive_value` is intentionally
-    non-functional; `MetricResultsProcessor.update_derived_metrics` is
+    non-functional; `MetricsAccumulator._resolve_derived_metrics` is
     expected to catch NoMetricValue and skip the tag during its
     derivation walk.
     """
@@ -486,7 +486,7 @@ def _derive_value(self, metric_results: MetricResultsDict) -> NoReturn:
         "is externally injected by "
         "GPUTelemetryAccumulator.compute_efficiency_metrics. If this exception "
         "surfaces, the derivation walk is missing its NoMetricValue handler "
-        "(see MetricResultsProcessor.update_derived_metrics)."
+        "(see MetricsAccumulator._resolve_derived_metrics)."
     )
 ```
 
@@ -500,7 +500,7 @@ is enforced. The recommended shape is:
 - *Injection site*: which method is the source of truth
   (`GPUTelemetryAccumulator.compute_efficiency_metrics`).
 - *Catching path*: where the exception is expected to be absorbed
-  (`MetricResultsProcessor.update_derived_metrics`). If this fires in
+  (`MetricsAccumulator._resolve_derived_metrics`). If this fires in
   production, the catching path has a bug.
 
 ### Why not just skip the class entirely?
@@ -517,9 +517,9 @@ external injection.
 `GPUTelemetryAccumulator.compute_efficiency_metrics`, which constructs
 `MetricResult` objects directly with the relevant tags and appends them
 to the records list before `ProcessRecordsResult` is built. The standard
-`update_derived_metrics` walk sees these tags too, raises `NoMetricValue`
-via `_derive_value`, catches it, and skips — so the externally-injected
-values are not overwritten.
+`MetricsAccumulator._resolve_derived_metrics` walk sees these tags too,
+raises `NoMetricValue` via `_derive_value`, catches it, and skips — so the
+externally-injected values are not overwritten.
 
 ### Test contract
 

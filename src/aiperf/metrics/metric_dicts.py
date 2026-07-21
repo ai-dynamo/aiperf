@@ -13,11 +13,8 @@ from aiperf.common.enums import (
     MetricType,
     MetricUnitT,
     MetricValueTypeT,
-    MetricValueTypeVarT,
 )
-from aiperf.common.environment import Environment
 from aiperf.common.exceptions import MetricTypeError, MetricUnitError, NoMetricValue
-from aiperf.common.growable_array import GrowableArray
 from aiperf.common.models.record_models import MetricResult, MetricValue
 from aiperf.common.types import MetricTagT
 
@@ -29,7 +26,6 @@ if TYPE_CHECKING:
 __all__ = [
     "BaseMetricDict",
     "MetricAggregator",
-    "MetricArray",
     "MetricDictValueTypeVarT",
     "MetricRecordDict",
     "MetricResultsDict",
@@ -251,76 +247,3 @@ class MetricResultsDict(BaseMetricDict[MetricDictValueTypeT]):
                 f"Cannot convert a record metric to a different unit: {metric.tag}"
             )
         return super().get_converted_or_raise(metric, other_unit)
-
-
-class MetricArray(Generic[MetricValueTypeVarT]):
-    """NumPy backed array for metric data.
-
-    This is used to store the values of a metric over time.
-    Uses GrowableArray internally for efficient storage with automatic growth.
-    """
-
-    def __init__(
-        self, initial_capacity: int = Environment.METRICS.ARRAY_INITIAL_CAPACITY
-    ):
-        """Initialize the array with the given initial capacity."""
-        self._array = GrowableArray(
-            initial_capacity=initial_capacity,
-            dtype=np.float64,
-            track_sum=True,
-        )
-
-    def extend(self, values: list[MetricValueTypeVarT]) -> None:
-        """Extend the array with a list of values."""
-        self._array.extend(np.asarray(values, dtype=np.float64))
-
-    def append(self, value: MetricValueTypeVarT) -> None:
-        """Append a value to the array."""
-        self._array.append(value)
-
-    @property
-    def sum(self) -> MetricValueTypeVarT:
-        """Get the sum of the array."""
-        return self._array.sum  # type: ignore
-
-    @property
-    def data(self) -> np.ndarray:
-        """Return view of actual data."""
-        return self._array.data
-
-    @property
-    def capacity(self) -> int:
-        """Return current capacity."""
-        return self._array.capacity
-
-    def __len__(self) -> int:
-        """Return number of elements."""
-        return len(self._array)
-
-    def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult:
-        """Compute metric stats with zero-copy"""
-
-        arr = self.data
-        p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.percentile(
-            arr, [1, 5, 10, 25, 50, 75, 90, 95, 99]
-        )
-        return MetricResult(
-            tag=tag,
-            header=header,
-            unit=unit,
-            min=np.min(arr),
-            max=np.max(arr),
-            avg=float(np.mean(arr)),
-            sum=float(self.sum),
-            std=float(np.std(arr)),
-            p1=p1,
-            p5=p5,
-            p10=p10,
-            p25=p25,
-            p50=p50,
-            p75=p75,
-            p90=p90,
-            p95=p95,
-            p99=p99,
-            count=len(self._array),
-        )

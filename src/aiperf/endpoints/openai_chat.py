@@ -8,6 +8,7 @@ from typing import Any
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     BaseResponseData,
+    Image,
     InferenceServerResponse,
     ParsedResponse,
     ReasoningResponseData,
@@ -25,9 +26,8 @@ class ChatEndpoint(BaseEndpoint):
 
     Supports multi-modal inputs (text, images, audio, video) and both
     streaming and non-streaming responses. Message-array construction
-    uses the generic ``BaseEndpoint.build_messages`` flow - the default
-    ``_render_*_part`` hooks already emit OpenAI chat shape, so nothing
-    needs overriding here.
+    uses the generic ``BaseEndpoint.build_messages`` flow. Image UUIDs
+    use a narrow image-rendering hook without changing audio or video.
     """
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
@@ -125,6 +125,24 @@ class ChatEndpoint(BaseEndpoint):
         else:
             first["content"] = f"{system_message}\n{content}"
         return [first, *rendered[1:]]
+
+    def _extend_image_parts(
+        self, parts: list[dict[str, Any]], images: list[Image]
+    ) -> None:
+        """Append image parts, always passing through authored cache UUIDs."""
+        for image in images:
+            uuids = getattr(image, "uuids", None)
+            if not uuids:
+                self._extend_parts(parts, [image], self._render_image_part)
+                continue
+            for content, uuid in zip(image.contents, uuids, strict=True):
+                parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": content},
+                        "uuid": uuid,
+                    }
+                )
 
     @staticmethod
     def _ensure_include_usage(payload: dict[str, Any]) -> None:

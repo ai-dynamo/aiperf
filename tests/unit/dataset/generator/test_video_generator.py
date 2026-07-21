@@ -231,7 +231,11 @@ class TestVideoGenerator:
     def test_create_video_with_pipes_format_handling(
         self, video_format, codec, expected_movflags
     ):
-        """Test that MP4 uses temp file output and WebM uses pipe output."""
+        """Both formats write to a seekable temp file; only MP4 sets movflags.
+
+        WebM must also use a seekable file (not ``pipe:``) so the Matroska muxer
+        records the container duration; a pipe leaves that metadata empty.
+        """
         config = VideoConfig(
             width=64,
             height=64,
@@ -245,8 +249,6 @@ class TestVideoGenerator:
         frames = [Image.new("RGB", (64, 64), (255, 0, 0))]
 
         file_data = b"file_video_data"
-        pipe_data = b"pipe_video_data"
-        expected_data = file_data if video_format == VideoFormat.MP4 else pipe_data
         temp_dir = "/tmp/aiperf_pipes_test"
 
         with (
@@ -261,19 +263,16 @@ class TestVideoGenerator:
             mock_ffmpeg.input.return_value = mock_input
             mock_input.output.return_value = mock_output
             mock_output.overwrite_output.return_value = mock_output
-            mock_output.run.return_value = (pipe_data, b"")
+            mock_output.run.return_value = (b"", b"")
 
             result = generator._create_video_with_pipes(frames)
 
-            # Verify output destination
+            # Verify output destination is a temp file for both formats.
+            # Match production's ``str(Path(temp_dir) / "output.<ext>")`` —
+            # on Windows ``WindowsPath`` normalizes ``/`` to ``\\`` for the
+            # entire path, not just the joined separator.
             output_call = mock_input.output.call_args
-            if video_format == VideoFormat.MP4:
-                # Match production's ``str(Path(temp_dir) / "output.mp4")`` —
-                # on Windows ``WindowsPath`` normalizes ``/`` to ``\\`` for
-                # the entire path, not just the joined separator.
-                assert output_call[0][0] == str(Path(temp_dir) / "output.mp4")
-            else:
-                assert output_call[0][0] == "pipe:"
+            assert output_call[0][0] == str(Path(temp_dir) / f"output.{video_format}")
 
             # Verify movflags
             if expected_movflags:
@@ -281,8 +280,8 @@ class TestVideoGenerator:
             else:
                 assert "movflags" not in output_call[1]
 
-            # Verify result contains data from correct source
-            expected_base64 = base64.b64encode(expected_data).decode()
+            # Verify result contains data read back from the temp file
+            expected_base64 = base64.b64encode(file_data).decode()
             assert result.startswith(f"data:video/{video_format};base64,")
             assert expected_base64 in result
 
@@ -437,7 +436,13 @@ class TestVideoGeneratorAudio:
         generator = VideoGenerator(base_config)
         frames = [Image.new("RGB", (64, 64), (255, 0, 0))]
 
-        with patch("aiperf.dataset.generator.video.ffmpeg") as mock_ffmpeg:
+        with (
+            patch("aiperf.dataset.generator.video.ffmpeg") as mock_ffmpeg,
+            patch("tempfile.mkdtemp", return_value="/tmp/aiperf_pipes_test"),
+            patch.object(Path, "read_bytes", return_value=b"video_data"),
+            patch.object(Path, "exists", return_value=True),
+            patch("shutil.rmtree"),
+        ):
             mock_input = Mock()
             mock_output = Mock()
             mock_ffmpeg.input.return_value = mock_input
@@ -460,6 +465,7 @@ class TestVideoGeneratorAudio:
             patch("aiperf.dataset.generator.video.ffmpeg") as mock_ffmpeg,
             patch("tempfile.mkdtemp", return_value="/tmp/aiperf_pipes_test"),
             patch.object(Path, "write_bytes"),
+            patch.object(Path, "read_bytes", return_value=b"video_data"),
             patch.object(Path, "exists", return_value=True),
             patch("shutil.rmtree"),
         ):
@@ -498,6 +504,7 @@ class TestVideoGeneratorAudio:
             patch("aiperf.dataset.generator.video.ffmpeg") as mock_ffmpeg,
             patch("tempfile.mkdtemp", return_value=temp_dir),
             patch.object(Path, "write_bytes"),
+            patch.object(Path, "read_bytes", return_value=b"video_data"),
             patch.object(Path, "exists", return_value=True),
             patch("shutil.rmtree") as mock_rmtree,
         ):

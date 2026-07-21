@@ -70,7 +70,8 @@ system message).
 
 | Benchmark | Default grader | Default n-shots | Source |
 |---|---|---|---|
-| `mmlu` | `multiple_choice` | 5 | `lighteval/mmlu` (57 subjects) |
+| `mmlu` | `multiple_choice` | 5 | `lighteval/mmlu` (57 subjects; non-CoT parity, `--accuracy-enable-cot` for reasoning models) |
+| `mmlu_pro` | `mmlu_pro` | 5 | `TIGER-Lab/MMLU-Pro` (14 categories, up to 10 options A-J, CoT-native) |
 | `aime` | `math` | 8 | `Maxwell-Jia/AIME_2024` (trt-llm reference, 8-shot CoT) |
 | `hellaswag` | `exact_match` | 10 | `Rowan/hellaswag` (trt-llm/DeepEval reference; one few-shot per unique activity_label) |
 | `bigbench` | `exact_match` | 3 | `lukaemon/bbh` (trt-llm/DeepEval reference; 27 subtasks, canonical CoT/non-CoT prompt files) |
@@ -128,6 +129,104 @@ uv pip install 'datasets>=3.0,<4'
 The error message names which condition fired (it includes the installed
 `datasets` version when ≥ 4) so operators get an actionable next step
 without reading the source.
+
+## MMLU chain-of-thought and reasoning models
+
+The `mmlu` benchmark has two prompting modes, selected by
+`--accuracy-enable-cot`:
+
+- **Non-CoT (default) — lighteval parity.** The prompt ends in a bare
+  `Answer:` trailer and the generation budget is `generation_size=5`
+  (mapped to the turn's `max_tokens`), with the `["\n"]` stop sequence.
+  This is byte-identical to lighteval's reference MMLU path: the server is
+  expected to emit a single answer letter immediately. Use this for
+  non-reasoning instruct models where you want reference-comparable scores.
+
+- **CoT — `--accuracy-enable-cot`.** The instruction is extended with
+  `Think step by step and then output the answer in the format of "The
+  answer is (X)" at the end.`, the query gets a `Let's think step by step.`
+  primer, and the generation budget is raised to the full
+  `generation_size=4000` so the model has room for a reasoning trace before
+  the final `The answer is (X)` line. The `multiple_choice` grader parses
+  the trailing letter.
+
+  ```bash
+  aiperf profile my-model --url http://localhost:8000 \
+    --endpoint-type chat \
+    --accuracy-benchmark mmlu \
+    --accuracy-enable-cot \
+    --num-requests 15000 \
+    --concurrency 10 \
+    --extra-inputs '{"temperature": 0}'
+  ```
+
+For reasoning models whose traces are long enough to exhaust the 4000-token
+budget before reaching the answer line, raise the budget with
+`--extra-inputs '{"max_completion_tokens": 16000}'`. The `--extra-inputs`
+value overrides the benchmark's `generation_size` (which is what the
+benchmark maps into the turn `max_tokens`), so the model can finish its
+reasoning:
+
+```bash
+aiperf profile my-model --url http://localhost:8000 \
+  --endpoint-type chat \
+  --accuracy-benchmark mmlu \
+  --accuracy-enable-cot \
+  --num-requests 15000 \
+  --concurrency 10 \
+  --extra-inputs '{"temperature": 0, "max_completion_tokens": 16000}'
+```
+
+### Troubleshooting: 0% / all-unparsed against a reasoning model
+
+An MMLU run that scores near 0% with (almost) every response flagged
+`unparsed` against a **reasoning** model is expected in **non-CoT** mode.
+The non-CoT prompt asks for a single answer letter under a 5-token budget,
+but a reasoning model emits chain-of-thought that never reaches (or is
+truncated before) a parseable letter, so extraction falls through every
+tier. This is not a grader bug. Fix it by giving the model room to reason:
+
+- add `--accuracy-enable-cot` (MMLU's CoT mode, full 4000-token budget), or
+- switch to the CoT-native `mmlu_pro` benchmark (below).
+
+## MMLU-Pro
+
+The `mmlu_pro` benchmark ports TIGER-AI-Lab's MMLU-Pro
+(`evaluate_from_api.py`) at parity:
+
+- **Dataset:** `TIGER-Lab/MMLU-Pro`. Test split provides the graded
+  questions; the validation split provides the per-category CoT few-shots.
+- **Categories (14):** `biology`, `business`, `chemistry`,
+  `computer science`, `economics`, `engineering`, `health`, `history`,
+  `law`, `math`, `philosophy`, `physics`, `psychology`, `other`. Restrict
+  with `--accuracy-tasks` (e.g. `--accuracy-tasks math,physics`); omit for
+  all 14.
+- **Options:** up to 10 per question, labeled `A`-`J` (`N/A` placeholder
+  options are filtered out before lettering).
+- **Defaults:** `default_n_shots: 5`, `default_enable_cot: true`,
+  `default_grader: mmlu_pro`. MMLU-Pro is **CoT-native** — the per-category
+  instruction always requests the `"The answer is (X)"` format and the
+  generation budget is `generation_size=4000`.
+- **Grader (`mmlu_pro`):** extracts the final `A`-`J` letter via the
+  upstream 3-tier cascade — `answer is (X)` -> `Answer: X` -> the last lone
+  in-range letter. A response parsed by a fallback tier (or not at all) is
+  flagged `unparsed`. No optional dependencies are required.
+
+Because MMLU-Pro defaults to CoT, it works with reasoning models out of the
+box; as with MMLU CoT, raise the budget via
+`--extra-inputs '{"max_completion_tokens": 16000}'` if long reasoning
+traces get truncated before the answer line.
+
+A **non-CoT** variant is available via `--accuracy-no-enable-cot`, which
+switches the few-shots and the query to a bare `Answer:` trailer. This is an
+AIPerf extension for quick low-latency runs and is **not** part of upstream
+MMLU-Pro parity — use the default CoT mode for reference-comparable scores.
+
+```bash
+aiperf profile --model <model> --url <url>/v1 --endpoint-type chat --streaming \
+  --tokenizer <model> --accuracy-benchmark mmlu_pro --num-requests 200 --concurrency 10 \
+  --extra-inputs '{"temperature": 0}'
+```
 
 ## CLI Flags
 
@@ -206,10 +305,15 @@ aiperf profile my-model --url http://localhost:8000 \
 
 | Grader | Selection rule | Coverage |
 |---|---|---|
-| `multiple_choice` | A/B/C/D match against gold letter (lighteval `ExactMatches`). | MMLU |
+| `multiple_choice` | A/B/C/D match against gold letter (lighteval `ExactMatches`). Under `--accuracy-enable-cot` the model emits a reasoning trace ending in `The answer is (X)`. | MMLU |
+| `mmlu_pro` | Extract the final `A`-`J` letter via the upstream 3-tier cascade: `answer is (X)` → `Answer: X` → last lone in-range letter. Fallback-tier or no-match responses are flagged `unparsed`. No optional dependencies. | MMLU-Pro |
 | `math` | Extract last `\boxed{...}`, fall back to "answer is X" / last number. Apply trt-llm `strip_string` normalization, then compare via `math_equal` (lowercase string → numeric `isclose` → symbolic equivalence via sympy + latex2sympy2-extended). | AIME |
-| `exact_match` | Stub. | (unused) |
-| `code_execution` | Stub. | (unused) |
+| `exact_match` | Strict `pred.strip() == gold.strip()` — case-sensitive, no normalization (mirrors DeepEval `Scorer.exact_match_score`). Empty/whitespace-only response scores 0 and is flagged `unparsed`. | HellaSwag, BigBench-Hard |
+| `code_execution` | pass@1 by executing the model's generated code against the benchmark's bundled public + private test cases via lighteval's `codegen_metrics` (sandboxed `ProcessPoolExecutor`, 6s per-test timeout). Extracts the code block with lighteval's `extract_code`; `correct` when pass@1 == 1.0, `unparsed` when no code block was extractable. Requires the `[accuracy]` extra (lighteval). | LiveCodeBench (`lcb_codegeneration`) |
+| `lighteval_expr` | Sympy-backed expression extraction and symbolic equivalence (lighteval `expr_gold_metric`): pulls the model's final expression and compares it to gold via lighteval's math parser. Requires the `[accuracy]` extra (lighteval). | AIME24, AIME25 |
+| `lighteval_latex` | Same as `lighteval_expr` but the gold/prediction extractor uses lighteval's `LatexExtractionConfig` for `\boxed{...}` LaTeX answers (lighteval `latex_gold_metric`). Requires the `[accuracy]` extra. | MATH-500 |
+| `lighteval_gpqa` | Multiple-choice `A`-`D` index extraction via lighteval's `gpqa_metric` (`NativeLetters`), using the simple-evals template the GPQA-Diamond loader mirrors for parity. Requires the `[accuracy]` extra. | GPQA-Diamond |
+| `lighteval_gsm8k` | Extract the number after `####` from gold and the last number from the prediction (preferring a `####` marker when present); numeric comparison so `24` and `24.0` match (lighteval `quasi_exact_match_gsm8k`). Pure-regex — no lighteval install required. | GSM8K |
 
 The `math` grader pipeline (aligned with `trt-llm-benchmark-recipe/src/accuracy/aime/`):
 
@@ -232,29 +336,112 @@ When extraction fell back past the `\boxed{}` step (i.e. the model didn't follow
 
 ## Output
 
-Accuracy results are displayed in the console and exported to CSV:
+Accuracy flows on a dedicated `accuracy` record-type channel (alongside the
+`metric_records`, `gpu_telemetry`, and `server_metrics` channels — see
+[Record-Type Channels](../architecture.md#record-type-channels)). Each graded
+response is routed to two sinks: an accumulator that produces the per-task
+summary, and a per-record JSONL writer.
+
+Accuracy results are displayed in the console and exported to CSV. The console
+table and the CSV both carry a per-task `Unparsed` count (responses where the
+grader needed a regex fallback because the model output did not match the
+expected format):
 
 ```text
-                  Accuracy Benchmark Results
-┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━┓
-┃ Task                    ┃ Correct ┃ Total ┃ Accuracy ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━┩
-│ abstract_algebra        │      35 │   100 │   35.00% │
-│ ...                     │     ... │   ... │      ... │
-│ OVERALL                 │    8368 │ 14042 │   59.59% │
-└─────────────────────────┴─────────┴───────┴──────────┘
+                        Accuracy Benchmark Results
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Task                    ┃ Correct ┃ Total ┃ Unparsed ┃ Accuracy ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
+│ abstract_algebra        │      35 │   100 │        2 │   35.00% │
+│ ...                     │     ... │   ... │      ... │      ... │
+│ OVERALL                 │    8368 │ 14042 │       61 │   59.59% │
+└─────────────────────────┴─────────┴───────┴──────────┴──────────┘
 ```
 
-CSV file: `<artifact_dir>/accuracy_results.csv`
+**Summary CSV:** `<artifact_dir>/accuracy_results.csv` — one row per task plus a
+trailing `OVERALL` row. Columns: `task, total, passed, unparsed, accuracy_rate,
+unparsed_rate`.
+
+### Per-record accuracy JSONL
+
+**Path:** `<artifact_dir>/accuracy_export.jsonl` by default, or
+`<prefix>_accuracy.jsonl` when an artifact prefix is configured (see
+`AIPerfConfig.artifacts.accuracy_export_jsonl_file`). One JSON object per line,
+one line per graded response — the full grading detail that the summary CSV and
+console table roll up. Produced independently by the `AccuracyJSONLWriter`; it
+is not affected by the summary/metric bridge that feeds the CSV and console.
+
+Each line is a serialized `AccuracyRecordsData`
+(`src/aiperf/accuracy/models.py`) with these fields, in order:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `session_num` | int | Conversation/session index this response came from |
+| `conversation_id` | str \| null | Stable id of the benchmark problem/conversation; the key to look up the full prompt in `inputs.json` |
+| `x_request_id` | str \| null | Unique per-request `X-Request-ID` for tracing this exact graded response back to the raw records |
+| `worker_id` | str | Record processor that produced this record |
+| `benchmark_phase` | str | Benchmark phase active when grading completed (`warmup` or `profiling`) |
+| `timestamp_ns` | int | Nanosecond wall-clock timestamp when grading completed |
+| `task` | str \| null | Accuracy task/subtask name (e.g. an MMLU subject); `null` when the dataset has no task label |
+| `grader_name` | str | Which grader scored this response (e.g. `multiple_choice`) |
+| `passed` | bool | Whether the response was graded correct |
+| `unparsed` | bool | Whether the model output needed a regex fallback |
+| `confidence` | float | Grading confidence (0.0–1.0) |
+| `expected` | str | Ground-truth answer |
+| `actual` | str | Answer extracted from the model response |
+| `explanation` | str | The **grader's** explanation of why it scored the response correct/incorrect |
+| `model_output` | str | The full answer content the model returned (the answer channel) |
+| `model_thinking` | str \| null | The **model's** own reasoning (`reasoning_content`) when it emitted a separate reasoning channel; `null` otherwise |
+
+Three of these fields carry distinct text and are easy to conflate:
+
+- `explanation` — the **grader's** reasoning about the *score* (why it marked the
+  response right or wrong).
+- `model_output` — the model's *answer* content (the answer channel).
+- `model_thinking` — the model's own chain-of-thought / `reasoning_content`
+  channel, `null` when the model emitted no separate reasoning channel.
+
+The full prompt is **not** embedded in each record: it lives in `inputs.json`
+keyed by `session_id`, which equals this record's `conversation_id`. Join on
+that id to recover the prompt — this avoids duplicating multi-KB prompts on
+every graded response.
+
+Example line (pretty-printed here; the file emits one compact object per line):
+
+```json
+{
+  "session_num": 0,
+  "conversation_id": "session_000000",
+  "x_request_id": "de56948f-8736-43e5-b636-303ebee20b20",
+  "worker_id": "worker_1c12efdd",
+  "benchmark_phase": "profiling",
+  "timestamp_ns": 1784176216352916652,
+  "task": "abstract_algebra",
+  "grader_name": "multiple_choice",
+  "passed": false,
+  "unparsed": false,
+  "confidence": 0.0,
+  "expected": "B",
+  "actual": "D",
+  "explanation": "first-line-of-response extracted to 'D'; ground_truth stripped to 'B'; match=False",
+  "model_output": "The answer is (D)",
+  "model_thinking": "I'll reason about each option in turn. Eliminating the implausible cases narrows it down. Therefore, The answer is (D)"
+}
+```
+
+Use it for per-response post-hoc analysis — e.g. inspecting exactly what a
+reasoning model thought before an `unparsed` answer.
 
 ## Architecture
 
-```text
-AccuracyDatasetLoader          → Conversation/Turn objects (dataset pipeline)
-AccuracyRecordProcessor        → grades each response (record pipeline)
-AccuracyResultsProcessor       → aggregates per-task accuracy (results pipeline)
-AccuracyConsoleExporter         → Rich table output
-AccuracyDataExporter            → CSV export
+```mermaid
+flowchart LR
+    DL[AccuracyDatasetLoader] -->|Conversation/Turn objects| RP[AccuracyRecordProcessor<br/>grades each response]
+    RP -->|AccuracyRecordsData<br/>in RecordsMessage| RM[RecordsManager<br/>metadata-driven routing]
+    RM --> ACC[AccuracyAccumulator<br/>per-task AccuracySummary]
+    RM --> JW[AccuracyJSONLWriter<br/>accuracy_export.jsonl]
+    ACC --> CE[AccuracyConsoleExporter<br/>Rich table]
+    ACC --> DE[AccuracyDataExporter<br/>accuracy_results.csv]
 ```
 
 All components self-disable when `--accuracy-benchmark` is not set.
