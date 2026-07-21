@@ -37,7 +37,20 @@ where shared admission alone is insufficient.
   (`rust/runtime/src/engine/sharded_scheduled.rs`) slice concurrency, rate,
   and request budget `1/W` up front per worker thread, retained as an
   explicit throughput-oriented opt-in where byte-exact parity does not
-  matter.
+  matter. "Today's" is load-bearing, not just a figure of speech: `21c2e870d`
+  (2026-07-16) unified two coexisting `workers>1` mechanisms — this static
+  `sharded_scheduled` partition and a separate per-request hop executor
+  (`turn_execution::ThreadPerCoreExecutor`) that had been the general
+  fallback for trace-driven/fixed_schedule/user_centric runs — by deleting
+  the hop executor and extending `Sharded` to cover everything it used to
+  serve. For a few days, `Sharded` was the *only* `workers>1` execution
+  model in the tree. `Global` and `GlobalHop` were then built on top of it
+  starting `467eedbca` (2026-07-19), with `GlobalHop` literally reconstructing
+  the just-deleted hop executor's shape as one selectable mode instead of the
+  sole path (see the `GlobalHop` entry below). So `Sharded` isn't a legacy
+  survivor kept around from before global-style coordination existed — it's
+  the floor both other modes were layered onto immediately after the
+  unification collapsed onto it.
 - `Global` (default for `workers>1`) keeps each worker thread's own
   transport, capture, and measurement, but draws concurrency and
   request-rate admission from a shared `GlobalAdmission` gate
