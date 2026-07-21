@@ -121,17 +121,25 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
                 or "X-Correlation-ID"
             )
             headers[correlation_header] = request_info.x_correlation_id
-            if Environment.HTTP.X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID:
-                headers["X-Dynamo-Session-ID"] = request_info.x_correlation_id
-                if request_info.parent_correlation_id:
-                    headers["X-Dynamo-Parent-Session-ID"] = (
-                        request_info.parent_correlation_id
-                    )
 
         headers.update(request_info.endpoint_headers)
         if request_info.turns and request_info.turns[-1].extra_headers:
             headers.update(request_info.turns[-1].extra_headers)
         headers.update(self.get_transport_headers(request_info))
+
+        # Apply derived Dynamo session headers last so they are authoritative
+        # and cannot be overwritten by endpoint, extra, or transport headers.
+        if (
+            request_info.x_correlation_id
+            and Environment.HTTP.X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID
+        ):
+            headers["X-Dynamo-Session-ID"] = request_info.x_correlation_id
+            if request_info.parent_correlation_id:
+                headers["X-Dynamo-Parent-Session-ID"] = (
+                    request_info.parent_correlation_id
+                )
+            else:
+                headers.pop("X-Dynamo-Parent-Session-ID", None)
 
         return headers
 

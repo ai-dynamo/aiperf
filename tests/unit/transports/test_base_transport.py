@@ -155,8 +155,11 @@ class TestBaseTransport:
         assert headers["User-Agent"] == AIPERF_USER_AGENT
 
     def test_build_headers_dynamo_session_header_root_has_no_parent(
-        self, transport, request_info, monkeypatch
-    ):
+        self,
+        transport: FakeTransport,
+        request_info: RequestInfo,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Root session emits X-Dynamo-Session-ID but no parent header."""
         monkeypatch.setattr(
             Environment.HTTP, "X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID", True
@@ -168,8 +171,11 @@ class TestBaseTransport:
         assert "X-Dynamo-Parent-Session-ID" not in headers
 
     def test_build_headers_dynamo_session_header_child_adds_parent(
-        self, transport, request_info, monkeypatch
-    ):
+        self,
+        transport: FakeTransport,
+        request_info: RequestInfo,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Subagent child also emits X-Dynamo-Parent-Session-ID."""
         monkeypatch.setattr(
             Environment.HTTP, "X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID", True
@@ -180,6 +186,35 @@ class TestBaseTransport:
 
         assert headers["X-Dynamo-Session-ID"] == "test-correlation-id"
         assert headers["X-Dynamo-Parent-Session-ID"] == "parent-correlation-id"
+
+    def test_build_headers_dynamo_session_header_disabled_by_default(
+        self,
+        transport: FakeTransport,
+        request_info: RequestInfo,
+    ) -> None:
+        """With the flag off, neither Dynamo header is emitted, even with a parent."""
+        request_info.parent_correlation_id = "parent-correlation-id"
+
+        headers = transport.build_headers(request_info)
+
+        assert "X-Dynamo-Session-ID" not in headers
+        assert "X-Dynamo-Parent-Session-ID" not in headers
+
+    def test_build_headers_dynamo_session_header_not_overwritten_by_extra_headers(
+        self,
+        transport: FakeTransport,
+        request_info: RequestInfo,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Derived Dynamo headers win over endpoint/extra headers when enabled."""
+        monkeypatch.setattr(
+            Environment.HTTP, "X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID", True
+        )
+        request_info.endpoint_headers = {"X-Dynamo-Session-ID": "override"}
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Dynamo-Session-ID"] == "test-correlation-id"
 
     def test_build_headers_transport_headers_override(self, request_info):
         """Test that transport headers can override endpoint headers."""
