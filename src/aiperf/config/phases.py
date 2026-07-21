@@ -79,7 +79,8 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         Field(
             pattern=r"^[A-Za-z_][A-Za-z0-9_-]*$",
             description="Unique workflow label for this phase, such as "
-            "'low', 'storm', or 'recover'. This is distinct from phase kind: "
+            "'baseline_traffic', 'cancellation_stress', or "
+            "'recovery_traffic'. This is distinct from phase kind: "
             "multiple phases may share kind='profiling' while each keeps a "
             "different name. Used in logs, status, sweep targeting, artifact "
             "paths, and result file naming. Must be a strict identifier: "

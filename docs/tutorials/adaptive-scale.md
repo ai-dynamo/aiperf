@@ -189,7 +189,7 @@ A workflow can include more than one adaptive profiling phase. Give each phase a
 ```yaml
 benchmark:
   phases:
-    - name: baseline_search
+    - name: baseline_traffic_search
       kind: profiling
       type: concurrency
       concurrency: 64
@@ -202,7 +202,7 @@ benchmark:
       sla:
         request_latency: {p95: {le: 300}}
 
-    - name: storm_search
+    - name: cancellation_stress_search
       kind: profiling
       type: concurrency
       concurrency: 128

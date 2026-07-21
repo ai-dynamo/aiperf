@@ -1042,7 +1042,7 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                       "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
@@ -1354,7 +1354,7 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                       "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
@@ -1741,7 +1741,7 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                       "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
@@ -2142,7 +2142,7 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                       "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
@@ -2529,7 +2529,7 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                       "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
@@ -2896,7 +2896,7 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                       "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
@@ -3931,7 +3931,7 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                   "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
@@ -4243,7 +4243,7 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                   "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
@@ -4630,7 +4630,7 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                   "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
@@ -5031,7 +5031,7 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                   "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
@@ -5418,7 +5418,7 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                   "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
@@ -5785,7 +5785,7 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                   "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
@@ -6154,7 +6154,7 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                   "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
@@ -6466,7 +6466,7 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                   "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
@@ -6853,7 +6853,7 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                   "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
@@ -7254,7 +7254,7 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                   "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
@@ -7641,7 +7641,7 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                   "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
@@ -8008,7 +8008,7 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
                   "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
@@ -8609,7 +8609,7 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
@@ -9150,7 +9150,7 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
@@ -10845,7 +10845,7 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
@@ -11450,7 +11450,7 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
@@ -13849,7 +13849,7 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
@@ -17022,7 +17022,7 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"

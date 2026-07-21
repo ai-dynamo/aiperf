@@ -186,17 +186,17 @@ benchmark:
     - name: warmup
       type: concurrency
       duration: 5m
-    - name: low_cancel_1
+    - name: baseline_traffic
       kind: profiling
       type: concurrency
       duration: 30m
       cancellation: {rate: 5, delay: 0}
-    - name: storm_1
+    - name: cancellation_stress
       kind: profiling
       type: concurrency
       duration: 5m
       cancellation: {rate: 50, delay: 0}
-    - name: recovery_1
+    - name: recovery_traffic
       kind: profiling
       type: concurrency
       duration: 30m
@@ -398,7 +398,7 @@ benchmark:
 
 The `parameters:` keys are dot-paths into the `benchmark:` body. For phase lists, the second segment resolves in this order: numeric index, exact unique phase `name`, then legacy `phases.profiling.*` shorthand for the unique profiling-kind phase when no phase is named `profiling`:
 
-- `phases.storm_1.cancellation.rate` → the phase named `storm_1`, field `cancellation.rate`
+- `phases.cancellation_stress.cancellation.rate` → the phase named `cancellation_stress`, field `cancellation.rate`
 - `phases.1.concurrency` → the second phase, field `concurrency`
 - `phases.profiling.rate` → the phase named `profiling`, or the unique profiling-kind phase when unambiguous
 - `datasets.default.prompts.isl` → the dataset named `default` (the singular `dataset:` shorthand auto-names it `default`)

@@ -39,21 +39,21 @@ benchmark:
       concurrency: 8
       duration: 5m
 
-    - name: low_cancel_1
+    - name: baseline_traffic
       kind: profiling
       type: concurrency
       concurrency: 32
       duration: 30m
       cancellation: {rate: 5, delay: 0}
 
-    - name: storm_1
+    - name: cancellation_stress
       kind: profiling
       type: concurrency
       concurrency: 64
       duration: 5m
       cancellation: {rate: 50, delay: 0}
 
-    - name: recovery_1
+    - name: recovery_traffic
       kind: profiling
       type: concurrency
       concurrency: 32
@@ -107,9 +107,9 @@ Use custom names when the workflow has repeated semantic phases:
 
 ```yaml
 phases:
-  - {name: settle_before_storm, kind: warmup, type: concurrency, duration: 5m}
-  - {name: storm_1, kind: profiling, type: concurrency, duration: 5m}
-  - {name: settle_after_storm, kind: warmup, type: concurrency, duration: 5m}
+  - {name: settle_before_stress, kind: warmup, type: concurrency, duration: 5m}
+  - {name: cancellation_stress, kind: profiling, type: concurrency, duration: 5m}
+  - {name: settle_after_stress, kind: warmup, type: concurrency, duration: 5m}
   - {name: final_profile, kind: profiling, type: concurrency, duration: 10m}
 ```
 
@@ -132,10 +132,10 @@ Named phases add a manifest and phase-scoped files under `phases/<phase_name>/`:
 phase_manifest.json
 phases/warmup/profile_export_aiperf.json
 phases/warmup/profile_export_aiperf.csv
-phases/low_cancel_1/profile_export_aiperf.json
-phases/low_cancel_1/profile_export_aiperf.csv
-phases/low_cancel_1/server_metrics.json
-phases/low_cancel_1/gpu_telemetry.json
+phases/baseline_traffic/profile_export_aiperf.json
+phases/baseline_traffic/profile_export_aiperf.csv
+phases/baseline_traffic/server_metrics.json
+phases/baseline_traffic/gpu_telemetry.json
 ```
 
 `phase_manifest.json` is the discovery file. Each entry includes phase identity fields such as `phase_index`, `profiling_index`, `phase_name`, and `phase_kind`, plus artifact paths such as `metrics_json`, `metrics_csv`, `server_metrics_json`, and `gpu_telemetry_json` when those files were written.
@@ -146,7 +146,7 @@ Per-phase `server_metrics.json` and `gpu_telemetry.json` are best-effort observa
 
 Use the root `profile_export_aiperf.json` and CSV when you need the traditional benchmark output shape for existing tools. Warmup phases are excluded from those aggregate profiling results.
 
-Use `phase_manifest.json` and `phases/<phase_name>/profile_export_aiperf.json` when you need exact per-phase request metrics. This is the right view for comparing `low_cancel_1`, `storm_1`, and `recovery_1` independently.
+Use `phase_manifest.json` and `phases/<phase_name>/profile_export_aiperf.json` when you need exact per-phase request metrics. This is the right view for comparing `baseline_traffic`, `cancellation_stress`, and `recovery_traffic` independently.
 
 For server metrics, the root `server_metrics_export.json` preserves the legacy aggregate view. In workflows with repeated phase kinds, its phase ranges may span gaps between phases of the same kind. Use `phases/<phase_name>/server_metrics.json` for exact phase-scoped server telemetry.
 
@@ -162,8 +162,8 @@ Sweeps can target named phase fields through the phase name:
 sweep:
   type: grid
   parameters:
-    phases.low_cancel_1.concurrency: [16, 32]
-    phases.storm_1.cancellation.rate: [25, 50]
+    phases.baseline_traffic.concurrency: [16, 32]
+    phases.cancellation_stress.cancellation.rate: [25, 50]
 ```
 
 ## Seamless Transitions
@@ -172,12 +172,12 @@ By default, AIPerf waits for a phase's in-flight requests to finish before movin
 
 ```yaml
 phases:
-  - name: low_cancel_1
+  - name: baseline_traffic
     kind: profiling
     type: concurrency
     duration: 30m
 
-  - name: storm_1
+  - name: cancellation_stress
     kind: profiling
     type: concurrency
     duration: 5m
