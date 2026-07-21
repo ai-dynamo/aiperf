@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { FlowSmoke } from "./smoke/FlowSmoke.js";
+
 export function App(): React.JSX.Element {
-  return <h1 className="p-8 text-2xl font-bold">AIPerf Flow</h1>;
+  return <FlowSmoke />;
 }

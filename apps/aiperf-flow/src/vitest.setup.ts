@@ -4,3 +4,12 @@
  */
 
 import "@testing-library/jest-dom";
+
+// Polyfill ResizeObserver for React Flow testing
+if (!global.ResizeObserver) {
+  global.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
