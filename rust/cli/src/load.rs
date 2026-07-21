@@ -250,6 +250,13 @@ pub(crate) struct Inputs {
     /// Strip repeated image content once observed within a session
     /// (`--uuid-and-strip`), single_turn only.
     pub uuid_and_strip: bool,
+    /// `baseten_trace` replay-timing knobs.
+    pub replay_speedup: Option<f64>,
+    pub max_idle_gap_cap_seconds: Option<f64>,
+    pub open_loop_replay: bool,
+    pub open_loop_strict: bool,
+    pub omit_kv_hints: bool,
+    pub force_min_tokens: bool,
     /// Fixed-schedule replay (timestamp-driven); carries the auto-offset flag.
     pub fixed_schedule: Option<bool>,
     /// Fixed-schedule start/end offsets.
@@ -606,6 +613,12 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         hf_subset: flags.hf_subset.clone(),
         inter_turn_delay_cap_seconds: flags.inter_turn_delay_cap_seconds,
         uuid_and_strip: flags.uuid_and_strip,
+        replay_speedup: flags.replay_speedup,
+        max_idle_gap_cap_seconds: flags.max_idle_gap_cap_seconds,
+        open_loop_replay: flags.open_loop_replay && !flags.no_open_loop_replay,
+        open_loop_strict: flags.open_loop_strict,
+        omit_kv_hints: flags.omit_kv_hints,
+        force_min_tokens: flags.force_min_tokens && !flags.no_force_min_tokens,
         fixed_schedule,
         fixed_schedule_start_offset: flags.fixed_schedule_start_offset,
         fixed_schedule_end_offset: flags.fixed_schedule_end_offset,
@@ -791,6 +804,27 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 }
                 if inputs.uuid_and_strip {
                     o.insert("uuid_and_strip".to_string(), serde_json::json!(true));
+                }
+                if let Some(speedup) = inputs.replay_speedup {
+                    o.insert("replay_speedup".to_string(), serde_json::json!(speedup));
+                }
+                if let Some(cap) = inputs.max_idle_gap_cap_seconds {
+                    o.insert(
+                        "max_idle_gap_cap_seconds".to_string(),
+                        serde_json::json!(cap),
+                    );
+                }
+                if !inputs.open_loop_replay {
+                    o.insert("open_loop_replay".to_string(), serde_json::json!(false));
+                }
+                if inputs.open_loop_strict {
+                    o.insert("open_loop_strict".to_string(), serde_json::json!(true));
+                }
+                if inputs.omit_kv_hints {
+                    o.insert("omit_kv_hints".to_string(), serde_json::json!(true));
+                }
+                if !inputs.force_min_tokens {
+                    o.insert("force_min_tokens".to_string(), serde_json::json!(false));
                 }
                 o
             },

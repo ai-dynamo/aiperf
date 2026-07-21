@@ -20,6 +20,7 @@ use crate::dataset::segment::SegmentPool;
 use crate::dataset::tokenizer::TextTokenizer;
 
 pub mod asr;
+pub mod baseten;
 pub mod exgentic;
 pub mod public;
 pub mod random_pool;
@@ -29,6 +30,7 @@ pub mod synthetic;
 pub mod trace;
 
 pub use asr::{HfAsrComposer, HfAsrDatasetLoader};
+pub use baseten::{BasetenTraceComposer, BasetenTraceDatasetLoader};
 pub use exgentic::{ExgenticComposer, ExgenticDatasetLoader, ExgenticV2DatasetLoader};
 pub use public::{
     AccuracyComposer, AccuracyDatasetLoader, HfConversationComposer, HfConversationDatasetLoader,
@@ -422,6 +424,10 @@ impl LoaderRegistry {
             DatasetFormatRegistration::new(
                 Arc::new(MooncakeTraceDatasetLoader),
                 Arc::new(MooncakeTraceComposer),
+            ),
+            DatasetFormatRegistration::new(
+                Arc::new(BasetenTraceDatasetLoader),
+                Arc::new(BasetenTraceComposer),
             ),
             DatasetFormatRegistration::new(
                 Arc::new(RandomPoolDatasetLoader),

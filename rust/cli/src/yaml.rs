@@ -540,6 +540,19 @@ struct DatasetSection {
     /// (`--uuid-and-strip`), single_turn only.
     #[serde(default, alias = "uuidAndStrip")]
     uuid_and_strip: Option<bool>,
+    /// `baseten_trace` replay-timing knobs.
+    #[serde(default, alias = "replaySpeedup")]
+    replay_speedup: Option<f64>,
+    #[serde(default, alias = "maxIdleGapCapSeconds")]
+    max_idle_gap_cap_seconds: Option<f64>,
+    #[serde(default, alias = "openLoopReplay")]
+    open_loop_replay: Option<bool>,
+    #[serde(default, alias = "openLoopStrict")]
+    open_loop_strict: Option<bool>,
+    #[serde(default, alias = "omitKvHints")]
+    omit_kv_hints: Option<bool>,
+    #[serde(default, alias = "forceMinTokens")]
+    force_min_tokens: Option<bool>,
     /// Synthetic image generation (`synthetic.images`).
     images: Option<ImageSection>,
     /// Synthetic audio generation (`synthetic.audio`).
@@ -1027,6 +1040,24 @@ impl Benchmark {
             .as_ref()
             .and_then(|d| d.uuid_and_strip)
             .unwrap_or(false);
+        let replay_speedup = dataset.as_ref().and_then(|d| d.replay_speedup);
+        let max_idle_gap_cap_seconds = dataset.as_ref().and_then(|d| d.max_idle_gap_cap_seconds);
+        let open_loop_replay = dataset
+            .as_ref()
+            .and_then(|d| d.open_loop_replay)
+            .unwrap_or(true);
+        let open_loop_strict = dataset
+            .as_ref()
+            .and_then(|d| d.open_loop_strict)
+            .unwrap_or(false);
+        let omit_kv_hints = dataset
+            .as_ref()
+            .and_then(|d| d.omit_kv_hints)
+            .unwrap_or(false);
+        let force_min_tokens = dataset
+            .as_ref()
+            .and_then(|d| d.force_min_tokens)
+            .unwrap_or(true);
 
         // Multi-turn (turns / inter-turn delay / think-time ratio).
         let turns = dataset
@@ -1491,6 +1522,12 @@ impl Benchmark {
             hf_subset,
             inter_turn_delay_cap_seconds,
             uuid_and_strip,
+            replay_speedup,
+            max_idle_gap_cap_seconds,
+            open_loop_replay,
+            open_loop_strict,
+            omit_kv_hints,
+            force_min_tokens,
             fixed_schedule,
             fixed_schedule_start_offset: phase.start_offset,
             fixed_schedule_end_offset: phase.end_offset,

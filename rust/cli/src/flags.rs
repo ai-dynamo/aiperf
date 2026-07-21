@@ -786,6 +786,54 @@ pub struct ProfileFlags {
     #[arg(long = "uuid-and-strip", default_value_t = false)]
     pub uuid_and_strip: bool,
 
+    /// Wall-clock compression factor for `baseten_trace` replay
+    /// (`--replay-speedup`); divides normalized timestamps and
+    /// `duration_e2e_ms` comparisons by this factor. Never touches
+    /// `hash_ids`, unlike synthesis speedup.
+    #[arg(long = "replay-speedup")]
+    pub replay_speedup: Option<f64>,
+    /// Collapse `baseten_trace` idle gaps larger than this many seconds
+    /// (`--max-idle-gap-cap-seconds`) so fixed-schedule replay of a sparse
+    /// (sampled) trace does not idle through long dead-air stretches.
+    #[arg(long = "max-idle-gap-cap-seconds")]
+    pub max_idle_gap_cap_seconds: Option<f64>,
+    /// `baseten_trace` replay mode: every turn fires at its absolute
+    /// (speedup-scaled) recorded timestamp (default;
+    /// `--no-open-loop-replay` switches to closed-loop back-pressure, where
+    /// continuation turns fire only after the prior turn completes).
+    #[arg(
+        long = "open-loop-replay",
+        default_value_t = true,
+        overrides_with = "no_open_loop_replay"
+    )]
+    pub open_loop_replay: bool,
+    /// Disable open-loop replay (`--no-open-loop-replay`).
+    #[arg(long = "no-open-loop-replay")]
+    pub no_open_loop_replay: bool,
+    /// Open-loop-only: explode every `baseten_trace` session into an
+    /// independent single-turn conversation, each firing at its absolute
+    /// recorded time with no session grouping (`--open-loop-strict`).
+    #[arg(long = "open-loop-strict", default_value_t = false)]
+    pub open_loop_strict: bool,
+    /// Skip injecting `hash_ids`/`block_size` KV-cache routing hints into
+    /// the `baseten_trace` request body (`--omit-kv-hints`); use for strict
+    /// frontends that reject unknown body params.
+    #[arg(long = "omit-kv-hints", default_value_t = false)]
+    pub omit_kv_hints: bool,
+    /// Inject `min_tokens` (from the recorded output length) into the
+    /// `baseten_trace` request body (default; `--no-force-min-tokens`
+    /// disables so a user-supplied `--extra-inputs min_tokens` value goes
+    /// through instead).
+    #[arg(
+        long = "force-min-tokens",
+        default_value_t = true,
+        overrides_with = "no_force_min_tokens"
+    )]
+    pub force_min_tokens: bool,
+    /// Disable forced `min_tokens` injection (`--no-force-min-tokens`).
+    #[arg(long = "no-force-min-tokens")]
+    pub no_force_min_tokens: bool,
+
     /// Synthetic video audio channels (`--video-audio-num-channels`).
     #[arg(long = "video-audio-num-channels")]
     pub video_audio_num_channels: Option<u32>,
