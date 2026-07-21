@@ -4,7 +4,7 @@
  */
 
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
+import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { nodeTypes } from "../../nodes/nodeTypes.js";
 import { edgeTypes } from "../../edges/edgeTypes.js";
@@ -74,7 +74,14 @@ export function dashed(source: string, target: string, label?: string): Edge {
   };
 }
 
-/** Standard React Flow canvas frame used by every diagram page. */
+/**
+ * Standard React Flow canvas frame used by every diagram page. Wraps its own
+ * `ReactFlowProvider` — several pages in this deck render more than one `DeckDiagram`
+ * side by side, and sibling `<ReactFlow>` instances sharing one ancestor provider
+ * silently collide onto the same internal store (only the last-mounted one's nodes
+ * actually render). Each instance owning its own provider makes every diagram
+ * independent regardless of how many appear on one page.
+ */
 export function DeckDiagram({
   nodes,
   edges,
@@ -86,18 +93,20 @@ export function DeckDiagram({
 }): React.JSX.Element {
   return (
     <div style={{ height }}>
-      <ReactFlow
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        nodes={nodes}
-        edges={edges}
-        fitView
-        fitViewOptions={{ padding: 0.15 }}
-        nodesDraggable={false}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-      </ReactFlow>
+      <ReactFlowProvider>
+        <ReactFlow
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          nodes={nodes}
+          edges={edges}
+          fitView
+          fitViewOptions={{ padding: 0.15 }}
+          nodesDraggable={false}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
+        </ReactFlow>
+      </ReactFlowProvider>
     </div>
   );
 }
