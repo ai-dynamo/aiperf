@@ -178,6 +178,48 @@ class TestPromptGeneratorComprehensive:
 
         generator.generate_prompt(1000)
 
+    def test_generate_prompt_retries_when_encode_drifts_long(self, basic_config):
+        """generate_prompt trims and retries when re-encode returns too many tokens."""
+        tokenizer, prompts, prefix_prompts = basic_config
+
+        # First encode call returns 2 extra tokens; subsequent calls are accurate.
+        real_encode = tokenizer._mock_encode
+        call_count = {"n": 0}
+
+        def drifting_encode(text, **kwargs):
+            call_count["n"] += 1
+            ids = real_encode(text, **kwargs)
+            if call_count["n"] == 1:
+                return ids + [998, 999]
+            return ids
+
+        tokenizer.encode = drifting_encode
+        generator = _make_generator(
+            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
+        )
+
+        result = generator.generate_prompt(3)
+        assert isinstance(result, str)
+        assert call_count["n"] >= 2
+
+    def test_generate_prompt_accepts_mismatch_after_budget(self, basic_config):
+        """generate_prompt accepts result after exhausting _max_retries."""
+        tokenizer, prompts, prefix_prompts = basic_config
+
+        # encode always returns one extra token — convergence is impossible.
+        real_encode = tokenizer._mock_encode
+
+        def always_drifting_encode(text, **kwargs):
+            return real_encode(text, **kwargs) + [999]
+
+        tokenizer.encode = always_drifting_encode
+        generator = _make_generator(
+            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
+        )
+
+        result = generator.generate_prompt(3, _max_retries=3)
+        assert isinstance(result, str)
+
     # ============================================================================
     # _generate_cached_prompt Method Tests
     # ============================================================================
