@@ -52,6 +52,45 @@ from aiperf.timing.config import CreditPhaseConfig
 
 # Helper functions
 
+def test_orphan_phase_tracker_does_not_block_aggregate_completion() -> None:
+    tracker = RecordsTracker()
+    tracker.update_phase_info(
+        CreditPhaseStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=1,
+            profiling_index=0,
+            phase_name="load",
+            phase_kind="profiling",
+            start_ns=100,
+            requests_end_ns=300,
+            baseline_start_ns=90,
+            baseline_end_ns=310,
+            final_requests_completed=1,
+        )
+    )
+    orphan_tracker = tracker._get_phase_tracker(CreditPhase.PROFILING, None)
+    orphan_tracker.increment_error_records()
+    tracker.update_from_request(
+        MetricRecordMetadata(
+            session_num=1,
+            request_start_ns=101,
+            request_end_ns=110,
+            worker_id="worker",
+            record_processor_id="processor",
+            benchmark_phase=CreditPhase.PROFILING,
+            phase_index=1,
+        ),
+        None,
+    )
+
+    aggregate = tracker.create_aggregate_stats_for_phase(CreditPhase.PROFILING)
+
+    assert aggregate.success_records == 1
+    assert aggregate.error_records == 1
+    assert aggregate.baseline_start_ns == 90
+    assert aggregate.baseline_end_ns == 310
+    assert tracker.check_and_set_all_records_received_for_phase(CreditPhase.PROFILING)
+
 
 def create_metric_record_data(
     request_start_ns: int,

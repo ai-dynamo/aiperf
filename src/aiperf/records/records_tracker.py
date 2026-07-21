@@ -384,16 +384,20 @@ class RecordsTracker:
         if not phase_trackers:
             return False
 
+        gated_trackers: list[CreditPhaseRecordsTracker] = []
         for tracker in phase_trackers:
             stats = tracker.create_stats()
-            if (
-                stats.final_requests_completed is None
-                or stats.total_records < stats.final_requests_completed
-            ):
+            if stats.final_requests_completed is None:
+                continue
+            gated_trackers.append(tracker)
+            if stats.total_records < stats.final_requests_completed:
                 return False
 
+        if not gated_trackers:
+            return False
+
         newly_completed = False
-        for tracker in phase_trackers:
+        for tracker in gated_trackers:
             newly_completed = (
                 tracker.check_and_set_all_records_received() or newly_completed
             )
