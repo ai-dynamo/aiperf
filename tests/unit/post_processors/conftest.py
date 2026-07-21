@@ -15,14 +15,13 @@ import pytest
 from aiperf.common.enums import (
     CreditPhase,
     ExportLevel,
-    MessageType,
     MetricFlags,
     MetricValueTypeT,
     ModelSelectionStrategy,
 )
 from aiperf.common.enums.metric_enums import GenericMetricUnit
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.messages import MetricRecordsMessage
+from aiperf.common.messages import MetricRecordsData
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ErrorDetails,
@@ -52,7 +51,6 @@ from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin.enums import EndpointType
-from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from aiperf.post_processors.raw_record_writer_processor import RawRecordWriterProcessor
 from tests.unit.conftest import (
     DEFAULT_FIRST_RESPONSE_NS,
@@ -391,18 +389,31 @@ def _create_test_request_info(
     turn_index: int = 0,
     turns: list | None = None,
 ) -> RequestInfo:
-    """Create a RequestInfo for testing post processors."""
-    return RequestInfo(
-        model_endpoint=ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name=model_name)],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000/v1/test",
-            ),
+    """Create a RequestInfo for testing post processors.
+
+    Populates ``payload_bytes`` via the chat endpoint's ``format_payload``
+    when ``turns`` is non-empty — matches what ``inference_client`` does
+    pre-dispatch so the raw-record exporter's fast path
+    (``payload_bytes``-is-set) is exercised by default. The full ``turns``
+    list no longer crosses the ZMQ hop, so the exporter has no turn-based
+    reconstruction fallback — only ``payload_bytes`` produces a payload.
+    """
+    import orjson
+
+    from aiperf.endpoints.openai_chat import ChatEndpoint
+
+    model_endpoint = ModelEndpointInfo(
+        models=ModelListInfo(
+            models=[ModelInfo(name=model_name)],
+            model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
         ),
+        endpoint=EndpointInfo(
+            type=EndpointType.CHAT,
+            base_url="http://localhost:8000/v1/test",
+        ),
+    )
+    info = RequestInfo(
+        model_endpoint=model_endpoint,
         turns=turns or [],
         turn_index=turn_index,
         credit_num=0,
@@ -411,6 +422,11 @@ def _create_test_request_info(
         x_correlation_id="test-correlation-id",
         conversation_id=conversation_id,
     )
+    if info.turns:
+        info.payload_bytes = orjson.dumps(
+            ChatEndpoint(model_endpoint=model_endpoint).format_payload(info)
+        )
+    return info
 
 
 @pytest.fixture
@@ -580,23 +596,24 @@ def setup_mock_registry_sequences(
     return valid_tags, error_tags
 
 
-def create_results_processor_with_metrics(
-    run, *metrics: type[BaseMetric]
-) -> MetricResultsProcessor:
-    """Create a MetricResultsProcessor with pre-configured metrics.
+def create_accumulator_with_metrics(run, *metrics: type[BaseMetric]):
+    """Construct a :class:`MetricsAccumulator` pre-configured with ``metrics``.
 
-    Args:
-        run: BenchmarkRun for the processor
-        metrics: list of metric classes
-
-    Returns:
-        Configured MetricResultsProcessor instance
+    Bypasses ``_setup_metrics`` / ``MetricRegistry`` so individual tests can
+    drive the accumulator with synthetic metric classes without registering
+    them globally.
     """
+    from aiperf.metrics.accumulator import MetricsAccumulator
 
-    processor = MetricResultsProcessor(run)
-    processor._tags_to_types = {metric.tag: metric.type for metric in metrics}
-    processor._instances_map = {metric.tag: metric() for metric in metrics}
-    return processor
+    accumulator = MetricsAccumulator(run)
+    accumulator._tags_to_types = {metric.tag: metric.type for metric in metrics}
+    accumulator._metric_classes = {metric.tag: metric for metric in metrics}
+    accumulator._aggregation_kinds = {
+        metric.tag: metric.aggregation_kind
+        for metric in metrics
+        if hasattr(metric, "aggregation_kind")
+    }
+    return accumulator
 
 
 @pytest.fixture
@@ -617,9 +634,7 @@ def mock_metric_registry(monkeypatch):
     monkeypatch.setattr(
         "aiperf.post_processors.base_metrics_processor.MetricRegistry", mock_registry
     )
-    monkeypatch.setattr(
-        "aiperf.post_processors.metric_results_processor.MetricRegistry", mock_registry
-    )
+    monkeypatch.setattr("aiperf.metrics.accumulator.MetricRegistry", mock_registry)
     monkeypatch.setattr("aiperf.metrics.display_units.MetricRegistry", mock_registry)
 
     return mock_registry
@@ -778,7 +793,7 @@ def create_metric_metadata(
     )
 
 
-def create_metric_records_message(
+def create_metric_records_data(
     service_id: str = "test-processor",
     results: list[dict[MetricTagT, MetricValueTypeT]] | None = None,
     error: ErrorDetails | None = None,
@@ -786,13 +801,13 @@ def create_metric_records_message(
     x_request_id: str | None = None,
     trace_data: Any | None = None,
     **metadata_kwargs,
-) -> MetricRecordsMessage:
+) -> MetricRecordsData:
     """
-    Create a MetricRecordsMessage with sensible defaults.
+    Create a finished MetricRecordsData with sensible defaults.
 
     Args:
-        service_id: Service ID
-        results: List of metric result dictionaries
+        service_id: Service ID (unused; kept for call-site compatibility)
+        results: List of metric result dictionaries, merged into the metrics dict
         error: Error details if any
         metadata: Pre-built metadata, or None to build from kwargs
         x_request_id: Record ID (set as x_request_id in metadata if provided)
@@ -800,7 +815,7 @@ def create_metric_records_message(
         **metadata_kwargs: Args passed to create_metric_metadata if metadata is None
 
     Returns:
-        MetricRecordsMessage object
+        MetricRecordsData object
     """
     if results is None:
         results = []
@@ -811,13 +826,15 @@ def create_metric_records_message(
             metadata_kwargs["x_request_id"] = x_request_id
         metadata = create_metric_metadata(**metadata_kwargs)
 
-    return MetricRecordsMessage(
-        message_type=MessageType.METRIC_RECORDS,
-        service_id=service_id,
+    metrics: dict[MetricTagT, MetricValueTypeT] = {}
+    for result in results:
+        metrics.update(result)
+
+    return MetricRecordsData(
         metadata=metadata,
-        results=results,
-        error=error,
+        metrics=metrics,
         trace_data=trace_data,
+        error=error,
     )
 
 

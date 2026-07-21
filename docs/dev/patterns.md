@@ -115,6 +115,20 @@ Then:
 - The CLI-to-envelope converter is the only module outside `cli_commands/` that may
   read `CLIConfig` attributes.
 
+## Adaptive Scale Implementation Pattern
+
+Adaptive scale is a timing strategy plus CLI/YAML configuration surface. When changing adaptive control variables, SLA semantics, artifacts, or CLI/YAML precedence, update [Adaptive Scale](../tutorials/adaptive-scale.md) and keep these invariants intact:
+
+- Exactly one adaptive control variable is active per phase. Supported variables are `concurrency`, `prefill_concurrency`, `request_rate`, and `users`.
+- Compact `--adaptive-scale-control variable:min,max:type` flags and expanded `--adaptive-control-*` flags are mutually exclusive.
+- `--adaptive-scale-sla` requires `--adaptive-scale`; it must raise a configuration error rather than silently no-op.
+- Canonical YAML stores adaptive SLA filters on phase-level `sla`; CLI SLA overrides must update that phase `sla` and any compatibility `adaptive_scale.sla` mirror before YAML lowering.
+- Keep adaptive SLA docs aligned with `adaptive_scale_sla.SUPPORTED_METRICS_MESSAGE`; do not document a controller SLA metric until the runtime supports it.
+- TTFT adaptive SLA requires `FirstToken` observations even when no static `prefill_concurrency` is configured.
+- Ratio metrics such as `goodput_ratio` and `success_rate` are ratios rather than throughput values.
+- Adaptive artifact fields are orchestration-facing. Renaming schema fields such as `control_variable`, `control_value_before`, `control_value_after`, `boundary_value`, `last_passing_value`, or `first_failing_value` needs migration and backcompat thought.
+
+
 ## Service Pattern
 
 Services run in separate processes via `bootstrap.py`:
@@ -450,7 +464,7 @@ class TotalGpuEnergyMetric(BaseDerivedMetric[float]):
     Invariant: externally injected by
     `GPUTelemetryAccumulator.compute_efficiency_metrics` from
     energy_consumption counter deltas. `_derive_value` is intentionally
-    non-functional; `MetricResultsProcessor.update_derived_metrics` is
+    non-functional; `MetricsAccumulator._resolve_derived_metrics` is
     expected to catch NoMetricValue and skip the tag during its
     derivation walk.
     """
@@ -472,7 +486,7 @@ def _derive_value(self, metric_results: MetricResultsDict) -> NoReturn:
         "is externally injected by "
         "GPUTelemetryAccumulator.compute_efficiency_metrics. If this exception "
         "surfaces, the derivation walk is missing its NoMetricValue handler "
-        "(see MetricResultsProcessor.update_derived_metrics)."
+        "(see MetricsAccumulator._resolve_derived_metrics)."
     )
 ```
 
@@ -486,7 +500,7 @@ is enforced. The recommended shape is:
 - *Injection site*: which method is the source of truth
   (`GPUTelemetryAccumulator.compute_efficiency_metrics`).
 - *Catching path*: where the exception is expected to be absorbed
-  (`MetricResultsProcessor.update_derived_metrics`). If this fires in
+  (`MetricsAccumulator._resolve_derived_metrics`). If this fires in
   production, the catching path has a bug.
 
 ### Why not just skip the class entirely?
@@ -503,9 +517,9 @@ external injection.
 `GPUTelemetryAccumulator.compute_efficiency_metrics`, which constructs
 `MetricResult` objects directly with the relevant tags and appends them
 to the records list before `ProcessRecordsResult` is built. The standard
-`update_derived_metrics` walk sees these tags too, raises `NoMetricValue`
-via `_derive_value`, catches it, and skips — so the externally-injected
-values are not overwritten.
+`MetricsAccumulator._resolve_derived_metrics` walk sees these tags too,
+raises `NoMetricValue` via `_derive_value`, catches it, and skips — so the
+externally-injected values are not overwritten.
 
 ### Test contract
 

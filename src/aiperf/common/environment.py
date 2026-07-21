@@ -40,7 +40,7 @@ Examples:
 """
 
 from pathlib import Path
-from typing import Annotated, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Literal, Self
 
 from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -53,6 +53,9 @@ from aiperf.config.loader.parsing import (
 )
 from aiperf.plugin.enums import ServiceType
 
+if TYPE_CHECKING:
+    from aiperf.plugin.enums import UIType
+
 _logger = AIPerfLogger(__name__)
 
 __all__ = ["Environment"]
@@ -61,12 +64,24 @@ __all__ = ["Environment"]
 class _AccuracySettings(BaseSettings):
     """Accuracy benchmark settings.
 
-    Tunables for the accuracy benchmark loaders. Currently only pins the
-    LiveCodeBench dataset release so accuracy numbers are reproducible
-    across runs without requiring source edits.
+    Tunables for accuracy benchmarking: the cancel-path result-wait timeout and
+    the LiveCodeBench dataset release pin, so accuracy behavior and numbers are
+    reproducible across runs without requiring source edits.
     """
 
     model_config = SettingsConfigDict(env_prefix="AIPERF_ACCURACY_")
+
+    CANCEL_RESULT_WAIT_SEC: float = Field(
+        default=5.0,
+        ge=0.0,
+        description="Bounded time (seconds) the SystemController waits on the "
+        "cancel (Ctrl+C) path for the RecordsManager's "
+        "ProcessAccuracyResultMessage before stopping. The normal completion "
+        "path blocks on the accuracy shutdown gate indefinitely, but the cancel "
+        "path must not hang forever, so it waits at most this long for the "
+        "graded accuracy summary to arrive over pub/sub before proceeding to "
+        "export. Set to 0 to skip the wait entirely.",
+    )
 
     LCB_RELEASE_TAG: str = Field(
         default="v4_v5",
@@ -119,6 +134,28 @@ class _APIServerSettings(BaseSettings):
         description="Seconds the API listener stays open after a benchmark terminates "
         "so polling clients can observe the final status before the server shuts down. "
         "Set to 0 to skip the grace window and shut down immediately.",
+    )
+
+
+class _ChatSettings(BaseSettings):
+    """Settings for the interactive ``aiperf chat`` command."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_CHAT_",
+    )
+
+    CONNECT_TIMEOUT: float = Field(
+        gt=0.0,
+        default=10.0,
+        description="Seconds to wait to establish a connection to the endpoint "
+        "before a turn fails. Kept short so an unreachable URL fails fast.",
+    )
+    READ_TIMEOUT: float = Field(
+        gt=0.0,
+        default=300.0,
+        description="Seconds to wait for the next streamed chunk before a turn "
+        "fails. No overall (total) timeout is applied, so long generations are "
+        "never truncated mid-reply; this only fires if the server stalls.",
     )
 
 
@@ -476,6 +513,13 @@ class _HTTPSettings(BaseSettings):
         "When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, "
         "and NO_PROXY environment variables.",
     )
+    X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
+        default=False,
+        description="Also send X-Dynamo-Session-ID with the stable X-Correlation-ID value, "
+        "plus X-Dynamo-Parent-Session-ID on subagent children. Use this with a Dynamo "
+        "frontend running --router-session-affinity-ttl-secs to pin every turn of a "
+        "session to the replica holding its KV prefix.",
+    )
     VIDEO_POLL_INTERVAL: float = Field(
         ge=0.001,
         le=10.0,
@@ -548,6 +592,16 @@ class _MetricsSettings(BaseSettings):
         le=10000,
         default=500,
         description="t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size.",
+    )
+    LIST_BACKEND: Literal["ragged", "tdigest"] = Field(
+        default="ragged",
+        description="Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (at most 0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint.",
+    )
+    EXPORT_FLUSH_INTERVAL: float = Field(
+        ge=0.05,
+        le=60.0,
+        default=1.0,
+        description="Periodic flush interval (seconds) for buffered JSONL stream exporters (raw record writer, record export, gpu/server-metrics JSONL writers). Bounds the worst-case freshness of low-throughput export files when the in-memory batch never reaches batch_size.",
     )
 
 
@@ -647,6 +701,20 @@ class _RecordSettings(BaseSettings):
         le=100000.0,
         default=300.0,
         description="Timeout in seconds for processing record results",
+    )
+    STRIP_PAYLOAD_BYTES: bool | None = Field(
+        default=None,
+        description="Tri-state control for omitting canonical request payload "
+        "bytes from RecordContext after a request is sent, which substantially "
+        "reduces record-pipeline memory for very large prompts. None (default) "
+        "auto-detects: bytes are stripped only when no downstream record consumer "
+        "needs them (client-side input tokenization disabled, no synthetic image/"
+        "audio/video inputs, and raw payload export off). True forces stripping "
+        "even when a consumer wants the bytes, disabling client-side input "
+        "tokenization, media counting from request bodies, and raw request "
+        "payload export. False always retains them. Auto-detection does not see "
+        "media embedded in custom dataset payloads under server-token-count mode; "
+        "set False explicitly for that case.",
     )
 
 
@@ -1137,21 +1205,46 @@ class _UISettings(BaseSettings):
         default=3,
         description="Duration in seconds to display UI notifications before auto-dismissing",
     )
-    REALTIME_METRICS_INTERVAL: float = Field(
-        ge=1.0,
+    REALTIME_METRICS_INTERVAL: float | None = Field(
+        ge=0.0,
         le=1000.0,
-        default=5.0,
-        description="Interval in seconds between real-time metrics messages",
+        default=None,
+        description=(
+            "Interval in seconds between real-time metrics messages (and the "
+            "per-tick stats log block). 0 disables the log block; dashboards "
+            "still poll. When None, ``realtime_metrics_interval(ui_type)`` "
+            "auto-defaults to 5.0 under --ui dashboard, 30.0 otherwise."
+        ),
     )
     REALTIME_METRICS_ENABLED: bool = Field(
         default=False,
         description="Enable real-time metrics collection and reporting despite UI type",
     )
+
+    def realtime_metrics_interval(self, ui_type: "UIType") -> float:
+        """Resolve the realtime metrics tick interval, applying the auto-default by UI type."""
+        if self.REALTIME_METRICS_INTERVAL is not None:
+            return self.REALTIME_METRICS_INTERVAL
+        from aiperf.plugin.enums import UIType as _UIType  # local import: avoid cycle
+
+        return 5.0 if ui_type == _UIType.DASHBOARD else 30.0
+
     SPINNER_REFRESH_RATE: float = Field(
         ge=0.1,
         le=100.0,
         default=0.1,
         description="Progress spinner refresh rate in seconds (default: 10 FPS)",
+    )
+    CONSOLE_EXPORT_WIDTH: int = Field(
+        ge=40,
+        le=10000,
+        default=140,
+        description=(
+            "Fixed column width used to render the post-run console exporter "
+            "tables. Applied both to the recording console that produces "
+            "profile_export_console.txt and to the live console when stdout "
+            "is not a tty (so non-tty CI logs match the saved artifact)."
+        ),
     )
 
 
@@ -1381,6 +1474,10 @@ class _Environment(BaseSettings):
     API_SERVER: _APIServerSettings = Field(
         default_factory=_APIServerSettings,
         description="API server settings",
+    )
+    CHAT: _ChatSettings = Field(
+        default_factory=_ChatSettings,
+        description="Interactive `aiperf chat` command settings",
     )
     COMPRESSION: _CompressionSettings = Field(
         default_factory=_CompressionSettings,
