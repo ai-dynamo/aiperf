@@ -35,6 +35,7 @@ pub enum MetricTag {
     TimeToFirstOutputToken,
     InterTokenLatency,
     InterChunkLatency,
+    DecodeDuration,
     CreditDropLatency,
     OutputSequenceLength,
     InputSequenceLength,
@@ -171,6 +172,7 @@ impl MetricTag {
             Self::TimeToSecondToken => "time_to_second_token",
             Self::TimeToFirstOutputToken => "time_to_first_output_token",
             Self::InterTokenLatency => "inter_token_latency",
+            Self::DecodeDuration => "decode_duration",
             Self::InterChunkLatency => "inter_chunk_latency",
             Self::CreditDropLatency => "credit_drop_latency",
             Self::OutputSequenceLength => "output_sequence_length",
@@ -581,6 +583,15 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             None,
             MetricFlags::STREAMING_TOKENS_ONLY,
             []
+        ),
+        spec!(
+            DecodeDuration,
+            "Decode Duration",
+            Nanosecond,
+            Record,
+            None,
+            MetricFlags::STREAMING_TOKENS_ONLY | MetricFlags::PERCENTILE_INCLUDES_FAILED_REQUESTS,
+            [RequestLatency, TimeToFirstToken]
         ),
         spec!(
             CreditDropLatency,
@@ -1557,6 +1568,7 @@ fn configure_catalog_metadata(catalog: &mut [MetricSpec]) {
             BenchmarkDuration => Some("Duration"),
             CompletedRequestCount => Some("Completed"),
             CreditDropLatency => Some("Credit Latency"),
+            DecodeDuration => Some("Decode Duration"),
             E2eOutputTokenThroughput => Some("E2E Output TPS/User"),
             ErrorInputSequenceLength => Some("Error ISL"),
             ErrorRequestCount => Some("Error Count"),
@@ -1717,6 +1729,7 @@ fn configure_catalog_metadata(catalog: &mut [MetricSpec]) {
             | TimeToFirstOutputToken
             | InterTokenLatency
             | InterChunkLatency
+            | DecodeDuration
             | CreditDropLatency
             | StreamSetupLatency
             | StreamPrefillLatency
@@ -1740,6 +1753,7 @@ fn configure_catalog_metadata(catalog: &mut [MetricSpec]) {
         spec.display_order = match spec.tag {
             AudioDuration => Some(870),
             CompletedRequestCount => Some(1075),
+            DecodeDuration => Some(350),
             E2eOutputTokenThroughput => Some(510),
             EnergyPerUser => Some(903),
             ErrorInputSequenceLength => Some(700),
@@ -2138,7 +2152,7 @@ mod tests {
     #[test]
     fn catalog_has_unique_acyclic_resolved_dependencies() {
         let order = validate_catalog().unwrap();
-        assert_eq!(CATALOG.len(), 119);
+        assert_eq!(CATALOG.len(), 120);
         assert!(order.contains(&MetricTag::RequestLatency));
         assert!(
             CATALOG
@@ -2149,11 +2163,11 @@ mod tests {
 
     #[test]
     fn catalog_identity_matches_the_source_grounded_snapshot() {
-        // Covers the 103 Python identities plus the 16 native sweep identities.
+        // Covers the 104 Python identities plus the 16 native sweep identities.
         // Any intentional metadata change must be re-audited before updating this value.
-        // Updated 2026-07-14: dropped the redundant trailing " %" from the four
-        // Percent-unit diff headers (OSL Mismatch Diff, Usage {Prompt,Completion,
-        // Reasoning} Diff) so `{Header} ({unit})` renders "… Diff (%)", not "… Diff % (%)".
-        assert_eq!(catalog_fingerprint(), 6_796_016_298_316_141_378);
+        // Updated 2026-07-20: added DecodeDuration (client-observed interval from
+        // the first to final content response; ports Python's
+        // decode_duration_metric.py), hand-porting origin/main's fe999132f.
+        assert_eq!(catalog_fingerprint(), 12_500_847_112_264_108_415);
     }
 }

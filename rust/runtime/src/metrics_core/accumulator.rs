@@ -846,6 +846,12 @@ impl MetricsAccumulator {
                 (latency - ttft) / (osl - 1.0),
             );
         }
+        // Client-observed interval from the first to final content response.
+        // `ttft` is only populated for streaming records, so this naturally
+        // limits to streaming (matching the STREAMING_TOKENS_ONLY catalog flag).
+        if let (Some(latency), Some(ttft)) = (latency, ttft) {
+            self.set_finite_record(row, MetricTag::DecodeDuration, latency - ttft);
+        }
         if let Some(itl) = self.store.metric_f64(row, MetricTag::InterTokenLatency)
             && itl != 0.0
         {
@@ -1980,6 +1986,16 @@ mod tests {
             .as_f64()
             .unwrap();
         assert!((itl_ms - 80.0 / 9.0).abs() < 1e-12);
+        // latency=100ms, ttft=20ms (derived above from itl=(latency-ttft)/9).
+        let decode_duration_ms = summary
+            .result(MetricTag::DecodeDuration)
+            .unwrap()
+            .distribution()
+            .unwrap()
+            .avg
+            .as_f64()
+            .unwrap();
+        assert!((decode_duration_ms - 80.0).abs() < 1e-9);
         assert_eq!(
             summary.finite_value(MetricTag::TotalOutputSequenceLength),
             Some(10.0)
