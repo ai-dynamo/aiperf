@@ -41,4 +41,24 @@ describe("useReveal", () => {
     const { result } = renderHook(() => useReveal([], { stepMs: 100 }));
     expect(result.current).toEqual(new Set());
   });
+
+  it("restarts the reveal sequence from the first item when order changes mid-sequence", () => {
+    const { result, rerender } = renderHook(
+      ({ order }: { order: string[] }) => useReveal(order, { stepMs: 100 }),
+      { initialProps: { order: ["a", "b", "c"] } },
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(result.current).toEqual(new Set(["a", "b", "c"]));
+
+    rerender({ order: ["x", "y", "z"] });
+    expect(result.current).toEqual(new Set(["x"]));
+
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    expect(result.current).toEqual(new Set(["x", "y"]));
+  });
 });
