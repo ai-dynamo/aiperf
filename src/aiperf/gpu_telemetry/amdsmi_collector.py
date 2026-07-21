@@ -42,7 +42,10 @@ from aiperf.common.models import (
     TelemetryMetrics,
     TelemetryRecord,
 )
-from aiperf.gpu_telemetry.constants import AMDSMI_SOURCE_IDENTIFIER
+from aiperf.gpu_telemetry.constants import (
+    AMD_GPU_TELEMETRY_PLATFORM,
+    AMDSMI_SOURCE_IDENTIFIER,
+)
 from aiperf.gpu_telemetry.protocols import TErrorCallback, TRecordCallback
 
 __all__ = ["AMDSMITelemetryCollector"]
@@ -285,6 +288,7 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
                 pci_bus_id=pci_bus_id,
                 device=f"amd{index}",
                 hostname="localhost",
+                platform=AMD_GPU_TELEMETRY_PLATFORM,
             ),
         )
 
@@ -377,22 +381,40 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
         self._collect_throttle(handle, td, ExcType)
         return td
 
-    @staticmethod
     def _collect_power(
-        handle: Any, td: TelemetryMetrics, ExcType: type[Exception]
+        self, handle: Any, td: TelemetryMetrics, ExcType: type[Exception]
     ) -> None:
-        """Power in W. ``current_socket_power`` is already in W; no scaling."""
-        with contextlib.suppress(ExcType):
+        """Power in W. ``current_socket_power`` is already in W; no scaling.
+
+        Probe order:
+        - ``socket_power``: GPU-version-agnostic field added in ROCm 7.0.0;
+          works across all Instinct generations.
+        - ``current_socket_power``: MI300+ series (gfx942/MI300X, gfx950/MI355X).
+        - ``average_socket_power``: Navi / MI200 and older; N/A on MI300+.
+        """
+        try:
             power = amdsmi.amdsmi_get_power_info(handle)
-            value = _numeric(power.get("current_socket_power"))
+            value = _numeric(power.get("socket_power"))
+            if value is None:
+                value = _numeric(power.get("current_socket_power"))
             if value is None:
                 value = _numeric(power.get("average_socket_power"))
             if value is not None:
                 td.amd_power = value
+            else:
+                self.debug(
+                    lambda p=power: (
+                        f"amdsmi_get_power_info returned no usable power value "
+                        f"(socket_power={p.get('socket_power')!r}, "
+                        f"current_socket_power={p.get('current_socket_power')!r}, "
+                        f"average_socket_power={p.get('average_socket_power')!r})"
+                    )
+                )
+        except ExcType as exc:
+            self.debug(lambda e=exc: f"amdsmi_get_power_info raised: {e!r}")
 
-    @staticmethod
     def _collect_energy(
-        handle: Any, td: TelemetryMetrics, ExcType: type[Exception]
+        self, handle: Any, td: TelemetryMetrics, ExcType: type[Exception]
     ) -> None:
         """Energy: ``accumulator(ticks) * counter_resolution(µJ)`` -> MJ.
 
@@ -400,7 +422,7 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
         somewhere around the 6.2 timeframe. Fall back to the older name so
         we keep working on ROCm 6.x.
         """
-        with contextlib.suppress(ExcType):
+        try:
             energy = amdsmi.amdsmi_get_energy_count(handle)
             acc = _numeric(energy.get("energy_accumulator"))
             if acc is None:
@@ -410,6 +432,17 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
                 td.amd_energy_consumption = (
                     acc * res * _AMDScalingFactors.energy_uj_to_mj
                 )
+            else:
+                self.debug(
+                    lambda e=energy: (
+                        f"amdsmi_get_energy_count returned no usable energy value "
+                        f"(energy_accumulator={e.get('energy_accumulator')!r}, "
+                        f"power={e.get('power')!r}, "
+                        f"counter_resolution={e.get('counter_resolution')!r})"
+                    )
+                )
+        except ExcType as exc:
+            self.debug(lambda e=exc: f"amdsmi_get_energy_count raised: {e!r}")
 
     @staticmethod
     def _collect_activity(
