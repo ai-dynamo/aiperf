@@ -226,7 +226,10 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                 except Exception as exc:
                     errors.append(f"{endpoint_url}: {type(exc).__name__}: {exc}")
         finally:
-            if self._active_phase_token == baseline_token and previous_phase is not None:
+            if (
+                self._active_phase_token == baseline_token
+                and previous_phase is not None
+            ):
                 self._active_phase = previous_phase
         if errors:
             raise RuntimeError("; ".join(errors))

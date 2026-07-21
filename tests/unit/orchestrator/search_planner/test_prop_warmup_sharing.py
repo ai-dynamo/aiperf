@@ -102,7 +102,6 @@ def test_find_phase_index_matches_named_phase_by_kind() -> None:
     assert find_phase_index(phases, "profiling") == 1
 
 
-
 # ---------------------------------------------------------------------------
 # Property 10: Warmup Sharing
 # ---------------------------------------------------------------------------

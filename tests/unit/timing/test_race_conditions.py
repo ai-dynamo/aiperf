@@ -763,9 +763,10 @@ class TestRecordsTrackerPhase:
         )
 
         assert rt.create_stats_for_phase(CreditPhase.PROFILING).phase_name == "second"
-        assert rt.create_stats_for_phase(
-            CreditPhase.PROFILING, phase_index=0
-        ).phase_name == "first"
+        assert (
+            rt.create_stats_for_phase(CreditPhase.PROFILING, phase_index=0).phase_name
+            == "first"
+        )
         assert rt.create_stats_for_phase(CreditPhase.PROFILING).phase_name == "second"
 
     def test_orphan_record_does_not_replace_concrete_latest_phase_index(self):
@@ -876,9 +877,12 @@ class TestRecordsTrackerPhase:
         )
 
         assert rt.check_and_set_all_records_received_for_phase(CreditPhase.PROFILING)
-        assert rt.create_stats_for_phase(
-            CreditPhase.PROFILING, phase_index=0
-        ).success_records == 1
+        assert (
+            rt.create_stats_for_phase(
+                CreditPhase.PROFILING, phase_index=0
+            ).success_records
+            == 1
+        )
 
 
 @pytest.mark.asyncio
