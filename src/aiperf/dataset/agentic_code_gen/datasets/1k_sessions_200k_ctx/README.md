@@ -33,4 +33,3 @@ Expected dataset, user-generated via the `aiperf synthesize agentic-code` comman
 | `simulation.html` | Session-timeline / cache-hit simulation |
 | `cache_structure.json` | Raw cache-tree data backing `cache_explorer.html` |
 | `comparison.txt` | Text summary comparing target vs realized distributions |
-

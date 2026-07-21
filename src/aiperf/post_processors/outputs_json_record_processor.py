@@ -1,6 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Record processor that captures model response text per request for outputs.json export."""
+"""Record observer that captures model response text per request for outputs.json export."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from pydantic import Field
 
@@ -8,10 +12,12 @@ from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import BufferedJSONLWriterMixin
-from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.resolution.plan import BenchmarkRun
+
+if TYPE_CHECKING:
+    from aiperf.post_processors.record_observer_context import RecordObserverContext
 
 
 class OutputFragment(AIPerfBaseModel):
@@ -80,10 +86,10 @@ class OutputsJsonRecordProcessor(BufferedJSONLWriterMixin[OutputFragment]):
 
         self.info(f"OutputsJsonRecordProcessor initialized: {self.output_file}")
 
-    async def process_record(
-        self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
-    ) -> None:
+    async def observe(self, ctx: RecordObserverContext) -> None:
         """Extract response text and write an output fragment."""
+        record = ctx.record
+        metadata = ctx.metadata
         if metadata.benchmark_phase != CreditPhase.PROFILING:
             return
 

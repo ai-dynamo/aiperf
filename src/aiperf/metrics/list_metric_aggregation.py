@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Run-level aggregator for list-valued record metrics.
 
-Used by :class:`aiperf.post_processors.metric_results_processor.MetricResultsProcessor`
-when a ``MetricType.RECORD`` metric arrives with a list value (today only
+Used by :class:`aiperf.metrics.accumulator.MetricsAccumulator` when a
+``MetricType.RECORD`` metric arrives with a list value (today only
 ``inter_chunk_latency``, where each request contributes a list of inter-chunk
 gap durations). At 1 M-request ramp scale the exact storage —
 ``records x (chunks-1) x 8 B`` would dwarf the records-manager pod's
@@ -22,7 +22,7 @@ Stats:
   suffer catastrophic cancellation.
 - ``p1``..``p99`` are approximate via t-digest.
 
-Implements the :class:`aiperf.metrics.metric_dicts.MetricAggregator` protocol.
+Implements :class:`aiperf.common.accumulator_protocols.MetricSeriesProtocol`.
 """
 
 from __future__ import annotations
@@ -37,12 +37,20 @@ from aiperf.common.environment import Environment
 from aiperf.common.models import MetricResult
 from aiperf.common.types import MetricTagT
 
+__all__ = ["TDigestListMetricAggregator"]
+
 
 class TDigestListMetricAggregator:
     """Bounded-memory aggregator backed by a t-digest sketch.
 
-    Conforms to :class:`aiperf.metrics.metric_dicts.MetricAggregator`.
+    Conforms to :class:`aiperf.common.accumulator_protocols.MetricSeriesProtocol`
+    plus the :class:`aiperf.metrics.column_store.ColumnStore` list-backend
+    contract: ``add_for_record(idx, values)`` ingest entry point and a
+    ``SUPPORTS_PER_RECORD_REPLAY`` capability flag the
+    :mod:`aiperf.metrics.accumulator_sweeps` helpers gate ICL-aware curves on.
     """
+
+    SUPPORTS_PER_RECORD_REPLAY = False
 
     def __init__(self) -> None:
         self._td = TDigest(compression=Environment.METRICS.TDIGEST_COMPRESSION)
@@ -58,10 +66,14 @@ class TDigestListMetricAggregator:
 
     @property
     def sum(self) -> float:
-        """Exact running sum of all samples — for the :class:`MetricAggregator`
-        protocol so derived-sum metrics can compute uniformly across this
-        and :class:`MetricArray`."""
+        """Exact running sum of all samples — for the
+        :class:`MetricSeriesProtocol` so derived-sum metrics can compute
+        uniformly across every MetricAggregator implementation."""
         return self._sum
+
+    def __len__(self) -> int:
+        """Return the number of observed samples."""
+        return self._count
 
     def append(self, value: int | float) -> None:
         """Add a single sample."""
@@ -108,9 +120,18 @@ class TDigestListMetricAggregator:
         self._min = batch_min if self._min is None else min(self._min, batch_min)
         self._max = batch_max if self._max is None else max(self._max, batch_max)
 
+    def add_for_record(self, idx: int, values: list[float]) -> None:  # noqa: ARG002 - idx unused
+        """Record-keyed ingest entry point shared with :class:`RaggedSeries`.
+
+        ``idx`` is ignored: the t-digest is a global sketch with no per-record
+        structure. The accumulator routes every list-valued metric through this
+        method regardless of backend, which is why the signature has to match.
+        """
+        self.extend(values)
+
     def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult:
         """Return a :class:`MetricResult` with the same field set as
-        ``MetricArray.to_result``. Percentiles come from the t-digest;
+        the exact numpy-percentile reference. Percentiles come from the t-digest;
         every other stat is exact."""
         if self._count == 0:
             return MetricResult(tag=tag, header=header, unit=unit, count=0)

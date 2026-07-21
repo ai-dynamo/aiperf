@@ -53,6 +53,9 @@ class MetricsJsonExporter(MetricsBaseExporter):
         """
         # Use helper method to prepare metrics
         prepared_json_metrics = self._prepare_metrics_for_json(self._results.records)
+        prepared_warmup_metrics = self._prepare_metrics_for_json(
+            getattr(self._results, "warmup_records", None) or []
+        )
 
         start_time = (
             datetime.fromtimestamp(self._results.start_ns / NANOS_PER_SECOND)
@@ -79,6 +82,7 @@ class MetricsJsonExporter(MetricsBaseExporter):
             start_time=start_time,
             end_time=end_time,
             telemetry_data=self._telemetry_results,
+            warmup_metrics=prepared_warmup_metrics or None,
         )
 
         # Add all prepared metrics dynamically
