@@ -382,7 +382,10 @@ class RecordsTracker:
             else orphan_phase_items
         ) or [
             (tracked_phase_index, tracker)
-            for (tracker_phase, tracked_phase_index), tracker in self._phase_trackers.items()
+            for (
+                tracker_phase,
+                tracked_phase_index,
+            ), tracker in self._phase_trackers.items()
             if tracker_phase == phase
         ]
         if not phase_items:

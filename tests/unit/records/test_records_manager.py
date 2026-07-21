@@ -11,6 +11,7 @@ import pytest
 
 from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.enums import CreditPhase
+from aiperf.common.environment import Environment
 from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.messages.inference_messages import (
     MetricRecordsData,
@@ -45,7 +46,6 @@ from aiperf.plugin.enums import AccumulatorType, TimingMode, UIType
 from aiperf.records import records_manager as records_manager_module
 from aiperf.records import records_manager_processing
 from aiperf.records.error_tracker import ErrorTracker
-from aiperf.common.environment import Environment
 from aiperf.records.records_manager import ErrorTrackingState, RecordsManager
 from aiperf.records.records_manager_processing import LoadedAnalyzer
 from aiperf.records.records_tracker import RecordsTracker
