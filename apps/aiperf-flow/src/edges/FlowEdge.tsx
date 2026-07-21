@@ -4,7 +4,7 @@
  */
 
 import type { EdgeProps, Edge } from "@xyflow/react";
-import { BaseEdge, getBezierPath } from "@xyflow/react";
+import { BaseEdge, getSmoothStepPath } from "@xyflow/react";
 
 /** Animation speed presets, mapped to a CSS `animation-duration`. */
 export type FlowEdgeSpeed = "slow" | "normal" | "fast";
@@ -45,13 +45,14 @@ export function FlowEdge({
   markerEnd,
   data,
 }: EdgeProps<FlowEdgeType>): React.JSX.Element {
-  const [edgePath] = getBezierPath({
+  const [edgePath] = getSmoothStepPath({
     sourceX,
     sourceY,
     sourcePosition,
     targetX,
     targetY,
     targetPosition,
+    borderRadius: 8,
   });
 
   const color = data?.color ?? DEFAULT_COLOR;
@@ -80,13 +81,13 @@ export function FlowEdge({
       <defs>
         <marker
           id={markerId}
-          markerWidth={10}
-          markerHeight={10}
-          refX={8}
-          refY={5}
+          markerWidth={12}
+          markerHeight={12}
+          refX={9}
+          refY={6}
           orient="auto-start-reverse"
         >
-          <path d="M0,0 L10,5 L0,10 Z" fill={color} />
+          <path d="M0,0 L12,6 L0,12 Z" fill={color} />
         </marker>
       </defs>
       <BaseEdge
@@ -95,7 +96,7 @@ export function FlowEdge({
         markerEnd={markerEnd ?? `url(#${markerId})`}
         className="flow-edge__path"
         stroke={color}
-        strokeWidth={2}
+        strokeWidth={2.5}
         strokeDasharray="8 8"
         style={{ "--flow-edge-duration": duration } as React.CSSProperties}
       />

@@ -5,33 +5,33 @@
   --font-sans: "Manrope", system-ui, sans-serif;
   --font-mono: "Roboto Mono", monospace;
 
-  --color-ink-primary: #000000;
-  --color-ink-secondary: #555555;
-  --color-ink-tertiary: #a7a7a7;
-  --color-ink-quaternary: #c4c4c4;
-  --color-ink-link: #3d6b00;
+  --color-ink-primary: #f5f5f5;
+  --color-ink-secondary: #a9adb4;
+  --color-ink-tertiary: #75797f;
+  --color-ink-quaternary: #4a4d52;
+  --color-ink-link: #9ede2f;
 
-  --color-surface-page: #ffffff;
-  --color-surface-chrome: #fafafa;
-  --color-surface-elevated: #ffffff;
-  --color-surface-panel: #f7f7f7;
+  --color-surface-page: #0a0a0a;
+  --color-surface-chrome: #121214;
+  --color-surface-elevated: #18191c;
+  --color-surface-panel: #1e1f22;
 
-  --color-stroke-primary: #111111;
-  --color-stroke-secondary: #e4e4e4;
-  --color-stroke-tertiary: #efefef;
+  --color-stroke-primary: #3a3d42;
+  --color-stroke-secondary: #26282c;
+  --color-stroke-tertiary: #1c1d20;
 
   --color-accent-primary: #76b900;
-  --color-accent-tint: #f2f7ea;
-  --color-accent-control: #3987a6;
+  --color-accent-tint: rgba(118, 185, 0, 0.12);
+  --color-accent-control: #4fb3d9;
 
-  --color-category-green: #5e8a1f;
-  --color-category-yellow: #b08a1e;
-  --color-category-purple: #6e4fa6;
-  --color-category-blue: #2a78d6;
-  --color-category-red: #a63244;
-  --color-category-orange: #b05e2a;
-  --color-category-cyan: #3987a6;
-  --color-category-gray: #7e838e;
+  --color-category-green: #5fc22a;
+  --color-category-yellow: #e0b23d;
+  --color-category-purple: #a488e0;
+  --color-category-blue: #5b9bf0;
+  --color-category-red: #e5677f;
+  --color-category-orange: #e08a4a;
+  --color-category-cyan: #4fd0e0;
+  --color-category-gray: #9aa0aa;
 
   --radius-none: 0px;
 }
@@ -39,5 +39,13 @@
 body {
   margin: 0;
   font-family: var(--font-sans);
-  color-scheme: light;
+  color-scheme: dark;
+}
+
+/* React Flow's built-in default edge (used by a handful of intentionally
+   arrow-less `plainEdge()` static connectors) — kept legible against the
+   dark canvas without touching every deck file that uses it. */
+.react-flow__edge-path {
+  stroke: var(--color-stroke-primary);
+  stroke-width: 1.5px;
 }
