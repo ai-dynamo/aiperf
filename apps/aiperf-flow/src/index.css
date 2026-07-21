@@ -1,9 +1,21 @@
-@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Roboto+Mono:wght@400;500&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Roboto+Mono:wght@400;500&display=swap");
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Manrope", system-ui, sans-serif;
+  --font-sans: "Inter", system-ui, sans-serif;
   --font-mono: "Roboto Mono", monospace;
+
+  /* Bump the small-text tiers app-wide — most prose/detail/caption content in this
+     app uses text-xs/text-sm, and 12px/14px reads too small on a dark canvas at a
+     normal viewing distance. Overriding Tailwind v4's --text-* theme variables here
+     changes every `text-xs`/`text-sm` utility class across the whole app without
+     touching individual component files. */
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: calc(1.4 / 0.8125);
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: calc(1.5 / 0.9375);
+  --text-base: 1.0625rem;
+  --text-base--line-height: calc(1.6 / 1.0625);
 
   --color-ink-primary: #fafafb;
   --color-ink-secondary: #c7cad0;
