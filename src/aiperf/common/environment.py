@@ -539,6 +539,18 @@ class _HTTPSettings(BaseSettings):
         "When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, "
         "and NO_PROXY environment variables.",
     )
+    X_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
+        default=False,
+        description="Also send X-Session-ID with the stable X-Correlation-ID value. "
+        "Use this when an external router requires a session-affinity header. This is "
+        "ADDITIVE (both headers are sent); --session-header only RENAMES the single "
+        "correlation header.",
+    )
+    X_SMG_ROUTING_KEY_FROM_CORRELATION_ID: bool = Field(
+        default=False,
+        description="Also send X-SMG-Routing-Key with the stable X-Correlation-ID value. "
+        "Use this with the SGLang Model Gateway manual routing policy.",
+    )
     X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
         default=False,
         description="Also send X-Dynamo-Session-ID with the stable X-Correlation-ID value, "

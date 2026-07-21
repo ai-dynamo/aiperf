@@ -130,6 +130,15 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
                 or "X-Correlation-ID"
             )
             headers[correlation_header] = request_info.x_correlation_id
+            # Additive (distinct from --session-header, which RENAMES the single
+            # header above): some routers require X-Session-ID ALONGSIDE the
+            # correlation header for session affinity.
+            if Environment.HTTP.X_SESSION_ID_FROM_CORRELATION_ID:
+                headers["X-Session-ID"] = request_info.x_correlation_id
+            # Additive SGLang Model Gateway routing key: co-locate a session's
+            # requests on one worker via the stable correlation ID.
+            if Environment.HTTP.X_SMG_ROUTING_KEY_FROM_CORRELATION_ID:
+                headers["X-SMG-Routing-Key"] = request_info.x_correlation_id
 
         headers.update(request_info.endpoint_headers)
         if request_info.turns and request_info.turns[-1].extra_headers:
