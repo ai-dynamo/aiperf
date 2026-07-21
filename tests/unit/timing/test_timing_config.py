@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -55,6 +56,7 @@ _LOADGEN_FIELDS: frozenset[str] = frozenset(
         "concurrency_ramp_duration",
         "prefill_concurrency_ramp_duration",
         "request_rate_ramp_duration",
+        "request_rate_series",
         "arrival_smoothness",
     }
 )
@@ -253,6 +255,20 @@ class TestTimingConfigFromCLIConfig:
             p.request_rate,
             p.total_expected_requests,
         ) == (8, 4, 50.0, 500)
+
+    def test_maps_request_rate_series(self, tmp_path: Path) -> None:
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":5},{"time_s":10,"qps":15}]}',
+            encoding="utf-8",
+        )
+
+        cfg = _make_timing_config(request_rate_series=json_path, request_count=500)
+
+        p = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.PROFILING)
+        assert p.request_rate == 5.0
+        assert p.request_rate_series is not None
+        assert p.request_rate_series.points[1].qps == 15.0
 
     def test_creates_warmup_when_configured(self) -> None:
         cfg = _make_timing_config(warmup_request_count=25)

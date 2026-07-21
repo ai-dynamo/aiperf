@@ -1095,9 +1095,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 start_ns=phase_stats.start_ns
             )
 
+        prev_realtime_phase_index = getattr(self, "_prev_realtime_phase_index", None)
         prev_realtime_snapshot = (
             self._prev_realtime_snapshot
-            if self._prev_realtime_phase_index == phase_stats.phase_index
+            if prev_realtime_phase_index == phase_stats.phase_index
             else None
         )
         rendered = _render_realtime_block(

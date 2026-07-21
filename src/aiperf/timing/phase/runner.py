@@ -12,7 +12,7 @@ import asyncio
 import time
 import uuid
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from aiperf.common.enums import BaselineKind, CreditPhase
 from aiperf.common.environment import Environment
@@ -27,6 +27,7 @@ from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
 from aiperf.timing.ramping import Ramper, RamperConfig, RampType
+from aiperf.timing.rate_series import RateSeriesController
 from aiperf.timing.request_cancellation import RequestCancellationSimulator
 from aiperf.timing.strategies.core import RateSettableProtocol
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
@@ -41,6 +42,14 @@ if TYPE_CHECKING:
     from aiperf.timing.phase.publisher import PhasePublisher
     from aiperf.timing.request_cancellation import RequestCancellationSimulator
     from aiperf.timing.strategies.core import TimingStrategyProtocol
+
+
+class RateControllerProtocol(Protocol):
+    """Background controller that can update phase limits over time."""
+
+    def start(self) -> asyncio.Task: ...
+
+    def stop(self) -> None: ...
 
 
 class PhaseRunner(TaskManagerMixin):
@@ -145,7 +154,7 @@ class PhaseRunner(TaskManagerMixin):
         self._progress_task: asyncio.Task | None = None
         self._return_wait_task: asyncio.Task | None = None
         self._was_cancelled = False
-        self._rampers: list[Ramper] = []
+        self._rampers: list[RateControllerProtocol] = []
 
     def _build_credit_issuer(
         self, url_selection_strategy: URLSelectionStrategyProtocol | None
@@ -592,6 +601,36 @@ class PhaseRunner(TaskManagerMixin):
                     f"Strategy {strategy.__class__.__name__} does not implement RateSettableProtocol. "
                     "Request rate will be fixed at the target value."
                 )
+
+        self._create_rate_series_controller(strategy)
+
+    def _create_rate_series_controller(self, strategy: TimingStrategyProtocol) -> None:
+        """Create a request-rate series controller when configured."""
+        config = self._config
+        if not config.request_rate_series or not config.request_rate:
+            return
+        if not isinstance(strategy, RateSettableProtocol):
+            self.warning(
+                f"Strategy {strategy.__class__.__name__} does not implement RateSettableProtocol. "
+                "Request rate series will be ignored."
+            )
+            return
+
+        points = config.request_rate_series.points
+        start_delay = config.request_rate_ramp_duration_sec or 0.0
+        self.info(
+            f"Starting request rate series: {len(points)} points, "
+            f"initial={points[0].qps} QPS, final={points[-1].qps} QPS, "
+            f"start_delay={start_delay}s"
+        )
+        self._rampers.append(
+            RateSeriesController(
+                setter=strategy.set_request_rate,
+                config=config.request_rate_series,
+                update_interval=Environment.TIMING.RATE_RAMP_UPDATE_INTERVAL,
+                start_delay=start_delay,
+            )
+        )
 
     def _format_phase_started(self, stats: CreditPhaseStats) -> str:
         """Format a concise log message for phase start."""

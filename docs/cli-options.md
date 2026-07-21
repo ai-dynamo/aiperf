@@ -959,6 +959,10 @@ Duration in seconds to ramp prefill concurrency from 1 to target.
 Duration in seconds to ramp request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration), ensuring correct behavior for target rates below 1 QPS. Useful for gradual warm-up of the target system.
 <br/>_Constraints: > 0_
 
+#### `--request-rate-series` `<str>`
+
+JSON file containing request-rate points for piecewise-linear request-rate control.
+
 ### Warmup
 
 #### `--warmup-request-count`, `--num-warmup-requests` `<int>`
@@ -2384,6 +2388,10 @@ Duration in seconds to ramp prefill concurrency from 1 to target.
 
 Duration in seconds to ramp request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration), ensuring correct behavior for target rates below 1 QPS. Useful for gradual warm-up of the target system.
 <br/>_Constraints: > 0_
+
+#### `--request-rate-series` `<str>`
+
+JSON file containing request-rate points for piecewise-linear request-rate control.
 
 ### Warmup
 

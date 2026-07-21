@@ -20,6 +20,7 @@ Covers former bugs in ``aiperf.config.flags._converter_profiling``:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
@@ -48,7 +49,7 @@ def _make_user(
 
 
 class TestArrivalSmoothnessGating:
-    def test_smoothness_without_gamma_raises_clear_error(self):
+    def test_smoothness_without_gamma_raises_clear_error(self) -> None:
         """--arrival-smoothness with default poisson pattern must error."""
         loadgen = CLIConfig(
             request_rate=100.0,
@@ -59,7 +60,7 @@ class TestArrivalSmoothnessGating:
         with pytest.raises(ValueError, match="--arrival-smoothness"):
             build_profiling(user)
 
-    def test_smoothness_with_constant_pattern_raises(self):
+    def test_smoothness_with_constant_pattern_raises(self) -> None:
         """--arrival-smoothness with --arrival-pattern constant must error."""
         loadgen = CLIConfig(
             request_rate=100.0,
@@ -71,7 +72,7 @@ class TestArrivalSmoothnessGating:
         with pytest.raises(ValueError, match="arrival-pattern gamma"):
             build_profiling(user)
 
-    def test_smoothness_without_request_rate_raises(self):
+    def test_smoothness_without_request_rate_raises(self) -> None:
         """Concurrency-mode (no rate) with --arrival-smoothness must error."""
         loadgen = CLIConfig(
             arrival_smoothness=1.5,
@@ -82,7 +83,7 @@ class TestArrivalSmoothnessGating:
         with pytest.raises(ValueError, match="--arrival-smoothness"):
             build_profiling(user)
 
-    def test_smoothness_with_gamma_succeeds(self):
+    def test_smoothness_with_gamma_succeeds(self) -> None:
         """Valid combination: --arrival-pattern gamma + --arrival-smoothness."""
         loadgen = CLIConfig(
             request_rate=100.0,
@@ -96,7 +97,7 @@ class TestArrivalSmoothnessGating:
         assert prof["smoothness"] == 1.5
         assert prof["rate"] == 100.0
 
-    def test_gamma_without_smoothness_succeeds(self):
+    def test_gamma_without_smoothness_succeeds(self) -> None:
         """--arrival-pattern gamma without --arrival-smoothness is allowed
         (smoothness is optional on GammaPhase)."""
         loadgen = CLIConfig(
@@ -116,28 +117,28 @@ class TestArrivalSmoothnessGating:
 
 
 class TestFixedScheduleOffsetGating:
-    def test_start_offset_without_fixed_schedule_raises(self):
+    def test_start_offset_without_fixed_schedule_raises(self) -> None:
         loadgen = CLIConfig(request_rate=100.0, request_count=10)
         input_cfg = CLIConfig(fixed_schedule_start_offset=1000)
         user = _make_user(loadgen=loadgen, input_cfg=input_cfg)
         with pytest.raises(ValueError, match="--fixed-schedule"):
             build_profiling(user)
 
-    def test_end_offset_without_fixed_schedule_raises(self):
+    def test_end_offset_without_fixed_schedule_raises(self) -> None:
         loadgen = CLIConfig(request_rate=100.0, request_count=10)
         input_cfg = CLIConfig(fixed_schedule_end_offset=2000)
         user = _make_user(loadgen=loadgen, input_cfg=input_cfg)
         with pytest.raises(ValueError, match="--fixed-schedule"):
             build_profiling(user)
 
-    def test_auto_offset_without_fixed_schedule_raises(self):
+    def test_auto_offset_without_fixed_schedule_raises(self) -> None:
         loadgen = CLIConfig(concurrency=4, request_count=10)
         input_cfg = CLIConfig(fixed_schedule_auto_offset=True)
         user = _make_user(loadgen=loadgen, input_cfg=input_cfg)
         with pytest.raises(ValueError, match="--fixed-schedule"):
             build_profiling(user)
 
-    def test_offsets_in_concurrency_mode_raises(self):
+    def test_offsets_in_concurrency_mode_raises(self) -> None:
         loadgen = CLIConfig(concurrency=2, request_count=10)
         input_cfg = CLIConfig(fixed_schedule_start_offset=500)
         user = _make_user(loadgen=loadgen, input_cfg=input_cfg)
@@ -146,7 +147,7 @@ class TestFixedScheduleOffsetGating:
         ):
             build_profiling(user)
 
-    def test_offsets_with_fixed_schedule_succeed(self):
+    def test_offsets_with_fixed_schedule_succeed(self) -> None:
         """Valid combination: --fixed-schedule + offsets all together."""
         loadgen = CLIConfig(concurrency=4)
         input_cfg = CLIConfig(
@@ -162,7 +163,7 @@ class TestFixedScheduleOffsetGating:
         # Existing convention: start_offset present => auto_offset defaults False.
         assert prof["auto_offset"] is False
 
-    def test_fixed_schedule_without_offsets_succeeds(self):
+    def test_fixed_schedule_without_offsets_succeeds(self) -> None:
         """--fixed-schedule alone (no offsets) is fine."""
         loadgen = CLIConfig(concurrency=4)
         input_cfg = CLIConfig(fixed_schedule=True)
@@ -179,7 +180,7 @@ class TestFixedScheduleOffsetGating:
 
 
 class TestGracePeriodRequiresDuration:
-    def test_grace_period_without_duration_raises(self):
+    def test_grace_period_without_duration_raises(self) -> None:
         loadgen = CLIConfig(benchmark_grace_period=30, request_count=10, concurrency=1)
         user = _make_user(loadgen=loadgen)
         with pytest.raises(
@@ -187,7 +188,7 @@ class TestGracePeriodRequiresDuration:
         ):
             build_profiling(user)
 
-    def test_grace_period_with_duration_succeeds(self):
+    def test_grace_period_with_duration_succeeds(self) -> None:
         loadgen = CLIConfig(
             benchmark_duration=60.0, benchmark_grace_period=30, concurrency=1
         )
@@ -203,7 +204,7 @@ class TestGracePeriodRequiresDuration:
 
 
 class TestNumUsersRequiresUserCentric:
-    def test_num_users_with_concurrency_mode_raises(self):
+    def test_num_users_with_concurrency_mode_raises(self) -> None:
         loadgen = CLIConfig(num_users=5, request_count=10, concurrency=1)
         user = _make_user(loadgen=loadgen)
         with pytest.raises(
@@ -211,7 +212,7 @@ class TestNumUsersRequiresUserCentric:
         ):
             build_profiling(user)
 
-    def test_num_users_with_request_rate_raises(self):
+    def test_num_users_with_request_rate_raises(self) -> None:
         loadgen = CLIConfig(num_users=5, request_rate=100.0, request_count=10)
         user = _make_user(loadgen=loadgen)
         with pytest.raises(
@@ -219,7 +220,7 @@ class TestNumUsersRequiresUserCentric:
         ):
             build_profiling(user)
 
-    def test_num_users_with_user_centric_succeeds(self):
+    def test_num_users_with_user_centric_succeeds(self) -> None:
         """``--user-centric-rate`` resolves to USER_CENTRIC; --num-users flows through."""
         loadgen = CLIConfig(
             user_centric_rate=10.0,
@@ -239,17 +240,17 @@ class TestNumUsersRequiresUserCentric:
 
 
 class TestRateRampRequiresRequestRate:
-    def test_rate_ramp_with_concurrency_mode_raises(self):
+    def test_rate_ramp_with_concurrency_mode_raises(self) -> None:
         loadgen = CLIConfig(
             request_rate_ramp_duration=30, request_count=10, concurrency=1
         )
         user = _make_user(loadgen=loadgen)
         with pytest.raises(
-            ValueError, match="--request-rate-ramp-duration.*rate-controlled"
+            ValueError, match=r"--request-rate-ramp-duration.*rate-controlled"
         ):
             build_profiling(user)
 
-    def test_rate_ramp_with_request_rate_succeeds(self):
+    def test_rate_ramp_with_request_rate_succeeds(self) -> None:
         loadgen = CLIConfig(
             request_rate=100.0, request_rate_ramp_duration=30, request_count=10
         )
@@ -558,3 +559,57 @@ class TestAdaptiveScaleRoutes:
         )
 
         assert phase.adaptive_scale is False
+
+
+class TestRateSeries:
+    def test_rate_series_without_request_rate_succeeds(self, tmp_path: Path) -> None:
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":1},{"time_s":60,"qps":7},{"time_s":120,"qps":40}]}',
+            encoding="utf-8",
+        )
+        loadgen = CLIConfig(
+            request_rate_series=json_path,
+            arrival_pattern=ArrivalPattern.CONSTANT,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+
+        prof = build_profiling(user)
+
+        assert prof["type"] == PhaseType.CONSTANT
+        assert "rate" not in prof
+        assert prof["rate_series"]["points"][1] == {"time_s": 60.0, "qps": 7.0}
+
+    def test_rate_series_with_request_rate_raises(self, tmp_path: Path) -> None:
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":5},{"time_s":60,"qps":10}]}',
+            encoding="utf-8",
+        )
+        loadgen = CLIConfig(
+            request_rate=100.0,
+            request_rate_series=json_path,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+
+        with pytest.raises(ValueError, match=r"request-rate.*request-rate-series"):
+            build_profiling(user)
+
+    def test_rate_series_with_user_centric_rate_raises(self, tmp_path: Path) -> None:
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":5},{"time_s":60,"qps":10}]}',
+            encoding="utf-8",
+        )
+        loadgen = CLIConfig(
+            user_centric_rate=100.0,
+            request_rate_series=json_path,
+            num_users=4,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+
+        with pytest.raises(ValueError, match="user-centric-rate"):
+            build_profiling(user)
