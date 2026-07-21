@@ -8,6 +8,7 @@ discrimination rules) and load_dataset line-parsing edge cases that the
 shipped unit tests do not cover. Task 1 of the raw-payload adversarial pass.
 """
 
+import sys
 from unittest.mock import MagicMock
 
 import orjson
@@ -195,6 +196,10 @@ class TestLoadDatasetLineEdgeCases:
 
 
 class TestWave2BugCandidates:
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Windows uses ACLs not POSIX permission bits; os.chmod(0o000) does not block reads",
+    )
     def test_can_load_directory_with_unreadable_jsonl_raises_post_fix(self, tmp_path):
         """Unreadable .jsonl file in a directory.
 
