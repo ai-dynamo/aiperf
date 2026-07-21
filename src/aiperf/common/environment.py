@@ -685,13 +685,6 @@ class _HTTPSettings(BaseSettings):
         description="Also send X-SMG-Routing-Key with the stable X-Correlation-ID value. "
         "Use this with the SGLang Model Gateway manual routing policy.",
     )
-    X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
-        default=False,
-        description="Also send X-Dynamo-Session-ID with the stable X-Correlation-ID value, "
-        "plus X-Dynamo-Parent-Session-ID on subagent children. Use this with a Dynamo "
-        "frontend running --router-session-affinity-ttl-secs to pin every turn of a "
-        "session to the replica holding its KV prefix.",
-    )
     VIDEO_POLL_INTERVAL: float = Field(
         ge=0.001,
         le=10.0,
