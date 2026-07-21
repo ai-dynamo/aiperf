@@ -1433,8 +1433,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
         except Exception as e:  # noqa: BLE001 - phase artifact remains best-effort
             return None, [f"GPU telemetry phase export failed: {type(e).__name__}: {e}"]
-        if results is None:
-            return None, ["No GPU telemetry data available for this phase."]
+        if results is None or not getattr(results, "endpoints", None):
+            return None, []
         return results, []
 
     async def _phase_server_metrics_results(
@@ -1453,8 +1453,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return None, [
                 f"Server metrics phase export failed: {type(e).__name__}: {e}"
             ]
-        if results is None:
-            return None, ["No server metrics data available for this phase."]
+        if results is None or not getattr(results, "endpoint_summaries", None):
+            return None, []
         return results, []
 
     def _create_phase_profile_result(

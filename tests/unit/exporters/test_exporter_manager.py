@@ -280,6 +280,45 @@ class TestExporterManager:
         assert "Failed to write phase export" in manager.error.call_args.args[0]
 
     @pytest.mark.asyncio
+    async def test_write_phase_observability_export_skips_no_data_without_warnings(
+        self, endpoint_config, output_config, mock_cfg
+    ) -> None:
+        manager = ExporterManager(
+            results=ProfileResults(
+                records=[],
+                start_ns=1,
+                end_ns=2,
+                completed=0,
+                was_cancelled=False,
+                error_summary=[],
+            ),
+            run=make_run_from_cli(mock_cfg),
+            telemetry_results=None,
+        )
+        phase_result = PhaseProfileResults(
+            phase_index=1,
+            profiling_index=0,
+            phase_name="load",
+            phase_kind="profiling",
+            start_ns=1_000,
+            end_ns=2_000,
+            telemetry_results=None,
+            telemetry_warnings=[],
+        )
+        phase_dir = output_config / "phases" / "load"
+        await manager._write_phase_observability_export(
+            phase_result=phase_result,
+            phase_dir=phase_dir,
+            manifest_entry={},
+            attr="telemetry_results",
+            warnings_attr="telemetry_warnings",
+            file_name="gpu_telemetry.json",
+            manifest_key="gpu_telemetry_json",
+        )
+
+        assert not (phase_dir / "gpu_telemetry.json").exists()
+
+    @pytest.mark.asyncio
     async def test_export_runs_mlflow_after_other_data_exporters(
         self, endpoint_config, output_config, sample_records, mock_cfg
     ):

@@ -290,15 +290,16 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         manager._error_tracker = ErrorTracker()
 
         class _CaptureAccumulator:
-            def __init__(self) -> None:
+            def __init__(self, result) -> None:
+                self.result = result
                 self.contexts: list[ExportContext] = []
 
             async def export_results(self, ctx: ExportContext):
                 self.contexts.append(ctx)
-                return None
+                return self.result
 
-        gpu_accumulator = _CaptureAccumulator()
-        server_accumulator = _CaptureAccumulator()
+        gpu_accumulator = _CaptureAccumulator(SimpleNamespace(endpoints={}))
+        server_accumulator = _CaptureAccumulator(SimpleNamespace(endpoint_summaries={}))
         manager._gpu_telemetry_accumulator = gpu_accumulator
         manager._server_metrics_accumulator = server_accumulator
 
@@ -315,6 +316,10 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         assert server_accumulator.contexts[0].start_ns == 900
         assert server_accumulator.contexts[0].end_ns == 2_200
         assert server_accumulator.contexts[0].is_phase_scoped is True
+        assert results[0].telemetry_results is None
+        assert results[0].server_metrics_results is None
+        assert results[0].telemetry_warnings == []
+        assert results[0].server_metrics_warnings == []
 
     @pytest.mark.asyncio
     async def test_disabled_observability_skips_phase_exports(self) -> None:
