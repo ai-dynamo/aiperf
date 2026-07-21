@@ -1566,6 +1566,7 @@ class PlotGenerator:
         secondary_style: Style | None = None,
         active_count_col: str | None = None,
         title: str | None = None,
+        subtitle: str | None = None,
         x_label: str | None = None,
         y1_label: str | None = None,
         y2_label: str | None = None,
@@ -1612,6 +1613,8 @@ class PlotGenerator:
             title
             or f"{get_metric_display_name(y1_metric)} with {get_metric_display_name(y2_metric)}"
         )
+        if subtitle:
+            title = f"{title}<br><sup>{subtitle}</sup>"
         x_label = x_label or "Time (s)"
         y1_label = y1_label or get_metric_display_name(y1_metric)
         y2_label = y2_label or get_metric_display_name(y2_metric)

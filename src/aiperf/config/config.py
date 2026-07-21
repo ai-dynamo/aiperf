@@ -437,24 +437,26 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
 
     @model_validator(mode="after")
     def validate_phase_names_unique(self) -> Self:
-        """Reject duplicate phase names — they must be unique within the list."""
-        seen: set[str] = set()
+        """Reject duplicate phase names, case-insensitively, within the list."""
+        seen: dict[str, str] = {}
         for phase in self.phases:
-            if phase.name in seen:
+            key = phase.name.lower()
+            if key in seen:
                 raise ValueError(
-                    f"duplicate phase name '{phase.name}' — names must be unique. "
+                    f"duplicate phase name '{phase.name}' conflicts with "
+                    f"'{seen[key]}' — names must be unique case-insensitively. "
                     f"Found names: {[p.name for p in self.phases]}"
                 )
-            seen.add(phase.name)
+            seen[key] = phase.name
         return self
 
     @model_validator(mode="after")
     def validate_profiling_phase_required(self) -> Self:
-        """Require at least one 'profiling' phase — warmup alone is not a benchmark."""
-        if not any(p.name == "profiling" for p in self.phases):
+        """Require at least one profiling-kind phase — warmup alone is not a benchmark."""
+        if not any(p.kind == "profiling" for p in self.phases):
             raise ValueError(
                 "a 'profiling' phase is required; "
-                f"got phases: {[p.name for p in self.phases]}"
+                f"got phases: {[(p.name, p.kind) for p in self.phases]}"
             )
         return self
 
