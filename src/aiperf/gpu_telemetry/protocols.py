@@ -9,21 +9,16 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 
 if TYPE_CHECKING:
+    from aiperf.common.accumulator_protocols import ExportContext
     from aiperf.common.models import (
-        ErrorDetailsCount,
         MetricResult,
         TelemetryExportData,
     )
-    from aiperf.common.models.server_metrics_models import TimeRangeFilter
 
 
 @runtime_checkable
 class GPUTelemetryCollectorProtocol(Protocol):
-    """Protocol for GPU telemetry collectors.
-
-    Defines the interface for collectors that gather GPU metrics from various sources
-    (DCGM HTTP endpoints, pynvml library, etc.) and deliver them via callbacks.
-    """
+    """Protocol for GPU telemetry collectors."""
 
     @property
     def id(self) -> str:
@@ -48,122 +43,37 @@ class GPUTelemetryCollectorProtocol(Protocol):
         ...
 
     async def is_url_reachable(self) -> bool:
-        """Check if the collector source is available.
-
-        For DCGM: Tests HTTP endpoint reachability.
-        For pynvml: Tests NVML library initialization.
-
-        Returns:
-            True if the source is available and ready for collection.
-        """
+        """Check if the collector source is available."""
         ...
 
     async def collect_and_process_metrics(self) -> None:
-        """Perform a one-shot scrape and dispatch records via the configured callback.
-
-        Called by ``GPUTelemetryManager`` for baseline and final-state capture,
-        outside the collector's own periodic background task. Implementations
-        must be safe to invoke before ``start()`` (i.e. after ``initialize()``)
-        and concurrently with the periodic loop.
-        """
+        """Perform a one-shot scrape and dispatch records via the configured callback."""
         ...
 
     @classmethod
     def validate_environment(cls) -> None:
-        """Raise RuntimeError if this collector cannot run on the current host.
-
-        Called during :class:`GpuTelemetryConfig` validation for local
-        collectors before the benchmark starts so missing native bindings
-        or required system libraries produce a friendly CLI error rather
-        than a runtime traceback. Remote collectors (e.g. DCGM) implement
-        this as a no-op.
-        """
+        """Raise RuntimeError if this collector cannot run on the current host."""
         ...
 
 
-# Type aliases for callbacks
 TRecordCallback = Callable[[list[TelemetryRecord], str], Awaitable[None]]
 TErrorCallback = Callable[[ErrorDetails, str], Awaitable[None]]
 
 
 @runtime_checkable
-class GPUTelemetryProcessorProtocol(Protocol):
-    """Protocol for GPU telemetry results processors that handle TelemetryRecord objects.
+class GPUTelemetryAccumulatorProtocol(Protocol):
+    """Protocol for GPU telemetry accumulators and realtime telemetry."""
 
-    This protocol is separate from ResultsProcessorProtocol because GPU telemetry data
-    has fundamentally different structure (hierarchical with metadata) compared
-    to inference metrics (flat key-value pairs).
-    """
-
-    async def process_telemetry_record(self, record: TelemetryRecord) -> None:
-        """Process individual telemetry record with rich metadata.
-
-        Args:
-            record: TelemetryRecord containing GPU metrics and hierarchical metadata
-        """
+    async def process_record(self, record: TelemetryRecord) -> None:
+        """Process one GPU telemetry sample."""
         ...
 
+    async def summarize(self) -> list[MetricResult]: ...
 
-@runtime_checkable
-class GPUTelemetryAccumulatorProtocol(GPUTelemetryProcessorProtocol, Protocol):
-    """Protocol for GPU telemetry accumulators that accumulate GPU telemetry data and export pre-computed metrics.
-
-    Extends GPUTelemetryProcessorProtocol to provide result export, realtime telemetry, and summarization
-    capabilities. Implementations should accumulate DCGM metrics, compute aggregated statistics per GPU,
-    and support dynamic dashboard enablement for realtime monitoring.
-    """
-
-    def export_results(
-        self,
-        start_ns: int,
-        end_ns: int,
-        error_summary: list[ErrorDetailsCount] | None = None,
-    ) -> TelemetryExportData | None:
-        """Export accumulated telemetry data as a TelemetryExportData object.
-
-        Args:
-            start_ns: Start time of collection in nanoseconds
-            end_ns: End time of collection in nanoseconds
-            error_summary: Optional list of error counts
-
-        Returns:
-            TelemetryExportData object with pre-computed metrics for each GPU
-        """
+    async def export_results(self, ctx: ExportContext) -> TelemetryExportData | None:
+        """Export accumulated telemetry data scoped to ``ctx``."""
         ...
 
     def start_realtime_telemetry(self) -> None:
-        """Start the realtime telemetry background task.
-
-        This is called when the user dynamically enables the telemetry dashboard
-        by pressing the telemetry option in the UI without having passed the 'dashboard' parameter
-        at startup.
-        """
-
-    def compute_efficiency_metrics(
-        self,
-        metric_results: list[MetricResult],
-        time_filter: TimeRangeFilter,
-    ) -> list[MetricResult]:
-        """Compute cross-boundary power efficiency metrics.
-
-        Args:
-            metric_results: All metric results from the profiling phase.
-            time_filter: Time range covering the profiling phase.
-
-        Returns:
-            Up to three MetricResult objects covering total GPU power, total
-            GPU energy, and output tokens per joule. Each metric is
-            independently omitted when its underlying GPU signal is
-            unavailable; returns an empty list when no GPU has any of the
-            relevant signals.
-        """
-        ...
-
-    async def summarize(self) -> list[MetricResult]:
-        """Generate MetricResult list with hierarchical tags for telemetry data.
-
-        Returns:
-            List of MetricResult objects with hierarchical tags that preserve
-            dcgm_url -> gpu_uuid grouping structure for dashboard filtering.
-        """
+        """Start realtime telemetry publishing."""
         ...

@@ -3,10 +3,11 @@
 
 from pytest import approx
 
+from aiperf.common.enums import AggregationKind
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.max_response_metric import MaxResponseTimestampMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
-from tests.unit.metrics.conftest import create_record
+from tests.unit.metrics.conftest import create_record, run_simple_metrics_pipeline
 
 
 class TestMaxResponseTimestampMetric:
@@ -30,36 +31,20 @@ class TestMaxResponseTimestampMetric:
         expected = 100 + 50  # start_ns + latency = timestamp_ns + latency
         assert result == approx(expected)
 
-    def test_max_response_aggregation(self):
-        """Test aggregation finds maximum response timestamp"""
+    def test_uses_max_aggregation_kind(self) -> None:
+        """The accumulator folds the per-record response timestamps to the run max."""
+        assert MaxResponseTimestampMetric.aggregation_kind == AggregationKind.MAX
+
+    def test_max_response_aggregation(self) -> None:
+        """Per-record final-response timestamps fold to the maximum via aggregation_kind."""
         records = [
             create_record(start_ns=100, responses=[150]),  # latency: 50, final: 150
-            create_record(
-                start_ns=200, responses=[300]
-            ),  # latency: 100, final: 300 (max)
+            create_record(start_ns=200, responses=[300]),  # latency: 100, final: 300
             create_record(
                 start_ns=300, responses=[350]
             ),  # latency: 50, final: 350 (max)
         ]
 
-        request_latency_metric = RequestLatencyMetric()
-        max_response_metric = MaxResponseTimestampMetric()
+        results = run_simple_metrics_pipeline(records, MaxResponseTimestampMetric.tag)
 
-        # Process each record and aggregate
-        for record in records:
-            # Get request latency
-            latency = request_latency_metric.parse_record(record, MetricRecordDict())
-
-            # Get max response timestamp
-            metrics_dict = MetricRecordDict()
-            metrics_dict[RequestLatencyMetric.tag] = latency
-            value = max_response_metric.parse_record(record, metrics_dict)
-            max_response_metric.aggregate_value(value)
-
-        # Should have the maximum final response timestamp
-        assert max_response_metric.current_value == approx(350)
-
-    def test_max_response_default_value(self):
-        """Test that default value is zero"""
-        metric = MaxResponseTimestampMetric()
-        assert metric.current_value == 0
+        assert results[MaxResponseTimestampMetric.tag] == approx(350)

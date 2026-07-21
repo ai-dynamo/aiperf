@@ -10,6 +10,7 @@ from pytest import approx
 from tests.component_integration.conftest import (
     ComponentIntegrationTestDefaults as defaults,
 )
+from tests.harness.optional_deps import HAS_SOUNDFILE
 from tests.harness.utils import AIPerfCLI
 from tests.integration.utils import first_video_details
 
@@ -88,6 +89,9 @@ class TestVideoSynthesisTypes:
 
 
 @pytest.mark.skipif(not FFMPEG_AVAILABLE, reason="ffmpeg not installed")
+@pytest.mark.skipif(
+    not HAS_SOUNDFILE, reason="soundfile/libsndfile unavailable (e.g. Windows-on-ARM)"
+)
 @pytest.mark.ffmpeg
 @pytest.mark.component_integration
 class TestVideoAudio:

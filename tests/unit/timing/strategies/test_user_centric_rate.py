@@ -241,6 +241,69 @@ class TestRealisticScenarios:
         assert len(h.sent_credits) >= 100
 
 
+class TestAdaptiveTargetUsers:
+    def _strategy(self) -> UserCentricStrategy:
+        cfg = CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.USER_CENTRIC_RATE,
+            request_rate=10.0,
+            num_users=4,
+            total_expected_requests=10,
+        )
+        return UserCentricStrategy(
+            config=cfg,
+            conversation_source=MagicMock(),
+            scheduler=MagicMock(),
+            stop_checker=MagicMock(),
+            credit_issuer=MagicMock(),
+            lifecycle=MagicMock(),
+        )
+
+    def test_set_target_users_recomputes_gap_and_staggers_scale_up(self) -> None:
+        strategy = self._strategy()
+        strategy._spawn_queue = []
+        strategy._session_to_user = {"1": MagicMock(), "2": MagicMock()}
+
+        strategy.set_target_users(6)
+
+        assert strategy.target_users == 6
+        assert strategy._adaptive_target_enabled is True
+        assert strategy._turn_gap == pytest.approx(0.6)
+        assert len(strategy._spawn_queue) == 2
+        snapshot = strategy.user_control_snapshot()
+        assert snapshot["target_value"] == 6
+        assert snapshot["actual_value"] == 2
+        assert snapshot["retiring_users"] == 0
+
+    def test_set_target_users_rejects_non_positive_and_reports_retiring(self) -> None:
+        strategy = self._strategy()
+        strategy._session_to_user = {str(i): MagicMock() for i in range(6)}
+
+        with pytest.raises(ValueError, match="target users must be positive"):
+            strategy.set_target_users(0)
+
+        strategy.set_target_users(3)
+
+        snapshot = strategy.user_control_snapshot()
+        assert snapshot["target_value"] == 3
+        assert snapshot["actual_value"] == 6
+        assert snapshot["retiring_users"] == 3
+        assert snapshot["cancelled"] == 0
+
+    def test_scale_down_suppresses_new_and_replacement_users(self) -> None:
+        strategy = self._strategy()
+        strategy._session_to_user = {str(i): MagicMock() for i in range(6)}
+
+        strategy.set_target_users(3)
+
+        assert not strategy._should_spawn_user()
+        spawn_queue: list[float] = []
+        strategy._schedule_replacement_user(
+            spawn_queue, spawn_sec=10.0, user=MagicMock(max_turns=2)
+        )
+        assert spawn_queue == []
+
+
 class TestUserClass:
     def test_x_correlation_id_delegates_to_sampled(self) -> None:
         """User.x_correlation_id should delegate to sampled session."""

@@ -194,7 +194,11 @@ class PluginNotFoundError(AIPerfError):
     """Exception raised when a plugin is not found. This is used to indicate that a plugin is not found when trying to get a plugin class or metadata."""
 
 
-class PostProcessorDisabled(AIPerfError):
+class PluginDisabled(AIPerfError):
+    """Raised when initializing an accumulator or stream exporter to indicate it is disabled and should not be loaded."""
+
+
+class PostProcessorDisabled(PluginDisabled):
     """Raised when initializing a post processor to indicate to the caller that it is disabled and should not be used."""
 
 

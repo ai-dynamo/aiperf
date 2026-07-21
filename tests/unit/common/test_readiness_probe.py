@@ -88,6 +88,39 @@ def test_wait_inference_dedicated_template_does_not_warn(
     assert client.payloads == [{"input": "Lo", "model": "embedder"}]
 
 
+def test_wait_inference_messages_uses_dedicated_template(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="aiperf.common.readiness_probe")
+    client = _FakeClient()
+
+    asyncio.run(
+        readiness_probe._wait_inference(
+            client=cast(Any, client),
+            url="http://server",
+            model_name="claude-sonnet-4-20250514",
+            endpoint_type="messages",
+            custom_endpoint=None,
+            timeout_s=1.0,
+            interval_s=0.1,
+            headers={},
+        )
+    )
+
+    # The Messages endpoint has a dedicated template, so no chat fallback
+    # warning and the probe hits /v1/messages with a Messages-shaped body
+    # (max_tokens is required by the Anthropic API).
+    assert "no dedicated request template" not in caplog.text
+    assert client.posted_urls == ["http://server/v1/messages"]
+    assert client.payloads == [
+        {
+            "messages": [{"role": "user", "content": "Lo"}],
+            "max_tokens": 1,
+            "model": "claude-sonnet-4-20250514",
+        }
+    ]
+
+
 class _FakeReadyRecord:
     """A get_request response that the probe treats as 'server live'."""
 
