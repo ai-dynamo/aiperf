@@ -541,29 +541,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             if record.error is not None:
                 credit_context.error = record.error
 
-            if session.should_store_response() and (
-                resp_turn := self.inference_client.endpoint.build_assistant_turn(record)
-            ):
-                session.store_response(resp_turn)
-
-            parsed_responses = self._parsed_responses_for_record(record)
-            content_perf_ns = self._content_response_perf_ns_for_record(
-                record, parsed_responses
-            )
-            credit_context.request_latency_ns = self._request_latency_ns_for_record(
-                record, content_perf_ns
-            )
-            credit_context.output_sequence_length = (
-                self._output_sequence_length_for_responses(parsed_responses)
-            )
-            credit_context.inter_token_latency_ns = (
-                self._inter_token_latency_ns_for_record(
-                    record,
-                    content_perf_ns,
-                    parsed_responses,
-                    credit_context.output_sequence_length,
-                )
-            )
+            self._maybe_store_response(session, record)
+            self._populate_response_metrics(credit_context, record)
 
         except asyncio.CancelledError:
             # Mark cancelled before re-raising so finally can evict session
@@ -617,6 +596,29 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         record = await self.inference_client.send_request(
             request_info, first_token_callback=first_token_callback
         )
+        self._populate_response_metrics(credit_context, record)
+        await self._send_inference_result_message(record)
+        if record.error is not None:
+            credit_context.error = record.error
+        return True
+
+    def _maybe_store_response(
+        self, session: UserSession, record: RequestRecord
+    ) -> None:
+        """Store the assistant turn on the session when the mode retains history."""
+        if session.should_store_response() and (
+            resp_turn := self.inference_client.endpoint.build_assistant_turn(record)
+        ):
+            session.store_response(resp_turn)
+
+    def _populate_response_metrics(
+        self, credit_context: CreditContext, record: RequestRecord
+    ) -> None:
+        """Derive latency/OSL/ITL from ``record`` onto ``credit_context``.
+
+        Shared by the normal session path and the payload-bytes fast path so
+        both emit identical CreditReturn timing fields from the same record.
+        """
         parsed_responses = self._parsed_responses_for_record(record)
         content_perf_ns = self._content_response_perf_ns_for_record(
             record, parsed_responses
@@ -633,10 +635,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             parsed_responses,
             credit_context.output_sequence_length,
         )
-        await self._send_inference_result_message(record)
-        if record.error is not None:
-            credit_context.error = record.error
-        return True
 
     def _parsed_responses_for_record(
         self, record: RequestRecord
