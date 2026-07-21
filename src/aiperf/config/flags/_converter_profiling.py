@@ -66,7 +66,7 @@ def _profiling_phase_type(cli: CLIConfig) -> Any:
         return PhaseType.FIXED_SCHEDULE
     if cli.user_centric_rate is not None:
         return PhaseType.USER_CENTRIC
-    if cli.request_rate is not None:
+    if cli.request_rate is not None or cli.request_rate_series is not None:
         match cli.arrival_pattern:
             case ArrivalPattern.GAMMA:
                 return PhaseType.GAMMA
@@ -117,6 +117,23 @@ def _apply_adaptive_scale_control(prof: dict[str, Any], cli: CLIConfig) -> None:
     prof.update(control)
     prof["_adaptive_control_variable_source"] = "--adaptive-scale-control"
     prof.pop("adaptive_scale_control", None)
+
+
+def _apply_profiling_rate_series(prof: dict[str, Any], cli: CLIConfig) -> None:
+    if "request_rate_series" not in cli.model_fields_set:
+        return
+    if "request_rate" in cli.model_fields_set:
+        raise ValueError(
+            "--request-rate and --request-rate-series are mutually exclusive."
+        )
+    if cli.user_centric_rate is not None:
+        raise ValueError(
+            "--request-rate-series is not supported with --user-centric-rate."
+        )
+    from aiperf.config.rate_series import RateSeriesConfig
+
+    series = RateSeriesConfig(path=str(cli.request_rate_series))
+    prof["rate_series"] = series.model_dump(exclude_none=True, exclude={"path"})
 
 
 def _reject_orphan_load_generator_flags(prof: dict[str, Any], cli: CLIConfig) -> None:
@@ -184,6 +201,15 @@ def _reject_orphan_load_generator_flags(prof: dict[str, Any], cli: CLIConfig) ->
             "--request-rate-ramp-duration can only be used with rate-controlled "
             "scheduling (--request-rate or --user-centric-rate). Pass one of "
             "those to enable rate ramping, or drop --request-rate-ramp-duration."
+        )
+
+    if "rate_series" in prof and phase_type not in (
+        PhaseType.POISSON,
+        PhaseType.GAMMA,
+        PhaseType.CONSTANT,
+    ):
+        raise ValueError(
+            "--request-rate-series can only be used with rate-controlled scheduling."
         )
 
 
@@ -464,6 +490,7 @@ def build_profiling(cli: CLIConfig) -> dict[str, Any]:
             prof[output_key] = getattr(cli, attr_name)
 
     _apply_profiling_ramps(prof, cli)
+    _apply_profiling_rate_series(prof, cli)
 
     prof["type"] = _profiling_phase_type(cli)
     _apply_adaptive_scale_control(prof, cli)
