@@ -437,13 +437,17 @@ pub struct MockServerConfig {
     #[arg(short = 'f', long, env = "MOCK_SERVER_FAST", default_value_t = false)]
     pub fast: bool,
 
-    /// Skip the real mock server entirely and serve a single static payload
-    /// (`fastmock.rs`) at ultra-low latency instead. Unlike `--fast` (which
-    /// still runs full request handling with simulated delays zeroed), this
-    /// bypasses routing, latency simulation, token rendering, and every other
-    /// `--*` flag — every request on `--host:--port` (and `--uds`, if set)
-    /// gets the same fixed chat-completion / model-list response. Intended
-    /// for saturating a transport or client path, not for behavioral testing.
+    /// WARNING: NOT A REALISTIC MOCK SERVER. Raw-throughput extreme test
+    /// only — skips the real mock server entirely and serves a single
+    /// HARD-CODED response (`fastmock.rs`) at ultra-low latency instead.
+    /// Unlike `--fast` (which still runs full request handling with
+    /// simulated delays zeroed), this bypasses routing, latency simulation,
+    /// token rendering, endpoint dispatch, and every other `--*` flag —
+    /// request contents are ignored, and every request on `--host:--port`
+    /// (and `--uds`, if set) gets the same fixed chat-completion /
+    /// model-list payload. Use ONLY to saturate a transport or client path
+    /// at the ceiling of what the wire can carry; never for behavioral,
+    /// correctness, or benchmark-accuracy testing. Aliased as `--plaid`.
     #[arg(
         long,
         alias = "plaid",
