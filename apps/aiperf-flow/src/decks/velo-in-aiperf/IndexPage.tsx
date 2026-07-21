@@ -1,0 +1,111 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Constellation index — ten mechanism cards arranged around a Velo "core", ported from the
+//! canvas source's `Index` component. Rendered as a real `@xyflow/react` graph: dashed edges
+//! radiate from a center chip to each mechanism card, and clicking a card navigates to that
+//! mechanism's page (the aiperf-flow analogue of the canvas's `open(view)`).
+
+import { useMemo } from "react";
+import type { Edge, Node } from "@xyflow/react";
+import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import clsx from "clsx";
+import { nodeTypes } from "../../nodes/nodeTypes.js";
+import { edgeTypes } from "../../edges/edgeTypes.js";
+import { categoryClassName, inkClassName } from "../../theme/tokens.js";
+import type { VeloPageId } from "./VeloInAiperfDeck.js";
+
+/** The ten mechanisms, in canvas order — id (page), mnemonic mark, and title. */
+export const MECHANISMS: ReadonlyArray<{ id: Exclude<VeloPageId, "index">; mark: string; title: string }> = [
+  { id: "radar", mark: "R", title: "Connection radar" },
+  { id: "xray", mark: "X", title: "Registration X-ray" },
+  { id: "gate", mark: "G", title: "Start gate" },
+  { id: "press", mark: "P", title: "MessagePack press" },
+  { id: "scope", mark: "H", title: "Heartbeat scope" },
+  { id: "courier", mark: "C", title: "Partition courier" },
+  { id: "merge", mark: "M", title: "Merge machine" },
+  { id: "phaser", mark: "Φ", title: "Phaser clock" },
+  { id: "dataset", mark: "D", title: "Dataset floodgate" },
+  { id: "tree", mark: "T", title: "Aggregator tree" },
+];
+
+// Constellation offsets around a center core, roughly matching the canvas `.i0..i9` placement.
+const RING: ReadonlyArray<[number, number]> = [
+  [-560, -220],
+  [-190, -300],
+  [520, -210],
+  [-640, 40],
+  [560, 40],
+  [-540, 300],
+  [-150, 360],
+  [520, 300],
+  [-380, -80],
+  [300, 210],
+];
+
+export function IndexPage({ onSelect }: { onSelect: (id: VeloPageId) => void }): React.JSX.Element {
+  const { nodes, edges } = useMemo(() => {
+    const nodeList: Node[] = [
+      {
+        id: "core",
+        type: "chip",
+        position: { x: 0, y: 40 },
+        data: { label: "Velo plane", strokeRole: "primary", className: categoryClassName("cyan") },
+      },
+    ];
+    const edgeList: Edge[] = [];
+    MECHANISMS.forEach((m, i) => {
+      const [dx, dy] = RING[i]!;
+      nodeList.push({
+        id: m.id,
+        type: "card",
+        position: { x: dx, y: 40 + dy },
+        data: {
+          title: m.title,
+          subtitle: `${m.mark} / ${String(i + 1).padStart(2, "0")}`,
+        },
+      });
+      edgeList.push({ id: `e-core-${m.id}`, source: "core", target: m.id, style: { strokeDasharray: "2 8" } });
+    });
+    return { nodes: nodeList, edges: edgeList };
+  }, []);
+
+  return (
+    <div className="flex h-full w-full flex-col gap-4">
+      <div>
+        <div className={clsx("text-[11px] font-bold uppercase tracking-wide", categoryClassName("cyan"))}>
+          AIPerf cellular transport
+        </div>
+        <h2 className={clsx("mt-1 text-2xl font-semibold", inkClassName("primary"))}>Velo mechanisms</h2>
+        <p className={clsx("mt-1 max-w-2xl text-sm", inkClassName("secondary"))}>
+          Ten interactive instruments expose how cellular identity, synchronization, distribution,
+          and reduction cross the Velo plane.
+        </p>
+      </div>
+
+      <div style={{ height: 620 }}>
+        <ReactFlow
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          nodes={nodes}
+          edges={edges}
+          onNodeClick={(_, node) => {
+            if (node.id !== "core") onSelect(node.id as VeloPageId);
+          }}
+          fitView
+          fitViewOptions={{ padding: 0.1 }}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
+        </ReactFlow>
+      </div>
+
+      <p className={clsx("text-xs", inkClassName("tertiary"))}>
+        Select any instrument above, or click a card to open it.
+      </p>
+    </div>
+  );
+}
