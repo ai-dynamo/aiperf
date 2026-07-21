@@ -322,6 +322,67 @@ Rate updates continuously (every 0.1 seconds by default):
 
 This creates smooth traffic curves without sudden jumps.
 
+### Request Rate Series (Custom Curves)
+
+For full control over the load shape, provide a JSON file with `time_s` and `qps`
+points. AIPerf linearly interpolates between points, holds the first QPS before
+the first point, and holds the last QPS after the final point.
+
+```json
+{
+  "points": [
+    {"time_s": 0, "qps": 1},
+    {"time_s": 60, "qps": 7},
+    {"time_s": 300, "qps": 65},
+    {"time_s": 600, "qps": 20},
+    {"time_s": 900, "qps": 40}
+  ]
+}
+```
+
+```bash
+aiperf profile \
+    --model your-model \
+    --url localhost:8000 \
+    --request-rate-ramp-duration 60 \
+    --request-rate-series rate.json \
+    --arrival-pattern constant \
+    --benchmark-duration 960
+```
+
+Use `--arrival-pattern constant` for the clearest match to the requested curve.
+Use `poisson` or `gamma` when you want random arrivals around the instantaneous
+QPS target. When combined with `--request-rate-ramp-duration`, AIPerf ramps to
+the first series QPS, then starts the series timeline after the ramp completes.
+
+YAML configs can also inline the same points, which is useful when the config is
+the complete deployment artifact, such as a Kubernetes `AIPerfJob` custom
+resource:
+
+```yaml
+phases:
+  - name: profiling
+    type: constant
+    duration: 960
+    rateSeries:
+      points:
+        - timeS: 0
+          qps: 1
+        - timeS: 60
+          qps: 7
+        - timeS: 300
+          qps: 65
+        - timeS: 600
+          qps: 20
+        - timeS: 900
+          qps: 40
+```
+
+The profiling series supplied by `--request-rate-series` is not inherited by an
+automatically generated warmup phase. To use a request-rate series during
+warmup, define `rateSeries` explicitly on the YAML warmup phase; that warmup
+then follows its own series timeline.
+
 ## Quick Reference
 
 | Option | Description | Default |
@@ -329,6 +390,7 @@ This creates smooth traffic curves without sudden jumps.
 | `--concurrency-ramp-duration <sec>` | Ramp session concurrency over N seconds | No ramping |
 | `--prefill-concurrency-ramp-duration <sec>` | Ramp prefill concurrency over N seconds | No ramping |
 | `--request-rate-ramp-duration <sec>` | Ramp request rate over N seconds | No ramping |
+| `--request-rate-series <path>` | Follow a JSON request-rate curve | No series |
 | `--warmup-concurrency-ramp-duration <sec>` | Warmup phase concurrency ramp | Uses main value |
 | `--warmup-prefill-concurrency-ramp-duration <sec>` | Warmup phase prefill ramp | Uses main value |
 | `--warmup-request-rate-ramp-duration <sec>` | Warmup phase rate ramp | Uses main value |
@@ -338,6 +400,7 @@ This creates smooth traffic curves without sudden jumps.
 - Request rate starts proportionally low and interpolates smoothly
 - Ramps complete exactly at the specified duration
 - After ramping, values stay at the target for the rest of the phase
+- Request-rate series starts after request-rate ramping when both are configured
 
 ## Related Documentation
 
