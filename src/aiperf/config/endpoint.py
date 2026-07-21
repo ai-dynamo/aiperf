@@ -37,6 +37,7 @@ from aiperf.config.control_hooks import (
 from aiperf.config.loader.parsing import normalize_http_urls
 from aiperf.plugin.enums import (
     EndpointType,
+    RequestSignerType,
     TransportType,
     URLSelectionStrategy,
 )
@@ -214,9 +215,46 @@ class EndpointConfig(BaseConfig):
         TransportType | None,
         Field(
             default=None,
-            description="Transport plugin name. Currently only 'http' (aiohttp-based "
-            "HTTP/1.1) is shipped. Auto-detected from URL when unset; explicit "
-            "setting overrides auto-detection.",
+            description="Transport plugin name. Auto-detected from the URL scheme when unset.",
+        ),
+    ]
+
+    aws_region: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="AWS region for the request. Required when auth_type='sigv4'.",
+        ),
+    ]
+
+    aws_profile: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Named AWS credentials profile. Unset uses botocore's default "
+            "credential chain.",
+        ),
+    ]
+
+    auth_type: Annotated[
+        RequestSignerType | None,
+        Field(
+            default=None,
+            description="Request signing method for authentication. When set, the selected "
+            "request_signer plugin signs every HTTP request sent by the HTTP transport. "
+            "Replaces Bearer token auth (api_key is ignored when auth_type is set).",
+        ),
+    ]
+
+    aws_signing_service: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="AWS SigV4 signing name -- the credential scope the signature "
+            "is bound to (e.g. 'execute-api', 'sagemaker', 'bedrock'). This is the "
+            "service's signing name, which is not always its API id: the "
+            "'sagemaker-runtime' API signs as 'sagemaker', and 'bedrock-runtime' signs "
+            "as 'bedrock'. Required when auth_type='sigv4'.",
         ),
     ]
 
@@ -689,4 +727,72 @@ class EndpointConfig(BaseConfig):
                 "HTTP transport; unsupported transport "
                 f"{self.transport!r}"
             )
+        # Both hooks reach the server out of band via ``auth_headers_for_endpoint``,
+        # which never applies the request signer, so their requests would go out
+        # unsigned. Checked alongside the transport condition rather than in a
+        # parallel validator so the two cannot drift apart.
+        if self.auth_type is not None:
+            raise ValueError(
+                "endpoint.reset_kv_cache and endpoint.server_profiler issue "
+                "out-of-band requests that request signing does not cover, so "
+                f"they would be rejected under auth_type={self.auth_type}. "
+                "Unset them, or drop --auth-type."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_request_signer_support(self) -> Self:
+        """Reject signer setups whose requests would never reach the signer.
+
+        Defined after ``_validate_request_content_type`` so ``request_content_type``
+        already reflects multipart auto-selection (``mode="after"`` validators run
+        in definition order).
+        """
+        if self.auth_type is None:
+            return self
+
+        if self.auth_type == RequestSignerType.SIGV4:
+            missing = [
+                flag
+                for flag, value in (
+                    ("--aws-region", self.aws_region),
+                    ("--aws-signing-service", self.aws_signing_service),
+                )
+                if not value
+            ]
+            if missing:
+                raise ValueError(
+                    f"--auth-type sigv4 requires {' and '.join(missing)}. "
+                    "The signing name is the credential scope, not the API id: "
+                    "SageMaker Runtime signs as 'sagemaker', Bedrock Runtime as "
+                    "'bedrock', and API Gateway as 'execute-api'."
+                )
+
+        from aiperf.plugin import plugins
+
+        metadata = plugins.get_endpoint_metadata(self.type)
+        if getattr(metadata, "requires_polling", False):
+            raise ValueError(
+                f"endpoint type {self.type} submits and polls an async job over a "
+                "code path that bypasses request signing, so those requests would "
+                f"be sent unsigned under auth_type={self.auth_type}. Signing the "
+                "polling path is not supported."
+            )
+
+        # aiohttp streams multipart bodies, so they never materialize as the exact
+        # bytes SigV4 has to hash.
+        if self.request_content_type == RequestContentType.MULTIPART_FORM_DATA:
+            raise ValueError(
+                f"auth_type={self.auth_type} cannot sign multipart/form-data "
+                f"request bodies, which endpoint type {self.type} requires. "
+                "Use a JSON endpoint type, or drop --auth-type."
+            )
+
+        if self.wait_for_model_timeout > 0:
+            raise ValueError(
+                "--wait-for-model issues an out-of-band readiness probe that "
+                "request signing does not cover, so it would be rejected under "
+                f"auth_type={self.auth_type}. Drop --wait-for-model."
+            )
+
         return self

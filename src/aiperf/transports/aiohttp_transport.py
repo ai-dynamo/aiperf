@@ -332,6 +332,19 @@ class AioHttpTransport(BaseTransport):
             else:
                 body = orjson.dumps(payload)
 
+            # Sign only after ``body`` is final, so the pre-encoded-bytes fast
+            # path is signed too: SigV4 hashes the exact bytes on the wire, and
+            # a body that was signed before re-encoding (or not signed at all)
+            # is rejected with 403. Multipart bodies are streamed by aiohttp and
+            # never materialize as bytes here, so they cannot be hashed;
+            # EndpointConfig rejects multipart + an active signer up front
+            # rather than silently sending them unsigned.
+            if not isinstance(body, aiohttp.FormData):
+                signed = await self._sign_if_needed("POST", url, headers, body)
+                url = signed.url if signed.url is not None else url
+                headers = signed.headers
+                body = signed.body if signed.body is not None else body
+
             match reuse_strategy:
                 case ConnectionReuseStrategy.NEVER:
                     # Create a new connector for this request, and have aiohttp
