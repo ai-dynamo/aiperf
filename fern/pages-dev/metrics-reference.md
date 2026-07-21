@@ -19,6 +19,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Time to First Token (TTFT)](#time-to-first-token-ttft)
     - [Time to Second Token (TTST)](#time-to-second-token-ttst)
     - [Time to First Output Token (TTFO)](#time-to-first-output-token-ttfo)
+    - [Decode Duration](#decode-duration)
     - [Inter Token Latency (ITL)](#inter-token-latency-itl)
     - [Inter Chunk Latency (ICL)](#inter-chunk-latency-icl)
     - [Output Token Throughput Per User](#output-token-throughput-per-user)
@@ -268,6 +269,27 @@ ttfo_ms = ttfo_ns / 1e6
 
 ---
 
+### Decode Duration
+
+**Type:** [Record Metric](#record-metrics)
+
+Measures the client-observed wall-clock interval between the first and final non-empty streamed content responses. Unlike ITL, this metric is not normalized by the number of generated tokens.
+
+**Formula:**
+```python
+decode_duration_ns = request_latency_ns - time_to_first_token_ns
+
+decode_duration_ms = decode_duration_ns / 1e6
+```
+
+**Notes:**
+- This is an end-to-end client observation. It includes response delivery and client-observed gaps after TTFT; it does not isolate server kernel execution time.
+- Compare Decode Duration with Output Sequence Length when early stopping or a generation-length change is possible.
+- A run can have similar Decode Duration but a much higher ITL if it produces fewer output tokens.
+- Requires valid `time_to_first_token` and `request_latency` metrics.
+
+---
+
 ### Inter Token Latency (ITL)
 
 **Type:** [Record Metric](#record-metrics)
@@ -287,7 +309,10 @@ inter_token_latency_ms = inter_token_latency_ns / 1e6
 ```
 
 **Notes:**
-- Requires at least 2 non-empty response chunks and valid `time_to_first_token`, `request_latency`, and `output_sequence_length` metrics.
+- Requires an output sequence length of at least 2 tokens and valid `time_to_first_token`, `request_latency`, and `output_sequence_length` metrics.
+- ITL is generated-token-normalized decode duration. It is not the total wall-clock decode duration.
+- Compare runs at equivalent output lengths, or inspect Decode Duration and Output Sequence Length alongside ITL.
+- Streaming chunks can contain multiple tokens. ITL uses token count, while ICL uses chunk arrival timestamps.
 - Result is in seconds when used for throughput calculations (Output Token Throughput Per User).
 
 ---
