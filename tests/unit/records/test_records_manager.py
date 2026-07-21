@@ -52,6 +52,7 @@ from aiperf.timing.config import CreditPhaseConfig
 
 # Helper functions
 
+
 def test_orphan_phase_tracker_does_not_block_aggregate_completion() -> None:
     tracker = RecordsTracker()
     tracker.update_phase_info(
