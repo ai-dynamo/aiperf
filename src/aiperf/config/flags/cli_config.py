@@ -374,6 +374,26 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    uuid_and_strip: Annotated[
+        bool,
+        Field(
+            description=(
+                "Enable AIPerf-managed image stripping for vLLM's multimodal processor "
+                "cache. Dataset-authored image UUIDs, including UUID-only cache "
+                "references, always pass through on the chat endpoint; this flag only "
+                "strips repeated content after AIPerf observes it in the same session. "
+                "Automatic stripping supports only single_turn datasets with "
+                "session_id-grouped rows; multi_turn is rejected. The server cache must "
+                "cover the working set, and requests in a session must reach a replica "
+                "that retains earlier UUIDs."
+            ),
+        ),
+        CLIParameter(
+            name=("--uuid-and-strip",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.UUID_AND_STRIP
+
     @property
     def url(self) -> str:
         """Return the first URL for backward compatibility."""
@@ -485,7 +505,7 @@ class CLIConfig(BaseConfig):
         Field(
             description="Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. "
             "Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), "
-            "directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.",
+            "Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.",
         ),
         BeforeValidator(parse_file),
         CLIParameter(
@@ -540,7 +560,7 @@ class CLIConfig(BaseConfig):
         Field(
             description="Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. "
             "Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "
-            "`mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; "
+            "`mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; "
             "when using `random_pool`, `--conversation-num` defaults to 100 if not specified; "
             "batch sizes > 1 sample each modality independently from a flat pool and do not preserve "
             "per-entry associations - use `single_turn` if paired modalities must stay together). "
@@ -577,6 +597,22 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--random-seed",),
+            group=Groups.INPUT,
+        ),
+    ] = None
+
+    trace_session_sample_ratio: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0.0,
+            le=1.0,
+            description="Fraction of trace sessions to keep for replay, sampled "
+            "whole-session to preserve multi-turn integrity; deterministic when "
+            "`--random-seed` is set. Only supported by the baseten_trace loader.",
+        ),
+        CLIParameter(
+            name=("--trace-session-sample-ratio",),
             group=Groups.INPUT,
         ),
     ] = None
@@ -831,18 +867,122 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             ge=0.0,
-            description="Clamp per-turn replay delays (read from JSONL trace "
-            "files) to at most this many seconds. ``None`` disables the cap. "
-            "Used by the DAG JSONL loader to keep long pre-recorded waits "
-            "from stalling the benchmark; the loader reports the clamp count "
-            "at end of load. Routes onto the active FileDataset's "
-            "``inter_turn_delay_cap_seconds`` field at config-resolution time.",
+            description="Clamp per-turn replay delays to at most this many "
+            "seconds; ``None`` disables the cap. Honored by the DAG JSONL loader "
+            "and the baseten_trace loader's closed-loop think-times; the clamp "
+            "count is reported at end of load. Maps to FileDataset "
+            "``inter_turn_delay_cap_seconds``.",
         ),
         CLIParameter(
             name=("--inter-turn-delay-cap-seconds",),
             group=Groups.CONVERSATION_INPUT,
         ),
     ] = None
+
+    max_idle_gap_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0.0,
+            description="Collapse idle gaps between consecutive requests (across "
+            "all sessions) to at most this many seconds, so a sparse or "
+            "session-sampled trace does not replay dead air; ``None`` disables "
+            "the cap. The cap is in replay wall-clock seconds, applied after "
+            "--replay-speedup compression, so it bounds actual benchmark idle "
+            "time regardless of speedup. Only supported by the baseten_trace "
+            "loader. Maps to FileDataset ``max_idle_gap_cap_seconds``.",
+        ),
+        CLIParameter(
+            name=("--max-idle-gap-cap-seconds",),
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = None
+
+    replay_speedup: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0.0,
+            description="Trace replay wall-clock compression (10 = 10x faster "
+            "than recorded): divides normalized timestamps and inter-turn delays; "
+            "``None`` = real time. Unlike synthesis speedup_ratio, hash_ids stay "
+            "untouched (KV-cache fidelity). Only supported by the baseten_trace "
+            "loader. Maps to FileDataset ``replay_speedup``.",
+        ),
+        CLIParameter(
+            name=("--replay-speedup",),
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = None
+
+    open_loop_replay: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Open-loop replay (the default): each session starts at "
+            "its absolute, speedup-scaled recorded timestamp; continuation turns "
+            "fire at max(recorded timestamp, prior-turn completion). Pass "
+            "`--no-open-loop-replay` for closed-loop back-pressure: continuation "
+            "turns fire a think-time (recorded start-to-start gap minus recorded "
+            "e2e duration) after the prior turn completes, keeping sessions "
+            "causally ordered when replayed service times differ from recorded "
+            "(e.g. A/A comparisons). Only honored by the baseten_trace loader. "
+            "Maps to FileDataset ``open_loop_replay``.",
+        ),
+        CLIParameter(
+            name=("--open-loop-replay",),
+            negative="--no-open-loop-replay",
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = True
+
+    open_loop_strict: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="In open-loop replay, fire every trace row at its "
+            "absolute recorded timestamp as an independent single-turn session, "
+            "trading away multi-turn grouping and session metrics. Only honored "
+            "by the baseten_trace loader. Maps to FileDataset "
+            "``open_loop_strict``.",
+        ),
+        CLIParameter(
+            name=("--open-loop-strict",),
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = False
+
+    omit_kv_hints: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Drop recorded KV-cache hints (``hash_ids``, "
+            "``block_size``) from replayed request bodies, for strict frontends "
+            "that reject unknown parameters. Only honored by the baseten_trace "
+            "loader. Maps to FileDataset ``omit_kv_hints``.",
+        ),
+        CLIParameter(
+            name=("--omit-kv-hints",),
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = False
+
+    force_min_tokens: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Pin ``min_tokens`` to the recorded output length so "
+            "replayed generations match recorded lengths; pass "
+            "`--no-force-min-tokens` to let EOS end generations naturally (some "
+            "servers reject ``min_tokens``). Only honored by the baseten_trace "
+            "loader. Maps to FileDataset ``force_min_tokens``.",
+        ),
+        CLIParameter(
+            name=("--force-min-tokens",),
+            negative="--no-force-min-tokens",
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = True
 
     ##############################################################################
     # Prompt
@@ -993,10 +1133,11 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             ge=1,
-            description="Token block size for hash-based prompt caching in trace datasets (`mooncake_trace`, `bailian_trace`). When `hash_ids` are provided in trace entries, "
-            "prompts are divided into blocks of this size. Each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation "
-            "of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. "
-            "When not set, the trace loader's `default_block_size` from plugin metadata is used (e.g. 16 for `bailian_trace`, 512 for `mooncake_trace`).",
+            description="Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached "
+            "block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length "
+            "equals `(num_hash_ids - 1) * block_size + final_block_size`. Only supported with synthetic datasets: with `--input-file` the flag is "
+            "rejected at convert time, and trace replay loaders always use the `default_block_size` from their plugin metadata "
+            "(16 for `bailian_trace`, 64 for `baseten_trace`, 512 for `mooncake_trace`).",
         ),
         CLIParameter(
             name=(

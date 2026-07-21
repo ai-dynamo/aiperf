@@ -32,6 +32,7 @@ from unittest.mock import MagicMock
 import pytest
 from tests.aiperf_mock_server.node_exporter_faker import NodeExporterFaker
 
+from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.models.server_metrics_models import (
     CounterMetricData,
@@ -196,7 +197,7 @@ class TestUnknownAccumulatorExport:
             await proc.process_server_metrics_record(
                 _untyped_record("node_netstat_Icmp_InErrors", v, timestamp_ns=i + 1)
             )
-        results = await proc.export_results(start_ns=0, end_ns=10)
+        results = await proc.export_results(ExportContext(start_ns=0, end_ns=10))
         assert results is not None
         (summary,) = results.endpoint_summaries.values()
         metric = summary.metrics["node_netstat_Icmp_InErrors"]

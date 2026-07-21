@@ -602,10 +602,7 @@
           "anyOf": [
             {
               "items": {
-                "enum": [
-                  "json",
-                  "genai_perf"
-                ],
+                "const": "json",
                 "type": "string"
               },
               "type": "array"
@@ -622,11 +619,7 @@
           "anyOf": [
             {
               "items": {
-                "enum": [
-                  "jsonl",
-                  "csv",
-                  "parquet"
-                ],
+                "const": "jsonl",
                 "type": "string"
               },
               "type": "array"
@@ -636,7 +629,7 @@
               "type": "boolean"
             }
           ],
-          "description": "Per-request records export formats. 'jsonl' writes the row-oriented `profile_export.jsonl`; 'csv' writes a flat `profile_export_records.csv` (one row per request, a `{metric}_value`/`{metric}_unit` column pair per metric); 'parquet' writes a wide, columnar `profile_export.parquet` sidecar. Combine them (`[jsonl, csv, parquet]`) or select any subset. Parquet requires an `aiperf-runner` built with the `parquet` feature (the default build). Set to false to disable per-record export entirely.",
+          "description": "Per-request records export formats. Only 'jsonl' is wired up today. Set to false to disable the per-record JSONL file.",
           "title": "Records"
         },
         "raw": {
@@ -859,14 +852,6 @@
         "endpoint": {
           "$ref": "#/$defs/EndpointConfig",
           "description": "Endpoint configuration for connecting to inference server(s). Includes URLs, API type, authentication, timeout, and connection settings."
-        },
-        "endpointProfiles": {
-          "additionalProperties": {
-            "$ref": "#/$defs/EndpointConfig"
-          },
-          "description": "Additional named protocol-v2 endpoint profiles. The existing endpoint section remains the required 'default' profile; evaluation routes reference either 'default' or one of these names.",
-          "title": "Endpointprofiles",
-          "type": "object"
         },
         "datasets": {
           "description": "Dataset configuration as a single-element list. The list shape exists to share the schema between YAML and the AIPerfSweep CRD; the runtime currently loads exactly one dataset. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
@@ -1123,20 +1108,6 @@
                       "default": null,
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
-                    },
-                    "agenticCacheWarmupDuration": {
-                      "anyOf": [
-                        {
-                          "exclusiveMinimum": 0,
-                          "type": "number"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                      "title": "Agenticcachewarmupduration"
                     },
                     "concurrency": {
                       "default": 1,
@@ -1435,20 +1406,6 @@
                       "default": null,
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
-                    },
-                    "agenticCacheWarmupDuration": {
-                      "anyOf": [
-                        {
-                          "exclusiveMinimum": 0,
-                          "type": "number"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                      "title": "Agenticcachewarmupduration"
                     },
                     "concurrency": {
                       "anyOf": [
@@ -1773,20 +1730,6 @@
                       "default": null,
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
-                    },
-                    "agenticCacheWarmupDuration": {
-                      "anyOf": [
-                        {
-                          "exclusiveMinimum": 0,
-                          "type": "number"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                      "title": "Agenticcachewarmupduration"
                     },
                     "concurrency": {
                       "anyOf": [
@@ -2126,20 +2069,6 @@
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
                     },
-                    "agenticCacheWarmupDuration": {
-                      "anyOf": [
-                        {
-                          "exclusiveMinimum": 0,
-                          "type": "number"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                      "title": "Agenticcachewarmupduration"
-                    },
                     "concurrency": {
                       "anyOf": [
                         {
@@ -2463,20 +2392,6 @@
                       "default": null,
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
-                    },
-                    "agenticCacheWarmupDuration": {
-                      "anyOf": [
-                        {
-                          "exclusiveMinimum": 0,
-                          "type": "number"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                      "title": "Agenticcachewarmupduration"
                     },
                     "concurrency": {
                       "anyOf": [
@@ -2809,20 +2724,6 @@
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
                     },
-                    "agenticCacheWarmupDuration": {
-                      "anyOf": [
-                        {
-                          "exclusiveMinimum": 0,
-                          "type": "number"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                      "title": "Agenticcachewarmupduration"
-                    },
                     "concurrency": {
                       "anyOf": [
                         {
@@ -3066,23 +2967,6 @@
           "$ref": "#/$defs/RuntimeConfig",
           "description": "Runtime configuration for worker processes and inter-process communication."
         },
-        "failurePolicy": {
-          "anyOf": [
-            {
-              "enum": [
-                "continue",
-                "abort"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "How the run reacts to a failed request. 'continue' records the failure and keeps running (resilient); 'abort' fails the whole benchmark on the first non-cancellation failure (fail-fast). When unset, each execution path applies its historical default: scheduled runs are resilient, graph (DAG) runs are fail-fast. Cancellations are never treated as failures.",
-          "title": "Failurepolicy"
-        },
         "logging": {
           "$ref": "#/$defs/LoggingConfig"
         },
@@ -3101,110 +2985,6 @@
           ],
           "default": null,
           "description": "Accuracy benchmarking configuration. When set, enables accuracy evaluation alongside performance profiling."
-        },
-        "transport": {
-          "description": "Orthogonal native transport selection. The open type ID and factory-owned config are validated by the selected aiperf-runner. The clock rides on the transport ID (dynosim_offline=virtual, dynosim_online/http/grpc=wall clock).",
-          "oneOf": [
-            {
-              "$ref": "#/$defs/HttpTransport"
-            },
-            {
-              "$ref": "#/$defs/GrpcTransport"
-            },
-            {
-              "$ref": "#/$defs/DynosimOfflineTransport"
-            },
-            {
-              "$ref": "#/$defs/DynosimOnlineTransport"
-            },
-            {
-              "$ref": "#/$defs/OpenTransport"
-            }
-          ],
-          "title": "Transport"
-        },
-        "workload": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/RunnerWorkloadConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional explicit native workload selection. When omitted, the protocol-v2 projection selects graph for dag_jsonl, static_accuracy for enabled accuracy, and scheduled otherwise."
-        },
-        "scenario": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Lock all benchmark invariants for a named scenario (e.g. 'inferencex-agentx-mvp'). Plain data here; the lock is applied by the ScenarioResolver step in the pre-bootstrap resolver chain (auto-fills defaults, validates, raises ScenarioLockError on conflict). Distinct from the sweep ``scenarios`` strategy (SweepConfig), which expands hand-picked named runs -- this field is a single invariant LOCK, not a sweep.",
-          "title": "Scenario"
-        },
-        "unsafeOverride": {
-          "default": false,
-          "description": "Convert scenario lock errors to warnings; stamps submission_valid=false in the resolved scenario outcome. No-op without ``scenario``. Plain data; consumed by the ScenarioResolver.",
-          "title": "Unsafeoverride",
-          "type": "boolean"
-        },
-        "trajectoryStartMinRatio": {
-          "default": 0.0,
-          "description": "Lower bound of the recorded-graph trajectory-start (t*) snapshot window, expressed as a fraction of each recorded trace's total duration. The native runner samples a per-trace start offset in [min_ratio, max_ratio] of the trace's duration so replay begins mid-trajectory (an active t* window) rather than at t=0. 0.0 (with a 0.0 max) disables the window and starts every trace at its beginning.",
-          "title": "Trajectorystartminratio",
-          "oneOf": [
-            {
-              "default": 0.0,
-              "description": "Lower bound of the recorded-graph trajectory-start (t*) snapshot window, expressed as a fraction of each recorded trace's total duration. The native runner samples a per-trace start offset in [min_ratio, max_ratio] of the trace's duration so replay begins mid-trajectory (an active t* window) rather than at t=0. 0.0 (with a 0.0 max) disables the window and starts every trace at its beginning.",
-              "maximum": 1.0,
-              "minimum": 0.0,
-              "title": "Trajectorystartminratio",
-              "type": "number"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "x-jinja2-supported": true
-        },
-        "trajectoryStartMaxRatio": {
-          "default": 0.0,
-          "description": "Upper bound of the recorded-graph trajectory-start (t*) snapshot window, expressed as a fraction of each recorded trace's total duration. Paired with trajectory_start_min_ratio; must be >= it. 0.0 disables the window (every trace starts at t=0).",
-          "title": "Trajectorystartmaxratio",
-          "oneOf": [
-            {
-              "default": 0.0,
-              "description": "Upper bound of the recorded-graph trajectory-start (t*) snapshot window, expressed as a fraction of each recorded trace's total duration. Paired with trajectory_start_min_ratio; must be >= it. 0.0 disables the window (every trace starts at t=0).",
-              "maximum": 1.0,
-              "minimum": 0.0,
-              "title": "Trajectorystartmaxratio",
-              "type": "number"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "x-jinja2-supported": true
         },
         "model": {
           "description": "Shorthand for 'models'. Accepts a single value which will be converted to a list/dict. Model configuration. Accepts a single model name string, a list of model names, or an advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced.",
@@ -3498,7 +3278,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace, JSON/directory WEKA traces, JSONL/gzip/segmented Dynamo captures, and directories for random_pool.",
+                  "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/bailian_trace, Parquet for baseten_trace, directories for random_pool.",
                   "title": "Path"
                 },
                 "records": {
@@ -3531,7 +3311,7 @@
                 "format": {
                   "$ref": "#/$defs/DatasetFormat",
                   "default": "single_turn",
-                  "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / burst_gpt_trace: timestamped trace files for replay. weka_trace / dynamo_trace: Rust-native recorded graphs. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
+                  "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
                 },
                 "sampling": {
                   "$ref": "#/$defs/DatasetSamplingStrategy",
@@ -3548,7 +3328,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Trace synthesis/transformation configuration. Allows scaling trace replay and configuring Rust-native WEKA/Dynamo graph reconstruction."
+                  "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Applies to trace formats such as mooncake_trace and baseten_trace, except speedup_ratio, which is rejected for baseten_trace (use replay_speedup / --replay-speedup to scale replay pacing there)."
                 },
                 "entries": {
                   "anyOf": [
@@ -3577,6 +3357,21 @@
                   "description": "Random seed for deterministic sampling. When set, makes random/shuffle sampling reproducible across runs. Overrides global random_seed for this dataset.",
                   "title": "Randomseed"
                 },
+                "traceSessionSampleRatio": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0.0,
+                      "maximum": 1.0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Fraction of trace sessions to keep for replay, sampled whole-session to preserve multi-turn integrity; deterministic when ``random_seed`` is set. Only supported by the baseten_trace loader.",
+                  "title": "Tracesessionsampleratio"
+                },
                 "interTurnDelayCapSeconds": {
                   "anyOf": [
                     {
@@ -3588,8 +3383,60 @@
                     }
                   ],
                   "default": null,
-                  "description": "Clamp per-turn replay delays (read from JSONL trace files) to at most this many seconds. ``None`` disables the cap. Used by the DAG JSONL loader to keep long pre-recorded waits from stalling the benchmark; ``DelayCapTracker`` reports the clamp count at end of load.",
+                  "description": "Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load.",
                   "title": "Interturndelaycapseconds"
+                },
+                "maxIdleGapCapSeconds": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0.0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Collapse idle gaps between consecutive requests (across all sessions) to at most this many seconds, so a sparse or session-sampled trace does not replay dead air; ``None`` disables the cap. The cap is in replay wall-clock seconds, applied after replay_speedup compression, so it bounds actual benchmark idle time regardless of speedup. Only supported by the baseten_trace loader.",
+                  "title": "Maxidlegapcapseconds"
+                },
+                "replaySpeedup": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0.0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Trace replay wall-clock compression (10 = 10x faster than recorded): divides normalized timestamps and inter-turn delays; ``None`` = real time. Unlike synthesis speedup_ratio, hash_ids stay untouched (KV-cache fidelity). Only supported by the baseten_trace loader.",
+                  "title": "Replayspeedup"
+                },
+                "openLoopReplay": {
+                  "default": true,
+                  "description": "Open-loop replay (the default): each session starts at its absolute, speedup-scaled recorded timestamp; continuation turns fire at max(recorded timestamp, prior-turn completion). Set ``False`` for closed-loop back-pressure: continuation turns fire a think-time (recorded start-to-start gap minus recorded e2e duration) after the prior turn completes, keeping sessions causally ordered when replayed service times differ from recorded (e.g. A/A comparisons). Only honored by the baseten_trace loader.",
+                  "title": "Openloopreplay",
+                  "type": "boolean"
+                },
+                "openLoopStrict": {
+                  "default": false,
+                  "description": "In open-loop replay, fire every trace row at its absolute recorded timestamp as an independent single-turn session, trading away multi-turn grouping and session metrics. Only honored by the baseten_trace loader.",
+                  "title": "Openloopstrict",
+                  "type": "boolean"
+                },
+                "omitKvHints": {
+                  "default": false,
+                  "description": "Drop recorded KV-cache hints (``hash_ids``, ``block_size``) from replayed request bodies, for strict frontends that reject unknown parameters. Only honored by the baseten_trace loader.",
+                  "title": "Omitkvhints",
+                  "type": "boolean"
+                },
+                "forceMinTokens": {
+                  "default": true,
+                  "description": "Pin ``min_tokens`` to the recorded output length so replayed generations match recorded lengths; disable to let EOS end generations naturally (some servers reject ``min_tokens``). Only honored by the baseten_trace loader.",
+                  "title": "Forcemintokens",
+                  "type": "boolean"
                 },
                 "osl": {
                   "anyOf": [
@@ -3898,20 +3745,6 @@
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
                 },
-                "agenticCacheWarmupDuration": {
-                  "anyOf": [
-                    {
-                      "exclusiveMinimum": 0,
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "default": null,
-                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                  "title": "Agenticcachewarmupduration"
-                },
                 "concurrency": {
                   "default": 1,
                   "description": "Max concurrent in-flight requests (must be >= 1). Primary control for concurrency phases.",
@@ -4209,20 +4042,6 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
-                },
-                "agenticCacheWarmupDuration": {
-                  "anyOf": [
-                    {
-                      "exclusiveMinimum": 0,
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "default": null,
-                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -4547,20 +4366,6 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
-                },
-                "agenticCacheWarmupDuration": {
-                  "anyOf": [
-                    {
-                      "exclusiveMinimum": 0,
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "default": null,
-                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -4900,20 +4705,6 @@
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
                 },
-                "agenticCacheWarmupDuration": {
-                  "anyOf": [
-                    {
-                      "exclusiveMinimum": 0,
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "default": null,
-                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                  "title": "Agenticcachewarmupduration"
-                },
                 "concurrency": {
                   "anyOf": [
                     {
@@ -5237,20 +5028,6 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
-                },
-                "agenticCacheWarmupDuration": {
-                  "anyOf": [
-                    {
-                      "exclusiveMinimum": 0,
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "default": null,
-                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -5582,20 +5359,6 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
-                },
-                "agenticCacheWarmupDuration": {
-                  "anyOf": [
-                    {
-                      "exclusiveMinimum": 0,
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "default": null,
-                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -5952,20 +5715,6 @@
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
                 },
-                "agenticCacheWarmupDuration": {
-                  "anyOf": [
-                    {
-                      "exclusiveMinimum": 0,
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "default": null,
-                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                  "title": "Agenticcachewarmupduration"
-                },
                 "concurrency": {
                   "default": 1,
                   "description": "Max concurrent in-flight requests (must be >= 1). Primary control for concurrency phases.",
@@ -6263,20 +6012,6 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
-                },
-                "agenticCacheWarmupDuration": {
-                  "anyOf": [
-                    {
-                      "exclusiveMinimum": 0,
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "default": null,
-                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -6601,20 +6336,6 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
-                },
-                "agenticCacheWarmupDuration": {
-                  "anyOf": [
-                    {
-                      "exclusiveMinimum": 0,
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "default": null,
-                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -6954,20 +6675,6 @@
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
                 },
-                "agenticCacheWarmupDuration": {
-                  "anyOf": [
-                    {
-                      "exclusiveMinimum": 0,
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "default": null,
-                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                  "title": "Agenticcachewarmupduration"
-                },
                 "concurrency": {
                   "anyOf": [
                     {
@@ -7291,20 +6998,6 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
-                },
-                "agenticCacheWarmupDuration": {
-                  "anyOf": [
-                    {
-                      "exclusiveMinimum": 0,
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "default": null,
-                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -7636,20 +7329,6 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
-                },
-                "agenticCacheWarmupDuration": {
-                  "anyOf": [
-                    {
-                      "exclusiveMinimum": 0,
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "default": null,
-                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -8271,31 +7950,6 @@
           "title": "Sessions",
           "x-jinja2-supported": true
         },
-        "agenticCacheWarmupDuration": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-          "title": "Agenticcachewarmupduration",
-          "x-jinja2-supported": true
-        },
         "concurrency": {
           "default": 1,
           "description": "Max concurrent in-flight requests (must be >= 1). Primary control for concurrency phases.",
@@ -8823,31 +8477,6 @@
           "title": "Sessions",
           "x-jinja2-supported": true
         },
-        "agenticCacheWarmupDuration": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-          "title": "Agenticcachewarmupduration",
-          "x-jinja2-supported": true
-        },
         "concurrency": {
           "anyOf": [
             {
@@ -9176,12 +8805,11 @@
       "enum": [
         "burst_gpt_trace",
         "bailian_trace",
+        "baseten_trace",
         "mooncake_trace",
         "raw_payload",
         "inputs_json",
         "dag_jsonl",
-        "dynamo_trace",
-        "weka_trace",
         "sagemaker_data_capture",
         "multi_turn",
         "random_pool",
@@ -9363,922 +8991,6 @@
       "title": "DualBindCommunicationConfig",
       "type": "object"
     },
-    "DynamoBuildFeature": {
-      "description": "Optional runner build capability an authored run may require.\n\nSpellings match the Cargo feature names the runner advertises\n(``DynamoBuildFeature``, kebab-case).",
-      "enum": [
-        "dynamo-router-runtime",
-        "dynamo-zmq-events",
-        "dynamo-kvbm-offload",
-        "dynamo-aic-forward-pass",
-        "dynamo-profile",
-        "dynamo-full",
-        "dynamo-parity"
-      ],
-      "title": "DynamoBuildFeature",
-      "type": "string"
-    },
-    "DynamoKvEventVisibility": {
-      "description": "KV-event publication point (mirrors ``DynamoKvEventVisibilitySpec``).",
-      "enum": [
-        "pass_start",
-        "pass_end"
-      ],
-      "title": "DynamoKvEventVisibility",
-      "type": "string"
-    },
-    "DynosimAicConfig": {
-      "additionalProperties": false,
-      "description": "Structured AIConfigurator overrides (mirrors ``DynosimAicSpec``).\n\nAll fields are optional; the runner requires ``backend``, ``system``, and\n``model_path`` together once any AIC field is set.",
-      "properties": {
-        "backend": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "AIC serving backend identity.",
-          "title": "Backend"
-        },
-        "system": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "AIC GPU system identity.",
-          "title": "System"
-        },
-        "backendVersion": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Performance-database backend version.",
-          "title": "Backendversion"
-        },
-        "modelPath": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Hugging Face model path for AIC.",
-          "title": "Modelpath"
-        },
-        "tpSize": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Tensor-parallel degree.",
-          "title": "Tpsize",
-          "x-jinja2-supported": true
-        },
-        "moeTpSize": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "MoE tensor-parallel degree.",
-          "title": "Moetpsize",
-          "x-jinja2-supported": true
-        },
-        "moeEpSize": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "MoE expert-parallel degree.",
-          "title": "Moeepsize",
-          "x-jinja2-supported": true
-        },
-        "attentionDpSize": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Attention data-parallel degree.",
-          "title": "Attentiondpsize",
-          "x-jinja2-supported": true
-        },
-        "nextn": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Speculative (MTP) draft-token count.",
-          "title": "Nextn",
-          "x-jinja2-supported": true
-        },
-        "gemmDtype": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "GEMM quantization override.",
-          "title": "Gemmdtype"
-        },
-        "moeDtype": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "MoE quantization override.",
-          "title": "Moedtype"
-        },
-        "fmhaDtype": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Attention/FMHA quantization override.",
-          "title": "Fmhadtype"
-        },
-        "kvCacheDtype": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "KV-cache quantization override.",
-          "title": "Kvcachedtype"
-        },
-        "commDtype": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Collective/comm quantization override.",
-          "title": "Commdtype"
-        },
-        "nextnAcceptRates": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Comma-separated conditional draft acceptance rates.",
-          "title": "Nextnacceptrates"
-        }
-      },
-      "title": "DynosimAicConfig",
-      "type": "object"
-    },
-    "DynosimArtifactConfig": {
-      "additionalProperties": false,
-      "description": "Backend-owned outputs written after a successful run (mirrors ``DynosimArtifactSpec``).\n\nPaths are relative to the run artifact target.  ``kv_event_visibility`` requires\n``worker_artifacts_json`` (enforced by the runner).",
-      "properties": {
-        "reportJson": {
-          "anyOf": [
-            {
-              "format": "path",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Canonical aggregate Dynamo JSON report path.",
-          "title": "Reportjson"
-        },
-        "perRequestJsonl": {
-          "anyOf": [
-            {
-              "format": "path",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Canonical per-request Dynamo JSONL path.",
-          "title": "Perrequestjsonl"
-        },
-        "workerArtifactsJson": {
-          "anyOf": [
-            {
-              "format": "path",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Timed worker/request/KV artifact JSON for trace workloads.",
-          "title": "Workerartifactsjson"
-        },
-        "kvEventVisibility": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DynamoKvEventVisibility"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Pass-start/pass-end KV visibility override."
-        }
-      },
-      "title": "DynosimArtifactConfig",
-      "type": "object"
-    },
-    "DynosimOfflineTransport": {
-      "additionalProperties": false,
-      "description": "In-process Dynamo mocker replay on the deterministic virtual clock.\n\nInherits the full typed ``dynosim`` field surface from\n:class:`DynosimTransportConfig`; the fields sit directly on the transport\nobject, exactly like :class:`~aiperf.config.phases.PoissonPhase` lifts its own\nknobs onto the phase object.  The clock rides on the transport ID, so there is\nno ``replay_mode`` field.",
-      "properties": {
-        "engineProfile": {
-          "anyOf": [
-            {
-              "format": "path",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "JSON engine profile consumed by Dynamo's canonical parser.",
-          "title": "Engineprofile"
-        },
-        "engine": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Inline aggregate/single MockEngineArgs object (passed through verbatim).",
-          "title": "Engine"
-        },
-        "prefillEngine": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Inline disaggregated prefill MockEngineArgs object.",
-          "title": "Prefillengine"
-        },
-        "decodeEngine": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Inline disaggregated decode MockEngineArgs object.",
-          "title": "Decodeengine"
-        },
-        "router": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Inline KvRouterConfig object (passed through verbatim).",
-          "title": "Router"
-        },
-        "routerPolicyConfig": {
-          "anyOf": [
-            {
-              "format": "path",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Startup router policy-family YAML path overriding the inline router field.",
-          "title": "Routerpolicyconfig"
-        },
-        "routerModelName": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Model selector for a multi-model router policy document.",
-          "title": "Routermodelname"
-        },
-        "aic": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DynosimAicConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional structured AIConfigurator overrides."
-        },
-        "capturePerRequest": {
-          "default": false,
-          "description": "Capture backend per-request records even without a JSONL artifact.",
-          "title": "Captureperrequest",
-          "type": "boolean"
-        },
-        "sla": {
-          "$ref": "#/$defs/DynosimSlaConfig",
-          "description": "Canonical goodput thresholds."
-        },
-        "topology": {
-          "$ref": "#/$defs/DynosimTopology",
-          "default": "single",
-          "description": "Deployment topology."
-        },
-        "workers": {
-          "default": 1,
-          "description": "Aggregate worker count.",
-          "title": "Workers",
-          "oneOf": [
-            {
-              "default": 1,
-              "description": "Aggregate worker count.",
-              "exclusiveMinimum": 0,
-              "title": "Workers",
-              "type": "integer"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "x-jinja2-supported": true
-        },
-        "prefillWorkers": {
-          "default": 1,
-          "description": "Disaggregated prefill worker count.",
-          "title": "Prefillworkers",
-          "oneOf": [
-            {
-              "default": 1,
-              "description": "Disaggregated prefill worker count.",
-              "exclusiveMinimum": 0,
-              "title": "Prefillworkers",
-              "type": "integer"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "x-jinja2-supported": true
-        },
-        "decodeWorkers": {
-          "default": 1,
-          "description": "Disaggregated decode worker count.",
-          "title": "Decodeworkers",
-          "oneOf": [
-            {
-              "default": 1,
-              "description": "Disaggregated decode worker count.",
-              "exclusiveMinimum": 0,
-              "title": "Decodeworkers",
-              "type": "integer"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "x-jinja2-supported": true
-        },
-        "routerMode": {
-          "$ref": "#/$defs/DynosimRouterMode",
-          "default": "round_robin",
-          "description": "Router policy for routed topologies."
-        },
-        "requiredFeatures": {
-          "description": "Optional build capabilities that must exist in the exact runner image.",
-          "items": {
-            "$ref": "#/$defs/DynamoBuildFeature"
-          },
-          "title": "Requiredfeatures",
-          "type": "array",
-          "uniqueItems": true
-        },
-        "artifacts": {
-          "$ref": "#/$defs/DynosimArtifactConfig",
-          "description": "Backend-owned output artifacts."
-        },
-        "type": {
-          "const": "dynosim_offline",
-          "title": "Type",
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "title": "DynosimOfflineTransport",
-      "type": "object"
-    },
-    "DynosimOnlineTransport": {
-      "additionalProperties": false,
-      "description": "In-process Dynamo mocker replay driven under the wall clock.",
-      "properties": {
-        "engineProfile": {
-          "anyOf": [
-            {
-              "format": "path",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "JSON engine profile consumed by Dynamo's canonical parser.",
-          "title": "Engineprofile"
-        },
-        "engine": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Inline aggregate/single MockEngineArgs object (passed through verbatim).",
-          "title": "Engine"
-        },
-        "prefillEngine": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Inline disaggregated prefill MockEngineArgs object.",
-          "title": "Prefillengine"
-        },
-        "decodeEngine": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Inline disaggregated decode MockEngineArgs object.",
-          "title": "Decodeengine"
-        },
-        "router": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Inline KvRouterConfig object (passed through verbatim).",
-          "title": "Router"
-        },
-        "routerPolicyConfig": {
-          "anyOf": [
-            {
-              "format": "path",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Startup router policy-family YAML path overriding the inline router field.",
-          "title": "Routerpolicyconfig"
-        },
-        "routerModelName": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Model selector for a multi-model router policy document.",
-          "title": "Routermodelname"
-        },
-        "aic": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DynosimAicConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional structured AIConfigurator overrides."
-        },
-        "capturePerRequest": {
-          "default": false,
-          "description": "Capture backend per-request records even without a JSONL artifact.",
-          "title": "Captureperrequest",
-          "type": "boolean"
-        },
-        "sla": {
-          "$ref": "#/$defs/DynosimSlaConfig",
-          "description": "Canonical goodput thresholds."
-        },
-        "topology": {
-          "$ref": "#/$defs/DynosimTopology",
-          "default": "single",
-          "description": "Deployment topology."
-        },
-        "workers": {
-          "default": 1,
-          "description": "Aggregate worker count.",
-          "title": "Workers",
-          "oneOf": [
-            {
-              "default": 1,
-              "description": "Aggregate worker count.",
-              "exclusiveMinimum": 0,
-              "title": "Workers",
-              "type": "integer"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "x-jinja2-supported": true
-        },
-        "prefillWorkers": {
-          "default": 1,
-          "description": "Disaggregated prefill worker count.",
-          "title": "Prefillworkers",
-          "oneOf": [
-            {
-              "default": 1,
-              "description": "Disaggregated prefill worker count.",
-              "exclusiveMinimum": 0,
-              "title": "Prefillworkers",
-              "type": "integer"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "x-jinja2-supported": true
-        },
-        "decodeWorkers": {
-          "default": 1,
-          "description": "Disaggregated decode worker count.",
-          "title": "Decodeworkers",
-          "oneOf": [
-            {
-              "default": 1,
-              "description": "Disaggregated decode worker count.",
-              "exclusiveMinimum": 0,
-              "title": "Decodeworkers",
-              "type": "integer"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "x-jinja2-supported": true
-        },
-        "routerMode": {
-          "$ref": "#/$defs/DynosimRouterMode",
-          "default": "round_robin",
-          "description": "Router policy for routed topologies."
-        },
-        "requiredFeatures": {
-          "description": "Optional build capabilities that must exist in the exact runner image.",
-          "items": {
-            "$ref": "#/$defs/DynamoBuildFeature"
-          },
-          "title": "Requiredfeatures",
-          "type": "array",
-          "uniqueItems": true
-        },
-        "artifacts": {
-          "$ref": "#/$defs/DynosimArtifactConfig",
-          "description": "Backend-owned output artifacts."
-        },
-        "type": {
-          "const": "dynosim_online",
-          "title": "Type",
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "title": "DynosimOnlineTransport",
-      "type": "object"
-    },
-    "DynosimRouterMode": {
-      "description": "Router policy for routed topologies (mirrors ``DynosimRouterSpec``).",
-      "enum": [
-        "round_robin",
-        "kv"
-      ],
-      "title": "DynosimRouterMode",
-      "type": "string"
-    },
-    "DynosimSlaConfig": {
-      "additionalProperties": false,
-      "description": "Canonical goodput thresholds owned by Dynamo's collector.\n\nMirrors ``DynosimSlaSpec``; each bound is optional and non-negative.",
-      "properties": {
-        "ttftMs": {
-          "anyOf": [
-            {
-              "minimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Maximum time to first token (ms).",
-          "title": "Ttftms",
-          "x-jinja2-supported": true
-        },
-        "itlMs": {
-          "anyOf": [
-            {
-              "minimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Maximum mean inter-token latency (ms).",
-          "title": "Itlms",
-          "x-jinja2-supported": true
-        },
-        "e2EMs": {
-          "anyOf": [
-            {
-              "minimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Maximum end-to-end latency (ms).",
-          "title": "E2Ems",
-          "x-jinja2-supported": true
-        }
-      },
-      "title": "DynosimSlaConfig",
-      "type": "object"
-    },
-    "DynosimTopology": {
-      "description": "Authored offline deployment topology (mirrors ``DynosimTopologySpec``).",
-      "enum": [
-        "single",
-        "aggregated",
-        "disaggregated"
-      ],
-      "title": "DynosimTopology",
-      "type": "string"
-    },
     "EmpiricalDistribution": {
       "additionalProperties": false,
       "description": "Discrete distribution sampled from weighted values.\n\nYAML:\n    isl:\n      points:\n        - {value: 128, weight: 40}\n        - {value: 512, weight: 35}\n        - {value: 2048, weight: 20}\n        - {value: 8192, weight: 5}",
@@ -10414,7 +9126,7 @@
       "description": "Endpoint configuration for connecting to inference servers.\n\nThis section configures how AIPerf connects to and communicates\nwith the target inference server(s). It supports multiple URLs\nfor load-balanced deployments and various API types.",
       "properties": {
         "urls": {
-          "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Protocol-v2 native gRPC backends accept explicit ``grpc://`` or ``grpcs://`` targets. Example: ['http://localhost:8000']",
+          "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Example: ['http://localhost:8000/v1/chat/completions']",
           "items": {
             "type": "string"
           },
@@ -10428,11 +9140,9 @@
           "description": "Strategy for distributing requests across multiple URLs. round_robin cycles through URLs in order."
         },
         "type": {
+          "$ref": "#/$defs/EndpointType",
           "default": "chat",
-          "description": "Endpoint dialect identifier compiled into the selected aiperf-runner. The portable config accepts any non-empty string; execution validates availability against that exact runner.",
-          "minLength": 1,
-          "title": "Type",
-          "type": "string"
+          "description": "API endpoint type determining request/response format. chat: OpenAI chat completions, completions: OpenAI completions, embeddings: vector embeddings, rankings: reranking, template: custom format, and others — see `aiperf plugins` for the full list."
         },
         "path": {
           "anyOf": [
@@ -10490,87 +9200,22 @@
           "title": "Streaming",
           "type": "boolean"
         },
-        "connectionReuse": {
-          "$ref": "#/$defs/ConnectionReuseStrategy",
-          "default": "pooled",
-          "description": "HTTP connection management strategy. pooled: shared connection pool (fastest), never: new connection per request (includes TCP overhead), sticky-user-sessions: dedicated connection per user session."
-        },
-        "http2": {
-          "default": false,
-          "description": "Force HTTP/2 for this endpoint profile. Cleartext HTTP uses h2c prior knowledge; HTTPS requires HTTP/2 over TLS.",
-          "title": "Http2",
-          "type": "boolean"
-        },
-        "sslVerify": {
-          "default": true,
-          "description": "Verify HTTPS certificate chains and hostnames. Disabling verification is insecure and intended only for explicitly trusted test environments.",
-          "title": "Sslverify",
-          "type": "boolean"
-        },
-        "udsPath": {
+        "transport": {
           "anyOf": [
             {
-              "type": "string"
+              "$ref": "#/$defs/TransportType"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Connect over this Unix-domain socket path instead of TCP. The endpoint URL still supplies the request path and Host header, so keep it a normal http:// value (the socket carries the transport). HTTP/1.1 only; intended for local co-located inference servers.",
-          "title": "Udspath"
+          "description": "Transport plugin name. Currently only 'http' (aiohttp-based HTTP/1.1) is shipped. Auto-detected from URL when unset; explicit setting overrides auto-detection."
         },
-        "connectionLimit": {
-          "default": 2500,
-          "description": "Maximum simultaneous HTTP/1 connections per origin and runner worker. HTTP/2 multiplexes concurrent streams over one connection.",
-          "title": "Connectionlimit",
-          "oneOf": [
-            {
-              "default": 2500,
-              "description": "Maximum simultaneous HTTP/1 connections per origin and runner worker. HTTP/2 multiplexes concurrent streams over one connection.",
-              "maximum": 65000,
-              "minimum": 1,
-              "title": "Connectionlimit",
-              "type": "integer"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "x-jinja2-supported": true
-        },
-        "keepaliveTimeout": {
-          "default": 300.0,
-          "description": "Maximum seconds an idle pooled connection remains eligible for reuse. Zero disables idle connection reuse.",
-          "title": "Keepalivetimeout",
-          "oneOf": [
-            {
-              "default": 300.0,
-              "description": "Maximum seconds an idle pooled connection remains eligible for reuse. Zero disables idle connection reuse.",
-              "maximum": 10000.0,
-              "minimum": 0.0,
-              "title": "Keepalivetimeout",
-              "type": "number"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "x-jinja2-supported": true
+        "connectionReuse": {
+          "$ref": "#/$defs/ConnectionReuseStrategy",
+          "default": "pooled",
+          "description": "HTTP connection management strategy. pooled: shared connection pool (fastest), never: new connection per request (includes TCP overhead), sticky-user-sessions: dedicated connection per user session."
         },
         "useLegacyMaxTokens": {
           "default": false,
@@ -10594,7 +9239,7 @@
             }
           ],
           "default": null,
-          "description": "Optional request/response template configuration forwarded unchanged for interpretation by the selected runner adapter."
+          "description": "Custom template configuration for template endpoint type. Only used when type='template'. Defines request body format and response parsing."
         },
         "headers": {
           "additionalProperties": {
@@ -10640,6 +9285,12 @@
           "default": null,
           "description": "HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header. Useful when the inference server expects a custom session-affinity header (e.g. `--session-header X-Session-ID`).",
           "title": "Sessionheader"
+        },
+        "uuidAndStrip": {
+          "default": false,
+          "description": "Enable AIPerf-managed image stripping for vLLM's multimodal processor cache. Dataset-authored image UUIDs, including UUID-only cache references, always pass through on the chat endpoint; this flag only strips repeated content after AIPerf observes it in the same session. Automatic stripping supports only single_turn datasets with session_id-grouped rows; multi_turn is rejected. The server cache must cover the working set, and requests in a session must reach a replica that retains earlier UUIDs.",
+          "title": "Uuidandstrip",
+          "type": "boolean"
         },
         "waitForModelTimeout": {
           "default": 0.0,
@@ -10703,13 +9354,13 @@
           "type": "string"
         },
         "url": {
-          "description": "Shorthand for 'urls'. Accepts a single value which will be converted to a list/dict. List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Protocol-v2 native gRPC backends accept explicit ``grpc://`` or ``grpcs://`` targets. Example: ['http://localhost:8000']",
+          "description": "Shorthand for 'urls'. Accepts a single value which will be converted to a list/dict. List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Example: ['http://localhost:8000/v1/chat/completions']",
           "oneOf": [
             {
               "type": "string"
             },
             {
-              "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Protocol-v2 native gRPC backends accept explicit ``grpc://`` or ``grpcs://`` targets. Example: ['http://localhost:8000']",
+              "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Example: ['http://localhost:8000/v1/chat/completions']",
               "items": {
                 "type": "string"
               },
@@ -10741,6 +9392,30 @@
         }
       ]
     },
+    "EndpointType": {
+      "enum": [
+        "chat",
+        "cohere_rankings",
+        "completions",
+        "responses",
+        "messages",
+        "chat_embeddings",
+        "embeddings",
+        "hf_tei_rankings",
+        "huggingface_generate",
+        "image_generation",
+        "image_edit",
+        "video_generation",
+        "image_retrieval",
+        "nim_embeddings",
+        "nim_rankings",
+        "solido_rag",
+        "raw",
+        "template"
+      ],
+      "title": "EndpointType",
+      "type": "string"
+    },
     "FileDataset": {
       "additionalProperties": false,
       "description": "File-based dataset configuration.\n\nLoads prompts from a local file in various formats.\nSupports trace replay and custom sampling strategies.",
@@ -10768,7 +9443,7 @@
             }
           ],
           "default": null,
-          "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace, JSON/directory WEKA traces, JSONL/gzip/segmented Dynamo captures, and directories for random_pool.",
+          "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/bailian_trace, Parquet for baseten_trace, directories for random_pool.",
           "title": "Path"
         },
         "records": {
@@ -10801,7 +9476,7 @@
         "format": {
           "$ref": "#/$defs/DatasetFormat",
           "default": "single_turn",
-          "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / burst_gpt_trace: timestamped trace files for replay. weka_trace / dynamo_trace: Rust-native recorded graphs. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
+          "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
         },
         "sampling": {
           "$ref": "#/$defs/DatasetSamplingStrategy",
@@ -10818,7 +9493,7 @@
             }
           ],
           "default": null,
-          "description": "Trace synthesis/transformation configuration. Allows scaling trace replay and configuring Rust-native WEKA/Dynamo graph reconstruction."
+          "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Applies to trace formats such as mooncake_trace and baseten_trace, except speedup_ratio, which is rejected for baseten_trace (use replay_speedup / --replay-speedup to scale replay pacing there)."
         },
         "entries": {
           "anyOf": [
@@ -10869,6 +9544,32 @@
           "title": "Randomseed",
           "x-jinja2-supported": true
         },
+        "traceSessionSampleRatio": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "maximum": 1.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Fraction of trace sessions to keep for replay, sampled whole-session to preserve multi-turn integrity; deterministic when ``random_seed`` is set. Only supported by the baseten_trace loader.",
+          "title": "Tracesessionsampleratio",
+          "x-jinja2-supported": true
+        },
         "interTurnDelayCapSeconds": {
           "anyOf": [
             {
@@ -10890,9 +9591,83 @@
             }
           ],
           "default": null,
-          "description": "Clamp per-turn replay delays (read from JSONL trace files) to at most this many seconds. ``None`` disables the cap. Used by the DAG JSONL loader to keep long pre-recorded waits from stalling the benchmark; ``DelayCapTracker`` reports the clamp count at end of load.",
+          "description": "Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load.",
           "title": "Interturndelaycapseconds",
           "x-jinja2-supported": true
+        },
+        "maxIdleGapCapSeconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Collapse idle gaps between consecutive requests (across all sessions) to at most this many seconds, so a sparse or session-sampled trace does not replay dead air; ``None`` disables the cap. The cap is in replay wall-clock seconds, applied after replay_speedup compression, so it bounds actual benchmark idle time regardless of speedup. Only supported by the baseten_trace loader.",
+          "title": "Maxidlegapcapseconds",
+          "x-jinja2-supported": true
+        },
+        "replaySpeedup": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Trace replay wall-clock compression (10 = 10x faster than recorded): divides normalized timestamps and inter-turn delays; ``None`` = real time. Unlike synthesis speedup_ratio, hash_ids stay untouched (KV-cache fidelity). Only supported by the baseten_trace loader.",
+          "title": "Replayspeedup",
+          "x-jinja2-supported": true
+        },
+        "openLoopReplay": {
+          "default": true,
+          "description": "Open-loop replay (the default): each session starts at its absolute, speedup-scaled recorded timestamp; continuation turns fire at max(recorded timestamp, prior-turn completion). Set ``False`` for closed-loop back-pressure: continuation turns fire a think-time (recorded start-to-start gap minus recorded e2e duration) after the prior turn completes, keeping sessions causally ordered when replayed service times differ from recorded (e.g. A/A comparisons). Only honored by the baseten_trace loader.",
+          "title": "Openloopreplay",
+          "type": "boolean"
+        },
+        "openLoopStrict": {
+          "default": false,
+          "description": "In open-loop replay, fire every trace row at its absolute recorded timestamp as an independent single-turn session, trading away multi-turn grouping and session metrics. Only honored by the baseten_trace loader.",
+          "title": "Openloopstrict",
+          "type": "boolean"
+        },
+        "omitKvHints": {
+          "default": false,
+          "description": "Drop recorded KV-cache hints (``hash_ids``, ``block_size``) from replayed request bodies, for strict frontends that reject unknown parameters. Only honored by the baseten_trace loader.",
+          "title": "Omitkvhints",
+          "type": "boolean"
+        },
+        "forceMinTokens": {
+          "default": true,
+          "description": "Pin ``min_tokens`` to the recorded output length so replayed generations match recorded lengths; disable to let EOS end generations naturally (some servers reject ``min_tokens``). Only honored by the baseten_trace loader.",
+          "title": "Forcemintokens",
+          "type": "boolean"
         },
         "osl": {
           "anyOf": [
@@ -11338,31 +10113,6 @@
           "default": null,
           "description": "Stop after this many sessions completed (must be >= 1).",
           "title": "Sessions",
-          "x-jinja2-supported": true
-        },
-        "agenticCacheWarmupDuration": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-          "title": "Agenticcachewarmupduration",
           "x-jinja2-supported": true
         },
         "concurrency": {
@@ -11956,31 +10706,6 @@
           "title": "Sessions",
           "x-jinja2-supported": true
         },
-        "agenticCacheWarmupDuration": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-          "title": "Agenticcachewarmupduration",
-          "x-jinja2-supported": true
-        },
         "concurrency": {
           "anyOf": [
             {
@@ -12398,36 +11123,6 @@
         "parameters"
       ],
       "title": "GridSweep",
-      "type": "object"
-    },
-    "GrpcTransport": {
-      "additionalProperties": false,
-      "description": "Native gRPC transport (wall clock; ``grpc://`` / ``grpcs://`` URLs).",
-      "properties": {
-        "type": {
-          "const": "grpc",
-          "title": "Type",
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "title": "GrpcTransport",
-      "type": "object"
-    },
-    "HttpTransport": {
-      "additionalProperties": false,
-      "description": "Native HTTP/SSE transport (wall clock; ``http://`` / ``https://`` URLs).\n\n``type`` keeps a default so this is the zero-argument default transport when\n``benchmark.transport`` is omitted, and so the discriminator falls back here.\nThe other variants make ``type`` required — matching the ``phases`` / ``dataset``\nunions — so their discriminator is never dropped by ``exclude_defaults`` dumps.",
-      "properties": {
-        "type": {
-          "const": "http",
-          "default": "http",
-          "title": "Type",
-          "type": "string"
-        }
-      },
-      "title": "HttpTransport",
       "type": "object"
     },
     "ImageConfig": {
@@ -13616,22 +12311,6 @@
       "title": "Objective",
       "type": "object"
     },
-    "OpenTransport": {
-      "additionalProperties": true,
-      "description": "Fallback for a runner-owned transport ID Config v2 does not model.\n\n``extra='allow'`` preserves the open-registry property: arbitrary\nfactory-owned keys are captured inline and passed through opaquely, without\nPython interpreting them.",
-      "properties": {
-        "type": {
-          "minLength": 1,
-          "title": "Type",
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "title": "OpenTransport",
-      "type": "object"
-    },
     "OptimizationDirection": {
       "description": "Direction of optimization for a metric.\n\nMAXIMIZE: Higher values are preferred (e.g. throughput, goodput).\nMINIMIZE: Lower values are preferred (e.g. latency, TTFT, p99).",
       "enum": [
@@ -14369,31 +13048,6 @@
           "title": "Sessions",
           "x-jinja2-supported": true
         },
-        "agenticCacheWarmupDuration": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-          "title": "Agenticcachewarmupduration",
-          "x-jinja2-supported": true
-        },
         "concurrency": {
           "anyOf": [
             {
@@ -14992,7 +13646,6 @@
     },
     "PublicDatasetType": {
       "enum": [
-        "weka_cc_traces_062126",
         "exgentic_v2",
         "exgentic",
         "sharegpt",
@@ -15181,29 +13834,6 @@
       "title": "RequestContentType",
       "type": "string"
     },
-    "RunnerWorkloadConfig": {
-      "additionalProperties": false,
-      "description": "Optional explicit workload-factory selection for one native run.\n\nThe open runner registry owns arbitrary workload IDs; the selected runner\nfactory strictly validates the opaque, factory-owned authored configuration.",
-      "properties": {
-        "type": {
-          "description": "Open factory ID resolved by the selected runner registry.",
-          "minLength": 1,
-          "title": "Type",
-          "type": "string"
-        },
-        "config": {
-          "additionalProperties": true,
-          "description": "Factory-owned authored configuration; opaque to Python.",
-          "title": "Config",
-          "type": "object"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "title": "RunnerWorkloadConfig",
-      "type": "object"
-    },
     "RuntimeConfig": {
       "additionalProperties": false,
       "description": "Runtime configuration for benchmark execution.",
@@ -15236,31 +13866,6 @@
           "default": null,
           "description": "Total worker processes across the deployment (the maximum, ramped up to from `workers_min`). null = auto-detect based on CPU cores. Distinct from `workers_per_pod` (per-Kubernetes-pod fan-out) and `workers_min` (lower bound for adaptive ramp).",
           "title": "Workers",
-          "x-jinja2-supported": true
-        },
-        "cells": {
-          "default": 1,
-          "description": "Number of native execution cells the run is partitioned across (cellular mode). 1 (default) runs the ordinary single-process native path, byte-for-byte unchanged. With cells > 1 the launched `aiperf-runner` becomes a controller that spawns that many `aiperf-runner --cell` subprocesses over a `(cell_id, cell_count)` partition of the request budget, merges their records in global dispatch order into one report, and fails the run closed on any unsupported shape. Supported only for the scheduled HTTP transport over seeded, single-turn synthetic datasets against a single endpoint URL with request-bounded phases; see the cellular roadmap spec.",
-          "title": "Cells",
-          "oneOf": [
-            {
-              "default": 1,
-              "description": "Number of native execution cells the run is partitioned across (cellular mode). 1 (default) runs the ordinary single-process native path, byte-for-byte unchanged. With cells > 1 the launched `aiperf-runner` becomes a controller that spawns that many `aiperf-runner --cell` subprocesses over a `(cell_id, cell_count)` partition of the request budget, merges their records in global dispatch order into one report, and fails the run closed on any unsupported shape. Supported only for the scheduled HTTP transport over seeded, single-turn synthetic datasets against a single endpoint URL with request-bounded phases; see the cellular roadmap spec.",
-              "minimum": 1,
-              "title": "Cells",
-              "type": "integer"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
           "x-jinja2-supported": true
         },
         "recordProcessors": {
@@ -16358,7 +14963,7 @@
     },
     "SynthesisConfig": {
       "additionalProperties": false,
-      "description": "Configuration for trace synthesis/transformation.\n\nMooncake fields scale production replay timestamps, token lengths, and\nradix-tree structure. Recorded WEKA/Dynamo fields bound whole-trace\nselection, idle-gap warping, canonical native content, and corpus wrapping.",
+      "description": "Configuration for trace synthesis/transformation.\n\nUsed with mooncake_trace format to transform production trace\ndata before replay. Allows scaling timestamps, token lengths,\nand radix tree structure.",
       "properties": {
         "speedupRatio": {
           "default": 1.0,
@@ -16534,86 +15139,6 @@
           "description": "Maximum output sequence length cap. Traces with output_length > max_osl are capped to this value (not filtered).",
           "title": "Maxosl",
           "x-jinja2-supported": true
-        },
-        "maxContextLength": {
-          "anyOf": [
-            {
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Maximum per-trace input-plus-output context for recorded graph selection.",
-          "title": "Maxcontextlength",
-          "x-jinja2-supported": true
-        },
-        "allowDatasetWrap": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Whether a finite recorded graph corpus may wrap during selection.",
-          "title": "Allowdatasetwrap"
-        },
-        "idleGapCapSeconds": {
-          "anyOf": [
-            {
-              "minimum": 0.0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": 60.0,
-          "description": "True-idle gap cap for weka_trace/dynamo_trace; null disables warping.",
-          "title": "Idlegapcapseconds",
-          "x-jinja2-supported": true
-        },
-        "corpus": {
-          "anyOf": [
-            {
-              "enum": [
-                "coding",
-                "sonnet"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Content corpus for recorded graph prompt reconstruction.",
-          "title": "Corpus"
         }
       },
       "title": "SynthesisConfig",
@@ -17085,7 +15610,7 @@
     },
     "TemplateConfig": {
       "additionalProperties": false,
-      "description": "Optional request/response template policy for a runner adapter.",
+      "description": "Configuration for custom template-based endpoints.\n\nWhen endpoint type is \"template\", this configures how requests\nare formatted and responses are parsed.",
       "properties": {
         "body": {
           "description": "Jinja2 template string for request body. Variables: {{prompt}}, {{max_tokens}}, {{model}}, {{messages}}, etc.",
@@ -17159,6 +15684,13 @@
       ],
       "title": "TokenizerOverride",
       "type": "object"
+    },
+    "TransportType": {
+      "enum": [
+        "http"
+      ],
+      "title": "TransportType",
+      "type": "string"
     },
     "UIType": {
       "enum": [
@@ -17514,31 +16046,6 @@
           "default": null,
           "description": "Stop after this many sessions completed (must be >= 1).",
           "title": "Sessions",
-          "x-jinja2-supported": true
-        },
-        "agenticCacheWarmupDuration": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
-          "title": "Agenticcachewarmupduration",
           "x-jinja2-supported": true
         },
         "concurrency": {

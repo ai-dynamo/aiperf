@@ -26,6 +26,7 @@ from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.post_processors.record_observer_context import RecordObserverContext
 
 
 class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
@@ -161,12 +162,10 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
             self.error(f"Failed to write raw record: {e!r}")
             self.dropped_record_count += 1
 
-    async def process_record(
-        self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
-    ) -> None:
-        """Process a single record."""
+    async def observe(self, ctx: RecordObserverContext) -> None:
+        """Write the raw request/response data for a single record."""
         # Build export record with full parsed record
-        record_export = self._build_export_record(record, metadata)
+        record_export = self._build_export_record(ctx.record, ctx.metadata)
 
         # Write using the buffered writer mixin (handles batching and flushing)
         await self.buffered_write(record_export)

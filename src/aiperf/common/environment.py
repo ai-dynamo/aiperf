@@ -65,12 +65,24 @@ __all__ = ["Environment"]
 class _AccuracySettings(BaseSettings):
     """Accuracy benchmark settings.
 
-    Tunables for the accuracy benchmark loaders. Currently only pins the
-    LiveCodeBench dataset release so accuracy numbers are reproducible
-    across runs without requiring source edits.
+    Tunables for accuracy benchmarking: the cancel-path result-wait timeout and
+    the LiveCodeBench dataset release pin, so accuracy behavior and numbers are
+    reproducible across runs without requiring source edits.
     """
 
     model_config = SettingsConfigDict(env_prefix="AIPERF_ACCURACY_")
+
+    CANCEL_RESULT_WAIT_SEC: float = Field(
+        default=5.0,
+        ge=0.0,
+        description="Bounded time (seconds) the SystemController waits on the "
+        "cancel (Ctrl+C) path for the RecordsManager's "
+        "ProcessAccuracyResultMessage before stopping. The normal completion "
+        "path blocks on the accuracy shutdown gate indefinitely, but the cancel "
+        "path must not hang forever, so it waits at most this long for the "
+        "graded accuracy summary to arrive over pub/sub before proceeding to "
+        "export. Set to 0 to skip the wait entirely.",
+    )
 
     LCB_RELEASE_TAG: str = Field(
         default="v4_v5",
@@ -617,6 +629,13 @@ class _HTTPSettings(BaseSettings):
         description="Trust environment variables for HTTP client configuration. "
         "When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, "
         "and NO_PROXY environment variables.",
+    )
+    X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
+        default=False,
+        description="Also send X-Dynamo-Session-ID with the stable X-Correlation-ID value, "
+        "plus X-Dynamo-Parent-Session-ID on subagent children. Use this with a Dynamo "
+        "frontend running --router-session-affinity-ttl-secs to pin every turn of a "
+        "session to the replica holding its KV prefix.",
     )
     VIDEO_POLL_INTERVAL: float = Field(
         ge=0.001,

@@ -238,26 +238,36 @@ def _parse_dataset_filters(values: list[str]) -> dict[str, str]:
     return filters
 
 
+# (cli field, dataset key, forward explicit None). The _set gate alone
+# forwards explicitly-set booleans of both polarities (e.g.
+# --no-open-loop-replay); a bool is never None, so keep_none is
+# irrelevant for the boolean rows.
+_VERBATIM_DATASET_FIELDS = (
+    ("input_file", "path", True),
+    ("public_dataset", "dataset", True),
+    ("hf_dataset_subset", "hf_subset", False),
+    ("custom_dataset_type", "format", False),
+    ("dataset_sampling_strategy", "sampling", False),
+    ("conversation_num_dataset_entries", "entries", True),
+    ("trace_session_sample_ratio", "trace_session_sample_ratio", False),
+    ("max_idle_gap_cap_seconds", "max_idle_gap_cap_seconds", False),
+    ("replay_speedup", "replay_speedup", False),
+    ("open_loop_replay", "open_loop_replay", False),
+    ("open_loop_strict", "open_loop_strict", False),
+    ("omit_kv_hints", "omit_kv_hints", False),
+    ("force_min_tokens", "force_min_tokens", False),
+)
+
+
 def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
     """Top-level fields that move through verbatim."""
     out: dict[str, Any] = {}
-    if _set(cli, "input_file"):
-        out["path"] = cli.input_file
-    if _set(cli, "public_dataset"):
-        out["dataset"] = cli.public_dataset
-    if _set(cli, "hf_dataset_subset") and cli.hf_dataset_subset is not None:
-        out["hf_subset"] = cli.hf_dataset_subset
+    for field, key, keep_none in _VERBATIM_DATASET_FIELDS:
+        value = getattr(cli, field)
+        if _set(cli, field) and (keep_none or value is not None):
+            out[key] = value
     if _set(cli, "dataset_filters"):
         out["filters"] = _parse_dataset_filters(cli.dataset_filters)
-    if _set(cli, "custom_dataset_type") and cli.custom_dataset_type is not None:
-        out["format"] = cli.custom_dataset_type
-    if (
-        _set(cli, "dataset_sampling_strategy")
-        and cli.dataset_sampling_strategy is not None
-    ):
-        out["sampling"] = cli.dataset_sampling_strategy
-    if "conversation_num_dataset_entries" in cli.model_fields_set:
-        out["entries"] = cli.conversation_num_dataset_entries
     return out
 
 
@@ -542,6 +552,149 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
         )
 
 
+_BASETEN_ONLY_TRACE_FLAGS: tuple[tuple[str, str], ...] = (
+    ("trace_session_sample_ratio", "--trace-session-sample-ratio"),
+    ("replay_speedup", "--replay-speedup"),
+    ("max_idle_gap_cap_seconds", "--max-idle-gap-cap-seconds"),
+)
+
+# Boolean knobs are never None, so an explicit set of either polarity
+# (membership in model_fields_set) is the guard signal.
+_BASETEN_ONLY_TRACE_BOOL_FLAGS: tuple[tuple[str, str], ...] = (
+    ("open_loop_replay", "--open-loop-replay/--no-open-loop-replay"),
+    ("open_loop_strict", "--open-loop-strict"),
+    ("omit_kv_hints", "--omit-kv-hints"),
+    ("force_min_tokens", "--force-min-tokens/--no-force-min-tokens"),
+)
+
+
+def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
+    """Reject baseten_trace-only replay knobs on incompatible datasets.
+
+    These knobs are only consumed by the baseten_trace loader; on any other
+    dataset they would silently no-op (or crash AIPerfConfig validation with
+    a raw ``extra_forbidden`` on synthetic/public datasets), hiding user
+    error. Rejected when the dataset cannot be file-based (--public-dataset
+    set or no --input-file), or when --custom-dataset-type is explicitly set
+    to a different loader.
+    """
+    from aiperf.plugin.enums import CustomDatasetType
+
+    set_flags = [
+        flag
+        for attr, flag in _BASETEN_ONLY_TRACE_FLAGS
+        if attr in cli.model_fields_set and getattr(cli, attr) is not None
+    ]
+    set_flags += [
+        flag
+        for attr, flag in _BASETEN_ONLY_TRACE_BOOL_FLAGS
+        if attr in cli.model_fields_set
+    ]
+    if not set_flags:
+        return
+    msg = f"{', '.join(set_flags)} is only supported by the baseten_trace loader"
+    if cli.public_dataset or not cli.input_file:
+        raise ValueError(
+            f"{msg}; provide --input-file and --custom-dataset-type baseten_trace."
+        )
+    if (
+        cli.custom_dataset_type is not None
+        and cli.custom_dataset_type != CustomDatasetType.BASETEN_TRACE
+    ):
+        raise ValueError(
+            f"{msg}, but --custom-dataset-type is {cli.custom_dataset_type}."
+        )
+
+
+def _reject_baseten_trace_unsupported_synthesis(cli: CLIConfig) -> None:
+    """Reject synthesis knobs that cannot apply to baseten_trace replay.
+
+    baseten_trace replay is paced by --replay-speedup; synthesis speedup
+    rescales the raw trace timestamps before replay, so it compounds with
+    --replay-speedup and desyncs the closed-loop think-time subtraction and
+    the open-loop idle-gap cap (both divide by replay_speedup only).
+    Prompt-shaping multipliers reshape hash_ids while the wire still sends
+    the original recorded prompt, so the forwarded KV hints would desync
+    from the prompt. Output-length synthesis and the max-ISL/OSL filter/cap
+    remain valid. The auto-detected dataset-type path is guarded at load
+    time by the loader.
+    """
+    from aiperf.plugin.enums import CustomDatasetType
+
+    if cli.custom_dataset_type != CustomDatasetType.BASETEN_TRACE:
+        return
+    if cli.synthesis_speedup_ratio != 1.0:
+        raise ValueError(
+            "--synthesis-speedup-ratio is not supported with "
+            "--custom-dataset-type baseten_trace; use --replay-speedup to "
+            "scale replay pacing."
+        )
+    reshaping_flags = [
+        flag
+        for attr, flag, default in (
+            (
+                "synthesis_prefix_len_multiplier",
+                "--synthesis-prefix-len-multiplier",
+                1.0,
+            ),
+            (
+                "synthesis_prefix_root_multiplier",
+                "--synthesis-prefix-root-multiplier",
+                1,
+            ),
+            (
+                "synthesis_prompt_len_multiplier",
+                "--synthesis-prompt-len-multiplier",
+                1.0,
+            ),
+        )
+        if getattr(cli, attr) != default
+    ]
+    if reshaping_flags:
+        verb = "is" if len(reshaping_flags) == 1 else "are"
+        raise ValueError(
+            f"{', '.join(reshaping_flags)} {verb} not supported with "
+            "--custom-dataset-type baseten_trace: it replays recorded "
+            "prompts verbatim, so hash-reshaping synthesis cannot change "
+            "the sent prompt and would desync the forwarded hash_ids KV "
+            "hints."
+        )
+
+
+def _reject_baseten_trace_extra_input_collisions(cli: CLIConfig) -> None:
+    """Reject --extra-inputs keys the baseten_trace loader injects per-turn.
+
+    Loader-injected per-turn values (``min_tokens`` from the recorded output
+    length, ``hash_ids``/``block_size`` KV hints) overwrite endpoint-level
+    extras, so the user's value would be silently clobbered on the wire.
+    Each collision has an opt-out flag that stops the injection so the user
+    value goes through. ``max_tokens`` is not guarded: user extras win over
+    the loader for that key.
+    """
+    from aiperf.plugin.enums import CustomDatasetType
+
+    if cli.custom_dataset_type != CustomDatasetType.BASETEN_TRACE:
+        return
+    extra = dict(cli.extra_inputs or ())
+    collisions: list[tuple[str, str]] = []
+    if cli.force_min_tokens and "min_tokens" in extra:
+        collisions.append(("min_tokens", "--no-force-min-tokens"))
+    if not cli.omit_kv_hints:
+        collisions.extend(
+            (key, "--omit-kv-hints")
+            for key in ("hash_ids", "block_size")
+            if key in extra
+        )
+    if collisions:
+        raise ValueError(
+            "; ".join(
+                f"--extra-inputs {key} is overwritten per-turn by the "
+                f"baseten_trace loader; pass {flag} to send your value instead"
+                for key, flag in collisions
+            )
+        )
+
+
 def _apply_file_osl(d: dict[str, Any], cli: CLIConfig) -> None:
     """Route ``--osl`` onto ``FileDataset.osl`` when --input-file is set.
 
@@ -601,6 +754,9 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
         A dict suitable for ``DatasetConfig.model_validate({"name": "main", **out})``.
     """
     _reject_file_dataset_incompatible(cli)
+    _reject_baseten_only_trace_flags(cli)
+    _reject_baseten_trace_unsupported_synthesis(cli)
+    _reject_baseten_trace_extra_input_collisions(cli)
     if cli.dataset_filters and not cli.public_dataset:
         raise ValueError("--dataset-filter requires --public-dataset")
 

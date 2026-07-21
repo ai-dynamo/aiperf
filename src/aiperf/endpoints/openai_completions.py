@@ -47,7 +47,9 @@ class CompletionsEndpoint(BaseEndpoint):
         extra = model_endpoint.endpoint.extra or []
 
         payload = {
-            "prompt": prompts,
+            # A single prompt goes on the wire as a bare string (the canonical
+            # OpenAI form); some gateways reject the list[str] wrapping.
+            "prompt": prompts[0] if len(prompts) == 1 else prompts,
             "model": turn.model or model_endpoint.primary_model_name,
             "stream": model_endpoint.endpoint.streaming,
         }

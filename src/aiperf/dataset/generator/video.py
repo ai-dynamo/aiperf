@@ -390,7 +390,11 @@ class VideoGenerator(BaseGenerator):
         return frame.tobytes()
 
     def _create_video_with_pipes(self, frames: list[Image.Image]) -> str:
-        """Create video using pipes via stdin and either stdout or temp file output."""
+        """Create video by piping raw frames to ffmpeg stdin, writing to a temp file.
+
+        Output goes to a seekable temp file (not ``pipe:``) so container metadata
+        such as the WebM/Matroska duration is written; see the note below.
+        """
         temp_dir = Path(tempfile.mkdtemp(prefix="aiperf_pipes_"))
         try:
             # Gather all frame data first to prevent deadlocks due to pipe input/output synchronization issues
@@ -404,14 +408,15 @@ class VideoGenerator(BaseGenerator):
                 "pix_fmt": "yuv420p",
             }
 
-            # Determine output destination based on format
+            # Always write to a seekable temp file, never a ``pipe:``. Matroska/WebM
+            # only records the segment duration (and thus a derivable frame count)
+            # when the muxer can seek back to the header after writing; a
+            # non-seekable pipe leaves that metadata empty, so frame-sampling
+            # decoders such as vLLM's compute a bad frame count and fail. MP4
+            # already required a file for ``movflags=faststart``.
             if self.config.format == VideoFormat.MP4:
-                # MP4 requires seekable output, use temp file
                 output_options["movflags"] = "faststart"
-                output_dest = str(temp_dir / f"output.{self.config.format}")
-            else:
-                # WebM and other formats can use pipe output
-                output_dest = "pipe:"
+            output_dest = str(temp_dir / f"output.{self.config.format}")
 
             video_stream = ffmpeg.input(
                 "pipe:",
@@ -424,15 +429,9 @@ class VideoGenerator(BaseGenerator):
             pipeline = self._build_ffmpeg_output(
                 video_stream, output_dest, output_options, temp_dir
             )
-            stdout, _ = pipeline.run(
-                input=all_data, capture_stdout=True, capture_stderr=True
-            )
+            pipeline.run(input=all_data, capture_stderr=True)
 
-            # Read output based on destination
-            if output_dest != "pipe:":
-                video_data = Path(output_dest).read_bytes()
-            else:
-                video_data = stdout
+            video_data = Path(output_dest).read_bytes()
 
             if not video_data:
                 raise RuntimeError("FFmpeg produced no output")
@@ -485,7 +484,7 @@ class VideoGenerator(BaseGenerator):
             pipeline = self._build_ffmpeg_output(
                 video_stream, str(output_path), output_options, temp_dir
             )
-            pipeline.run(capture_stdout=True, capture_stderr=True)
+            pipeline.run(capture_stderr=True)
 
             # Read the output file
             video_data = output_path.read_bytes()

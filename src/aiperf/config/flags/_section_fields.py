@@ -31,6 +31,7 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "urls",
         "use_legacy_max_tokens",
         "use_server_token_count",
+        "uuid_and_strip",
         "wait_for_model_interval",
         "wait_for_model_mode",
         "wait_for_model_timeout",

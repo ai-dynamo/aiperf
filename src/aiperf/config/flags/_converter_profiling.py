@@ -386,7 +386,7 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
 
 
 def _first_record_has_timestamp(file_path: object) -> bool:
-    """Return True when the first non-empty JSONL record carries a timestamp."""
+    """Return True when a trace file carries timestamp data."""
     from pathlib import Path
 
     from aiperf.common.utils import load_json_str
@@ -394,8 +394,19 @@ def _first_record_has_timestamp(file_path: object) -> bool:
     path = Path(file_path)
     if not path.is_file():
         return False
+    if path.suffix.lower() == ".parquet":
+        try:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+        except ImportError:
+            return False
+
+        try:
+            return "timestamp_start_unix_ms" in set(pq.read_schema(path).names)
+        except (OSError, pa.ArrowException):
+            return False
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 if not (stripped := line.strip()):
                     continue
@@ -410,7 +421,7 @@ def _first_record_has_timestamp(file_path: object) -> bool:
 
 
 def _count_dataset_records(file_path: object) -> int:
-    """Count non-empty lines across a JSONL file or directory of JSONLs."""
+    """Count records across a JSONL file/directory or Parquet trace file."""
     from pathlib import Path
 
     path = Path(file_path)
@@ -418,13 +429,24 @@ def _count_dataset_records(file_path: object) -> int:
         if path.is_dir():
             total = 0
             for jsonl in path.rglob("*.jsonl"):
-                with open(jsonl) as f:
+                with open(jsonl, encoding="utf-8") as f:
                     total += sum(1 for line in f if line.strip())
             return total
+        if path.suffix.lower() == ".parquet" and path.is_file():
+            try:
+                import pyarrow as pa
+                import pyarrow.parquet as pq
+            except ImportError:
+                return 0
+
+            try:
+                return pq.ParquetFile(path).metadata.num_rows
+            except (OSError, pa.ArrowException):
+                return 0
         if path.is_file():
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 return sum(1 for line in f if line.strip())
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return 0
     return 0
 

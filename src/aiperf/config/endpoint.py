@@ -82,6 +82,7 @@ class EndpointDefaults:
     WAIT_FOR_MODEL_TIMEOUT = 0.0
     WAIT_FOR_MODEL_INTERVAL = 5.0
     WAIT_FOR_MODEL_MODE = "inference"
+    UUID_AND_STRIP = False
 
 
 class TemplateConfig(BaseConfig):
@@ -377,6 +378,23 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    uuid_and_strip: Annotated[
+        bool,
+        Field(
+            default=EndpointDefaults.UUID_AND_STRIP,
+            description=(
+                "Enable AIPerf-managed image stripping for vLLM's multimodal processor "
+                "cache. Dataset-authored image UUIDs, including UUID-only cache "
+                "references, always pass through on the chat endpoint; this flag only "
+                "strips repeated content after AIPerf observes it in the same session. "
+                "Automatic stripping supports only single_turn datasets with "
+                "session_id-grouped rows; multi_turn is rejected. The server cache must "
+                "cover the working set, and requests in a session must reach a replica "
+                "that retains earlier UUIDs."
+            ),
+        ),
+    ]
+
     wait_for_model_timeout: Annotated[
         float,
         Field(
@@ -499,6 +517,19 @@ class EndpointConfig(BaseConfig):
                 )
         if self.path is not None and not self.path.startswith("/"):
             raise ValueError("endpoint.path must start with a leading slash")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_template_required(self) -> Self:
+        if self.type == EndpointType.TEMPLATE and self.template is None:
+            raise ValueError("template is required when endpoint type is 'template'")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_uuid_and_strip(self) -> Self:
+        """Require image UUID reuse to use the Chat Completions endpoint."""
+        if self.uuid_and_strip and self.type != EndpointType.CHAT:
+            raise ValueError("--uuid-and-strip requires endpoint type 'chat'")
         return self
 
     @model_validator(mode="after")

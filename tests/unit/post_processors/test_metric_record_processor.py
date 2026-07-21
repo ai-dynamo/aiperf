@@ -6,8 +6,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 from aiperf.common.exceptions import NoMetricValue
+from aiperf.common.messages import MetricRecordsData
 from aiperf.common.models import ParsedResponseRecord
-from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
@@ -69,11 +69,11 @@ class TestMetricRecordProcessor:
         metadata = create_metric_metadata()
         result = await processor.process_record(sample_parsed_record, metadata)
 
-        assert isinstance(result, MetricRecordDict)
-        assert RequestLatencyMetric.tag in result
+        assert isinstance(result, MetricRecordsData)
+        assert RequestLatencyMetric.tag in result.metrics
 
         expected_latency = DEFAULT_LAST_RESPONSE_NS - DEFAULT_START_TIME_NS
-        assert result[RequestLatencyMetric.tag] == expected_latency
+        assert result.metrics[RequestLatencyMetric.tag] == expected_latency
 
     @pytest.mark.asyncio
     async def test_process_error_record(
@@ -91,8 +91,8 @@ class TestMetricRecordProcessor:
         metadata = create_metric_metadata()
         result = await processor.process_record(error_parsed_record, metadata)
 
-        assert isinstance(result, MetricRecordDict)
-        assert result[ErrorRequestCountMetric.tag] == 1
+        assert isinstance(result, MetricRecordsData)
+        assert result.metrics[ErrorRequestCountMetric.tag] == 1
 
     @pytest.mark.asyncio
     async def test_process_record_multiple_metrics(
@@ -110,13 +110,13 @@ class TestMetricRecordProcessor:
         metadata = create_metric_metadata()
         result = await processor.process_record(sample_parsed_record, metadata)
 
-        assert len(result) == 2
-        assert RequestLatencyMetric.tag in result
-        assert RequestCountMetric.tag in result
-        assert result[RequestCountMetric.tag] == 1
+        assert len(result.metrics) == 2
+        assert RequestLatencyMetric.tag in result.metrics
+        assert RequestCountMetric.tag in result.metrics
+        assert result.metrics[RequestCountMetric.tag] == 1
 
         expected_latency = DEFAULT_LAST_RESPONSE_NS - DEFAULT_START_TIME_NS
-        assert result[RequestLatencyMetric.tag] == expected_latency
+        assert result.metrics[RequestLatencyMetric.tag] == expected_latency
 
     @pytest.mark.asyncio
     async def test_process_record_handles_no_metric_value_exception(
@@ -137,8 +137,8 @@ class TestMetricRecordProcessor:
         with patch.object(processor, "trace") as mock_trace:
             result = await processor.process_record(sample_parsed_record, metadata)
 
-            assert isinstance(result, MetricRecordDict)
-            assert failing_metric_no_value_cls.tag not in result
+            assert isinstance(result, MetricRecordsData)
+            assert failing_metric_no_value_cls.tag not in result.metrics
             mock_trace.assert_called_once()
             assert (
                 f"No metric value for metric '{failing_metric_no_value_cls.tag}'"
@@ -169,8 +169,8 @@ class TestMetricRecordProcessor:
         with patch.object(processor, "warning") as mock_warning:
             result = await processor.process_record(sample_parsed_record, metadata)
 
-            assert isinstance(result, MetricRecordDict)
-            assert failing_metric_value_error_cls.tag not in result
+            assert isinstance(result, MetricRecordsData)
+            assert failing_metric_value_error_cls.tag not in result.metrics
             mock_warning.assert_called_once()
             assert (
                 f"Error parsing record for metric '{failing_metric_value_error_cls.tag}'"
@@ -196,12 +196,12 @@ class TestMetricRecordProcessor:
         with patch.object(processor, "debug"):
             result = await processor.process_record(sample_parsed_record, metadata)
 
-            assert len(result) == 1
-            assert RequestLatencyMetric.tag in result
-            assert failing_metric_no_value_cls.tag not in result
+            assert len(result.metrics) == 1
+            assert RequestLatencyMetric.tag in result.metrics
+            assert failing_metric_no_value_cls.tag not in result.metrics
 
             expected_latency = DEFAULT_LAST_RESPONSE_NS - DEFAULT_START_TIME_NS
-            assert result[RequestLatencyMetric.tag] == expected_latency
+            assert result.metrics[RequestLatencyMetric.tag] == expected_latency
 
     @pytest.mark.asyncio
     async def test_process_record_with_dependencies(
@@ -222,14 +222,14 @@ class TestMetricRecordProcessor:
         metadata = create_metric_metadata()
         result = await processor.process_record(sample_parsed_record, metadata)
 
-        assert len(result) == 2
-        assert RequestLatencyMetric.tag in result
-        assert double_latency_test_metric_cls.tag in result
+        assert len(result.metrics) == 2
+        assert RequestLatencyMetric.tag in result.metrics
+        assert double_latency_test_metric_cls.tag in result.metrics
 
         # Dependent metric value is 2x the base metric value
         assert (
-            result[double_latency_test_metric_cls.tag]
-            == result[RequestLatencyMetric.tag] * 2
+            result.metrics[double_latency_test_metric_cls.tag]
+            == result.metrics[RequestLatencyMetric.tag] * 2
         )
 
     @pytest.mark.asyncio
@@ -244,5 +244,5 @@ class TestMetricRecordProcessor:
         metadata = create_metric_metadata()
         result = await processor.process_record(sample_parsed_record, metadata)
 
-        assert isinstance(result, MetricRecordDict)
-        assert len(result) == 0
+        assert isinstance(result, MetricRecordsData)
+        assert len(result.metrics) == 0
