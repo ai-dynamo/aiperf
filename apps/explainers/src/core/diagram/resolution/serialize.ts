@@ -13,7 +13,7 @@ import type {
   ResolvedSceneSnapshot,
 } from "./types.js";
 
-const DEFAULT_VIEWPORT = Object.freeze({ width: 700, height: 400 });
+const DEFAULT_VIEWPORT = Object.freeze({ width: 1920, height: 1080 });
 
 function capabilityOf(node: SceneNodeLike): string {
   return nodeCapabilityOf(node);
@@ -65,6 +65,9 @@ export function resolvedSceneSnapshot(
       compareGeneratedParts,
     ),
     connectors: [...resolved.connectorsById.values()].sort((left, right) =>
+      compareIds(left.id, right.id),
+    ),
+    fans: [...resolved.fanGeometryById.values()].sort((left, right) =>
       compareIds(left.id, right.id),
     ),
     diagnostics: resolved.diagnostics,

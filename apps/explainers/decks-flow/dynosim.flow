@@ -41,40 +41,40 @@ explainer "Dynosim" {
         id = "s0-hdr",
         title = "NO SERVING SOCKET",
         caption = "No serving socket on the hot path.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
       sdk.Band(
         id = "s0-band",
         title = "in-process hot path",
-        x = 60, y = 100, width = 580, height = 140
+        x = 177, y = 270, width = 1566, height = 378
       )
       sdk.Rail(
         id = "s0-modes",
         direction = "row",
-        gap = 16,
-        x = 80, y = 86, width = 540, height = 22
+        gap = 43.2,
+        x = 231, y = 232.2, width = 1458, height = 59.4
       ) {
         children {
           sdk.Chip(
             id = "s0-chip-off",
             label = "offline",
-            x = 0, y = 0, width = 100, height = 22,
+            x = 15, y = 0, width = 270, height = 59.4,
             surfaceRole = theme(surface.elevated),
             strokeRole = theme(accent.primary)
           )
           sdk.Chip(
             id = "s0-chip-on",
             label = "online",
-            x = 0, y = 0, width = 100, height = 22,
+            x = 15, y = 0, width = 270, height = 59.4,
             surfaceRole = theme(surface.elevated),
             strokeRole = theme(accent.secondary)
           )
           sdk.Chip(
             id = "s0-chip-sim",
             label = "SimClock",
-            x = 0, y = 0, width = 100, height = 22,
+            x = 15, y = 0, width = 270, height = 59.4,
             surfaceRole = theme(surface.elevated),
             strokeRole = theme(accent.tertiary)
           )
@@ -84,7 +84,7 @@ explainer "Dynosim" {
         id = "s0-aiperf",
         title = "AIPerf workload",
         detail = "schedule + observe",
-        x = 80, y = 130, width = 160, height = 96,
+        x = 231, y = 351, width = 432, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -93,13 +93,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s0-aiperf", anchor: "e" },
         to = { nodeId: "s0-sink", anchor: "w" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s0-sink",
         title = "DynosimSink",
         detail = "in-process",
-        x = 280, y = 130, width = 160, height = 96,
+        x = 771, y = 351, width = 432, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -108,34 +108,34 @@ explainer "Dynosim" {
         mode = "route",
         from = { nodeId: "s0-sink", anchor: "e" },
         to = { nodeId: "s0-replay", anchor: "w" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s0-replay",
         title = "SteppableReplay",
         detail = "Dynamo mocker",
-        x = 480, y = 130, width = 140, height = 96,
+        x = 1311, y = 351, width = 378, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Divider(
         id = "s0-divider",
         axis = "x",
-        x = 80, y = 250, length = 540,
+        x = 231, y = 675, length = 540,
         strokeRole = theme(ink.tertiary),
-        strokeWidth = 1.2
+        strokeWidth = 3.24
       )
-      sdk.Callout(
+      sdk.Note(
         id = "s0-callout",
         text = "no socket I/O",
-        x = 300, y = 88, width = 110, height = 22,
-        target = { x: 355, y: 130 },
+        x = 1419, y = 702, width = 378, height = 75.6,
+        surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Note(
         id = "s0-note",
         text = "HTTP/gRPC socket omitted on the hot path",
-        x = 80, y = 280, width = 540, height = 28,
+        x = 231, y = 810, width = 1458, height = 97.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -144,7 +144,7 @@ explainer "Dynosim" {
         from = { nodeId: "s0-aiperf", anchor: "e" },
         to = { nodeId: "s0-replay", anchor: "w" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.primary) }
       )
 
@@ -190,7 +190,7 @@ explainer "Dynosim" {
         id = "s1-hdr",
         title = "FEATURE GATE",
         caption = "Opt-in at compile time, selected at config time.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -198,7 +198,7 @@ explainer "Dynosim" {
         id = "s1-feat",
         title = "Cargo feature",
         detail = "dynosim",
-        x = 120, y = 120, width = 200, height = 110,
+        x = 339, y = 324, width = 540, height = 297,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -207,13 +207,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s1-feat", anchor: "e" },
         to = { nodeId: "s1-ids", anchor: "w" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s1-ids",
         title = "Registry IDs",
         detail = "offline · online",
-        x = 380, y = 120, width = 200, height = 110,
+        x = 1041, y = 324, width = 540, height = 297,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -221,7 +221,7 @@ explainer "Dynosim" {
         id = "s1-motion-sig",
         edge = "s1-a1",
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.primary) }
       )
 
@@ -260,7 +260,7 @@ explainer "Dynosim" {
         id = "s2-hdr",
         title = "TRANSPORT → CLOCK",
         caption = "Config is shared; transport picks real vs. virtual time.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -268,7 +268,7 @@ explainer "Dynosim" {
         id = "s2-run",
         title = "BenchmarkRun",
         detail = "Config v2",
-        x = 60, y = 130, width = 150, height = 96,
+        x = 177, y = 351, width = 405, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -277,13 +277,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s2-run", anchor: "e" },
         to = { nodeId: "s2-tr", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.secondary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s2-tr",
         title = "transport.type",
         detail = "selects driver",
-        x = 260, y = 130, width = 180, height = 96,
+        x = 717, y = 351, width = 486, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -292,13 +292,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s2-tr", anchor: "e" },
         to = { nodeId: "s2-clk", anchor: "w" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s2-clk",
         title = "Clock",
         detail = "Sim or Real",
-        x = 490, y = 130, width = 150, height = 96,
+        x = 1338, y = 351, width = 405, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -307,7 +307,7 @@ explainer "Dynosim" {
         from = { nodeId: "s2-run", anchor: "e" },
         to = { nodeId: "s2-clk", anchor: "w" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.secondary) }
       )
 
@@ -348,7 +348,7 @@ explainer "Dynosim" {
         id = "s3-hdr",
         title = "REGISTRY ROUTE",
         caption = "Transport ID → dynosim factory, not HTTP stack.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -356,7 +356,7 @@ explainer "Dynosim" {
         id = "s3-http",
         title = "HTTP factory",
         detail = "not used",
-        x = 90, y = 120, width = 180, height = 110,
+        x = 258, y = 324, width = 486, height = 297,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -364,14 +364,14 @@ explainer "Dynosim" {
         id = "s3-dyno",
         title = "Dynosim factory",
         detail = "own module",
-        x = 430, y = 120, width = 180, height = 110,
+        x = 1176, y = 324, width = 486, height = 297,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Note(
         id = "s3-note",
         text = "transport ID routes before Hyper/Tonic clients build",
-        x = 80, y = 280, width = 540, height = 28,
+        x = 231, y = 756, width = 1458, height = 75.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -380,7 +380,7 @@ explainer "Dynosim" {
         from = { nodeId: "s3-http", anchor: "center" },
         to = { nodeId: "s3-dyno", anchor: "center" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.primary) }
       )
 
@@ -416,7 +416,7 @@ explainer "Dynosim" {
         id = "s4-hdr",
         title = "HOST + SINK",
         caption = "Same observation vocabulary, different dispatch backend.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -424,7 +424,7 @@ explainer "Dynosim" {
         id = "s4-host",
         title = "EngineHost",
         detail = "SteppableReplay",
-        x = 70, y = 130, width = 150, height = 96,
+        x = 204, y = 351, width = 405, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -433,13 +433,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s4-host", anchor: "e" },
         to = { nodeId: "s4-sink", anchor: "w" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s4-sink",
         title = "DynosimSink",
         detail = "RequestSink",
-        x = 270, y = 130, width = 150, height = 96,
+        x = 744, y = 351, width = 405, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -448,13 +448,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s4-sink", anchor: "e" },
         to = { nodeId: "s4-obs", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.secondary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s4-obs",
         title = "RequestObserver",
         detail = "metrics",
-        x = 470, y = 130, width = 160, height = 96,
+        x = 1284, y = 351, width = 432, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -463,7 +463,7 @@ explainer "Dynosim" {
         from = { nodeId: "s4-host", anchor: "center" },
         to = { nodeId: "s4-obs", anchor: "center" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.primary) }
       )
 
@@ -504,7 +504,7 @@ explainer "Dynosim" {
         id = "s5-hdr",
         title = "OFFLINE · SIMCLOCK",
         caption = "Deterministic virtual time drives offline replay.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -512,7 +512,7 @@ explainer "Dynosim" {
         id = "s5-off",
         title = "dynosim_offline",
         detail = "SimClock",
-        x = 250, y = 100, width = 200, height = 110,
+        x = 690, y = 270, width = 540, height = 297,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -521,13 +521,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s5-off", anchor: "s" },
         to = { nodeId: "s5-drive", anchor: "n" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s5-drive",
         title = "drive_sim_with_source",
         detail = "virtual pump",
-        x = 250, y = 250, width = 200, height = 78,
+        x = 690, y = 675, width = 540, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -536,7 +536,7 @@ explainer "Dynosim" {
         from = { nodeId: "s5-off", anchor: "center" },
         to = { nodeId: "s5-drive", anchor: "center" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.tertiary) }
       )
 
@@ -575,7 +575,7 @@ explainer "Dynosim" {
         id = "s6-hdr",
         title = "ONLINE · REALCLOCK",
         caption = "Same engine contract; clock switches to wall time.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -583,7 +583,7 @@ explainer "Dynosim" {
         id = "s6-on",
         title = "dynosim_online",
         detail = "RealClock",
-        x = 250, y = 100, width = 200, height = 110,
+        x = 690, y = 270, width = 540, height = 297,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -592,13 +592,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s6-on", anchor: "s" },
         to = { nodeId: "s6-drive", anchor: "n" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s6-drive",
         title = "drive_real_with_source",
         detail = "wall pump",
-        x = 250, y = 250, width = 200, height = 78,
+        x = 690, y = 675, width = 540, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -607,7 +607,7 @@ explainer "Dynosim" {
         from = { nodeId: "s6-on", anchor: "center" },
         to = { nodeId: "s6-drive", anchor: "center" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.secondary) }
       )
 
@@ -646,7 +646,7 @@ explainer "Dynosim" {
         id = "s7-hdr",
         title = "CLOCK COMPARE",
         caption = "One Clock trait; two time domains.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -654,7 +654,7 @@ explainer "Dynosim" {
         id = "s7-real",
         title = "RealClock",
         detail = "wall nanoseconds",
-        x = 100, y = 130, width = 200, height = 96,
+        x = 285, y = 351, width = 540, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -662,14 +662,14 @@ explainer "Dynosim" {
         id = "s7-sim",
         title = "SimClock",
         detail = "virtual nanoseconds",
-        x = 400, y = 130, width = 200, height = 96,
+        x = 1095, y = 351, width = 540, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Note(
         id = "s7-note",
         text = "Clock::is_virtual() selects reactor vs. simulation driver",
-        x = 80, y = 280, width = 540, height = 28,
+        x = 231, y = 756, width = 1458, height = 75.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -678,7 +678,7 @@ explainer "Dynosim" {
         from = { nodeId: "s7-real", anchor: "center" },
         to = { nodeId: "s7-sim", anchor: "center" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.primary) }
       )
 
@@ -714,7 +714,7 @@ explainer "Dynosim" {
         id = "s8-hdr",
         title = "DUAL QUEUES",
         caption = "Earliest event wins; clock wins ties at the same t.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -722,7 +722,7 @@ explainer "Dynosim" {
         id = "s8-clkq",
         title = "SimClock queue",
         detail = "arrivals · phases",
-        x = 80, y = 130, width = 220, height = 96,
+        x = 231, y = 351, width = 594, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -730,14 +730,14 @@ explainer "Dynosim" {
         id = "s8-srcq",
         title = "SimEventSource",
         detail = "engine events",
-        x = 400, y = 130, width = 220, height = 96,
+        x = 1095, y = 351, width = 594, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Note(
         id = "s8-rule",
         text = "min(clock, source) · clock wins ties",
-        x = 80, y = 280, width = 540, height = 28,
+        x = 231, y = 756, width = 1458, height = 75.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -746,7 +746,7 @@ explainer "Dynosim" {
         from = { nodeId: "s8-clkq", anchor: "center" },
         to = { nodeId: "s8-srcq", anchor: "center" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.primary) }
       )
 
@@ -782,7 +782,7 @@ explainer "Dynosim" {
         id = "s9-hdr",
         title = "SIM PUMP LOOP",
         caption = "Poll → idle → advance → poll again.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -790,7 +790,7 @@ explainer "Dynosim" {
         id = "s9-p0",
         title = "poll future",
         detail = "sim pump",
-        x = 40, y = 130, width = 130, height = 96,
+        x = 123, y = 351, width = 351, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -799,13 +799,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s9-p0", anchor: "e" },
         to = { nodeId: "s9-p1", anchor: "w" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s9-p1",
         title = "idle?",
         detail = "sim pump",
-        x = 200, y = 130, width = 130, height = 96,
+        x = 555, y = 351, width = 351, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -814,13 +814,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s9-p1", anchor: "e" },
         to = { nodeId: "s9-p2", anchor: "w" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s9-p2",
         title = "advance t",
         detail = "sim pump",
-        x = 360, y = 130, width = 130, height = 96,
+        x = 987, y = 351, width = 351, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -829,13 +829,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s9-p2", anchor: "e" },
         to = { nodeId: "s9-p3", anchor: "w" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s9-p3",
         title = "repeat",
         detail = "sim pump",
-        x = 520, y = 130, width = 130, height = 96,
+        x = 1419, y = 351, width = 351, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -844,7 +844,7 @@ explainer "Dynosim" {
         from = { nodeId: "s9-p0", anchor: "e" },
         to = { nodeId: "s9-p3", anchor: "w" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.tertiary) }
       )
 
@@ -887,7 +887,7 @@ explainer "Dynosim" {
         id = "s10-hdr",
         title = "CLOCK WINS TIES",
         caption = "Clock-wins-ties keeps scheduling backend-independent.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -895,7 +895,7 @@ explainer "Dynosim" {
         id = "s10-arr",
         title = "arrival @ t",
         detail = "clock queue",
-        x = 120, y = 140, width = 180, height = 80,
+        x = 339, y = 378, width = 486, height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -903,14 +903,14 @@ explainer "Dynosim" {
         id = "s10-eng",
         title = "engine pass @ t",
         detail = "source queue",
-        x = 400, y = 140, width = 180, height = 80,
+        x = 1095, y = 378, width = 486, height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Note(
         id = "s10-rule",
         text = "clock fires first at equal t",
-        x = 80, y = 260, width = 540, height = 28,
+        x = 231, y = 702, width = 1458, height = 75.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -919,7 +919,7 @@ explainer "Dynosim" {
         from = { nodeId: "s10-arr", anchor: "center" },
         to = { nodeId: "s10-eng", anchor: "center" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.primary) }
       )
 
@@ -955,7 +955,7 @@ explainer "Dynosim" {
         id = "s11-hdr",
         title = "STEP BOUNDS",
         caption = "Monotonic virtual time with overshoot protection.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -963,7 +963,7 @@ explainer "Dynosim" {
         id = "s11-step",
         title = "source.step",
         detail = "[at, end_ns)",
-        x = 80, y = 130, width = 170, height = 96,
+        x = 231, y = 351, width = 459, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -972,13 +972,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s11-step", anchor: "e" },
         to = { nodeId: "s11-guards", anchor: "w" },
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.warning), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s11-guards",
         title = "guards",
         detail = "regression · overshoot",
-        x = 300, y = 130, width = 170, height = 96,
+        x = 825, y = 351, width = 459, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -987,13 +987,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s11-guards", anchor: "e" },
         to = { nodeId: "s11-adv", anchor: "w" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s11-adv",
         title = "advance",
         detail = "SimClock",
-        x = 520, y = 130, width = 100, height = 96,
+        x = 1419, y = 351, width = 270, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1002,7 +1002,7 @@ explainer "Dynosim" {
         from = { nodeId: "s11-step", anchor: "center" },
         to = { nodeId: "s11-adv", anchor: "center" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.tertiary) }
       )
 
@@ -1043,7 +1043,7 @@ explainer "Dynosim" {
         id = "s12-hdr",
         title = "DIRECT REQUEST",
         caption = "In-process submission; mailbox completion.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -1051,7 +1051,7 @@ explainer "Dynosim" {
         id = "s12-turn",
         title = "Turn dispatch",
         detail = "workload",
-        x = 70, y = 130, width = 150, height = 96,
+        x = 204, y = 351, width = 405, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -1060,13 +1060,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s12-turn", anchor: "e" },
         to = { nodeId: "s12-req", anchor: "w" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s12-req",
         title = "DirectRequest",
         detail = "submit",
-        x = 270, y = 130, width = 150, height = 96,
+        x = 744, y = 351, width = 405, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1075,13 +1075,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s12-req", anchor: "e" },
         to = { nodeId: "s12-mail", anchor: "w" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s12-mail",
         title = "waiter mailbox",
         detail = "completion",
-        x = 470, y = 130, width = 160, height = 96,
+        x = 1284, y = 351, width = 432, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1090,7 +1090,7 @@ explainer "Dynosim" {
         from = { nodeId: "s12-turn", anchor: "center" },
         to = { nodeId: "s12-mail", anchor: "center" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.primary) }
       )
 
@@ -1131,7 +1131,7 @@ explainer "Dynosim" {
         id = "s13-hdr",
         title = "OBSERVER PATH",
         caption = "Observer seam is transport-neutral.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -1139,7 +1139,7 @@ explainer "Dynosim" {
         id = "s13-evt",
         title = "EngineEvent",
         detail = "token · usage",
-        x = 60, y = 130, width = 160, height = 96,
+        x = 177, y = 351, width = 432, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1148,13 +1148,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s13-evt", anchor: "e" },
         to = { nodeId: "s13-sink", anchor: "w" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s13-sink",
         title = "DynosimSink",
         detail = "translate",
-        x = 280, y = 130, width = 160, height = 96,
+        x = 771, y = 351, width = 432, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1163,13 +1163,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s13-sink", anchor: "e" },
         to = { nodeId: "s13-obs", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.secondary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s13-obs",
         title = "Observer",
         detail = "TTFT · terminal",
-        x = 500, y = 130, width = 140, height = 96,
+        x = 1365, y = 351, width = 378, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -1178,7 +1178,7 @@ explainer "Dynosim" {
         from = { nodeId: "s13-evt", anchor: "center" },
         to = { nodeId: "s13-obs", anchor: "center" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.primary) }
       )
 
@@ -1219,7 +1219,7 @@ explainer "Dynosim" {
         id = "s14-hdr",
         title = "METRICS MERGE",
         caption = "Same metric plane; source is replay instead of wire.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -1227,7 +1227,7 @@ explainer "Dynosim" {
         id = "s14-obs",
         title = "Observer events",
         detail = "per worker",
-        x = 80, y = 130, width = 150, height = 96,
+        x = 231, y = 351, width = 405, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -1236,13 +1236,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s14-obs", anchor: "e" },
         to = { nodeId: "s14-core", anchor: "w" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s14-core",
         title = "metrics_core",
         detail = "accumulate",
-        x = 280, y = 130, width = 170, height = 96,
+        x = 771, y = 351, width = 459, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1251,13 +1251,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s14-core", anchor: "e" },
         to = { nodeId: "s14-rec", anchor: "w" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s14-rec",
         title = "records",
         detail = "exact / sketch",
-        x = 500, y = 130, width = 120, height = 96,
+        x = 1365, y = 351, width = 324, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1266,7 +1266,7 @@ explainer "Dynosim" {
         from = { nodeId: "s14-obs", anchor: "center" },
         to = { nodeId: "s14-rec", anchor: "center" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.primary) }
       )
 
@@ -1307,7 +1307,7 @@ explainer "Dynosim" {
         id = "s15-hdr",
         title = "DELIVERY MODE",
         caption = "Delivery shape follows config, not transport family.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -1315,7 +1315,7 @@ explainer "Dynosim" {
         id = "s15-inc",
         title = "Incremental",
         detail = "token → token",
-        x = 100, y = 130, width = 220, height = 96,
+        x = 285, y = 351, width = 594, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1323,7 +1323,7 @@ explainer "Dynosim" {
         id = "s15-coa",
         title = "Coalesced",
         detail = "terminal batch",
-        x = 380, y = 130, width = 220, height = 96,
+        x = 1041, y = 351, width = 594, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1332,7 +1332,7 @@ explainer "Dynosim" {
         from = { nodeId: "s15-inc", anchor: "center" },
         to = { nodeId: "s15-coa", anchor: "center" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.primary) }
       )
 
@@ -1368,7 +1368,7 @@ explainer "Dynosim" {
         id = "s16-hdr",
         title = "DRAIN + STALL",
         caption = "Clean termination with explicit stall signals.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -1376,7 +1376,7 @@ explainer "Dynosim" {
         id = "s16-ready",
         title = "Ready future",
         detail = "drain source",
-        x = 120, y = 120, width = 180, height = 110,
+        x = 339, y = 324, width = 486, height = 297,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1384,7 +1384,7 @@ explainer "Dynosim" {
         id = "s16-stall",
         title = "No progress",
         detail = "stall / deadlock",
-        x = 400, y = 120, width = 180, height = 110,
+        x = 1095, y = 324, width = 486, height = 297,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.orange)
       )
@@ -1393,7 +1393,7 @@ explainer "Dynosim" {
         from = { nodeId: "s16-ready", anchor: "center" },
         to = { nodeId: "s16-stall", anchor: "center" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.primary) }
       )
 
@@ -1429,7 +1429,7 @@ explainer "Dynosim" {
         id = "s17-hdr",
         title = "MODE RECAP",
         caption = "Pick the clock; keep the rest of AIPerf unchanged.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -1437,7 +1437,7 @@ explainer "Dynosim" {
         id = "s17-off",
         title = "Offline",
         detail = "SimClock",
-        x = 60, y = 130, width = 150, height = 96,
+        x = 177, y = 351, width = 405, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1446,13 +1446,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s17-off", anchor: "e" },
         to = { nodeId: "s17-on", anchor: "w" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s17-on",
         title = "Online",
         detail = "RealClock",
-        x = 275, y = 130, width = 150, height = 96,
+        x = 757.5, y = 351, width = 405, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -1461,13 +1461,13 @@ explainer "Dynosim" {
         mode = "connector",
         from = { nodeId: "s17-on", anchor: "e" },
         to = { nodeId: "s17-json", anchor: "w" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s17-json",
         title = "native-v2.json",
         detail = "same persist",
-        x = 490, y = 130, width = 150, height = 96,
+        x = 1338, y = 351, width = 405, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1476,7 +1476,7 @@ explainer "Dynosim" {
         from = { nodeId: "s17-off", anchor: "center" },
         to = { nodeId: "s17-json", anchor: "center" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.primary) }
       )
 

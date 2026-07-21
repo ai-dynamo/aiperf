@@ -80,7 +80,7 @@ describe("sdk.stepChain", () => {
         ? root.children.find((child) => child.id === "sc__arrow-0")
         : undefined;
     expect(arrow).toMatchObject({
-      geometry: { x: 168, y: 58, width: 46, height: 0 },
+      geometry: { x: 453.6, y: 156.6, width: 124.20000000000005, height: 0 },
       from: { nodeId: "sc__step-0", anchor: "e" },
       to: { nodeId: "sc__step-1", anchor: "w" },
     });
@@ -297,7 +297,7 @@ describe("sdk.nodeTree", () => {
         ? tree.children.find((child) => child.id === "nt__line-0")
         : undefined;
     expect(firstLine).toMatchObject({
-      geometry: { x: 75, y: 60, width: 95, height: 70 },
+      geometry: { x: 202.5, y: 162, width: 256.5, height: 189 },
       from: { nodeId: "nt__root", anchor: "s" },
       to: { nodeId: "nt__child-0", anchor: "n" },
     });
@@ -412,10 +412,10 @@ describe("flow-engine free-text sizing", () => {
     }
     const longH = findGeometry(longResult.value.roots[0] as never, "sd__subtitle")!.height;
     const shortH = findGeometry(shortResult.value.roots[0] as never, "sd2__subtitle")!.height;
-    // Floor is DIVIDER_SUBTITLE_H (34); a short subtitle stays at it, the long
+    // Floor is DIVIDER_SUBTITLE_H (91.8); a short subtitle stays at it, the long
     // one grows past it.
-    expect(shortH).toBe(34);
-    expect(longH).toBeGreaterThan(34);
+    expect(shortH).toBe(91.8);
+    expect(longH).toBeGreaterThan(91.8);
   });
 
   it("grows the bigStat description box for wrapping prose", () => {
@@ -470,8 +470,8 @@ describe("flow-engine free-text sizing", () => {
     if (!result.ok) {
       return;
     }
-    // Short single-line captions floor at AXIS_LABEL_H (16).
-    expect(findGeometry(result.value.roots[0] as never, "ta__tick-0__label")!.height).toBe(16);
-    expect(findGeometry(result.value.roots[0] as never, "ta__marker-0__label")!.height).toBe(16);
+    // Short single-line captions floor at AXIS_LABEL_H (43.2).
+    expect(findGeometry(result.value.roots[0] as never, "ta__tick-0__label")!.height).toBe(43.2);
+    expect(findGeometry(result.value.roots[0] as never, "ta__marker-0__label")!.height).toBe(43.2);
   });
 });

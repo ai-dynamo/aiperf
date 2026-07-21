@@ -41,11 +41,30 @@ function makeDeck(id: string, route: string, startGateTitle: string): DeckDefini
 const deckA = makeDeck("deck-a", "/deck-a", "Deck A start gate");
 const deckB = makeDeck("deck-b", "/deck-b", "Deck B start gate");
 
+function manifestEntryFor(deck: DeckDefinition) {
+  return {
+    id: deck.id,
+    route: deck.route,
+    topic: "test",
+    eyebrowLabel: deck.eyebrowLabel,
+    hub: deck.hub,
+    slideCount: deck.slides.length,
+  };
+}
+
 vi.mock("../core/deck-registry", () => ({
-  deckByRoute: (pathname: string) => {
-    if (pathname === "/deck-a") return deckA;
-    if (pathname === "/deck-b") return deckB;
+  deckManifestByRoute: (pathname: string) => {
+    if (pathname === "/deck-a") return manifestEntryFor(deckA);
+    if (pathname === "/deck-b") return manifestEntryFor(deckB);
     return undefined;
+  },
+}));
+
+vi.mock("../core/load-deck-flows", () => ({
+  loadDeckFlowById: (id: string) => {
+    if (id === "deck-a") return Promise.resolve(deckA);
+    if (id === "deck-b") return Promise.resolve(deckB);
+    return Promise.reject(new Error(`unknown deck id "${id}"`));
   },
 }));
 
@@ -66,7 +85,7 @@ afterEach(() => {
 });
 
 describe("DeckRoute remounts ExplainerShell per deck", () => {
-  it("resets started state when navigating to a different deck", () => {
+  it("resets started state when navigating to a different deck", async () => {
     render(
       <MemoryRouter initialEntries={["/deck-a"]}>
         <Link to="/deck-b">Open deck B</Link>
@@ -77,7 +96,8 @@ describe("DeckRoute remounts ExplainerShell per deck", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("Deck A start gate")).toBeTruthy();
+    // Lazy per-route compilation resolves asynchronously — wait for it.
+    expect(await screen.findByText("Deck A start gate")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /play without audio/i }));
     expect(screen.queryByText("Deck A start gate")).toBeNull();
     expect(screen.getByTestId("mental-model-deck-a")).toBeTruthy();
@@ -85,7 +105,7 @@ describe("DeckRoute remounts ExplainerShell per deck", () => {
     fireEvent.click(screen.getByRole("link", { name: /open deck b/i }));
 
     // Without key={deck.id}, ExplainerShell keeps started=true across route reuse.
-    expect(screen.getByText("Deck B start gate")).toBeTruthy();
+    expect(await screen.findByText("Deck B start gate")).toBeTruthy();
     expect(screen.queryByText("Deck A start gate")).toBeNull();
   });
 });

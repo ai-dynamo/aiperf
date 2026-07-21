@@ -96,6 +96,141 @@ describe("flow verifier canonical snapshot contract", () => {
   });
 });
 
+function packageWithFan() {
+  return {
+    id: "fan-snapshot-contract",
+    slides: [
+      {
+        id: "slide-1",
+        title: "Fan snapshot contract",
+        render: {
+          scene: {
+            viewport: { width: 700, height: 400 },
+            roots: [
+              {
+                id: "fan",
+                kind: "fan",
+                capabilityId: "core.fan-out",
+                geometry: { x: 0, y: 0, width: 0, height: 0 },
+                from: { x: 0, y: 100 },
+                to: [
+                  { x: 300, y: 50 },
+                  { x: 300, y: 150 },
+                ],
+              },
+            ],
+            timeline: [
+              { id: "fan-trace", at: 0, duration: 500, action: "trace", target: "fan" },
+            ],
+          },
+        },
+      },
+    ],
+  };
+}
+
+function snapshotWithFan() {
+  return {
+    deckId: "fan-snapshot-contract",
+    slideId: "slide-1",
+    snapshot: {
+      viewport: { width: 700, height: 400 },
+      nodes: [
+        {
+          id: "fan",
+          capability: "core.fan-out",
+          bounds: { x: 0, y: 0, width: 0, height: 0 },
+          ancestorIds: [],
+        },
+      ],
+      generatedParts: [],
+      connectors: [],
+      fans: [
+        {
+          id: "fan",
+          capability: "core.fan-out",
+          junction: { x: 150, y: 100 },
+          segments: [],
+          trajectories: [
+            { id: "fan-trajectory-0", d: "M0 100 L150 100 L150 50 L300 50", role: "branch" },
+            { id: "fan-trajectory-1", d: "M0 100 L150 100 L150 150 L300 150", role: "branch" },
+          ],
+        },
+      ],
+      diagnostics: [],
+    },
+  };
+}
+
+function snapshotWithoutFans() {
+  const snapshot = snapshotWithFan();
+  return {
+    ...snapshot,
+    snapshot: { ...snapshot.snapshot, fans: [] },
+  };
+}
+
+function snapshotWithDisconnectedFan() {
+  const snapshot = snapshotWithFan();
+  return {
+    ...snapshot,
+    snapshot: {
+      ...snapshot.snapshot,
+      fans: [
+        {
+          ...snapshot.snapshot.fans[0],
+          // Junction no longer sits on either trajectory.
+          junction: { x: 999, y: 999 },
+        },
+      ],
+    },
+  };
+}
+
+describe("flow verifier canonical fan geometry contract", () => {
+  it("does not flag a fan whose canonical snapshot geometry is connected", () => {
+    const findings = verifyPackageIr(packageWithFan(), {
+      snapshots: [snapshotWithFan()],
+    });
+
+    expect(findings).not.toContainEqual(
+      expect.objectContaining({ code: "resolved-fan-missing" }),
+    );
+    expect(findings).not.toContainEqual(
+      expect.objectContaining({ code: "fan-disconnected-junction" }),
+    );
+    expect(findings).not.toContainEqual(
+      expect.objectContaining({ code: "fan-invalid-cardinality" }),
+    );
+  });
+
+  it("fails closed when a fan is absent from the canonical resolved snapshot", () => {
+    const findings = verifyPackageIr(packageWithFan(), {
+      snapshots: [snapshotWithoutFans()],
+    });
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        severity: "error",
+        code: "resolved-fan-missing",
+      }),
+    );
+  });
+
+  it("rejects canonical fan geometry whose junction does not connect to its trajectories", () => {
+    const findings = verifyPackageIr(packageWithFan(), {
+      snapshots: [snapshotWithDisconnectedFan()],
+    });
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        severity: "error",
+        code: "fan-disconnected-junction",
+      }),
+    );
+  });
+});
+
 describe("flow verifier path degeneracy", () => {
   it("flags zero-length connector paths", () => {
     const pts = pathPoints("M10 20 L10 20");

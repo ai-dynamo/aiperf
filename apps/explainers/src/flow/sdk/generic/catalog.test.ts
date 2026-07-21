@@ -5,9 +5,22 @@
 
 import { describe, expect, it } from "vitest";
 
+import { pathPoints } from "../../dev-tools/verify-geometry.js";
 import type { JsonValue } from "../../schema/json-value.js";
 import { createSdkRegistry } from "../registry.js";
 import type { SceneFragment, SdkExpansionContext } from "../types.js";
+
+function pathEndpointsCoincident(
+  points: ReadonlyArray<{ readonly x: number; readonly y: number }>,
+  tolerance = 0.5,
+): boolean {
+  if (points.length < 2) {
+    return true;
+  }
+  const first = points[0]!;
+  const last = points[points.length - 1]!;
+  return Math.hypot(first.x - last.x, first.y - last.y) <= tolerance;
+}
 
 const GENERIC_CATALOG_IDS = [
   "sdk.shape",
@@ -1085,5 +1098,31 @@ describe("generic SDK catalog", () => {
     if (result.ok) {
       expect(result.value.roots[0]?.geometry.height).toBeGreaterThanOrEqual(40);
     }
+  });
+
+  it("emits cloud icon glyph paths with distinct endpoints for verifier geometry", () => {
+    // Regression: closed cloud paths start and end at the same point, which the
+    // IR verifier treats as arrow-degenerate-path on generated `__icon` nodes
+    // (e.g. il-v3__icon on the generic catalog IconLabel slide).
+    const result = createSdkRegistry().lookup("sdk.iconLabel")!.factory(
+      { id: "il-v3", icon: "cloud", label: "Cloud", width: 210, height: 42 },
+      {},
+      { instanceId: "il-v3", sourceMap: SOURCE_MAP, themeTokens: new Map() },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const root = result.value.roots[0];
+    const icon =
+      root?.kind === "group"
+        ? root.children.find((child) => child.id === "il-v3__icon")
+        : undefined;
+    expect(icon?.capabilityId).toBe("core.path");
+    expect(typeof icon?.path).toBe("string");
+    const pts = pathPoints(icon?.path);
+    expect(pts.length).toBeGreaterThanOrEqual(2);
+    expect(pathEndpointsCoincident(pts)).toBe(false);
   });
 });

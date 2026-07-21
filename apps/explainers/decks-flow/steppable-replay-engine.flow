@@ -1,0 +1,823 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Steppable replay engine — the externally-clocked mocker seam.
+//! Authored directly from dynamo lib/mocker source (loadgen/steppable.rs,
+//! replay/offline/{agg,disagg}.rs) and aiperf rust/runtime/src/dynosim.rs.
+
+explainer "Steppable replay engine" {
+  id: "steppable-replay-engine"
+  route: "/steppable-replay-engine"
+  topic: "mocker-steppable-replay"
+  storagePrefix: "steppable-replay-engine-explainer"
+  classPrefix: "deck-steppable-replay"
+  eyebrowLabel: "STEPPABLE REPLAY"
+  startGateTitle: "Steppable replay engine"
+
+  hub: {
+    title: "the externally-clocked mocker seam"
+    highlight: "Steppable replay engine"
+    description: "How dynamo's lib/mocker exposes its own offline runtimes — single-engine, aggregated multi-worker + router, disaggregated prefill/decode — as a passive, dynamically-fed SteppableReplay trait, and how aiperf's dynosim.rs fuses that seam into its own discrete-event pump."
+  }
+
+  slide "The inversion: from self-driving to externally clocked" {
+    eyebrow: "1 · Inversion"
+    title: "The native runtime drives itself; SteppableReplay hands the wheel to the caller"
+    lede: "run() owns a static arrival queue and its own loop. SteppableReplay keeps every scheduling behavior — batching, KV cache, prefix caching, chunked prefill, routing, disagg handoff — inside the runtime, and adds exactly one seam: the caller now owns the clock."
+    narration: "The native offline runtimes drive themselves over a static arrival queue. Steppable replay inverts that. The caller owns the clock and the loop, submits requests as they emerge in a closed loop dataflow, and steps the runtime one logical timestamp at a time. Batching, KV cache, prefix caching, chunked prefill, routing, and disagg handoff stay the runtime's job — this adds nothing but the seam."
+    term: {
+      word: "SteppableReplay"
+      meaning: "Tier-2 boundary trait from the engine-boundary spec: a real mocker offline runtime exposed as a passive, externally-clocked, dynamic-admission engine, uniform across every topology."
+    }
+    points: [
+      "Static arrival queue (run()) → closed-loop submission (SteppableReplay::submit).",
+      "Runtime-owned loop → caller-owned clock: advance_now_ms / step / step_until.",
+      "Uniform across single / aggregated+router / disaggregated topologies — same trait, three impls.",
+      "Source of truth: lib/mocker/src/loadgen/steppable.rs, module doc comment."
+    ]
+    caption: "run()'s self-clocked loop → caller-clocked step() seam, same scheduling core."
+
+    render: @scene {
+      sdk.Header(
+        id = "s0-hdr",
+        title = "PUSH → PULL INVERSION",
+        caption = "static arrival queue vs. externally-clocked step()",
+        x = 48.6, y = 43.2, width = 1792.8, height = 118.8,
+        surfaceRole = theme(surface.primary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s0-native",
+        title = "run() — native offline",
+        detail = "self-clocked loop, static arrival queue",
+        x = 81, y = 270, width = 526.5, height = 270,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "s0-a1", mode = "connector",
+        from = { nodeId: "s0-native", anchor: "e" }, to = { nodeId: "s0-trait", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 5.94, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s0-trait",
+        title = "SteppableReplay seam",
+        detail = "same scheduling core, new seam only",
+        x = 683.1, y = 270, width = 526.5, height = 270,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s0-a2", mode = "connector",
+        from = { nodeId: "s0-trait", anchor: "e" }, to = { nodeId: "s0-caller", anchor: "w" },
+        style = { stroke: theme(accent.primary), strokeWidth: 5.94, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s0-caller",
+        title = "External caller",
+        detail = "owns clock + loop, closed-loop submit",
+        x = 1285.2, y = 270, width = 526.5, height = 270,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.PropertyList(
+        id = "s0-props",
+        title = "Unchanged inside the seam",
+        items = ["batching", "KV cache + prefix caching", "chunked prefill", "routing", "disagg handoff"],
+        x = 81, y = 637.2, width = 864, height = 313.2
+      )
+      sdk.Quote(
+        id = "s0-quote",
+        text = "The native offline runtimes drive themselves over a static arrival queue. This adds nothing but the seam.",
+        x = 1004.4, y = 637.2, width = 807.3, height = 313.2
+      )
+      sdk.Label(id = "s0-cap", text = "run() self-clocks → SteppableReplay is caller-clocked, identical scheduling core.", x = 48.6, y = 1004.4, width = 1792.8, height = 54, fontSize = 32.4, align = "middle", inkRole = theme(ink.secondary))
+
+      timeline main {
+        at 0 reveal s0-hdr duration 240
+        after s0-hdr reveal s0-native duration 260
+        after s0-native trace s0-a1 duration 300
+        after s0-a1 reveal s0-trait duration 260
+        after s0-trait trace s0-a2 duration 300
+        after s0-a2 reveal s0-caller duration 260
+        after s0-caller reveal s0-props duration 260
+        after s0-props reveal s0-quote duration 240
+        after s0-quote reveal s0-cap duration 200
+      }
+    }
+  }
+
+  slide "EngineEvent: one construction point, no divergence" {
+    eyebrow: "2 · Event model"
+    title: "emitted_token cannot diverge from token_id — by construction, not convention"
+    lede: "EngineEvent::new is the only place that builds the struct. emitted_token is derived from token_id.is_some(), never set independently, so a caller gating first-token-latency off emitted_token can never desync from the token the event actually carries."
+    narration: "Engine event has a private constructor, engine event new, that is the single construction point. The emitted token flag always equals whether a token id is present, because it's derived there, not passed in separately. The terminal status stays authoritative for distinguishing cancellation and failure from successful completion and rejection. Engine event terminal is the second entry point, for a terminal event that carries no output token."
+    term: {
+      word: "emitted_token"
+      meaning: "True exactly when this pass emitted an output token — the caller gates first-token-latency off the first such event. Always equals token_id.is_some(), enforced at construction."
+    }
+    points: [
+      "pub(crate) fn new(uuid, token_id, terminal_status) — the only constructor; fields are not publicly settable.",
+      "EngineEvent::terminal(uuid, status) — sugar for new(uuid, None, Some(status)): a terminal event, no token.",
+      "terminal_status: Option<ReplayTerminalStatus> distinguishes Completed / Rejected / Canceled / Failed.",
+      "event_from_signal() bridges the scheduler's OutputSignal → EngineEvent, deriving Rejected vs Completed from signal.rejected."
+    ]
+    caption: "struct EngineEvent { uuid, emitted_token, token_id, terminal_status } — one constructor, no divergence."
+
+    render: @scene {
+      sdk.Header(id = "s1-hdr", title = "ENGINEEVENT INVARIANT", caption = "single construction point", x = 48.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.primary), inkRole = theme(ink.secondary))
+      sdk.CodeBlock(
+        id = "s1-code",
+        text = "EngineEvent::new(uuid, token_id, status) { emitted_token: token_id.is_some(), .. }",
+        x = 81, y = 259.2, width = 810, height = 567,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.PropertyList(
+        id = "s1-fields",
+        title = "EngineEvent fields",
+        items = ["uuid: Uuid", "emitted_token: bool (derived)", "token_id: Option<u32>", "terminal_status: Option<Status>"],
+        x = 950.4, y = 259.2, width = 858.6, height = 264.6
+      )
+      sdk.PropertyList(
+        id = "s1-table",
+        title = "ReplayTerminalStatus",
+        entries = [{ key: "Completed", value: "max_output_tokens / eos" }, { key: "Rejected", value: "scheduler rejected" }, { key: "Canceled", value: "cancel() won the race" }, { key: "Failed", value: "backend error path" }],
+        x = 950.4, y = 556.2, width = 858.6, height = 270
+      )
+      sdk.Callout(
+        id = "s1-callout",
+        text = "emitted_token = token_id.is_some() — never set independently",
+        x = 81, y = 891, width = 864, height = 108,
+        strokeRole = theme(accent.warning)
+      )
+
+      timeline main {
+        at 0 reveal s1-hdr duration 240
+        after s1-hdr reveal s1-code duration 340
+        after s1-code reveal s1-fields duration 260
+        after s1-fields reveal s1-table duration 260
+        after s1-table reveal s1-callout duration 260
+      }
+    }
+  }
+
+  slide "The SteppableReplay trait surface" {
+    eyebrow: "3 · Trait contract"
+    title: "Ten methods, one uniform surface across three topologies"
+    lede: "now_ms/advance_now_ms own the clock; submit/cancel own admission; step/step_until own progress; is_idle/in_flight/next_event_ms describe liveness for the caller's own DES pump; take_report drains; request_latencies/request_admission/actual_output_length are read-after-completion facts."
+    narration: "The trait groups into four families: clock control, admission, stepping, and post hoc reads. Every method is implemented identically in spirit by the single engine, aggregated, and disaggregated wrappers — the only topology-specific behavior is what counts as an event and how the deadline-bounded step decides where to stop."
+    term: {
+      word: "next_event_ms"
+      meaning: "The caller's DES pump signal: the next sim time at which the engine can make progress. Aggregated/disaggregated surface their event-heap next_timestamp (min of next arrival, next event, next offload); single-worker returns the current time while work remains, None when idle."
+    }
+    points: [
+      "Clock: now_ms() / advance_now_ms(now_ms) — monotonic, a no-op at or before current time.",
+      "Admission: submit(req) -> Uuid / cancel(uuid) -> Option<EngineEvent>.",
+      "Stepping: step() / step_until(until_ms) — step_until has a default body that step()s and rejects any finite deadline unless overridden.",
+      "Liveness: is_idle() / in_flight() / next_event_ms() — the caller's own event-loop condition.",
+      "Reads: take_report(wall_ms), request_latencies(uuid), request_admission(uuid), actual_output_length(uuid)."
+    ]
+    caption: "clock · admission · stepping · liveness · reads — same ten methods, three backends."
+
+    render: @scene {
+      sdk.Header(id = "s2-hdr", title = "TRAIT SURFACE", caption = "10 methods · 4 families", x = 48.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.primary), inkRole = theme(ink.secondary))
+      sdk.Lane(id = "s2-clock", title = "CLOCK", x = 54, y = 243, width = 405, height = 297) {
+        children {
+          sdk.Label(id = "s2-clock-1", text = "now_ms()", x = 32.4, y = 91.8, width = 340.2, height = 43.2, fontSize = 29.7, inkRole = theme(ink.secondary))
+          sdk.Label(id = "s2-clock-2", text = "advance_now_ms(t)", x = 32.4, y = 151.2, width = 340.2, height = 43.2, fontSize = 29.7, inkRole = theme(ink.secondary))
+        }
+      }
+      sdk.Lane(id = "s2-adm", title = "ADMISSION", x = 486, y = 243, width = 405, height = 297) {
+        children {
+          sdk.Label(id = "s2-adm-1", text = "submit(req)", x = 32.4, y = 91.8, width = 340.2, height = 43.2, fontSize = 29.7, inkRole = theme(ink.secondary))
+          sdk.Label(id = "s2-adm-2", text = "cancel(uuid)", x = 32.4, y = 151.2, width = 340.2, height = 43.2, fontSize = 29.7, inkRole = theme(ink.secondary))
+        }
+      }
+      sdk.Lane(id = "s2-step", title = "STEPPING", x = 918, y = 243, width = 405, height = 297) {
+        children {
+          sdk.Label(id = "s2-step-1", text = "step()", x = 32.4, y = 91.8, width = 340.2, height = 43.2, fontSize = 29.7, inkRole = theme(ink.secondary))
+          sdk.Label(id = "s2-step-2", text = "step_until(t)", x = 32.4, y = 151.2, width = 340.2, height = 43.2, fontSize = 29.7, inkRole = theme(ink.secondary))
+        }
+      }
+      sdk.Lane(id = "s2-live", title = "LIVENESS", x = 1350, y = 243, width = 459, height = 297) {
+        children {
+          sdk.Label(id = "s2-live-1", text = "is_idle/in_flight", x = 32.4, y = 91.8, width = 394.2, height = 43.2, fontSize = 29.7, inkRole = theme(ink.secondary))
+          sdk.Label(id = "s2-live-2", text = "next_event_ms()", x = 32.4, y = 151.2, width = 394.2, height = 43.2, fontSize = 29.7, inkRole = theme(ink.secondary))
+        }
+      }
+      sdk.Lane(id = "s2-read", title = "READS (post-hoc)", x = 54, y = 583.2, width = 864, height = 243) {
+        children {
+          sdk.Label(id = "s2-read-1", text = "take_report(wall_ms)", x = 32.4, y = 91.8, width = 799.2, height = 43.2, fontSize = 29.7, inkRole = theme(ink.secondary))
+          sdk.Label(id = "s2-read-2", text = "request_latencies / _admission / actual_output_length", x = 32.4, y = 145.8, width = 799.2, height = 75.6, fontSize = 27, inkRole = theme(ink.secondary))
+        }
+      }
+      sdk.Badge(id = "s2-badge", text = "3 impls, 1 trait", x = 1350, y = 583.2, width = 459, height = 81, variant = "info")
+      sdk.Label(id = "s2-cap", text = "step_until's default body rejects any finite deadline — only overridden where a topology can actually interrupt mid-pass.", x = 48.6, y = 988.2, width = 1792.8, height = 86.4, fontSize = 32.4, align = "middle", inkRole = theme(ink.secondary))
+
+      timeline main {
+        at 0 reveal s2-hdr duration 220
+        after s2-hdr reveal s2-clock duration 220
+        after s2-clock reveal s2-adm duration 220
+        after s2-adm reveal s2-step duration 220
+        after s2-step reveal s2-live duration 220
+        after s2-live reveal s2-read duration 220
+        after s2-read reveal s2-badge duration 180
+        after s2-badge reveal s2-cap duration 220
+      }
+    }
+  }
+
+  slide "SteppableEngine: the direct single-worker wrapper" {
+    eyebrow: "4 · Single-worker"
+    title: "No router, no event heap — every step is just one scheduler pass"
+    lede: "SteppableEngine wraps exactly one ReplayWorkerCore. next_event_ms has no heap to query: it returns Some(now_ms) while the worker holds any request, None when empty. step_until therefore inherits the trait's default and rejects any finite deadline — a single already-executing scheduler pass cannot be interrupted mid-flight."
+    narration: "The single-worker engine is the simplest of the three. It has one worker, one collector, and its own current-time field. Submit stamps the arrival at the current time and hands the request to the worker. Step calls the worker's execute pass, walks the output signals, classifies each into an engine event, and advances the clock to the pass's end time. Because there's no event heap to consult, the next-event query can only say now or nothing — so it cannot honor a finite step-until deadline, and calling it with one is an error."
+    term: {
+      word: "execute_pass"
+      meaning: "ReplayWorkerCore's scheduler tick: runs one batching/decoding pass at the current time and returns output_signals — the per-request token/completion facts SteppableEngine turns into EngineEvents."
+    }
+    points: [
+      "SteppableEngine::new declares static_worker_count(0, 1) and gpus_per_worker up front — mirrors offline/single.rs so finish() can derive decode_worker_seconds and gpu_hours.",
+      "submit(): worker.receive(req) then collector.on_arrival(uuid, now_ms, input_length, output_length).",
+      "step(): worker.execute_pass(&mut collector, now_ms) → classify signals → collector.on_terminal for completions → now_ms = pass.end_ms.",
+      "step_until(finite) -> Err: \"cannot stop at finite deadline\" — verified by direct_single_worker_rejects_finite_step_deadline."
+    ]
+    caption: "one ReplayWorkerCore, one collector, no heap — step_until(finite) is a hard error."
+
+    render: @scene {
+      sdk.Header(id = "s3-hdr", title = "STEPPABLEENGINE", caption = "single worker, no router", x = 48.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.primary), inkRole = theme(ink.secondary))
+      sdk.Panel(id = "s3-caller", title = "caller", detail = "owns clock", x = 54, y = 259.2, width = 351, height = 172.8, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Edge(id = "s3-a1", mode = "connector", from = { nodeId: "s3-caller", anchor: "e" }, to = { nodeId: "s3-eng", anchor: "w" }, style = { stroke: theme(accent.primary), strokeWidth: 5.94, fill: "none" })
+      sdk.Panel(id = "s3-eng", title = "SteppableEngine", detail = "now_ms + collector", x = 513, y = 259.2, width = 432, height = 172.8, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.warning))
+      sdk.Edge(id = "s3-a2", mode = "connector", from = { nodeId: "s3-eng", anchor: "e" }, to = { nodeId: "s3-worker", anchor: "w" }, style = { stroke: theme(accent.warning), strokeWidth: 5.94, fill: "none" })
+      sdk.Panel(id = "s3-worker", title = "ReplayWorkerCore", detail = "execute_pass(collector, now_ms)", x = 1053, y = 259.2, width = 756, height = 172.8, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
+      sdk.CodeBlock(
+        id = "s3-code",
+        text = "fn step() { let pass = worker.execute_pass(&mut collector, now_ms); now_ms = pass.end_ms; }",
+        x = 81, y = 513, width = 891, height = 459,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.PropertyList(
+        id = "s3-table",
+        title = "next_event_ms()",
+        entries = [{ key: "worker.is_empty()", value: "None" }, { key: "holds any request", value: "Some(now_ms)" }],
+        x = 1053, y = 513, width = 756, height = 226.8
+      )
+      sdk.Callout(
+        id = "s3-callout",
+        text = "step_until(finite) -> Err — cannot interrupt an in-flight pass",
+        x = 1053, y = 777.6, width = 756, height = 189,
+        strokeRole = theme(accent.warning)
+      )
+
+      timeline main {
+        at 0 reveal s3-hdr duration 220
+        after s3-hdr reveal s3-caller duration 220
+        after s3-caller trace s3-a1 duration 300
+        after s3-a1 reveal s3-eng duration 220
+        after s3-eng trace s3-a2 duration 300
+        after s3-a2 reveal s3-worker duration 220
+        after s3-worker reveal s3-code duration 320
+        after s3-code reveal s3-table duration 220
+        after s3-table reveal s3-callout duration 260
+      }
+    }
+  }
+
+  slide "SteppableAgg: multi-worker + KV router" {
+    eyebrow: "5 · Aggregated"
+    title: "SteppableAgg wraps AggRuntime with defer_drive forced on"
+    lede: "AggRuntime::new builds workers.max(1) engines behind a ReplayRouterMode, in ReplayMode::Concurrency { max_in_flight: usize::MAX } so admission is caller-gated, not concurrency-capped by the runtime itself. SteppableAgg::new_with_router_config then sets rt.defer_drive = true before returning — a single field flip that changes the commit ordering of every subsequent step."
+    narration: "The aggregated wrapper is a thin shell around one field: an aggregated runtime. Its constructor builds the runtime with an optional KV router config and a prefill load estimator — the same configuration canonical DynoSim replay uses — then unconditionally sets a deferred-drive flag to true. Every trait method after that just forwards: submit calls the runtime's dynamic submit, step calls its dynamic step, and the next-event query calls its own next timestamp. The interesting behavior lives one layer down, in why that deferred-drive flag exists at all."
+    term: {
+      word: "defer_drive"
+      meaning: "AggRuntime flag that switches step_dynamic_until from an atomic single-pass drain to a delta-cycle split — yielding a completion's terminal event before committing the freed slot's replacement, so an externally-submitted replacement lands at the same instant run() would have admitted it in-drain."
+    }
+    points: [
+      "AggRuntime::new(&args, router_config, prefill_load_estimator, VecDeque::new(), workers.max(1), Concurrency{max_in_flight:MAX}, router_mode).",
+      "rt.defer_drive = true — set once in the constructor, never toggled per-call.",
+      "cluster_in_flight() backs in_flight(); is_workload_done() backs is_idle().",
+      "Holds for both RoundRobin and KvRouter: the router's own admission queue is empty at a completion, so the caller's post-yield submit is what actually fills the slot."
+    ]
+    caption: "workers.max(1) engines + router_mode, Concurrency{MAX}, defer_drive = true."
+
+    render: @scene {
+      sdk.Header(id = "s4-hdr", title = "STEPPABLEAGG", caption = "AggRuntime, defer_drive = true", x = 48.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.primary), inkRole = theme(ink.secondary))
+      sdk.Panel(id = "s4-agg", title = "SteppableAgg { rt: AggRuntime }", detail = "", x = 54, y = 243, width = 810, height = 97.2, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.warning))
+      sdk.Edge(id = "s4-a1", mode = "connector", from = { nodeId: "s4-agg", anchor: "s" }, to = { nodeId: "s4-router", anchor: "n" }, style = { stroke: theme(accent.warning), strokeWidth: 5.4, fill: "none" })
+      sdk.LoadBalancer(id = "s4-router", label = "ReplayRouterMode", detail = "RoundRobin | KvRouter", x = 54, y = 405, width = 810, height = 145.8)
+      sdk.Edge(id = "s4-a2", mode = "connector", from = { nodeId: "s4-router", anchor: "s" }, to = { nodeId: "s4-w1", anchor: "n" }, style = { stroke: theme(accent.secondary), strokeWidth: 5.4, fill: "none" })
+      sdk.Edge(id = "s4-a3", mode = "connector", from = { nodeId: "s4-router", anchor: "s" }, to = { nodeId: "s4-w2", anchor: "n" }, style = { stroke: theme(accent.secondary), strokeWidth: 5.4, fill: "none" })
+      sdk.Edge(id = "s4-a4", mode = "connector", from = { nodeId: "s4-router", anchor: "s" }, to = { nodeId: "s4-w3", anchor: "n" }, style = { stroke: theme(accent.secondary), strokeWidth: 5.4, fill: "none" })
+      sdk.Worker(id = "s4-w1", label = "worker 0", x = 54, y = 658.8, width = 243, height = 151.2)
+      sdk.Worker(id = "s4-w2", label = "worker 1", x = 337.5, y = 658.8, width = 243, height = 151.2)
+      sdk.Worker(id = "s4-w3", label = "worker N", x = 621, y = 658.8, width = 243, height = 151.2)
+      sdk.PropertyList(
+        id = "s4-props",
+        title = "Constructor arguments",
+        items = ["workers.max(1)", "Concurrency{max_in_flight: MAX}", "router_config: Option<KvRouterConfig>", "prefill_load_estimator: Option<...>", "rt.defer_drive = true (forced)"],
+        x = 945, y = 243, width = 864, height = 399.6
+      )
+      sdk.PropertyList(
+        id = "s4-table",
+        title = "Trait method → AggRuntime forward",
+        entries = [{ key: "submit", value: "submit_dynamic" }, { key: "step_until", value: "step_dynamic_until" }, { key: "is_idle", value: "is_workload_done" }, { key: "in_flight", value: "cluster_in_flight" }, { key: "next_event_ms", value: "next_timestamp" }],
+        x = 945, y = 660, width = 864, height = 351
+      )
+
+      timeline main {
+        at 0 reveal s4-hdr duration 220
+        after s4-hdr reveal s4-agg duration 220
+        after s4-agg trace s4-a1 duration 240
+        after s4-a1 reveal s4-router duration 240
+        after s4-router trace s4-a2 duration 220
+        after s4-a2 trace s4-a3 duration 200
+        after s4-a3 trace s4-a4 duration 200
+        after s4-a4 reveal s4-w1 duration 160
+        after s4-w1 reveal s4-w2 duration 160
+        after s4-w2 reveal s4-w3 duration 160
+        after s4-w3 reveal s4-props duration 260
+        after s4-props reveal s4-table duration 260
+      }
+    }
+  }
+
+  slide "The delta-cycle split: why defer_drive exists" {
+    eyebrow: "6 · Delta cycles"
+    title: "run()'s atomic drain would commit a freed slot before its external replacement exists"
+    lede: "run()'s drain_current_timestamp drains its admission queue inside the same loop pass, so it stays atomic. Steppable's admission arrives externally — a SlotPool-gated driver submits one replacement per observed terminal — so an atomic single-pass drain would COMMIT the freed pipeline stage before that replacement is submitted, landing it one step late relative to run()."
+    narration: "This is the single most intimate mechanism in the whole seam. The fix is a delta cycle split, the same VHDL and Ptolemy discrete event technique used to let combinational logic settle within one instant while keeping a strict global order across instants. The deferred step function first checks a pending-drive flag: if set, it clears the flag and drains the current timestamp. Otherwise it evaluates completions and may defer — which yields the terminal event first and defers the commit. The driver observes that terminal, submits its replacement at time T, and only then does the next call to step actually drive the freed pipeline stage — at the same instant T, byte-matching what the native run loop's in-drain admission would have produced."
+    term: {
+      word: "delta cycle"
+      meaning: "A discrete-event simulation technique: within one virtual instant, a component may react more than once as new events settle, forming a fixed point — used here to yield a terminal before committing its freed slot's replacement, so results stay 'repeatable' independent of iteration order."
+    }
+    points: [
+      "evaluate_completions_and_maybe_defer(): sets drive_pending = true and returns early with just the terminal event when a completion needs a deferred commit.",
+      "Next step() call: drive_pending is true → clear it → drain_current_timestamp() actually drives the now-submitted replacement.",
+      "Holds under KV routing too: the router's admission queue is empty at a completion, so the freed slot is filled by the driver's post-yield submit — admitted on arrival, COMMIT-driven now, exactly like round-robin.",
+      "Cited prior art: VHDLwhiz \"Delta cycles explained\"; Ptolemy II Timed SR compositionality analysis — both referenced directly in the source doc comment."
+    ]
+    caption: "yield terminal at T → driver submits replacement at T → COMMIT drives it at T. Same instant, right order."
+
+    render: @scene {
+      sdk.Header(id = "s5-hdr", title = "DELTA-CYCLE DEFERRED DRIVE", caption = "watch the pipeline slot as one instant T unfolds", x = 48.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.primary), inkRole = theme(ink.secondary))
+
+      sdk.TimelineAxis(
+        id = "s5-axis",
+        start = 0, end = 4,
+        ticks = [{ at: 0, label: "T-1" }, { at: 1, label: "completion" }, { at: 2, label: "submit" }, { at: 3, label: "COMMIT" }, { at: 4, label: "T+1" }],
+        x = 162, y = 280, width = 1620
+      )
+
+      sdk.Panel(id = "s5-driver", title = "external driver", detail = "SlotPool-gated — one replacement per terminal", x = 140, y = 660, width = 300, height = 170, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "s5-slot-frame", title = "pipeline slot", detail = "", x = 810, y = 660, width = 300, height = 170, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
+      sdk.Panel(id = "s5-tray", title = "retired", detail = "completed request", x = 1480, y = 660, width = 300, height = 170, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
+
+      sdk.Label(id = "s5-slot-filled-a", text = "FILLED — driving request", x = 830, y = 735, width = 260, height = 60, fontSize = 24, align = "middle", weight = "bold", inkRole = theme(accent.secondary))
+      sdk.Label(id = "s5-slot-empty", text = "EMPTY — waiting for replacement", x = 830, y = 735, width = 260, height = 60, fontSize = 21, align = "middle", weight = "bold", inkRole = theme(accent.danger))
+      sdk.Label(id = "s5-slot-filled-b", text = "FILLED — replacement driven", x = 830, y = 735, width = 260, height = 60, fontSize = 24, align = "middle", weight = "bold", inkRole = theme(accent.secondary))
+
+      sdk.Edge(id = "s5-rail-exit", mode = "connector", from = { nodeId: "s5-slot-frame", anchor: "e" }, to = { nodeId: "s5-tray", anchor: "w" }, style = { stroke: theme(ink.tertiary), strokeWidth: 3.24, strokeDasharray: "10 10", fill: "none" })
+      sdk.Edge(id = "s5-rail-entry", mode = "connector", from = { nodeId: "s5-driver", anchor: "e" }, to = { nodeId: "s5-slot-frame", anchor: "w" }, style = { stroke: theme(ink.tertiary), strokeWidth: 3.24, strokeDasharray: "10 10", fill: "none" })
+
+      sdk.Signal(id = "s5-sig-exit", path = "M1110 745 H1480", opacity = 0.95, strokeWidth = 10.8, style = { stroke: theme(accent.warning), fill: "none" })
+      sdk.Signal(id = "s5-sig-entry", path = "M440 745 H810", opacity = 0.95, strokeWidth = 10.8, style = { stroke: theme(accent.danger), fill: "none" })
+
+      sdk.Caption(id = "s5-cap-exit", text = "old request completes, exits the slot", x = 1110, y = 850, width = 370, height = 40, inkRole = theme(accent.warning))
+      sdk.Caption(id = "s5-cap-entry", text = "replacement travels in — arrives only at COMMIT", x = 440, y = 850, width = 370, height = 40, inkRole = theme(accent.danger))
+
+      sdk.Quote(
+        id = "s5-quote",
+        text = "An atomic drain would COMMIT the freed slot before the replacement's token even leaves the driver — one step late relative to the native run loop.",
+        x = 162, y = 940, width = 1620, height = 110
+      )
+
+      timeline main {
+        at 0 reveal s5-hdr duration 220
+        after s5-hdr reveal s5-axis duration 260
+        after s5-axis reveal s5-driver duration 200
+        after s5-driver reveal s5-slot-frame duration 200
+        after s5-slot-frame reveal s5-tray duration 200
+        after s5-tray trace s5-rail-entry duration 200
+        after s5-rail-entry trace s5-rail-exit duration 200
+        after s5-rail-exit reveal s5-slot-filled-a duration 200
+        after s5-slot-filled-a trace s5-sig-exit duration 700
+        after s5-sig-exit reveal s5-cap-exit duration 220
+        after s5-cap-exit exit s5-slot-filled-a duration 150
+        after s5-slot-filled-a reveal s5-slot-empty duration 200
+        after s5-slot-empty trace s5-sig-entry duration 700
+        after s5-sig-entry reveal s5-cap-entry duration 220
+        after s5-cap-entry exit s5-slot-empty duration 150
+        after s5-slot-empty reveal s5-slot-filled-b duration 200
+        after s5-slot-filled-b reveal s5-quote duration 300
+      }
+    }
+  }
+
+  slide "SteppableDisagg: prefill/decode handoff under the same delta cycle" {
+    eyebrow: "7 · Disaggregated"
+    title: "OfflineDisaggReplayConfig wires two worker pools; defer_drive protects the prefill handoff too"
+    lede: "SteppableDisagg::new_with_router_config builds an OfflineDisaggReplayConfig from independent prefill_args/decode_args and prefill_workers.max(1)/decode_workers.max(1), constructs a DisaggRuntime, and forces the identical rt.defer_drive = true — so a freed decode slot's externally-submitted replacement has its prefill driven at the completion instant, not one step late."
+    narration: "Disaggregated topology doubles the worker pools — separate engine arguments and separate worker counts for prefill and decode — but the steppable seam is the same shape as the aggregated wrapper: one field, a disaggregated runtime, and the same delta cycle protection. The comment in the source is explicit that this is the prefill handoff being protected: a freed slot's replacement needs its prefill driven at the completion instant, byte-matching the native run loop's in-drain admission, and this holds for both routing modes for the same reason as the aggregated case."
+    term: {
+      word: "OfflineDisaggReplayConfig"
+      meaning: "{ prefill_args, decode_args, num_prefill_workers, num_decode_workers } — the config DisaggRuntime::new consumes to build independent prefill and decode worker pools behind one router."
+    }
+    points: [
+      "Two independent MockEngineArgs: prefill_args and decode_args — different engine configuration per stage.",
+      "prefill_workers.max(1), decode_workers.max(1) — independently sized pools.",
+      "The only difference from SteppableAgg's constructor: an extra config struct and a second worker pool; defer_drive, router_config, and prefill_load_estimator plumbing are identical in shape.",
+      "cov_steppable_engine.rs::disaggregated_events_expose_only_collector_visible_decode_tokens verifies emitted_token count equals report.request_counts.total_output_tokens — the caller only ever sees decode-visible tokens."
+    ]
+    caption: "prefill pool + decode pool + router, same defer_drive discipline as SteppableAgg."
+
+    render: @scene {
+      sdk.Header(id = "s6-hdr", title = "STEPPABLEDISAGG", caption = "prefill/decode, same delta cycle", x = 48.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.primary), inkRole = theme(ink.secondary))
+      sdk.Panel(id = "s6-req", title = "request", detail = "submit()", x = 54, y = 270, width = 216, height = 162, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Edge(id = "s6-a1", mode = "connector", from = { nodeId: "s6-req", anchor: "e" }, to = { nodeId: "s6-prefill", anchor: "w" }, style = { stroke: theme(accent.primary), strokeWidth: 5.94, fill: "none" })
+      sdk.Cluster(id = "s6-prefill", label = "prefill pool", detail = "prefill_args × prefill_workers", x = 372.6, y = 243, width = 445.5, height = 216)
+      sdk.Edge(id = "s6-a2", mode = "connector", from = { nodeId: "s6-prefill", anchor: "e" }, to = { nodeId: "s6-decode", anchor: "w" }, style = { stroke: theme(accent.warning), strokeWidth: 5.94, fill: "none" }, label = "KV handoff")
+      sdk.Cluster(id = "s6-decode", label = "decode pool", detail = "decode_args × decode_workers", x = 920.7, y = 243, width = 445.5, height = 216)
+      sdk.Edge(id = "s6-a3", mode = "connector", from = { nodeId: "s6-decode", anchor: "e" }, to = { nodeId: "s6-caller", anchor: "w" }, style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Panel(id = "s6-caller", title = "caller", detail = "decode-visible tokens only", x = 1468.8, y = 259.2, width = 324, height = 183.6, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
+      sdk.CodeBlock(
+        id = "s6-code",
+        text = "let mut rt = DisaggRuntime::new(&OfflineDisaggReplayConfig { prefill_args, decode_args, .. })?; rt.defer_drive = true;",
+        x = 54, y = 529.2, width = 972, height = 432,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Callout(
+        id = "s6-callout",
+        text = "freed decode slot's replacement gets its prefill driven at the completion instant — not one step late",
+        x = 1080, y = 529.2, width = 712.8, height = 216,
+        strokeRole = theme(accent.danger)
+      )
+      sdk.Badge(id = "s6-badge", text = "cov_steppable_engine.rs: verified", x = 1080, y = 777.6, width = 712.8, height = 81, variant = "success")
+
+      timeline main {
+        at 0 reveal s6-hdr duration 220
+        after s6-hdr reveal s6-req duration 200
+        after s6-req trace s6-a1 duration 240
+        after s6-a1 reveal s6-prefill duration 240
+        after s6-prefill trace s6-a2 duration 260
+        after s6-a2 reveal s6-decode duration 240
+        after s6-decode trace s6-a3 duration 240
+        after s6-a3 reveal s6-caller duration 220
+        after s6-caller reveal s6-code duration 320
+        after s6-code reveal s6-callout duration 260
+        after s6-callout reveal s6-badge duration 200
+      }
+    }
+  }
+
+  slide "step_until: deadline-bounded stepping without changing composition" {
+    eyebrow: "8 · Deadlines"
+    title: "Routed runtimes stop at the deadline; the direct wrapper cannot stop at all"
+    lede: "step_until(until_ms) lets an external DES driver interleave arrivals and firing gates without changing batch composition — the routed engines' internal event heap can genuinely halt mid-sequence at a deadline, because their next unit of work is a heap pop, not an already-dispatched scheduler pass."
+    narration: "The trait's default step-until body just calls step and bails on any finite deadline — that default is what the single-worker engine inherits, because a direct wrapper has no way to interrupt an execute pass once it starts. The aggregated and disaggregated wrappers override it: they forward to the runtime's own deadline-aware stepping, which can stop because their event-heap-driven loop can pause between heap pops. The deadline-bounded test is the proof: it runs the same workload once unbounded and once through repeated one-millisecond step-until calls, and asserts the resulting per-request timestamps serialize identically."
+    term: {
+      word: "step_until(until_ms)"
+      meaning: "Advance at most through until_ms, emitting events at or before that deadline. Aggregated/disaggregated stop exactly at the deadline when their next internal event is later; the direct wrapper rejects any finite deadline outright."
+    }
+    points: [
+      "Default trait body: if until_ms.is_finite() { bail!(...) } else { self.step() } — SteppableEngine uses this unmodified.",
+      "SteppableAgg::step_until / SteppableDisagg::step_until: both forward to rt.step_dynamic_until(until_ms), which is genuinely deadline-aware.",
+      "aggregate_step_until_never_crosses_external_deadline: steps to a 0.000001ms deadline and asserts outcome.end_ms <= deadline_ms and the engine stays non-idle.",
+      "deadline_bounded_steps_preserve_request_measurements: unbounded vs. 1ms-clamped stepping produce byte-identical serialized per_request records — deadline clamping never perturbs scheduling outcomes."
+    ]
+    caption: "default body: step() + reject finite deadline. Routed engines override with a real heap-aware stop."
+
+    render: @scene {
+      sdk.Header(id = "s7-hdr", title = "STEP_UNTIL SEMANTICS", caption = "deadline-bounded, composition-preserving", x = 48.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.primary), inkRole = theme(ink.secondary))
+      sdk.PropertyList(
+        id = "s7-cmp-left",
+        title = "SteppableEngine (default body)",
+        entries = [{ key: "finite deadline", value: "Err: cannot stop mid-pass" }, { key: "mechanism", value: "single execute_pass, uncuttable" }, { key: "infinite", value: "self.step()" }],
+        x = 54, y = 248.4, width = 864, height = 307.8
+      )
+      sdk.PropertyList(
+        id = "s7-cmp-right",
+        title = "SteppableAgg / SteppableDisagg (override)",
+        entries = [{ key: "finite deadline", value: "stops at until_ms exactly" }, { key: "mechanism", value: "event-heap pop, cuttable" }, { key: "infinite", value: "rt.step_dynamic_until(INF)" }],
+        x = 972, y = 248.4, width = 864, height = 307.8
+      )
+      sdk.CodeBlock(
+        id = "s7-code",
+        text = "fn step_until(until_ms) { if until_ms.is_finite() { bail!(\"cannot stop at finite deadline\"); } self.step() }",
+        x = 54, y = 594, width = 1080, height = 270,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Stat(id = "s7-stat", title = "test tolerance", items = ["0.000001ms", "aggregate_step_until_never_crosses_deadline"], x = 1188, y = 594, width = 648, height = 216)
+      sdk.Callout(
+        id = "s7-callout",
+        text = "identical serialized per_request records: unbounded vs. 1ms-clamped stepping",
+        x = 1188, y = 837, width = 648, height = 178.2,
+        strokeRole = theme(accent.primary)
+      )
+
+      timeline main {
+        at 0 reveal s7-hdr duration 220
+        after s7-hdr reveal s7-cmp-left duration 260
+        after s7-cmp-left reveal s7-cmp-right duration 260
+        after s7-cmp-right reveal s7-code duration 300
+        after s7-code reveal s7-stat duration 220
+        after s7-stat reveal s7-callout duration 260
+      }
+    }
+  }
+
+  slide "next_event_ms: the caller's DES pump signal" {
+    eyebrow: "9 · DES pump"
+    title: "Three implementations of the same question: when can this engine next make progress?"
+    lede: "next_event_ms is what turns a SteppableReplay into something a caller can drive as a discrete-event pump: min(next_pacer_deadline, engine.next_event_ms()) tells the caller exactly how far virtual time can safely advance before it must hand control back to the engine."
+    narration: "For the single-worker engine, there's no event heap, so the answer collapses to a binary: now, if the worker holds any request, or nothing if it's empty. For the aggregated and disaggregated runtimes, the next-event query forwards to the runtime's own next timestamp — the runtime's own event heap, which is the minimum of the next arrival, the next scheduled engine event, and the next KV offload. The doc comment on the trait spells out the caller contract directly: advance virtual time to the earlier of the next pacer deadline and the next event, then step."
+    term: {
+      word: "next_timestamp"
+      meaning: "AggRuntime/DisaggRuntime's own event-heap query: min(next_arrival, next_event, next_offload) — the earliest instant at which the routed runtime has anything to do."
+    }
+    points: [
+      "SteppableEngine::next_event_ms: worker.is_empty() ? None : Some(now_ms) — no heap, no lookahead.",
+      "SteppableAgg / SteppableDisagg::next_event_ms: self.rt.next_timestamp() — a real min-heap query over arrival/event/offload.",
+      "Caller contract (trait doc): advance virtual time to min(next_pacer_deadline, next_event_ms()), then step.",
+      "dynosim.rs composes this with its own driver's next_ready_time_ms() to compute one fused next_ms per outer loop iteration — the next slide."
+    ]
+    caption: "next_event_ms() is the engine half of a two-heap min; the caller supplies the other half."
+
+    render: @scene {
+      sdk.Header(id = "s8-hdr", title = "NEXT_EVENT_MS", caption = "the caller's DES pump signal", x = 48.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.primary), inkRole = theme(ink.secondary))
+      sdk.Panel(id = "s8-single", title = "SteppableEngine", detail = "is_empty() ? None : Some(now_ms)", x = 54, y = 248.4, width = 810, height = 199.8, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
+      sdk.Panel(id = "s8-routed", title = "SteppableAgg / SteppableDisagg", detail = "rt.next_timestamp() = min(arrival, event, offload)", x = 945, y = 248.4, width = 810, height = 199.8, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.warning))
+      sdk.Edge(id = "s8-a1", mode = "connector", from = { nodeId: "s8-single", anchor: "s" }, to = { nodeId: "s8-caller", anchor: "nw" }, style = { stroke: theme(accent.secondary), strokeWidth: 5.4, fill: "none" })
+      sdk.Edge(id = "s8-a2", mode = "connector", from = { nodeId: "s8-routed", anchor: "s" }, to = { nodeId: "s8-caller", anchor: "ne" }, style = { stroke: theme(accent.warning), strokeWidth: 5.4, fill: "none" })
+      sdk.Panel(id = "s8-caller", title = "caller: min(pacer_deadline, next_event_ms())", detail = "then step", x = 405, y = 567, width = 999, height = 162, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.CodeBlock(
+        id = "s8-code",
+        text = "// caller advances to min(next_pacer_deadline, next_event_ms()), then steps\nfn next_event_ms(&mut self) -> Option<f64>;",
+        x = 54, y = 810, width = 1701, height = 189,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+
+      timeline main {
+        at 0 reveal s8-hdr duration 220
+        after s8-hdr reveal s8-single duration 240
+        after s8-single reveal s8-routed duration 240
+        after s8-routed trace s8-a1 duration 220
+        after s8-a1 trace s8-a2 duration 220
+        after s8-a2 reveal s8-caller duration 240
+        after s8-caller reveal s8-code duration 260
+      }
+    }
+  }
+
+  slide "Read-after-completion facts: request_admission and actual_output_length" {
+    eyebrow: "10 · Post-hoc reads"
+    title: "The engine's own collector is the source of truth for admission time and true OSL"
+    lede: "request_latencies/request_admission/actual_output_length exist so the caller never has to re-derive facts the runtime already measured internally — the caller stamps arrival/e2e from its own clock (identical to the engine's, since admission happens at the caller's advance_now_ms), and reads everything else back from the engine."
+    narration: "The request admission query returns the first scheduler admission — its time and how many input tokens were reused — once known; it defaults to nothing, so topologies that don't track prefix cache reuse don't have to implement it. The actual output length query returns the output tokens truly emitted for a request, which the caller uses in preference to counting its own observed token events, because the engine's count is authoritative even if the caller missed an event ordering edge case."
+    term: {
+      word: "reused_input_tokens"
+      meaning: "Part of request_admission's return value — the prompt tokens the scheduler served from prefix cache rather than recomputing, read back from the engine's own admission bookkeeping rather than estimated by the caller."
+    }
+    points: [
+      "request_latencies(uuid) -> Option<(ttft_ms, mean_itl_ms)> — read on completion to build the caller's own per-request record.",
+      "request_admission(uuid) -> Option<(at_ms, reused_input_tokens)> — trait-default None; topologies opt in.",
+      "actual_output_length(uuid) -> Option<usize> — the authoritative OSL, used in dynosim.rs as completion_tokens.unwrap_or(client.observed_output_tokens).",
+      "All three are collector pass-throughs: self.collector.request_latencies(uuid), etc. — no new bookkeeping in the steppable layer itself."
+    ]
+    caption: "the collector already measured this; the steppable seam just exposes it, it does not recompute it."
+
+    render: @scene {
+      sdk.Header(id = "s9-hdr", title = "POST-HOC READS", caption = "collector pass-throughs, not new bookkeeping", x = 48.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.primary), inkRole = theme(ink.secondary))
+      sdk.PropertyList(
+        id = "s9-table",
+        title = "Read methods → default",
+        entries = [{ key: "request_latencies(uuid)", value: "collector pass-through" }, { key: "request_admission(uuid)", value: "None (opt-in)" }, { key: "actual_output_length(uuid)", value: "collector pass-through" }],
+        x = 54, y = 248.4, width = 891, height = 291.6
+      )
+      sdk.CodeBlock(
+        id = "s9-code",
+        text = "trait default: fn request_admission(&self, _uuid) -> Option<(f64, usize)> { None }",
+        x = 54, y = 567, width = 891, height = 432,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(id = "s9-usage", title = "dynosim.rs usage", detail = "completion_tokens = engine\n  .actual_output_length(uuid)\n  .unwrap_or(observed_output_tokens);", x = 999, y = 248.4, width = 837, height = 291.6, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Callout(
+        id = "s9-callout",
+        text = "caller's own clock stamps arrival/e2e; engine's collector stamps everything internal",
+        x = 999, y = 567, width = 837, height = 243,
+        strokeRole = theme(accent.secondary)
+      )
+
+      timeline main {
+        at 0 reveal s9-hdr duration 220
+        after s9-hdr reveal s9-table duration 300
+        after s9-table reveal s9-code duration 300
+        after s9-code reveal s9-usage duration 260
+        after s9-usage reveal s9-callout duration 260
+      }
+    }
+  }
+
+  slide "aiperf's fused pump: min(next_ready, next_engine)" {
+    eyebrow: "11 · Consumer: dynosim.rs"
+    title: "run_trace_offline drives one outer loop with two independent heaps fused into one next_ms"
+    lede: "aiperf's dynosim.rs owns a WorkloadDriver (trace/session/turn admission) alongside the SteppableReplay engine. Each outer-loop iteration computes next_ready from the driver, next_engine from the engine, takes the minimum, advances both clocks to it, pops ready arrivals, submits them, then steps the engine to whichever is sooner: the next external arrival or the engine's own next event."
+    narration: "This is the whole point of the seam: AIPerf never touches the mocker's internal scheduling. It just asks two questions every iteration — when is my next trace arrival ready, and when can the engine next make progress — takes the earlier of the two, and steps. The driver's next-ready-time query and the engine's next-event query are genuinely symmetric: one models the trace's own admission clock, the other models the engine's own scheduling clock, and the DynoSim driver is the only thing that knows both exist."
+    term: {
+      word: "next_ms"
+      meaning: "dynosim.rs's fused clock value for one outer-loop iteration: ready.min(engine) when both driver and engine have pending work, or whichever side is Some when only one does; None/None is a deadlock, reported with in_flight() count."
+    }
+    points: [
+      "while !driver.is_drained() || !engine.is_idle() { ... } — the loop's own liveness condition, symmetric across both sides.",
+      "next_ready = driver.next_ready_time_ms(); next_engine = engine.next_event_ms().or_else(|| (!engine.is_idle()).then_some(engine.now_ms())).",
+      "now_ms = next_ready.min(next_engine) (or whichever exists) — then engine.advance_now_ms(now_ms) and clock.advance_to(...) together.",
+      "deadline_ms = next_external.min(cap_ms); engine_due gates whether step_until(deadline_ms) runs at all this iteration."
+    ]
+    caption: "one outer loop, two independent event sources, one fused next_ms per iteration."
+
+    render: @scene {
+      sdk.Header(id = "s10-hdr", title = "FUSED DES PUMP", caption = "dynosim.rs :: run_trace_offline", x = 48.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.primary), inkRole = theme(ink.secondary))
+      sdk.Panel(id = "s10-driver", title = "WorkloadDriver", detail = "next_ready_time_ms() / pop_ready", x = 54, y = 243, width = 702, height = 189, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "s10-engine", title = "engine: SteppableReplay", detail = "next_event_ms() / step_until()", x = 1134, y = 243, width = 702, height = 189, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.warning))
+      sdk.Edge(id = "s10-a1", mode = "connector", from = { nodeId: "s10-driver", anchor: "s" }, to = { nodeId: "s10-min", anchor: "nw" }, style = { stroke: theme(accent.primary), strokeWidth: 5.4, fill: "none" })
+      sdk.Edge(id = "s10-a2", mode = "connector", from = { nodeId: "s10-engine", anchor: "s" }, to = { nodeId: "s10-min", anchor: "ne" }, style = { stroke: theme(accent.warning), strokeWidth: 5.4, fill: "none" })
+      sdk.Decision(id = "s10-min", label = "next_ms = min(next_ready, next_engine)", x = 459, y = 507.6, width = 864, height = 124.2)
+      sdk.Edge(id = "s10-a3", mode = "connector", from = { nodeId: "s10-min", anchor: "s" }, to = { nodeId: "s10-advance", anchor: "n" }, style = { stroke: theme(accent.secondary), strokeWidth: 5.4, fill: "none" })
+      sdk.Panel(id = "s10-advance", title = "advance_now_ms + clock.advance_to", detail = "pop_ready → submit → step_until(deadline)", x = 297, y = 702, width = 1188, height = 135, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
+      sdk.CodeBlock(
+        id = "s10-code",
+        text = "let next_ms = match (next_ready, next_engine) { (Some(r), Some(e)) => r.min(e), (None, None) => bail!(\"deadlocked\"), .. };",
+        x = 54, y = 880.2, width = 1701, height = 151.2,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.danger)
+      )
+
+      timeline main {
+        at 0 reveal s10-hdr duration 220
+        after s10-hdr reveal s10-driver duration 240
+        after s10-driver reveal s10-engine duration 240
+        after s10-engine trace s10-a1 duration 220
+        after s10-a1 trace s10-a2 duration 220
+        after s10-a2 reveal s10-min duration 220
+        after s10-min trace s10-a3 duration 220
+        after s10-a3 reveal s10-advance duration 240
+        after s10-advance reveal s10-code duration 320
+      }
+    }
+  }
+
+  slide "The livelock guard: same_instant_control_steps" {
+    eyebrow: "12 · Livelock guard"
+    title: "made_progress must be true at every same-timestamp iteration, or the loop trips a 1024-iteration breaker"
+    lede: "made_progress is the disjunction of five independent signals: a submission happened, the clock advanced, events were non-empty, in_flight changed, or next_event_ms itself changed. If none of those held at a fixed next_ms, same_instant_control_steps increments; hitting 1024 is a hard bail with a full liveness dump — engine_now, in_flight, is_idle, next_engine, next_ready."
+    narration: "This guard exists precisely because of the balanced liveness contract documented in the mocker's offline replay module: an empty effects queue is not proof of quiescence while workers own unfinished requests, but repeatedly reporting an effect-free zero-duration pass at the same timestamp is livelock, not progress. The DynoSim driver enforces the caller side half of that contract independently of the mocker's own progress filtering — it has to, because it's now the one driving the clock."
+    term: {
+      word: "made_progress"
+      meaning: "submitted || now_ms > before_ms || !outcome.events.is_empty() || after_in_flight != before_in_flight || after_event_ms != before_event_ms — any one of these being true resets the same-instant counter to zero."
+    }
+    points: [
+      "Five independent OR'd signals — deliberately redundant so a change no single signal would catch (e.g. in_flight count shifting with zero emitted events) still counts as progress.",
+      "same_instant_control_steps.saturating_add(1) on failure; ensure!(< 1_024, ...) is the trip point.",
+      "Panic message dumps engine.now_ms(), in_flight(), is_idle(), next_event_ms(), and driver.next_ready_time_ms() — everything needed to diagnose a real deadlock vs. a false trip.",
+      "This is the caller half of the balanced liveness contract; mocker's own made_progress filtering (PR #10919) is the callee half, inside drain_current_timestamp."
+    ]
+    caption: "same next_ms with no made_progress signal, 1024 times running → hard bail with full liveness state."
+
+    render: @scene {
+      sdk.Header(id = "s11-hdr", title = "LIVELOCK GUARD", caption = "same_instant_control_steps < 1_024", x = 48.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.primary), inkRole = theme(ink.secondary))
+      sdk.PropertyList(
+        id = "s11-table",
+        title = "made_progress signals (any resets the counter)",
+        entries = [{ key: "submitted", value: "arrival popped this iteration" }, { key: "now_ms > before_ms", value: "clock actually advanced" }, { key: "!events.is_empty()", value: "emitted >= 1 EngineEvent" }, { key: "in_flight changed", value: "differs before/after step" }, { key: "next_event_ms changed", value: "engine lookahead moved" }],
+        x = 54, y = 216, width = 1080, height = 460
+      )
+      sdk.Stat(id = "s11-gauge", title = "same_instant_control_steps", items = ["trip point: 1_024", "resets on any made_progress signal"], x = 54, y = 720, width = 480, height = 160)
+      sdk.CodeBlock(
+        id = "s11-code",
+        text = "ensure!(same_instant_control_steps < 1_024, \"…\");",
+        x = 570, y = 720, width = 500, height = 160,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.danger)
+      )
+      sdk.Callout(
+        id = "s11-callout",
+        text = "caller-side half of the balanced liveness contract; mocker's PR #10919 filtering is the callee-side half",
+        x = 1104, y = 720, width = 762, height = 160,
+        strokeRole = theme(accent.warning)
+      )
+
+      timeline main {
+        at 0 reveal s11-hdr duration 220
+        after s11-hdr reveal s11-table duration 320
+        after s11-table reveal s11-gauge duration 220
+        after s11-gauge reveal s11-code duration 300
+        after s11-code reveal s11-callout duration 260
+      }
+    }
+  }
+
+  slide "Observer fan-out: one engine event, two independent sinks" {
+    eyebrow: "13 · Consumer wiring"
+    title: "CollectorObserver and NativeMetricsObserver both consume the same on_admit / on_classified_token / on_terminal stream"
+    lede: "dynosim.rs builds one ObserverTee over a Vec<Rc<dyn RequestObserver>> — a CollectorObserver for aiperf's own report stack and a NativeMetricsObserver carrying per-request RequestMetricMetadata (conversation_id, turn_index, correlation_id) — and drives both from the identical EngineEvent stream the SteppableReplay engine emits."
+    narration: "This is the payoff of the whole seam: AIPerf's own observability stack — its metrics, its collector, its report format — never has to know the mocker's scheduling internals. It only has to translate each engine event into its own arrival, admit, classified token, usage, and terminal calls, fan them out through the observer tee, and separately feed the equivalent output-token, complete, terminal, and release calls back into the workload driver so session and turn state advances in lockstep with what the engine actually emitted."
+    term: {
+      word: "ObserverTee"
+      meaning: "Fan-out RequestObserver that forwards each event call to every delegate in its Vec<Rc<dyn RequestObserver>> — here, a CollectorObserver and a NativeMetricsObserver receiving the identical event stream derived from engine.step_until()'s outcome.events."
+    }
+    points: [
+      "observer.on_arrival at submit time; observer.on_admit only once, gated by client.admitted, using engine.request_admission(uuid).",
+      "event.token_id.is_some() -> driver.on_output_token + observer.on_classified_token(ObservedTokenKind::Output).",
+      "event.terminal_status.is_some() -> observer.on_usage(ObservedUsage{prompt_tokens, completion_tokens}) then observer.on_terminal(map_terminal_status(status)).",
+      "Terminal status also branches back into the driver: Completed -> on_complete, Rejected -> on_terminal(true), Canceled|Failed -> release_cap_slot — three different session-state transitions from one EngineEvent enum."
+    ]
+    caption: "one EngineEvent stream → ObserverTee fan-out (report + metrics) and → WorkloadDriver session/turn state, kept in lockstep."
+
+    render: @scene {
+      sdk.Header(id = "s12-hdr", title = "OBSERVER FAN-OUT", caption = "one EngineEvent stream, two independent sinks", x = 48.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.primary), inkRole = theme(ink.secondary))
+      sdk.Panel(id = "s12-event", title = "EngineEvent", detail = "outcome.events", x = 702, y = 237.6, width = 405, height = 135, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.warning))
+      sdk.Edge(id = "s12-a1", mode = "connector", from = { nodeId: "s12-event", anchor: "sw" }, to = { nodeId: "s12-tee", anchor: "n" }, style = { stroke: theme(accent.warning), strokeWidth: 5.4, fill: "none" })
+      sdk.Edge(id = "s12-a2", mode = "connector", from = { nodeId: "s12-event", anchor: "se" }, to = { nodeId: "s12-driver", anchor: "n" }, style = { stroke: theme(accent.secondary), strokeWidth: 5.4, fill: "none" })
+      sdk.EventBus(id = "s12-tee", label = "ObserverTee", x = 162, y = 453.6, width = 594, height = 118.8)
+      sdk.Edge(id = "s12-a3", mode = "connector", from = { nodeId: "s12-tee", anchor: "sw" }, to = { nodeId: "s12-coll", anchor: "n" }, style = { stroke: theme(accent.primary), strokeWidth: 5.4, fill: "none" })
+      sdk.Edge(id = "s12-a4", mode = "connector", from = { nodeId: "s12-tee", anchor: "se" }, to = { nodeId: "s12-metrics", anchor: "n" }, style = { stroke: theme(accent.primary), strokeWidth: 5.4, fill: "none" })
+      sdk.DataStore(id = "s12-coll", label = "CollectorObserver", detail = "aiperf report stack", x = 54, y = 658.8, width = 378, height = 151.2)
+      sdk.DataStore(id = "s12-metrics", label = "NativeMetricsObserver", detail = "RequestMetricMetadata", x = 486, y = 658.8, width = 378, height = 151.2)
+      sdk.Panel(id = "s12-driver", title = "WorkloadDriver", detail = "on_output_token / on_complete\non_terminal / release_cap_slot", x = 1080, y = 453.6, width = 756, height = 226.8, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
+      sdk.PropertyList(
+        id = "s12-table",
+        title = "terminal_status → driver call",
+        entries = [{ key: "Completed", value: "on_complete(uuid, now_ms)" }, { key: "Rejected", value: "on_terminal(uuid, now_ms, true)" }, { key: "Canceled | Failed", value: "release_cap_slot(uuid, now_ms)" }],
+        x = 1080, y = 707.4, width = 756, height = 259.2
+      )
+
+      timeline main {
+        at 0 reveal s12-hdr duration 220
+        after s12-hdr reveal s12-event duration 220
+        after s12-event trace s12-a1 duration 220
+        after s12-event trace s12-a2 duration 220
+        after s12-a1 reveal s12-tee duration 220
+        after s12-tee trace s12-a3 duration 200
+        after s12-tee trace s12-a4 duration 200
+        after s12-a3 reveal s12-coll duration 200
+        after s12-a4 reveal s12-metrics duration 200
+        after s12-a2 reveal s12-driver duration 240
+        after s12-driver reveal s12-table duration 260
+      }
+    }
+  }
+
+  slide "Parity as the design invariant" {
+    eyebrow: "14 · Closing invariant"
+    title: "The seam's entire justification is one equivalence: externally-clocked stepping must byte-match run()"
+    lede: "deadline_bounded_steps_preserve_request_measurements is the strongest test in the suite: it runs identical workloads through unbounded stepping and through repeated one-millisecond step_until calls, and asserts the serialized per_request records are byte-identical — not just equal counts, the full JSON serialization."
+    narration: "Every mechanism in this deck exists to protect that one equivalence. The engine event's single construction point keeps the emitted-token flag truthful. The deferred-drive delta cycle split keeps external admission from landing one step late. The step-until deadline semantics keep an external discrete-event driver from perturbing batch composition. The livelock guard keeps the DynoSim driver's own outer loop honest about whether it actually made progress. None of it changes what the runtime computes — it only changes who owns the clock."
+    term: {
+      word: "byte-identical serialization"
+      meaning: "serde_json::to_vec(&unbounded_report.per_request) == serde_json::to_vec(&bounded_report.per_request) — the test's actual assertion; not approximate equality, exact serialized bytes."
+    }
+    points: [
+      "assert_eq! on num_requests, completed_requests, total_input_tokens, total_output_tokens, latency.ttft.mean_ms, latency.itl.distribution.mean_ms.",
+      "assert_eq! on serde_json::to_vec(&per_request) for both reports — the strongest possible check.",
+      "Test runs under tokio::runtime::Builder::new_current_thread().enable_time().start_paused(true) — paused virtual time, so wall-clock never leaks into the comparison.",
+      "The invariant this protects: 'external idle checkpoints must not change per-request perf timestamps' — quoted directly from the test's own assertion message."
+    ]
+    caption: "unbounded stepping ≡ 1ms-clamped stepping, byte-for-byte — the whole seam exists to keep that true."
+
+    render: @scene {
+      sdk.Header(id = "s13-hdr", title = "PARITY INVARIANT", caption = "deadline_bounded_steps_preserve_request_measurements", x = 48.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.primary), inkRole = theme(ink.secondary))
+      sdk.Panel(id = "s13-unb", title = "unbounded", detail = "while !idle { step() }", x = 81, y = 248.4, width = 540, height = 172.8, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
+      sdk.Panel(id = "s13-bnd", title = "1ms-clamped", detail = "while !idle { step_until(now+1ms) }", x = 1171.8, y = 248.4, width = 540, height = 172.8, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.warning))
+      sdk.Edge(id = "s13-a1", mode = "connector", from = { nodeId: "s13-unb", anchor: "s" }, to = { nodeId: "s13-eq", anchor: "nw" }, style = { stroke: theme(accent.secondary), strokeWidth: 6.48, fill: "none" })
+      sdk.Edge(id = "s13-a2", mode = "connector", from = { nodeId: "s13-bnd", anchor: "s" }, to = { nodeId: "s13-eq", anchor: "ne" }, style = { stroke: theme(accent.warning), strokeWidth: 6.48, fill: "none" })
+      sdk.Decision(id = "s13-eq", label = "serde_json::to_vec(per_request) ==", x = 540, y = 502.2, width = 702, height = 124.2)
+      sdk.CodeBlock(
+        id = "s13-code",
+        text = "assert_eq!(to_vec(&unbounded.per_request), to_vec(&bounded.per_request), \"idle checkpoints must not change timestamps\");",
+        x = 108, y = 664.2, width = 1593, height = 205.2,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Badge(id = "s13-badge", text = "start_paused(true) — no wall-clock leakage", x = 540, y = 907.2, width = 702, height = 70.2, variant = "info")
+
+      timeline main {
+        at 0 reveal s13-hdr duration 220
+        after s13-hdr reveal s13-unb duration 220
+        after s13-unb reveal s13-bnd duration 220
+        after s13-bnd trace s13-a1 duration 220
+        after s13-a1 trace s13-a2 duration 220
+        after s13-a2 reveal s13-eq duration 240
+        after s13-eq reveal s13-code duration 320
+        after s13-code reveal s13-badge duration 220
+      }
+    }
+  }
+}

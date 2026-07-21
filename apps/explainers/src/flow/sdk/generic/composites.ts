@@ -322,7 +322,7 @@ const matrixFactory: SdkComponentFactory = (props, slots, context) => {
     numberPropOrUndefined(props, "rows"),
     roots.length,
   );
-  const gap = numberProp(props, "gap", 12);
+  const gap = numberProp(props, "gap", 32.4);
   const id = nodeId(context);
   const label = stringProp(props, "label") ?? "matrix";
   const group: RenderNodeIr = withOrigin(
@@ -370,7 +370,7 @@ export const SDK_MATRIX: SdkComponentDefinition = {
       id: { type: "string", required: true },
       cols: { type: "number", required: false },
       rows: { type: "number", required: false },
-      gap: { type: "number", required: false, default: 12 },
+      gap: { type: "number", required: false, default: 32.4 },
       label: { type: "string", required: false },
       ...GEOMETRY_PROPS,
     },
@@ -385,7 +385,7 @@ export const SDK_MATRIX: SdkComponentDefinition = {
 
 // --- sdk.layerStack ------------------------------------------------------------
 
-const LAYER_STACK_DEFAULT_OFFSET = 8;
+const LAYER_STACK_DEFAULT_OFFSET = 21.6;
 
 function shiftGeometry<T extends RenderNodeIr>(node: T, dx: number, dy: number): T {
   return { ...node, geometry: { ...node.geometry, x: node.geometry.x + dx, y: node.geometry.y + dy } };
@@ -721,7 +721,7 @@ export const SDK_TREE: SdkComponentDefinition = {
 
 // --- sdk.bidirectionalLink -------------------------------------------------------
 
-const BIDIRECTIONAL_LINK_DEFAULT_GAP = 6;
+const BIDIRECTIONAL_LINK_DEFAULT_GAP = 16.2;
 
 /**
  * Splits `from`/`to` into two perpendicular-offset endpoint pairs so the
@@ -891,9 +891,9 @@ export const SDK_BIDIRECTIONAL_LINK: SdkComponentDefinition = {
 // --- sdk.stateTransition -----------------------------------------------------------
 
 const STATE_TRANSITION_DEFAULT_OPACITY = 0.85;
-const STATE_TRANSITION_DEFAULT_STROKE_WIDTH = 1.75;
-const STATE_TRANSITION_LABEL_WIDTH = 96;
-const STATE_TRANSITION_LABEL_HEIGHT = 16;
+const STATE_TRANSITION_DEFAULT_STROKE_WIDTH = 4.73;
+const STATE_TRANSITION_LABEL_WIDTH = 259.2;
+const STATE_TRANSITION_LABEL_HEIGHT = 43.2;
 
 function midpointOf(a: ConnectorEndpointIr, b: ConnectorEndpointIr): PointIr | undefined {
   if (typeof a.x === "number" && typeof a.y === "number" && typeof b.x === "number" && typeof b.y === "number") {
@@ -1004,7 +1004,7 @@ const stateTransitionFactory: SdkComponentFactory = (props, slots, context) => {
             width: STATE_TRANSITION_LABEL_WIDTH,
             height: STATE_TRANSITION_LABEL_HEIGHT,
           },
-          style: { fontSize: 10, textAnchor: "middle" },
+          style: { fontSize: 27, textAnchor: "middle" },
           accessibility: { label: triggerText },
           fallback: triggerText,
           sourceMap: context.sourceMap,

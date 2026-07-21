@@ -46,7 +46,7 @@ const TOPOLOGY_ACTIONS = ["enter", "draw", "trace"] as const satisfies readonly 
 const LAYOUT_ACTIONS = ["enter", "stagger"] as const satisfies readonly SdkActionName[];
 
 const SPECS: readonly DiagramSpec[] = [
-  { id: "sdk.user", category: "actor", glyph: "●", width: 112, height: 76 },
+  { id: "sdk.user", category: "actor", glyph: "●", width: 302.4, height: 205.2 },
   { id: "sdk.client", category: "compute", glyph: "⌘" },
   { id: "sdk.service", category: "compute", glyph: "◆" },
   { id: "sdk.server", category: "compute", glyph: "▤" },
@@ -54,7 +54,7 @@ const SPECS: readonly DiagramSpec[] = [
   { id: "sdk.worker", category: "compute", glyph: "⚙" },
   { id: "sdk.function", category: "compute", glyph: "ƒ" },
   { id: "sdk.container", category: "compute", glyph: "⬡" },
-  { id: "sdk.cloud", category: "compute", glyph: "☁", width: 132, height: 76 },
+  { id: "sdk.cloud", category: "compute", glyph: "☁", width: 356.4, height: 205.2 },
   { id: "sdk.database", category: "storage", glyph: "◒" },
   { id: "sdk.dataStore", category: "storage", glyph: "▥" },
   { id: "sdk.cache", category: "storage", glyph: "ϟ" },
@@ -69,24 +69,24 @@ const SPECS: readonly DiagramSpec[] = [
   { id: "sdk.endpoint", category: "network", glyph: "◉" },
   { id: "sdk.loadBalancer", category: "network", glyph: "⑂" },
   { id: "sdk.firewall", category: "network", glyph: "▦" },
-  { id: "sdk.start", category: "control", glyph: "▶", width: 84, height: 48 },
-  { id: "sdk.end", category: "control", glyph: "■", width: 84, height: 48 },
+  { id: "sdk.start", category: "control", glyph: "▶", width: 226.8, height: 129.6 },
+  { id: "sdk.end", category: "control", glyph: "■", width: 226.8, height: 129.6 },
   { id: "sdk.processStep", category: "control", glyph: "→" },
-  { id: "sdk.decision", category: "control", glyph: "◇", width: 112, height: 86 },
+  { id: "sdk.decision", category: "control", glyph: "◇", width: 302.4, height: 232.2 },
   { id: "sdk.merge", category: "control", glyph: "⋈" },
   { id: "sdk.delay", category: "control", glyph: "◷" },
   { id: "sdk.retry", category: "control", glyph: "↻" },
   { id: "sdk.loop", category: "control", glyph: "⟳" },
-  { id: "sdk.boundary", category: "boundary", glyph: "□", width: 320, height: 200 },
-  { id: "sdk.zone", category: "boundary", glyph: "▢", width: 320, height: 200 },
-  { id: "sdk.cluster", category: "boundary", glyph: "⬚", width: 320, height: 200 },
-  { id: "sdk.trustBoundary", category: "boundary", glyph: "⛨", width: 320, height: 200 },
-  { id: "sdk.document", category: "symbol", glyph: "▧", width: 96, height: 72 },
-  { id: "sdk.terminal", category: "symbol", glyph: ">_", width: 112, height: 72 },
-  { id: "sdk.clock", category: "symbol", glyph: "◷", width: 96, height: 72 },
-  { id: "sdk.lock", category: "symbol", glyph: "▣", width: 96, height: 72 },
-  { id: "sdk.key", category: "symbol", glyph: "⚿", width: 96, height: 72 },
-  { id: "sdk.warning", category: "symbol", glyph: "⚠", width: 96, height: 72 },
+  { id: "sdk.boundary", category: "boundary", glyph: "□", width: 864, height: 540 },
+  { id: "sdk.zone", category: "boundary", glyph: "▢", width: 864, height: 540 },
+  { id: "sdk.cluster", category: "boundary", glyph: "⬚", width: 864, height: 540 },
+  { id: "sdk.trustBoundary", category: "boundary", glyph: "⛨", width: 864, height: 540 },
+  { id: "sdk.document", category: "symbol", glyph: "▧", width: 259.2, height: 194.4 },
+  { id: "sdk.terminal", category: "symbol", glyph: ">_", width: 302.4, height: 194.4 },
+  { id: "sdk.clock", category: "symbol", glyph: "◷", width: 259.2, height: 194.4 },
+  { id: "sdk.lock", category: "symbol", glyph: "▣", width: 259.2, height: 194.4 },
+  { id: "sdk.key", category: "symbol", glyph: "⚿", width: 259.2, height: 194.4 },
+  { id: "sdk.warning", category: "symbol", glyph: "⚠", width: 259.2, height: 194.4 },
 ];
 
 const COMMON_PROPS: Readonly<Record<string, ComponentPropDescriptor>> = {
@@ -125,8 +125,8 @@ function geometry(props: Props, spec: DiagramSpec): GeometryIr {
   return {
     x: numberProp(props, "x", 0),
     y: numberProp(props, "y", 0),
-    width: numberProp(props, "width", spec.width ?? 144),
-    height: numberProp(props, "height", spec.height ?? 82),
+    width: numberProp(props, "width", spec.width ?? 388.8),
+    height: numberProp(props, "height", spec.height ?? 221.4),
   };
 }
 
@@ -213,9 +213,9 @@ function themeStyle(props: Props, spec: DiagramSpec): Record<string, StyleValueI
   return {
     fill: stringProp(props, "surfaceRole") ?? surfaceByCategory[spec.category],
     stroke: stringProp(props, "strokeRole") ?? "@theme.ink.secondary",
-    strokeWidth: spec.category === "boundary" ? 1.5 : 1.25,
-    radius: spec.category === "storage" ? 12 : spec.category === "boundary" ? 8 : 7,
-    ...(spec.id === "sdk.trustBoundary" ? { strokeDasharray: "6 4" } : {}),
+    strokeWidth: spec.category === "boundary" ? 4.05 : 3.38,
+    radius: spec.category === "storage" ? 32.4 : spec.category === "boundary" ? 21.6 : 18.9,
+    ...(spec.id === "sdk.trustBoundary" ? { strokeDasharray: "16.2 10.8" } : {}),
   };
 }
 
@@ -287,10 +287,10 @@ function standardFactory(spec: DiagramSpec): SdkComponentFactory {
       text(
         glyphId,
         spec.glyph,
-        { x: 10, y: 10, width: 30, height: 28 },
+        { x: 27, y: 27, width: 81, height: 75.6 },
         {
           fill: stringProp(props, "inkRole") ?? "@theme.ink.primary",
-          fontSize: spec.glyph.length > 1 ? 14 : 20,
+          fontSize: spec.glyph.length > 1 ? 37.8 : 54,
           fontWeight: "bold",
           textAnchor: "middle",
         },
@@ -300,19 +300,47 @@ function standardFactory(spec: DiagramSpec): SdkComponentFactory {
       ),
     ];
     if (spec.id === "sdk.retry" || spec.id === "sdk.loop") {
+      // Decorative return stroke — not a routed semantic edge. Stamp core.path
+      // (IconLabel pattern): authored local path + schema-required local from/to
+      // dummies. Capability excludes connector routing/verifier edge checks so
+      // the bottom U-loop can attach without SCENE_CONNECTOR_* findings.
+      //
+      // Path starts on the bottom edge and ends slightly inside the chrome so
+      // arrowhead shortening still lands the tip on the border (not floating
+      // below the primitive).
+      const left = 48.6;
+      const right = box.width - 48.6;
+      const tipInset = 21.6;
+      const attachY = box.height;
+      const dipY = box.height + 48.6;
+      const loopWidth = right - left;
+      const loopHeight = dipY - attachY;
       children.push(
         withOrigin(
           {
             kind: "connector",
             id: `${context.instanceId}__back-edge`,
-            capabilityId: "core.connector",
-            geometry: { x: 8, y: box.height - 20, width: box.width - 16, height: 12 },
-            style: { fill: "none", markerEnd: "arrow", route: "curve" },
+            capabilityId: "core.path",
+            geometry: {
+              x: left,
+              y: attachY - tipInset,
+              width: loopWidth,
+              height: loopHeight + tipInset,
+            },
+            style: {
+              fill: "none",
+              stroke: stringProp(props, "strokeRole") ?? "@theme.accent.primary",
+              strokeWidth: 4.05,
+              markerEnd: "arrow",
+            },
             accessibility: { label: `${label} back edge` },
             fallback: `${label} back edge`,
             sourceMap: context.sourceMap,
-            from: { x: box.width - 12, y: box.height - 14 },
-            to: { x: 12, y: box.height - 14 },
+            // Schema requires endpoints on kind:"connector"; keep them local
+            // path dummies (no nodeId) so they never become routing anchors.
+            from: { x: loopWidth, y: tipInset },
+            to: { x: 0, y: 0 },
+            path: `M${loopWidth} ${tipInset} C${loopWidth} ${tipInset + loopHeight} 0 ${tipInset + loopHeight} 0 0`,
           },
           context,
           spec.id,

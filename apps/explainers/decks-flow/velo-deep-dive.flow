@@ -42,10 +42,10 @@ explainer "Velo deep dive" {
         id = "s0-hdr",
         title = "CONNECTION RESOLVE",
         caption = "endpoint → _hello → register_peer(controller).",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -53,10 +53,10 @@ explainer "Velo deep dive" {
         id = "s0-cell",
         title = "Cell k",
         detail = "known coordinate",
-        x = 40,
-        y = 140,
-        width = 160,
-        height = 80,
+        x = 123,
+        y = 378,
+        width = 432,
+        height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -65,16 +65,16 @@ explainer "Velo deep dive" {
         mode = "connector",
         from = { nodeId: "s0-cell", anchor: "e" },
         to = { nodeId: "s0-velo", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Label(
         id = "s0-hello",
         text = "_hello",
-        x = 225,
-        y = 152,
-        width = 50,
-        height = 16,
-        fontSize = 11,
+        x = 622.5,
+        y = 410.4,
+        width = 135,
+        height = 43.2,
+        fontSize = 29.7,
         weight = "bold",
         align = "middle",
         inkRole = theme(ink.tertiary)
@@ -83,10 +83,10 @@ explainer "Velo deep dive" {
         id = "s0-velo",
         title = "Velo transport",
         detail = "resolve PeerInfo",
-        x = 300,
-        y = 140,
-        width = 170,
-        height = 80,
+        x = 825,
+        y = 378,
+        width = 459,
+        height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -95,29 +95,29 @@ explainer "Velo deep dive" {
         mode = "connector",
         from = { nodeId: "s0-velo", anchor: "e" },
         to = { nodeId: "s0-ctrl", anchor: "w" },
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.warning), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s0-ctrl",
         title = "Controller",
         detail = "register_peer",
-        x = 540,
-        y = 140,
-        width = 140,
-        height = 80,
+        x = 1473,
+        y = 378,
+        width = 378,
+        height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
-      sdk.Lane(id = "s0-src", title = "tcp:// · uds:// · SLURM_* · k8s", x = 210, y = 270, width = 280, height = 70) {
+      sdk.Lane(id = "s0-src", title = "tcp:// · uds:// · SLURM_* · k8s", x = 582, y = 729, width = 756, height = 189) {
         children {
           sdk.Label(
             id = "s0-src-detail",
             text = "coordinate sources",
-            x = 16,
-            y = 36,
-            width = 248,
-            height = 18,
-            fontSize = 11,
+            x = 58.2,
+            y = 97.2,
+            width = 669.6,
+            height = 48.6,
+            fontSize = 29.7,
             align = "middle",
             inkRole = theme(ink.secondary)
           )
@@ -127,7 +127,7 @@ explainer "Velo deep dive" {
         id = "s0-motion-sig",
         path = "M110 175 H560",
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.secondary), fill: "none" }
       )
 
@@ -166,10 +166,10 @@ explainer "Velo deep dive" {
         id = "s1-hdr",
         title = "REGISTRATION REPLY",
         caption = "decode CellRegister → spec_for(cell_id) → RegisterReply.",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -177,10 +177,10 @@ explainer "Velo deep dive" {
         id = "s1-reg",
         title = "CellRegister",
         detail = "cell_id: u32",
-        x = 30,
-        y = 150,
-        width = 150,
-        height = 70,
+        x = 96,
+        y = 405,
+        width = 405,
+        height = 189,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -189,16 +189,16 @@ explainer "Velo deep dive" {
         mode = "connector",
         from = { nodeId: "s1-reg", anchor: "e" },
         to = { nodeId: "s1-peer", anchor: "w" },
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.warning), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s1-peer",
         title = "register_peer",
         detail = "return route",
-        x = 225,
-        y = 150,
-        width = 150,
-        height = 70,
+        x = 622.5,
+        y = 405,
+        width = 405,
+        height = 189,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -207,16 +207,16 @@ explainer "Velo deep dive" {
         mode = "connector",
         from = { nodeId: "s1-peer", anchor: "e" },
         to = { nodeId: "s1-spec", anchor: "w" },
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.warning), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s1-spec",
         title = "spec_for(id)",
         detail = "pure lookup",
-        x = 420,
-        y = 150,
-        width = 150,
-        height = 70,
+        x = 1149,
+        y = 405,
+        width = 405,
+        height = 189,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -225,16 +225,16 @@ explainer "Velo deep dive" {
         mode = "connector",
         from = { nodeId: "s1-spec", anchor: "s" },
         to = { nodeId: "s1-reply", anchor: "n" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s1-reply",
         title = "RegisterReply",
         detail = "envelope + start_event",
-        x = 470,
-        y = 280,
-        width = 200,
-        height = 70,
+        x = 1284,
+        y = 756,
+        width = 540,
+        height = 189,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -242,7 +242,7 @@ explainer "Velo deep dive" {
         id = "s1-motion-sig",
         path = "M110 170 H560",
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.secondary), fill: "none" }
       )
 
@@ -281,10 +281,10 @@ explainer "Velo deep dive" {
         id = "s2-hdr",
         title = "SYNCHRONIZED START",
         caption = "N registrations → trigger → all awaiters go Ready.",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -292,10 +292,10 @@ explainer "Velo deep dive" {
         id = "s2-c0",
         title = "c0",
         detail = "register",
-        x = 30,
-        y = 280,
-        width = 80,
-        height = 60,
+        x = 96,
+        y = 756,
+        width = 216,
+        height = 162,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -303,10 +303,10 @@ explainer "Velo deep dive" {
         id = "s2-c1",
         title = "c1",
         detail = "register",
-        x = 130,
-        y = 280,
-        width = 80,
-        height = 60,
+        x = 366,
+        y = 756,
+        width = 216,
+        height = 162,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -314,10 +314,10 @@ explainer "Velo deep dive" {
         id = "s2-c2",
         title = "c2",
         detail = "register",
-        x = 230,
-        y = 280,
-        width = 80,
-        height = 60,
+        x = 636,
+        y = 756,
+        width = 216,
+        height = 162,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -325,10 +325,10 @@ explainer "Velo deep dive" {
         id = "s2-c3",
         title = "c3",
         detail = "register",
-        x = 330,
-        y = 280,
-        width = 80,
-        height = 60,
+        x = 906,
+        y = 756,
+        width = 216,
+        height = 162,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -338,7 +338,7 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M70 280 C70 230 350 220 460 190",
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.warning), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Edge(
         id = "s2-a1",
@@ -346,7 +346,7 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M170 280 C170 230 350 220 460 190",
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.warning), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Edge(
         id = "s2-a2",
@@ -354,7 +354,7 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M270 280 C270 230 350 220 460 190",
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.warning), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Edge(
         id = "s2-a3",
@@ -362,16 +362,16 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M370 280 C370 230 350 220 460 190",
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.warning), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s2-barrier",
         title = "Barrier",
         detail = "all_registered → trigger",
-        x = 460,
-        y = 150,
-        width = 180,
-        height = 80,
+        x = 1257,
+        y = 405,
+        width = 486,
+        height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -379,10 +379,10 @@ explainer "Velo deep dive" {
         id = "s2-start",
         title = "START event",
         detail = "wake all awaiters",
-        x = 210,
-        y = 110,
-        width = 220,
-        height = 54,
+        x = 582,
+        y = 297,
+        width = 594,
+        height = 145.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -392,13 +392,13 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M550 150 C520 120 470 130 430 137",
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.warning), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Signal(
         id = "s2-motion-sig",
         path = "M350 300 V150",
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.secondary), fill: "none" }
       )
 
@@ -438,10 +438,10 @@ explainer "Velo deep dive" {
         id = "s3-hdr",
         title = "MESSAGEPACK CODEC",
         caption = "to_vec → raw payload → from_slice → typed value.",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -449,10 +449,10 @@ explainer "Velo deep dive" {
         id = "s3-msg",
         title = "CellMessage",
         detail = "ttft: NaN · max +∞",
-        x = 30,
-        y = 150,
-        width = 150,
-        height = 80,
+        x = 96,
+        y = 405,
+        width = 405,
+        height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -461,16 +461,16 @@ explainer "Velo deep dive" {
         mode = "connector",
         from = { nodeId: "s3-msg", anchor: "e" },
         to = { nodeId: "s3-vec", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s3-vec",
         title = "to_vec",
         detail = "rmp_serde",
-        x = 225,
-        y = 150,
-        width = 130,
-        height = 80,
+        x = 622.5,
+        y = 405,
+        width = 351,
+        height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -479,16 +479,16 @@ explainer "Velo deep dive" {
         mode = "connector",
         from = { nodeId: "s3-vec", anchor: "e" },
         to = { nodeId: "s3-raw", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s3-raw",
         title = "raw bytes",
         detail = "Velo payload",
-        x = 400,
-        y = 150,
-        width = 130,
-        height = 80,
+        x = 1095,
+        y = 405,
+        width = 351,
+        height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -497,16 +497,16 @@ explainer "Velo deep dive" {
         mode = "connector",
         from = { nodeId: "s3-raw", anchor: "s" },
         to = { nodeId: "s3-from", anchor: "n" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s3-from",
         title = "from_slice",
         detail = "typed again",
-        x = 555,
-        y = 280,
-        width = 130,
-        height = 70,
+        x = 1513.5,
+        y = 756,
+        width = 351,
+        height = 189,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -514,7 +514,7 @@ explainer "Velo deep dive" {
         id = "s3-motion-sig",
         path = "M90 180 H600",
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.secondary), fill: "none" }
       )
 
@@ -553,10 +553,10 @@ explainer "Velo deep dive" {
         id = "s4-hdr",
         title = "HEARTBEAT LANE",
         caption = "one snapshot, shipped once → live cross-cell aggregate.",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -564,10 +564,10 @@ explainer "Velo deep dive" {
         id = "s4-c0",
         title = "cell 0",
         detail = "snapshot",
-        x = 40,
-        y = 86,
-        width = 140,
-        height = 64,
+        x = 123,
+        y = 232.2,
+        width = 378,
+        height = 172.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -575,10 +575,10 @@ explainer "Velo deep dive" {
         id = "s4-c1",
         title = "cell 1",
         detail = "snapshot",
-        x = 40,
-        y = 160,
-        width = 140,
-        height = 64,
+        x = 123,
+        y = 432,
+        width = 378,
+        height = 172.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -586,10 +586,10 @@ explainer "Velo deep dive" {
         id = "s4-c2",
         title = "cell 2",
         detail = "snapshot, ships last",
-        x = 40,
-        y = 250,
-        width = 140,
-        height = 64,
+        x = 123,
+        y = 675,
+        width = 378,
+        height = 172.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.orange)
       )
@@ -599,7 +599,7 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M180 102 C300 102 360 200 440 200",
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Edge(
         id = "s4-a1",
@@ -607,7 +607,7 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M180 192 C300 192 360 200 440 200",
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Edge(
         id = "s4-a2",
@@ -615,27 +615,27 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M180 282 C300 282 360 200 440 200",
-        style = { stroke: theme(accent.orange), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.orange), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s4-agg",
         title = "Controller aggregate",
         detail = "counters + sketches · merged",
-        x = 440,
-        y = 160,
-        width = 220,
-        height = 80,
+        x = 1203,
+        y = 432,
+        width = 594,
+        height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Label(
         id = "s4-note",
         text = "fire-and-forget · shipped once, right before the partition",
-        x = 110,
-        y = 318,
-        width = 400,
-        height = 16,
-        fontSize = 12,
+        x = 312,
+        y = 858.6,
+        width = 1080,
+        height = 43.2,
+        fontSize = 32.4,
         align = "start",
         inkRole = theme(ink.tertiary)
       )
@@ -643,7 +643,7 @@ explainer "Velo deep dive" {
         id = "s4-motion-sig",
         path = "M120 130 H560",
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.secondary), fill: "none" }
       )
 
@@ -681,10 +681,10 @@ explainer "Velo deep dive" {
         id = "s5-hdr",
         title = "PARTITION SHIP",
         caption = "ship peer + partition → register_peer(shipper) → CellAck.",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -692,10 +692,10 @@ explainer "Velo deep dive" {
         id = "s5-fin",
         title = "Finished cell",
         detail = "ship peer + partition",
-        x = 30,
-        y = 150,
-        width = 160,
-        height = 80,
+        x = 96,
+        y = 405,
+        width = 432,
+        height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -704,16 +704,16 @@ explainer "Velo deep dive" {
         mode = "connector",
         from = { nodeId: "s5-fin", anchor: "e" },
         to = { nodeId: "s5-pay", anchor: "w" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s5-pay",
         title = "unary payload",
         detail = "fresh PeerInfo",
-        x = 250,
-        y = 150,
-        width = 150,
-        height = 80,
+        x = 690,
+        y = 405,
+        width = 405,
+        height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -722,16 +722,16 @@ explainer "Velo deep dive" {
         mode = "connector",
         from = { nodeId: "s5-pay", anchor: "e" },
         to = { nodeId: "s5-ctrl", anchor: "w" },
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.warning), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s5-ctrl",
         title = "Controller",
         detail = "register_peer(shipper)",
-        x = 460,
-        y = 150,
-        width = 200,
-        height = 80,
+        x = 1257,
+        y = 405,
+        width = 540,
+        height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -741,16 +741,16 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M560 230 C560 290 300 300 190 290",
-        style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s5-ack",
         title = "CellAck",
         detail = "delivered",
-        x = 210,
-        y = 280,
-        width = 130,
-        height = 54,
+        x = 582,
+        y = 756,
+        width = 351,
+        height = 145.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -758,7 +758,7 @@ explainer "Velo deep dive" {
         id = "s5-motion-sig",
         path = "M110 180 H590",
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.secondary), fill: "none" }
       )
 
@@ -797,10 +797,10 @@ explainer "Velo deep dive" {
         id = "s6-hdr",
         title = "MERGE CENTER",
         caption = "records → global-order sort · stores → append + merge.",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -808,10 +808,10 @@ explainer "Velo deep dive" {
         id = "s6-p0",
         title = "partition 0",
         detail = "records",
-        x = 30,
-        y = 90,
-        width = 130,
-        height = 52,
+        x = 96,
+        y = 243,
+        width = 351,
+        height = 140.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -819,10 +819,10 @@ explainer "Velo deep dive" {
         id = "s6-p1",
         title = "partition 1",
         detail = "store",
-        x = 30,
-        y = 158,
-        width = 130,
-        height = 52,
+        x = 96,
+        y = 426.6,
+        width = 351,
+        height = 140.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -830,10 +830,10 @@ explainer "Velo deep dive" {
         id = "s6-p2",
         title = "partition 2",
         detail = "records",
-        x = 30,
-        y = 226,
-        width = 130,
-        height = 52,
+        x = 96,
+        y = 610.2,
+        width = 351,
+        height = 140.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -841,10 +841,10 @@ explainer "Velo deep dive" {
         id = "s6-p3",
         title = "partition 3",
         detail = "store",
-        x = 30,
-        y = 294,
-        width = 130,
-        height = 52,
+        x = 96,
+        y = 793.8,
+        width = 351,
+        height = 140.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -854,7 +854,7 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M160 116 C280 116 340 200 420 200",
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Edge(
         id = "s6-a1",
@@ -862,7 +862,7 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M160 184 C280 184 340 200 420 200",
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Edge(
         id = "s6-a2",
@@ -870,7 +870,7 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M160 252 C280 252 340 200 420 200",
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Edge(
         id = "s6-a3",
@@ -878,16 +878,16 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M160 320 C280 320 340 200 420 200",
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s6-merge",
         title = "Merge center",
         detail = "associative fold",
-        x = 420,
-        y = 160,
-        width = 150,
-        height = 80,
+        x = 1149,
+        y = 432,
+        width = 405,
+        height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -896,16 +896,16 @@ explainer "Velo deep dive" {
         mode = "route",
         from = { nodeId: "s6-merge", anchor: "s" },
         to = { nodeId: "s6-one", anchor: "n" },
-        style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s6-one",
         title = "one result",
         detail = "order · append · merge",
-        x = 520,
-        y = 290,
-        width = 160,
-        height = 60,
+        x = 1419,
+        y = 783,
+        width = 432,
+        height = 162,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -913,7 +913,7 @@ explainer "Velo deep dive" {
         id = "s6-motion-sig",
         path = "M110 175 H560",
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.secondary), fill: "none" }
       )
 
@@ -953,10 +953,10 @@ explainer "Velo deep dive" {
         id = "s7-hdr",
         title = "PHASER REPLAY",
         caption = "attach → reply replay ≤ g · live push > g.",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -964,10 +964,10 @@ explainer "Velo deep dive" {
         id = "s7-g1",
         title = "g1",
         detail = "replay",
-        x = 30,
-        y = 110,
-        width = 80,
-        height = 56,
+        x = 96,
+        y = 297,
+        width = 216,
+        height = 151.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -975,10 +975,10 @@ explainer "Velo deep dive" {
         id = "s7-g2",
         title = "g2",
         detail = "replay",
-        x = 125,
-        y = 110,
-        width = 80,
-        height = 56,
+        x = 352.5,
+        y = 297,
+        width = 216,
+        height = 151.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -986,10 +986,10 @@ explainer "Velo deep dive" {
         id = "s7-g3",
         title = "g3",
         detail = "replay",
-        x = 220,
-        y = 110,
-        width = 80,
-        height = 56,
+        x = 609,
+        y = 297,
+        width = 216,
+        height = 151.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -997,10 +997,10 @@ explainer "Velo deep dive" {
         id = "s7-g4",
         title = "g4",
         detail = "live",
-        x = 315,
-        y = 110,
-        width = 80,
-        height = 56,
+        x = 865.5,
+        y = 297,
+        width = 216,
+        height = 151.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1008,10 +1008,10 @@ explainer "Velo deep dive" {
         id = "s7-g5",
         title = "g5",
         detail = "live",
-        x = 410,
-        y = 110,
-        width = 80,
-        height = 56,
+        x = 1122,
+        y = 297,
+        width = 216,
+        height = 151.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1019,10 +1019,10 @@ explainer "Velo deep dive" {
         id = "s7-attach",
         title = "attach @ g3",
         detail = "capture boundary",
-        x = 220,
-        y = 250,
-        width = 180,
-        height = 70,
+        x = 609,
+        y = 675,
+        width = 486,
+        height = 189,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1032,7 +1032,7 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M310 250 C310 210 250 190 200 168",
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.warning), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Edge(
         id = "s7-a2",
@@ -1040,16 +1040,16 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M400 260 C480 240 500 200 510 168",
-        style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Label(
         id = "s7-note",
         text = "reply replays ≤ g3 · active-message pushes > g3",
-        x = 150,
-        y = 340,
-        width = 420,
-        height = 16,
-        fontSize = 12,
+        x = 420,
+        y = 918,
+        width = 1134,
+        height = 43.2,
+        fontSize = 32.4,
         align = "start",
         inkRole = theme(ink.tertiary)
       )
@@ -1057,7 +1057,7 @@ explainer "Velo deep dive" {
         id = "s7-motion-sig",
         path = "M110 130 H590",
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.secondary), fill: "none" }
       )
 
@@ -1094,10 +1094,10 @@ explainer "Velo deep dive" {
         id = "s8-hdr",
         title = "DATASET FLOODGATE",
         caption = "publish chunk → replay + live · keep id % cells == cell_id.",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -1105,10 +1105,10 @@ explainer "Velo deep dive" {
         id = "s8-chunk",
         title = "chunk stream",
         detail = "MessagePack + zstd",
-        x = 30,
-        y = 140,
-        width = 140,
-        height = 90,
+        x = 96,
+        y = 378,
+        width = 378,
+        height = 243,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1117,16 +1117,16 @@ explainer "Velo deep dive" {
         mode = "connector",
         from = { nodeId: "s8-chunk", anchor: "e" },
         to = { nodeId: "s8-bcast", anchor: "w" },
-        style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s8-bcast",
         title = "broadcast",
         detail = "publish once",
-        x = 230,
-        y = 150,
-        width = 120,
-        height = 70,
+        x = 636,
+        y = 405,
+        width = 324,
+        height = 189,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -1134,10 +1134,10 @@ explainer "Velo deep dive" {
         id = "s8-c0",
         title = "cell 0",
         detail = "keep id % 3 == 0",
-        x = 430,
-        y = 90,
-        width = 230,
-        height = 64,
+        x = 1176,
+        y = 243,
+        width = 621,
+        height = 172.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1147,16 +1147,16 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M350 185 C390 122 400 122 430 122",
-        style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s8-c1",
         title = "cell 1",
         detail = "keep id % 3 == 1",
-        x = 430,
-        y = 180,
-        width = 230,
-        height = 64,
+        x = 1176,
+        y = 486,
+        width = 621,
+        height = 172.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1166,16 +1166,16 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M350 185 C390 212 400 212 430 212",
-        style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s8-c2",
         title = "cell 2",
         detail = "keep id % 3 == 2",
-        x = 430,
-        y = 270,
-        width = 230,
-        height = 64,
+        x = 1176,
+        y = 729,
+        width = 621,
+        height = 172.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1185,13 +1185,13 @@ explainer "Velo deep dive" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M350 185 C390 302 400 302 430 302",
-        style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Signal(
         id = "s8-motion-sig",
         path = "M120 175 H560",
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.secondary), fill: "none" }
       )
 
@@ -1232,10 +1232,10 @@ explainer "Velo deep dive" {
         id = "s9-hdr",
         title = "AGGREGATOR TREE",
         caption = "fold: cells → aggregators → controller · retain stays flat.",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -1243,10 +1243,10 @@ explainer "Velo deep dive" {
         id = "s9-ctrl",
         title = "Controller",
         detail = "one report",
-        x = 270,
-        y = 90,
-        width = 160,
-        height = 64,
+        x = 744,
+        y = 243,
+        width = 432,
+        height = 172.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1254,10 +1254,10 @@ explainer "Velo deep dive" {
         id = "s9-agg0",
         title = "aggregator 0",
         detail = "cells 0–3",
-        x = 120,
-        y = 210,
-        width = 150,
-        height = 60,
+        x = 339,
+        y = 567,
+        width = 405,
+        height = 162,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1265,10 +1265,10 @@ explainer "Velo deep dive" {
         id = "s9-agg1",
         title = "aggregator 1",
         detail = "cells 4–7",
-        x = 430,
-        y = 210,
-        width = 150,
-        height = 60,
+        x = 1176,
+        y = 567,
+        width = 405,
+        height = 162,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1278,16 +1278,16 @@ explainer "Velo deep dive" {
         to = { nodeId: "s9-ctrl", anchor: "s" },
         axis = "y",
         junction = { x: 350, y: 180 },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s9-c0",
         title = "c0",
         detail = "store",
-        x = 30,
-        y = 320,
-        width = 70,
-        height = 50,
+        x = 96,
+        y = 864,
+        width = 189,
+        height = 135,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1295,10 +1295,10 @@ explainer "Velo deep dive" {
         id = "s9-c1",
         title = "c1",
         detail = "store",
-        x = 120,
-        y = 320,
-        width = 70,
-        height = 50,
+        x = 339,
+        y = 864,
+        width = 189,
+        height = 135,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1306,10 +1306,10 @@ explainer "Velo deep dive" {
         id = "s9-c2",
         title = "c2",
         detail = "store",
-        x = 210,
-        y = 320,
-        width = 70,
-        height = 50,
+        x = 582,
+        y = 864,
+        width = 189,
+        height = 135,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1317,10 +1317,10 @@ explainer "Velo deep dive" {
         id = "s9-c3",
         title = "c3",
         detail = "store",
-        x = 300,
-        y = 320,
-        width = 70,
-        height = 50,
+        x = 825,
+        y = 864,
+        width = 189,
+        height = 135,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1330,16 +1330,16 @@ explainer "Velo deep dive" {
         to = { nodeId: "s9-agg0", anchor: "s" },
         axis = "y",
         junction = { x: 195, y: 290 },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Label(
         id = "s9-note",
         text = "fold only · retain stays flat",
-        x = 430,
-        y = 340,
-        width = 240,
-        height = 16,
-        fontSize = 12,
+        x = 1176,
+        y = 918,
+        width = 648,
+        height = 43.2,
+        fontSize = 32.4,
         align = "start",
         inkRole = theme(ink.tertiary)
       )
@@ -1361,70 +1361,70 @@ explainer "Velo deep dive" {
         id = "final-hdr",
         title = "Live evidence files",
         caption = "velo transport",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
       sdk.Panel(
         id = "f1",
         title = "rust/runtime/src/cellular/transport/mod.rs",
-        x = 40,
-        y = 88,
-        width = 620,
-        height = 40,
+        x = 123,
+        y = 237.6,
+        width = 1674,
+        height = 97.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
       sdk.Panel(
         id = "f2",
         title = "rust/runtime/src/cellular/transport/velo_transport.rs",
-        x = 40,
-        y = 120,
-        width = 620,
-        height = 40,
+        x = 123,
+        y = 394.2,
+        width = 1674,
+        height = 97.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
       sdk.Panel(
         id = "f3",
         title = "rust/runtime/src/cellular/transport/phaser_velo.rs",
-        x = 40,
-        y = 168,
-        width = 620,
-        height = 40,
+        x = 123,
+        y = 523.8,
+        width = 1674,
+        height = 97.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Panel(
         id = "f4",
         title = "rust/runtime/src/cellular/transport/dataset_velo.rs",
-        x = 40,
-        y = 216,
-        width = 620,
-        height = 40,
+        x = 123,
+        y = 653.4,
+        width = 1674,
+        height = 97.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Panel(
         id = "f5",
         title = "rust/runtime/src/cellular/heartbeat.rs",
-        x = 40,
-        y = 264,
-        width = 620,
-        height = 40,
+        x = 123,
+        y = 783,
+        width = 1674,
+        height = 97.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Panel(
         id = "f6",
         title = "rust/runtime/src/cellular/shard.rs",
-        x = 40,
-        y = 312,
-        width = 620,
-        height = 40,
+        x = 123,
+        y = 912.6,
+        width = 1674,
+        height = 97.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )

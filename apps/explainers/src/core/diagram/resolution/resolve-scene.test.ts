@@ -57,13 +57,13 @@ describe("resolveScene", () => {
       x: 40,
       y: 60,
       width: 100,
-      height: 30,
+      height: 43.2,
     });
     expect(resolved.worldGeometryById.get("two")).toEqual({
       x: 40,
-      y: 98,
+      y: 111.2,
       width: 100,
-      height: 30,
+      height: 43.2,
     });
     expect(resolved.worldGeometryById.get("absolute")?.x).toBe(500);
     expect(resolved.ancestorIdsById.get("two")).toEqual(["stack"]);
@@ -113,7 +113,7 @@ describe("resolveScene", () => {
 
     expect(resolved.worldGeometryById.get("after")).toMatchObject({
       x: 55,
-      y: 57,
+      y: 70.2,
     });
     expect(resolved.worldGeometryById.get("before")).toMatchObject({
       x: 300,
@@ -152,9 +152,9 @@ describe("resolveScene", () => {
 
     expect(resolved.worldGeometryById.get("shifted")).toEqual({
       x: 55,
-      y: 57,
+      y: 70.19999999999999,
       width: 100,
-      height: 30,
+      height: 43.2,
     });
   });
 
@@ -211,7 +211,7 @@ describe("resolveScene", () => {
       x: 200,
       y: 20,
       width: 40,
-      height: 20,
+      height: 43.2,
     });
   });
 
@@ -306,7 +306,7 @@ describe("resolveScene", () => {
     const resolved = resolveScene(scene);
 
     expect(resolved.connectorsById.get("edge")).toMatchObject({
-      d: "M90 40 L210 40",
+      d: "M90 41.6 L210 41.6",
       directed: true,
       showArrowhead: true,
     });
@@ -316,6 +316,34 @@ describe("resolveScene", () => {
         severity: "info",
       }),
     );
+  });
+
+  it("resolves canonical fan-out geometry alongside connectors in one pass", () => {
+    const scene: SceneIrLike = {
+      roots: [
+        {
+          id: "fan",
+          kind: "fan",
+          capabilityId: "core.fan-out",
+          geometry: { x: 0, y: 0, width: 0, height: 0 },
+          axis: "x",
+          from: { x: 0, y: 100 },
+          to: [
+            { x: 300, y: 50 },
+            { x: 300, y: 150 },
+          ],
+        },
+      ],
+      timeline: [],
+    };
+
+    const resolved = resolveScene(scene);
+
+    expect(resolved.fanGeometryById.get("fan")).toMatchObject({
+      id: "fan",
+      capability: "core.fan-out",
+    });
+    expect(resolved.fanGeometryById.get("fan")?.trajectories).toHaveLength(2);
   });
 
   it("indexes native semantic chrome under capability-specific generated IDs", () => {

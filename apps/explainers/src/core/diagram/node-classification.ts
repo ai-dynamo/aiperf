@@ -64,6 +64,12 @@ export function isArrowLike(node: SceneNodeLike): boolean {
   return ARROW_CAPABILITIES.has(capability) || ARROW_KINDS.has(kind);
 }
 
+/** Whether a node is fan-in/fan-out topology (one endpoint, many endpoints). */
+export function isFanNode(node: SceneNodeLike, capability = ""): boolean {
+  const cap = capability.length > 0 ? capability : capabilityOf(node);
+  return cap === "core.fan-out" || cap === "core.fan-in" || node.kind === "fan";
+}
+
 /** Small filled dots only — circles/ellipses render as shapes, not motion dots. */
 export function isDotLike(node: SceneNodeLike, capability = ""): boolean {
   const cap = capability.length > 0 ? capability : capabilityOf(node);

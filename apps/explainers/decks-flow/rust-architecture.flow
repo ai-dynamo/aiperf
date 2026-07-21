@@ -34,12 +34,12 @@ explainer "Rust Architecture" {
     ]
     caption: "One executable, two hats: operator CLI and execution child."
     render: @scene {
-      sdk.Header(id = "header", title = "ONE BINARY", caption = "cli is entry + engine", x = 18, y = 16, width = 664, height = 44, surfaceRole = "@theme.surface.secondary")
-      sdk.Panel(id = "binary", title = "aiperf binary", detail = "cli/src/main.rs", x = 250, y = 88, width = 200, height = 88, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Label(id = "footer", text = "public CLI on the outside · execution child on the inside", x = 50, y = 210, width = 600, height = 24, fontSize = 13, align = "middle", inkRole = "@theme.ink.secondary")
-      sdk.Panel(id = "cli-hat", title = "public CLI", detail = "outside", x = 90, y = 240, width = 180, height = 55, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
-      sdk.Edge(id = "a1", mode = "route", from = { nodeId: "cli-hat", anchor: "e" }, to = { nodeId: "engine-hat", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none" })
-      sdk.Panel(id = "engine-hat", title = "execution child", detail = "inside", position = { relativeTo: "cli-hat", anchor: "n", dx: 250 }, width = 180, height = 55, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Header(id = "header", title = "ONE BINARY", caption = "cli is entry + engine", x = 63.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = "@theme.surface.secondary")
+      sdk.Panel(id = "binary", title = "aiperf binary", detail = "cli/src/main.rs", x = 690, y = 237.6, width = 540, height = 237.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Label(id = "footer", text = "public CLI on the outside · execution child on the inside", x = 150, y = 567, width = 1620, height = 64.8, fontSize = 35.1, align = "middle", inkRole = "@theme.ink.secondary")
+      sdk.Panel(id = "cli-hat", title = "public CLI", detail = "outside", x = 258, y = 648, width = 486, height = 148.5, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a1", mode = "route", from = { nodeId: "cli-hat", anchor: "e" }, to = { nodeId: "engine-hat", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94, fill: "none" })
+      sdk.Panel(id = "engine-hat", title = "execution child", detail = "inside", position = { relativeTo: "cli-hat", anchor: "n", dx: 250 }, width = 486, height = 148.5, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal binary duration 360
@@ -66,13 +66,13 @@ explainer "Rust Architecture" {
     ]
     caption: "cli → runtime (dispatch lives in-crate)"
     render: @scene {
-      sdk.Header(id = "header", title = "WORKSPACE CRATES", caption = "cli \u2192 runtime (dispatch in-crate)", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "cli", title = "aiperf-cli", detail = "commands + execute", x = 60, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
-      sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "cli", anchor: "e" }, to = { nodeId: "runtime", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "runtime", title = "aiperf-runtime", detail = "engine + transports", x = 250, y = 130, width = 170, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "runtime", anchor: "e" }, to = { nodeId: "loadgen", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "loadgen", title = "dispatch", detail = "in-crate module", x = 460, y = 130, width = 180, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
-      sdk.Panel(id = "mock", title = "mock-server", detail = "separate target", x = 520, y = 280, width = 120, height = 72, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Header(id = "header", title = "WORKSPACE CRATES", caption = "cli \u2192 runtime (dispatch in-crate)", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Panel(id = "cli", title = "aiperf-cli", detail = "commands + execute", x = 177, y = 351, width = 405, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "cli", anchor: "e" }, to = { nodeId: "runtime", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "runtime", title = "aiperf-runtime", detail = "engine + transports", x = 690, y = 351, width = 459, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "runtime", anchor: "e" }, to = { nodeId: "loadgen", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "loadgen", title = "dispatch", detail = "in-crate module", x = 1257, y = 351, width = 486, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
+      sdk.Panel(id = "mock", title = "mock-server", detail = "separate target", x = 1419, y = 756, width = 324, height = 194.4, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal cli duration 320
@@ -100,12 +100,12 @@ explainer "Rust Architecture" {
     ]
     caption: "Hidden modes short-circuit; public commands fall through."
     render: @scene {
-      sdk.Header(id = "header", title = "STARTUP ORDER", caption = "execute_mode before dispatch", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "logging", title = "logging", detail = "startup", x = 70, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "logging", anchor: "e" }, to = { nodeId: "execute", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "execute", title = "execute_mode?", detail = "hidden argv", x = 260, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
-      sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "execute", anchor: "e" }, to = { nodeId: "dispatch", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "dispatch", title = "dispatch::run", detail = "startup", x = 450, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Header(id = "header", title = "STARTUP ORDER", caption = "execute_mode before dispatch", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Panel(id = "logging", title = "logging", detail = "startup", x = 204, y = 351, width = 405, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "logging", anchor: "e" }, to = { nodeId: "execute", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "execute", title = "execute_mode?", detail = "hidden argv", x = 717, y = 351, width = 405, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
+      sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "execute", anchor: "e" }, to = { nodeId: "dispatch", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "dispatch", title = "dispatch::run", detail = "startup", x = 1230, y = 351, width = 405, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal logging duration 320
@@ -132,11 +132,11 @@ explainer "Rust Architecture" {
     ]
     caption: "Benchmark hot path native; extended surface delegated."
     render: @scene {
-      sdk.Header(id = "header", title = "COMMAND DISPATCH", caption = "native profile/config/cell", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "native", title = "Native commands", detail = "profile · config · cell", x = 70, y = 120, width = 220, height = 110, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Edge(id = "split", mode = "connector", from = { nodeId: "native", anchor: "e" }, to = { nodeId: "delegated", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Panel(id = "delegated", title = "Delegated commands", detail = "python -m aiperf", x = 410, y = 120, width = 220, height = 110, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.orange")
-      sdk.Label(id = "footer", text = "dispatch.rs chooses the path from argv[0]", x = 50, y = 280, width = 600, height = 24, fontSize = 13, align = "middle", inkRole = "@theme.ink.secondary")
+      sdk.Header(id = "header", title = "COMMAND DISPATCH", caption = "native profile/config/cell", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Panel(id = "native", title = "Native commands", detail = "profile · config · cell", x = 204, y = 324, width = 594, height = 297, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "split", mode = "connector", from = { nodeId: "native", anchor: "e" }, to = { nodeId: "delegated", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Panel(id = "delegated", title = "Delegated commands", detail = "python -m aiperf", x = 1122, y = 324, width = 594, height = 297, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.orange")
+      sdk.Label(id = "footer", text = "dispatch.rs chooses the path from argv[0]", x = 150, y = 756, width = 1620, height = 64.8, fontSize = 35.1, align = "middle", inkRole = "@theme.ink.secondary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal native duration 360
@@ -162,12 +162,12 @@ explainer "Rust Architecture" {
     ]
     caption: "YAML in → validated BenchmarkRun out."
     render: @scene {
-      sdk.Header(id = "header", title = "CONFIG V2", caption = "BenchmarkRun wire object", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "yaml", title = "benchmark.yaml", detail = "Config v2", x = 50, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "yaml", anchor: "e" }, to = { nodeId: "load", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Panel(id = "load", title = "yaml + load", detail = "expand + validate", x = 250, y = 130, width = 170, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
-      sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "load", anchor: "e" }, to = { nodeId: "run", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "run", title = "BenchmarkRun", detail = "typed wire object", x = 470, y = 130, width = 180, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Header(id = "header", title = "CONFIG V2", caption = "BenchmarkRun wire object", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Panel(id = "yaml", title = "benchmark.yaml", detail = "Config v2", x = 150, y = 351, width = 405, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "yaml", anchor: "e" }, to = { nodeId: "load", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Panel(id = "load", title = "yaml + load", detail = "expand + validate", x = 690, y = 351, width = 459, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "load", anchor: "e" }, to = { nodeId: "run", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "run", title = "BenchmarkRun", detail = "typed wire object", x = 1284, y = 351, width = 486, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal yaml duration 320
@@ -194,12 +194,12 @@ explainer "Rust Architecture" {
     ]
     caption: "Same binary, new process, protocol on stdio."
     render: @scene {
-      sdk.Header(id = "header", title = "SELF EXECUTE", caption = "spawn current_exe()", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "parent", title = "profile parent", detail = "operator process", x = 70, y = 130, width = 170, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
-      sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "parent", anchor: "e" }, to = { nodeId: "spawn", anchor: "w" }, style = { stroke: "@theme.accent.warning", strokeWidth: 2.2 })
-      sdk.Panel(id = "spawn", title = "spawn child", detail = "current_exe()", x = 290, y = 130, width = 170, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
-      sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "spawn", anchor: "e" }, to = { nodeId: "execute", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "execute", title = "--execute", detail = "stdio JSON", x = 510, y = 130, width = 120, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Header(id = "header", title = "SELF EXECUTE", caption = "spawn current_exe()", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Panel(id = "parent", title = "profile parent", detail = "operator process", x = 204, y = 351, width = 459, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "parent", anchor: "e" }, to = { nodeId: "spawn", anchor: "w" }, style = { stroke: "@theme.accent.warning", strokeWidth: 5.94 })
+      sdk.Panel(id = "spawn", title = "spawn child", detail = "current_exe()", x = 798, y = 351, width = 459, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
+      sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "spawn", anchor: "e" }, to = { nodeId: "execute", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "execute", title = "--execute", detail = "stdio JSON", x = 1392, y = 351, width = 324, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal parent duration 320
@@ -226,12 +226,12 @@ explainer "Rust Architecture" {
     ]
     caption: "Envelope v2 in → terminal envelope out."
     render: @scene {
-      sdk.Header(id = "header", title = "PROTOCOL V2", caption = "Application::handle_v2", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "envelope", title = "Envelope v2", detail = "protocol boundary", x = 90, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "envelope", anchor: "e" }, to = { nodeId: "app", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "app", title = "Application", detail = "stock composition", x = 290, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "app", anchor: "e" }, to = { nodeId: "terminal", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Panel(id = "terminal", title = "terminal", detail = "JSONL out", x = 490, y = 130, width = 120, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
+      sdk.Header(id = "header", title = "PROTOCOL V2", caption = "Application::handle_v2", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Panel(id = "envelope", title = "Envelope v2", detail = "protocol boundary", x = 258, y = 351, width = 405, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "envelope", anchor: "e" }, to = { nodeId: "app", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "app", title = "Application", detail = "stock composition", x = 798, y = 351, width = 405, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "app", anchor: "e" }, to = { nodeId: "terminal", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.Panel(id = "terminal", title = "terminal", detail = "JSONL out", x = 1338, y = 351, width = 324, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal envelope duration 320
@@ -258,18 +258,18 @@ explainer "Rust Architecture" {
     ]
     caption: "Capabilities are frozen before the first request."
     render: @scene {
-      sdk.Header(id = "header", title = "REGISTRY BOOTSTRAP", caption = "frozen capabilities", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "registry", title = "AIPerfRegistry", detail = "transactional build", x = 250, y = 90, width = 200, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "loaders", title = "loaders", detail = "registered", x = 80, y = 220, width = 110, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Panel(id = "samplers", title = "samplers", detail = "registered", x = 220, y = 220, width = 110, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Panel(id = "endpoints", title = "endpoints", detail = "registered", x = 360, y = 220, width = 110, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Header(id = "header", title = "REGISTRY BOOTSTRAP", caption = "frozen capabilities", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Panel(id = "registry", title = "AIPerfRegistry", detail = "transactional build", x = 690, y = 243, width = 540, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "loaders", title = "loaders", detail = "registered", x = 231, y = 594, width = 297, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Panel(id = "samplers", title = "samplers", detail = "registered", x = 609, y = 594, width = 297, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Panel(id = "endpoints", title = "endpoints", detail = "registered", x = 987, y = 594, width = 297, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       sdk.FanOut(id = "registry-fan", from = { nodeId: "registry", anchor: "s" }, to = [
             { nodeId: "loaders", anchor: "n" },
             { nodeId: "samplers", anchor: "n" },
             { nodeId: "endpoints", anchor: "n" },
             { nodeId: "transports", anchor: "n" }
-          ], axis = "y", junction = { x: 350, y: 190 }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2 })
-      sdk.Panel(id = "transports", title = "transports", detail = "registered", x = 500, y = 220, width = 110, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+          ], axis = "y", junction = { x: 350, y: 190 }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 5.4 })
+      sdk.Panel(id = "transports", title = "transports", detail = "registered", x = 1365, y = 594, width = 297, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal registry duration 360
@@ -297,14 +297,14 @@ explainer "Rust Architecture" {
     ]
     caption: "One coordinator owns the whole run lifecycle."
     render: @scene {
-      sdk.Header(id = "header", title = "COORDINATOR", caption = "validate \u2192 prepare \u2192 execute", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "validate", title = "validate", detail = "coordinator", x = 40, y = 130, width = 130, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Edge(id = "a1", mode = "line", from = { x: 170, y: 178 }, to = { x: 200, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "prepare", title = "prepare", detail = "coordinator", x = 200, y = 130, width = 130, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Edge(id = "a2", mode = "line", from = { x: 330, y: 178 }, to = { x: 360, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "execute", title = "execute", detail = "coordinator", x = 360, y = 130, width = 130, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Edge(id = "a3", mode = "line", from = { x: 490, y: 178 }, to = { x: 520, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "persist", title = "persist", detail = "coordinator", x = 520, y = 130, width = 130, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Header(id = "header", title = "COORDINATOR", caption = "validate \u2192 prepare \u2192 execute", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Panel(id = "validate", title = "validate", detail = "coordinator", x = 123, y = 351, width = 351, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a1", mode = "line", from = { x: 170, y: 178 }, to = { x: 200, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "prepare", title = "prepare", detail = "coordinator", x = 555, y = 351, width = 351, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a2", mode = "line", from = { x: 330, y: 178 }, to = { x: 360, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "execute", title = "execute", detail = "coordinator", x = 987, y = 351, width = 351, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "a3", mode = "line", from = { x: 490, y: 178 }, to = { x: 520, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "persist", title = "persist", detail = "coordinator", x = 1419, y = 351, width = 351, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal validate duration 300
@@ -333,11 +333,11 @@ explainer "Rust Architecture" {
     ]
     caption: "Real time online, virtual time in simulation."
     render: @scene {
-      sdk.Header(id = "header", title = "CLOCK SEAM", caption = "RealClock / SimClock", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "real", title = "RealClock", detail = "HTTP / gRPC online", x = 120, y = 130, width = 180, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
-      sdk.Edge(id = "split", mode = "line", from = { x: 300, y: 178 }, to = { x: 400, y: 178 }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Panel(id = "sim", title = "SimClock", detail = "dynosim + graph", x = 400, y = 130, width = 180, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
-      sdk.Label(id = "footer", text = "scheduling, backoff, and measurement all route through Clock", x = 50, y = 280, width = 600, height = 24, fontSize = 13, align = "middle", inkRole = "@theme.ink.secondary")
+      sdk.Header(id = "header", title = "CLOCK SEAM", caption = "RealClock / SimClock", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Panel(id = "real", title = "RealClock", detail = "HTTP / gRPC online", x = 339, y = 351, width = 486, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "split", mode = "line", from = { x: 300, y: 178 }, to = { x: 400, y: 178 }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.Panel(id = "sim", title = "SimClock", detail = "dynosim + graph", x = 1095, y = 351, width = 486, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
+      sdk.Label(id = "footer", text = "scheduling, backoff, and measurement all route through Clock", x = 150, y = 756, width = 1620, height = 64.8, fontSize = 35.1, align = "middle", inkRole = "@theme.ink.secondary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal real duration 340
@@ -363,14 +363,14 @@ explainer "Rust Architecture" {
     ]
     caption: "Inputs become endpoint-ready requests once, then reuse handles."
     render: @scene {
-      sdk.Header(id = "header", title = "DATASET PIPELINE", caption = "load \u2192 sample \u2192 materialize", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "load", title = "load", detail = "dataset", x = 40, y = 130, width = 120, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Edge(id = "a1", mode = "line", from = { x: 160, y: 178 }, to = { x: 190, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "compose", title = "compose", detail = "dataset", x = 190, y = 130, width = 120, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Edge(id = "a2", mode = "line", from = { x: 310, y: 178 }, to = { x: 340, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "sample", title = "sample", detail = "dataset", x = 340, y = 130, width = 120, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Edge(id = "a3", mode = "line", from = { x: 460, y: 178 }, to = { x: 490, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "materialize", title = "materialize", detail = "dataset", x = 490, y = 130, width = 120, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Header(id = "header", title = "DATASET PIPELINE", caption = "load \u2192 sample \u2192 materialize", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Panel(id = "load", title = "load", detail = "dataset", x = 123, y = 351, width = 324, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a1", mode = "line", from = { x: 160, y: 178 }, to = { x: 190, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "compose", title = "compose", detail = "dataset", x = 528, y = 351, width = 324, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a2", mode = "line", from = { x: 310, y: 178 }, to = { x: 340, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "sample", title = "sample", detail = "dataset", x = 933, y = 351, width = 324, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a3", mode = "line", from = { x: 460, y: 178 }, to = { x: 490, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "materialize", title = "materialize", detail = "dataset", x = 1338, y = 351, width = 324, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal load duration 300
@@ -399,12 +399,12 @@ explainer "Rust Architecture" {
     ]
     caption: "Scheduling decides when; transport decides how to send."
     render: @scene {
-      sdk.Header(id = "header", title = "WORKLOAD + PHASES", caption = "scheduled + phase_runtime", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "workload", title = "Workload", detail = "request-rate / graph", x = 80, y = 120, width = 180, height = 110, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
-      sdk.Edge(id = "a1", mode = "line", from = { x: 260, y: 175 }, to = { x: 310, y: 175 }, style = { stroke: "@theme.accent.warning", strokeWidth: 2.2 })
-      sdk.Panel(id = "phase", title = "phase_runtime", detail = "warmup · drain", x = 310, y = 120, width = 180, height = 110, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
-      sdk.Edge(id = "a2", mode = "line", from = { x: 490, y: 175 }, to = { x: 540, y: 175 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "turns", title = "Turns", detail = "dispatch", x = 540, y = 120, width = 90, height = 110, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Header(id = "header", title = "WORKLOAD + PHASES", caption = "scheduled + phase_runtime", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Panel(id = "workload", title = "Workload", detail = "request-rate / graph", x = 231, y = 324, width = 486, height = 297, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a1", mode = "line", from = { x: 260, y: 175 }, to = { x: 310, y: 175 }, style = { stroke: "@theme.accent.warning", strokeWidth: 5.94 })
+      sdk.Panel(id = "phase", title = "phase_runtime", detail = "warmup · drain", x = 852, y = 324, width = 486, height = 297, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
+      sdk.Edge(id = "a2", mode = "line", from = { x: 490, y: 175 }, to = { x: 540, y: 175 }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "turns", title = "Turns", detail = "dispatch", x = 1473, y = 324, width = 243, height = 297, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal workload duration 340
@@ -431,12 +431,12 @@ explainer "Rust Architecture" {
     ]
     caption: "Transport sends; observer measures; sink owns the lifecycle."
     render: @scene {
-      sdk.Header(id = "header", title = "OBSERVER SEAM", caption = "RequestSink + Observer", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "dispatcher", title = "TurnDispatcher", detail = "scheduler side", x = 70, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
-      sdk.Edge(id = "a1", mode = "line", from = { x: 220, y: 178 }, to = { x: 270, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "sink", title = "RequestSink", detail = "transport side", x = 270, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Edge(id = "a2", mode = "line", from = { x: 420, y: 178 }, to = { x: 470, y: 178 }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Panel(id = "observer", title = "RequestObserver", detail = "measurement", x = 470, y = 130, width = 160, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
+      sdk.Header(id = "header", title = "OBSERVER SEAM", caption = "RequestSink + Observer", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Panel(id = "dispatcher", title = "TurnDispatcher", detail = "scheduler side", x = 204, y = 351, width = 405, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a1", mode = "line", from = { x: 220, y: 178 }, to = { x: 270, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "sink", title = "RequestSink", detail = "transport side", x = 744, y = 351, width = 405, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "a2", mode = "line", from = { x: 420, y: 178 }, to = { x: 470, y: 178 }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.Panel(id = "observer", title = "RequestObserver", detail = "measurement", x = 1284, y = 351, width = 432, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal dispatcher duration 320
@@ -463,16 +463,16 @@ explainer "Rust Architecture" {
     ]
     caption: "Scale out by adding worker threads, not shared mutable hot state."
     render: @scene {
-      sdk.Header(id = "header", title = "WORKER MODEL", caption = "thread-per-core sub-cells", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "coord", title = "Coordinator thread", detail = "workers > 1", x = 250, y = 90, width = 200, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
-      sdk.Panel(id = "w0", title = "Worker 0", detail = "sub-cell", x = 120, y = 220, width = 110, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "w1", title = "Worker 1", detail = "sub-cell", x = 290, y = 220, width = 110, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Header(id = "header", title = "WORKER MODEL", caption = "thread-per-core sub-cells", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Panel(id = "coord", title = "Coordinator thread", detail = "workers > 1", x = 690, y = 243, width = 540, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
+      sdk.Panel(id = "w0", title = "Worker 0", detail = "sub-cell", x = 339, y = 594, width = 297, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "w1", title = "Worker 1", detail = "sub-cell", x = 798, y = 594, width = 297, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.FanOut(id = "worker-fan", from = { nodeId: "coord", anchor: "s" }, to = [
             { nodeId: "w0", anchor: "n" },
             { nodeId: "w1", anchor: "n" },
             { nodeId: "w2", anchor: "n" }
-          ], axis = "y", junction = { x: 350, y: 190 }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2 })
-      sdk.Panel(id = "w2", title = "Worker 2", detail = "sub-cell", x = 460, y = 220, width = 110, height = 78, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+          ], axis = "y", junction = { x: 350, y: 190 }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 5.4 })
+      sdk.Panel(id = "w2", title = "Worker 2", detail = "sub-cell", x = 1257, y = 594, width = 297, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal coord duration 340
@@ -499,12 +499,12 @@ explainer "Rust Architecture" {
     ]
     caption: "Same engine, more processes, partitioned ownership."
     render: @scene {
-      sdk.Header(id = "header", title = "CELLULAR MODE", caption = "controller + cells + Velo", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "controller", title = "Controller", detail = "rank 0", x = 70, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
-      sdk.Edge(id = "a1", mode = "line", from = { x: 220, y: 178 }, to = { x: 270, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "velo", title = "Velo", detail = "control plane", x = 270, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Edge(id = "a2", mode = "line", from = { x: 420, y: 178 }, to = { x: 470, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "cells", title = "Cells", detail = "load + results", x = 470, y = 130, width = 160, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Header(id = "header", title = "CELLULAR MODE", caption = "controller + cells + Velo", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Panel(id = "controller", title = "Controller", detail = "rank 0", x = 204, y = 351, width = 405, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
+      sdk.Edge(id = "a1", mode = "line", from = { x: 220, y: 178 }, to = { x: 270, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "velo", title = "Velo", detail = "control plane", x = 744, y = 351, width = 405, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "a2", mode = "line", from = { x: 420, y: 178 }, to = { x: 470, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "cells", title = "Cells", detail = "load + results", x = 1284, y = 351, width = 432, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal controller duration 340
@@ -531,13 +531,13 @@ explainer "Rust Architecture" {
     ]
     caption: "Measure locally, merge once, export many formats."
     render: @scene {
-      sdk.Header(id = "header", title = "METRICS + FEATURES", caption = "native-v2.json + exporters", x = 18, y = 16, width = 664, height = 44)
-      sdk.Panel(id = "workers", title = "Workers", detail = "local metrics", x = 60, y = 130, width = 130, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Edge(id = "a1", mode = "line", from = { x: 190, y: 178 }, to = { x: 240, y: 178 }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Panel(id = "report", title = "native-v2.json", detail = "authoritative", x = 240, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
-      sdk.Edge(id = "a2", mode = "line", from = { x: 390, y: 178 }, to = { x: 440, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "exporters", title = "Exporters", detail = "JSON · CSV · Parquet", x = 440, y = 130, width = 200, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Label(id = "footer", text = "features: grpc · cellular · dynosim · parquet · pyo3-embed", x = 50, y = 280, width = 600, height = 24, fontSize = 13, align = "middle", inkRole = "@theme.ink.secondary")
+      sdk.Header(id = "header", title = "METRICS + FEATURES", caption = "native-v2.json + exporters", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Panel(id = "workers", title = "Workers", detail = "local metrics", x = 177, y = 351, width = 351, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a1", mode = "line", from = { x: 190, y: 178 }, to = { x: 240, y: 178 }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.Panel(id = "report", title = "native-v2.json", detail = "authoritative", x = 663, y = 351, width = 405, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
+      sdk.Edge(id = "a2", mode = "line", from = { x: 390, y: 178 }, to = { x: 440, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Panel(id = "exporters", title = "Exporters", detail = "JSON · CSV · Parquet", x = 1203, y = 351, width = 540, height = 259.2, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Label(id = "footer", text = "features: grpc · cellular · dynosim · parquet · pyo3-embed", x = 150, y = 756, width = 1620, height = 64.8, fontSize = 35.1, align = "middle", inkRole = "@theme.ink.secondary")
       timeline primary {
         at 0 reveal header duration 280
         after header reveal workers duration 320

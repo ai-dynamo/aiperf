@@ -5,19 +5,20 @@
 
 import { Link } from "react-router-dom";
 import {
-  DECK_REGISTRY,
+  DECK_MANIFEST,
   EXPECTED_DECK_ROUTES,
-  deckById,
+  deckManifestById,
 } from "../core/deck-registry";
 import { BrandMark } from "../core/ui";
 
 /**
  * Home index: one card per canonical registry deck (bookmark-stable id/route),
- * titled from DeckPackage hub metadata.
+ * titled from the deck manifest — never compiles a deck's slides/scenes,
+ * those only compile once that deck's own route is visited.
  */
 export function Hub() {
   const decks = EXPECTED_DECK_ROUTES.map(([id, route]) => {
-    const deck = deckById(id) ?? DECK_REGISTRY.find((entry) => entry.route === route);
+    const deck = deckManifestById(id) ?? DECK_MANIFEST.find((entry) => entry.route === route);
     return { id, route, deck };
   });
 
@@ -61,7 +62,7 @@ export function Hub() {
               </span>
               <div className="ex-card__meta">
                 <span>Deck {String(index + 1).padStart(2, "0")}</span>
-                <span>{deck.slides.length} slides</span>
+                <span>{deck.slideCount} slides</span>
               </div>
               <div className="ex-card__title">
                 <span className="ex-card__highlight">{deck.hub.highlight}</span>{" "}

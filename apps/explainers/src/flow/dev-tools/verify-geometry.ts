@@ -48,9 +48,9 @@ export function indexResolvedWorldGeometry(
 
 /** Default SceneRenderer viewport. */
 export const DEFAULT_VIEWPORT = Object.freeze({
-  width: 700,
-  height: 400,
-  margin: 24,
+  width: 1920,
+  height: 1080,
+  margin: 64.8,
 });
 
 /** Snap distance (px) for connector endpoint / dot proximity. */

@@ -18,6 +18,7 @@ import {
   nodeIds,
   normalizeCurveRouteOptions,
   pathEndpointsCoincident,
+  pathHasTravel,
   pathPoints,
   routeCurve,
   timelineDurationMs,
@@ -324,6 +325,38 @@ function fanCardinalityValid(node) {
   return false;
 }
 
+function pointsNear(left, right, tolerance = 0.5) {
+  return (
+    Math.abs(left.x - right.x) <= tolerance &&
+    Math.abs(left.y - right.y) <= tolerance
+  );
+}
+
+/**
+ * Structural sanity check for canonical fan geometry pulled from the resolved
+ * snapshot: a finite junction, at least one branch trajectory, and every
+ * trajectory actually passing through that junction. Mirrors the in-browser
+ * `fanGeometryConnected` in `verify-deck.ts` but reads snapshot `d` strings
+ * instead of recomputing branch points independently.
+ */
+function fanGeometryConnected(fan) {
+  const junction = fan?.junction;
+  if (
+    junction === null ||
+    typeof junction !== "object" ||
+    !Number.isFinite(junction.x) ||
+    !Number.isFinite(junction.y)
+  ) {
+    return false;
+  }
+  const trajectories = Array.isArray(fan?.trajectories) ? fan.trajectories : [];
+  if (trajectories.length === 0) return false;
+  return trajectories.every((trajectory) => {
+    const points = pathPoints(trajectory?.d);
+    return points.length >= 2 && points.some((point) => pointsNear(point, junction));
+  });
+}
+
 function hasFanTraceCue(timeline, fanId) {
   return (timeline ?? []).some(
     (cue) =>
@@ -405,6 +438,9 @@ function verifySceneIr(deck, slideLabel, scene, options, findings) {
     const resolvedConnectors = new Map(
       snapshot.connectors.map((connector) => [connector.id, connector]),
     );
+    const resolvedFans = new Map(
+      (snapshot.fans ?? []).map((fan) => [fan.id, fan]),
+    );
     const nodes = walkNodes(roots).map((node) => {
       const resolved = resolvedNodes.get(node.id);
       return resolved === undefined
@@ -479,6 +515,34 @@ function verifySceneIr(deck, slideLabel, scene, options, findings) {
               `fan "${id}" must be fan-out with one source and at least two destinations, or fan-in with at least two sources and one destination`,
             ),
           );
+        } else {
+          const resolvedFan = resolvedFans.get(id);
+          if (resolvedFan === undefined) {
+            findings.push(
+              finding(
+                "error",
+                deck,
+                slideLabel,
+                "resolved-fan-missing",
+                `fan "${id}" is absent from the canonical resolved snapshot`,
+              ),
+            );
+          } else if (!fanGeometryConnected(resolvedFan)) {
+            findings.push(
+              finding(
+                "error",
+                deck,
+                slideLabel,
+                "fan-disconnected-junction",
+                `fan "${id}" does not resolve to a finite trunk and branches connected at one junction`,
+              ),
+            );
+          } else {
+            for (const trajectory of resolvedFan.trajectories) {
+              pathPolylines.push(pathPoints(trajectory.d));
+            }
+            directedArrowIds.push(id);
+          }
         }
         if (!hasFanTraceCue(timeline, id) && !staggeredBranchMotion) {
           findings.push(
@@ -495,6 +559,13 @@ function verifySceneIr(deck, slideLabel, scene, options, findings) {
       }
 
       if (isArrowLike(node)) {
+        const capability = sceneCapabilityOf(node);
+        // Glyph icons and brace geometry reuse path IR but are not routed edges.
+        const isGlyphPath =
+          capability === "core.path" ||
+          capability === "core.bracket" ||
+          node?.kind === "path" ||
+          node?.kind === "bracket";
         const resolvedConnector = resolvedConnectors.get(id);
         if (
           resolvedConnector === undefined &&
@@ -511,6 +582,9 @@ function verifySceneIr(deck, slideLabel, scene, options, findings) {
           );
           continue;
         }
+        if (isGlyphPath) {
+          continue;
+        }
         const path =
           resolvedConnector?.d ??
           (typeof node.d === "string" && node.d.trim() !== ""
@@ -522,7 +596,9 @@ function verifySceneIr(deck, slideLabel, scene, options, findings) {
           continue;
         }
         const pts = pathPoints(path);
-        if (pts.length < 2 || pathEndpointsCoincident(pts)) {
+        // Self-loops and out-and-back motion strokes deliberately share endpoints
+        // while still covering travel; only zero-travel paths are degenerate.
+        if (pts.length < 2 || (pathEndpointsCoincident(pts) && !pathHasTravel(pts))) {
           findings.push(
             finding(
               "error",

@@ -49,6 +49,13 @@ export type SceneRelativePositionLike = Readonly<{
   dy?: number;
 }>;
 
+/** Provenance for SDK-expanded nodes used by resolution diagnostics. */
+export type SceneSdkOriginLike = Readonly<{
+  componentId: string;
+  instanceId: string;
+  generatedRole: string;
+}>;
+
 /** Structural scene node independent of React and renderer state. */
 export type SceneNodeLike = Readonly<{
   id: string;
@@ -73,6 +80,7 @@ export type SceneNodeLike = Readonly<{
   axis?: string;
   junction?: ScenePointLike;
   edgeRef?: string;
+  sdkOrigin?: SceneSdkOriginLike;
 }>;
 
 /** Minimal timeline cue authored for a scene. */

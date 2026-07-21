@@ -252,7 +252,7 @@ describe("SceneRenderer SDK foundations", () => {
               // a narrower width would now legitimately wrap across
               // multiple <tspan>s per the wrap-respecting layout fix, and
               // exact-string textContent equality wouldn't hold post-wrap).
-              geometry: { x: 8, y: 8, width: 260, height: 22 },
+              geometry: { x: 8, y: 8, width: 702, height: 22 },
               text: "Authored compatibility title",
             },
           ],
@@ -677,7 +677,9 @@ describe("SceneRenderer SDK foundations", () => {
     expect(textByContent("source")?.getAttribute("font-size")).toBe("10.35");
     expect(textByContent("Authored")?.getAttribute("font-size")).toBe("18");
     expect(textByContent("Authored")?.style.fontSize).toBe("18px");
-    expect(textByContent("Default")?.getAttribute("font-size")).toBe("12.6");
+    expect(textByContent("Default")?.getAttribute("font-size")).toBe(
+      "34.019999999999996",
+    );
   });
 
   it("renders intrinsically sized semantic stepper labels", () => {
@@ -768,7 +770,7 @@ describe("SceneRenderer SDK foundations", () => {
 
     const longWidth = Math.max(
       84,
-      estimateTextWidth("authoritative", 11, "bold") + 24,
+      estimateTextWidth("authoritative", 11, "bold") + 64.8,
     );
     const chips = container.querySelectorAll(
       '[data-flow-semantic-chrome="core.chip"]',
@@ -914,7 +916,7 @@ describe("SceneRenderer SDK foundations", () => {
       const path = container.querySelector(
         '[data-flow-node-id="conn"] path[data-flow-arrowhead]',
       );
-      expect(path?.getAttribute("stroke-dasharray")).toBe("6 5");
+      expect(path?.getAttribute("stroke-dasharray")).toBe("16.2 13.5");
       expect(path?.getAttribute("stroke-dashoffset")).toBeNull();
       expect(path?.getAttribute("pathLength")).toBeNull();
     });
@@ -1255,9 +1257,9 @@ describe("SceneRenderer SDK foundations", () => {
       const [, , visibleWidth, visibleHeight] = viewBox
         .split(/\s+/)
         .map(Number);
-      // Fully zoomed (zoom = 4): 700/4 = 175, 400/4 = 100.
-      expect(visibleWidth).toBeCloseTo(175, 0);
-      expect(visibleHeight).toBeCloseTo(100, 0);
+      // Fully zoomed (zoom = 4): 1920/4 = 480, 1080/4 = 270.
+      expect(visibleWidth).toBeCloseTo(480, 0);
+      expect(visibleHeight).toBeCloseTo(270, 0);
     });
 
     it("inserts an off-trajectory junction into the polyline instead of dropping the ball split", () => {

@@ -216,6 +216,14 @@ function intersects(a: SceneGeometryLike, b: SceneGeometryLike): boolean {
   );
 }
 
+/**
+ * Equal-fill managed layouts (e.g. rating stars dividing a container's exact
+ * width) place their last child's far edge at a sum of floating-point
+ * additions that lands within ~1e-10 of the container edge, not exactly on
+ * it. Tolerate that noise so it isn't reported as a genuine overflow.
+ */
+const OVERFLOW_EPSILON = 0.01;
+
 function managedDiagnostics(
   node: SceneNodeLike,
   children: readonly SceneNodeLike[],
@@ -229,10 +237,12 @@ function managedDiagnostics(
     .filter(
       ({ geometry, child }) =>
         !isAbsolute(child!) &&
-        (geometry.x < contentBounds.x ||
-          geometry.y < contentBounds.y ||
-          geometry.x + geometry.width > contentBounds.x + contentBounds.width ||
-          geometry.y + geometry.height > contentBounds.y + contentBounds.height),
+        (geometry.x < contentBounds.x - OVERFLOW_EPSILON ||
+          geometry.y < contentBounds.y - OVERFLOW_EPSILON ||
+          geometry.x + geometry.width >
+            contentBounds.x + contentBounds.width + OVERFLOW_EPSILON ||
+          geometry.y + geometry.height >
+            contentBounds.y + contentBounds.height + OVERFLOW_EPSILON),
     )
     .map(({ child }) => child?.id)
     .filter((id): id is string => id !== undefined);

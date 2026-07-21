@@ -59,8 +59,8 @@ export const tokens = {
     box: 0,
   },
   diagram: {
-    strokeWidth: 1.6,
-    dashed: "6 5",
+    strokeWidth: 4.32,
+    dashed: "16.2 13.5",
   },
 } as const;
 

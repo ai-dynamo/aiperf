@@ -79,11 +79,12 @@ export type SceneRendererProps = Readonly<{
   playbackRate?: number;
 }>;
 
-const VIEWPORT_WIDTH = 700;
-const VIEWPORT_HEIGHT = 400;
+/** 16:9 default canvas; scales exactly 2x to a 3840x2160 4K export. */
+const VIEWPORT_WIDTH = 1920;
+const VIEWPORT_HEIGHT = 1080;
 const DEFAULT_ARROW_STROKE_WIDTH: number = tokens.diagram.strokeWidth;
 const SVG_NS = "http://www.w3.org/2000/svg";
-const DEFAULT_DOT_RADIUS = 5;
+const DEFAULT_DOT_RADIUS = 13.5;
 const PULSE_CYCLE_MS = 2200;
 const PULSE_DELAY_MS = 800;
 /** SMIL loop pace for idle motion dots — matched to typical edge-draw speed. */
@@ -682,7 +683,7 @@ function motionSignalPathData(
 }
 
 /** Minimum clear gap between boxes to treat as a connector corridor. */
-const MOTION_BOUNDARY_GAP_MIN = 8;
+const MOTION_BOUNDARY_GAP_MIN = 21.6;
 
 function boxGeometriesForMotion(
   index: SceneNodeIndex,

@@ -32,15 +32,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Connect intent, not generated geometry."
 
     render: @scene {
-      sdk.Header(id = "header", title = "NODE GRAMMAR + SEMANTIC PORTS", caption = "One labeled grammar; category ports preserve meaning.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Client(id = "source", title = "Author", detail = "component props", x = 40, y = 135, width = 140, height = 82, strokeRole = theme(accent.secondary))
-      sdk.Service(id = "hero", title = "SDK node", detail = "stable instance id", x = 280, y = 120, width = 160, height = 110, strokeRole = theme(accent.green))
-      sdk.Database(id = "sink", title = "Scene IR", detail = "validated output", x = 520, y = 135, width = 140, height = 82, strokeRole = theme(accent.tertiary))
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.write"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Endpoint(id = "variant-1", title = "input", detail = "semantic ref", x = 70, y = 285, width = 140, height = 72)
-      sdk.Queue(id = "variant-2", title = "producer", detail = "category port", x = 280, y = 285, width = 140, height = 72)
-      sdk.Decision(id = "variant-3", title = "branch.yes", detail = "named outcome", x = 490, y = 280, width = 140, height = 68, branches = ["yes", "no"])
+      sdk.Header(id = "header", title = "NODE GRAMMAR + SEMANTIC PORTS", caption = "One labeled grammar; category ports preserve meaning.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Client(id = "source", title = "Author", detail = "component props", x = 123, y = 364.5, width = 378, height = 221.4, strokeRole = theme(accent.secondary))
+      sdk.Service(id = "hero", title = "SDK node", detail = "stable instance id", x = 771, y = 324, width = 432, height = 297, strokeRole = theme(accent.green))
+      sdk.Database(id = "sink", title = "Scene IR", detail = "validated output", x = 1419, y = 364.5, width = 378, height = 221.4, strokeRole = theme(accent.tertiary))
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.write"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Endpoint(id = "variant-1", title = "input", detail = "semantic ref", x = 204, y = 769.5, width = 378, height = 194.4)
+      sdk.Queue(id = "variant-2", title = "producer", detail = "category port", x = 771, y = 769.5, width = 378, height = 194.4)
+      sdk.Decision(id = "variant-3", title = "branch.yes", detail = "named outcome", x = 1338, y = 756, width = 378, height = 183.6, branches = ["yes", "no"])
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -65,11 +65,11 @@ explainer "SDK Diagram Catalog" {
     caption: "9 primitives · focused examples follow."
 
     render: @scene {
-      sdk.Header(id = "header", title = "ACTORS AND COMPUTE", caption = "Chapter 1 · 9 focused primitives", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.User(id = "preview-user", title = "Run owner", detail = "starts a measured run", x = 80, y = 175, width = 140, height = 76, strokeRole = theme(ink.secondary))
-      sdk.Service(id = "preview-service", title = "Inference API", detail = "owns request behavior", x = 285, y = 175, width = 140, height = 76, strokeRole = theme(accent.green))
-      sdk.Cloud(id = "preview-cloud", title = "Remote region", detail = "hosts distributed cells", x = 490, y = 175, width = 140, height = 76, strokeRole = theme(ink.secondary))
-      sdk.Label(id = "chapter-note", text = "actors and compute · one semantic role at a time", x = 100, y = 300, width = 500, height = 24, fontSize = 12, align = "middle")
+      sdk.Header(id = "header", title = "ACTORS AND COMPUTE", caption = "Chapter 1 · 9 focused primitives", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.User(id = "preview-user", title = "Run owner", detail = "starts a measured run", x = 231, y = 472.5, width = 378, height = 205.2, strokeRole = theme(ink.secondary))
+      sdk.Service(id = "preview-service", title = "Inference API", detail = "owns request behavior", x = 784.5, y = 472.5, width = 378, height = 205.2, strokeRole = theme(accent.green))
+      sdk.Cloud(id = "preview-cloud", title = "Remote region", detail = "hosts distributed cells", x = 1338, y = 472.5, width = 378, height = 205.2, strokeRole = theme(ink.secondary))
+      sdk.Label(id = "chapter-note", text = "actors and compute · one semantic role at a time", x = 285, y = 810, width = 1350, height = 64.8, fontSize = 32.4, align = "middle")
       timeline main {
         at 0 reveal header duration 180
         after header reveal preview-service duration 240
@@ -83,7 +83,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "ACTORS AND COMPUTE · SDK.USER"
     title: "User: Run owner"
     lede: "Starts a measured run. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The User hero is followed by Analyst, SRE, and Researcher variants."
+    narration: "User names 'Run owner'; Analyst, SRE, and Researcher show related examples."
     points: [
       "Run owner anchors the primary user example.",
       "The surrounding nodes clarify who owns work before and after this compute role."
@@ -91,15 +91,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Actors establish ownership before infrastructure begins."
 
     render: @scene {
-      sdk.Header(id = "header", title = "USER", caption = "Actors establish ownership before infrastructure begins.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Client(id = "source", title = "Workbench", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.User(id = "hero", title = "Run owner", detail = "starts a measured run", x = 265, y = 112, width = 180, height = 110, strokeRole = theme(accent.green))
-      sdk.Service(id = "sink", title = "Profile API", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.User(id = "variant-1", title = "Analyst", detail = "owns analysis", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
-      sdk.User(id = "variant-2", title = "SRE", detail = "guards production", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.User(id = "variant-3", title = "Researcher", detail = "explores models", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "USER", caption = "Actors establish ownership before infrastructure begins.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Client(id = "source", title = "Workbench", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.User(id = "hero", title = "Run owner", detail = "starts a measured run", x = 730.5, y = 302.4, width = 486, height = 297, strokeRole = theme(accent.green))
+      sdk.Service(id = "sink", title = "Profile API", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.User(id = "variant-1", title = "Analyst", detail = "owns analysis", x = 171.6, y = 810, width = 383.4, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.User(id = "variant-2", title = "SRE", detail = "guards production", x = 768.3, y = 750.6, width = 410.4, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.User(id = "variant-3", title = "Researcher", detail = "explores models", x = 1378.5, y = 810, width = 369.9, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -115,7 +115,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "ACTORS AND COMPUTE · SDK.CLIENT"
     title: "Client: Load client"
     lede: "Authors benchmark requests. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Client hero is followed by CLI, Runner, and Notebook variants."
+    narration: "Client names 'Load client'; CLI, Runner, and Notebook show related examples."
     points: [
       "Load client anchors the primary client example.",
       "The surrounding nodes clarify who owns work before and after this compute role."
@@ -123,15 +123,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Clients initiate work at the system edge."
 
     render: @scene {
-      sdk.Header(id = "header", title = "CLIENT", caption = "Clients initiate work at the system edge.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.User(id = "source", title = "Benchmark owner", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.Client(id = "hero", title = "Load client", detail = "authors benchmark requests", x = 265, y = 112, width = 180, height = 110, strokeRole = theme(accent.green))
-      sdk.Gateway(id = "sink", title = "Ingress", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Client(id = "variant-1", title = "CLI", detail = "interactive authoring", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Client(id = "variant-2", title = "Runner", detail = "scheduled execution", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Client(id = "variant-3", title = "Notebook", detail = "exploratory session", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "CLIENT", caption = "Clients initiate work at the system edge.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.User(id = "source", title = "Benchmark owner", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Client(id = "hero", title = "Load client", detail = "authors benchmark requests", x = 730.5, y = 302.4, width = 486, height = 297, strokeRole = theme(accent.green))
+      sdk.Gateway(id = "sink", title = "Ingress", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Client(id = "variant-1", title = "CLI", detail = "interactive authoring", x = 171.6, y = 810, width = 383.4, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Client(id = "variant-2", title = "Runner", detail = "scheduled execution", x = 768.3, y = 750.6, width = 410.4, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Client(id = "variant-3", title = "Notebook", detail = "exploratory session", x = 1378.5, y = 810, width = 369.9, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -147,7 +147,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "ACTORS AND COMPUTE · SDK.SERVICE"
     title: "Service: Inference API"
     lede: "Owns request behavior. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Service hero is followed by Chat, Embed, and Rank variants."
+    narration: "Service names 'Inference API'; Chat, Embed, and Rank show related examples."
     points: [
       "Inference API anchors the primary service example.",
       "The surrounding nodes clarify who owns work before and after this compute role."
@@ -155,15 +155,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Services name capabilities rather than machines."
 
     render: @scene {
-      sdk.Header(id = "header", title = "SERVICE", caption = "Services name capabilities rather than machines.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Client(id = "source", title = "Load generator", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.Service(id = "hero", title = "Inference API", detail = "owns request behavior", x = 265, y = 112, width = 180, height = 110, strokeRole = theme(accent.green))
-      sdk.Database(id = "sink", title = "Model metadata", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Service(id = "variant-1", title = "Chat", detail = "streaming generation", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Service(id = "variant-2", title = "Embed", detail = "vector encoding", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Service(id = "variant-3", title = "Rank", detail = "candidate ordering", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "SERVICE", caption = "Services name capabilities rather than machines.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Client(id = "source", title = "Load generator", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Service(id = "hero", title = "Inference API", detail = "owns request behavior", x = 730.5, y = 302.4, width = 486, height = 297, strokeRole = theme(accent.green))
+      sdk.Database(id = "sink", title = "Model metadata", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Service(id = "variant-1", title = "Chat", detail = "streaming generation", x = 171.6, y = 810, width = 383.4, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Service(id = "variant-2", title = "Embed", detail = "vector encoding", x = 768.3, y = 750.6, width = 410.4, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Service(id = "variant-3", title = "Rank", detail = "candidate ordering", x = 1378.5, y = 810, width = 369.9, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -179,7 +179,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "ACTORS AND COMPUTE · SDK.SERVER"
     title: "Server: GPU server"
     lede: "Serves model traffic. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Server hero is followed by H100-0, H100-1, and CPU fallback variants."
+    narration: "Server names 'GPU server'; H100-0, H100-1, and CPU fallback show related examples."
     points: [
       "GPU server anchors the primary server example.",
       "The surrounding nodes clarify who owns work before and after this compute role."
@@ -187,15 +187,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Servers make deployment units explicit."
 
     render: @scene {
-      sdk.Header(id = "header", title = "SERVER", caption = "Servers make deployment units explicit.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.LoadBalancer(id = "source", title = "Traffic split", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.Server(id = "hero", title = "GPU server", detail = "serves model traffic", x = 265, y = 112, width = 180, height = 110, strokeRole = theme(accent.green))
-      sdk.Database(id = "sink", title = "Weights", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Server(id = "variant-1", title = "H100-0", detail = "serving traffic", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Server(id = "variant-2", title = "H100-1", detail = "warming weights", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Server(id = "variant-3", title = "CPU fallback", detail = "reduced capacity", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "SERVER", caption = "Servers make deployment units explicit.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.LoadBalancer(id = "source", title = "Traffic split", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Server(id = "hero", title = "GPU server", detail = "serves model traffic", x = 730.5, y = 302.4, width = 486, height = 297, strokeRole = theme(accent.green))
+      sdk.Database(id = "sink", title = "Weights", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Server(id = "variant-1", title = "H100-0", detail = "serving traffic", x = 171.6, y = 810, width = 383.4, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Server(id = "variant-2", title = "H100-1", detail = "warming weights", x = 768.3, y = 750.6, width = 410.4, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Server(id = "variant-3", title = "CPU fallback", detail = "reduced capacity", x = 1378.5, y = 810, width = 369.9, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -211,7 +211,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "ACTORS AND COMPUTE · SDK.PROCESS"
     title: "Process: aiperf --execute"
     lede: "Isolates one run. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Process hero is followed by Controller, Cell, and Sidecar variants."
+    narration: "Process names 'aiperf --execute'; Controller, Cell, and Sidecar show related examples."
     points: [
       "aiperf --execute anchors the primary process example.",
       "The surrounding nodes clarify who owns work before and after this compute role."
@@ -219,15 +219,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Processes show operating-system isolation."
 
     render: @scene {
-      sdk.Header(id = "header", title = "PROCESS", caption = "Processes show operating-system isolation.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Client(id = "source", title = "Profile parent", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.Process(id = "hero", title = "aiperf --execute", detail = "isolates one run", x = 265, y = 112, width = 180, height = 110, strokeRole = theme(accent.green))
-      sdk.Worker(id = "sink", title = "Local worker", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Process(id = "variant-1", title = "Controller", detail = "coordinates cells", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Process(id = "variant-2", title = "Cell", detail = "dispatches load", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Process(id = "variant-3", title = "Sidecar", detail = "exports results", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "PROCESS", caption = "Processes show operating-system isolation.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Client(id = "source", title = "Profile parent", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Process(id = "hero", title = "aiperf --execute", detail = "isolates one run", x = 730.5, y = 302.4, width = 486, height = 297, strokeRole = theme(accent.green))
+      sdk.Worker(id = "sink", title = "Local worker", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Process(id = "variant-1", title = "Controller", detail = "coordinates cells", x = 171.6, y = 810, width = 383.4, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Process(id = "variant-2", title = "Cell", detail = "dispatches load", x = 768.3, y = 750.6, width = 410.4, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Process(id = "variant-3", title = "Sidecar", detail = "exports results", x = 1378.5, y = 810, width = 369.9, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -243,7 +243,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "ACTORS AND COMPUTE · SDK.WORKER"
     title: "Worker: Worker 03"
     lede: "Owns a local sink. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Worker hero is followed by Active, Draining, and Idle variants."
+    narration: "Worker names 'Worker 03'; Active, Draining, and Idle show related examples."
     points: [
       "Worker 03 anchors the primary worker example.",
       "The surrounding nodes clarify who owns work before and after this compute role."
@@ -251,15 +251,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Workers communicate concurrency and local ownership."
 
     render: @scene {
-      sdk.Header(id = "header", title = "WORKER", caption = "Workers communicate concurrency and local ownership.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Queue(id = "source", title = "Ready turns", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.Worker(id = "hero", title = "Worker 03", detail = "owns a local sink", x = 265, y = 112, width = 180, height = 110, strokeRole = theme(accent.green))
-      sdk.Endpoint(id = "sink", title = "Model route", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Worker(id = "variant-1", title = "Active", detail = "accepting turns", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Worker(id = "variant-2", title = "Draining", detail = "finishing in-flight", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Worker(id = "variant-3", title = "Idle", detail = "awaiting work", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "WORKER", caption = "Workers communicate concurrency and local ownership.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Queue(id = "source", title = "Ready turns", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Worker(id = "hero", title = "Worker 03", detail = "owns a local sink", x = 730.5, y = 302.4, width = 486, height = 297, strokeRole = theme(accent.green))
+      sdk.Endpoint(id = "sink", title = "Model route", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Worker(id = "variant-1", title = "Active", detail = "accepting turns", x = 171.6, y = 810, width = 383.4, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Worker(id = "variant-2", title = "Draining", detail = "finishing in-flight", x = 768.3, y = 750.6, width = 410.4, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Worker(id = "variant-3", title = "Idle", detail = "awaiting work", x = 1378.5, y = 810, width = 369.9, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -275,7 +275,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "ACTORS AND COMPUTE · SDK.FUNCTION"
     title: "Function: Reduce response"
     lede: "Classifies token events. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Function hero is followed by Parse, Measure, and Fold variants."
+    narration: "Function names 'Reduce response'; Parse, Measure, and Fold show related examples."
     points: [
       "Reduce response anchors the primary function example.",
       "The surrounding nodes clarify who owns work before and after this compute role."
@@ -283,15 +283,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Functions show bounded transformations inside a flow."
 
     render: @scene {
-      sdk.Header(id = "header", title = "FUNCTION", caption = "Functions show bounded transformations inside a flow.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Stream(id = "source", title = "SSE records", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.Function(id = "hero", title = "Reduce response", detail = "classifies token events", x = 265, y = 112, width = 180, height = 110, strokeRole = theme(accent.green))
-      sdk.DataStore(id = "sink", title = "Measurements", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Function(id = "variant-1", title = "Parse", detail = "decodes frames", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Function(id = "variant-2", title = "Measure", detail = "records timings", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Function(id = "variant-3", title = "Fold", detail = "merges metrics", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "FUNCTION", caption = "Functions show bounded transformations inside a flow.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Stream(id = "source", title = "SSE records", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Function(id = "hero", title = "Reduce response", detail = "classifies token events", x = 730.5, y = 302.4, width = 486, height = 297, strokeRole = theme(accent.green))
+      sdk.DataStore(id = "sink", title = "Measurements", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Function(id = "variant-1", title = "Parse", detail = "decodes frames", x = 171.6, y = 810, width = 383.4, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Function(id = "variant-2", title = "Measure", detail = "records timings", x = 768.3, y = 750.6, width = 410.4, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Function(id = "variant-3", title = "Fold", detail = "merges metrics", x = 1378.5, y = 810, width = 369.9, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -307,7 +307,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "ACTORS AND COMPUTE · SDK.CONTAINER"
     title: "Container: Runtime image"
     lede: "Packages the executor. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Container hero is followed by CLI image, Cell image, and Mock image variants."
+    narration: "Container names 'Runtime image'; CLI image, Cell image, and Mock image show related examples."
     points: [
       "Runtime image anchors the primary container example.",
       "The surrounding nodes clarify who owns work before and after this compute role."
@@ -315,15 +315,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Containers communicate packaging boundaries."
 
     render: @scene {
-      sdk.Header(id = "header", title = "CONTAINER", caption = "Containers communicate packaging boundaries.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Volume(id = "source", title = "Config mount", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.Container(id = "hero", title = "Runtime image", detail = "packages the executor", x = 265, y = 112, width = 180, height = 110, strokeRole = theme(accent.green))
-      sdk.Service(id = "sink", title = "aiperf", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Container(id = "variant-1", title = "CLI image", detail = "minimal runtime", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Container(id = "variant-2", title = "Cell image", detail = "cell deployment", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Container(id = "variant-3", title = "Mock image", detail = "deterministic target", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "CONTAINER", caption = "Containers communicate packaging boundaries.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Volume(id = "source", title = "Config mount", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Container(id = "hero", title = "Runtime image", detail = "packages the executor", x = 730.5, y = 302.4, width = 486, height = 297, strokeRole = theme(accent.green))
+      sdk.Service(id = "sink", title = "aiperf", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Container(id = "variant-1", title = "CLI image", detail = "minimal runtime", x = 171.6, y = 810, width = 383.4, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Container(id = "variant-2", title = "Cell image", detail = "cell deployment", x = 768.3, y = 750.6, width = 410.4, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Container(id = "variant-3", title = "Mock image", detail = "deterministic target", x = 1378.5, y = 810, width = 369.9, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -339,7 +339,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "ACTORS AND COMPUTE · SDK.CLOUD"
     title: "Cloud: Remote region"
     lede: "Hosts distributed cells. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Cloud hero is followed by us-west, us-east, and on-prem variants."
+    narration: "Cloud names 'Remote region'; us-west, us-east, and on-prem show related examples."
     points: [
       "Remote region anchors the primary cloud example.",
       "The surrounding nodes clarify who owns work before and after this compute role."
@@ -347,15 +347,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Cloud marks remote infrastructure without hiding roles."
 
     render: @scene {
-      sdk.Header(id = "header", title = "CLOUD", caption = "Cloud marks remote infrastructure without hiding roles.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Gateway(id = "source", title = "WAN ingress", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.Cloud(id = "hero", title = "Remote region", detail = "hosts distributed cells", x = 265, y = 112, width = 180, height = 110, strokeRole = theme(accent.green))
-      sdk.Cluster(id = "sink", title = "Cell fleet", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Cloud(id = "variant-1", title = "us-west", detail = "primary region", x = 58, y = 300, width = 142, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Cloud(id = "variant-2", title = "us-east", detail = "replica region", x = 279, y = 278, width = 152, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Cloud(id = "variant-3", title = "on-prem", detail = "hybrid capacity", x = 505, y = 300, width = 137, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "CLOUD", caption = "Cloud marks remote infrastructure without hiding roles.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Gateway(id = "source", title = "WAN ingress", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Cloud(id = "hero", title = "Remote region", detail = "hosts distributed cells", x = 730.5, y = 302.4, width = 486, height = 297, strokeRole = theme(accent.green))
+      sdk.Cluster(id = "sink", title = "Cell fleet", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Cloud(id = "variant-1", title = "us-west", detail = "primary region", x = 171.6, y = 810, width = 383.4, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Cloud(id = "variant-2", title = "us-east", detail = "replica region", x = 768.3, y = 750.6, width = 410.4, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Cloud(id = "variant-3", title = "on-prem", detail = "hybrid capacity", x = 1378.5, y = 810, width = 369.9, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -379,11 +379,11 @@ explainer "SDK Diagram Catalog" {
     caption: "6 primitives · focused examples follow."
 
     render: @scene {
-      sdk.Header(id = "header", title = "STORAGE", caption = "Chapter 2 · 6 focused primitives", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Database(id = "preview-database", title = "Results DB", detail = "stores benchmark summaries", x = 80, y = 175, width = 140, height = 76, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.Cache(id = "preview-cache", title = "Prompt cache", detail = "reuses warm prefixes", x = 285, y = 175, width = 140, height = 76, strokeRole = theme(accent.green))
-      sdk.ObjectStore(id = "preview-objectStore", title = "Artifact bucket", detail = "retains large outputs", x = 490, y = 175, width = 140, height = 76, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.Label(id = "chapter-note", text = "storage · one semantic role at a time", x = 100, y = 300, width = 500, height = 24, fontSize = 12, align = "middle")
+      sdk.Header(id = "header", title = "STORAGE", caption = "Chapter 2 · 6 focused primitives", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Database(id = "preview-database", title = "Results DB", detail = "stores benchmark summaries", x = 231, y = 472.5, width = 378, height = 205.2, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.Cache(id = "preview-cache", title = "Prompt cache", detail = "reuses warm prefixes", x = 784.5, y = 472.5, width = 378, height = 205.2, strokeRole = theme(accent.green))
+      sdk.ObjectStore(id = "preview-objectStore", title = "Artifact bucket", detail = "retains large outputs", x = 1338, y = 472.5, width = 378, height = 205.2, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.Label(id = "chapter-note", text = "storage · one semantic role at a time", x = 285, y = 810, width = 1350, height = 64.8, fontSize = 32.4, align = "middle")
       timeline main {
         at 0 reveal header duration 180
         after header reveal preview-cache duration 240
@@ -397,7 +397,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "STORAGE · SDK.DATABASE"
     title: "Database: Results DB"
     lede: "Stores benchmark summaries. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Database hero is followed by Runs, Traces, and Index variants."
+    narration: "Database names 'Results DB'; Runs, Traces, and Index show related examples."
     points: [
       "Results DB anchors the primary database example.",
       "The left path writes into storage; the right path reads stored state back out."
@@ -405,15 +405,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Read and write ports preserve storage direction."
 
     render: @scene {
-      sdk.Header(id = "header", title = "DATABASE", caption = "Read and write ports preserve storage direction.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Service(id = "source", title = "Reporter", detail = "writer", x = 55, y = 125, width = 140, height = 72)
-      sdk.Database(id = "hero", title = "Results DB", detail = "stores benchmark summaries", x = 275, y = 105, width = 170, height = 110, strokeRole = theme(accent.green))
-      sdk.Client(id = "sink", title = "Dashboard", detail = "reader", x = 515, y = 145, width = 140, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Database(id = "variant-1", title = "Runs", detail = "relational summaries", x = 72, y = 286, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.Database(id = "variant-2", title = "Traces", detail = "append-only events", x = 270, y = 306, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
-      sdk.Database(id = "variant-3", title = "Index", detail = "search metadata", x = 468, y = 286, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "DATABASE", caption = "Read and write ports preserve storage direction.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Service(id = "source", title = "Reporter", detail = "writer", x = 163.5, y = 337.5, width = 378, height = 194.4)
+      sdk.Database(id = "hero", title = "Results DB", detail = "stores benchmark summaries", x = 757.5, y = 283.5, width = 459, height = 297, strokeRole = theme(accent.green))
+      sdk.Client(id = "sink", title = "Dashboard", detail = "reader", x = 1405.5, y = 391.5, width = 378, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Database(id = "variant-1", title = "Runs", detail = "relational summaries", x = 209.4, y = 772.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.Database(id = "variant-2", title = "Traces", detail = "append-only events", x = 744, y = 826.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
+      sdk.Database(id = "variant-3", title = "Index", detail = "search metadata", x = 1278.6, y = 772.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -431,7 +431,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "STORAGE · SDK.DATASTORE"
     title: "DataStore: Metric store"
     lede: "Holds folded observations. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The DataStore hero is followed by Exact, Sketch, and Window variants."
+    narration: "DataStore names 'Metric store'; Exact, Sketch, and Window show related examples."
     points: [
       "Metric store anchors the primary dataStore example.",
       "The left path writes into storage; the right path reads stored state back out."
@@ -439,15 +439,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Data stores describe logical persistence."
 
     render: @scene {
-      sdk.Header(id = "header", title = "DATASTORE", caption = "Data stores describe logical persistence.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Worker(id = "source", title = "Metric fold", detail = "writer", x = 55, y = 125, width = 140, height = 72)
-      sdk.DataStore(id = "hero", title = "Metric store", detail = "holds folded observations", x = 275, y = 105, width = 170, height = 110, strokeRole = theme(accent.green))
-      sdk.Service(id = "sink", title = "Report builder", detail = "reader", x = 515, y = 145, width = 140, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.DataStore(id = "variant-1", title = "Exact", detail = "per-request records", x = 72, y = 286, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.DataStore(id = "variant-2", title = "Sketch", detail = "mergeable digest", x = 270, y = 306, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
-      sdk.DataStore(id = "variant-3", title = "Window", detail = "steady-state slice", x = 468, y = 286, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "DATASTORE", caption = "Data stores describe logical persistence.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Worker(id = "source", title = "Metric fold", detail = "writer", x = 163.5, y = 337.5, width = 378, height = 194.4)
+      sdk.DataStore(id = "hero", title = "Metric store", detail = "holds folded observations", x = 757.5, y = 283.5, width = 459, height = 297, strokeRole = theme(accent.green))
+      sdk.Service(id = "sink", title = "Report builder", detail = "reader", x = 1405.5, y = 391.5, width = 378, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.DataStore(id = "variant-1", title = "Exact", detail = "per-request records", x = 209.4, y = 772.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.DataStore(id = "variant-2", title = "Sketch", detail = "mergeable digest", x = 744, y = 826.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
+      sdk.DataStore(id = "variant-3", title = "Window", detail = "steady-state slice", x = 1278.6, y = 772.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -465,7 +465,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "STORAGE · SDK.CACHE"
     title: "Cache: Prompt cache"
     lede: "Reuses warm prefixes. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Cache hero is followed by Hot, Warm, and Cold variants."
+    narration: "Cache names 'Prompt cache'; Hot, Warm, and Cold show related examples."
     points: [
       "Prompt cache anchors the primary cache example.",
       "The left path writes into storage; the right path reads stored state back out."
@@ -473,15 +473,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Caches expose reuse and latency-sensitive state."
 
     render: @scene {
-      sdk.Header(id = "header", title = "CACHE", caption = "Caches expose reuse and latency-sensitive state.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Service(id = "source", title = "Tokenizer", detail = "writer", x = 55, y = 125, width = 140, height = 72)
-      sdk.Cache(id = "hero", title = "Prompt cache", detail = "reuses warm prefixes", x = 275, y = 105, width = 170, height = 110, strokeRole = theme(accent.green))
-      sdk.Worker(id = "sink", title = "Request builder", detail = "reader", x = 515, y = 145, width = 140, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Cache(id = "variant-1", title = "Hot", detail = "resident prefix", x = 72, y = 286, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.Cache(id = "variant-2", title = "Warm", detail = "shared prefix", x = 270, y = 306, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
-      sdk.Cache(id = "variant-3", title = "Cold", detail = "cache miss", x = 468, y = 286, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "CACHE", caption = "Caches expose reuse and latency-sensitive state.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Service(id = "source", title = "Tokenizer", detail = "writer", x = 163.5, y = 337.5, width = 378, height = 194.4)
+      sdk.Cache(id = "hero", title = "Prompt cache", detail = "reuses warm prefixes", x = 757.5, y = 283.5, width = 459, height = 297, strokeRole = theme(accent.green))
+      sdk.Worker(id = "sink", title = "Request builder", detail = "reader", x = 1405.5, y = 391.5, width = 378, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Cache(id = "variant-1", title = "Hot", detail = "resident prefix", x = 209.4, y = 772.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.Cache(id = "variant-2", title = "Warm", detail = "shared prefix", x = 744, y = 826.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
+      sdk.Cache(id = "variant-3", title = "Cold", detail = "cache miss", x = 1278.6, y = 772.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -499,7 +499,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "STORAGE · SDK.FILE"
     title: "File: config.yaml"
     lede: "Captures authored intent. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The File hero is followed by Config, Trace, and Report variants."
+    narration: "File names 'config.yaml'; Config, Trace, and Report show related examples."
     points: [
       "config.yaml anchors the primary file example.",
       "The left path writes into storage; the right path reads stored state back out."
@@ -507,15 +507,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Files represent discrete lifecycle artifacts."
 
     render: @scene {
-      sdk.Header(id = "header", title = "FILE", caption = "Files represent discrete lifecycle artifacts.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.User(id = "source", title = "Author", detail = "writer", x = 55, y = 125, width = 140, height = 72)
-      sdk.File(id = "hero", title = "config.yaml", detail = "captures authored intent", x = 275, y = 105, width = 170, height = 110, strokeRole = theme(accent.green))
-      sdk.ProcessStep(id = "sink", title = "Validate", detail = "reader", x = 515, y = 145, width = 140, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.File(id = "variant-1", title = "Config", detail = "authored YAML", x = 72, y = 286, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.File(id = "variant-2", title = "Trace", detail = "captured JSONL", x = 270, y = 306, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
-      sdk.File(id = "variant-3", title = "Report", detail = "generated JSON", x = 468, y = 286, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "FILE", caption = "Files represent discrete lifecycle artifacts.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.User(id = "source", title = "Author", detail = "writer", x = 163.5, y = 337.5, width = 378, height = 194.4)
+      sdk.File(id = "hero", title = "config.yaml", detail = "captures authored intent", x = 757.5, y = 283.5, width = 459, height = 297, strokeRole = theme(accent.green))
+      sdk.ProcessStep(id = "sink", title = "Validate", detail = "reader", x = 1405.5, y = 391.5, width = 378, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.File(id = "variant-1", title = "Config", detail = "authored YAML", x = 209.4, y = 772.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.File(id = "variant-2", title = "Trace", detail = "captured JSONL", x = 744, y = 826.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
+      sdk.File(id = "variant-3", title = "Report", detail = "generated JSON", x = 1278.6, y = 772.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -533,7 +533,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "STORAGE · SDK.OBJECTSTORE"
     title: "ObjectStore: Artifact bucket"
     lede: "Retains large outputs. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The ObjectStore hero is followed by Records, Media, and Logs variants."
+    narration: "ObjectStore names 'Artifact bucket'; Records, Media, and Logs show related examples."
     points: [
       "Artifact bucket anchors the primary objectStore example.",
       "The left path writes into storage; the right path reads stored state back out."
@@ -541,15 +541,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Object stores signal durable blob storage."
 
     render: @scene {
-      sdk.Header(id = "header", title = "OBJECTSTORE", caption = "Object stores signal durable blob storage.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Service(id = "source", title = "Exporter", detail = "writer", x = 55, y = 125, width = 140, height = 72)
-      sdk.ObjectStore(id = "hero", title = "Artifact bucket", detail = "retains large outputs", x = 275, y = 105, width = 170, height = 110, strokeRole = theme(accent.green))
-      sdk.Client(id = "sink", title = "Analysis job", detail = "reader", x = 515, y = 145, width = 140, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.ObjectStore(id = "variant-1", title = "Records", detail = "columnar artifacts", x = 72, y = 286, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.ObjectStore(id = "variant-2", title = "Media", detail = "request payloads", x = 270, y = 306, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
-      sdk.ObjectStore(id = "variant-3", title = "Logs", detail = "compressed diagnostics", x = 468, y = 286, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "OBJECTSTORE", caption = "Object stores signal durable blob storage.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Service(id = "source", title = "Exporter", detail = "writer", x = 163.5, y = 337.5, width = 378, height = 194.4)
+      sdk.ObjectStore(id = "hero", title = "Artifact bucket", detail = "retains large outputs", x = 757.5, y = 283.5, width = 459, height = 297, strokeRole = theme(accent.green))
+      sdk.Client(id = "sink", title = "Analysis job", detail = "reader", x = 1405.5, y = 391.5, width = 378, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.ObjectStore(id = "variant-1", title = "Records", detail = "columnar artifacts", x = 209.4, y = 772.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.ObjectStore(id = "variant-2", title = "Media", detail = "request payloads", x = 744, y = 826.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
+      sdk.ObjectStore(id = "variant-3", title = "Logs", detail = "compressed diagnostics", x = 1278.6, y = 772.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -567,7 +567,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "STORAGE · SDK.VOLUME"
     title: "Volume: Dataset volume"
     lede: "Mounts local corpus data. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Volume hero is followed by Read-only, Scratch, and Shared variants."
+    narration: "Volume names 'Dataset volume'; Read-only, Scratch, and Shared show related examples."
     points: [
       "Dataset volume anchors the primary volume example.",
       "The left path writes into storage; the right path reads stored state back out."
@@ -575,15 +575,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Volumes show storage attached to compute."
 
     render: @scene {
-      sdk.Header(id = "header", title = "VOLUME", caption = "Volumes show storage attached to compute.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Container(id = "source", title = "Cell image", detail = "writer", x = 55, y = 125, width = 140, height = 72)
-      sdk.Volume(id = "hero", title = "Dataset volume", detail = "mounts local corpus data", x = 275, y = 105, width = 170, height = 110, strokeRole = theme(accent.green))
-      sdk.Worker(id = "sink", title = "Loader", detail = "reader", x = 515, y = 145, width = 140, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Volume(id = "variant-1", title = "Read-only", detail = "immutable corpus", x = 72, y = 286, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.Volume(id = "variant-2", title = "Scratch", detail = "ephemeral workspace", x = 270, y = 306, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
-      sdk.Volume(id = "variant-3", title = "Shared", detail = "multi-cell results", x = 468, y = 286, width = 160, height = 78, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "VOLUME", caption = "Volumes show storage attached to compute.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Container(id = "source", title = "Cell image", detail = "writer", x = 163.5, y = 337.5, width = 378, height = 194.4)
+      sdk.Volume(id = "hero", title = "Dataset volume", detail = "mounts local corpus data", x = 757.5, y = 283.5, width = 459, height = 297, strokeRole = theme(accent.green))
+      sdk.Worker(id = "sink", title = "Loader", detail = "reader", x = 1405.5, y = 391.5, width = 378, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.write"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.read"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Volume(id = "variant-1", title = "Read-only", detail = "immutable corpus", x = 209.4, y = 772.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.Volume(id = "variant-2", title = "Scratch", detail = "ephemeral workspace", x = 744, y = 826.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
+      sdk.Volume(id = "variant-3", title = "Shared", detail = "multi-cell results", x = 1278.6, y = 772.2, width = 432, height = 210.6, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -609,11 +609,11 @@ explainer "SDK Diagram Catalog" {
     caption: "8 primitives · focused examples follow."
 
     render: @scene {
-      sdk.Header(id = "header", title = "MESSAGING AND NETWORK", caption = "Chapter 3 · 8 focused primitives", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Queue(id = "preview-queue", title = "Ready turns", detail = "buffers admitted work", x = 80, y = 175, width = 140, height = 76, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.Gateway(id = "preview-gateway", title = "API gateway", detail = "normalizes external ingress", x = 285, y = 175, width = 140, height = 76, strokeRole = theme(accent.green))
-      sdk.Firewall(id = "preview-firewall", title = "Network policy", detail = "admits benchmark traffic", x = 490, y = 175, width = 140, height = 76, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.Label(id = "chapter-note", text = "messaging and network · one semantic role at a time", x = 100, y = 300, width = 500, height = 24, fontSize = 12, align = "middle")
+      sdk.Header(id = "header", title = "MESSAGING AND NETWORK", caption = "Chapter 3 · 8 focused primitives", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Queue(id = "preview-queue", title = "Ready turns", detail = "buffers admitted work", x = 231, y = 472.5, width = 378, height = 205.2, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.Gateway(id = "preview-gateway", title = "API gateway", detail = "normalizes external ingress", x = 784.5, y = 472.5, width = 378, height = 205.2, strokeRole = theme(accent.green))
+      sdk.Firewall(id = "preview-firewall", title = "Network policy", detail = "admits benchmark traffic", x = 1338, y = 472.5, width = 378, height = 205.2, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.Label(id = "chapter-note", text = "messaging and network · one semantic role at a time", x = 285, y = 810, width = 1350, height = 64.8, fontSize = 32.4, align = "middle")
       timeline main {
         at 0 reveal header duration 180
         after header reveal preview-gateway duration 240
@@ -627,7 +627,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "MESSAGING AND NETWORK · SDK.QUEUE"
     title: "Queue: Ready turns"
     lede: "Buffers admitted work. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Queue hero is followed by Pending, Priority, and Drain variants."
+    narration: "Queue names 'Ready turns'; Pending, Priority, and Drain show related examples."
     points: [
       "Ready turns anchors the primary queue example.",
       "Directional semantic ports distinguish ingress from delivery without generated IDs."
@@ -635,15 +635,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Producer and consumer ports expose queue direction."
 
     render: @scene {
-      sdk.Header(id = "header", title = "QUEUE", caption = "Producer and consumer ports expose queue direction.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Process(id = "source", title = "Scheduler", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.Queue(id = "hero", title = "Ready turns", detail = "buffers admitted work", x = 265, y = 112, width = 180, height = 110, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Worker(id = "sink", title = "Dispatcher", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.producer"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.consumer"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Queue(id = "variant-1", title = "Pending", detail = "twelve ready turns", x = 52, y = 278, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.Queue(id = "variant-2", title = "Priority", detail = "warmup first", x = 278, y = 304, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
-      sdk.Queue(id = "variant-3", title = "Drain", detail = "rejecting new work", x = 504, y = 278, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "QUEUE", caption = "Producer and consumer ports expose queue direction.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Process(id = "source", title = "Scheduler", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Queue(id = "hero", title = "Ready turns", detail = "buffers admitted work", x = 730.5, y = 302.4, width = 486, height = 297, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Worker(id = "sink", title = "Dispatcher", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.producer"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.consumer"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Queue(id = "variant-1", title = "Pending", detail = "twelve ready turns", x = 155.4, y = 750.6, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.Queue(id = "variant-2", title = "Priority", detail = "warmup first", x = 765.6, y = 820.8, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
+      sdk.Queue(id = "variant-3", title = "Drain", detail = "rejecting new work", x = 1375.8, y = 750.6, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -660,7 +660,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "MESSAGING AND NETWORK · SDK.TOPIC"
     title: "Topic: Token events"
     lede: "Fans out observations. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Topic hero is followed by Usage, Tokens, and Errors variants."
+    narration: "Topic names 'Token events'; Usage, Tokens, and Errors show related examples."
     points: [
       "Token events anchors the primary topic example.",
       "Directional semantic ports distinguish ingress from delivery without generated IDs."
@@ -668,15 +668,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Topics model named publish-subscribe channels."
 
     render: @scene {
-      sdk.Header(id = "header", title = "TOPIC", caption = "Topics model named publish-subscribe channels.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Service(id = "source", title = "Response parser", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.Topic(id = "hero", title = "Token events", detail = "fans out observations", x = 265, y = 112, width = 180, height = 110, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Worker(id = "sink", title = "Collector", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.producer"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.consumer"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Topic(id = "variant-1", title = "Usage", detail = "terminal accounting", x = 52, y = 278, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.Topic(id = "variant-2", title = "Tokens", detail = "incremental output", x = 278, y = 304, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
-      sdk.Topic(id = "variant-3", title = "Errors", detail = "classified failures", x = 504, y = 278, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "TOPIC", caption = "Topics model named publish-subscribe channels.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Service(id = "source", title = "Response parser", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Topic(id = "hero", title = "Token events", detail = "fans out observations", x = 730.5, y = 302.4, width = 486, height = 297, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Worker(id = "sink", title = "Collector", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.producer"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.consumer"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Topic(id = "variant-1", title = "Usage", detail = "terminal accounting", x = 155.4, y = 750.6, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.Topic(id = "variant-2", title = "Tokens", detail = "incremental output", x = 765.6, y = 820.8, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
+      sdk.Topic(id = "variant-3", title = "Errors", detail = "classified failures", x = 1375.8, y = 750.6, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -693,7 +693,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "MESSAGING AND NETWORK · SDK.STREAM"
     title: "Stream: SSE byte stream"
     lede: "Preserves event ordering. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Stream hero is followed by Open, Backpressured, and Complete variants."
+    narration: "Stream names 'SSE byte stream'; Open, Backpressured, and Complete show related examples."
     points: [
       "SSE byte stream anchors the primary stream example.",
       "Directional semantic ports distinguish ingress from delivery without generated IDs."
@@ -701,15 +701,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Streams emphasize ordered incremental delivery."
 
     render: @scene {
-      sdk.Header(id = "header", title = "STREAM", caption = "Streams emphasize ordered incremental delivery.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Endpoint(id = "source", title = "HTTP response", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.Stream(id = "hero", title = "SSE byte stream", detail = "preserves event ordering", x = 265, y = 112, width = 180, height = 110, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Function(id = "sink", title = "Reducer", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.producer"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.consumer"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Stream(id = "variant-1", title = "Open", detail = "receiving bytes", x = 52, y = 278, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.Stream(id = "variant-2", title = "Backpressured", detail = "consumer-limited", x = 278, y = 304, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
-      sdk.Stream(id = "variant-3", title = "Complete", detail = "terminal frame seen", x = 504, y = 278, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "STREAM", caption = "Streams emphasize ordered incremental delivery.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Endpoint(id = "source", title = "HTTP response", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Stream(id = "hero", title = "SSE byte stream", detail = "preserves event ordering", x = 730.5, y = 302.4, width = 486, height = 297, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Function(id = "sink", title = "Reducer", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.producer"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.consumer"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Stream(id = "variant-1", title = "Open", detail = "receiving bytes", x = 155.4, y = 750.6, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.Stream(id = "variant-2", title = "Backpressured", detail = "consumer-limited", x = 765.6, y = 820.8, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
+      sdk.Stream(id = "variant-3", title = "Complete", detail = "terminal frame seen", x = 1375.8, y = 750.6, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -726,7 +726,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "MESSAGING AND NETWORK · SDK.EVENTBUS"
     title: "EventBus: Runtime events"
     lede: "Decouples lifecycle observers. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The EventBus hero is followed by Phase, Request, and Telemetry variants."
+    narration: "EventBus names 'Runtime events'; Phase, Request, and Telemetry show related examples."
     points: [
       "Runtime events anchors the primary eventBus example.",
       "Directional semantic ports distinguish ingress from delivery without generated IDs."
@@ -734,15 +734,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Event buses connect many producers and handlers."
 
     render: @scene {
-      sdk.Header(id = "header", title = "EVENTBUS", caption = "Event buses connect many producers and handlers.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Process(id = "source", title = "Coordinator", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.EventBus(id = "hero", title = "Runtime events", detail = "decouples lifecycle observers", x = 265, y = 112, width = 180, height = 110, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Service(id = "sink", title = "Exporters", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.producer"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.consumer"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.EventBus(id = "variant-1", title = "Phase", detail = "lifecycle changes", x = 52, y = 278, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.EventBus(id = "variant-2", title = "Request", detail = "request completion", x = 278, y = 304, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
-      sdk.EventBus(id = "variant-3", title = "Telemetry", detail = "side-channel samples", x = 504, y = 278, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "EVENTBUS", caption = "Event buses connect many producers and handlers.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Process(id = "source", title = "Coordinator", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.EventBus(id = "hero", title = "Runtime events", detail = "decouples lifecycle observers", x = 730.5, y = 302.4, width = 486, height = 297, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Service(id = "sink", title = "Exporters", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.producer"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.consumer"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.EventBus(id = "variant-1", title = "Phase", detail = "lifecycle changes", x = 155.4, y = 750.6, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.EventBus(id = "variant-2", title = "Request", detail = "request completion", x = 765.6, y = 820.8, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
+      sdk.EventBus(id = "variant-3", title = "Telemetry", detail = "side-channel samples", x = 1375.8, y = 750.6, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -759,7 +759,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "MESSAGING AND NETWORK · SDK.GATEWAY"
     title: "Gateway: API gateway"
     lede: "Normalizes external ingress. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Gateway hero is followed by Public, Private, and Local variants."
+    narration: "Gateway names 'API gateway'; Public, Private, and Local show related examples."
     points: [
       "API gateway anchors the primary gateway example.",
       "Directional semantic ports distinguish ingress from delivery without generated IDs."
@@ -767,15 +767,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Inbound and outbound ports preserve gateway direction."
 
     render: @scene {
-      sdk.Header(id = "header", title = "GATEWAY", caption = "Inbound and outbound ports preserve gateway direction.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Client(id = "source", title = "Load generator", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.Gateway(id = "hero", title = "API gateway", detail = "normalizes external ingress", x = 265, y = 112, width = 180, height = 110, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Service(id = "sink", title = "Inference API", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.inbound"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.outbound"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Gateway(id = "variant-1", title = "Public", detail = "TLS ingress", x = 52, y = 278, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.Gateway(id = "variant-2", title = "Private", detail = "VPC ingress", x = 278, y = 304, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
-      sdk.Gateway(id = "variant-3", title = "Local", detail = "Unix socket", x = 504, y = 278, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "GATEWAY", caption = "Inbound and outbound ports preserve gateway direction.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Client(id = "source", title = "Load generator", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Gateway(id = "hero", title = "API gateway", detail = "normalizes external ingress", x = 730.5, y = 302.4, width = 486, height = 297, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Service(id = "sink", title = "Inference API", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.inbound"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.outbound"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Gateway(id = "variant-1", title = "Public", detail = "TLS ingress", x = 155.4, y = 750.6, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.Gateway(id = "variant-2", title = "Private", detail = "VPC ingress", x = 765.6, y = 820.8, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
+      sdk.Gateway(id = "variant-3", title = "Local", detail = "Unix socket", x = 1375.8, y = 750.6, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -792,7 +792,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "MESSAGING AND NETWORK · SDK.ENDPOINT"
     title: "Endpoint: Model endpoint"
     lede: "Binds protocol to a target. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Endpoint hero is followed by HTTP, gRPC, and Dry run variants."
+    narration: "Endpoint names 'Model endpoint'; HTTP, gRPC, and Dry run show related examples."
     points: [
       "Model endpoint anchors the primary endpoint example.",
       "Directional semantic ports distinguish ingress from delivery without generated IDs."
@@ -800,15 +800,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Endpoints represent addressable protocol bindings."
 
     render: @scene {
-      sdk.Header(id = "header", title = "ENDPOINT", caption = "Endpoints represent addressable protocol bindings.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Gateway(id = "source", title = "Route", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.Endpoint(id = "hero", title = "Model endpoint", detail = "binds protocol to a target", x = 265, y = 112, width = 180, height = 110, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Server(id = "sink", title = "GPU backend", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.inbound"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.outbound"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Endpoint(id = "variant-1", title = "HTTP", detail = "OpenAI-compatible", x = 52, y = 278, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.Endpoint(id = "variant-2", title = "gRPC", detail = "KServe binding", x = 278, y = 304, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
-      sdk.Endpoint(id = "variant-3", title = "Dry run", detail = "socket-free transport", x = 504, y = 278, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "ENDPOINT", caption = "Endpoints represent addressable protocol bindings.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Gateway(id = "source", title = "Route", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Endpoint(id = "hero", title = "Model endpoint", detail = "binds protocol to a target", x = 730.5, y = 302.4, width = 486, height = 297, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Server(id = "sink", title = "GPU backend", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.inbound"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.outbound"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Endpoint(id = "variant-1", title = "HTTP", detail = "OpenAI-compatible", x = 155.4, y = 750.6, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.Endpoint(id = "variant-2", title = "gRPC", detail = "KServe binding", x = 765.6, y = 820.8, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
+      sdk.Endpoint(id = "variant-3", title = "Dry run", detail = "socket-free transport", x = 1375.8, y = 750.6, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -825,7 +825,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "MESSAGING AND NETWORK · SDK.LOADBALANCER"
     title: "LoadBalancer: Traffic balancer"
     lede: "Spreads requests across replicas. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The LoadBalancer hero is followed by Round robin, Least load, and Sticky variants."
+    narration: "LoadBalancer names 'Traffic balancer'; Round robin, Least load, and Sticky show related examples."
     points: [
       "Traffic balancer anchors the primary loadBalancer example.",
       "Directional semantic ports distinguish ingress from delivery without generated IDs."
@@ -833,15 +833,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Load balancers expose distribution policy."
 
     render: @scene {
-      sdk.Header(id = "header", title = "LOADBALANCER", caption = "Load balancers expose distribution policy.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Gateway(id = "source", title = "Ingress", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.LoadBalancer(id = "hero", title = "Traffic balancer", detail = "spreads requests across replicas", x = 265, y = 112, width = 180, height = 110, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Server(id = "sink", title = "Replica pool", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.inbound"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.outbound"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.LoadBalancer(id = "variant-1", title = "Round robin", detail = "even distribution", x = 52, y = 278, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.LoadBalancer(id = "variant-2", title = "Least load", detail = "adaptive distribution", x = 278, y = 304, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
-      sdk.LoadBalancer(id = "variant-3", title = "Sticky", detail = "session affinity", x = 504, y = 278, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "LOADBALANCER", caption = "Load balancers expose distribution policy.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Gateway(id = "source", title = "Ingress", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.LoadBalancer(id = "hero", title = "Traffic balancer", detail = "spreads requests across replicas", x = 730.5, y = 302.4, width = 486, height = 297, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Server(id = "sink", title = "Replica pool", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.inbound"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.outbound"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.LoadBalancer(id = "variant-1", title = "Round robin", detail = "even distribution", x = 155.4, y = 750.6, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.LoadBalancer(id = "variant-2", title = "Least load", detail = "adaptive distribution", x = 765.6, y = 820.8, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
+      sdk.LoadBalancer(id = "variant-3", title = "Sticky", detail = "session affinity", x = 1375.8, y = 750.6, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -858,7 +858,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "MESSAGING AND NETWORK · SDK.FIREWALL"
     title: "Firewall: Network policy"
     lede: "Admits benchmark traffic. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Firewall hero is followed by Allow, Deny, and Audit variants."
+    narration: "Firewall names 'Network policy'; Allow, Deny, and Audit show related examples."
     points: [
       "Network policy anchors the primary firewall example.",
       "Directional semantic ports distinguish ingress from delivery without generated IDs."
@@ -866,15 +866,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Firewalls mark policy checkpoints on paths."
 
     render: @scene {
-      sdk.Header(id = "header", title = "FIREWALL", caption = "Firewalls mark policy checkpoints on paths.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Client(id = "source", title = "Cell network", detail = "upstream", x = 38, y = 140, width = 135, height = 72)
-      sdk.Firewall(id = "hero", title = "Network policy", detail = "admits benchmark traffic", x = 265, y = 112, width = 180, height = 110, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Gateway(id = "sink", title = "Protected ingress", detail = "downstream", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.inbound"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.outbound"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Firewall(id = "variant-1", title = "Allow", detail = "port 443 admitted", x = 52, y = 278, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
-      sdk.Firewall(id = "variant-2", title = "Deny", detail = "public ingress blocked", x = 278, y = 304, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
-      sdk.Firewall(id = "variant-3", title = "Audit", detail = "decisions recorded", x = 504, y = 278, width = 145, height = 72, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "FIREWALL", caption = "Firewalls mark policy checkpoints on paths.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Client(id = "source", title = "Cell network", detail = "upstream", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Firewall(id = "hero", title = "Network policy", detail = "admits benchmark traffic", x = 730.5, y = 302.4, width = 486, height = 297, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Gateway(id = "sink", title = "Protected ingress", detail = "downstream", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.inbound"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.outbound"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Firewall(id = "variant-1", title = "Allow", detail = "port 443 admitted", x = 155.4, y = 750.6, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(ink.secondary))
+      sdk.Firewall(id = "variant-2", title = "Deny", detail = "public ingress blocked", x = 765.6, y = 820.8, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.tertiary))
+      sdk.Firewall(id = "variant-3", title = "Audit", detail = "decisions recorded", x = 1375.8, y = 750.6, width = 391.5, height = 194.4, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -899,11 +899,11 @@ explainer "SDK Diagram Catalog" {
     caption: "8 primitives · focused examples follow."
 
     render: @scene {
-      sdk.Header(id = "header", title = "CONTROL FLOW", caption = "Chapter 4 · 8 focused primitives", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Start(id = "preview-start", title = "Run accepted", detail = "opens the lifecycle", x = 80, y = 175, width = 140, height = 76, strokeRole = theme(ink.secondary))
-      sdk.Decision(id = "preview-decision", title = "Target healthy?", detail = "branches on readiness", x = 285, y = 175, width = 140, height = 76, strokeRole = theme(accent.green))
-      sdk.End(id = "preview-end", title = "Artifacts committed", detail = "closes the lifecycle", x = 490, y = 175, width = 140, height = 76, strokeRole = theme(ink.secondary))
-      sdk.Label(id = "chapter-note", text = "control flow · one semantic role at a time", x = 100, y = 300, width = 500, height = 24, fontSize = 12, align = "middle")
+      sdk.Header(id = "header", title = "CONTROL FLOW", caption = "Chapter 4 · 8 focused primitives", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Start(id = "preview-start", title = "Run accepted", detail = "opens the lifecycle", x = 231, y = 472.5, width = 378, height = 205.2, strokeRole = theme(ink.secondary))
+      sdk.Decision(id = "preview-decision", title = "Target healthy?", detail = "branches on readiness", x = 784.5, y = 472.5, width = 378, height = 205.2, strokeRole = theme(accent.green))
+      sdk.End(id = "preview-end", title = "Artifacts committed", detail = "closes the lifecycle", x = 1338, y = 472.5, width = 378, height = 205.2, strokeRole = theme(ink.secondary))
+      sdk.Label(id = "chapter-note", text = "control flow · one semantic role at a time", x = 285, y = 810, width = 1350, height = 64.8, fontSize = 32.4, align = "middle")
       timeline main {
         at 0 reveal header duration 180
         after header reveal preview-decision duration 240
@@ -917,7 +917,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "CONTROL FLOW · SDK.START"
     title: "Start: Run accepted"
     lede: "Opens the lifecycle. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Start hero is followed by Manual, Scheduled, and Remote variants."
+    narration: "Start names 'Run accepted'; Manual, Scheduled, and Remote show related examples."
     points: [
       "Run accepted anchors the primary start example.",
       "The surrounding actions make entry, outcome, and continuation explicit."
@@ -925,15 +925,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Start nodes identify one process entry."
 
     render: @scene {
-      sdk.Header(id = "header", title = "START", caption = "Start nodes identify one process entry.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.User(id = "source", title = "Profile command", detail = "previous", x = 38, y = 140, width = 135, height = 72)
-      sdk.Start(id = "hero", title = "Run accepted", detail = "opens the lifecycle", x = 270, y = 125, width = 170, height = 100, strokeRole = theme(accent.green))
-      sdk.ProcessStep(id = "sink", title = "Validate config", detail = "next", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Start(id = "variant-1", title = "Manual", detail = "operator initiated", x = 88, y = 292, width = 150, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Start(id = "variant-2", title = "Scheduled", detail = "CI initiated", x = 275, y = 292, width = 150, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Start(id = "variant-3", title = "Remote", detail = "controller initiated", x = 462, y = 292, width = 150, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "START", caption = "Start nodes identify one process entry.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.User(id = "source", title = "Profile command", detail = "previous", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Start(id = "hero", title = "Run accepted", detail = "opens the lifecycle", x = 744, y = 337.5, width = 459, height = 270, strokeRole = theme(accent.green))
+      sdk.ProcessStep(id = "sink", title = "Validate config", detail = "next", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Start(id = "variant-1", title = "Manual", detail = "operator initiated", x = 252.6, y = 788.4, width = 405, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Start(id = "variant-2", title = "Scheduled", detail = "CI initiated", x = 757.5, y = 788.4, width = 405, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Start(id = "variant-3", title = "Remote", detail = "controller initiated", x = 1262.4, y = 788.4, width = 405, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -950,7 +950,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "CONTROL FLOW · SDK.END"
     title: "End: Artifacts committed"
     lede: "Closes the lifecycle. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The End hero is followed by Success, Cancelled, and Failed variants."
+    narration: "End names 'Artifacts committed'; Success, Cancelled, and Failed show related examples."
     points: [
       "Artifacts committed anchors the primary end example.",
       "The surrounding actions make entry, outcome, and continuation explicit."
@@ -958,15 +958,15 @@ explainer "SDK Diagram Catalog" {
     caption: "End nodes make terminal outcomes explicit."
 
     render: @scene {
-      sdk.Header(id = "header", title = "END", caption = "End nodes make terminal outcomes explicit.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.ProcessStep(id = "source", title = "Export", detail = "previous", x = 38, y = 140, width = 135, height = 72)
-      sdk.End(id = "hero", title = "Artifacts committed", detail = "closes the lifecycle", x = 270, y = 125, width = 170, height = 100, strokeRole = theme(accent.green))
-      sdk.User(id = "sink", title = "Result owner", detail = "next", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.End(id = "variant-1", title = "Success", detail = "artifacts complete", x = 88, y = 292, width = 150, height = 72, strokeRole = theme(ink.secondary))
-      sdk.End(id = "variant-2", title = "Cancelled", detail = "drain completed", x = 275, y = 292, width = 150, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.End(id = "variant-3", title = "Failed", detail = "diagnostic terminal", x = 462, y = 292, width = 150, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "END", caption = "End nodes make terminal outcomes explicit.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.ProcessStep(id = "source", title = "Export", detail = "previous", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.End(id = "hero", title = "Artifacts committed", detail = "closes the lifecycle", x = 744, y = 337.5, width = 459, height = 270, strokeRole = theme(accent.green))
+      sdk.User(id = "sink", title = "Result owner", detail = "next", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.End(id = "variant-1", title = "Success", detail = "artifacts complete", x = 252.6, y = 788.4, width = 405, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.End(id = "variant-2", title = "Cancelled", detail = "drain completed", x = 757.5, y = 788.4, width = 405, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.End(id = "variant-3", title = "Failed", detail = "diagnostic terminal", x = 1262.4, y = 788.4, width = 405, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -983,7 +983,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "CONTROL FLOW · SDK.PROCESSSTEP"
     title: "ProcessStep: Prepare endpoint"
     lede: "Performs one bounded action. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The ProcessStep hero is followed by Validate, Prepare, and Execute variants."
+    narration: "ProcessStep names 'Prepare endpoint'; Validate, Prepare, and Execute show related examples."
     points: [
       "Prepare endpoint anchors the primary processStep example.",
       "The surrounding actions make entry, outcome, and continuation explicit."
@@ -991,15 +991,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Process steps turn lifecycles into readable actions."
 
     render: @scene {
-      sdk.Header(id = "header", title = "PROCESSSTEP", caption = "Process steps turn lifecycles into readable actions.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Start(id = "source", title = "Validated run", detail = "previous", x = 38, y = 140, width = 135, height = 72)
-      sdk.ProcessStep(id = "hero", title = "Prepare endpoint", detail = "performs one bounded action", x = 270, y = 125, width = 170, height = 100, strokeRole = theme(accent.green))
-      sdk.Decision(id = "sink", title = "Ready?", detail = "next", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.ProcessStep(id = "variant-1", title = "Validate", detail = "rejects unknowns", x = 88, y = 292, width = 150, height = 72, strokeRole = theme(ink.secondary))
-      sdk.ProcessStep(id = "variant-2", title = "Prepare", detail = "builds local state", x = 275, y = 292, width = 150, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.ProcessStep(id = "variant-3", title = "Execute", detail = "dispatches measured work", x = 462, y = 292, width = 150, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "PROCESSSTEP", caption = "Process steps turn lifecycles into readable actions.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Start(id = "source", title = "Validated run", detail = "previous", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.ProcessStep(id = "hero", title = "Prepare endpoint", detail = "performs one bounded action", x = 744, y = 337.5, width = 459, height = 270, strokeRole = theme(accent.green))
+      sdk.Decision(id = "sink", title = "Ready?", detail = "next", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.ProcessStep(id = "variant-1", title = "Validate", detail = "rejects unknowns", x = 252.6, y = 788.4, width = 405, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.ProcessStep(id = "variant-2", title = "Prepare", detail = "builds local state", x = 757.5, y = 788.4, width = 405, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.ProcessStep(id = "variant-3", title = "Execute", detail = "dispatches measured work", x = 1262.4, y = 788.4, width = 405, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -1016,7 +1016,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "CONTROL FLOW · SDK.DECISION"
     title: "Decision: Target healthy?"
     lede: "Branches on readiness. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Decision hero is followed by Yes, No, and Timeout variants."
+    narration: "Decision names 'Target healthy?'; Yes, No, and Timeout show related examples."
     points: [
       "Target healthy? anchors the primary decision example.",
       "The surrounding actions make entry, outcome, and continuation explicit."
@@ -1024,15 +1024,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Named branch ports survive geometry changes."
 
     render: @scene {
-      sdk.Header(id = "header", title = "DECISION", caption = "Named branch ports survive geometry changes.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.ProcessStep(id = "source", title = "Probe", detail = "previous", x = 38, y = 140, width = 135, height = 72)
-      sdk.Decision(id = "hero", title = "Target healthy?", detail = "branches on readiness", x = 270, y = 125, width = 170, height = 100, branches = ["yes", "no", "timeout"], strokeRole = theme(accent.green))
-      sdk.Service(id = "sink", title = "Dispatch", detail = "next", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.branch.yes"), to = ref("sink.input"), via = { x: 500, y: 242 }, style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Decision(id = "variant-1", title = "Yes", detail = "continue branch", x = 88, y = 292, width = 150, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Decision(id = "variant-2", title = "No", detail = "recovery branch", x = 275, y = 292, width = 150, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Decision(id = "variant-3", title = "Timeout", detail = "terminal branch", x = 462, y = 292, width = 150, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "DECISION", caption = "Named branch ports survive geometry changes.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.ProcessStep(id = "source", title = "Probe", detail = "previous", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Decision(id = "hero", title = "Target healthy?", detail = "branches on readiness", x = 744, y = 337.5, width = 459, height = 270, branches = ["yes", "no", "timeout"], strokeRole = theme(accent.green))
+      sdk.Service(id = "sink", title = "Dispatch", detail = "next", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.branch.yes"), to = ref("sink.input"), via = { x: 500, y: 242 }, style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Decision(id = "variant-1", title = "Yes", detail = "continue branch", x = 252.6, y = 788.4, width = 405, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Decision(id = "variant-2", title = "No", detail = "recovery branch", x = 757.5, y = 788.4, width = 405, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Decision(id = "variant-3", title = "Timeout", detail = "terminal branch", x = 1262.4, y = 788.4, width = 405, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -1049,7 +1049,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "CONTROL FLOW · SDK.MERGE"
     title: "Merge: Join outcomes"
     lede: "Rejoins compatible branches. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Merge hero is followed by Records, Metrics, and Cells variants."
+    narration: "Merge names 'Join outcomes'; Records, Metrics, and Cells show related examples."
     points: [
       "Join outcomes anchors the primary merge example.",
       "The surrounding actions make entry, outcome, and continuation explicit."
@@ -1057,15 +1057,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Merge nodes show where divergent paths converge."
 
     render: @scene {
-      sdk.Header(id = "header", title = "MERGE", caption = "Merge nodes show where divergent paths converge.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Decision(id = "source", title = "Success path", detail = "previous", x = 38, y = 140, width = 135, height = 72)
-      sdk.Merge(id = "hero", title = "Join outcomes", detail = "rejoins compatible branches", x = 270, y = 125, width = 170, height = 100, strokeRole = theme(accent.green))
-      sdk.ProcessStep(id = "sink", title = "Export", detail = "next", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Merge(id = "variant-1", title = "Records", detail = "exact record join", x = 88, y = 292, width = 150, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Merge(id = "variant-2", title = "Metrics", detail = "folded store join", x = 275, y = 292, width = 150, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Merge(id = "variant-3", title = "Cells", detail = "partition join", x = 462, y = 292, width = 150, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "MERGE", caption = "Merge nodes show where divergent paths converge.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Decision(id = "source", title = "Success path", detail = "previous", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Merge(id = "hero", title = "Join outcomes", detail = "rejoins compatible branches", x = 744, y = 337.5, width = 459, height = 270, strokeRole = theme(accent.green))
+      sdk.ProcessStep(id = "sink", title = "Export", detail = "next", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Merge(id = "variant-1", title = "Records", detail = "exact record join", x = 252.6, y = 788.4, width = 405, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Merge(id = "variant-2", title = "Metrics", detail = "folded store join", x = 757.5, y = 788.4, width = 405, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Merge(id = "variant-3", title = "Cells", detail = "partition join", x = 1262.4, y = 788.4, width = 405, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -1082,7 +1082,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "CONTROL FLOW · SDK.DELAY"
     title: "Delay: Linear backoff"
     lede: "Waits on the injected clock. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Delay hero is followed by 100 ms, 200 ms, and Sim clock variants."
+    narration: "Delay names 'Linear backoff'; 100 ms, 200 ms, and Sim clock show related examples."
     points: [
       "Linear backoff anchors the primary delay example.",
       "The surrounding actions make entry, outcome, and continuation explicit."
@@ -1090,15 +1090,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Delays make intentional waiting visible."
 
     render: @scene {
-      sdk.Header(id = "header", title = "DELAY", caption = "Delays make intentional waiting visible.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Decision(id = "source", title = "Retry needed", detail = "previous", x = 38, y = 140, width = 135, height = 72)
-      sdk.Delay(id = "hero", title = "Linear backoff", detail = "waits on the injected clock", x = 270, y = 125, width = 170, height = 100, strokeRole = theme(accent.green))
-      sdk.ProcessStep(id = "sink", title = "Reconnect", detail = "next", x = 540, y = 130, width = 140, height = 82)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Delay(id = "variant-1", title = "100 ms", detail = "first backoff", x = 88, y = 292, width = 150, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Delay(id = "variant-2", title = "200 ms", detail = "second backoff", x = 275, y = 292, width = 150, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Delay(id = "variant-3", title = "Sim clock", detail = "virtual-time wait", x = 462, y = 292, width = 150, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "DELAY", caption = "Delays make intentional waiting visible.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Decision(id = "source", title = "Retry needed", detail = "previous", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Delay(id = "hero", title = "Linear backoff", detail = "waits on the injected clock", x = 744, y = 337.5, width = 459, height = 270, strokeRole = theme(accent.green))
+      sdk.ProcessStep(id = "sink", title = "Reconnect", detail = "next", x = 1473, y = 351, width = 378, height = 221.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Delay(id = "variant-1", title = "100 ms", detail = "first backoff", x = 252.6, y = 788.4, width = 405, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Delay(id = "variant-2", title = "200 ms", detail = "second backoff", x = 757.5, y = 788.4, width = 405, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Delay(id = "variant-3", title = "Sim clock", detail = "virtual-time wait", x = 1262.4, y = 788.4, width = 405, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -1115,7 +1115,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "CONTROL FLOW · SDK.RETRY"
     title: "Retry: Reconnect"
     lede: "Loops after pre-send failure. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Retry hero is followed by Attempt 1, Attempt 2, and Exhausted variants."
+    narration: "Retry names 'Reconnect'; Attempt 1, Attempt 2, and Exhausted show related examples."
     points: [
       "Reconnect anchors the primary retry example.",
       "The surrounding actions make entry, outcome, and continuation explicit."
@@ -1123,20 +1123,16 @@ explainer "SDK Diagram Catalog" {
     caption: "Retry exposes a semantic recovery back port."
 
     render: @scene {
-      sdk.Header(id = "header", title = "RETRY", caption = "Retry exposes a semantic recovery back port.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Delay(id = "source", title = "Backoff", detail = "previous", x = 38, y = 140, width = 135, height = 72)
-      sdk.Boundary(id = "hero-frame", title = "", x = 270, y = 125, width = 170, height = 100, surfaceRole = theme(surface.primary), strokeRole = theme(surface.primary)) {
-        children {
-          sdk.Retry(id = "hero", title = "Reconnect", detail = "loops after pre-send failure", x = 0, y = 0, width = 170, height = 100, strokeRole = theme(accent.green))
-        }
-      }
-      sdk.Endpoint(id = "sink", title = "Dial target", detail = "next", x = 525, y = 140, width = 135, height = 72, surfaceRole = theme(surface.secondary))
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-back", mode = "route", from = ref("hero.back"), to = ref("source.input"), style = { stroke: theme(accent.warning), strokeWidth: 2.0, fill: "none" })
-      sdk.ProcessStep(id = "variant-1", title = "Attempt 1", detail = "immediate dial", x = 40, y = 280, width = 140, height = 82, strokeRole = theme(ink.secondary))
-      sdk.Delay(id = "variant-2", title = "Attempt 2", detail = "clock-delayed dial", x = 280, y = 280, width = 140, height = 82, strokeRole = theme(accent.tertiary))
-      sdk.End(id = "variant-3", title = "Exhausted", detail = "budget exhausted", x = 520, y = 280, width = 140, height = 82, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "RETRY", caption = "Retry exposes a semantic recovery back port.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Delay(id = "source", title = "Backoff", detail = "previous", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Retry(id = "hero", title = "Reconnect", detail = "loops after pre-send failure", x = 744, y = 337.5, width = 459, height = 270, strokeRole = theme(accent.green))
+      sdk.Endpoint(id = "sink", title = "Dial target", detail = "next", x = 1432.5, y = 378, width = 364.5, height = 194.4, surfaceRole = theme(surface.secondary))
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-back", mode = "route", from = ref("hero.back"), to = ref("source.input"), via = { x: 200, y: 245 }, style = { stroke: theme(accent.warning), strokeWidth: 5.4, fill: "none" })
+      sdk.ProcessStep(id = "variant-1", title = "Attempt 1", detail = "immediate dial", x = 123, y = 756, width = 378, height = 221.4, strokeRole = theme(ink.secondary))
+      sdk.Delay(id = "variant-2", title = "Attempt 2", detail = "clock-delayed dial", x = 771, y = 756, width = 378, height = 221.4, strokeRole = theme(accent.tertiary))
+      sdk.End(id = "variant-3", title = "Exhausted", detail = "budget exhausted", x = 1419, y = 756, width = 378, height = 221.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -1156,7 +1152,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "CONTROL FLOW · SDK.LOOP"
     title: "Loop: Conversation turns"
     lede: "Repeats until dialogue ends. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Loop hero is followed by Turn 1, Turn N, and Stop variants."
+    narration: "Loop names 'Conversation turns'; Turn 1, Turn N, and Stop show related examples."
     points: [
       "Conversation turns anchors the primary loop example.",
       "The surrounding actions make entry, outcome, and continuation explicit."
@@ -1164,20 +1160,16 @@ explainer "SDK Diagram Catalog" {
     caption: "Loop exposes repeated work and its return edge."
 
     render: @scene {
-      sdk.Header(id = "header", title = "LOOP", caption = "Loop exposes repeated work and its return edge.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Decision(id = "source", title = "More turns?", detail = "previous", x = 38, y = 140, width = 135, height = 72)
-      sdk.Boundary(id = "hero-frame", title = "", x = 270, y = 125, width = 170, height = 100, surfaceRole = theme(surface.primary), strokeRole = theme(surface.primary)) {
-        children {
-          sdk.Loop(id = "hero", title = "Conversation turns", detail = "repeats until dialogue ends", x = 0, y = 0, width = 170, height = 100, strokeRole = theme(accent.green))
-        }
-      }
-      sdk.ProcessStep(id = "sink", title = "Dispatch turn", detail = "next", x = 525, y = 140, width = 135, height = 72)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-back", mode = "route", from = ref("hero.back"), to = ref("source.input"), style = { stroke: theme(accent.warning), strokeWidth: 2.0, fill: "none" })
-      sdk.Start(id = "variant-1", title = "Turn 1", detail = "initial prompt", x = 40, y = 280, width = 140, height = 82, strokeRole = theme(ink.secondary))
-      sdk.ProcessStep(id = "variant-2", title = "Turn N", detail = "history-bearing turn", x = 280, y = 280, width = 140, height = 82, strokeRole = theme(accent.tertiary))
-      sdk.End(id = "variant-3", title = "Stop", detail = "conversation complete", x = 520, y = 280, width = 140, height = 82, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "LOOP", caption = "Loop exposes repeated work and its return edge.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Decision(id = "source", title = "More turns?", detail = "previous", x = 117.6, y = 378, width = 364.5, height = 194.4)
+      sdk.Loop(id = "hero", title = "Conversation turns", detail = "repeats until dialogue ends", x = 744, y = 337.5, width = 459, height = 270, strokeRole = theme(accent.green))
+      sdk.ProcessStep(id = "sink", title = "Dispatch turn", detail = "next", x = 1432.5, y = 378, width = 364.5, height = 194.4)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-back", mode = "route", from = ref("hero.back"), to = ref("source.input"), via = { x: 200, y: 245 }, style = { stroke: theme(accent.warning), strokeWidth: 5.4, fill: "none" })
+      sdk.Start(id = "variant-1", title = "Turn 1", detail = "initial prompt", x = 123, y = 756, width = 378, height = 221.4, strokeRole = theme(ink.secondary))
+      sdk.ProcessStep(id = "variant-2", title = "Turn N", detail = "history-bearing turn", x = 771, y = 756, width = 378, height = 221.4, strokeRole = theme(accent.tertiary))
+      sdk.End(id = "variant-3", title = "Stop", detail = "conversation complete", x = 1419, y = 756, width = 378, height = 221.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -1205,23 +1197,23 @@ explainer "SDK Diagram Catalog" {
     caption: "4 primitives · focused examples follow."
 
     render: @scene {
-      sdk.Header(id = "header", title = "BOUNDARIES AND GROUPING", caption = "Chapter 5 · 4 focused primitives", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Boundary(id = "preview-boundary", title = "Execution boundary", detail = "groups one runtime role", x = 80, y = 175, width = 150, height = 76, strokeRole = theme(ink.secondary)) {
+      sdk.Header(id = "header", title = "BOUNDARIES AND GROUPING", caption = "Chapter 5 · 4 focused primitives", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Boundary(id = "preview-boundary", title = "Execution boundary", detail = "groups one runtime role", x = 231, y = 472.5, width = 405, height = 205.2, strokeRole = theme(ink.secondary)) {
         children {
-          sdk.Label(id = "preview-boundary-note", text = "runtime scope", x = 12, y = 43, width = 126, height = 16, fontSize = 9, align = "middle", inkRole = theme(ink.secondary))
+          sdk.Label(id = "preview-boundary-note", text = "runtime scope", x = 47.4, y = 116.1, width = 340.2, height = 43.2, fontSize = 24.3, align = "middle", inkRole = theme(ink.secondary))
         }
       }
-      sdk.Zone(id = "preview-zone", title = "Availability zone", detail = "contains colocated replicas", x = 285, y = 175, width = 150, height = 76, strokeRole = theme(accent.green)) {
+      sdk.Zone(id = "preview-zone", title = "Availability zone", detail = "contains colocated replicas", x = 784.5, y = 472.5, width = 405, height = 205.2, strokeRole = theme(accent.green)) {
         children {
-          sdk.Label(id = "preview-zone-note", text = "placement scope", x = 12, y = 43, width = 126, height = 16, fontSize = 9, align = "middle", inkRole = theme(ink.secondary))
+          sdk.Label(id = "preview-zone-note", text = "placement scope", x = 47.4, y = 116.1, width = 340.2, height = 43.2, fontSize = 24.3, align = "middle", inkRole = theme(ink.secondary))
         }
       }
-      sdk.TrustBoundary(id = "preview-trustBoundary", title = "Tenant trust boundary", detail = "separates credentials and traffic", x = 490, y = 175, width = 150, height = 76, strokeRole = theme(ink.secondary)) {
+      sdk.TrustBoundary(id = "preview-trustBoundary", title = "Tenant trust boundary", detail = "separates credentials and traffic", x = 1338, y = 472.5, width = 405, height = 205.2, strokeRole = theme(ink.secondary)) {
         children {
-          sdk.Label(id = "preview-trust-note", text = "credential scope", x = 12, y = 43, width = 126, height = 16, fontSize = 9, align = "middle", inkRole = theme(ink.secondary))
+          sdk.Label(id = "preview-trust-note", text = "credential scope", x = 47.4, y = 116.1, width = 340.2, height = 43.2, fontSize = 24.3, align = "middle", inkRole = theme(ink.secondary))
         }
       }
-      sdk.Label(id = "chapter-note", text = "boundaries and grouping · one semantic role at a time", x = 100, y = 300, width = 500, height = 24, fontSize = 12, align = "middle")
+      sdk.Label(id = "chapter-note", text = "boundaries and grouping · one semantic role at a time", x = 285, y = 810, width = 1350, height = 64.8, fontSize = 32.4, align = "middle")
       timeline main {
         at 0 reveal header duration 180
         after header reveal preview-zone duration 240
@@ -1235,7 +1227,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "BOUNDARIES AND GROUPING · SDK.BOUNDARY"
     title: "Boundary: Execution boundary"
     lede: "Groups one runtime role. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Boundary hero is followed by Runtime, Transport, and Metrics variants."
+    narration: "Boundary names 'Execution boundary'; Runtime, Transport, and Metrics show related examples."
     points: [
       "Execution boundary anchors the primary boundary example.",
       "Nested members establish scope while entry and exit remain connectable."
@@ -1243,30 +1235,30 @@ explainer "SDK Diagram Catalog" {
     caption: "Boundaries group responsibility with entry and exit ports."
 
     render: @scene {
-      sdk.Header(id = "header", title = "BOUNDARY", caption = "Boundaries group responsibility with entry and exit ports.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Client(id = "source", title = "Control plane", detail = "entry", x = 28, y = 150, width = 130, height = 68)
-      sdk.Boundary(id = "hero", title = "Execution boundary", detail = "groups one runtime role", x = 190, y = 85, width = 320, height = 170, strokeRole = theme(accent.green)) {
+      sdk.Header(id = "header", title = "BOUNDARY", caption = "Boundaries group responsibility with entry and exit ports.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Client(id = "source", title = "Control plane", detail = "entry", x = 90.6, y = 405, width = 351, height = 183.6)
+      sdk.Boundary(id = "hero", title = "Execution boundary", detail = "groups one runtime role", x = 528, y = 229.5, width = 864, height = 459, strokeRole = theme(accent.green)) {
         children {
-          sdk.Worker(id = "member-a", title = "Worker A", detail = "active", x = 24, y = 50, width = 120, height = 68)
-          sdk.Database(id = "member-b", title = "Local state", detail = "owned", x = 170, y = 50, width = 125, height = 68)
+          sdk.Worker(id = "member-a", title = "Worker A", detail = "active", x = 79.8, y = 135, width = 324, height = 183.6)
+          sdk.Database(id = "member-b", title = "Local state", detail = "owned", x = 474, y = 135, width = 337.5, height = 183.6)
         }
       }
-      sdk.Service(id = "sink", title = "Artifacts", detail = "exit", x = 542, y = 150, width = 130, height = 68)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.entry"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.exit"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Boundary(id = "variant-1", title = "Runtime", detail = "process responsibility", x = 44, y = 300, width = 170, height = 72, strokeRole = theme(ink.secondary)) {
+      sdk.Service(id = "sink", title = "Artifacts", detail = "exit", x = 1478.4, y = 405, width = 351, height = 183.6)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.entry"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.exit"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Boundary(id = "variant-1", title = "Runtime", detail = "process responsibility", x = 133.8, y = 810, width = 459, height = 194.4, strokeRole = theme(ink.secondary)) {
         children {
-          sdk.Label(id = "runtime-note", text = "process responsibility", x = 12, y = 38, width = 146, height = 16, fontSize = 9, align = "middle", inkRole = theme(ink.secondary))
+          sdk.Label(id = "runtime-note", text = "process responsibility", x = 47.4, y = 102.6, width = 394.2, height = 43.2, fontSize = 24.3, align = "middle", inkRole = theme(ink.secondary))
         }
       }
-      sdk.Boundary(id = "variant-2", title = "Transport", detail = "wire responsibility", x = 265, y = 278, width = 170, height = 72, strokeRole = theme(accent.tertiary)) {
+      sdk.Boundary(id = "variant-2", title = "Transport", detail = "wire responsibility", x = 730.5, y = 750.6, width = 459, height = 194.4, strokeRole = theme(accent.tertiary)) {
         children {
-          sdk.Label(id = "transport-note", text = "wire responsibility", x = 12, y = 38, width = 146, height = 16, fontSize = 9, align = "middle", inkRole = theme(ink.secondary))
+          sdk.Label(id = "transport-note", text = "wire responsibility", x = 47.4, y = 102.6, width = 394.2, height = 43.2, fontSize = 24.3, align = "middle", inkRole = theme(ink.secondary))
         }
       }
-      sdk.Boundary(id = "variant-3", title = "Metrics", detail = "measurement responsibility", x = 486, y = 300, width = 170, height = 72, strokeRole = theme(accent.warning)) {
+      sdk.Boundary(id = "variant-3", title = "Metrics", detail = "measurement responsibility", x = 1327.2, y = 810, width = 459, height = 194.4, strokeRole = theme(accent.warning)) {
         children {
-          sdk.Label(id = "metrics-note", text = "measurement scope", x = 12, y = 38, width = 146, height = 16, fontSize = 9, align = "middle", inkRole = theme(ink.secondary))
+          sdk.Label(id = "metrics-note", text = "measurement scope", x = 47.4, y = 102.6, width = 394.2, height = 43.2, fontSize = 24.3, align = "middle", inkRole = theme(ink.secondary))
         }
       }
       timeline main {
@@ -1284,7 +1276,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "BOUNDARIES AND GROUPING · SDK.ZONE"
     title: "Zone: Availability zone"
     lede: "Contains colocated replicas. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Zone hero is followed by Zone A, Zone B, and Zone C variants."
+    narration: "Zone names 'Availability zone'; Zone A, Zone B, and Zone C show related examples."
     points: [
       "Availability zone anchors the primary zone example.",
       "Nested members establish scope while entry and exit remain connectable."
@@ -1292,30 +1284,30 @@ explainer "SDK Diagram Catalog" {
     caption: "Zones communicate placement and failure domains."
 
     render: @scene {
-      sdk.Header(id = "header", title = "ZONE", caption = "Zones communicate placement and failure domains.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Gateway(id = "source", title = "Regional ingress", detail = "entry", x = 28, y = 150, width = 130, height = 68)
-      sdk.Zone(id = "hero", title = "Availability zone", detail = "contains colocated replicas", x = 190, y = 85, width = 320, height = 170, strokeRole = theme(accent.green)) {
+      sdk.Header(id = "header", title = "ZONE", caption = "Zones communicate placement and failure domains.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Gateway(id = "source", title = "Regional ingress", detail = "entry", x = 90.6, y = 405, width = 351, height = 183.6)
+      sdk.Zone(id = "hero", title = "Availability zone", detail = "contains colocated replicas", x = 528, y = 229.5, width = 864, height = 459, strokeRole = theme(accent.green)) {
         children {
-          sdk.Worker(id = "member-a", title = "Worker A", detail = "active", x = 24, y = 50, width = 120, height = 68)
-          sdk.Database(id = "member-b", title = "Local state", detail = "owned", x = 170, y = 50, width = 125, height = 68)
+          sdk.Worker(id = "member-a", title = "Worker A", detail = "active", x = 79.8, y = 135, width = 324, height = 183.6)
+          sdk.Database(id = "member-b", title = "Local state", detail = "owned", x = 474, y = 135, width = 337.5, height = 183.6)
         }
       }
-      sdk.LoadBalancer(id = "sink", title = "Replica set", detail = "exit", x = 542, y = 150, width = 130, height = 68)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.entry"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.exit"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Zone(id = "variant-1", title = "Zone A", detail = "serving traffic", x = 44, y = 300, width = 170, height = 72, strokeRole = theme(ink.secondary)) {
+      sdk.LoadBalancer(id = "sink", title = "Replica set", detail = "exit", x = 1478.4, y = 405, width = 351, height = 183.6)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.entry"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.exit"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Zone(id = "variant-1", title = "Zone A", detail = "serving traffic", x = 133.8, y = 810, width = 459, height = 194.4, strokeRole = theme(ink.secondary)) {
         children {
-          sdk.Label(id = "zone-a-note", text = "serving traffic", x = 12, y = 38, width = 146, height = 16, fontSize = 9, align = "middle", inkRole = theme(ink.secondary))
+          sdk.Label(id = "zone-a-note", text = "serving traffic", x = 47.4, y = 102.6, width = 394.2, height = 43.2, fontSize = 24.3, align = "middle", inkRole = theme(ink.secondary))
         }
       }
-      sdk.Zone(id = "variant-2", title = "Zone B", detail = "failover reserve", x = 265, y = 278, width = 170, height = 72, strokeRole = theme(accent.tertiary)) {
+      sdk.Zone(id = "variant-2", title = "Zone B", detail = "failover reserve", x = 730.5, y = 750.6, width = 459, height = 194.4, strokeRole = theme(accent.tertiary)) {
         children {
-          sdk.Label(id = "zone-b-note", text = "failover reserve", x = 12, y = 38, width = 146, height = 16, fontSize = 9, align = "middle", inkRole = theme(ink.secondary))
+          sdk.Label(id = "zone-b-note", text = "failover reserve", x = 47.4, y = 102.6, width = 394.2, height = 43.2, fontSize = 24.3, align = "middle", inkRole = theme(ink.secondary))
         }
       }
-      sdk.Zone(id = "variant-3", title = "Zone C", detail = "elastic capacity", x = 486, y = 300, width = 170, height = 72, strokeRole = theme(accent.warning)) {
+      sdk.Zone(id = "variant-3", title = "Zone C", detail = "elastic capacity", x = 1327.2, y = 810, width = 459, height = 194.4, strokeRole = theme(accent.warning)) {
         children {
-          sdk.Label(id = "zone-c-note", text = "elastic capacity", x = 12, y = 38, width = 146, height = 16, fontSize = 9, align = "middle", inkRole = theme(ink.secondary))
+          sdk.Label(id = "zone-c-note", text = "elastic capacity", x = 47.4, y = 102.6, width = 394.2, height = 43.2, fontSize = 24.3, align = "middle", inkRole = theme(ink.secondary))
         }
       }
       timeline main {
@@ -1333,7 +1325,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "BOUNDARIES AND GROUPING · SDK.CLUSTER"
     title: "Cluster: Cell cluster"
     lede: "Groups distributed workers. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Cluster hero is followed by Local, Remote, and SLURM variants."
+    narration: "Cluster names 'Cell cluster'; Local, Remote, and SLURM show related examples."
     points: [
       "Cell cluster anchors the primary cluster example.",
       "Nested members establish scope while entry and exit remain connectable."
@@ -1341,30 +1333,30 @@ explainer "SDK Diagram Catalog" {
     caption: "Clusters show members managed as one fleet."
 
     render: @scene {
-      sdk.Header(id = "header", title = "CLUSTER", caption = "Clusters show members managed as one fleet.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Gateway(id = "source", title = "Controller", detail = "entry", x = 28, y = 150, width = 130, height = 68)
-      sdk.Cluster(id = "hero", title = "Cell cluster", detail = "groups distributed workers", x = 190, y = 85, width = 320, height = 170, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green)) {
+      sdk.Header(id = "header", title = "CLUSTER", caption = "Clusters show members managed as one fleet.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Gateway(id = "source", title = "Controller", detail = "entry", x = 90.6, y = 405, width = 351, height = 183.6)
+      sdk.Cluster(id = "hero", title = "Cell cluster", detail = "groups distributed workers", x = 528, y = 229.5, width = 864, height = 459, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green)) {
         children {
-          sdk.Worker(id = "member-a", title = "Worker A", detail = "active", x = 24, y = 50, width = 120, height = 68)
-          sdk.Database(id = "member-b", title = "Local state", detail = "owned", x = 170, y = 50, width = 125, height = 68)
+          sdk.Worker(id = "member-a", title = "Worker A", detail = "active", x = 79.8, y = 135, width = 324, height = 183.6)
+          sdk.Database(id = "member-b", title = "Local state", detail = "owned", x = 474, y = 135, width = 337.5, height = 183.6)
         }
       }
-      sdk.DataStore(id = "sink", title = "Merged results", detail = "exit", x = 542, y = 150, width = 130, height = 68)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.entry"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.exit"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Cluster(id = "variant-1", title = "Local", detail = "four local workers", x = 44, y = 300, width = 170, height = 72, strokeRole = theme(ink.secondary)) {
+      sdk.DataStore(id = "sink", title = "Merged results", detail = "exit", x = 1478.4, y = 405, width = 351, height = 183.6)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.entry"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.exit"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Cluster(id = "variant-1", title = "Local", detail = "four local workers", x = 133.8, y = 810, width = 459, height = 194.4, strokeRole = theme(ink.secondary)) {
         children {
-          sdk.Label(id = "local-note", text = "four local workers", x = 12, y = 38, width = 146, height = 16, fontSize = 9, align = "middle", inkRole = theme(ink.secondary))
+          sdk.Label(id = "local-note", text = "four local workers", x = 47.4, y = 102.6, width = 394.2, height = 43.2, fontSize = 24.3, align = "middle", inkRole = theme(ink.secondary))
         }
       }
-      sdk.Cluster(id = "variant-2", title = "Remote", detail = "eight remote cells", x = 265, y = 278, width = 170, height = 72, strokeRole = theme(accent.tertiary)) {
+      sdk.Cluster(id = "variant-2", title = "Remote", detail = "eight remote cells", x = 730.5, y = 750.6, width = 459, height = 194.4, strokeRole = theme(accent.tertiary)) {
         children {
-          sdk.Label(id = "remote-note", text = "eight remote cells", x = 12, y = 38, width = 146, height = 16, fontSize = 9, align = "middle", inkRole = theme(ink.secondary))
+          sdk.Label(id = "remote-note", text = "eight remote cells", x = 47.4, y = 102.6, width = 394.2, height = 43.2, fontSize = 24.3, align = "middle", inkRole = theme(ink.secondary))
         }
       }
-      sdk.Cluster(id = "variant-3", title = "SLURM", detail = "scheduled allocation", x = 486, y = 300, width = 170, height = 72, strokeRole = theme(accent.warning)) {
+      sdk.Cluster(id = "variant-3", title = "SLURM", detail = "scheduled allocation", x = 1327.2, y = 810, width = 459, height = 194.4, strokeRole = theme(accent.warning)) {
         children {
-          sdk.Label(id = "slurm-note", text = "scheduled allocation", x = 12, y = 38, width = 146, height = 16, fontSize = 9, align = "middle", inkRole = theme(ink.secondary))
+          sdk.Label(id = "slurm-note", text = "scheduled allocation", x = 47.4, y = 102.6, width = 394.2, height = 43.2, fontSize = 24.3, align = "middle", inkRole = theme(ink.secondary))
         }
       }
       timeline main {
@@ -1383,7 +1375,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "BOUNDARIES AND GROUPING · SDK.TRUSTBOUNDARY"
     title: "TrustBoundary: Tenant trust boundary"
     lede: "Separates credentials and traffic. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The TrustBoundary hero is followed by Public, Service, and Data variants."
+    narration: "TrustBoundary names 'Tenant trust boundary'; Public, Service, and Data show related examples."
     points: [
       "Tenant trust boundary anchors the primary trustBoundary example.",
       "Nested members establish scope while entry and exit remain connectable."
@@ -1391,30 +1383,30 @@ explainer "SDK Diagram Catalog" {
     caption: "Dashed trust chrome makes security scope explicit."
 
     render: @scene {
-      sdk.Header(id = "header", title = "TRUSTBOUNDARY", caption = "Dashed trust chrome makes security scope explicit.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Client(id = "source", title = "External caller", detail = "entry", x = 28, y = 150, width = 130, height = 68)
-      sdk.TrustBoundary(id = "hero", title = "Tenant trust boundary", detail = "separates credentials and traffic", x = 190, y = 85, width = 320, height = 170, strokeRole = theme(accent.green)) {
+      sdk.Header(id = "header", title = "TRUSTBOUNDARY", caption = "Dashed trust chrome makes security scope explicit.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Client(id = "source", title = "External caller", detail = "entry", x = 90.6, y = 405, width = 351, height = 183.6)
+      sdk.TrustBoundary(id = "hero", title = "Tenant trust boundary", detail = "separates credentials and traffic", x = 528, y = 229.5, width = 864, height = 459, strokeRole = theme(accent.green)) {
         children {
-          sdk.Worker(id = "member-a", title = "Worker A", detail = "active", x = 24, y = 50, width = 120, height = 68)
-          sdk.Database(id = "member-b", title = "Local state", detail = "owned", x = 170, y = 50, width = 125, height = 68)
+          sdk.Worker(id = "member-a", title = "Worker A", detail = "active", x = 79.8, y = 135, width = 324, height = 183.6)
+          sdk.Database(id = "member-b", title = "Local state", detail = "owned", x = 474, y = 135, width = 337.5, height = 183.6)
         }
       }
-      sdk.Service(id = "sink", title = "Private runtime", detail = "exit", x = 542, y = 150, width = 130, height = 68)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.entry"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.exit"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.TrustBoundary(id = "variant-1", title = "Public", detail = "untrusted ingress", x = 44, y = 300, width = 170, height = 72, strokeRole = theme(ink.secondary)) {
+      sdk.Service(id = "sink", title = "Private runtime", detail = "exit", x = 1478.4, y = 405, width = 351, height = 183.6)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.entry"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.exit"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.TrustBoundary(id = "variant-1", title = "Public", detail = "untrusted ingress", x = 133.8, y = 810, width = 459, height = 194.4, strokeRole = theme(ink.secondary)) {
         children {
-          sdk.Label(id = "public-note", text = "untrusted ingress", x = 12, y = 38, width = 146, height = 16, fontSize = 9, align = "middle", inkRole = theme(ink.secondary))
+          sdk.Label(id = "public-note", text = "untrusted ingress", x = 47.4, y = 102.6, width = 394.2, height = 43.2, fontSize = 24.3, align = "middle", inkRole = theme(ink.secondary))
         }
       }
-      sdk.TrustBoundary(id = "variant-2", title = "Service", detail = "authenticated service", x = 265, y = 278, width = 170, height = 72, strokeRole = theme(accent.tertiary)) {
+      sdk.TrustBoundary(id = "variant-2", title = "Service", detail = "authenticated service", x = 730.5, y = 750.6, width = 459, height = 194.4, strokeRole = theme(accent.tertiary)) {
         children {
-          sdk.Label(id = "service-note", text = "authenticated service", x = 12, y = 38, width = 146, height = 16, fontSize = 9, align = "middle", inkRole = theme(ink.secondary))
+          sdk.Label(id = "service-note", text = "authenticated service", x = 47.4, y = 102.6, width = 394.2, height = 43.2, fontSize = 24.3, align = "middle", inkRole = theme(ink.secondary))
         }
       }
-      sdk.TrustBoundary(id = "variant-3", title = "Data", detail = "restricted records", x = 486, y = 300, width = 170, height = 72, strokeRole = theme(accent.warning)) {
+      sdk.TrustBoundary(id = "variant-3", title = "Data", detail = "restricted records", x = 1327.2, y = 810, width = 459, height = 194.4, strokeRole = theme(accent.warning)) {
         children {
-          sdk.Label(id = "data-note", text = "restricted records", x = 12, y = 38, width = 146, height = 16, fontSize = 9, align = "middle", inkRole = theme(ink.secondary))
+          sdk.Label(id = "data-note", text = "restricted records", x = 47.4, y = 102.6, width = 394.2, height = 43.2, fontSize = 24.3, align = "middle", inkRole = theme(ink.secondary))
         }
       }
       timeline main {
@@ -1440,11 +1432,11 @@ explainer "SDK Diagram Catalog" {
     caption: "6 primitives · focused examples follow."
 
     render: @scene {
-      sdk.Header(id = "header", title = "SYMBOLS AND ANNOTATIONS", caption = "Chapter 6 · 6 focused primitives", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Document(id = "preview-document", title = "Run manifest", detail = "marks a durable artifact", x = 55, y = 175, width = 130, height = 76, strokeRole = theme(ink.secondary))
-      sdk.Clock(id = "preview-clock", title = "Injected clock", detail = "anchors scheduling and measurement", x = 260, y = 175, width = 130, height = 76, strokeRole = theme(accent.green))
-      sdk.Warning(id = "preview-warning", title = "Quality warning", detail = "flags degraded evidence", x = 520, y = 175, width = 130, height = 76, strokeRole = theme(ink.secondary))
-      sdk.Label(id = "chapter-note", text = "symbols and annotations · one semantic role at a time", x = 100, y = 300, width = 500, height = 24, fontSize = 12, align = "middle")
+      sdk.Header(id = "header", title = "SYMBOLS AND ANNOTATIONS", caption = "Chapter 6 · 6 focused primitives", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Document(id = "preview-document", title = "Run manifest", detail = "marks a durable artifact", x = 163.5, y = 472.5, width = 351, height = 205.2, strokeRole = theme(ink.secondary))
+      sdk.Clock(id = "preview-clock", title = "Injected clock", detail = "anchors scheduling and measurement", x = 717, y = 472.5, width = 351, height = 205.2, strokeRole = theme(accent.green))
+      sdk.Warning(id = "preview-warning", title = "Quality warning", detail = "flags degraded evidence", x = 1419, y = 472.5, width = 351, height = 205.2, strokeRole = theme(ink.secondary))
+      sdk.Label(id = "chapter-note", text = "symbols and annotations · one semantic role at a time", x = 285, y = 810, width = 1350, height = 64.8, fontSize = 32.4, align = "middle")
       timeline main {
         at 0 reveal header duration 180
         after header reveal preview-clock duration 240
@@ -1458,7 +1450,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "SYMBOLS AND ANNOTATIONS · SDK.DOCUMENT"
     title: "Document: Run manifest"
     lede: "Marks a durable artifact. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Document hero is followed by Config, Report, and Trace variants."
+    narration: "Document names 'Run manifest'; Config, Report, and Trace show related examples."
     points: [
       "Run manifest anchors the primary document example.",
       "The compact symbol annotates a concrete relationship without taking over the topology."
@@ -1466,15 +1458,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Documents add artifact meaning without becoming stores."
 
     render: @scene {
-      sdk.Header(id = "header", title = "DOCUMENT", caption = "Documents add artifact meaning without becoming stores.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Process(id = "source", title = "Profile", detail = "context", x = 65, y = 135, width = 145, height = 78)
-      sdk.Document(id = "hero", title = "Run manifest", detail = "marks a durable artifact", x = 295, y = 112, width = 120, height = 105, strokeRole = theme(accent.green))
-      sdk.ObjectStore(id = "sink", title = "Archive", detail = "context", x = 490, y = 135, width = 145, height = 78)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Document(id = "variant-1", title = "Config", detail = "authored input", x = 82, y = 276, width = 140, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Document(id = "variant-2", title = "Report", detail = "generated output", x = 280, y = 300, width = 140, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Document(id = "variant-3", title = "Trace", detail = "captured evidence", x = 478, y = 324, width = 140, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "DOCUMENT", caption = "Documents add artifact meaning without becoming stores.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Process(id = "source", title = "Profile", detail = "context", x = 190.5, y = 364.5, width = 391.5, height = 210.6)
+      sdk.Document(id = "hero", title = "Run manifest", detail = "marks a durable artifact", x = 811.5, y = 302.4, width = 324, height = 283.5, strokeRole = theme(accent.green))
+      sdk.ObjectStore(id = "sink", title = "Archive", detail = "context", x = 1338, y = 364.5, width = 391.5, height = 210.6)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Document(id = "variant-1", title = "Config", detail = "authored input", x = 236.4, y = 745.2, width = 378, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Document(id = "variant-2", title = "Report", detail = "generated output", x = 771, y = 810, width = 378, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Document(id = "variant-3", title = "Trace", detail = "captured evidence", x = 1305.6, y = 874.8, width = 378, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -1491,7 +1483,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "SYMBOLS AND ANNOTATIONS · SDK.TERMINAL"
     title: "Terminal: aiperf profile"
     lede: "Marks an operator command. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Terminal hero is followed by Local, CI, and Cell variants."
+    narration: "Terminal names 'aiperf profile'; Local, CI, and Cell show related examples."
     points: [
       "aiperf profile anchors the primary terminal example.",
       "The compact symbol annotates a concrete relationship without taking over the topology."
@@ -1499,15 +1491,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Terminals distinguish commands from long-running processes."
 
     render: @scene {
-      sdk.Header(id = "header", title = "TERMINAL", caption = "Terminals distinguish commands from long-running processes.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.User(id = "source", title = "Engineer", detail = "context", x = 65, y = 135, width = 145, height = 78)
-      sdk.Terminal(id = "hero", title = "aiperf profile", detail = "marks an operator command", x = 295, y = 112, width = 120, height = 105, strokeRole = theme(accent.green))
-      sdk.Process(id = "sink", title = "Native CLI", detail = "context", x = 490, y = 135, width = 145, height = 78)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Terminal(id = "variant-1", title = "Local", detail = "interactive shell", x = 82, y = 276, width = 140, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Terminal(id = "variant-2", title = "CI", detail = "noninteractive job", x = 280, y = 300, width = 140, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Terminal(id = "variant-3", title = "Cell", detail = "internal process mode", x = 478, y = 324, width = 140, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "TERMINAL", caption = "Terminals distinguish commands from long-running processes.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.User(id = "source", title = "Engineer", detail = "context", x = 190.5, y = 364.5, width = 391.5, height = 210.6)
+      sdk.Terminal(id = "hero", title = "aiperf profile", detail = "marks an operator command", x = 811.5, y = 302.4, width = 324, height = 283.5, strokeRole = theme(accent.green))
+      sdk.Process(id = "sink", title = "Native CLI", detail = "context", x = 1338, y = 364.5, width = 391.5, height = 210.6)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Terminal(id = "variant-1", title = "Local", detail = "interactive shell", x = 236.4, y = 745.2, width = 378, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Terminal(id = "variant-2", title = "CI", detail = "noninteractive job", x = 771, y = 810, width = 378, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Terminal(id = "variant-3", title = "Cell", detail = "internal process mode", x = 1305.6, y = 874.8, width = 378, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -1524,7 +1516,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "SYMBOLS AND ANNOTATIONS · SDK.CLOCK"
     title: "Clock: Injected clock"
     lede: "Anchors scheduling and measurement. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Clock hero is followed by Real, Sim, and Window variants."
+    narration: "Clock names 'Injected clock'; Real, Sim, and Window show related examples."
     points: [
       "Injected clock anchors the primary clock example.",
       "The compact symbol annotates a concrete relationship without taking over the topology."
@@ -1532,15 +1524,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Clocks call out the source of time."
 
     render: @scene {
-      sdk.Header(id = "header", title = "CLOCK", caption = "Clocks call out the source of time.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.ProcessStep(id = "source", title = "Pacer", detail = "context", x = 40, y = 135, width = 145, height = 78)
-      sdk.Clock(id = "hero", title = "Injected clock", detail = "anchors scheduling and measurement", x = 270, y = 112, width = 120, height = 105, strokeRole = theme(accent.green))
-      sdk.Worker(id = "sink", title = "Observer", detail = "context", x = 545, y = 135, width = 130, height = 78)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Clock(id = "variant-1", title = "Real", detail = "wall-clock reactor", x = 82, y = 276, width = 140, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Clock(id = "variant-2", title = "Sim", detail = "deterministic virtual time", x = 280, y = 300, width = 140, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Clock(id = "variant-3", title = "Window", detail = "measurement interval", x = 478, y = 324, width = 140, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "CLOCK", caption = "Clocks call out the source of time.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.ProcessStep(id = "source", title = "Pacer", detail = "context", x = 123, y = 364.5, width = 391.5, height = 210.6)
+      sdk.Clock(id = "hero", title = "Injected clock", detail = "anchors scheduling and measurement", x = 744, y = 302.4, width = 324, height = 283.5, strokeRole = theme(accent.green))
+      sdk.Worker(id = "sink", title = "Observer", detail = "context", x = 1486.5, y = 364.5, width = 351, height = 210.6)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Clock(id = "variant-1", title = "Real", detail = "wall-clock reactor", x = 236.4, y = 745.2, width = 378, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Clock(id = "variant-2", title = "Sim", detail = "deterministic virtual time", x = 771, y = 810, width = 378, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Clock(id = "variant-3", title = "Window", detail = "measurement interval", x = 1305.6, y = 874.8, width = 378, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -1557,7 +1549,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "SYMBOLS AND ANNOTATIONS · SDK.LOCK"
     title: "Lock: Admission permit"
     lede: "Marks exclusive access. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Lock hero is followed by Open, Held, and Released variants."
+    narration: "Lock names 'Admission permit'; Open, Held, and Released show related examples."
     points: [
       "Admission permit anchors the primary lock example.",
       "The compact symbol annotates a concrete relationship without taking over the topology."
@@ -1565,15 +1557,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Locks annotate protected ownership."
 
     render: @scene {
-      sdk.Header(id = "header", title = "LOCK", caption = "Locks annotate protected ownership.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Queue(id = "source", title = "Waiting turns", detail = "context", x = 65, y = 135, width = 145, height = 78)
-      sdk.Lock(id = "hero", title = "Admission permit", detail = "marks exclusive access", x = 295, y = 112, width = 120, height = 105, strokeRole = theme(accent.green))
-      sdk.Worker(id = "sink", title = "Slot owner", detail = "context", x = 490, y = 135, width = 145, height = 78)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Lock(id = "variant-1", title = "Open", detail = "capacity available", x = 82, y = 276, width = 140, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Lock(id = "variant-2", title = "Held", detail = "slot in flight", x = 280, y = 300, width = 140, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Lock(id = "variant-3", title = "Released", detail = "permit returned", x = 478, y = 324, width = 140, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "LOCK", caption = "Locks annotate protected ownership.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Queue(id = "source", title = "Waiting turns", detail = "context", x = 190.5, y = 364.5, width = 391.5, height = 210.6)
+      sdk.Lock(id = "hero", title = "Admission permit", detail = "marks exclusive access", x = 811.5, y = 302.4, width = 324, height = 283.5, strokeRole = theme(accent.green))
+      sdk.Worker(id = "sink", title = "Slot owner", detail = "context", x = 1338, y = 364.5, width = 391.5, height = 210.6)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Lock(id = "variant-1", title = "Open", detail = "capacity available", x = 236.4, y = 745.2, width = 378, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Lock(id = "variant-2", title = "Held", detail = "slot in flight", x = 771, y = 810, width = 378, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Lock(id = "variant-3", title = "Released", detail = "permit returned", x = 1305.6, y = 874.8, width = 378, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -1590,7 +1582,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "SYMBOLS AND ANNOTATIONS · SDK.KEY"
     title: "Key: EndpointKey"
     lede: "Identifies a prepared binding. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Key hero is followed by Dense, Stable, and Local variants."
+    narration: "Key names 'EndpointKey'; Dense, Stable, and Local show related examples."
     points: [
       "EndpointKey anchors the primary key example.",
       "The compact symbol annotates a concrete relationship without taking over the topology."
@@ -1598,15 +1590,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Keys identify prepared lookup relationships."
 
     render: @scene {
-      sdk.Header(id = "header", title = "KEY", caption = "Keys identify prepared lookup relationships.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.DataStore(id = "source", title = "Endpoint table", detail = "context", x = 40, y = 135, width = 145, height = 78)
-      sdk.Key(id = "hero", title = "EndpointKey", detail = "identifies a prepared binding", x = 270, y = 112, width = 120, height = 105, strokeRole = theme(accent.green))
-      sdk.Endpoint(id = "sink", title = "Worker binding", detail = "context", x = 545, y = 135, width = 130, height = 78)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Key(id = "variant-1", title = "Dense", detail = "compact index", x = 82, y = 276, width = 140, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Key(id = "variant-2", title = "Stable", detail = "stable for run", x = 280, y = 300, width = 140, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Key(id = "variant-3", title = "Local", detail = "worker-local lookup", x = 478, y = 324, width = 140, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "KEY", caption = "Keys identify prepared lookup relationships.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.DataStore(id = "source", title = "Endpoint table", detail = "context", x = 123, y = 364.5, width = 391.5, height = 210.6)
+      sdk.Key(id = "hero", title = "EndpointKey", detail = "identifies a prepared binding", x = 744, y = 302.4, width = 324, height = 283.5, strokeRole = theme(accent.green))
+      sdk.Endpoint(id = "sink", title = "Worker binding", detail = "context", x = 1486.5, y = 364.5, width = 351, height = 210.6)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Key(id = "variant-1", title = "Dense", detail = "compact index", x = 236.4, y = 745.2, width = 378, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Key(id = "variant-2", title = "Stable", detail = "stable for run", x = 771, y = 810, width = 378, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Key(id = "variant-3", title = "Local", detail = "worker-local lookup", x = 1305.6, y = 874.8, width = 378, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -1623,7 +1615,7 @@ explainer "SDK Diagram Catalog" {
     eyebrow: "SYMBOLS AND ANNOTATIONS · SDK.WARNING"
     title: "Warning: Quality warning"
     lede: "Flags degraded evidence. The hero appears in a believable relationship while three quieter specimens compare concrete states."
-    narration: "The Warning hero is followed by Bounds, Route, and Fallback variants."
+    narration: "Warning names 'Quality warning'; Bounds, Route, and Fallback show related examples."
     points: [
       "Quality warning anchors the primary warning example.",
       "The compact symbol annotates a concrete relationship without taking over the topology."
@@ -1631,15 +1623,15 @@ explainer "SDK Diagram Catalog" {
     caption: "Warnings annotate risk without replacing its source."
 
     render: @scene {
-      sdk.Header(id = "header", title = "WARNING", caption = "Warnings annotate risk without replacing its source.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.Service(id = "source", title = "Verifier", detail = "context", x = 65, y = 135, width = 145, height = 78)
-      sdk.Warning(id = "hero", title = "Quality warning", detail = "flags degraded evidence", x = 295, y = 112, width = 120, height = 105, strokeRole = theme(accent.green))
-      sdk.User(id = "sink", title = "Deck author", detail = "context", x = 490, y = 135, width = 145, height = 78)
-      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Warning(id = "variant-1", title = "Bounds", detail = "content clipped", x = 82, y = 276, width = 140, height = 72, strokeRole = theme(ink.secondary))
-      sdk.Warning(id = "variant-2", title = "Route", detail = "connector conflict", x = 280, y = 300, width = 140, height = 72, strokeRole = theme(accent.tertiary))
-      sdk.Warning(id = "variant-3", title = "Fallback", detail = "quality degraded", x = 478, y = 324, width = 140, height = 72, strokeRole = theme(accent.warning))
+      sdk.Header(id = "header", title = "WARNING", caption = "Warnings annotate risk without replacing its source.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.Service(id = "source", title = "Verifier", detail = "context", x = 190.5, y = 364.5, width = 391.5, height = 210.6)
+      sdk.Warning(id = "hero", title = "Quality warning", detail = "flags degraded evidence", x = 811.5, y = 302.4, width = 324, height = 283.5, strokeRole = theme(accent.green))
+      sdk.User(id = "sink", title = "Deck author", detail = "context", x = 1338, y = 364.5, width = 391.5, height = 210.6)
+      sdk.Edge(id = "edge-in", mode = "route", from = ref("source.output"), to = ref("hero.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "edge-out", mode = "route", from = ref("hero.output"), to = ref("sink.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Warning(id = "variant-1", title = "Bounds", detail = "content clipped", x = 236.4, y = 745.2, width = 378, height = 194.4, strokeRole = theme(ink.secondary))
+      sdk.Warning(id = "variant-2", title = "Route", detail = "connector conflict", x = 771, y = 810, width = 378, height = 194.4, strokeRole = theme(accent.tertiary))
+      sdk.Warning(id = "variant-3", title = "Fallback", detail = "quality degraded", x = 1305.6, y = 874.8, width = 378, height = 194.4, strokeRole = theme(accent.warning))
       timeline main {
         at 0 reveal header duration 160
         after header reveal hero duration 260
@@ -1664,24 +1656,24 @@ explainer "SDK Diagram Catalog" {
     caption: "A small grammar scales from one specimen to a complete system."
 
     render: @scene {
-      sdk.Header(id = "header", title = "CATALOG COMPOSITION", caption = "Compute, storage, messaging, control, and trust compose without stand-ins.", x = 18, y = 16, width = 664, height = 66, surfaceRole = theme(surface.secondary))
-      sdk.TrustBoundary(id = "trust", title = "Benchmark trust boundary", x = 150, y = 92, width = 530, height = 180, strokeRole = theme(accent.green)) {
+      sdk.Header(id = "header", title = "CATALOG COMPOSITION", caption = "Compute, storage, messaging, control, and trust compose without stand-ins.", x = 63.6, y = 43.2, width = 1792.8, height = 178.2, surfaceRole = theme(surface.secondary))
+      sdk.TrustBoundary(id = "trust", title = "Benchmark trust boundary", x = 420, y = 248.4, width = 1431, height = 486, strokeRole = theme(accent.green)) {
         children {
-          sdk.Client(id = "client", title = "Load client", detail = "authors turns", x = 10, y = 62, width = 110, height = 68)
-          sdk.Queue(id = "queue", title = "Ready queue", detail = "admitted", x = 145, y = 62, width = 110, height = 68)
-          sdk.Service(id = "service", title = "Inference", detail = "dispatch", x = 280, y = 62, width = 110, height = 68)
-          sdk.Database(id = "results", title = "Results", detail = "folded", x = 415, y = 62, width = 105, height = 68)
+          sdk.Client(id = "client", title = "Load client", detail = "authors turns", x = 42, y = 167.4, width = 297, height = 183.6)
+          sdk.Queue(id = "queue", title = "Ready queue", detail = "admitted", x = 406.5, y = 167.4, width = 297, height = 183.6)
+          sdk.Service(id = "service", title = "Inference", detail = "dispatch", x = 771, y = 167.4, width = 297, height = 183.6)
+          sdk.Database(id = "results", title = "Results", detail = "folded", x = 1135.5, y = 167.4, width = 283.5, height = 183.6)
         }
       }
-      sdk.User(id = "operator", title = "Operator", detail = "owns intent", x = 10, y = 145, width = 90, height = 72)
-      sdk.Decision(id = "gate", title = "Healthy?", detail = "control gate", x = 300, y = 300, width = 130, height = 72, branches = ["no", "yes"], strokeRole = theme(accent.warning))
-      sdk.Cloud(id = "archive", title = "Artifact cloud", detail = "durable outputs", x = 535, y = 300, width = 140, height = 72)
-      sdk.Edge(id = "final-in", mode = "route", from = ref("operator.output"), to = ref("trust.child.0.input"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "final-flow-1", mode = "route", from = ref("trust.child.0.output"), to = ref("trust.child.1.producer"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "final-flow-2", mode = "route", from = ref("trust.child.1.consumer"), to = ref("trust.child.2.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "final-store", mode = "route", from = ref("trust.child.2.output"), to = ref("trust.child.3.write"), style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "final-gate-in", mode = "route", from = ref("trust.child.3.read"), to = ref("gate.input"), style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "final-gate-out", mode = "route", from = ref("gate.branch.yes"), to = ref("archive.input"), style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" })
+      sdk.User(id = "operator", title = "Operator", detail = "owns intent", x = 42, y = 391.5, width = 243, height = 194.4)
+      sdk.Decision(id = "gate", title = "Healthy?", detail = "control gate", x = 825, y = 810, width = 351, height = 194.4, branches = ["no", "yes"], strokeRole = theme(accent.warning))
+      sdk.Cloud(id = "archive", title = "Artifact cloud", detail = "durable outputs", x = 1459.5, y = 810, width = 378, height = 194.4)
+      sdk.Edge(id = "final-in", mode = "route", from = ref("operator.output"), to = ref("trust.child.0.input"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "final-flow-1", mode = "route", from = ref("trust.child.0.output"), to = ref("trust.child.1.producer"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "final-flow-2", mode = "route", from = ref("trust.child.1.consumer"), to = ref("trust.child.2.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "final-store", mode = "route", from = ref("trust.child.2.output"), to = ref("trust.child.3.write"), style = { stroke: theme(accent.secondary), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "final-gate-in", mode = "route", from = ref("trust.child.3.read"), to = ref("gate.input"), via = { x: 690, y: 285 }, style = { stroke: theme(accent.warning), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "final-gate-out", mode = "route", from = ref("gate.branch.yes"), to = ref("archive.input"), style = { stroke: theme(accent.tertiary), strokeWidth: 5.94, fill: "none" })
       timeline main {
         at 0 reveal header duration 180
         after header reveal trust duration 260

@@ -29,10 +29,10 @@ explainer "Rust Architecture — Deck Port" {
     narration: "The cover opens the deck: a green monospace kicker over the huge title 'AIPerf Rust Runtime', the one-line thesis subtitle, and a green-barred byline reading 'Anthony Casagrande · 2026'."
     caption: "Architecture Deep Dive · AIPerf Rust Runtime."
     render: @scene {
-      sdk.Caption(id = "cover-eyebrow", text = "ARCHITECTURE DEEP DIVE", x = 54, y = 66, width = 460, height = 20, inkRole = theme(accent.primary))
-      sdk.Title(id = "cover-title", text = "AIPerf Rust Runtime", x = 54, y = 104, width = 600, height = 64, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "cover-lede", text = "From the command line to results — every\ncomponent on the product path, and the two\nseams that hold it together", x = 54, y = 194, width = 540, height = 84, inkRole = theme(ink.secondary))
-      sdk.IconLabel(id = "cover-byline", label = "Anthony Casagrande · 2026", icon = "user", x = 54, y = 314, width = 340, height = 36, inkRole = theme(ink.primary), strokeRole = theme(accent.primary))
+      sdk.Caption(id = "cover-eyebrow", text = "ARCHITECTURE DEEP DIVE", x = 160.8, y = 178.2, width = 1242, height = 54, inkRole = theme(accent.primary))
+      sdk.Title(id = "cover-title", text = "AIPerf Rust Runtime", x = 160.8, y = 280.8, width = 1620, height = 172.8, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "cover-lede", text = "From the command line to results — every\ncomponent on the product path, and the two\nseams that hold it together", x = 160.8, y = 523.8, width = 1458, height = 226.8, inkRole = theme(ink.secondary))
+      sdk.IconLabel(id = "cover-byline", label = "Anthony Casagrande · 2026", icon = "user", x = 160.8, y = 847.8, width = 918, height = 97.2, inkRole = theme(ink.primary), strokeRole = theme(accent.primary))
       timeline main {
         at 0 reveal cover-eyebrow duration 200
         after cover-eyebrow reveal cover-title duration 260
@@ -49,23 +49,23 @@ explainer "Rust Architecture — Deck Port" {
     narration: "The whole idea in one slide: Python orchestrates, Rust executes. A four-box pipeline runs Python → protocol-v2 envelope → aiperf-runner → native-v2.json, with the envelope box highlighted green as the single hand-off. Three green-topped takeaway cells restate the split: Python owns config, aiperf-runner is the only Rust exe, and two trait seams make one codebase run three ways."
     caption: "Python-orchestrated, Rust-executed · one envelope in, one report out."
     render: @scene {
-      sdk.Caption(id = "thesis-eyebrow", text = "THE WHOLE IDEA IN ONE SLIDE", x = 40, y = 22, width = 460, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "thesis-title", text = "AIPerf is Python-orchestrated, Rust-executed", x = 40, y = 46, width = 630, height = 34, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "thesis-sub", text = "one protocol-v2 envelope in, one authoritative report out", x = 40, y = 86, width = 630, height = 24, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "thesis-eyebrow", text = "THE WHOLE IDEA IN ONE SLIDE", x = 123, y = 59.4, width = 1242, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "thesis-title", text = "AIPerf is Python-orchestrated, Rust-executed", x = 123, y = 124.2, width = 1701, height = 91.8, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "thesis-sub", text = "one protocol-v2 envelope in, one authoritative report out", x = 123, y = 232.2, width = 1701, height = 64.8, inkRole = theme(ink.secondary))
 
-      sdk.Shape(id = "thesis-p1", variant = "rounded", label = "Python", x = 34, y = 128, width = 120, height = 44, strokeRole = theme(ink.tertiary))
-      sdk.Caption(id = "thesis-p1-sub", text = "Config-v2", x = 34, y = 176, width = 120, height = 16, inkRole = theme(ink.tertiary))
-      sdk.Arrow(id = "thesis-a1", label = "to envelope", from = { nodeId: "thesis-p1", anchor: "e" }, to = { nodeId: "thesis-p2", anchor: "w" }, x = 154, y = 150, width = 40, height = 0, strokeRole = theme(accent.primary))
-      sdk.Shape(id = "thesis-p2", variant = "rounded", label = "protocol-v2 envelope", x = 194, y = 128, width = 156, height = 44, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.primary))
-      sdk.Caption(id = "thesis-p2-sub", text = "one JSON line", x = 194, y = 176, width = 156, height = 16, inkRole = theme(ink.tertiary))
-      sdk.Arrow(id = "thesis-a2", label = "to runner", from = { nodeId: "thesis-p2", anchor: "e" }, to = { nodeId: "thesis-p3", anchor: "w" }, x = 350, y = 150, width = 40, height = 0, strokeRole = theme(accent.primary))
-      sdk.Shape(id = "thesis-p3", variant = "rounded", label = "aiperf-runner", x = 390, y = 128, width = 140, height = 44, strokeRole = theme(ink.primary))
-      sdk.Caption(id = "thesis-p3-sub", text = "the only Rust exe", x = 390, y = 176, width = 140, height = 16, inkRole = theme(ink.tertiary))
-      sdk.Arrow(id = "thesis-a3", label = "to output", from = { nodeId: "thesis-p3", anchor: "e" }, to = { nodeId: "thesis-p4", anchor: "w" }, x = 530, y = 150, width = 40, height = 0, strokeRole = theme(accent.primary))
-      sdk.Shape(id = "thesis-p4", variant = "rounded", label = "native-v2.json", x = 570, y = 128, width = 120, height = 44, strokeRole = theme(ink.tertiary))
-      sdk.Caption(id = "thesis-p4-sub", text = "+ terminal line", x = 570, y = 176, width = 120, height = 16, inkRole = theme(ink.tertiary))
+      sdk.Shape(id = "thesis-p1", variant = "rounded", label = "Python", x = 106.8, y = 345.6, width = 324, height = 118.8, strokeRole = theme(ink.tertiary))
+      sdk.Caption(id = "thesis-p1-sub", text = "Config-v2", x = 106.8, y = 475.2, width = 324, height = 43.2, inkRole = theme(ink.tertiary))
+      sdk.Arrow(id = "thesis-a1", label = "to envelope", from = { nodeId: "thesis-p1", anchor: "e" }, to = { nodeId: "thesis-p2", anchor: "w" }, x = 430.8, y = 405, width = 108, height = 0, strokeRole = theme(accent.primary))
+      sdk.Shape(id = "thesis-p2", variant = "rounded", label = "protocol-v2 envelope", x = 538.8, y = 345.6, width = 421.2, height = 118.8, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.primary))
+      sdk.Caption(id = "thesis-p2-sub", text = "one JSON line", x = 538.8, y = 475.2, width = 421.2, height = 43.2, inkRole = theme(ink.tertiary))
+      sdk.Arrow(id = "thesis-a2", label = "to runner", from = { nodeId: "thesis-p2", anchor: "e" }, to = { nodeId: "thesis-p3", anchor: "w" }, x = 960, y = 405, width = 108, height = 0, strokeRole = theme(accent.primary))
+      sdk.Shape(id = "thesis-p3", variant = "rounded", label = "aiperf-runner", x = 1068, y = 345.6, width = 378, height = 118.8, strokeRole = theme(ink.primary))
+      sdk.Caption(id = "thesis-p3-sub", text = "the only Rust exe", x = 1068, y = 475.2, width = 378, height = 43.2, inkRole = theme(ink.tertiary))
+      sdk.Arrow(id = "thesis-a3", label = "to output", from = { nodeId: "thesis-p3", anchor: "e" }, to = { nodeId: "thesis-p4", anchor: "w" }, x = 1446, y = 405, width = 108, height = 0, strokeRole = theme(accent.primary))
+      sdk.Shape(id = "thesis-p4", variant = "rounded", label = "native-v2.json", x = 1554, y = 345.6, width = 324, height = 118.8, strokeRole = theme(ink.tertiary))
+      sdk.Caption(id = "thesis-p4-sub", text = "+ terminal line", x = 1554, y = 475.2, width = 324, height = 43.2, inkRole = theme(ink.tertiary))
 
-      sdk.CompareGrid(id = "thesis-takeaways", columns = 3, items = [{ label: "Python owns config", detail: "one envelope to a fresh child" }, { label: "aiperf-runner", detail: "the only Rust exe on path" }, { label: "Two trait seams", detail: "one codebase, three modes" }], x = 4, y = 228)
+      sdk.CompareGrid(id = "thesis-takeaways", columns = 3, items = [{ label: "Python owns config", detail: "one envelope to a fresh child" }, { label: "aiperf-runner", detail: "the only Rust exe on path" }, { label: "Two trait seams", detail: "one codebase, three modes" }], x = 25.8, y = 615.6)
 
       timeline main {
         at 0 reveal thesis-eyebrow duration 180
@@ -88,13 +88,13 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Orientation walks the runner's six ordered stages left to right: 01 VALIDATE the envelope against frozen registries, 02 SELECT a transport and workload, 03 DRIVE a phased load test over the injected Clock, 04 MEASURE lock-free per worker, 05 REPORT the authoritative native-v2.json, and 06 EMIT one terminal JSONL line."
     caption: "Six stages · from stdin envelope to stdout line."
     render: @scene {
-      sdk.Title(id = "orient-title", text = "What the runner does, in order", x = 40, y = 30, width = 620, height = 36, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "orient-sub", text = "Everything from a single envelope arriving on stdin to a terminal line on stdout", x = 40, y = 76, width = 620, height = 24, inkRole = theme(ink.secondary))
+      sdk.Title(id = "orient-title", text = "What the runner does, in order", x = 123, y = 81, width = 1674, height = 97.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "orient-sub", text = "Everything from a single envelope arriving on stdin to a terminal line on stdout", x = 123, y = 205.2, width = 1674, height = 64.8, inkRole = theme(ink.secondary))
       // The 6-stage pipeline is split across two rows of three: the composite's
       // fixed step-box width overflows the 700×400 scene viewport at six-in-a-row,
       // so 01→03 and 04→06 stack, each an sdk.StepChain that fits cleanly.
-      sdk.StepChain(id = "orient-chain-a", direction = "row", steps = [{ number: "01", label: "VALIDATE", detail: "frozen registries" }, { number: "02", label: "SELECT", detail: "transport + workload" }, { number: "03", label: "DRIVE", detail: "phased over Clock" }], x = 52, y = 118)
-      sdk.StepChain(id = "orient-chain-b", direction = "row", steps = [{ number: "04", label: "MEASURE", detail: "lock-free per worker" }, { number: "05", label: "REPORT", detail: "write native-v2.json" }, { number: "06", label: "EMIT", detail: "one JSONL line on stdout" }], x = 52, y = 258)
+      sdk.StepChain(id = "orient-chain-a", direction = "row", steps = [{ number: "01", label: "VALIDATE", detail: "frozen registries" }, { number: "02", label: "SELECT", detail: "transport + workload" }, { number: "03", label: "DRIVE", detail: "phased over Clock" }], x = 155.4, y = 318.6)
+      sdk.StepChain(id = "orient-chain-b", direction = "row", steps = [{ number: "04", label: "MEASURE", detail: "lock-free per worker" }, { number: "05", label: "REPORT", detail: "write native-v2.json" }, { number: "06", label: "EMIT", detail: "one JSONL line on stdout" }], x = 155.4, y = 696.6)
       timeline main {
         at 0 reveal orient-title duration 200
         after orient-title reveal orient-sub duration 180
@@ -113,7 +113,7 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Chapter-break slide 01: a huge green monospace '01' over the bold title 'The Two Seams' and the gray subtitle 'If you understand these, the rest is composition', right-aligned."
     caption: "Chapter 01 · The Two Seams."
     render: @scene {
-      sdk.SectionDivider(id = "div01", number = "01", title = "The Two Seams", subtitle = "If you understand these, the rest is composition", x = 34, y = 58, width = 650)
+      sdk.SectionDivider(id = "div01", number = "01", title = "The Two Seams", subtitle = "If you understand these, the rest is composition", x = 106.8, y = 156.6, width = 1755)
       timeline main {
         at 0 reveal div01 duration 320
       }
@@ -127,11 +127,11 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Two trait seams carry the architecture. A row of run-mode pills — online-real, online-mock, offline co-sim — funnels down into a two-box waist, {clock} and {transport}, which then fans back out to the runtime-concern pills scheduling, pacing, admission, reporting. The modes above and concerns below never branch on each other."
     caption: "Two seams · the waist everything passes through."
     render: @scene {
-      sdk.Title(id = "seams-title", text = "Two trait seams carry the architecture", x = 34, y = 20, width = 640, height = 32, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "seams-sub", text = "Everything passes through the waist — modes above, runtime concerns below, neither branches on the other", x = 34, y = 56, width = 640, height = 24, inkRole = theme(ink.secondary))
-      sdk.TagList(id = "seams-modes", items = ["online-real", "online-mock", "offline co-sim"], gap = 12, x = 150, y = 92, width = 400, height = 34)
-      sdk.CompareGrid(id = "seams-waist", columns = 2, items = [{ label: "{clock}", detail: "wall-vs-virtual time · RealClock · SimClock" }, { label: "{transport}", detail: "dispatch + measure · Dispatchable · RequestSink · RequestObserver" }], x = 122, y = 134)
-      sdk.TagList(id = "seams-concerns", items = ["scheduling", "pacing", "admission", "reporting"], gap = 12, x = 130, y = 276, width = 440, height = 34)
+      sdk.Title(id = "seams-title", text = "Two trait seams carry the architecture", x = 106.8, y = 54, width = 1728, height = 86.4, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "seams-sub", text = "Everything passes through the waist — modes above, runtime concerns below, neither branches on the other", x = 106.8, y = 151.2, width = 1728, height = 64.8, inkRole = theme(ink.secondary))
+      sdk.TagList(id = "seams-modes", items = ["online-real", "online-mock", "offline co-sim"], gap = 32.4, x = 420, y = 248.4, width = 1080, height = 91.8)
+      sdk.CompareGrid(id = "seams-waist", columns = 2, items = [{ label: "{clock}", detail: "wall-vs-virtual time · RealClock · SimClock" }, { label: "{transport}", detail: "dispatch + measure · Dispatchable · RequestSink · RequestObserver" }], x = 344.4, y = 361.8)
+      sdk.TagList(id = "seams-concerns", items = ["scheduling", "pacing", "admission", "reporting"], gap = 32.4, x = 366, y = 745.2, width = 1188, height = 91.8)
       timeline main {
         at 0 reveal seams-title duration 200
         after seams-title reveal seams-sub duration 180
@@ -149,13 +149,13 @@ explainer "Rust Architecture — Deck Port" {
     narration: "One Clock trait, two implementations. On the left RealClock is a timeline: ticks at 0/1/2/3 ms, a dashed green target deadline, a filled-green 'timerfd exact' marker at the deadline and a hollow-gray 'wheel late' marker past it. On the right SimClock is a BinaryHeap: the popped root (100,0) fills green over its two children (140,1) and (140,2), with the pop order noted beneath."
     caption: "RealClock timeline vs SimClock heap."
     render: @scene {
-      sdk.Caption(id = "clock-eyebrow", text = "{clock}", x = 34, y = 18, width = 300, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "clock-title", text = "One Clock trait, two implementations", x = 34, y = 40, width = 640, height = 30, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "clock-sub", text = "now_ns · sleep · is_virtual — dispatch on is_virtual() and nothing above the seam cares", x = 34, y = 74, width = 640, height = 22, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "clock-real-name", text = "RealClock — timerfd (ns) vs tokio 1ms wheel", x = 20, y = 108, width = 320, height = 16, inkRole = theme(ink.primary))
-      sdk.TimelineAxis(id = "clock-real", start = 0, end = 3, ticks = [{ at: 0, label: "0ms" }, { at: 1, label: "1ms" }, { at: 2, label: "2ms" }, { at: 3, label: "3ms" }], target = { at: 1.6, label: "target" }, markers = [{ at: 1.6, label: "timerfd exact" }, { at: 2, label: "wheel late", style: "late" }], x = 20, y = 132, width = 300)
-      sdk.Caption(id = "clock-sim-name", text = "SimClock — BinaryHeap<Sleeper>, reversed Ord pops earliest", x = 356, y = 108, width = 340, height = 16, inkRole = theme(ink.primary))
-      sdk.NodeTree(id = "clock-sim", root = { label: "(100, 0)", emphasis: true }, children = [{ label: "(140, 1)" }, { label: "(140, 2)" }], orderNote = "pop order → (100,0) → (140,1) → (140,2)", x = 356, y = 132)
+      sdk.Caption(id = "clock-eyebrow", text = "{clock}", x = 106.8, y = 48.6, width = 810, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "clock-title", text = "One Clock trait, two implementations", x = 106.8, y = 108, width = 1728, height = 81, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "clock-sub", text = "now_ns · sleep · is_virtual — dispatch on is_virtual() and nothing above the seam cares", x = 106.8, y = 199.8, width = 1728, height = 59.4, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "clock-real-name", text = "RealClock — timerfd (ns) vs tokio 1ms wheel", x = 69, y = 291.6, width = 864, height = 43.2, inkRole = theme(ink.primary))
+      sdk.TimelineAxis(id = "clock-real", start = 0, end = 3, ticks = [{ at: 0, label: "0ms" }, { at: 1, label: "1ms" }, { at: 2, label: "2ms" }, { at: 3, label: "3ms" }], target = { at: 1.6, label: "target" }, markers = [{ at: 1.6, label: "timerfd exact" }, { at: 2, label: "wheel late", style: "late" }], x = 69, y = 356.4, width = 810)
+      sdk.Caption(id = "clock-sim-name", text = "SimClock — BinaryHeap<Sleeper>, reversed Ord pops earliest", x = 976.2, y = 291.6, width = 918, height = 43.2, inkRole = theme(ink.primary))
+      sdk.NodeTree(id = "clock-sim", root = { label: "(100, 0)", emphasis: true }, children = [{ label: "(140, 1)" }, { label: "(140, 2)" }], orderNote = "pop order → (100,0) → (140,1) → (140,2)", x = 976.2, y = 356.4)
       timeline main {
         at 0 reveal clock-eyebrow duration 160
         after clock-eyebrow reveal clock-title duration 220
@@ -175,21 +175,21 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Same executor, two ways to drive it. drive_real is a wall-clock timeline whose reactor fires futures at three green deadlines. drive_sim is an idle-pump loop: poll the LocalSet to quiescence, advance_to the next event time, wake sleepers in heap order, then repeat — an idle heap with no clock event panics as a deadlock."
     caption: "drive_real fires; drive_sim pumps."
     render: @scene {
-      sdk.Caption(id = "drv-eyebrow", text = "{clock} · drivers", x = 34, y = 18, width = 300, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "drv-title", text = "Same executor, two ways to drive it", x = 34, y = 40, width = 640, height = 30, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "drv-sub", text = "The driver dispatches on is_virtual() — real time yields to the reactor, virtual time is pumped by hand", x = 34, y = 74, width = 640, height = 22, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "drv-real-name", text = "drive_real — reactor fires at wall-clock deadlines", x = 20, y = 108, width = 320, height = 16, inkRole = theme(ink.primary))
-      sdk.TimelineAxis(id = "drv-real", start = 0, end = 3, markers = [{ at: 0.6, label: "fire" }, { at: 1.5, label: "fire" }, { at: 2.4, label: "fire" }], x = 20, y = 132, width = 300)
-      sdk.Caption(id = "drv-real-note", text = "real wall-clock time →", x = 20, y = 250, width = 300, height = 16, inkRole = theme(ink.tertiary))
-      sdk.Caption(id = "drv-sim-name", text = "drive_sim · idle-pump loop", x = 360, y = 108, width = 330, height = 16, inkRole = theme(accent.primary))
-      sdk.ProcessStep(id = "drv-poll", title = "poll", detail = "LocalSet", x = 360, y = 150, width = 100, height = 58)
-      sdk.ProcessStep(id = "drv-adv", title = "advance_to", detail = "next event", x = 475, y = 150, width = 100, height = 58)
-      sdk.ProcessStep(id = "drv-wake", title = "wake", detail = "sleepers", x = 590, y = 150, width = 100, height = 58)
-      sdk.Edge(id = "drv-e1", mode = "route", from = ref("drv-poll.output"), to = ref("drv-adv.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "drv-e2", mode = "route", from = ref("drv-adv.output"), to = ref("drv-wake.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
-      sdk.Edge(id = "drv-back", mode = "route", from = ref("drv-wake.output"), to = ref("drv-poll.input"), via = { x: 475, y: 240 }, style = { stroke: theme(accent.warning), strokeWidth: 2.0, fill: "none" })
-      sdk.Caption(id = "drv-repeat", text = "repeat — idle with no clock event → panic", x = 360, y = 250, width = 330, height = 16, inkRole = theme(ink.tertiary))
-      sdk.Paragraph(id = "drv-foot", text = "The graph engine's drive_*_with_source variants also merge an external SimEventSource — e.g. the in-process dynosim engine.", x = 34, y = 296, width = 640, height = 36, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "drv-eyebrow", text = "{clock} · drivers", x = 106.8, y = 48.6, width = 810, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "drv-title", text = "Same executor, two ways to drive it", x = 106.8, y = 108, width = 1728, height = 81, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "drv-sub", text = "The driver dispatches on is_virtual() — real time yields to the reactor, virtual time is pumped by hand", x = 106.8, y = 199.8, width = 1728, height = 59.4, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "drv-real-name", text = "drive_real — reactor fires at wall-clock deadlines", x = 69, y = 291.6, width = 864, height = 43.2, inkRole = theme(ink.primary))
+      sdk.TimelineAxis(id = "drv-real", start = 0, end = 3, markers = [{ at: 0.6, label: "fire" }, { at: 1.5, label: "fire" }, { at: 2.4, label: "fire" }], x = 69, y = 356.4, width = 810)
+      sdk.Caption(id = "drv-real-note", text = "real wall-clock time →", x = 69, y = 675, width = 810, height = 43.2, inkRole = theme(ink.tertiary))
+      sdk.Caption(id = "drv-sim-name", text = "drive_sim · idle-pump loop", x = 987, y = 291.6, width = 891, height = 43.2, inkRole = theme(accent.primary))
+      sdk.ProcessStep(id = "drv-poll", title = "poll", detail = "LocalSet", x = 987, y = 405, width = 270, height = 156.6)
+      sdk.ProcessStep(id = "drv-adv", title = "advance_to", detail = "next event", x = 1297.5, y = 405, width = 270, height = 156.6)
+      sdk.ProcessStep(id = "drv-wake", title = "wake", detail = "sleepers", x = 1608, y = 405, width = 270, height = 156.6)
+      sdk.Edge(id = "drv-e1", mode = "route", from = ref("drv-poll.output"), to = ref("drv-adv.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "drv-e2", mode = "route", from = ref("drv-adv.output"), to = ref("drv-wake.input"), style = { stroke: theme(accent.green), strokeWidth: 5.94, fill: "none" })
+      sdk.Edge(id = "drv-back", mode = "route", from = ref("drv-wake.output"), to = ref("drv-poll.input"), via = { x: 475, y: 240 }, style = { stroke: theme(accent.warning), strokeWidth: 5.4, fill: "none" })
+      sdk.Caption(id = "drv-repeat", text = "repeat — idle with no clock event → panic", x = 987, y = 675, width = 891, height = 43.2, inkRole = theme(ink.tertiary))
+      sdk.Paragraph(id = "drv-foot", text = "The graph engine's drive_*_with_source variants also merge an external SimEventSource — e.g. the in-process dynosim engine.", x = 106.8, y = 799.2, width = 1728, height = 97.2, inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal drv-eyebrow duration 160
         after drv-eyebrow reveal drv-title duration 220
@@ -217,12 +217,12 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Three traits, no concrete request types. Three cards — Dispatchable (Send + Sync, uuid/input_length/max_output_tokens), RequestSink<R> (?Send, !Send hyper/gRPC sinks on a LocalSet), and RequestObserver (no Send/Sync, worker-local Rc/RefCell). Below, a pill row real HTTP / native gRPC / mock HTTP / co-sim arrows into one RequestObserver."
     caption: "Three transport traits, one observer."
     render: @scene {
-      sdk.Caption(id = "trans-eyebrow", text = "{transport}", x = 34, y = 18, width = 300, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "trans-title", text = "Three traits, no concrete request types", x = 34, y = 40, width = 640, height = 30, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "trans-sub", text = "Real HTTP, native gRPC, mock HTTP and in-process co-sim all feed the same observer", x = 34, y = 74, width = 640, height = 22, inkRole = theme(ink.secondary))
-      sdk.CompareGrid(id = "trans-cards", columns = 3, items = [{ label: "Dispatchable", detail: "Send + Sync · no concrete type" }, { label: "RequestSink<R>", detail: "?Send · !Send on a LocalSet" }, { label: "RequestObserver", detail: "no Send/Sync · Rc/RefCell" }], x = 4, y = 108)
-      sdk.TagList(id = "trans-tags", items = ["real HTTP", "native gRPC", "mock HTTP", "co-sim"], gap = 8, x = 34, y = 300, width = 380, height = 32)
-      sdk.Caption(id = "trans-arrow", text = "→ one RequestObserver · backend never leaks up", x = 430, y = 306, width = 250, height = 40, inkRole = theme(ink.primary))
+      sdk.Caption(id = "trans-eyebrow", text = "{transport}", x = 106.8, y = 48.6, width = 810, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "trans-title", text = "Three traits, no concrete request types", x = 106.8, y = 108, width = 1728, height = 81, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "trans-sub", text = "Real HTTP, native gRPC, mock HTTP and in-process co-sim all feed the same observer", x = 106.8, y = 199.8, width = 1728, height = 59.4, inkRole = theme(ink.secondary))
+      sdk.CompareGrid(id = "trans-cards", columns = 3, items = [{ label: "Dispatchable", detail: "Send + Sync · no concrete type" }, { label: "RequestSink<R>", detail: "?Send · !Send on a LocalSet" }, { label: "RequestObserver", detail: "no Send/Sync · Rc/RefCell" }], x = 25.8, y = 291.6)
+      sdk.TagList(id = "trans-tags", items = ["real HTTP", "native gRPC", "mock HTTP", "co-sim"], gap = 21.6, x = 106.8, y = 810, width = 1026, height = 86.4)
+      sdk.Caption(id = "trans-arrow", text = "→ one RequestObserver · backend never leaks up", x = 1176, y = 826.2, width = 675, height = 108, inkRole = theme(ink.primary))
       timeline main {
         at 0 reveal trans-eyebrow duration 160
         after trans-eyebrow reveal trans-title duration 220
@@ -241,8 +241,8 @@ explainer "Rust Architecture — Deck Port" {
     narration: "The life of one request, in callbacks. Six numbered rows with alternating green and black index chips: on_arrival, on_admit, on_token (first token derives TTFT), on_usage (terminal authoritative server usage), on_endpoint_metrics (default no-op), and on_terminal (Completed · Rejected · Canceled · Failed)."
     caption: "Six observer callbacks in order."
     render: @scene {
-      sdk.Caption(id = "seq-title", text = "The life of one request, in callbacks", x = 34, y = 8, width = 640, height = 22, inkRole = theme(ink.primary))
-      sdk.NumberedSequence(id = "seq-list", items = [{ number: "1", title: "on_arrival", detail: "arrival_ms, input_length, requested_output_length", emphasis: true }, { number: "2", title: "on_admit", detail: "admit_ms, reused_input_tokens", emphasis: true }, { number: "3", title: "on_token", detail: "on_classified_token / batch — first token derives TTFT" }, { number: "4", title: "on_usage", detail: "terminal server usage, 13 optional fields; absent stays absent", emphasis: true }, { number: "5", title: "on_endpoint_metrics", detail: "image/video facts; default no-op", emphasis: true }, { number: "6", title: "on_terminal", detail: "Completed · Rejected · Canceled · Failed" }], x = 34, y = 34)
+      sdk.Caption(id = "seq-title", text = "The life of one request, in callbacks", x = 106.8, y = 21.6, width = 1728, height = 59.4, inkRole = theme(ink.primary))
+      sdk.NumberedSequence(id = "seq-list", items = [{ number: "1", title: "on_arrival", detail: "arrival_ms, input_length, requested_output_length", emphasis: true }, { number: "2", title: "on_admit", detail: "admit_ms, reused_input_tokens", emphasis: true }, { number: "3", title: "on_token", detail: "on_classified_token / batch — first token derives TTFT" }, { number: "4", title: "on_usage", detail: "terminal server usage, 13 optional fields; absent stays absent", emphasis: true }, { number: "5", title: "on_endpoint_metrics", detail: "image/video facts; default no-op", emphasis: true }, { number: "6", title: "on_terminal", detail: "Completed · Rejected · Canceled · Failed" }], x = 106.8, y = 91.8)
       timeline main {
         at 0 reveal seq-title duration 200
         after seq-title reveal seq-list duration 320
@@ -257,9 +257,9 @@ explainer "Rust Architecture — Deck Port" {
     narration: "The payoff of two seams: a giant green 3 beside 'interchangeable run modes from one codebase', over a three-column row — online-real (real clock, real HTTP/gRPC against a live server), online-mock (real clock against the standalone mock server), and offline co-sim (virtual clock, deterministic dynosim, byte-exact)."
     caption: "Three interchangeable run modes."
     render: @scene {
-      sdk.Caption(id = "modes-eyebrow", text = "The payoff of two seams", x = 360, y = 10, width = 320, height = 20, inkRole = theme(ink.secondary))
-      sdk.BigStat(id = "modes-stat", value = "3", title = "interchangeable run modes from one codebase", x = 30, y = 6, width = 640)
-      sdk.CompareGrid(id = "modes-grid", columns = 3, items = [{ label: "online-real", detail: "Real clock · real HTTP/gRPC" }, { label: "online-mock", detail: "Real clock · mock server" }, { label: "offline co-sim", detail: "Virtual clock · dynosim" }], x = 4, y = 278)
+      sdk.Caption(id = "modes-eyebrow", text = "The payoff of two seams", x = 987, y = 27, width = 864, height = 54, inkRole = theme(ink.secondary))
+      sdk.BigStat(id = "modes-stat", value = "3", title = "interchangeable run modes from one codebase", x = 96, y = 16.2, width = 1728)
+      sdk.CompareGrid(id = "modes-grid", columns = 3, items = [{ label: "online-real", detail: "Real clock · real HTTP/gRPC" }, { label: "online-mock", detail: "Real clock · mock server" }, { label: "offline co-sim", detail: "Virtual clock · dynosim" }], x = 25.8, y = 750.6)
       timeline main {
         at 0 reveal modes-eyebrow duration 160
         after modes-eyebrow reveal modes-stat duration 320
@@ -277,7 +277,7 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Chapter-break slide 02: a huge green monospace '02' over the bold title 'Crate Topology and the End-to-End Flow' and the gray subtitle 'Four crates, one product path, one typed outcome', right-aligned."
     caption: "Chapter 02 · Crate Topology and the End-to-End Flow."
     render: @scene {
-      sdk.SectionDivider(id = "div02", number = "02", title = "Crate Topology and the End-to-End Flow", subtitle = "Four crates, one product path, one typed outcome", x = 34, y = 58, width = 650)
+      sdk.SectionDivider(id = "div02", number = "02", title = "Crate Topology and the End-to-End Flow", subtitle = "Four crates, one product path, one typed outcome", x = 106.8, y = 156.6, width = 1755)
       timeline main {
         at 0 reveal div02 duration 320
       }
@@ -291,10 +291,10 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Four crates. A dependency-direction chip row reads loadgen-core ← aiperf ← aiperf-runner, with aiperf-mock-server standing apart as independent. Below, a 2×2 card grid: loadgen-core (green — the {transport} seam plus trace collector, zero engine/HTTP deps), aiperf (green — the library-only runtime, no binary), aiperf-runner (black — the sole strict Rust executable Python launches, protocol-v2 only), and aiperf-mock-server (gray — the standalone online test/benchmark target, not in the runner dep graph)."
     caption: "Four crates · one dependency chain, one independent target."
     render: @scene {
-      sdk.Title(id = "crate-title", text = "Four crates", x = 40, y = 18, width = 620, height = 30, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "crate-sub", text = "16 former aiperf-* crates are now modules inside one library crate — no binary of its own", x = 40, y = 52, width = 620, height = 22, inkRole = theme(ink.secondary))
-      sdk.TagList(id = "crate-deps", items = ["loadgen-core", "← aiperf", "← aiperf-runner", "| aiperf-mock-server (independent)"], gap = 10, x = 40, y = 84, width = 620, height = 32)
-      sdk.CardGrid(id = "crate-cards", columns = 2, cards = [{ title: "loadgen-core", detail: "{transport} seam + trace collector · zero deps", accent: "green" }, { title: "aiperf", detail: "Library-only runtime · no binary", accent: "green" }, { title: "aiperf-runner", detail: "The only strict Rust exe · protocol-v2 only", accent: "black" }, { title: "aiperf-mock-server", detail: "Standalone test target · off the dep graph", accent: "gray" }], x = 42, y = 124)
+      sdk.Title(id = "crate-title", text = "Four crates", x = 123, y = 48.6, width = 1674, height = 81, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "crate-sub", text = "16 former aiperf-* crates are now modules inside one library crate — no binary of its own", x = 123, y = 140.4, width = 1674, height = 59.4, inkRole = theme(ink.secondary))
+      sdk.TagList(id = "crate-deps", items = ["loadgen-core", "← aiperf", "← aiperf-runner", "| aiperf-mock-server (independent)"], gap = 27, x = 123, y = 226.8, width = 1674, height = 86.4)
+      sdk.CardGrid(id = "crate-cards", columns = 2, cards = [{ title: "loadgen-core", detail: "{transport} seam + trace collector · zero deps", accent: "green" }, { title: "aiperf", detail: "Library-only runtime · no binary", accent: "green" }, { title: "aiperf-runner", detail: "The only strict Rust exe · protocol-v2 only", accent: "black" }, { title: "aiperf-mock-server", detail: "Standalone test target · off the dep graph", accent: "gray" }], x = 128.4, y = 334.8)
       timeline main {
         at 0 reveal crate-title duration 200
         after crate-title reveal crate-sub duration 180
@@ -311,18 +311,18 @@ explainer "Rust Architecture — Deck Port" {
     narration: "The module universe. aiperf/src/lib.rs declares foundations and the composition modules that assemble them. A green FOUNDATIONS label sits over a wrapped row of leaf-module chips — clock, transport_http, transport_grpc, endpoints, dataset, rng, timing, graph, metrics_core, adaptive_core, accuracy_core, gpu_telemetry, network_latency, server_metrics, content_server, cellular, extensions. A green COMPOSITION label sits over a second wrapped row — http, grpc, run, scheduled, phase_runtime, workload, report, metrics, export, adaptive, accuracy, ancillary, dynosim*."
     caption: "Foundations and composition modules of aiperf/src/lib.rs."
     render: @scene {
-      sdk.Title(id = "mod-title", text = "The module universe", x = 40, y = 16, width = 620, height = 30, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "mod-sub", text = "aiperf/src/lib.rs declares foundations and the composition modules that assemble them", x = 40, y = 50, width = 620, height = 22, inkRole = theme(ink.secondary))
+      sdk.Title(id = "mod-title", text = "The module universe", x = 123, y = 43.2, width = 1674, height = 81, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "mod-sub", text = "aiperf/src/lib.rs declares foundations and the composition modules that assemble them", x = 123, y = 135, width = 1674, height = 59.4, inkRole = theme(ink.secondary))
       // sdk.TagList renders as a single non-wrapping lane, so the 17 foundation
       // and 13 composition modules are split into fixed-width rows that each stay
       // inside the 700px scene viewport (≈6-7 chips per row).
-      sdk.Caption(id = "mod-found-label", text = "FOUNDATIONS", x = 40, y = 82, width = 300, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "mod-found-1", items = ["clock", "transport_http", "transport_grpc", "endpoints", "dataset", "rng"], gap = 8, x = 40, y = 102, width = 620, height = 28)
-      sdk.TagList(id = "mod-found-2", items = ["timing", "graph", "metrics_core", "adaptive_core", "accuracy_core", "gpu_telemetry"], gap = 8, x = 40, y = 132, width = 620, height = 28)
-      sdk.TagList(id = "mod-found-3", items = ["network_latency", "server_metrics", "content_server", "cellular", "extensions"], gap = 8, x = 40, y = 162, width = 620, height = 28)
-      sdk.Caption(id = "mod-comp-label", text = "COMPOSITION", x = 40, y = 210, width = 300, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "mod-comp-1", items = ["http", "grpc", "run", "scheduled", "phase_runtime", "workload", "report"], gap = 8, x = 40, y = 230, width = 620, height = 28)
-      sdk.TagList(id = "mod-comp-2", items = ["metrics", "export", "adaptive", "accuracy", "ancillary", "dynosim*"], gap = 8, x = 40, y = 260, width = 620, height = 28)
+      sdk.Caption(id = "mod-found-label", text = "FOUNDATIONS", x = 123, y = 221.4, width = 810, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "mod-found-1", items = ["clock", "transport_http", "transport_grpc", "endpoints", "dataset", "rng"], gap = 21.6, x = 123, y = 275.4, width = 1674, height = 75.6)
+      sdk.TagList(id = "mod-found-2", items = ["timing", "graph", "metrics_core", "adaptive_core", "accuracy_core", "gpu_telemetry"], gap = 21.6, x = 123, y = 356.4, width = 1674, height = 75.6)
+      sdk.TagList(id = "mod-found-3", items = ["network_latency", "server_metrics", "content_server", "cellular", "extensions"], gap = 21.6, x = 123, y = 437.4, width = 1674, height = 75.6)
+      sdk.Caption(id = "mod-comp-label", text = "COMPOSITION", x = 123, y = 567, width = 810, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "mod-comp-1", items = ["http", "grpc", "run", "scheduled", "phase_runtime", "workload", "report"], gap = 21.6, x = 123, y = 621, width = 1674, height = 75.6)
+      sdk.TagList(id = "mod-comp-2", items = ["metrics", "export", "adaptive", "accuracy", "ancillary", "dynosim*"], gap = 21.6, x = 123, y = 702, width = 1674, height = 75.6)
       timeline main {
         at 0 reveal mod-title duration 200
         after mod-title reveal mod-sub duration 180
@@ -347,8 +347,8 @@ explainer "Rust Architecture — Deck Port" {
       // sdk.NumberedSequence (68px stride), matching the "Observer sequence"
       // slide's proven vertical-stack shape. stdin/stdout hand-offs are noted
       // inline in the stage details.
-      sdk.Caption(id = "flow-title", text = "Command line to results", x = 34, y = 8, width = 640, height = 22, inkRole = theme(ink.primary))
-      sdk.NumberedSequence(id = "flow-chain", items = [{ number: "PY", title: "Python", detail: "Config-v2 → BenchmarkRun → protocol-v2 JSON envelope", emphasis: true }, { number: "01", title: "aiperf-runner · main.rs", detail: "stdin · mimalloc · tracing · catch_unwind → JSONL + exit code" }, { number: "02", title: "RunnerV2Coordinator::handle", detail: "10-step: validate → lower → select → prepare → execute" }, { number: "03", title: "execute.rs · native run", detail: "current_thread + LocalSet; graph or scheduled phases", emphasis: true }, { number: "04", title: "persist + export", detail: "atomic native-v2.json · best-effort exporters · commit once" }, { number: "PY", title: "Python reads back", detail: "stdout terminal line → opens native-v2.json + artifacts", emphasis: true }], x = 150, y = 34)
+      sdk.Caption(id = "flow-title", text = "Command line to results", x = 106.8, y = 21.6, width = 1728, height = 59.4, inkRole = theme(ink.primary))
+      sdk.NumberedSequence(id = "flow-chain", items = [{ number: "PY", title: "Python", detail: "Config-v2 → BenchmarkRun → protocol-v2 JSON envelope", emphasis: true }, { number: "01", title: "aiperf-runner · main.rs", detail: "stdin · mimalloc · tracing · catch_unwind → JSONL + exit code" }, { number: "02", title: "RunnerV2Coordinator::handle", detail: "10-step: validate → lower → select → prepare → execute" }, { number: "03", title: "execute.rs · native run", detail: "current_thread + LocalSet; graph or scheduled phases", emphasis: true }, { number: "04", title: "persist + export", detail: "atomic native-v2.json · best-effort exporters · commit once" }, { number: "PY", title: "Python reads back", detail: "stdout terminal line → opens native-v2.json + artifacts", emphasis: true }], x = 420, y = 91.8)
       timeline main {
         at 0 reveal flow-title duration 200
         after flow-title reveal flow-chain duration 360
@@ -363,15 +363,15 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Every failure is typed. A green RunnerFailureStageV2 label sits over a five-column row of stage cells — Protocol, Validation, Preparation, Execution, Reporting. Below, a three-column outcome row maps exit codes to meaning: 0 success, 1 validated failure, 2 protocol failure. A closing line notes each failure carries a redacted diagnostic, with credentials scrubbed before anything reaches stdout."
     caption: "Five failure stages, three typed exit codes."
     render: @scene {
-      sdk.Title(id = "fail-title", text = "Every failure is typed", x = 40, y = 12, width = 620, height = 28, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "fail-sub", text = "A caught panic becomes a typed failure, never a bare crash — Python always sees exactly one JSONL line", x = 40, y = 44, width = 620, height = 22, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "fail-stage-label", text = "RunnerFailureStageV2", x = 40, y = 78, width = 320, height = 16, inkRole = theme(accent.primary))
+      sdk.Title(id = "fail-title", text = "Every failure is typed", x = 123, y = 32.4, width = 1674, height = 75.6, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "fail-sub", text = "A caught panic becomes a typed failure, never a bare crash — Python always sees exactly one JSONL line", x = 123, y = 118.8, width = 1674, height = 59.4, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "fail-stage-label", text = "RunnerFailureStageV2", x = 123, y = 210.6, width = 864, height = 43.2, inkRole = theme(accent.primary))
       // The 5-stage row uses sdk.TagList (bordered chips): a 5-column
       // sdk.CompareGrid at its fixed 220px cell width overflows the 700px scene
       // viewport, so the equivalent chip lane carries the same 5 stage labels.
-      sdk.TagList(id = "fail-stages", items = ["Protocol", "Validation", "Preparation", "Execution", "Reporting"], gap = 10, x = 40, y = 100, width = 620, height = 40)
-      sdk.CompareGrid(id = "fail-codes", columns = 3, items = [{ label: "0", detail: "success" }, { label: "1", detail: "validated failure" }, { label: "2", detail: "protocol failure" }], x = 4, y = 240)
-      sdk.Paragraph(id = "fail-foot", text = "Each carries a redacted diagnostic — credentials scrubbed before anything reaches stdout.", x = 40, y = 368, width = 620, height = 20, inkRole = theme(ink.secondary))
+      sdk.TagList(id = "fail-stages", items = ["Protocol", "Validation", "Preparation", "Execution", "Reporting"], gap = 27, x = 123, y = 270, width = 1674, height = 108)
+      sdk.CompareGrid(id = "fail-codes", columns = 3, items = [{ label: "0", detail: "success" }, { label: "1", detail: "validated failure" }, { label: "2", detail: "protocol failure" }], x = 25.8, y = 648)
+      sdk.Paragraph(id = "fail-foot", text = "Each carries a redacted diagnostic — credentials scrubbed before anything reaches stdout.", x = 123, y = 993.6, width = 1674, height = 54, inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal fail-title duration 200
         after fail-title reveal fail-sub duration 180
@@ -392,7 +392,7 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Chapter-break slide 03: a huge green monospace '03' over the bold title 'Component Reference' and the gray subtitle 'A through R — the process boundary to the mock server', right-aligned."
     caption: "Chapter 03 · Component Reference."
     render: @scene {
-      sdk.SectionDivider(id = "div03", number = "03", title = "Component Reference", subtitle = "A through R — the process boundary to the mock server", x = 34, y = 58, width = 650)
+      sdk.SectionDivider(id = "div03", number = "03", title = "Component Reference", subtitle = "A through R — the process boundary to the mock server", x = 106.8, y = 156.6, width = 1755)
       timeline main {
         at 0 reveal div03 duration 320
       }
@@ -406,16 +406,16 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component A — the process boundary. A green letter badge 'A' with the kicker 'process boundary · protocol v2'. stdin carries the envelope into aiperf-runner; stdout is the protocol channel; stderr is tracing. Argument dispatch: --capabilities emits the plugins catalog, --cell runs one cell, cells>1 is the cellular controller, and the default is a single-process execute. The wire contract: RunnerEnvelopeV2 is strict deny_unknown_fields while the embedded config stays open, and into_authored() decides scheduled vs graph from the dataset format, yielding AuthoredRunSpecV2."
     caption: "stdio boundary · strict envelope · argument dispatch."
     render: @scene {
-      sdk.Shape(id = "pb-badge", variant = "rect", label = "A", x = 40, y = 16, width = 34, height = 34, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "pb-badge-l", text = "A", x = 40, y = 23, width = 34, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "pb-kicker", text = "PROCESS BOUNDARY · PROTOCOL V2", x = 84, y = 24, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "pb-title", text = "The stdio entry point and the wire contract", x = 40, y = 56, width = 620, height = 28, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "pb-sub", text = "stdin envelope in · stdout is the protocol channel · everything else is stderr (AIPERF_RUNNER_LOG)", x = 40, y = 88, width = 620, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "pb-arg-label", text = "ARGUMENT DISPATCH", x = 40, y = 116, width = 320, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "pb-arg-1", items = ["--capabilities → plugins catalog", "--cell → one cell of a run"], gap = 10, x = 40, y = 136, width = 620, height = 28)
-      sdk.TagList(id = "pb-arg-2", items = ["cells > 1 → cellular controller", "default → single-process execute"], gap = 10, x = 40, y = 170, width = 620, height = 28)
-      sdk.Caption(id = "pb-wire-label", text = "THE WIRE CONTRACT", x = 40, y = 206, width = 320, height = 16, inkRole = theme(accent.primary))
-      sdk.CardGrid(id = "pb-wire", columns = 2, cards = [{ title: "RunnerEnvelopeV2", detail: "strict deny_unknown_fields; embedded config stays open", accent: "green" }, { title: "into_authored()", detail: "scheduled vs graph → AuthoredRunSpecV2", accent: "green" }], x = 42, y = 226)
+      sdk.Shape(id = "pb-badge", variant = "rect", label = "A", x = 123, y = 43.2, width = 91.8, height = 91.8, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "pb-badge-l", text = "A", x = 123, y = 62.1, width = 91.8, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "pb-kicker", text = "PROCESS BOUNDARY · PROTOCOL V2", x = 241.8, y = 64.8, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "pb-title", text = "The stdio entry point and the wire contract", x = 123, y = 151.2, width = 1674, height = 75.6, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "pb-sub", text = "stdin envelope in · stdout is the protocol channel · everything else is stderr (AIPERF_RUNNER_LOG)", x = 123, y = 237.6, width = 1674, height = 54, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "pb-arg-label", text = "ARGUMENT DISPATCH", x = 123, y = 313.2, width = 864, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "pb-arg-1", items = ["--capabilities → plugins catalog", "--cell → one cell of a run"], gap = 27, x = 123, y = 367.2, width = 1674, height = 75.6)
+      sdk.TagList(id = "pb-arg-2", items = ["cells > 1 → cellular controller", "default → single-process execute"], gap = 27, x = 123, y = 459, width = 1674, height = 75.6)
+      sdk.Caption(id = "pb-wire-label", text = "THE WIRE CONTRACT", x = 123, y = 556.2, width = 864, height = 43.2, inkRole = theme(accent.primary))
+      sdk.CardGrid(id = "pb-wire", columns = 2, cards = [{ title: "RunnerEnvelopeV2", detail: "strict deny_unknown_fields; embedded config stays open", accent: "green" }, { title: "into_authored()", detail: "scheduled vs graph → AuthoredRunSpecV2", accent: "green" }], x = 128.4, y = 610.2)
       timeline main {
         at 0 reveal pb-badge duration 160
         at 0 reveal pb-badge-l duration 160
@@ -437,15 +437,15 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component A continued — RunnerV2Coordinator::handle runs a fixed ten-step pipeline. Steps 1–3 validate_outer, into_authored, validate_selection; 4–5 validate_endpoint_profiles and sidecar_inputs.prepare; 6–8 RunnerRunContext::new, pair validate_run, report_provenance; 9–10 prepare_with_context and operation.execute. After step 8 the operation branches: Validate emits RunValidationV2 { Static } and exits 0; Execute continues through steps 9–10 to RunTerminalV2 { report_path }."
     caption: "Ten ordered steps · one branch after provenance."
     render: @scene {
-      sdk.Shape(id = "cp-badge", variant = "rect", label = "A", x = 40, y = 16, width = 34, height = 34, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "cp-badge-l", text = "A", x = 40, y = 23, width = 34, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "cp-kicker", text = "RUNNERV2COORDINATOR::HANDLE", x = 84, y = 24, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "cp-title", text = "The ten-step pipeline", x = 40, y = 56, width = 620, height = 28, inkRole = theme(ink.primary))
-      sdk.TagList(id = "cp-1", items = ["1 validate_outer", "2 into_authored", "3 validate_selection"], gap = 8, x = 40, y = 94, width = 620, height = 28)
-      sdk.TagList(id = "cp-2", items = ["4 validate_endpoint_profiles", "5 sidecar_inputs.prepare"], gap = 8, x = 40, y = 126, width = 620, height = 28)
-      sdk.TagList(id = "cp-3", items = ["6 RunnerRunContext::new", "7 validate_run", "8 report_provenance"], gap = 8, x = 40, y = 158, width = 620, height = 28)
-      sdk.TagList(id = "cp-4", items = ["9 prepare_with_context", "10 operation.execute()"], gap = 8, x = 40, y = 190, width = 620, height = 28)
-      sdk.CompareGrid(id = "cp-branch", columns = 2, items = [{ label: "operation == Validate", detail: "RunValidationV2 { Static } · exit 0" }, { label: "operation == Execute", detail: "steps 9–10 → RunTerminalV2 { report_path }" }], x = 4, y = 226)
+      sdk.Shape(id = "cp-badge", variant = "rect", label = "A", x = 123, y = 43.2, width = 91.8, height = 91.8, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "cp-badge-l", text = "A", x = 123, y = 62.1, width = 91.8, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "cp-kicker", text = "RUNNERV2COORDINATOR::HANDLE", x = 241.8, y = 64.8, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "cp-title", text = "The ten-step pipeline", x = 123, y = 151.2, width = 1674, height = 75.6, inkRole = theme(ink.primary))
+      sdk.TagList(id = "cp-1", items = ["1 validate_outer", "2 into_authored", "3 validate_selection"], gap = 21.6, x = 123, y = 253.8, width = 1674, height = 75.6)
+      sdk.TagList(id = "cp-2", items = ["4 validate_endpoint_profiles", "5 sidecar_inputs.prepare"], gap = 21.6, x = 123, y = 340.2, width = 1674, height = 75.6)
+      sdk.TagList(id = "cp-3", items = ["6 RunnerRunContext::new", "7 validate_run", "8 report_provenance"], gap = 21.6, x = 123, y = 426.6, width = 1674, height = 75.6)
+      sdk.TagList(id = "cp-4", items = ["9 prepare_with_context", "10 operation.execute()"], gap = 21.6, x = 123, y = 513, width = 1674, height = 75.6)
+      sdk.CompareGrid(id = "cp-branch", columns = 2, items = [{ label: "operation == Validate", detail: "RunValidationV2 { Static } · exit 0" }, { label: "operation == Execute", detail: "steps 9–10 → RunTerminalV2 { report_path }" }], x = 25.8, y = 610.2)
       timeline main {
         at 0 reveal cp-badge duration 160
         at 0 reveal cp-badge-l duration 160
@@ -464,12 +464,12 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component B — input resolution. Three resolvers each do the sole strict decode of their input into a prepared value. The graph adapter (dag_jsonl, weka, dynamo, aiperf) produces a GraphInputBundle that bypasses the linear loader registry. The dataset adapter (synthetic, file, public) produces a PreparedDatasetInput, materialized online or hash-identity under dynosim. The sidecar adapter decodes 5 sidecars into a type-erased PreparedSidecarInputs."
     caption: "Three adapters · one strict decode each → a prepared value."
     render: @scene {
-      sdk.Shape(id = "ir-badge", variant = "rect", label = "B", x = 40, y = 16, width = 34, height = 34, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "ir-badge-l", text = "B", x = 40, y = 23, width = 34, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "ir-kicker", text = "INPUT RESOLUTION", x = 84, y = 24, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "ir-title", text = "Three resolvers, one strict decode each", x = 40, y = 56, width = 620, height = 28, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "ir-sub", text = "Each resolver does the sole strict decode of its input → a prepared value, then hands it to the coordinator", x = 40, y = 88, width = 620, height = 32, inkRole = theme(ink.secondary))
-      sdk.NumberedSequence(id = "ir-seq", items = [{ number: "1", title: "Graph adapter", detail: "dag_jsonl · weka · dynamo · aiperf → GraphInputBundle (bypasses loader registry)", emphasis: true }, { number: "2", title: "Dataset adapter", detail: "synthetic · file · public → PreparedDatasetInput (materialized vs hash-identity)" }, { number: "3", title: "Sidecar adapter", detail: "5 sidecars → PreparedSidecarInputs (type-erased store)" }], x = 40, y = 130)
+      sdk.Shape(id = "ir-badge", variant = "rect", label = "B", x = 123, y = 43.2, width = 91.8, height = 91.8, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ir-badge-l", text = "B", x = 123, y = 62.1, width = 91.8, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ir-kicker", text = "INPUT RESOLUTION", x = 241.8, y = 64.8, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "ir-title", text = "Three resolvers, one strict decode each", x = 123, y = 151.2, width = 1674, height = 75.6, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ir-sub", text = "Each resolver does the sole strict decode of its input → a prepared value, then hands it to the coordinator", x = 123, y = 237.6, width = 1674, height = 86.4, inkRole = theme(ink.secondary))
+      sdk.NumberedSequence(id = "ir-seq", items = [{ number: "1", title: "Graph adapter", detail: "dag_jsonl · weka · dynamo · aiperf → GraphInputBundle (bypasses loader registry)", emphasis: true }, { number: "2", title: "Dataset adapter", detail: "synthetic · file · public → PreparedDatasetInput (materialized vs hash-identity)" }, { number: "3", title: "Sidecar adapter", detail: "5 sidecars → PreparedSidecarInputs (type-erased store)" }], x = 123, y = 351)
       timeline main {
         at 0 reveal ir-badge duration 160
         at 0 reveal ir-badge-l duration 160
@@ -488,12 +488,12 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component C — execution paths. prepare_and_execute_native lowers a NativeRunSpec, waits on readiness BEFORE creating the artifact dir, then dispatches to run_graph_phases for a graph plan or run_scheduled_phases otherwise, all on a current_thread runtime plus LocalSet. Placement is chosen by NativeRequestExecutorFactory: workers==1 uses a single TransportSink on the coordinator reactor; otherwise the ThreadPerCoreRequestExecutor gives one current_thread runtime and sink per OS thread, with bounded mpsc channels and per-worker record concat at drain."
     caption: "One driver · readiness before artifacts · thread-per-core placement."
     render: @scene {
-      sdk.Shape(id = "ep-badge", variant = "rect", label = "C", x = 40, y = 16, width = 34, height = 34, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "ep-badge-l", text = "C", x = 40, y = 23, width = 34, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "ep-kicker", text = "EXECUTION PATHS", x = 84, y = 24, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "ep-title", text = "One native driver, replaceable placement", x = 40, y = 56, width = 620, height = 28, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "ep-sub", text = "execute.rs lowers a protocol-neutral NativeRunSpec onto current_thread + LocalSet", x = 40, y = 88, width = 620, height = 32, inkRole = theme(ink.secondary))
-      sdk.CardGrid(id = "ep-cards", columns = 2, cards = [{ title: "prepare_and_execute_native", detail: "readiness.wait BEFORE artifact dir · block_on the native run", accent: "green" }, { title: "graph vs scheduled", detail: "graph plan → run_graph_phases, else scheduled", accent: "gray" }, { title: "workers == 1", detail: "single TransportSink on the coordinator reactor", accent: "gray" }, { title: "ThreadPerCoreRequestExecutor", detail: "runtime + sink per OS thread · bounded mpsc", accent: "green" }], x = 42, y = 128)
+      sdk.Shape(id = "ep-badge", variant = "rect", label = "C", x = 123, y = 43.2, width = 91.8, height = 91.8, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ep-badge-l", text = "C", x = 123, y = 62.1, width = 91.8, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ep-kicker", text = "EXECUTION PATHS", x = 241.8, y = 64.8, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "ep-title", text = "One native driver, replaceable placement", x = 123, y = 151.2, width = 1674, height = 75.6, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ep-sub", text = "execute.rs lowers a protocol-neutral NativeRunSpec onto current_thread + LocalSet", x = 123, y = 237.6, width = 1674, height = 86.4, inkRole = theme(ink.secondary))
+      sdk.CardGrid(id = "ep-cards", columns = 2, cards = [{ title: "prepare_and_execute_native", detail: "readiness.wait BEFORE artifact dir · block_on the native run", accent: "green" }, { title: "graph vs scheduled", detail: "graph plan → run_graph_phases, else scheduled", accent: "gray" }, { title: "workers == 1", detail: "single TransportSink on the coordinator reactor", accent: "gray" }, { title: "ThreadPerCoreRequestExecutor", detail: "runtime + sink per OS thread · bounded mpsc", accent: "green" }], x = 128.4, y = 345.6)
       timeline main {
         at 0 reveal ep-badge duration 160
         at 0 reveal ep-badge-l duration 160
@@ -512,12 +512,12 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component D — the HTTP TransportSink over hyper and a Clock. It is !Send and Rc-based, mapping the hyper byte stream and SSE chat chunks onto observer callbacks: on_admit at dispatch, TTFT released on the first meaningful chat token, on_classified_token for Output or Reasoning, and on_usage producing a k6-style HttpTrace. Role-only, usage-only, finish-only and [DONE] frames do not release TTFT — mirroring the Python worker. The body is Value xor Bytes, one absolute deadline that can't restart, and prewarm is a discarded round-trip that is never recorded."
     caption: "Observer callbacks over hyper · TTFT on first real token."
     render: @scene {
-      sdk.Shape(id = "ht-badge", variant = "rect", label = "D", x = 40, y = 16, width = 34, height = 34, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "ht-badge-l", text = "D", x = 40, y = 23, width = 34, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "ht-kicker", text = "HTTP TRANSPORT", x = 84, y = 24, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "ht-title", text = "TransportSink over hyper and a Clock", x = 40, y = 56, width = 620, height = 28, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "ht-sub", text = "!Send, Rc-based — body is Value xor Bytes, one absolute deadline, prewarm never recorded", x = 40, y = 88, width = 620, height = 32, inkRole = theme(ink.secondary))
-      sdk.NumberedSequence(id = "ht-seq", items = [{ number: "1", title: "on_admit", detail: "at dispatch" }, { number: "2", title: "TTFT", detail: "released on first meaningful chat token (not role/usage/[DONE])", emphasis: true }, { number: "3", title: "on_classified_token", detail: "Output / Reasoning" }, { number: "4", title: "on_usage", detail: "→ k6-style HttpTrace" }], x = 40, y = 128)
+      sdk.Shape(id = "ht-badge", variant = "rect", label = "D", x = 123, y = 43.2, width = 91.8, height = 91.8, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ht-badge-l", text = "D", x = 123, y = 62.1, width = 91.8, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ht-kicker", text = "HTTP TRANSPORT", x = 241.8, y = 64.8, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "ht-title", text = "TransportSink over hyper and a Clock", x = 123, y = 151.2, width = 1674, height = 75.6, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ht-sub", text = "!Send, Rc-based — body is Value xor Bytes, one absolute deadline, prewarm never recorded", x = 123, y = 237.6, width = 1674, height = 86.4, inkRole = theme(ink.secondary))
+      sdk.NumberedSequence(id = "ht-seq", items = [{ number: "1", title: "on_admit", detail: "at dispatch" }, { number: "2", title: "TTFT", detail: "released on first meaningful chat token (not role/usage/[DONE])", emphasis: true }, { number: "3", title: "on_classified_token", detail: "Output / Reasoning" }, { number: "4", title: "on_usage", detail: "→ k6-style HttpTrace" }], x = 123, y = 345.6)
       timeline main {
         at 0 reveal ht-badge duration 160
         at 0 reveal ht-badge-l duration 160
@@ -536,13 +536,13 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component D internals — transport_http, a Clock-driven port of the Python transport. Every connection phase is timestamped: DNS (cached, Clock-injected) → TCP (+ socketopts) → optional TLS/ALPN → httpN (h1 / h2c / h2). Three internals: pool.rs leases a connection and marks it reusable after a full drain (Pooled / Never / StickyUserSessions); sse/reader.rs uses a 3-byte back-scan so it decodes only complete, multibyte-safe lines; and ClientConfig sets keepalive 300s, 2500 conns/origin, chain/host-only verify, and never uses an ambient HTTP_PROXY."
     caption: "Timestamped connection phases · pool, SSE reader, ClientConfig."
     render: @scene {
-      sdk.Shape(id = "hi-badge", variant = "rect", label = "D", x = 40, y = 16, width = 34, height = 34, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "hi-badge-l", text = "D", x = 40, y = 23, width = 34, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "hi-kicker", text = "TRANSPORT_HTTP · THE CLIENT STACK", x = 84, y = 24, width = 520, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "hi-title", text = "A Clock-driven port of the Python transport", x = 40, y = 54, width = 620, height = 28, inkRole = theme(ink.primary))
-      sdk.Caption(id = "hi-life-label", text = "CONNECTION LIFECYCLE — EVERY PHASE TIMESTAMPED", x = 40, y = 90, width = 520, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "hi-life", items = ["DNS (cached, Clock)", "→ TCP (+socketopts)", "→ TLS / ALPN (optional)", "→ httpN (h1/h2c/h2)"], gap = 10, x = 40, y = 110, width = 640, height = 32)
-      sdk.NumberedSequence(id = "hi-cards", items = [{ number: "1", title: "pool.rs lease", detail: "Pooled / Never / StickyUserSessions · reusable after full drain" }, { number: "2", title: "sse/reader.rs", detail: "3-byte back-scan · multibyte-safe · complete lines only" }, { number: "3", title: "ClientConfig", detail: "keepalive 300s · 2500 conns/origin · no ambient HTTP_PROXY" }], x = 40, y = 158)
+      sdk.Shape(id = "hi-badge", variant = "rect", label = "D", x = 123, y = 43.2, width = 91.8, height = 91.8, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "hi-badge-l", text = "D", x = 123, y = 62.1, width = 91.8, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "hi-kicker", text = "TRANSPORT_HTTP · THE CLIENT STACK", x = 241.8, y = 64.8, width = 1404, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "hi-title", text = "A Clock-driven port of the Python transport", x = 123, y = 145.8, width = 1674, height = 75.6, inkRole = theme(ink.primary))
+      sdk.Caption(id = "hi-life-label", text = "CONNECTION LIFECYCLE — EVERY PHASE TIMESTAMPED", x = 123, y = 243, width = 1404, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "hi-life", items = ["DNS (cached, Clock)", "→ TCP (+socketopts)", "→ TLS / ALPN (optional)", "→ httpN (h1/h2c/h2)"], gap = 27, x = 123, y = 297, width = 1728, height = 86.4)
+      sdk.NumberedSequence(id = "hi-cards", items = [{ number: "1", title: "pool.rs lease", detail: "Pooled / Never / StickyUserSessions · reusable after full drain" }, { number: "2", title: "sse/reader.rs", detail: "3-byte back-scan · multibyte-safe · complete lines only" }, { number: "3", title: "ClientConfig", detail: "keepalive 300s · 2500 conns/origin · no ambient HTTP_PROXY" }], x = 123, y = 426.6)
       timeline main {
         at 0 reveal hi-badge duration 160
         at 0 reveal hi-badge-l duration 160
@@ -562,16 +562,16 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component E — the gRPC transport on Tonic plus a Clock. Three call shapes over a RawBytesCodec: unary, server-stream, and bidi. A DeadlineKind races clock.sleep across ChannelReady, Cancellation, and Total. gRPC status maps to HTTP equivalents — Cancelled to 499, DeadlineExceeded to 504 — and it produces the same observer callbacks plus a compatibility HttpTrace so downstream metrics never branch on transport. Bindings: KServe OIP v2 (5) and Riva (9), from a checked-in Prost mirror with no build-time protoc, via the binding_factory! macro."
     caption: "Tonic + Clock · same callbacks · status → HTTP-equivalent."
     render: @scene {
-      sdk.Shape(id = "gr-badge", variant = "rect", label = "E", x = 40, y = 16, width = 34, height = 34, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "gr-badge-l", text = "E", x = 40, y = 23, width = 34, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "gr-kicker", text = "GRPC TRANSPORT", x = 84, y = 24, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "gr-title", text = "Tonic + Clock, same observer callbacks", x = 40, y = 54, width = 620, height = 28, inkRole = theme(ink.primary))
-      sdk.Caption(id = "gr-shapes-label", text = "CALL SHAPES · DEADLINEKIND RACES CLOCK.SLEEP", x = 40, y = 90, width = 540, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "gr-shapes", items = ["unary", "server-stream", "bidi · RawBytesCodec"], gap = 10, x = 40, y = 110, width = 640, height = 28)
-      sdk.TagList(id = "gr-deadlines", items = ["ChannelReady", "Cancellation", "Total (DeadlineKind)"], gap = 10, x = 40, y = 142, width = 640, height = 28)
-      sdk.Caption(id = "gr-status-label", text = "STATUS → HTTP-EQUIVALENT", x = 40, y = 178, width = 400, height = 16, inkRole = theme(accent.primary))
-      sdk.CompareGrid(id = "gr-status", columns = 2, items = [{ label: "Cancelled → 499", detail: "same observer callbacks + compatibility HttpTrace" }, { label: "DeadlineExceeded → 504", detail: "downstream metrics never branch on transport" }], x = 4, y = 198)
-      sdk.TagList(id = "gr-bindings", items = ["KServe OIP v2 · 5", "Riva · 9", "Prost mirror · binding_factory!"], gap = 10, x = 40, y = 330, width = 640, height = 28)
+      sdk.Shape(id = "gr-badge", variant = "rect", label = "E", x = 123, y = 43.2, width = 91.8, height = 91.8, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "gr-badge-l", text = "E", x = 123, y = 62.1, width = 91.8, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "gr-kicker", text = "GRPC TRANSPORT", x = 241.8, y = 64.8, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "gr-title", text = "Tonic + Clock, same observer callbacks", x = 123, y = 145.8, width = 1674, height = 75.6, inkRole = theme(ink.primary))
+      sdk.Caption(id = "gr-shapes-label", text = "CALL SHAPES · DEADLINEKIND RACES CLOCK.SLEEP", x = 123, y = 243, width = 1458, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "gr-shapes", items = ["unary", "server-stream", "bidi · RawBytesCodec"], gap = 27, x = 123, y = 297, width = 1728, height = 75.6)
+      sdk.TagList(id = "gr-deadlines", items = ["ChannelReady", "Cancellation", "Total (DeadlineKind)"], gap = 27, x = 123, y = 383.4, width = 1728, height = 75.6)
+      sdk.Caption(id = "gr-status-label", text = "STATUS → HTTP-EQUIVALENT", x = 123, y = 480.6, width = 1080, height = 43.2, inkRole = theme(accent.primary))
+      sdk.CompareGrid(id = "gr-status", columns = 2, items = [{ label: "Cancelled → 499", detail: "same observer callbacks + compatibility HttpTrace" }, { label: "DeadlineExceeded → 504", detail: "downstream metrics never branch on transport" }], x = 25.8, y = 534.6)
+      sdk.TagList(id = "gr-bindings", items = ["KServe OIP v2 · 5", "Riva · 9", "Prost mirror · binding_factory!"], gap = 27, x = 123, y = 891, width = 1728, height = 75.6)
       timeline main {
         at 0 reveal gr-badge duration 160
         at 0 reveal gr-badge-l duration 160
@@ -593,16 +593,16 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component F — endpoints own request bodies and usage per provider dialect, with transport out of scope and auth headers a dialect property. Config lowering runs only through the frozen registry: RawEndpointConfig (authored, identity-free) → Effective (validated, bound to one factory) → PreparedEndpoint (an EndpointKey table). format_prepared_payload splices a BodyPlan of pre-serialized bytes with no re-serialize. EndpointDescriptor carries produces_tokens, tokenizes_input, requires_raw_token_ids and Modality; extraction is a single-pass walk where UsageView normalizes disjoint provider usage envelopes. Built-in dialects span chat through 9× kserve, 9× riva, and dynosim."
     caption: "Frozen-registry lowering · BodyPlan splice · many dialects."
     render: @scene {
-      sdk.Shape(id = "ed-badge", variant = "rect", label = "F", x = 40, y = 16, width = 34, height = 34, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "ed-badge-l", text = "F", x = 40, y = 23, width = 34, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "ed-kicker", text = "ENDPOINTS", x = 84, y = 24, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "ed-title", text = "Request bodies and usage, per provider dialect", x = 40, y = 54, width = 620, height = 28, inkRole = theme(ink.primary))
-      sdk.Caption(id = "ed-low-label", text = "CONFIG LOWERING — ONLY THE FROZEN REGISTRY CONSTRUCTS IT", x = 40, y = 90, width = 600, height = 16, inkRole = theme(accent.primary))
-      sdk.StepChain(id = "ed-low", direction = "row", steps = [{ number: "1", label: "RawEndpointConfig", detail: "authored, identity-free" }, { number: "2", label: "Effective", detail: "validated, bound to factory" }, { number: "3", label: "PreparedEndpoint", detail: "EndpointKey table" }], x = 40, y = 110)
-      sdk.Caption(id = "ed-dia-label", text = "BUILT-IN DIALECTS", x = 40, y = 238, width = 320, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "ed-dia-1", items = ["chat", "completions", "responses", "messages", "embeddings"], gap = 8, x = 40, y = 258, width = 640, height = 28)
-      sdk.TagList(id = "ed-dia-2", items = ["rankings ×3", "hf generate", "image gen/edit", "video gen", "solido_rag", "vllm_generate"], gap = 8, x = 40, y = 290, width = 640, height = 28)
-      sdk.TagList(id = "ed-dia-3", items = ["raw · template", "9× kserve", "9× riva", "dynosim"], gap = 8, x = 40, y = 322, width = 640, height = 28)
+      sdk.Shape(id = "ed-badge", variant = "rect", label = "F", x = 123, y = 43.2, width = 91.8, height = 91.8, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ed-badge-l", text = "F", x = 123, y = 62.1, width = 91.8, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ed-kicker", text = "ENDPOINTS", x = 241.8, y = 64.8, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "ed-title", text = "Request bodies and usage, per provider dialect", x = 123, y = 145.8, width = 1674, height = 75.6, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ed-low-label", text = "CONFIG LOWERING — ONLY THE FROZEN REGISTRY CONSTRUCTS IT", x = 123, y = 243, width = 1620, height = 43.2, inkRole = theme(accent.primary))
+      sdk.StepChain(id = "ed-low", direction = "row", steps = [{ number: "1", label: "RawEndpointConfig", detail: "authored, identity-free" }, { number: "2", label: "Effective", detail: "validated, bound to factory" }, { number: "3", label: "PreparedEndpoint", detail: "EndpointKey table" }], x = 123, y = 297)
+      sdk.Caption(id = "ed-dia-label", text = "BUILT-IN DIALECTS", x = 123, y = 642.6, width = 864, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "ed-dia-1", items = ["chat", "completions", "responses", "messages", "embeddings"], gap = 21.6, x = 123, y = 696.6, width = 1728, height = 75.6)
+      sdk.TagList(id = "ed-dia-2", items = ["rankings ×3", "hf generate", "image gen/edit", "video gen", "solido_rag", "vllm_generate"], gap = 21.6, x = 123, y = 783, width = 1728, height = 75.6)
+      sdk.TagList(id = "ed-dia-3", items = ["raw · template", "9× kserve", "9× riva", "dynosim"], gap = 21.6, x = 123, y = 869.4, width = 1728, height = 75.6)
       timeline main {
         at 0 reveal ed-badge duration 160
         at 0 reveal ed-badge-l duration 160
@@ -623,12 +623,12 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component G — the dataset pipeline: load, compose, store, sample, materialize. A content-addressed store keys segments by BLAKE3 of the parent id and wire bytes, so shared prefixes dedup. Turn::dispatch_body has a precedence — raw, then token-ids, then messages, first present wins — over dense Handles shared across worker threads. Loaders cover simple, synthetic, trace (Mooncake, Bailian, BurstGPT, SageMaker) and public (ShareGPT, HF, MT-Bench), with explicit lookup plus structural auto-detect. precompute_body_plans pre-serializes eligible static turns. Media uses a generator plus a separate publisher; tokenizers are Tiktoken and HuggingFace."
     caption: "Five stages · content-addressed store · loaders, media, tokenizers."
     render: @scene {
-      sdk.Shape(id = "dp-badge", variant = "rect", label = "G", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "dp-badge-l", text = "G", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "dp-kicker", text = "DATASET PIPELINE", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "dp-title", text = "Load → compose → store → sample → materialize", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.TagList(id = "dp-stages", items = ["load →", "compose →", "store →", "sample →", "materialize"], gap = 10, x = 40, y = 82, width = 640, height = 28)
-      sdk.CardGrid(id = "dp-cards", columns = 2, cards = [{ title: "Loaders", detail: "simple/synthetic/trace/public · explicit lookup + auto-detect", accent: "green" }, { title: "precompute_body_plans", detail: "pre-serialize static turns · cache BodyPlans", accent: "green" }, { title: "Media", detail: "generator + publisher · inline vs content-server URL", accent: "gray" }, { title: "Tokenizers", detail: "Tiktoken (o200k/cl100k) + HuggingFace tokenizer.json", accent: "gray" }], x = 42, y = 120)
+      sdk.Shape(id = "dp-badge", variant = "rect", label = "G", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "dp-badge-l", text = "G", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "dp-kicker", text = "DATASET PIPELINE", x = 236.4, y = 54, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "dp-title", text = "Load → compose → store → sample → materialize", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.TagList(id = "dp-stages", items = ["load →", "compose →", "store →", "sample →", "materialize"], gap = 27, x = 123, y = 221.4, width = 1728, height = 75.6)
+      sdk.CardGrid(id = "dp-cards", columns = 2, cards = [{ title: "Loaders", detail: "simple/synthetic/trace/public · explicit lookup + auto-detect", accent: "green" }, { title: "precompute_body_plans", detail: "pre-serialize static turns · cache BodyPlans", accent: "green" }, { title: "Media", detail: "generator + publisher · inline vs content-server URL", accent: "gray" }, { title: "Tokenizers", detail: "Tiktoken (o200k/cl100k) + HuggingFace tokenizer.json", accent: "gray" }], x = 128.4, y = 324)
       timeline main {
         at 0 reveal dp-badge duration 160
         at 0 reveal dp-badge-l duration 160
@@ -647,14 +647,14 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component G, materialization step 1 — the arena. Every message chunk is an interned segment in an InMemorySegmentStore, and Conversation and Turn hold only dense Handle(u32) indices, so sharing a Dataset across worker threads shares the payload bytes rather than copying. Two turns that reference h0 store it once. SegmentId is BLAKE3 of the parent id folded with the wire bytes, so shared prefixes dedup while identical text under a different prefix or media stays a distinct segment. Payload variants are Message, Text, Raw, TokenIds, Media, and TraceHashIds."
     caption: "Dense arena · Handle(u32) sharing · BLAKE3 SegmentId."
     render: @scene {
-      sdk.Shape(id = "ss-badge", variant = "rect", label = "G", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "ss-badge-l", text = "G", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "ss-kicker", text = "MATERIALIZATION · STEP 1 — THE ARENA", x = 82, y = 20, width = 540, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "ss-title", text = "Every message chunk is an interned segment", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "ss-sub", text = "Conversation and Turn hold only dense Handle(u32) indices — sharing a Dataset shares payload bytes", x = 40, y = 80, width = 620, height = 34, inkRole = theme(ink.secondary))
-      sdk.CardGrid(id = "ss-cards", columns = 2, cards = [{ title: "InMemorySegmentStore", detail: "dense arena · both turns reference h0 → stored once", accent: "green" }, { title: "SegmentId = BLAKE3(parent ‖ wire)", detail: "shared prefixes dedup; else a distinct segment", accent: "green" }], x = 42, y = 124)
-      sdk.Caption(id = "ss-var-label", text = "PAYLOAD VARIANTS", x = 40, y = 248, width = 320, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "ss-variants", items = ["Message", "Text", "Raw", "TokenIds", "Media", "TraceHashIds"], gap = 8, x = 40, y = 268, width = 640, height = 28)
+      sdk.Shape(id = "ss-badge", variant = "rect", label = "G", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ss-badge-l", text = "G", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ss-kicker", text = "MATERIALIZATION · STEP 1 — THE ARENA", x = 236.4, y = 54, width = 1458, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "ss-title", text = "Every message chunk is an interned segment", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ss-sub", text = "Conversation and Turn hold only dense Handle(u32) indices — sharing a Dataset shares payload bytes", x = 123, y = 216, width = 1674, height = 91.8, inkRole = theme(ink.secondary))
+      sdk.CardGrid(id = "ss-cards", columns = 2, cards = [{ title: "InMemorySegmentStore", detail: "dense arena · both turns reference h0 → stored once", accent: "green" }, { title: "SegmentId = BLAKE3(parent ‖ wire)", detail: "shared prefixes dedup; else a distinct segment", accent: "green" }], x = 128.4, y = 334.8)
+      sdk.Caption(id = "ss-var-label", text = "PAYLOAD VARIANTS", x = 123, y = 669.6, width = 864, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "ss-variants", items = ["Message", "Text", "Raw", "TokenIds", "Media", "TraceHashIds"], gap = 21.6, x = 123, y = 723.6, width = 1728, height = 75.6)
       timeline main {
         at 0 reveal ss-badge duration 160
         at 0 reveal ss-badge-l duration 160
@@ -675,14 +675,14 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component G, materialization step 2 — ahead of the run. Static turns are serialized once, up front, so JSON serialization cost is paid before profiling and never on the request path. A Turn of Handles goes through lower_messages_for_endpoint, where the ShapeLowerer serializes eligible static turns to message wires, becoming a Payload::Message of pre-serialized bytes back in the arena; precompute_body_plans then caches one BodyPlan per profiling record. Eligible turns — fully-known static message bodies — are interned once and reused every dispatch. Excluded turns — token-native vllm_generate and any per-request dynamic fields — are built on the hot path."
     caption: "Serialize once up front · eligible vs excluded turns."
     render: @scene {
-      sdk.Shape(id = "ps-badge", variant = "rect", label = "G", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "ps-badge-l", text = "G", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "ps-kicker", text = "MATERIALIZATION · STEP 2 — AHEAD OF THE RUN", x = 82, y = 20, width = 560, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "ps-title", text = "Static turns are serialized once, up front", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "ps-sub", text = "The cost of JSON serialization is paid before profiling starts — never on the request path", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.TagList(id = "ps-flow-1", items = ["Turn (Handles) →", "lower_messages_for_endpoint →"], gap = 10, x = 40, y = 108, width = 640, height = 28)
-      sdk.TagList(id = "ps-flow-2", items = ["Payload::Message →", "precompute_body_plans"], gap = 10, x = 40, y = 140, width = 640, height = 28)
-      sdk.CompareGrid(id = "ps-cards", columns = 2, items = [{ label: "Eligible — pre-serialized", detail: "static message turns; wire bytes interned once, reused every dispatch" }, { label: "Excluded — built at dispatch", detail: "token-native vllm_generate + any per-request dynamic fields" }], x = 4, y = 200)
+      sdk.Shape(id = "ps-badge", variant = "rect", label = "G", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ps-badge-l", text = "G", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ps-kicker", text = "MATERIALIZATION · STEP 2 — AHEAD OF THE RUN", x = 236.4, y = 54, width = 1512, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "ps-title", text = "Static turns are serialized once, up front", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ps-sub", text = "The cost of JSON serialization is paid before profiling starts — never on the request path", x = 123, y = 216, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.TagList(id = "ps-flow-1", items = ["Turn (Handles) →", "lower_messages_for_endpoint →"], gap = 27, x = 123, y = 291.6, width = 1728, height = 75.6)
+      sdk.TagList(id = "ps-flow-2", items = ["Payload::Message →", "precompute_body_plans"], gap = 27, x = 123, y = 378, width = 1728, height = 75.6)
+      sdk.CompareGrid(id = "ps-cards", columns = 2, items = [{ label: "Eligible — pre-serialized", detail: "static message turns; wire bytes interned once, reused every dispatch" }, { label: "Excluded — built at dispatch", detail: "token-native vllm_generate + any per-request dynamic fields" }], x = 25.8, y = 540)
       timeline main {
         at 0 reveal ps-badge duration 160
         at 0 reveal ps-badge-l duration 160
@@ -702,17 +702,17 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component G, materialization step 3 — on the hot path. Materialize means concatenate pre-serialized bytes: content is never re-serialized on the request path, dispatch just splices byte spans. Turn::dispatch_body has a precedence — raw, then token-ids, then messages, first present wins. format_prepared_payload walks a BodyPlan, an ordered list of byte spans — static segments interleaved with dynamic splices and media URLs — and concat produces a contiguous request body carried as HttpRequest.request_body_bytes. The byte-exact fast path uses request_body_bytes; request_body as a Value is only kept for accuracy runs. Media resolves through SyntheticMediaPublisher — inline data-URI, or a content-server URL spliced as a dynamic span."
     caption: "Splice byte spans · BodyPlan concat · never re-serialize."
     render: @scene {
-      sdk.Shape(id = "dm-badge", variant = "rect", label = "G", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "dm-badge-l", text = "G", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "dm-kicker", text = "MATERIALIZATION · STEP 3 — ON THE HOT PATH", x = 82, y = 20, width = 560, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "dm-title", text = "Materialize = concatenate pre-serialized bytes", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "dm-sub", text = "Content is never re-serialized on the request path — dispatch just splices byte spans", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "dm-prec-label", text = "TURN::DISPATCH_BODY — FIRST PRESENT WINS", x = 40, y = 106, width = 500, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "dm-prec", items = ["raw →", "token-ids →", "messages"], gap = 10, x = 40, y = 124, width = 640, height = 28)
-      sdk.Caption(id = "dm-plan-label", text = "BODYPLAN — ORDERED BYTE SPANS", x = 40, y = 156, width = 400, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "dm-plan", items = ["static seg h0", "dynamic splice", "static seg h2", "media URL"], gap = 8, x = 40, y = 174, width = 640, height = 28)
-      sdk.TagList(id = "dm-concat", items = ["concat → contiguous body (Bytes) →", "HttpRequest.request_body_bytes"], gap = 10, x = 40, y = 206, width = 640, height = 28)
-      sdk.CompareGrid(id = "dm-notes", columns = 2, items = [{ label: "Byte-exact fast path", detail: "request_body_bytes carries the wire; Value only for accuracy" }, { label: "Media publisher", detail: "inline data-URI or content-server URL, spliced as a span" }], x = 4, y = 240)
+      sdk.Shape(id = "dm-badge", variant = "rect", label = "G", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "dm-badge-l", text = "G", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "dm-kicker", text = "MATERIALIZATION · STEP 3 — ON THE HOT PATH", x = 236.4, y = 54, width = 1512, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "dm-title", text = "Materialize = concatenate pre-serialized bytes", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "dm-sub", text = "Content is never re-serialized on the request path — dispatch just splices byte spans", x = 123, y = 216, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "dm-prec-label", text = "TURN::DISPATCH_BODY — FIRST PRESENT WINS", x = 123, y = 286.2, width = 1350, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "dm-prec", items = ["raw →", "token-ids →", "messages"], gap = 27, x = 123, y = 334.8, width = 1728, height = 75.6)
+      sdk.Caption(id = "dm-plan-label", text = "BODYPLAN — ORDERED BYTE SPANS", x = 123, y = 421.2, width = 1080, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "dm-plan", items = ["static seg h0", "dynamic splice", "static seg h2", "media URL"], gap = 21.6, x = 123, y = 469.8, width = 1728, height = 75.6)
+      sdk.TagList(id = "dm-concat", items = ["concat → contiguous body (Bytes) →", "HttpRequest.request_body_bytes"], gap = 27, x = 123, y = 556.2, width = 1728, height = 75.6)
+      sdk.CompareGrid(id = "dm-notes", columns = 2, items = [{ label: "Byte-exact fast path", detail: "request_body_bytes carries the wire; Value only for accuracy" }, { label: "Media publisher", detail: "inline data-URI or content-server URL, spliced as a span" }], x = 25.8, y = 648)
       timeline main {
         at 0 reveal dm-badge duration 160
         at 0 reveal dm-badge-l duration 160
@@ -736,14 +736,14 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component H — the RNG substrate: hash-derived, order-independent randomness. A stream depends only on the pair of root_seed and identifier, so adding a consumer cannot perturb existing streams. derive_seed is BLAKE3 of the string root colon id, truncated to eight bytes, feeding a per-consumer Pcg64 — dataset.sampler, timing.cancel, graph.synth, and roughly forty-four canonical stream names that are sorted, unique, and collision-free. Order independence means adding a consumer Z leaves streams X and Y unchanged; HashIdRandomGenerator reseeds per trace_id and hash_id. Cross-language parity: AIPERF_RNG_BACKEND=rust_parity swaps Python onto a byte-exact port of this Pcg64 plus BLAKE3 substrate."
     caption: "derive_seed = BLAKE3 · per-stream Pcg64 · order-independent."
     render: @scene {
-      sdk.Shape(id = "rng-badge", variant = "rect", label = "H", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "rng-badge-l", text = "H", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "rng-kicker", text = "RNG SUBSTRATE", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "rng-title", text = "Hash-derived, order-independent randomness", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "rng-sub", text = "A stream depends only on (root_seed, identifier) — adding a consumer cannot perturb existing streams", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.StepChain(id = "rng-chain", direction = "row", steps = [{ number: "1", label: "root_seed", detail: "run-level entropy" }, { number: "2", label: "derive_seed", detail: "BLAKE3(\"root:id\")[..8]" }, { number: "3", label: "Pcg64 per stream", detail: "~44 canonical names · sorted, unique, collision-free" }], x = 40, y = 108)
-      sdk.CompareGrid(id = "rng-order", columns = 2, items = [{ label: "stream X, stream Y", detail: "independent Pcg64 streams keyed by identifier" }, { label: "+ add consumer Z", detail: "X, Y unchanged · Z is new · reseed per (trace_id, hash_id)" }], x = 4, y = 236)
-      sdk.Caption(id = "rng-parity", text = "AIPERF_RNG_BACKEND=rust_parity — byte-exact Python port of this Pcg64 + BLAKE3 substrate", x = 40, y = 366, width = 640, height = 16, inkRole = theme(ink.secondary))
+      sdk.Shape(id = "rng-badge", variant = "rect", label = "H", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "rng-badge-l", text = "H", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "rng-kicker", text = "RNG SUBSTRATE", x = 236.4, y = 54, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "rng-title", text = "Hash-derived, order-independent randomness", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "rng-sub", text = "A stream depends only on (root_seed, identifier) — adding a consumer cannot perturb existing streams", x = 123, y = 216, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.StepChain(id = "rng-chain", direction = "row", steps = [{ number: "1", label: "root_seed", detail: "run-level entropy" }, { number: "2", label: "derive_seed", detail: "BLAKE3(\"root:id\")[..8]" }, { number: "3", label: "Pcg64 per stream", detail: "~44 canonical names · sorted, unique, collision-free" }], x = 123, y = 291.6)
+      sdk.CompareGrid(id = "rng-order", columns = 2, items = [{ label: "stream X, stream Y", detail: "independent Pcg64 streams keyed by identifier" }, { label: "+ add consumer Z", detail: "X, Y unchanged · Z is new · reseed per (trace_id, hash_id)" }], x = 25.8, y = 637.2)
+      sdk.Caption(id = "rng-parity", text = "AIPERF_RNG_BACKEND=rust_parity — byte-exact Python port of this Pcg64 + BLAKE3 substrate", x = 123, y = 988.2, width = 1728, height = 43.2, inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal rng-badge duration 160
         at 0 reveal rng-badge-l duration 160
@@ -764,14 +764,14 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component I — timing and scheduling: paced arrivals into a dispatcher. ScheduledRuntime bridges a Workload schedule generator to a transport-neutral TurnDispatcher. The pipeline runs Workload to IntervalGenerator to SlotPool to TurnDispatcher to Observer. The SlotPool does debt-drain: when capacity decreases the effective slots equal available minus debt, an RAII SlotGuard releases prefill at TTFT by dropping the guard. A StopChecker chain runs Lifecycle, RequestCount, SessionCount, Duration, first-no wins. RampStrategy is Linear, Exponential, or Poisson and forces the exact target. BernoulliFixedDelay takes one draw at issuance; warmup draws no RNG. Workloads are RequestRate, UserCentric, FixedSchedule, and SingleTurn."
     caption: "ScheduledRuntime → SlotPool debt-drain → TurnDispatcher."
     render: @scene {
-      sdk.Shape(id = "ts-badge", variant = "rect", label = "I", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "ts-badge-l", text = "I", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "ts-kicker", text = "TIMING AND SCHEDULING", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "ts-title", text = "Paced arrivals into a dispatcher", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "ts-sub", text = "ScheduledRuntime bridges a Workload schedule generator to a transport-neutral TurnDispatcher", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.TagList(id = "ts-pipe-1", items = ["Workload →", "IntervalGenerator →", "SlotPool"], gap = 10, x = 40, y = 106, width = 640, height = 28)
-      sdk.TagList(id = "ts-pipe-2", items = ["→ TurnDispatcher →", "Observer · records"], gap = 10, x = 40, y = 136, width = 640, height = 28)
-      sdk.CardGrid(id = "ts-cards", columns = 2, cards = [{ title: "SlotPool · debt-drain", detail: "effective = available − debt · SlotGuard frees prefill at TTFT", accent: "green" }, { title: "StopChecker chain", detail: "Lifecycle→RequestCount→SessionCount→Duration", accent: "green" }, { title: "Ramp · Bernoulli", detail: "Linear/Exp/Poisson exact target · one draw at issuance", accent: "gray" }, { title: "Workloads", detail: "RequestRate · UserCentric · FixedSchedule · SingleTurn", accent: "gray" }], x = 42, y = 170)
+      sdk.Shape(id = "ts-badge", variant = "rect", label = "I", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ts-badge-l", text = "I", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ts-kicker", text = "TIMING AND SCHEDULING", x = 236.4, y = 54, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "ts-title", text = "Paced arrivals into a dispatcher", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ts-sub", text = "ScheduledRuntime bridges a Workload schedule generator to a transport-neutral TurnDispatcher", x = 123, y = 216, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.TagList(id = "ts-pipe-1", items = ["Workload →", "IntervalGenerator →", "SlotPool"], gap = 27, x = 123, y = 286.2, width = 1728, height = 75.6)
+      sdk.TagList(id = "ts-pipe-2", items = ["→ TurnDispatcher →", "Observer · records"], gap = 27, x = 123, y = 367.2, width = 1728, height = 75.6)
+      sdk.CardGrid(id = "ts-cards", columns = 2, cards = [{ title: "SlotPool · debt-drain", detail: "effective = available − debt · SlotGuard frees prefill at TTFT", accent: "green" }, { title: "StopChecker chain", detail: "Lifecycle→RequestCount→SessionCount→Duration", accent: "green" }, { title: "Ramp · Bernoulli", detail: "Linear/Exp/Poisson exact target · one draw at issuance", accent: "gray" }, { title: "Workloads", detail: "RequestRate · UserCentric · FixedSchedule · SingleTurn", accent: "gray" }], x = 128.4, y = 459)
       timeline main {
         at 0 reveal ts-badge duration 160
         at 0 reveal ts-badge-l duration 160
@@ -791,17 +791,17 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component I, the phase state machine — warmup before profiling, one escalation order. ClockPhaseRunner drives a fixed sequence: configure, setup, start, ramps, issuance, freeze, grace, cancel-inflight, drain, force complete. The orchestrator enforces ordering and seamless overlap. Each PhaseState advances Created, Started, SendingComplete, Complete. PhaseKind is Warmup or Profiling; GracePeriod is Disabled, Finite, or Infinite; CompletionReason is Completed, GraceTimeout, Cancelled, ForceCompleted, or Failed. SIGINT and SIGTERM lower a cancellation latch, and the AIPerf System is PROFILING banner is emitted on stderr."
     caption: "Fixed escalation order · PhaseState machine · cancellation latch."
     render: @scene {
-      sdk.Shape(id = "pl-badge", variant = "rect", label = "I", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "pl-badge-l", text = "I", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "pl-kicker", text = "PHASE STATE MACHINE", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "pl-title", text = "Warmup before profiling, one escalation order", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "pl-sub", text = "ClockPhaseRunner drives a fixed sequence; the orchestrator enforces ordering and seamless overlap", x = 40, y = 78, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.TagList(id = "pl-esc-1", items = ["configure →", "setup →", "start →", "ramps →", "issuance"], gap = 8, x = 40, y = 102, width = 640, height = 26)
-      sdk.TagList(id = "pl-esc-2", items = ["→ freeze →", "grace →", "cancel-inflight →", "drain →", "force complete"], gap = 8, x = 40, y = 130, width = 640, height = 26)
-      sdk.Caption(id = "pl-state-label", text = "PHASESTATE", x = 40, y = 160, width = 300, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "pl-state", items = ["Created →", "Started →", "SendingComplete →", "Complete"], gap = 8, x = 40, y = 178, width = 640, height = 26)
-      sdk.CompareGrid(id = "pl-enums", columns = 3, items = [{ label: "PhaseKind", detail: "Warmup · Profiling" }, { label: "GracePeriod", detail: "Disabled · Finite · Infinite" }, { label: "CompletionReason", detail: "Completed · GraceTimeout · Cancelled · ForceCompleted · Failed" }], x = 4, y = 208)
-      sdk.Caption(id = "pl-sig", text = "SIGINT/SIGTERM lower a cancellation latch; the \"AIPerf System is PROFILING\" banner is emitted on stderr", x = 40, y = 336, width = 640, height = 16, inkRole = theme(ink.secondary))
+      sdk.Shape(id = "pl-badge", variant = "rect", label = "I", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "pl-badge-l", text = "I", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "pl-kicker", text = "PHASE STATE MACHINE", x = 236.4, y = 54, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "pl-title", text = "Warmup before profiling, one escalation order", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "pl-sub", text = "ClockPhaseRunner drives a fixed sequence; the orchestrator enforces ordering and seamless overlap", x = 123, y = 210.6, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.TagList(id = "pl-esc-1", items = ["configure →", "setup →", "start →", "ramps →", "issuance"], gap = 21.6, x = 123, y = 275.4, width = 1728, height = 70.2)
+      sdk.TagList(id = "pl-esc-2", items = ["→ freeze →", "grace →", "cancel-inflight →", "drain →", "force complete"], gap = 21.6, x = 123, y = 351, width = 1728, height = 70.2)
+      sdk.Caption(id = "pl-state-label", text = "PHASESTATE", x = 123, y = 432, width = 810, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "pl-state", items = ["Created →", "Started →", "SendingComplete →", "Complete"], gap = 21.6, x = 123, y = 480.6, width = 1728, height = 70.2)
+      sdk.CompareGrid(id = "pl-enums", columns = 3, items = [{ label: "PhaseKind", detail: "Warmup · Profiling" }, { label: "GracePeriod", detail: "Disabled · Finite · Infinite" }, { label: "CompletionReason", detail: "Completed · GraceTimeout · Cancelled · ForceCompleted · Failed" }], x = 25.8, y = 561.6)
+      sdk.Caption(id = "pl-sig", text = "SIGINT/SIGTERM lower a cancellation latch; the \"AIPerf System is PROFILING\" banner is emitted on stderr", x = 123, y = 907.2, width = 1728, height = 43.2, inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal pl-badge duration 160
         at 0 reveal pl-badge-l duration 160
@@ -824,17 +824,17 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component J — the Graph-IR engine: a DAG of LlmNodes over named channels. It is thread-per-core dataflow, a whole trace placed on one worker, so node turns never cross a boundary. A root LlmNode fans out to node A, which FORKs, and node B, which SPAWNs, then both join at an AddMessages node before the output. Each edge carries four firing-gate delays — after-predecessor-completion, min-start, after-predecessor-start, and after-predecessor-first-token. ChannelType is Text or Messages; the Reducer is Overwrite or AddMessages."
     caption: "DAG of LlmNodes · four firing-gate delays per edge."
     render: @scene {
-      sdk.Shape(id = "gi-badge", variant = "rect", label = "J", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "gi-badge-l", text = "J", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "gi-kicker", text = "GRAPH-IR ENGINE", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "gi-title", text = "A DAG of LlmNodes over named channels", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "gi-sub", text = "Thread-per-core dataflow — a whole trace is placed on one worker; node turns never cross a boundary", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.NodeTree(id = "gi-graph", root = { label: "root · LlmNode", emphasis: true }, children = [{ label: "node A · FORK" }, { label: "node B · SPAWN" }], orderNote = "both join at join · AddMessages → out", x = 40, y = 118)
-      sdk.Caption(id = "gi-gate-label", text = "FOUR FIRING-GATE DELAYS PER EDGE", x = 360, y = 118, width = 320, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "gi-gates-1", items = ["after-predecessor-completion", "min-start"], gap = 8, x = 360, y = 138, width = 340, height = 26)
-      sdk.TagList(id = "gi-gates-2", items = ["after-predecessor-start", "after-predecessor-first-token"], gap = 8, x = 360, y = 170, width = 340, height = 26)
-      sdk.Caption(id = "gi-chan-label", text = "CHANNELTYPE · REDUCER", x = 360, y = 210, width = 320, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "gi-chan", items = ["Text · Messages", "Overwrite · AddMessages"], gap = 8, x = 360, y = 228, width = 340, height = 26)
+      sdk.Shape(id = "gi-badge", variant = "rect", label = "J", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "gi-badge-l", text = "J", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "gi-kicker", text = "GRAPH-IR ENGINE", x = 236.4, y = 54, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "gi-title", text = "A DAG of LlmNodes over named channels", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "gi-sub", text = "Thread-per-core dataflow — a whole trace is placed on one worker; node turns never cross a boundary", x = 123, y = 216, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.NodeTree(id = "gi-graph", root = { label: "root · LlmNode", emphasis: true }, children = [{ label: "node A · FORK" }, { label: "node B · SPAWN" }], orderNote = "both join at join · AddMessages → out", x = 123, y = 318.6)
+      sdk.Caption(id = "gi-gate-label", text = "FOUR FIRING-GATE DELAYS PER EDGE", x = 987, y = 318.6, width = 864, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "gi-gates-1", items = ["after-predecessor-completion", "min-start"], gap = 21.6, x = 987, y = 372.6, width = 918, height = 70.2)
+      sdk.TagList(id = "gi-gates-2", items = ["after-predecessor-start", "after-predecessor-first-token"], gap = 21.6, x = 987, y = 459, width = 918, height = 70.2)
+      sdk.Caption(id = "gi-chan-label", text = "CHANNELTYPE · REDUCER", x = 987, y = 567, width = 864, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "gi-chan", items = ["Text · Messages", "Overwrite · AddMessages"], gap = 21.6, x = 987, y = 615.6, width = 918, height = 70.2)
       timeline main {
         at 0 reveal gi-badge duration 160
         at 0 reveal gi-badge-l duration 160
@@ -857,17 +857,17 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component J, lowering and execution — from authored or recorded, into one executor. Two lowering paths: dag_jsonl goes through GraphBuilder, turning FORK, SPAWN, and JOIN into nodes, edges, and channels; traces go through the LCP-trie lowerer, a content-parent trie with idle-warp and interval-order fan-in. Then one TraceExecutor fires each node: await_inputs as a fan-in gate, gate delay, splice which snapshots channels, materialize the prompt, admission, and dispatch, which publishes and advances to the next. Three trace formats: WEKA is recursive JSON with heuristic boundaries that honors max_osl; Dynamo lowers sessions to chains to trees with a subagent depth guard; aiperf_trace is strict v1 with ground-truth tags and block_lens."
     caption: "Two lowering paths · one TraceExecutor · three trace formats."
     render: @scene {
-      sdk.Shape(id = "le-badge", variant = "rect", label = "J", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "le-badge-l", text = "J", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "le-kicker", text = "LOWERING AND EXECUTION", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "le-title", text = "From authored or recorded, into one executor", x = 40, y = 46, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Caption(id = "le-low-label", text = "LOWERING PATHS", x = 40, y = 78, width = 400, height = 16, inkRole = theme(accent.primary))
-      sdk.CompareGrid(id = "le-low", columns = 2, items = [{ label: "dag_jsonl → GraphBuilder", detail: "FORK/SPAWN/JOIN into nodes, edges, channels" }, { label: "traces → LCP-trie lowerer", detail: "content-parent trie, idle-warp, interval-order fan-in" }], x = 4, y = 96)
-      sdk.Caption(id = "le-exec-label", text = "TRACEEXECUTOR FIRES EACH NODE", x = 40, y = 218, width = 500, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "le-exec", items = ["await_inputs →", "gate delay →", "splice →", "materialize →", "admission →", "dispatch"], gap = 8, x = 40, y = 236, width = 660, height = 26)
-      sdk.Caption(id = "le-fmt-label", text = "TRACE FORMATS", x = 40, y = 268, width = 400, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "le-formats-1", items = ["WEKA — recursive JSON · honors max_osl", "Dynamo — sessions→chains→trees · depth guard"], gap = 8, x = 40, y = 286, width = 660, height = 26)
-      sdk.TagList(id = "le-formats-2", items = ["aiperf_trace — strict v1, ground-truth tags + block_lens"], gap = 8, x = 40, y = 316, width = 660, height = 26)
+      sdk.Shape(id = "le-badge", variant = "rect", label = "J", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "le-badge-l", text = "J", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "le-kicker", text = "LOWERING AND EXECUTION", x = 236.4, y = 54, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "le-title", text = "From authored or recorded, into one executor", x = 123, y = 124.2, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Caption(id = "le-low-label", text = "LOWERING PATHS", x = 123, y = 210.6, width = 1080, height = 43.2, inkRole = theme(accent.primary))
+      sdk.CompareGrid(id = "le-low", columns = 2, items = [{ label: "dag_jsonl → GraphBuilder", detail: "FORK/SPAWN/JOIN into nodes, edges, channels" }, { label: "traces → LCP-trie lowerer", detail: "content-parent trie, idle-warp, interval-order fan-in" }], x = 25.8, y = 259.2)
+      sdk.Caption(id = "le-exec-label", text = "TRACEEXECUTOR FIRES EACH NODE", x = 123, y = 588.6, width = 1350, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "le-exec", items = ["await_inputs →", "gate delay →", "splice →", "materialize →", "admission →", "dispatch"], gap = 21.6, x = 123, y = 637.2, width = 1782, height = 70.2)
+      sdk.Caption(id = "le-fmt-label", text = "TRACE FORMATS", x = 123, y = 723.6, width = 1080, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "le-formats-1", items = ["WEKA — recursive JSON · honors max_osl", "Dynamo — sessions→chains→trees · depth guard"], gap = 21.6, x = 123, y = 772.2, width = 1782, height = 70.2)
+      sdk.TagList(id = "le-formats-2", items = ["aiperf_trace — strict v1, ground-truth tags + block_lens"], gap = 21.6, x = 123, y = 853.2, width = 1782, height = 70.2)
       timeline main {
         at 0 reveal le-badge duration 160
         at 0 reveal le-badge-l duration 160
@@ -890,14 +890,14 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component J, agentic trace replay — an agent session replays as a DAG of turns. The Dynamo adapter lowers JSONL sessions into chains, then trees: an orchestrator at depth zero spawns subagents — a researcher and a coder at depth one — which may spawn deeper tools before a final turn joins with AddMessages, all replayed node-by-node on one worker. The whole tree is one GraphTracePlan placed on a single worker, so node turns never cross a boundary. A subagent depth guard caps recursion; deeper spawns are clamped. Virtual negative hashes stand in for non-replay turns so the DAG stays complete. Firing-gate delays fire each node after its predecessor's first token, so replay preserves the original spawn timing."
     caption: "sessions → chains → trees · one GraphTracePlan · depth guard."
     render: @scene {
-      sdk.Shape(id = "ar-badge", variant = "rect", label = "J", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "ar-badge-l", text = "J", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "ar-kicker", text = "GRAPH · AGENTIC TRACE REPLAY", x = 82, y = 20, width = 540, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "ar-title", text = "An agent session replays as a DAG of turns", x = 40, y = 46, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "ar-sub", text = "The Dynamo adapter lowers JSONL sessions into chains, then trees — replayed node-by-node on one worker", x = 40, y = 76, width = 640, height = 32, inkRole = theme(ink.secondary))
-      sdk.NodeTree(id = "ar-graph", root = { label: "orchestrator · d0", emphasis: true }, children = [{ label: "researcher · d1" }, { label: "coder · d1" }], orderNote = "d2 web_tool (guard) · final turn JOIN · AddMessages", x = 40, y = 118)
-      sdk.TagList(id = "ar-adapter", items = ["sessions →", "chains →", "trees"], gap = 10, x = 360, y = 118, width = 320, height = 26)
-      sdk.NumberedSequence(id = "ar-notes", items = [{ number: "1", title: "one GraphTracePlan", detail: "placed on a single worker · node turns never cross a boundary" }, { number: "2", title: "subagent depth guard", detail: "caps recursion; deeper spawns are clamped" }, { number: "3", title: "virtual negative hashes", detail: "stand in for non-replay turns so the DAG stays complete" }], x = 360, y = 150)
+      sdk.Shape(id = "ar-badge", variant = "rect", label = "J", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ar-badge-l", text = "J", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ar-kicker", text = "GRAPH · AGENTIC TRACE REPLAY", x = 236.4, y = 54, width = 1458, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "ar-title", text = "An agent session replays as a DAG of turns", x = 123, y = 124.2, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ar-sub", text = "The Dynamo adapter lowers JSONL sessions into chains, then trees — replayed node-by-node on one worker", x = 123, y = 205.2, width = 1728, height = 86.4, inkRole = theme(ink.secondary))
+      sdk.NodeTree(id = "ar-graph", root = { label: "orchestrator · d0", emphasis: true }, children = [{ label: "researcher · d1" }, { label: "coder · d1" }], orderNote = "d2 web_tool (guard) · final turn JOIN · AddMessages", x = 123, y = 318.6)
+      sdk.TagList(id = "ar-adapter", items = ["sessions →", "chains →", "trees"], gap = 27, x = 987, y = 318.6, width = 864, height = 70.2)
+      sdk.NumberedSequence(id = "ar-notes", items = [{ number: "1", title: "one GraphTracePlan", detail: "placed on a single worker · node turns never cross a boundary" }, { number: "2", title: "subagent depth guard", detail: "caps recursion; deeper spawns are clamped" }, { number: "3", title: "virtual negative hashes", detail: "stand in for non-replay turns so the DAG stays complete" }], x = 987, y = 405)
       timeline main {
         at 0 reveal ar-badge duration 160
         at 0 reveal ar-badge-l duration 160
@@ -918,21 +918,21 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component K — metrics core: a declarative catalog into a NaN-sparse store. The catalog has 119 rows — 103 Python identities plus 16 native sweep identities — validated for uniqueness, dependency tiering, and acyclicity, then pinned with a stable catalog fingerprint. MetricType is Record, Aggregate, or Derived. The ColumnStore treats NaN as absence, aligned by absolute request index, with CSR ragged series for in-context-learning shots. The ingest-to-derive pipeline runs NativeMetricsObserver, RecordIngest, Accumulator, then derived metrics in topological order. TTFT, ITL, TPOT, end-to-end, and goodput compute Rayon-parallel above 4096 rows; sweep-lines give concurrency and tokens-in-flight curves."
     caption: "119-row catalog · NaN-sparse ColumnStore · ingest → derive."
     render: @scene {
-      sdk.Shape(id = "mc-badge", variant = "rect", label = "K", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "mc-badge-l", text = "K", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "mc-kicker", text = "METRICS CORE", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "mc-title", text = "A declarative catalog into a NaN-sparse store", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "mc-sub", text = "Validated for uniqueness, dependency tiering and acyclicity — pinned with a stable catalog fingerprint", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "mc-rows-label", text = "119 CATALOG ROWS", x = 40, y = 110, width = 300, height = 16, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "mc-rows", text = "103 Python identities + 16 native sweep identities", x = 40, y = 130, width = 300, height = 30, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "mc-type-label", text = "METRICTYPE", x = 40, y = 166, width = 300, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "mc-type", items = ["Record", "Aggregate", "Derived"], gap = 8, x = 40, y = 184, width = 300, height = 26)
-      sdk.Caption(id = "mc-store-label", text = "COLUMNSTORE — NaN = ABSENCE", x = 360, y = 110, width = 320, height = 16, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "mc-store", text = "aligned by absolute request index · CSR ragged series for ICL", x = 360, y = 130, width = 320, height = 30, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "mc-pipe-label", text = "INGEST → DERIVE PIPELINE", x = 360, y = 166, width = 320, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "mc-pipe-1", items = ["NativeMetricsObserver →", "RecordIngest →"], gap = 8, x = 360, y = 184, width = 340, height = 26)
-      sdk.TagList(id = "mc-pipe-2", items = ["Accumulator →", "derived (topo)"], gap = 8, x = 360, y = 214, width = 340, height = 26)
-      sdk.TagList(id = "mc-metrics", items = ["TTFT", "ITL", "TPOT", "e2e", "goodput · Rayon > 4096 rows"], gap = 8, x = 40, y = 262, width = 660, height = 26)
+      sdk.Shape(id = "mc-badge", variant = "rect", label = "K", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "mc-badge-l", text = "K", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "mc-kicker", text = "METRICS CORE", x = 236.4, y = 54, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "mc-title", text = "A declarative catalog into a NaN-sparse store", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "mc-sub", text = "Validated for uniqueness, dependency tiering and acyclicity — pinned with a stable catalog fingerprint", x = 123, y = 216, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "mc-rows-label", text = "119 CATALOG ROWS", x = 123, y = 297, width = 810, height = 43.2, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "mc-rows", text = "103 Python identities + 16 native sweep identities", x = 123, y = 351, width = 810, height = 81, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "mc-type-label", text = "METRICTYPE", x = 123, y = 448.2, width = 810, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "mc-type", items = ["Record", "Aggregate", "Derived"], gap = 21.6, x = 123, y = 496.8, width = 810, height = 70.2)
+      sdk.Caption(id = "mc-store-label", text = "COLUMNSTORE — NaN = ABSENCE", x = 987, y = 297, width = 864, height = 43.2, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "mc-store", text = "aligned by absolute request index · CSR ragged series for ICL", x = 987, y = 351, width = 864, height = 81, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "mc-pipe-label", text = "INGEST → DERIVE PIPELINE", x = 987, y = 448.2, width = 864, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "mc-pipe-1", items = ["NativeMetricsObserver →", "RecordIngest →"], gap = 21.6, x = 987, y = 496.8, width = 918, height = 70.2)
+      sdk.TagList(id = "mc-pipe-2", items = ["Accumulator →", "derived (topo)"], gap = 21.6, x = 987, y = 577.8, width = 918, height = 70.2)
+      sdk.TagList(id = "mc-metrics", items = ["TTFT", "ITL", "TPOT", "e2e", "goodput · Rayon > 4096 rows"], gap = 21.6, x = 123, y = 707.4, width = 1782, height = 70.2)
       timeline main {
         at 0 reveal mc-badge duration 160
         at 0 reveal mc-badge-l duration 160
@@ -961,22 +961,22 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component K, the ragged ColumnStore backend — RaggedSeries, a CSR list backend for in-context-learning shots. Variable-length per-record series live in one contiguous values arena plus an offsets vector, so a ragged row is a slice, never a heap-allocated Vec. Row i equals values from indptr[i] to indptr[i+1]; an indptr of zero, three, four, seven reconstructs record zero of length three, record one of length one, and record two of length three. It sits beside NumericColumn, where NaN marks absence, in the same absolute-request-index alignment. append_store merges worker shards by concatenating buffers and shifting offsets. Sweep-lines read the ragged ICL series directly for tokens-in-flight and concurrency curves."
     caption: "CSR values arena + indptr · row = slice · append_store shifts offsets."
     render: @scene {
-      sdk.Shape(id = "rs-badge", variant = "rect", label = "K", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "rs-badge-l", text = "K", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "rs-kicker", text = "COLUMNSTORE · RAGGED BACKEND", x = 82, y = 20, width = 540, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "rs-title", text = "RaggedSeries — a CSR list backend for ICL", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "rs-sub", text = "Variable-length per-record series in one contiguous buffer with row offsets — no per-row allocation", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "rs-arena-label", text = "VALUES ARENA (ONE CONTIGUOUS BUFFER)", x = 40, y = 112, width = 300, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "rs-arena", items = ["v0", "v1", "v2", "v3", "v4", "v5", "v6"], gap = 6, x = 40, y = 132, width = 300, height = 26)
-      sdk.Caption(id = "rs-indptr-label", text = "INDPTR", x = 40, y = 168, width = 300, height = 16, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "rs-indptr", text = "[ 0, 3, 4, 7 ] · row i = values[indptr[i] .. indptr[i+1]]", x = 40, y = 188, width = 300, height = 30, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "rs-rows-label", text = "RECONSTRUCTED ROWS", x = 40, y = 226, width = 300, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "rs-rows", items = ["record 0 · len 3", "1 · 1", "record 2 · len 3"], gap = 8, x = 40, y = 246, width = 300, height = 26)
-      sdk.Caption(id = "rs-right-label", text = "RAGGED ROW BACKEND", x = 360, y = 112, width = 320, height = 16, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "rs-b1", text = "One flat values arena + offsets vector — a ragged row is a slice, never a heap-allocated Vec", x = 360, y = 132, width = 320, height = 40, inkRole = theme(ink.secondary))
-      sdk.Paragraph(id = "rs-b2", text = "Sits beside NumericColumn (NaN = absence) in the same absolute-request-index alignment", x = 360, y = 176, width = 320, height = 40, inkRole = theme(ink.secondary))
-      sdk.Paragraph(id = "rs-b3", text = "append_store merges worker shards by concatenating buffers and shifting offsets", x = 360, y = 220, width = 320, height = 30, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "rs-note", text = "Sweep-lines read the ragged ICL series directly for tokens-in-flight and concurrency curves", x = 360, y = 258, width = 320, height = 30, inkRole = theme(ink.secondary))
+      sdk.Shape(id = "rs-badge", variant = "rect", label = "K", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "rs-badge-l", text = "K", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "rs-kicker", text = "COLUMNSTORE · RAGGED BACKEND", x = 236.4, y = 54, width = 1458, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "rs-title", text = "RaggedSeries — a CSR list backend for ICL", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "rs-sub", text = "Variable-length per-record series in one contiguous buffer with row offsets — no per-row allocation", x = 123, y = 216, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "rs-arena-label", text = "VALUES ARENA (ONE CONTIGUOUS BUFFER)", x = 123, y = 302.4, width = 810, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "rs-arena", items = ["v0", "v1", "v2", "v3", "v4", "v5", "v6"], gap = 16.2, x = 123, y = 356.4, width = 810, height = 70.2)
+      sdk.Caption(id = "rs-indptr-label", text = "INDPTR", x = 123, y = 453.6, width = 810, height = 43.2, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "rs-indptr", text = "[ 0, 3, 4, 7 ] · row i = values[indptr[i] .. indptr[i+1]]", x = 123, y = 507.6, width = 810, height = 81, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "rs-rows-label", text = "RECONSTRUCTED ROWS", x = 123, y = 610.2, width = 810, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "rs-rows", items = ["record 0 · len 3", "1 · 1", "record 2 · len 3"], gap = 21.6, x = 123, y = 664.2, width = 810, height = 70.2)
+      sdk.Caption(id = "rs-right-label", text = "RAGGED ROW BACKEND", x = 987, y = 302.4, width = 864, height = 43.2, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "rs-b1", text = "One flat values arena + offsets vector — a ragged row is a slice, never a heap-allocated Vec", x = 987, y = 356.4, width = 864, height = 108, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "rs-b2", text = "Sits beside NumericColumn (NaN = absence) in the same absolute-request-index alignment", x = 987, y = 475.2, width = 864, height = 108, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "rs-b3", text = "append_store merges worker shards by concatenating buffers and shifting offsets", x = 987, y = 594, width = 864, height = 81, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "rs-note", text = "Sweep-lines read the ragged ICL series directly for tokens-in-flight and concurrency curves", x = 987, y = 696.6, width = 864, height = 81, inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal rs-badge duration 160
         at 0 reveal rs-badge-l duration 160
@@ -1003,20 +1003,20 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component L — reporting and export: one authoritative report, a fan-out of exporters. NativeReport is schema_version 2.0 — run, summary, metrics, server_metrics, accuracy, and errors, with finite-or-absent values. It is written once through a sole atomic path: refuse if exists, temp create_new, then atomic rename, before run_exporters. The registry orders local-file writers first — GenaiPerfV1, ConsoleTxt, Timeslice, AccuracyCsv, ServerMetrics, and Parquet — then network uploaders Otel, Mlflow, and Wandb, all best-effort. GenaiPerfV1 is byte-for-byte versus the retired Python emitter, and ConsoleTxt reproduces Rich box geometry; run_exporters logs and never aborts the run."
     caption: "Atomic create_new + rename · local writers before network uploaders."
     render: @scene {
-      sdk.Shape(id = "rp-badge", variant = "rect", label = "L", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "rp-badge-l", text = "L", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "rp-kicker", text = "REPORTING AND EXPORT", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "rp-title", text = "One authoritative report, a fan-out of exporters", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "rp-sub", text = "Sole atomic create_new + rename; the registry orders local-file writers before network uploaders, all best-effort", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "rp-report-label", text = "NATIVEREPORT · schema_version 2.0", x = 40, y = 108, width = 660, height = 16, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "rp-report", text = "run · summary · metrics · server_metrics · accuracy · errors · finite-or-absent", x = 40, y = 128, width = 660, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "rp-atomic-label", text = "ATOMIC WRITE", x = 40, y = 158, width = 660, height = 16, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "rp-atomic", text = "refuse if exists → temp create_new → atomic rename → run_exporters", x = 40, y = 178, width = 660, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "rp-local-label", text = "LOCAL-FILE WRITERS", x = 40, y = 208, width = 660, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "rp-local", items = ["GenaiPerfV1", "ConsoleTxt", "Timeslice", "AccuracyCsv", "ServerMetrics", "Parquet"], gap = 8, x = 40, y = 228, width = 660, height = 26)
-      sdk.Caption(id = "rp-net-label", text = "NETWORK UPLOADERS", x = 40, y = 262, width = 660, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "rp-net", items = ["Otel", "Mlflow", "Wandb"], gap = 8, x = 40, y = 282, width = 660, height = 26)
-      sdk.Caption(id = "rp-note", text = "GenaiPerfV1 byte-for-byte vs the retired Python emitter; ConsoleTxt reproduces Rich box geometry; run_exporters logs and never aborts", x = 40, y = 316, width = 660, height = 20, inkRole = theme(ink.secondary))
+      sdk.Shape(id = "rp-badge", variant = "rect", label = "L", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "rp-badge-l", text = "L", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "rp-kicker", text = "REPORTING AND EXPORT", x = 236.4, y = 54, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "rp-title", text = "One authoritative report, a fan-out of exporters", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "rp-sub", text = "Sole atomic create_new + rename; the registry orders local-file writers before network uploaders, all best-effort", x = 123, y = 216, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "rp-report-label", text = "NATIVEREPORT · schema_version 2.0", x = 123, y = 291.6, width = 1782, height = 43.2, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "rp-report", text = "run · summary · metrics · server_metrics · accuracy · errors · finite-or-absent", x = 123, y = 345.6, width = 1782, height = 54, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "rp-atomic-label", text = "ATOMIC WRITE", x = 123, y = 426.6, width = 1782, height = 43.2, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "rp-atomic", text = "refuse if exists → temp create_new → atomic rename → run_exporters", x = 123, y = 480.6, width = 1782, height = 54, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "rp-local-label", text = "LOCAL-FILE WRITERS", x = 123, y = 561.6, width = 1782, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "rp-local", items = ["GenaiPerfV1", "ConsoleTxt", "Timeslice", "AccuracyCsv", "ServerMetrics", "Parquet"], gap = 21.6, x = 123, y = 615.6, width = 1782, height = 70.2)
+      sdk.Caption(id = "rp-net-label", text = "NETWORK UPLOADERS", x = 123, y = 707.4, width = 1782, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "rp-net", items = ["Otel", "Mlflow", "Wandb"], gap = 21.6, x = 123, y = 761.4, width = 1782, height = 70.2)
+      sdk.Caption(id = "rp-note", text = "GenaiPerfV1 byte-for-byte vs the retired Python emitter; ConsoleTxt reproduces Rich box geometry; run_exporters logs and never aborts", x = 123, y = 853.2, width = 1782, height = 54, inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal rp-badge duration 160
         at 0 reveal rp-badge-l duration 160
@@ -1043,20 +1043,20 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component M — adaptive scale: ramp until failure, step back to the knee. Discover monotonically raises the load knob each assessment window until an SLA-threshold breach; then Sustain holds the last-passing boundary, the knee. Four control variables can be driven: concurrency, prefill_concurrency, request_rate, and users. The object-safe seam is ControlActuator, SlaEvaluator, StepPolicy, Controller, and WindowSampler. It steps by SLA-margin-scaled or fixed-percent, and the same futures run online and offline — everything sits behind Clock and ControlActuator."
     caption: "Discover ramps to breach · Sustain holds the knee · object-safe seam."
     render: @scene {
-      sdk.Shape(id = "ad-badge", variant = "rect", label = "M", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "ad-badge-l", text = "M", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "ad-kicker", text = "ADAPTIVE SCALE", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "ad-title", text = "Ramp until failure, step back to the knee", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "ad-sub", text = "Discover raises the load knob each window until an SLA breach — then Sustain holds the last-passing boundary", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "ad-disc-label", text = "DISCOVER", x = 40, y = 108, width = 660, height = 16, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "ad-disc", text = "raises the load knob each assessment window until the SLA threshold is breached", x = 40, y = 128, width = 660, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "ad-sust-label", text = "SUSTAIN", x = 40, y = 158, width = 660, height = 16, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "ad-sust", text = "steps back and holds the last-passing boundary — the knee", x = 40, y = 178, width = 660, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "ad-vars-label", text = "FOUR CONTROL VARIABLES", x = 40, y = 208, width = 660, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "ad-vars", items = ["concurrency", "prefill_concurrency", "request_rate", "users"], gap = 8, x = 40, y = 228, width = 660, height = 26)
-      sdk.Caption(id = "ad-seam-label", text = "OBJECT-SAFE SEAM", x = 40, y = 262, width = 660, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "ad-seam", items = ["ControlActuator", "SlaEvaluator", "StepPolicy", "Controller", "WindowSampler"], gap = 8, x = 40, y = 282, width = 660, height = 26)
-      sdk.Paragraph(id = "ad-note", text = "Steps by SLA-margin-scaled or fixed-percent · same futures online and offline, everything behind Clock and ControlActuator", x = 40, y = 316, width = 660, height = 20, inkRole = theme(ink.secondary))
+      sdk.Shape(id = "ad-badge", variant = "rect", label = "M", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ad-badge-l", text = "M", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ad-kicker", text = "ADAPTIVE SCALE", x = 236.4, y = 54, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "ad-title", text = "Ramp until failure, step back to the knee", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ad-sub", text = "Discover raises the load knob each window until an SLA breach — then Sustain holds the last-passing boundary", x = 123, y = 216, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "ad-disc-label", text = "DISCOVER", x = 123, y = 291.6, width = 1782, height = 43.2, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "ad-disc", text = "raises the load knob each assessment window until the SLA threshold is breached", x = 123, y = 345.6, width = 1782, height = 54, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "ad-sust-label", text = "SUSTAIN", x = 123, y = 426.6, width = 1782, height = 43.2, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "ad-sust", text = "steps back and holds the last-passing boundary — the knee", x = 123, y = 480.6, width = 1782, height = 54, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "ad-vars-label", text = "FOUR CONTROL VARIABLES", x = 123, y = 561.6, width = 1782, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "ad-vars", items = ["concurrency", "prefill_concurrency", "request_rate", "users"], gap = 21.6, x = 123, y = 615.6, width = 1782, height = 70.2)
+      sdk.Caption(id = "ad-seam-label", text = "OBJECT-SAFE SEAM", x = 123, y = 707.4, width = 1782, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "ad-seam", items = ["ControlActuator", "SlaEvaluator", "StepPolicy", "Controller", "WindowSampler"], gap = 21.6, x = 123, y = 761.4, width = 1782, height = 70.2)
+      sdk.Paragraph(id = "ad-note", text = "Steps by SLA-margin-scaled or fixed-percent · same futures online and offline, everything behind Clock and ControlActuator", x = 123, y = 853.2, width = 1782, height = 54, inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal ad-badge duration 160
         at 0 reveal ad-badge-l duration 160
@@ -1083,14 +1083,14 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component N — accuracy: Rust drives, a Python worker grades. Accuracy is not a dispatch workload; problems flow through the ordinary online scheduler, transport, and observer. Rust owns scheduling, IO and timing, and metrics; the Python Lighteval worker owns dataset prep and prompts, hidden tests, and grading. They talk over EVALUATOR_PROTOCOL_VERSION one — versioned JSONL over stdio, env_clear plus an allowlist, and data-hiding by deny_unknown_fields. Problems are graded in batches, joined by AccuracyAccumulator, giving a Wilson confidence interval, accuracy-at-load, and correct-answers-per-kWh drawn from the telemetry sidecar's energy metric."
     caption: "Rust owns scheduling/IO/metrics · Python worker grades over versioned stdio."
     render: @scene {
-      sdk.Shape(id = "ac-badge", variant = "rect", label = "N", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "ac-badge-l", text = "N", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "ac-kicker", text = "ACCURACY", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "ac-title", text = "Rust drives, a Python worker grades", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "ac-sub", text = "Accuracy is not a dispatch workload — problems flow through the ordinary online scheduler, transport and observer", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.CompareGrid(id = "ac-split", columns = 2, items = [{ label: "Rust owns", detail: "scheduling · IO and timing · metrics" }, { label: "Python / Lighteval worker owns", detail: "dataset prep & prompts · hidden tests · grading" }], x = 40, y = 118)
-      sdk.Caption(id = "ac-proto", text = "EVALUATOR_PROTOCOL_VERSION = 1 — versioned JSONL stdio · env_clear + allowlist · data-hiding by deny_unknown_fields", x = 40, y = 252, width = 640, height = 30, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "ac-note", text = "Graded in batches, joined by AccuracyAccumulator — Wilson CI, accuracy-at-load, correct-answers-per-kWh from the sidecar's energy metric", x = 40, y = 298, width = 640, height = 30, inkRole = theme(ink.secondary))
+      sdk.Shape(id = "ac-badge", variant = "rect", label = "N", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ac-badge-l", text = "N", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ac-kicker", text = "ACCURACY", x = 236.4, y = 54, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "ac-title", text = "Rust drives, a Python worker grades", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ac-sub", text = "Accuracy is not a dispatch workload — problems flow through the ordinary online scheduler, transport and observer", x = 123, y = 216, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.CompareGrid(id = "ac-split", columns = 2, items = [{ label: "Rust owns", detail: "scheduling · IO and timing · metrics" }, { label: "Python / Lighteval worker owns", detail: "dataset prep & prompts · hidden tests · grading" }], x = 123, y = 318.6)
+      sdk.Caption(id = "ac-proto", text = "EVALUATOR_PROTOCOL_VERSION = 1 — versioned JSONL stdio · env_clear + allowlist · data-hiding by deny_unknown_fields", x = 123, y = 680.4, width = 1728, height = 81, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "ac-note", text = "Graded in batches, joined by AccuracyAccumulator — Wilson CI, accuracy-at-load, correct-answers-per-kWh from the sidecar's energy metric", x = 123, y = 804.6, width = 1728, height = 81, inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal ac-badge duration 160
         at 0 reveal ac-badge-l duration 160
@@ -1111,13 +1111,13 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component O — side-channel telemetry: four Clock-injected sources, one metric series. Continuous scrapes dedup identical bodies into gauge distributions; boundary scrapes give exact reset-clamped counter deltas. The four sources are gpu_telemetry, a DCGM-first source with per-GPU energy, power, and efficiency joins; network_latency, a fresh-TCP-connect RTT calibration with per-target stats; server_metrics, a Prometheus parser over a vLLM and SGLang atlas with boundary deltas; and content_server, an Axum server that turns images and videos into stable HTTP URLs. All four converge as SidecarMetric, a shared series into the native report, barrier-synchronized to phases as ScheduledPhaseSidecars."
     caption: "gpu_telemetry · network_latency · server_metrics · content_server → SidecarMetric."
     render: @scene {
-      sdk.Shape(id = "oc-badge", variant = "rect", label = "O", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "oc-badge-l", text = "O", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "oc-kicker", text = "SIDE-CHANNEL TELEMETRY", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "oc-title", text = "Four Clock-injected sources, one metric series", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "oc-sub", text = "Continuous scrapes dedup identical bodies into gauge distributions; boundary scrapes give exact reset-clamped counter deltas", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.CardGrid(id = "oc-sources", columns = 2, cards = [{ title: "gpu_telemetry", detail: "DCGM-first · per-GPU energy/power/efficiency joins", accent: "green" }, { title: "network_latency", detail: "fresh-TCP-connect RTT calibration, per-target stats", accent: "green" }, { title: "server_metrics", detail: "Prometheus parser, vLLM/SGLang atlas, boundary deltas", accent: "green" }, { title: "content_server", detail: "Axum server, images/videos → stable HTTP URLs", accent: "green" }], x = 40, y = 116)
-      sdk.Caption(id = "oc-sink", text = "→ SidecarMetric — a shared series into the native report, barrier-synchronized to phases as ScheduledPhaseSidecars", x = 40, y = 360, width = 640, height = 30, inkRole = theme(ink.secondary))
+      sdk.Shape(id = "oc-badge", variant = "rect", label = "O", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "oc-badge-l", text = "O", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "oc-kicker", text = "SIDE-CHANNEL TELEMETRY", x = 236.4, y = 54, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "oc-title", text = "Four Clock-injected sources, one metric series", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "oc-sub", text = "Continuous scrapes dedup identical bodies into gauge distributions; boundary scrapes give exact reset-clamped counter deltas", x = 123, y = 216, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.CardGrid(id = "oc-sources", columns = 2, cards = [{ title: "gpu_telemetry", detail: "DCGM-first · per-GPU energy/power/efficiency joins", accent: "green" }, { title: "network_latency", detail: "fresh-TCP-connect RTT calibration, per-target stats", accent: "green" }, { title: "server_metrics", detail: "Prometheus parser, vLLM/SGLang atlas, boundary deltas", accent: "green" }, { title: "content_server", detail: "Axum server, images/videos → stable HTTP URLs", accent: "green" }], x = 123, y = 313.2)
+      sdk.Caption(id = "oc-sink", text = "→ SidecarMetric — a shared series into the native report, barrier-synchronized to phases as ScheduledPhaseSidecars", x = 123, y = 972, width = 1728, height = 81, inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal oc-badge duration 160
         at 0 reveal oc-badge-l duration 160
@@ -1137,14 +1137,14 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component P — cellular multi-process: a controller spawns N cells and merges one report. The union of ordinals is validated as a permutation of zero to total, stable-sorted and re-ingested, byte-identical to a single-cell run. Partition uses ModuloCellPartition with isolated stream roots; issuance uses a global ordinal, never a shared atomic; shards are raw RecordIngest over MessagePack carrying NaN and plus-infinity; heartbeats carry live t-digest percentiles for a progress lane. It is fail-closed: HTTP transport only, synthetic single-turn, request-bounded phases, requests at least cell_count — it rejects duration, sessions, adaptive, and multi-turn."
     caption: "controller → N cells → merged report · byte-identical · fail-closed."
     render: @scene {
-      sdk.Shape(id = "ce-badge", variant = "rect", label = "P", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "ce-badge-l", text = "P", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "ce-kicker", text = "CELLULAR MULTI-PROCESS", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "ce-title", text = "A controller spawns N cells, merges one report", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "ce-sub", text = "The union of ordinals is validated as a permutation of 0..total, stable-sorted and re-ingested — byte-identical to a single-cell run", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "ce-topo", text = "controller (--cells N) → cell k where i%N==k → merged report · byte-identical", x = 40, y = 106, width = 640, height = 16, inkRole = theme(accent.primary))
-      sdk.CardGrid(id = "ce-cards", columns = 2, cards = [{ title: "Partition", detail: "ModuloCellPartition · isolated stream roots", accent: "green" }, { title: "Issuance", detail: "global ordinal, never a shared atomic", accent: "green" }, { title: "Shard", detail: "raw RecordIngest over MessagePack (NaN/+inf)", accent: "green" }, { title: "Heartbeat", detail: "live t-digest percentiles for a progress lane", accent: "green" }], x = 40, y = 128)
-      sdk.Caption(id = "ce-note", text = "Fail-closed: HTTP transport only, synthetic single-turn, request-bounded phases, requests ≥ cell_count — rejects duration, sessions, adaptive and multi-turn", x = 40, y = 366, width = 640, height = 30, inkRole = theme(ink.secondary))
+      sdk.Shape(id = "ce-badge", variant = "rect", label = "P", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ce-badge-l", text = "P", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ce-kicker", text = "CELLULAR MULTI-PROCESS", x = 236.4, y = 54, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "ce-title", text = "A controller spawns N cells, merges one report", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ce-sub", text = "The union of ordinals is validated as a permutation of 0..total, stable-sorted and re-ingested — byte-identical to a single-cell run", x = 123, y = 216, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "ce-topo", text = "controller (--cells N) → cell k where i%N==k → merged report · byte-identical", x = 123, y = 286.2, width = 1728, height = 43.2, inkRole = theme(accent.primary))
+      sdk.CardGrid(id = "ce-cards", columns = 2, cards = [{ title: "Partition", detail: "ModuloCellPartition · isolated stream roots", accent: "green" }, { title: "Issuance", detail: "global ordinal, never a shared atomic", accent: "green" }, { title: "Shard", detail: "raw RecordIngest over MessagePack (NaN/+inf)", accent: "green" }, { title: "Heartbeat", detail: "live t-digest percentiles for a progress lane", accent: "green" }], x = 123, y = 345.6)
+      sdk.Caption(id = "ce-note", text = "Fail-closed: HTTP transport only, synthetic single-turn, request-bounded phases, requests ≥ cell_count — rejects duration, sessions, adaptive and multi-turn", x = 123, y = 988.2, width = 1728, height = 81, inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal ce-badge duration 160
         at 0 reveal ce-badge-l duration 160
@@ -1165,18 +1165,18 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component Q — Dynosim co-simulation: co-simulate Dynamo in-process, with no sockets. AIPerf owns the clock, workload, observers, and report; dynamo-mocker owns the scheduler and perf-model behind SteppableReplay. Two modes differ only in the clock and driver axis: dynosim_offline runs a Sim clock through drive_sim_with_source with enforced byte-exact parity versus Dynamo, while dynosim_online runs a Real clock through drive_real_with_source with relaxed parity. DynosimSink reuses the same RequestSink, HttpRequestDispatcher, and TurnDispatcher seams; EngineHost bridges the DES or wall clock as a SimEventSource; token priority is raw_token_ids, then trace_hash_ids, then chat body. It requires worker_count equal to one; dynamo-full adds the router, ZMQ, KV, and AIC surface."
     caption: "offline byte-exact vs online relaxed · same sink seams · worker_count == 1."
     render: @scene {
-      sdk.Shape(id = "dy-badge", variant = "rect", label = "Q", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "dy-badge-l", text = "Q", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "dy-kicker", text = "DYNOSIM CO-SIMULATION", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "dy-title", text = "Co-simulate Dynamo in-process, no sockets", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "dy-sub", text = "AIPerf owns clock, workload, observers and report; dynamo-mocker owns scheduler and perf-model behind SteppableReplay", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.CompareGrid(id = "dy-modes", columns = 2, items = [{ label: "dynosim_offline", detail: "Sim clock · drive_sim_with_source · enforced byte-exact parity vs Dynamo" }, { label: "dynosim_online", detail: "Real clock · drive_real_with_source · relaxed parity" }], x = 40, y = 124)
-      sdk.Caption(id = "dy-axis", text = "The two modes differ only in the clock / driver axis", x = 40, y = 248, width = 640, height = 16, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "dy-comp-label", text = "SHARED SEAMS", x = 40, y = 272, width = 640, height = 16, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "dy-c1", text = "DynosimSink · same RequestSink / HttpRequestDispatcher / TurnDispatcher seams", x = 40, y = 292, width = 660, height = 20, inkRole = theme(ink.secondary))
-      sdk.Paragraph(id = "dy-c2", text = "EngineHost · bridges the DES/wall clock as a SimEventSource", x = 40, y = 316, width = 660, height = 20, inkRole = theme(ink.secondary))
-      sdk.Paragraph(id = "dy-c3", text = "token priority · raw_token_ids → trace_hash_ids → chat body", x = 40, y = 340, width = 660, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "dy-note", text = "Requires worker_count == 1 · dynamo-full adds the router / ZMQ / KV / AIC surface", x = 40, y = 368, width = 660, height = 16, inkRole = theme(ink.secondary))
+      sdk.Shape(id = "dy-badge", variant = "rect", label = "Q", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "dy-badge-l", text = "Q", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "dy-kicker", text = "DYNOSIM CO-SIMULATION", x = 236.4, y = 54, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "dy-title", text = "Co-simulate Dynamo in-process, no sockets", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "dy-sub", text = "AIPerf owns clock, workload, observers and report; dynamo-mocker owns scheduler and perf-model behind SteppableReplay", x = 123, y = 216, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.CompareGrid(id = "dy-modes", columns = 2, items = [{ label: "dynosim_offline", detail: "Sim clock · drive_sim_with_source · enforced byte-exact parity vs Dynamo" }, { label: "dynosim_online", detail: "Real clock · drive_real_with_source · relaxed parity" }], x = 123, y = 334.8)
+      sdk.Caption(id = "dy-axis", text = "The two modes differ only in the clock / driver axis", x = 123, y = 669.6, width = 1728, height = 43.2, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "dy-comp-label", text = "SHARED SEAMS", x = 123, y = 734.4, width = 1728, height = 43.2, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "dy-c1", text = "DynosimSink · same RequestSink / HttpRequestDispatcher / TurnDispatcher seams", x = 123, y = 788.4, width = 1782, height = 54, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "dy-c2", text = "EngineHost · bridges the DES/wall clock as a SimEventSource", x = 123, y = 853.2, width = 1782, height = 54, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "dy-c3", text = "token priority · raw_token_ids → trace_hash_ids → chat body", x = 123, y = 918, width = 1782, height = 54, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "dy-note", text = "Requires worker_count == 1 · dynamo-full adds the router / ZMQ / KV / AIC surface", x = 123, y = 993.6, width = 1782, height = 43.2, inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal dy-badge duration 160
         at 0 reveal dy-badge-l duration 160
@@ -1199,20 +1199,20 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Component R — the mock server: a deterministic, standalone inference target. It is OpenAI, Anthropic, and TGI-compatible; Python does not supervise it — it simply supplies an ordinary online URL. It offers two latency models over goodput versus offered load: an analytic curve and a queue-threshold model whose goodput batch-collapses past the queue threshold. Server features include a prefix cache with SGLang-style eviction over chain-hash blocks, a DCGM faker producing 100 Hz throughput-driven per-GPU telemetry, TCP_NODELAY over a manual accept loop with no Nagle on SSE chunks, and a --fast mode with zero latency and no scheduler or cache. It emits seven Prometheus dialects, including vllm, sglang, trtllm, and dynamo families."
     caption: "Deterministic OpenAI/Anthropic/TGI target · two latency models · 7 dialects."
     render: @scene {
-      sdk.Shape(id = "ms-badge", variant = "rect", label = "R", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "ms-badge-l", text = "R", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
-      sdk.Caption(id = "ms-kicker", text = "MOCK SERVER", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
-      sdk.Title(id = "ms-title", text = "A deterministic, standalone inference target", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "ms-sub", text = "OpenAI / Anthropic / TGI-compatible; Python does not supervise it — it supplies an ordinary online URL", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "ms-lat-label", text = "TWO LATENCY MODELS · GOODPUT vs LOAD", x = 40, y = 106, width = 640, height = 16, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "ms-lat", text = "an analytic curve vs a queue-threshold model — goodput batch-collapses past the queue threshold", x = 40, y = 126, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "ms-feat-label", text = "SERVER FEATURES", x = 40, y = 158, width = 640, height = 16, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "ms-f1", text = "prefix cache · SGLang-style eviction, chain-hash blocks", x = 40, y = 178, width = 660, height = 20, inkRole = theme(ink.secondary))
-      sdk.Paragraph(id = "ms-f2", text = "DCGM faker · 100 Hz, throughput-driven per-GPU telemetry", x = 40, y = 202, width = 660, height = 20, inkRole = theme(ink.secondary))
-      sdk.Paragraph(id = "ms-f3", text = "TCP_NODELAY · manual accept loop, no Nagle on SSE chunks", x = 40, y = 226, width = 660, height = 20, inkRole = theme(ink.secondary))
-      sdk.Paragraph(id = "ms-f4", text = "--fast · zero latency, no scheduler or cache", x = 40, y = 250, width = 660, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "ms-dial-label", text = "7 PROMETHEUS DIALECTS", x = 40, y = 280, width = 640, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "ms-dial", items = ["vllm:*", "sglang:*", "trtllm:*", "dynamo_*", "+3"], gap = 8, x = 40, y = 300, width = 640, height = 26)
+      sdk.Shape(id = "ms-badge", variant = "rect", label = "R", x = 123, y = 32.4, width = 86.4, height = 86.4, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ms-badge-l", text = "R", x = 123, y = 48.6, width = 86.4, height = 54, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ms-kicker", text = "MOCK SERVER", x = 236.4, y = 54, width = 1350, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Title(id = "ms-title", text = "A deterministic, standalone inference target", x = 123, y = 129.6, width = 1728, height = 70.2, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ms-sub", text = "OpenAI / Anthropic / TGI-compatible; Python does not supervise it — it supplies an ordinary online URL", x = 123, y = 216, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "ms-lat-label", text = "TWO LATENCY MODELS · GOODPUT vs LOAD", x = 123, y = 286.2, width = 1728, height = 43.2, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "ms-lat", text = "an analytic curve vs a queue-threshold model — goodput batch-collapses past the queue threshold", x = 123, y = 340.2, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "ms-feat-label", text = "SERVER FEATURES", x = 123, y = 426.6, width = 1728, height = 43.2, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "ms-f1", text = "prefix cache · SGLang-style eviction, chain-hash blocks", x = 123, y = 480.6, width = 1782, height = 54, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "ms-f2", text = "DCGM faker · 100 Hz, throughput-driven per-GPU telemetry", x = 123, y = 545.4, width = 1782, height = 54, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "ms-f3", text = "TCP_NODELAY · manual accept loop, no Nagle on SSE chunks", x = 123, y = 610.2, width = 1782, height = 54, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "ms-f4", text = "--fast · zero latency, no scheduler or cache", x = 123, y = 675, width = 1782, height = 54, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "ms-dial-label", text = "7 PROMETHEUS DIALECTS", x = 123, y = 756, width = 1728, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "ms-dial", items = ["vllm:*", "sglang:*", "trtllm:*", "dynamo_*", "+3"], gap = 21.6, x = 123, y = 810, width = 1728, height = 70.2)
       timeline main {
         at 0 reveal ms-badge duration 160
         at 0 reveal ms-badge-l duration 160
@@ -1238,7 +1238,7 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Chapter-break slide 04: a huge green monospace '04' over the bold title 'Cross-Cutting' and the gray subtitle 'The configuration surface, the seams, the invariants', right-aligned."
     caption: "Chapter 04 · Cross-Cutting."
     render: @scene {
-      sdk.SectionDivider(id = "div04", number = "04", title = "Cross-Cutting", subtitle = "The configuration surface, the seams, the invariants", x = 34, y = 58, width = 650)
+      sdk.SectionDivider(id = "div04", number = "04", title = "Cross-Cutting", subtitle = "The configuration surface, the seams, the invariants", x = 106.8, y = 156.6, width = 1755)
       timeline main {
         at 0 reveal div04 duration 320
       }
@@ -1252,26 +1252,26 @@ explainer "Rust Architecture — Deck Port" {
     narration: "The configuration surface: transport and workload are chosen independently, and only validated pairs run. A supported-pairs matrix crosses transport against workload — http runs scheduled and graph, grpc runs scheduled only, and both dynosim_offline and dynosim_online (feature-gated) run scheduled and graph. Workload is derived from the dataset format: dag_jsonl, weka_trace, and dynamo_trace select graph; everything else is scheduled. Six labeled parameter families round out the surface — phase types, arrivals, ramps, adaptive controllers, sequence-length distributions, and failure policy."
     caption: "Transport × workload · only validated pairs run · six parameter families."
     render: @scene {
-      sdk.Title(id = "cfg-title", text = "The configuration surface", x = 34, y = 20, width = 640, height = 30, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "cfg-sub", text = "Transport and workload are chosen independently; only validated pairs run", x = 34, y = 56, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "cfg-matrix-label", text = "SUPPORTED PAIRS · TRANSPORT × WORKLOAD", x = 34, y = 88, width = 310, height = 16, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "cfg-m1", text = "http · scheduled ✓ · graph ✓", x = 34, y = 108, width = 320, height = 18, inkRole = theme(ink.secondary))
-      sdk.Paragraph(id = "cfg-m2", text = "grpc · scheduled ✓ · graph —", x = 34, y = 130, width = 320, height = 18, inkRole = theme(ink.secondary))
-      sdk.Paragraph(id = "cfg-m3", text = "dynosim_offline (feature) · scheduled ✓ · graph ✓", x = 34, y = 152, width = 320, height = 18, inkRole = theme(ink.secondary))
-      sdk.Paragraph(id = "cfg-m4", text = "dynosim_online (feature) · scheduled ✓ · graph ✓", x = 34, y = 174, width = 320, height = 18, inkRole = theme(ink.secondary))
-      sdk.Paragraph(id = "cfg-derive", text = "Workload is derived from the dataset format — dag_jsonl / weka_trace / dynamo_trace select graph, everything else scheduled.", x = 34, y = 202, width = 320, height = 48, inkRole = theme(ink.tertiary))
-      sdk.Caption(id = "cfg-f1-l", text = "PHASE TYPES", x = 356, y = 84, width = 336, height = 14, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "cfg-f1-v", text = "concurrency · poisson · gamma · constant · user_centric · fixed_schedule", x = 356, y = 100, width = 336, height = 30, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "cfg-f2-l", text = "ARRIVALS", x = 356, y = 134, width = 336, height = 14, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "cfg-f2-v", text = "Constant · Poisson · Gamma · ConcurrencyBurst", x = 356, y = 150, width = 336, height = 18, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "cfg-f3-l", text = "RAMPS", x = 356, y = 172, width = 160, height = 14, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "cfg-f3-v", text = "Linear · Exponential · Poisson", x = 356, y = 188, width = 160, height = 30, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "cfg-f4-l", text = "ADAPTIVE", x = 528, y = 172, width = 164, height = 14, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "cfg-f4-v", text = "concurrency · prefill · request_rate · users", x = 528, y = 188, width = 164, height = 30, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "cfg-f5-l", text = "SEQ LENGTHS", x = 356, y = 226, width = 336, height = 14, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "cfg-f5-v", text = "Fixed · Normal · LogNormal · Multimodal · Empirical", x = 356, y = 242, width = 336, height = 18, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "cfg-f6-l", text = "FAILURE", x = 356, y = 264, width = 336, height = 14, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "cfg-f6-v", text = "continue (scheduled) · abort (graph)", x = 356, y = 280, width = 336, height = 18, inkRole = theme(ink.secondary))
+      sdk.Title(id = "cfg-title", text = "The configuration surface", x = 106.8, y = 54, width = 1728, height = 81, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "cfg-sub", text = "Transport and workload are chosen independently; only validated pairs run", x = 106.8, y = 151.2, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "cfg-matrix-label", text = "SUPPORTED PAIRS · TRANSPORT × WORKLOAD", x = 106.8, y = 237.6, width = 837, height = 43.2, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "cfg-m1", text = "http · scheduled ✓ · graph ✓", x = 106.8, y = 291.6, width = 864, height = 48.6, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "cfg-m2", text = "grpc · scheduled ✓ · graph —", x = 106.8, y = 351, width = 864, height = 48.6, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "cfg-m3", text = "dynosim_offline (feature) · scheduled ✓ · graph ✓", x = 106.8, y = 410.4, width = 864, height = 48.6, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "cfg-m4", text = "dynosim_online (feature) · scheduled ✓ · graph ✓", x = 106.8, y = 469.8, width = 864, height = 48.6, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "cfg-derive", text = "Workload is derived from the dataset format — dag_jsonl / weka_trace / dynamo_trace select graph, everything else scheduled.", x = 106.8, y = 545.4, width = 864, height = 129.6, inkRole = theme(ink.tertiary))
+      sdk.Caption(id = "cfg-f1-l", text = "PHASE TYPES", x = 976.2, y = 226.8, width = 907.2, height = 37.8, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "cfg-f1-v", text = "concurrency · poisson · gamma · constant · user_centric · fixed_schedule", x = 976.2, y = 270, width = 907.2, height = 81, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "cfg-f2-l", text = "ARRIVALS", x = 976.2, y = 361.8, width = 907.2, height = 37.8, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "cfg-f2-v", text = "Constant · Poisson · Gamma · ConcurrencyBurst", x = 976.2, y = 405, width = 907.2, height = 48.6, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "cfg-f3-l", text = "RAMPS", x = 976.2, y = 464.4, width = 432, height = 37.8, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "cfg-f3-v", text = "Linear · Exponential · Poisson", x = 976.2, y = 507.6, width = 432, height = 81, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "cfg-f4-l", text = "ADAPTIVE", x = 1440.6, y = 464.4, width = 442.8, height = 37.8, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "cfg-f4-v", text = "concurrency · prefill · request_rate · users", x = 1440.6, y = 507.6, width = 442.8, height = 81, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "cfg-f5-l", text = "SEQ LENGTHS", x = 976.2, y = 610.2, width = 907.2, height = 37.8, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "cfg-f5-v", text = "Fixed · Normal · LogNormal · Multimodal · Empirical", x = 976.2, y = 653.4, width = 907.2, height = 48.6, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "cfg-f6-l", text = "FAILURE", x = 976.2, y = 712.8, width = 907.2, height = 37.8, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "cfg-f6-v", text = "continue (scheduled) · abort (graph)", x = 976.2, y = 756, width = 907.2, height = 48.6, inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal cfg-title duration 200
         after cfg-title reveal cfg-sub duration 160
@@ -1291,12 +1291,12 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Everything is a trait: every variation point is an implementable trait with at least one concrete impl — object-safe at dyn boundaries, monomorphized on the hot path. There are 115 extension seams across 18 layers, and the seam count per layer spans a wide range: Dataset 15, Scheduling 15, Graph 14, Runner composition 8, Phase lifecycle 8, Adaptive 7, Endpoints 6, HTTP 6, Metrics/report 6, Telemetry 6, Execution 5, Inputs 4, Cellular 4, and Dispatch/gRPC 3."
     caption: "115 extension seams across 18 layers · every variation point a trait."
     render: @scene {
-      sdk.Title(id = "trait-title", text = "Everything is a trait", x = 34, y = 18, width = 600, height = 28, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "trait-sub", text = "Every variation point is an implementable trait with at least one\nconcrete impl — object-safe at dyn boundaries, monomorphized on the hot path", x = 34, y = 50, width = 620, height = 40, inkRole = theme(ink.secondary))
-      sdk.Title(id = "trait-headline", text = "115 extension seams across 18 layers", x = 34, y = 104, width = 620, height = 30, inkRole = theme(accent.primary))
-      sdk.Caption(id = "trait-bars-label", text = "SEAMS PER LAYER", x = 34, y = 156, width = 300, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "trait-bars-1", items = ["Dataset · 15", "Scheduling · 15", "Graph · 14", "Runner comp. · 8", "Phase lifecycle · 8", "Adaptive · 7", "Endpoints · 6"], gap = 8, x = 34, y = 178, width = 640, height = 28)
-      sdk.TagList(id = "trait-bars-2", items = ["HTTP · 6", "Metrics/report · 6", "Telemetry · 6", "Execution · 5", "Inputs · 4", "Cellular · 4", "Dispatch/gRPC · 3"], gap = 8, x = 34, y = 216, width = 640, height = 28)
+      sdk.Title(id = "trait-title", text = "Everything is a trait", x = 106.8, y = 48.6, width = 1620, height = 75.6, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "trait-sub", text = "Every variation point is an implementable trait with at least one\nconcrete impl — object-safe at dyn boundaries, monomorphized on the hot path", x = 106.8, y = 135, width = 1674, height = 108, inkRole = theme(ink.secondary))
+      sdk.Title(id = "trait-headline", text = "115 extension seams across 18 layers", x = 106.8, y = 280.8, width = 1674, height = 81, inkRole = theme(accent.primary))
+      sdk.Caption(id = "trait-bars-label", text = "SEAMS PER LAYER", x = 106.8, y = 421.2, width = 810, height = 43.2, inkRole = theme(accent.primary))
+      sdk.TagList(id = "trait-bars-1", items = ["Dataset · 15", "Scheduling · 15", "Graph · 14", "Runner comp. · 8", "Phase lifecycle · 8", "Adaptive · 7", "Endpoints · 6"], gap = 21.6, x = 106.8, y = 480.6, width = 1728, height = 75.6)
+      sdk.TagList(id = "trait-bars-2", items = ["HTTP · 6", "Metrics/report · 6", "Telemetry · 6", "Execution · 5", "Inputs · 4", "Cellular · 4", "Dispatch/gRPC · 3"], gap = 21.6, x = 106.8, y = 583.2, width = 1728, height = 75.6)
       timeline main {
         at 0 reveal trait-title duration 200
         after trait-title reveal trait-sub duration 180
@@ -1315,21 +1315,21 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Cross-cutting invariants, read from the source rather than the docs — the rules every subsystem holds to. One, all time flows through Clock: never Instant::now or raw tokio::time for measurement, with virtual time an integer-ns tuple that tie-breaks on (at_ns, seq_no). Two, thread-per-core: N current_thread runtimes, per-trace state in Rc/RefCell, !Send futures, parallelism as many traces across threads rather than work-stealing. Three, no Arc/Mutex on the hot path: accumulate lock-free per worker and merge once at the join. Four, content-addressed: BLAKE3 prefix-dependent segments, materialize by concatenating pre-serialized bytes and never re-serialize. Five, NaN/Inf discipline: every value crossing a serialization boundary is finite or explicitly absent, and the cellular wire uses MessagePack for NaN-sparsity. Six, redaction at the boundary: every diagnostic is credential-scrubbed before stdout, secrets never enter DTOs and zeroize on drop. And one product entry path — Python projects exactly one side-effect-free protocol-v2 request; the runner fails closed on any unregistered id."
     caption: "Six invariants from the source · one fail-closed product entry path."
     render: @scene {
-      sdk.Title(id = "inv-title", text = "Cross-cutting invariants", x = 34, y = 18, width = 640, height = 28, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "inv-sub", text = "From the source, not the docs — the rules every subsystem holds to", x = 34, y = 50, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.Label(id = "inv-h1", text = "01 · All time via Clock", x = 34, y = 84, width = 300, height = 18, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "inv-d1", text = "No Instant::now / raw tokio timers;\nvirtual time = integer ns, (at_ns, seq_no) tie-break", x = 34, y = 104, width = 300, height = 60, inkRole = theme(ink.secondary))
-      sdk.Label(id = "inv-h2", text = "02 · Thread-per-core", x = 356, y = 84, width = 320, height = 18, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "inv-d2", text = "N current_thread runtimes; Rc/RefCell !Send\nper-trace state; many traces, not work-stealing", x = 356, y = 104, width = 320, height = 60, inkRole = theme(ink.secondary))
-      sdk.Label(id = "inv-h3", text = "03 · No Arc/Mutex hot-path", x = 34, y = 178, width = 300, height = 18, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "inv-d3", text = "Accumulate lock-free per worker,\nmerge once at the join", x = 34, y = 198, width = 300, height = 60, inkRole = theme(ink.secondary))
-      sdk.Label(id = "inv-h4", text = "04 · Content-addressed", x = 356, y = 178, width = 320, height = 18, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "inv-d4", text = "BLAKE3 prefix-dependent segments; materialize\nby concat of pre-serialized bytes, never re-serialize", x = 356, y = 198, width = 320, height = 60, inkRole = theme(ink.secondary))
-      sdk.Label(id = "inv-h5", text = "05 · NaN/Inf discipline", x = 34, y = 272, width = 300, height = 18, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "inv-d5", text = "Finite or explicitly absent at every serialization\nboundary; MessagePack wire for NaN-sparsity", x = 34, y = 292, width = 300, height = 60, inkRole = theme(ink.secondary))
-      sdk.Label(id = "inv-h6", text = "06 · Redaction at boundary", x = 356, y = 272, width = 320, height = 18, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "inv-d6", text = "Diagnostics credential-scrubbed before stdout;\nsecrets never enter DTOs, zeroize on drop", x = 356, y = 292, width = 320, height = 60, inkRole = theme(ink.secondary))
-      sdk.Paragraph(id = "inv-callout", text = "One product entry path — Python projects exactly one side-effect-free protocol-v2 request; the runner fails closed on any unregistered id.", x = 34, y = 360, width = 640, height = 32, inkRole = theme(ink.primary), strokeRole = theme(ink.primary))
+      sdk.Title(id = "inv-title", text = "Cross-cutting invariants", x = 106.8, y = 48.6, width = 1728, height = 75.6, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "inv-sub", text = "From the source, not the docs — the rules every subsystem holds to", x = 106.8, y = 135, width = 1728, height = 54, inkRole = theme(ink.secondary))
+      sdk.Label(id = "inv-h1", text = "01 · All time via Clock", x = 106.8, y = 226.8, width = 810, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "inv-d1", text = "No Instant::now / raw tokio timers;\nvirtual time = integer ns, (at_ns, seq_no) tie-break", x = 106.8, y = 280.8, width = 810, height = 162, inkRole = theme(ink.secondary))
+      sdk.Label(id = "inv-h2", text = "02 · Thread-per-core", x = 976.2, y = 226.8, width = 864, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "inv-d2", text = "N current_thread runtimes; Rc/RefCell !Send\nper-trace state; many traces, not work-stealing", x = 976.2, y = 280.8, width = 864, height = 162, inkRole = theme(ink.secondary))
+      sdk.Label(id = "inv-h3", text = "03 · No Arc/Mutex hot-path", x = 106.8, y = 480.6, width = 810, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "inv-d3", text = "Accumulate lock-free per worker,\nmerge once at the join", x = 106.8, y = 534.6, width = 810, height = 162, inkRole = theme(ink.secondary))
+      sdk.Label(id = "inv-h4", text = "04 · Content-addressed", x = 976.2, y = 480.6, width = 864, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "inv-d4", text = "BLAKE3 prefix-dependent segments; materialize\nby concat of pre-serialized bytes, never re-serialize", x = 976.2, y = 534.6, width = 864, height = 162, inkRole = theme(ink.secondary))
+      sdk.Label(id = "inv-h5", text = "05 · NaN/Inf discipline", x = 106.8, y = 734.4, width = 810, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "inv-d5", text = "Finite or explicitly absent at every serialization\nboundary; MessagePack wire for NaN-sparsity", x = 106.8, y = 788.4, width = 810, height = 162, inkRole = theme(ink.secondary))
+      sdk.Label(id = "inv-h6", text = "06 · Redaction at boundary", x = 976.2, y = 734.4, width = 864, height = 48.6, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "inv-d6", text = "Diagnostics credential-scrubbed before stdout;\nsecrets never enter DTOs, zeroize on drop", x = 976.2, y = 788.4, width = 864, height = 162, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "inv-callout", text = "One product entry path — Python projects exactly one side-effect-free protocol-v2 request; the runner fails closed on any unregistered id.", x = 106.8, y = 972, width = 1728, height = 86.4, inkRole = theme(ink.primary), strokeRole = theme(ink.primary))
       timeline main {
         at 0 reveal inv-title duration 200
         after inv-title reveal inv-sub duration 160
@@ -1347,14 +1347,14 @@ explainer "Rust Architecture — Deck Port" {
     narration: "The whole system on one slide: eighteen subsystems, two seams, one product path. A — the process boundary and protocol v2. B — input resolution. C — execution paths. D — HTTP transport. E — gRPC transport. F — endpoints. G — the dataset pipeline. H — the RNG substrate. I — timing and scheduling. J — the Graph-IR engine. K — metrics core. L — reporting and export. M — adaptive scale. N — accuracy. O — side-channel telemetry. P — cellular multi-process. Q — dynosim co-simulation. R — the mock server."
     caption: "Eighteen subsystems A–R · two seams · one product path."
     render: @scene {
-      sdk.Title(id = "map-title", text = "The whole system on one slide", x = 34, y = 20, width = 640, height = 30, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "map-sub", text = "Eighteen subsystems, two seams, one product path", x = 34, y = 56, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.Title(id = "map-title", text = "The whole system on one slide", x = 106.8, y = 54, width = 1728, height = 81, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "map-sub", text = "Eighteen subsystems, two seams, one product path", x = 106.8, y = 151.2, width = 1728, height = 54, inkRole = theme(ink.secondary))
       // The HTML source is a flat 6-column grid of lettered cards with no
       // connectors between them — not a networked diagram — so this maps to
       // three non-wrapping sdk.TagList lanes rather than sdk.ProcessStep/Edge.
-      sdk.TagList(id = "map-row-1", items = ["A Process boundary", "B Input resolution", "C Execution paths", "D HTTP transport", "E gRPC transport", "F Endpoints"], gap = 8, x = 34, y = 110, width = 640, height = 60)
-      sdk.TagList(id = "map-row-2", items = ["G Dataset pipeline", "H RNG substrate", "I Timing + sched", "J Graph-IR engine", "K Metrics core", "L Report + export"], gap = 8, x = 34, y = 190, width = 640, height = 60)
-      sdk.TagList(id = "map-row-3", items = ["M Adaptive scale", "N Accuracy", "O Telemetry", "P Cellular", "Q Dynosim", "R Mock server"], gap = 8, x = 34, y = 270, width = 640, height = 60)
+      sdk.TagList(id = "map-row-1", items = ["A Process boundary", "B Input resolution", "C Execution paths", "D HTTP transport", "E gRPC transport", "F Endpoints"], gap = 21.6, x = 106.8, y = 297, width = 1728, height = 162)
+      sdk.TagList(id = "map-row-2", items = ["G Dataset pipeline", "H RNG substrate", "I Timing + sched", "J Graph-IR engine", "K Metrics core", "L Report + export"], gap = 21.6, x = 106.8, y = 513, width = 1728, height = 162)
+      sdk.TagList(id = "map-row-3", items = ["M Adaptive scale", "N Accuracy", "O Telemetry", "P Cellular", "Q Dynosim", "R Mock server"], gap = 21.6, x = 106.8, y = 729, width = 1728, height = 162)
       timeline main {
         at 0 reveal map-title duration 200
         after map-title reveal map-sub duration 160
@@ -1372,9 +1372,9 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Closing slide, mirroring the cover: the bold title 'Two seams. One codebase. Three run modes.' over the lede 'Specs are design intent; code is truth — every variation point is a trait with at least one concrete impl', closing with a green-barred byline reading 'Anthony Casagrande · AIPerf Rust Runtime'."
     caption: "Two seams · one codebase · three run modes."
     render: @scene {
-      sdk.Title(id = "close-title", text = "Two seams. One codebase.\nThree run modes.", x = 54, y = 92, width = 600, height = 84, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "close-lede", text = "Specs are design intent; code is truth. Every variation\npoint is a trait with at least one concrete impl.", x = 54, y = 200, width = 560, height = 56, inkRole = theme(ink.secondary))
-      sdk.IconLabel(id = "close-byline", label = "Anthony Casagrande · AIPerf Rust Runtime", icon = "user", x = 54, y = 300, width = 420, height = 36, inkRole = theme(ink.primary), strokeRole = theme(accent.primary))
+      sdk.Title(id = "close-title", text = "Two seams. One codebase.\nThree run modes.", x = 160.8, y = 248.4, width = 1620, height = 226.8, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "close-lede", text = "Specs are design intent; code is truth. Every variation\npoint is a trait with at least one concrete impl.", x = 160.8, y = 540, width = 1512, height = 151.2, inkRole = theme(ink.secondary))
+      sdk.IconLabel(id = "close-byline", label = "Anthony Casagrande · AIPerf Rust Runtime", icon = "user", x = 160.8, y = 810, width = 1134, height = 97.2, inkRole = theme(ink.primary), strokeRole = theme(accent.primary))
       timeline main {
         at 0 reveal close-title duration 300
         after close-title reveal close-lede duration 240

@@ -225,7 +225,7 @@ function dominantCardinalDirection(direction: Point2): Point2 {
 }
 
 /** Deterministic offset used to keep a same-axis elbow bend from collapsing. */
-const SAME_AXIS_ELBOW_OFFSET = 24;
+const SAME_AXIS_ELBOW_OFFSET = 64.8;
 
 /**
  * Midpoint of `a`/`b`, offset off of `a` when they coincide. Same-side

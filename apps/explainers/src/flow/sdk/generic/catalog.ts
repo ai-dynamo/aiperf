@@ -106,51 +106,51 @@ const COMMON_PROPS: Readonly<Record<string, ComponentPropDescriptor>> = {
 };
 
 const CATALOG: readonly CatalogSpec[] = [
-  { id: "sdk.shape", capabilityId: "core.rect", family: "shape", width: 120, height: 64, actions: CHROME_ACTIONS },
-  { id: "sdk.text", capabilityId: "core.text", family: "text", width: 180, height: 24, actions: CHROME_ACTIONS },
-  { id: "sdk.richText", capabilityId: "core.text", family: "text", width: 240, height: 72, actions: CHROME_ACTIONS },
-  { id: "sdk.icon", capabilityId: "core.path", family: "icon", width: 24, height: 24, actions: CHROME_ACTIONS },
-  { id: "sdk.image", capabilityId: "core.image", family: "image", width: 160, height: 90, actions: CHROME_ACTIONS },
-  { id: "sdk.line", capabilityId: "core.line", family: "connector", width: 120, height: 0, actions: TOPOLOGY_ACTIONS },
-  { id: "sdk.arrow", capabilityId: "core.arrow", family: "connector", width: 120, height: 0, actions: TOPOLOGY_ACTIONS },
-  { id: "sdk.spacer", capabilityId: "core.group", family: "container", width: 24, height: 24, actions: LAYOUT_ACTIONS },
-  { id: "sdk.inset", capabilityId: "layout.pad", family: "container", width: 180, height: 80, actions: LAYOUT_ACTIONS, slots: CHILDREN_SLOT },
-  { id: "sdk.title", capabilityId: "core.text", family: "text", width: 280, height: 32, actions: CHROME_ACTIONS },
-  { id: "sdk.paragraph", capabilityId: "core.text", family: "text", width: 280, height: 72, actions: CHROME_ACTIONS },
-  { id: "sdk.caption", capabilityId: "core.text", family: "text", width: 180, height: 18, actions: CHROME_ACTIONS },
-  { id: "sdk.codeBlock", capabilityId: "core.group", family: "text", width: 320, height: 140, actions: CHROME_ACTIONS },
-  { id: "sdk.quote", capabilityId: "core.group", family: "text", width: 280, height: 88, actions: CHROME_ACTIONS },
-  { id: "sdk.list", capabilityId: "core.group", family: "collection", width: 240, height: 96, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
-  { id: "sdk.keyValue", capabilityId: "core.panel", family: "collection", width: 220, height: 32, actions: CHROME_ACTIONS },
-  { id: "sdk.propertyList", capabilityId: "core.panel", family: "collection", width: 260, height: 120, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
-  { id: "sdk.badge", capabilityId: "core.chip", family: "shape", width: 88, height: 26, actions: CHROME_ACTIONS },
-  { id: "sdk.statusDot", capabilityId: "core.circle", family: "shape", width: 14, height: 14, actions: CHROME_ACTIONS },
-  { id: "sdk.avatar", capabilityId: "core.group", family: "icon", width: 48, height: 48, actions: CHROME_ACTIONS },
-  { id: "sdk.iconLabel", capabilityId: "core.group", family: "icon", width: 160, height: 40, actions: CHROME_ACTIONS },
-  { id: "sdk.alert", capabilityId: "core.panel", family: "shape", width: 280, height: 72, actions: CHROME_ACTIONS },
-  { id: "sdk.statusCard", capabilityId: "core.panel", family: "shape", width: 220, height: 88, actions: CHROME_ACTIONS },
-  { id: "sdk.emptyState", capabilityId: "core.panel", family: "icon", width: 260, height: 140, actions: CHROME_ACTIONS },
-  { id: "sdk.stat", capabilityId: "core.panel", family: "collection", width: 150, height: 72, actions: CHROME_ACTIONS },
-  { id: "sdk.metric", capabilityId: "core.panel", family: "collection", width: 190, height: 80, actions: CHROME_ACTIONS },
-  { id: "sdk.table", capabilityId: "core.panel", family: "collection", width: 420, height: 180, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
-  { id: "sdk.tableRow", capabilityId: "layout.rail", family: "container", width: 420, height: 32, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
-  { id: "sdk.tableCell", capabilityId: "core.group", family: "container", width: 120, height: 32, actions: CHROME_ACTIONS, slots: CHILDREN_SLOT },
-  { id: "sdk.tagList", capabilityId: "core.lane", family: "collection", width: 260, height: 32, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
-  { id: "sdk.breadcrumb", capabilityId: "core.lane", family: "collection", width: 300, height: 28, actions: LAYOUT_ACTIONS },
-  { id: "sdk.tabs", capabilityId: "core.lane", family: "collection", width: 300, height: 34, actions: LAYOUT_ACTIONS },
-  { id: "sdk.pagination", capabilityId: "core.lane", family: "collection", width: 220, height: 30, actions: LAYOUT_ACTIONS },
-  { id: "sdk.timeline", capabilityId: "core.stepper", family: "collection", width: 300, height: 160, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
-  { id: "sdk.timelineItem", capabilityId: "core.panel", family: "collection", width: 240, height: 48, actions: CHROME_ACTIONS, slots: CHILDREN_SLOT },
-  { id: "sdk.progress", capabilityId: "core.group", family: "indicator", width: 220, height: 18, actions: INDICATOR_ACTIONS },
-  { id: "sdk.meter", capabilityId: "core.group", family: "indicator", width: 220, height: 22, actions: INDICATOR_ACTIONS },
-  { id: "sdk.gauge", capabilityId: "core.group", family: "indicator", width: 120, height: 72, actions: INDICATOR_ACTIONS },
-  { id: "sdk.sparkline", capabilityId: "core.group", family: "indicator", width: 160, height: 48, actions: INDICATOR_ACTIONS },
-  { id: "sdk.rating", capabilityId: "layout.rail", family: "indicator", width: 120, height: 24, actions: CHROME_ACTIONS },
-  { id: "sdk.semaphore", capabilityId: "layout.rail", family: "indicator", width: 72, height: 24, actions: INDICATOR_ACTIONS },
-  { id: "sdk.section", capabilityId: "core.panel", family: "container", width: 360, height: 220, actions: LAYOUT_ACTIONS, slots: CHILDREN_SLOT },
-  { id: "sdk.toolbar", capabilityId: "layout.rail", family: "container", width: 360, height: 44, actions: LAYOUT_ACTIONS, slots: CHILDREN_SLOT },
-  { id: "sdk.splitPane", capabilityId: "layout.stack", family: "container", width: 480, height: 240, actions: LAYOUT_ACTIONS, slots: CHILDREN_SLOT },
-  { id: "sdk.mediaObject", capabilityId: "core.group", family: "container", width: 320, height: 96, actions: LAYOUT_ACTIONS, slots: {
+  { id: "sdk.shape", capabilityId: "core.rect", family: "shape", width: 324, height: 172.8, actions: CHROME_ACTIONS },
+  { id: "sdk.text", capabilityId: "core.text", family: "text", width: 486, height: 64.8, actions: CHROME_ACTIONS },
+  { id: "sdk.richText", capabilityId: "core.text", family: "text", width: 648, height: 194.4, actions: CHROME_ACTIONS },
+  { id: "sdk.icon", capabilityId: "core.path", family: "icon", width: 64.8, height: 64.8, actions: CHROME_ACTIONS },
+  { id: "sdk.image", capabilityId: "core.image", family: "image", width: 432, height: 243, actions: CHROME_ACTIONS },
+  { id: "sdk.line", capabilityId: "core.line", family: "connector", width: 324, height: 0, actions: TOPOLOGY_ACTIONS },
+  { id: "sdk.arrow", capabilityId: "core.arrow", family: "connector", width: 324, height: 0, actions: TOPOLOGY_ACTIONS },
+  { id: "sdk.spacer", capabilityId: "core.group", family: "container", width: 64.8, height: 64.8, actions: LAYOUT_ACTIONS },
+  { id: "sdk.inset", capabilityId: "layout.pad", family: "container", width: 486, height: 216, actions: LAYOUT_ACTIONS, slots: CHILDREN_SLOT },
+  { id: "sdk.title", capabilityId: "core.text", family: "text", width: 756, height: 86.4, actions: CHROME_ACTIONS },
+  { id: "sdk.paragraph", capabilityId: "core.text", family: "text", width: 756, height: 194.4, actions: CHROME_ACTIONS },
+  { id: "sdk.caption", capabilityId: "core.text", family: "text", width: 486, height: 48.6, actions: CHROME_ACTIONS },
+  { id: "sdk.codeBlock", capabilityId: "core.group", family: "text", width: 864, height: 378, actions: CHROME_ACTIONS },
+  { id: "sdk.quote", capabilityId: "core.group", family: "text", width: 756, height: 237.6, actions: CHROME_ACTIONS },
+  { id: "sdk.list", capabilityId: "core.group", family: "collection", width: 648, height: 259.2, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
+  { id: "sdk.keyValue", capabilityId: "core.panel", family: "collection", width: 594, height: 86.4, actions: CHROME_ACTIONS },
+  { id: "sdk.propertyList", capabilityId: "core.panel", family: "collection", width: 702, height: 324, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
+  { id: "sdk.badge", capabilityId: "core.chip", family: "shape", width: 237.6, height: 70.2, actions: CHROME_ACTIONS },
+  { id: "sdk.statusDot", capabilityId: "core.circle", family: "shape", width: 37.8, height: 37.8, actions: CHROME_ACTIONS },
+  { id: "sdk.avatar", capabilityId: "core.group", family: "icon", width: 129.6, height: 129.6, actions: CHROME_ACTIONS },
+  { id: "sdk.iconLabel", capabilityId: "core.group", family: "icon", width: 432, height: 108, actions: CHROME_ACTIONS },
+  { id: "sdk.alert", capabilityId: "core.panel", family: "shape", width: 756, height: 194.4, actions: CHROME_ACTIONS },
+  { id: "sdk.statusCard", capabilityId: "core.panel", family: "shape", width: 594, height: 237.6, actions: CHROME_ACTIONS },
+  { id: "sdk.emptyState", capabilityId: "core.panel", family: "icon", width: 702, height: 378, actions: CHROME_ACTIONS },
+  { id: "sdk.stat", capabilityId: "core.panel", family: "collection", width: 405, height: 194.4, actions: CHROME_ACTIONS },
+  { id: "sdk.metric", capabilityId: "core.panel", family: "collection", width: 513, height: 216, actions: CHROME_ACTIONS },
+  { id: "sdk.table", capabilityId: "core.panel", family: "collection", width: 1134, height: 486, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
+  { id: "sdk.tableRow", capabilityId: "layout.rail", family: "container", width: 1134, height: 86.4, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
+  { id: "sdk.tableCell", capabilityId: "core.group", family: "container", width: 324, height: 86.4, actions: CHROME_ACTIONS, slots: CHILDREN_SLOT },
+  { id: "sdk.tagList", capabilityId: "core.lane", family: "collection", width: 702, height: 86.4, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
+  { id: "sdk.breadcrumb", capabilityId: "core.lane", family: "collection", width: 810, height: 75.6, actions: LAYOUT_ACTIONS },
+  { id: "sdk.tabs", capabilityId: "core.lane", family: "collection", width: 810, height: 91.8, actions: LAYOUT_ACTIONS },
+  { id: "sdk.pagination", capabilityId: "core.lane", family: "collection", width: 594, height: 81, actions: LAYOUT_ACTIONS },
+  { id: "sdk.timeline", capabilityId: "core.stepper", family: "collection", width: 810, height: 432, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
+  { id: "sdk.timelineItem", capabilityId: "core.panel", family: "collection", width: 648, height: 129.6, actions: CHROME_ACTIONS, slots: CHILDREN_SLOT },
+  { id: "sdk.progress", capabilityId: "core.group", family: "indicator", width: 594, height: 48.6, actions: INDICATOR_ACTIONS },
+  { id: "sdk.meter", capabilityId: "core.group", family: "indicator", width: 594, height: 59.4, actions: INDICATOR_ACTIONS },
+  { id: "sdk.gauge", capabilityId: "core.group", family: "indicator", width: 324, height: 194.4, actions: INDICATOR_ACTIONS },
+  { id: "sdk.sparkline", capabilityId: "core.group", family: "indicator", width: 432, height: 129.6, actions: INDICATOR_ACTIONS },
+  { id: "sdk.rating", capabilityId: "layout.rail", family: "indicator", width: 324, height: 64.8, actions: CHROME_ACTIONS },
+  { id: "sdk.semaphore", capabilityId: "layout.rail", family: "indicator", width: 194.4, height: 64.8, actions: INDICATOR_ACTIONS },
+  { id: "sdk.section", capabilityId: "core.panel", family: "container", width: 972, height: 594, actions: LAYOUT_ACTIONS, slots: CHILDREN_SLOT },
+  { id: "sdk.toolbar", capabilityId: "layout.rail", family: "container", width: 972, height: 118.8, actions: LAYOUT_ACTIONS, slots: CHILDREN_SLOT },
+  { id: "sdk.splitPane", capabilityId: "layout.stack", family: "container", width: 1296, height: 648, actions: LAYOUT_ACTIONS, slots: CHILDREN_SLOT },
+  { id: "sdk.mediaObject", capabilityId: "core.group", family: "container", width: 864, height: 259.2, actions: LAYOUT_ACTIONS, slots: {
     media: { accepts: "sdk.*", required: false },
     body: { accepts: "sdk.*", required: false },
     leading: { accepts: "sdk.*", required: false },
@@ -503,7 +503,7 @@ function shapeFactory(spec: CatalogSpec): SdkComponentFactory {
         spec.id === "sdk.statusDot" || shapeVariant === "circle"
           ? Math.max(box.width, box.height)
           : spec.id === "sdk.badge" || shapeVariant === "rounded"
-            ? 10
+            ? 27
             : 0,
     };
     if (
@@ -562,7 +562,7 @@ function textFactory(spec: CatalogSpec): SdkComponentFactory {
     const isQuote = spec.id === "sdk.quote";
     const inkRole = stringProp(props, "inkRole") ?? "@theme.ink.primary";
     if (!isCode && !isQuote) {
-      const fontSize = spec.id === "sdk.title" ? 22 : spec.id === "sdk.caption" ? 10 : 12;
+      const fontSize = spec.id === "sdk.title" ? 59.4 : spec.id === "sdk.caption" ? 27 : 32.4;
       const fontWeight = spec.id === "sdk.title" ? "bold" : "normal";
       // sdk.text / richText / title / paragraph grow to fit wrapped prose when
       // height is unauthored; sdk.caption keeps its fixed single-line box.
@@ -587,7 +587,7 @@ function textFactory(spec: CatalogSpec): SdkComponentFactory {
     }
     // sdk.quote grows to fit wrapped body text when height is unauthored;
     // sdk.codeBlock preserves its fixed table box (code is not re-wrapped).
-    const box = isQuote ? textGeometry(props, spec, text, 12, "normal") : geometry(props, spec);
+    const box = isQuote ? textGeometry(props, spec, text, 32.4, "normal") : geometry(props, spec);
     const root = groupNode(
       spec,
       context,
@@ -596,9 +596,9 @@ function textFactory(spec: CatalogSpec): SdkComponentFactory {
       [],
       {
         ...variantStyle(props),
-        radius: 6,
+        radius: 16.2,
         coordinateSpace: "local",
-        ...(isQuote ? { strokeWidth: 0, borderLeftWidth: 4 } : {}),
+        ...(isQuote ? { strokeWidth: 0, borderLeftWidth: 10.8 } : {}),
       },
       {
         text,
@@ -636,15 +636,15 @@ function iconFactory(spec: CatalogSpec): SdkComponentFactory {
         geometry: spec.id === "sdk.icon"
           ? box
           : {
-              x: 8,
-              y: 8,
-              width: Math.max(0, Math.min(24, box.width - 16)),
-              height: Math.max(0, Math.min(24, box.height - 16)),
+              x: 21.6,
+              y: 21.6,
+              width: Math.max(0, Math.min(64.8, box.width - 43.2)),
+              height: Math.max(0, Math.min(64.8, box.height - 43.2)),
             },
         style: {
           fill: "none",
           stroke: stringProp(props, "inkRole") ?? "@theme.ink.primary",
-          strokeWidth: 1.75,
+          strokeWidth: 4.73,
           markerEnd: "none",
         },
         accessibility: { label: iconName },
@@ -675,7 +675,7 @@ function iconFactory(spec: CatalogSpec): SdkComponentFactory {
         box,
         label,
         [icon],
-        { ...variantStyle(props), radius: 8, coordinateSpace: "local" },
+        { ...variantStyle(props), radius: 21.6, coordinateSpace: "local" },
         {
           title: label,
           ...(detail !== undefined ? { detail } : {}),
@@ -697,7 +697,7 @@ function iconFactory(spec: CatalogSpec): SdkComponentFactory {
       [icon],
       {
         ...variantStyle(props),
-        radius: isAvatar ? box.width : 8,
+        radius: isAvatar ? box.width : 21.6,
         coordinateSpace: "local",
       },
       {
@@ -803,11 +803,11 @@ function containerFactory(spec: CatalogSpec): SdkComponentFactory {
               textNode(
                 `${context.instanceId}__label`,
                 label,
-                { x: 6, y: 6, width: Math.max(box.width - 12, 0), height: Math.max(box.height - 12, 0) },
+                { x: 16.2, y: 16.2, width: Math.max(box.width - 32.4, 0), height: Math.max(box.height - 32.4, 0) },
                 context,
                 spec.id,
                 "label",
-                { fontSize: 10, textAnchor: "middle", fill: "@theme.ink.secondary" },
+                { fontSize: 27, textAnchor: "middle", fill: "@theme.ink.secondary" },
               ),
             ];
     const direction =
@@ -844,15 +844,15 @@ function containerFactory(spec: CatalogSpec): SdkComponentFactory {
                 id: `${context.instanceId}__stack`,
                 capabilityId: "layout.stack",
                 geometry: {
-                  x: 8,
-                  y: 36,
-                  width: Math.max(box.width - 16, 0),
-                  height: Math.max(box.height - 44, 0),
+                  x: 21.6,
+                  y: 97.2,
+                  width: Math.max(box.width - 43.2, 0),
+                  height: Math.max(box.height - 118.8, 0),
                 },
                 style: {
                   coordinateSpace: "local",
                   direction: "column",
-                  gap: numberProp(props, "gap", 8),
+                  gap: numberProp(props, "gap", 21.6),
                 },
                 accessibility: { label: `${title} content` },
                 fallback: title,
@@ -868,11 +868,11 @@ function containerFactory(spec: CatalogSpec): SdkComponentFactory {
     const root = groupNode(spec, context, box, title, managedChildren, {
       coordinateSpace: "local",
       direction,
-      gap: numberProp(props, "gap", 8),
+      gap: numberProp(props, "gap", 21.6),
       // layout.pad reads style.inset / style.pad (never style.padding).
-      ...(spec.id === "sdk.inset" ? { inset: numberProp(props, "gap", 12) } : {}),
+      ...(spec.id === "sdk.inset" ? { inset: numberProp(props, "gap", 32.4) } : {}),
       ...(spec.id === "sdk.section" || spec.id === "sdk.tableCell"
-        ? { ...variantStyle(props), radius: 6 }
+        ? { ...variantStyle(props), radius: 16.2 }
         : {}),
     }, semanticProps);
     const ports: Record<string, ConnectorEndpointIr> = { self: { nodeId: root.id } };
@@ -909,17 +909,17 @@ function mediaObjectFactory(spec: CatalogSpec): SdkComponentFactory {
             textNode(
               `${context.instanceId}__label`,
               label,
-              { x: 8, y: 8, width: Math.max(box.width - 16, 0), height: Math.max(box.height - 16, 0) },
+              { x: 21.6, y: 21.6, width: Math.max(box.width - 43.2, 0), height: Math.max(box.height - 43.2, 0) },
               context,
               spec.id,
               "label",
-              { fontSize: 11, textAnchor: "middle" },
+              { fontSize: 29.7, textAnchor: "middle" },
             ),
           ];
     const root = groupNode(spec, context, box, label, visibleChildren, {
       coordinateSpace: "local",
       direction: "row",
-      gap: numberProp(props, "gap", 10),
+      gap: numberProp(props, "gap", 27),
     });
     const ports: Record<string, ConnectorEndpointIr> = { self: { nodeId: root.id } };
     const roleCounts = new Map<string, number>();
@@ -966,11 +966,11 @@ function tableRowFactory(spec: CatalogSpec): SdkComponentFactory {
             textNode(
               `${context.instanceId}__label`,
               visibleText(props, "table row"),
-              { x: 6, y: 4, width: Math.max(box.width - 12, 0), height: Math.max(box.height - 8, 0) },
+              { x: 16.2, y: 10.8, width: Math.max(box.width - 32.4, 0), height: Math.max(box.height - 21.6, 0) },
               context,
               spec.id,
               "label",
-              { fontSize: 10, textAnchor: "start" },
+              { fontSize: 27, textAnchor: "start" },
             ),
           ];
     const root = groupNode(spec, context, box, visibleText(props, "table row"), children, {
@@ -1024,7 +1024,7 @@ function tableFactory(spec: CatalogSpec): SdkComponentFactory {
           gap: 0,
           overflow: "hidden",
           ...variantStyle(props),
-          radius: 6,
+          radius: 16.2,
         },
         {
           title,
@@ -1048,7 +1048,7 @@ function tableFactory(spec: CatalogSpec): SdkComponentFactory {
         gap: numberProp(props, "gap", 0),
         overflow: "hidden",
         ...variantStyle(props),
-        radius: 6,
+        radius: 16.2,
       },
       { title },
     );
@@ -1160,7 +1160,7 @@ function collectionFactory(spec: CatalogSpec): SdkComponentFactory {
     // semantic chrome capabilities with synthesized title/detail/steps.
     if (spec.id === "sdk.list") {
       const rail = spec.capabilityId === "layout.rail";
-      const rowHeight = Math.max(20, Math.min(32, box.height / Math.max(texts.length, 1)));
+      const rowHeight = Math.max(54, Math.min(86.4, box.height / Math.max(texts.length, 1)));
       const generated = texts.map((text, index) =>
         textNode(
           `${context.instanceId}__item-${index}`,
@@ -1173,16 +1173,16 @@ function collectionFactory(spec: CatalogSpec): SdkComponentFactory {
                 height: Math.max(box.height, rowHeight),
               }
             : {
-                x: 8,
+                x: 21.6,
                 y: index * rowHeight,
-                width: Math.max(box.width - 16, 0),
+                width: Math.max(box.width - 43.2, 0),
                 height: rowHeight,
               },
           context,
           spec.id,
           `item-${index}`,
           {
-            fontSize: 11,
+            fontSize: 29.7,
             fontWeight: "normal",
             textAnchor: "start",
           },
@@ -1192,7 +1192,7 @@ function collectionFactory(spec: CatalogSpec): SdkComponentFactory {
       const root = groupNode(spec, context, box, visibleText(props, "list"), children, {
         coordinateSpace: "local",
         direction: "column",
-        gap: numberProp(props, "gap", 6),
+        gap: numberProp(props, "gap", 16.2),
       });
       const ports: Record<string, ConnectorEndpointIr> = { self: { nodeId: root.id } };
       children.forEach((child, index) => {
@@ -1216,9 +1216,9 @@ function collectionFactory(spec: CatalogSpec): SdkComponentFactory {
         style: {
           coordinateSpace: "local",
           direction: spec.id === "sdk.timeline" ? "row" : "column",
-          gap: numberProp(props, "gap", 6),
+          gap: numberProp(props, "gap", 16.2),
           ...variantStyle(props),
-          radius: 6,
+          radius: 16.2,
         },
         props: semantic.props,
         accessibility: { label: semantic.label },
@@ -1301,7 +1301,7 @@ function indicatorFactory(spec: CatalogSpec): SdkComponentFactory {
             id: `${context.instanceId}__series`,
             capabilityId: "core.path",
             geometry: { x: 0, y: 0, width: box.width, height: box.height },
-            style: { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2, markerEnd: "none" },
+            style: { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 5.4, markerEnd: "none" },
             accessibility: { label: "sparkline series" },
             fallback: "sparkline",
             sourceMap: context.sourceMap,
@@ -1321,11 +1321,11 @@ function indicatorFactory(spec: CatalogSpec): SdkComponentFactory {
           textNode(
             `${context.instanceId}__rating-${index}`,
             index < Math.round(ratio * 5) ? "★" : "☆",
-            { x: index * 24, y: 0, width: 22, height: box.height },
+            { x: index * 64.8, y: 0, width: 59.4, height: box.height },
             context,
             spec.id,
             `rating-${index}`,
-            { fontSize: 18, textAnchor: "middle", fill: "@theme.accent.tertiary" },
+            { fontSize: 48.6, textAnchor: "middle", fill: "@theme.accent.tertiary" },
           ),
         );
       }
@@ -1334,14 +1334,14 @@ function indicatorFactory(spec: CatalogSpec): SdkComponentFactory {
         children.push(
           rectNode(
             `${context.instanceId}__light-${index}`,
-            { x: index * 24, y: 2, width: 18, height: 18 },
+            { x: index * 64.8, y: 5.4, width: 48.6, height: 48.6 },
             context,
             spec.id,
             `light-${index}`,
             variant,
             {
               ...variantStyle({ variant }),
-              radius: 18,
+              radius: 48.6,
               opacity: index === Math.round(ratio * 2) ? 1 : 0.25,
             },
             "core.circle",
@@ -1400,7 +1400,7 @@ function indicatorFactory(spec: CatalogSpec): SdkComponentFactory {
       {
         coordinateSpace: "local",
         ...(spec.id === "sdk.rating" || spec.id === "sdk.semaphore"
-          ? { direction: "row", gap: numberProp(props, "gap", 4) }
+          ? { direction: "row", gap: numberProp(props, "gap", 10.8) }
           : {}),
       },
     );

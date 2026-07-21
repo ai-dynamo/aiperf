@@ -5,7 +5,10 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_SCENE_FONT_SIZE,
   SCENE_TEXT_SCALE,
+  STEPPER_CHIP_PAD,
+  STEPPER_MIN_CHIP_WIDTH,
   estimateTextWidth,
   measureTextWidth,
   scaledSceneFontSize,
@@ -20,7 +23,9 @@ describe("scene text metrics", () => {
 
   it("scales authored and default font sizes", () => {
     expect(scaledSceneFontSize(20)).toBe(18);
-    expect(scaledSceneFontSize(undefined)).toBe(12.6);
+    expect(scaledSceneFontSize(undefined)).toBe(
+      DEFAULT_SCENE_FONT_SIZE * SCENE_TEXT_SCALE,
+    );
   });
 
   it("estimates width with the scene text scale", () => {
@@ -31,7 +36,10 @@ describe("scene text metrics", () => {
 
   it("sizes stepper chips from numbered labels under the text scale", () => {
     expect(stepperChipWidth("layout", 0)).toBe(
-      Math.max(72, Math.ceil("1. layout".length * 6.2 * 0.9) + 24),
+      Math.max(
+        STEPPER_MIN_CHIP_WIDTH,
+        Math.ceil("1. layout".length * 6.2 * 0.9) + STEPPER_CHIP_PAD,
+      ),
     );
   });
 });

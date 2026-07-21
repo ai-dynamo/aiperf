@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import type { SceneNodeLike } from "../scene-types.js";
 import {
+  CHIP_PAD_X,
   DETAIL_HEIGHT,
   estimateTextWidth,
   INSET,
@@ -239,7 +240,7 @@ describe("native Scene capability layout", () => {
     const layout = resolveCapabilityLayout(note, []);
 
     expect(layout.bounds.width).toBe(
-      Math.max(100, estimateTextWidth(subtitle, 10) + 16),
+      Math.max(100, estimateTextWidth(subtitle, 10) + INSET * 2),
     );
     expect(layout.bounds.height).toBeGreaterThanOrEqual(78);
   });
@@ -319,7 +320,7 @@ describe("native Scene capability layout", () => {
     expect(resolveCapabilityLayout(short, []).bounds.width).toBe(84);
     expect(resolveCapabilityLayout(long, []).bounds.width).toBeGreaterThan(84);
     expect(resolveCapabilityLayout(long, []).bounds.width).toBe(
-      Math.max(84, estimateTextWidth("authoritative", 11, "bold") + 24),
+      Math.max(84, estimateTextWidth("authoritative", 11, "bold") + CHIP_PAD_X),
     );
   });
 
@@ -349,7 +350,7 @@ describe("native Scene capability layout", () => {
     const layout = resolveCapabilityLayout(panel, []);
 
     expect(layout.bounds.width).toBe(
-      Math.max(100, estimateTextWidth(subtitle, 10) + 16),
+      Math.max(100, estimateTextWidth(subtitle, 10) + INSET * 2),
     );
     expect(layout.bounds.height).toBeGreaterThanOrEqual(78);
   });
@@ -377,7 +378,7 @@ describe("native Scene capability layout", () => {
     const layout = resolveCapabilityLayout(callout, []);
 
     expect(layout.bounds.width).toBe(
-      Math.max(100, estimateTextWidth(label, 12) + 16),
+      Math.max(100, estimateTextWidth(label, 12) + INSET * 2),
     );
     expect(layout.bounds.height).toBeGreaterThanOrEqual(24);
     expect(resolveCapabilityLayout(clipped, []).bounds).toEqual(callout.geometry);
@@ -402,7 +403,8 @@ describe("native Scene capability layout", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       const root = result.value.roots[0]!;
-      const expectedWidth = 10 + 8 + estimateTextWidth(label, 11) + 8;
+      // LEGEND_SWATCH_SIZE + LEGEND_LABEL_GAP + label width + INSET (all 2.7x-scaled).
+      const expectedWidth = 27 + 21.6 + estimateTextWidth(label, 29.7) + INSET;
       expect(root.geometry.width).toBe(expectedWidth);
       expect(
         root.kind === "group" ? root.children[0]?.geometry.width : undefined,

@@ -40,11 +40,11 @@ import {
 } from "./connector-routing-types.js";
 
 /** Smallest control-handle length, in scene units. */
-const MIN_HANDLE = 12;
+const MIN_HANDLE = 32.4;
 /** Largest control-handle length, in scene units. */
-const MAX_HANDLE = 180;
+const MAX_HANDLE = 486;
 /** Outward nudge applied to obstacle corners so grazing edges stay visible. */
-const CORNER_EPSILON = 0.5;
+const CORNER_EPSILON = 1.35;
 
 function unit(vector: Point2): Point2 {
   const length = Math.hypot(vector.x, vector.y);
@@ -434,13 +434,61 @@ const CURVATURE_LADDER = [1, 0.5, 0.25, 0.05] as const;
 const LANE_OFFSET_LADDER = [1, 0.75, 0.5, 0.25] as const;
 
 /**
+ * Shrink `bounds` so no point within `runway` of `point` — measured along
+ * whichever axis {@link shrinkBoundsToExcludePoint} would clear — counts as
+ * interior, instead of clearing only the exact point. Leaves bounds unchanged
+ * when `point` is outside the open interior.
+ *
+ * `smoothPolyline` guarantees every rounded segment travels at least
+ * `MIN_HANDLE` from each of its own waypoints along the fixed anchor tangent
+ * before the curve can bend back toward the other end, and the curvature
+ * ladder cannot shrink that runway: `clampHandle` floors the handle length at
+ * `MIN_HANDLE` no matter how small `curvature` gets. Clearing only the exact
+ * endpoint (as `shrinkBoundsToExcludePoint` does) leaves that unavoidable
+ * runway inside the clearance halo whenever the endpoint sits within
+ * `clearance` of an obstacle edge, so every curvature the ladder tries keeps
+ * registering the same unavoidable penetration and `usedFallback` fires for a
+ * route that was already obstacle-free at the polyline level.
+ */
+function shrinkBoundsForRunway(bounds: Bounds2, point: Point2, runway: number): Bounds2 {
+  if (!pointInBounds(point, bounds, true)) {
+    return bounds;
+  }
+  const left = bounds.x;
+  const right = bounds.x + bounds.width;
+  const top = bounds.y;
+  const bottom = bounds.y + bounds.height;
+  const distLeft = point.x - left;
+  const distRight = right - point.x;
+  const distTop = point.y - top;
+  const distBottom = bottom - point.y;
+  const minDist = Math.min(distLeft, distRight, distTop, distBottom);
+  if (minDist === distLeft) {
+    const edge = Math.min(point.x + runway, right);
+    return { x: edge, y: bounds.y, width: Math.max(right - edge, 0), height: bounds.height };
+  }
+  if (minDist === distRight) {
+    const edge = Math.max(point.x - runway, left);
+    return { x: bounds.x, y: bounds.y, width: Math.max(edge - left, 0), height: bounds.height };
+  }
+  if (minDist === distTop) {
+    const edge = Math.min(point.y + runway, bottom);
+    return { x: bounds.x, y: edge, width: bounds.width, height: Math.max(bottom - edge, 0) };
+  }
+  const edge = Math.max(point.y - runway, top);
+  return { x: bounds.x, y: bounds.y, width: bounds.width, height: Math.max(edge - top, 0) };
+}
+
+/**
  * Obstacles widened by `clearance` for post-smoothing penetration checks, with
- * each inflated rectangle shrunk away from the route's own `start`/`end` (the
- * same treatment `resolveWaypoints` gives the search graph). Without the
- * shrink, an obstacle that legitimately sits inside its own clearance halo of
- * a connector endpoint — the exact case `resolveWaypoints` keeps routable —
- * would make every sampled point at that endpoint register as a permanent
- * penetration, so the curvature ladder could never find a clean rounding.
+ * each inflated rectangle shrunk away from the route's own `start`/`end` by
+ * the guaranteed `MIN_HANDLE` runway (see {@link shrinkBoundsForRunway}) —
+ * the same endpoints `resolveWaypoints` gives the search graph, but with the
+ * wider exemption a rounded curve actually needs. Without it, an obstacle
+ * that legitimately sits inside its own clearance halo of a connector
+ * endpoint — the exact case `resolveWaypoints` keeps routable — would make
+ * the curve's unavoidable minimum-handle bulge near that endpoint register as
+ * a permanent penetration no curvature setting can clear.
  *
  * The waypoint search already routes interior legs around this same halo;
  * checking rounded cubics against only the raw obstacle rectangle let a
@@ -456,8 +504,8 @@ function inflateForPenetrationCheck(
 ): RouteObstacle[] {
   return obstacles.flatMap((obstacle): RouteObstacle[] => {
     let bounds = inflateBounds(obstacle.bounds, clearance);
-    bounds = shrinkBoundsToExcludePoint(bounds, start);
-    bounds = shrinkBoundsToExcludePoint(bounds, end);
+    bounds = shrinkBoundsForRunway(bounds, start, MIN_HANDLE);
+    bounds = shrinkBoundsForRunway(bounds, end, MIN_HANDLE);
     if (bounds.width <= 0 || bounds.height <= 0) {
       return [];
     }

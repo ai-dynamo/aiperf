@@ -7,8 +7,26 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { SceneIrLike } from "../scene-types.js";
+import type { SceneIrLike, SceneNodeLike } from "../scene-types.js";
 import { resolveScene } from "./resolve-scene.js";
+
+function sdkOrigin(
+  componentId: string,
+  instanceId: string,
+  generatedRole: string,
+): NonNullable<SceneNodeLike["sdkOrigin"]> {
+  return {
+    componentId,
+    instanceId,
+    generatedRole,
+  };
+}
+
+function overlapWarnings(scene: SceneIrLike) {
+  return resolveScene(scene).diagnostics.filter(
+    ({ code }) => code === "SCENE_ABSOLUTE_SIBLING_OVERLAP",
+  );
+}
 
 describe("resolved scene final validation", () => {
   it("ignores decorative bands and brackets but reports overlapping content siblings", () => {
@@ -73,6 +91,137 @@ describe("resolved scene final validation", () => {
     );
     expect(overlaps).toContainEqual(
       expect.objectContaining({ nodeIds: ["first-chip", "second-chip"] }),
+    );
+  });
+
+  it("ignores sdk indicator track and value parts sharing one instance", () => {
+    const scene: SceneIrLike = {
+      viewport: { width: 700, height: 400 },
+      roots: [
+        {
+          id: "progress-hero",
+          kind: "group",
+          capabilityId: "core.group",
+          geometry: { x: 44, y: 135, width: 350, height: 28 },
+          sdkOrigin: sdkOrigin("sdk.progress", "progress-hero", "root"),
+          children: [
+            {
+              id: "progress-hero__track",
+              kind: "rect",
+              capabilityId: "core.rect",
+              geometry: { x: 0, y: 0, width: 350, height: 28 },
+              sdkOrigin: sdkOrigin("sdk.progress", "progress-hero", "track"),
+              children: [],
+            },
+            {
+              id: "progress-hero__value",
+              kind: "rect",
+              capabilityId: "core.rect",
+              geometry: { x: 0, y: 0, width: 210, height: 28 },
+              sdkOrigin: sdkOrigin("sdk.progress", "progress-hero", "value"),
+              children: [],
+            },
+          ],
+        },
+      ],
+      timeline: [],
+    };
+
+    expect(overlapWarnings(scene)).toEqual([]);
+  });
+
+  it("still warns for track and value ids without sdk provenance", () => {
+    const scene: SceneIrLike = {
+      viewport: { width: 700, height: 400 },
+      roots: [
+        {
+          id: "progress-hero",
+          kind: "group",
+          capabilityId: "core.group",
+          geometry: { x: 44, y: 135, width: 350, height: 28 },
+          children: [
+            {
+              id: "progress-hero__track",
+              kind: "rect",
+              capabilityId: "core.rect",
+              geometry: { x: 0, y: 0, width: 350, height: 28 },
+              children: [],
+            },
+            {
+              id: "progress-hero__value",
+              kind: "rect",
+              capabilityId: "core.rect",
+              geometry: { x: 0, y: 0, width: 210, height: 28 },
+              children: [],
+            },
+          ],
+        },
+      ],
+      timeline: [],
+    };
+
+    expect(overlapWarnings(scene)).toContainEqual(
+      expect.objectContaining({
+        nodeIds: ["progress-hero__track", "progress-hero__value"],
+      }),
+    );
+  });
+
+  it("ignores sdk chips intentionally anchored on sibling panels", () => {
+    const scene: SceneIrLike = {
+      viewport: { width: 700, height: 400 },
+      roots: [
+        {
+          id: "algo-built",
+          kind: "group",
+          capabilityId: "core.panel",
+          geometry: { x: 35, y: 132, width: 190, height: 72 },
+          sdkOrigin: sdkOrigin("sdk.panel", "algo-built", "root"),
+          children: [],
+        },
+        {
+          id: "st-built",
+          kind: "group",
+          capabilityId: "core.chip",
+          geometry: { x: 155, y: 120, width: 70, height: 22 },
+          sdkOrigin: sdkOrigin("sdk.chip", "st-built", "root"),
+          children: [],
+        },
+      ],
+      timeline: [],
+    };
+
+    expect(overlapWarnings(scene)).toEqual([]);
+  });
+
+  it("still warns when sdk chips overlap unrelated panels", () => {
+    const scene: SceneIrLike = {
+      viewport: { width: 700, height: 400 },
+      roots: [
+        {
+          id: "left-panel",
+          kind: "group",
+          capabilityId: "core.panel",
+          geometry: { x: 35, y: 132, width: 190, height: 100 },
+          sdkOrigin: sdkOrigin("sdk.panel", "left-panel", "root"),
+          children: [],
+        },
+        {
+          id: "right-chip",
+          kind: "group",
+          capabilityId: "core.chip",
+          geometry: { x: 120, y: 150, width: 70, height: 22 },
+          sdkOrigin: sdkOrigin("sdk.chip", "right-chip", "root"),
+          children: [],
+        },
+      ],
+      timeline: [],
+    };
+
+    expect(overlapWarnings(scene)).toContainEqual(
+      expect.objectContaining({
+        nodeIds: ["left-panel", "right-chip"],
+      }),
     );
   });
 

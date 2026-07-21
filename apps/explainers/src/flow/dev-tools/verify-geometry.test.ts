@@ -89,7 +89,7 @@ describe("verifier geometry layout parity", () => {
       x: 20,
       y: 30,
       width: longWidth,
-      height: 26,
+      height: 70.2,
     });
     expect(short?.x).toBe(20 + long!.width + 8);
   });
@@ -228,6 +228,7 @@ describe("verifier geometry layout parity", () => {
       nodes: [],
       generatedParts: [],
       connectors: [],
+      fans: [],
       diagnostics: [
         {
           code: "SCENE_VIEWPORT_ESCAPE",

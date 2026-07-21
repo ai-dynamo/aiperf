@@ -6,17 +6,18 @@
 //! Deterministic, scale-aware text metrics for scene layout and rendering.
 
 export const SCENE_TEXT_SCALE = 0.9;
-export const DEFAULT_SCENE_FONT_SIZE = 14;
+/** 2.7x the pre-4K baseline (700x400 -> 1920x1080); keep in sync with SceneRenderer's VIEWPORT_WIDTH/HEIGHT. */
+export const DEFAULT_SCENE_FONT_SIZE = 37.8;
 export const CHAR_WIDTH = 6.2;
 export const BOLD_CHAR_WIDTH = 6.2;
-export const INSET = 8;
-export const TITLE_HEIGHT = 22;
-export const DETAIL_HEIGHT = 20;
-export const SUBTITLE_HEIGHT = 16;
-export const CHIP_PAD_X = 24;
-export const STEPPER_MIN_CHIP_WIDTH = 72;
-export const STEPPER_CHIP_HEIGHT = 26;
-export const STEPPER_CHIP_PAD = 24;
+export const INSET = 21.6;
+export const TITLE_HEIGHT = 59.4;
+export const DETAIL_HEIGHT = 54;
+export const SUBTITLE_HEIGHT = 43.2;
+export const CHIP_PAD_X = 64.8;
+export const STEPPER_MIN_CHIP_WIDTH = 194.4;
+export const STEPPER_CHIP_HEIGHT = 70.2;
+export const STEPPER_CHIP_PAD = 64.8;
 
 export function scaledSceneFontSize(
   value: unknown,

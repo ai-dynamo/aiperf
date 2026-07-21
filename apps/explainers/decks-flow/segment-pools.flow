@@ -39,7 +39,7 @@ explainer "Segment Pools" {
         id = "header",
         title = "BUILD · FREEZE · DISPATCH",
         caption = "BUILD → FREEZE → DISPATCH · zero content re-serialize on the hot path.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -47,14 +47,14 @@ explainer "Segment Pools" {
         id = "phases",
         steps = ["BUILD", "FREEZE", "DISPATCH"],
         linked = true,
-        gap = 24,
-        x = 90, y = 88, width = 540, height = 24
+        gap = 64.8,
+        x = 258, y = 237.6, width = 1458, height = 64.8
       )
       sdk.Panel(
         id = "composer",
         title = "Composer",
         detail = "intern rows",
-        x = 30, y = 142, width = 150, height = 68,
+        x = 96, y = 383.4, width = 405, height = 183.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -63,21 +63,21 @@ explainer "Segment Pools" {
         mode = "route",
         from = { nodeId: "composer", anchor: "e" },
         to = { nodeId: "segment-pool", anchor: "w" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "segment-pool",
         title = "SegmentPool",
         detail = "arena + ids map",
-        x = 230, y = 132, width = 160, height = 78,
+        x = 636, y = 356.4, width = 432, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
-      sdk.Callout(
+      sdk.Note(
         id = "pool-callout",
         text = "serialize once",
-        x = 300, y = 118, width = 120, height = 22,
-        target = { x: 360, y: 118 },
+        x = 123, y = 621, width = 378, height = 75.6,
+        surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Edge(
@@ -85,13 +85,13 @@ explainer "Segment Pools" {
         mode = "route",
         from = { nodeId: "segment-pool", anchor: "e" },
         to = { nodeId: "freeze", anchor: "w" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "freeze",
         title = ".freeze()",
         detail = "drop ids",
-        x = 430, y = 130, width = 110, height = 78,
+        x = 1176, y = 351, width = 297, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -100,13 +100,13 @@ explainer "Segment Pools" {
         mode = "route",
         from = { nodeId: "freeze", anchor: "e" },
         to = { nodeId: "dataset", anchor: "w" },
-        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.green), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "dataset",
         title = "Dataset",
         detail = "Arc store",
-        x = 570, y = 122, width = 110, height = 64,
+        x = 1554, y = 329.4, width = 297, height = 172.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -114,7 +114,7 @@ explainer "Segment Pools" {
         id = "body-plan",
         title = "BodyPlan",
         detail = "precompute",
-        x = 570, y = 190, width = 110, height = 72,
+        x = 1554, y = 513, width = 297, height = 194.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -122,22 +122,22 @@ explainer "Segment Pools" {
         id = "materializer",
         title = "Materializer",
         detail = "→ Bytes",
-        x = 570, y = 270, width = 110, height = 72,
+        x = 1554, y = 729, width = 297, height = 194.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
       sdk.Bracket(
         id = "dispatch-bracket",
         side = "left",
-        x = 555, y = 118, width = 18, height = 220,
+        x = 1513.5, y = 318.6, width = 48.6, height = 594,
         strokeRole = theme(accent.green),
-        strokeWidth = 1.5
+        strokeWidth = 4.05
       )
       sdk.Panel(
         id = "in-memory-store",
         title = "InMemoryStore",
         detail = "Box<[Segment]>",
-        x = 230, y = 230, width = 160, height = 78,
+        x = 636, y = 621, width = 432, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -146,7 +146,7 @@ explainer "Segment Pools" {
         from = { nodeId: "composer", anchor: "e" },
         to = { nodeId: "dataset", anchor: "w" },
         opacity = 0.55,
-        strokeWidth = 2.4,
+        strokeWidth = 6.48,
         style = { stroke: theme(accent.tertiary) }
       )
 
@@ -189,7 +189,7 @@ explainer "Segment Pools" {
         id = "header",
         title = "SEGMENT POOL INTERN",
         caption = "Same parent chain + same bytes → same Handle.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -197,7 +197,7 @@ explainer "Segment Pools" {
         id = "intern",
         title = "intern(msg)",
         detail = "parent + bytes",
-        x = 40, y = 100, width = 160, height = 80,
+        x = 123, y = 270, width = 432, height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -206,13 +206,13 @@ explainer "Segment Pools" {
         mode = "route",
         from = { nodeId: "intern", anchor: "e" },
         to = { nodeId: "pool", anchor: "w" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "pool",
         title = "SegmentPool",
         detail = "HashMap → Handle",
-        x = 250, y = 90, width = 200, height = 100,
+        x = 690, y = 243, width = 540, height = 270,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -221,13 +221,13 @@ explainer "Segment Pools" {
         mode = "route",
         from = { nodeId: "pool", anchor: "e" },
         to = { nodeId: "dedup", anchor: "w" },
-        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.green), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "dedup",
         title = "dedup hit?",
         detail = "reuse Handle",
-        x = 500, y = 100, width = 160, height = 80,
+        x = 1365, y = 270, width = 432, height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -235,7 +235,7 @@ explainer "Segment Pools" {
         id = "h0",
         title = "H0 system",
         detail = "shared",
-        x = 120, y = 240, width = 140, height = 78,
+        x = 339, y = 648, width = 378, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -243,7 +243,7 @@ explainer "Segment Pools" {
         id = "h1",
         title = "H1 user",
         detail = "shared",
-        x = 300, y = 240, width = 140, height = 78,
+        x = 825, y = 648, width = 378, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -251,7 +251,7 @@ explainer "Segment Pools" {
         id = "h23",
         title = "H2 / H3",
         detail = "novel replies",
-        x = 480, y = 240, width = 140, height = 78,
+        x = 1311, y = 648, width = 378, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.orange)
       )
@@ -260,7 +260,7 @@ explainer "Segment Pools" {
         from = { nodeId: "intern", anchor: "e" },
         to = { nodeId: "dedup", anchor: "w" },
         opacity = 0.55,
-        strokeWidth = 2.4,
+        strokeWidth = 6.48,
         style = { stroke: theme(accent.tertiary) }
       )
 
@@ -298,7 +298,7 @@ explainer "Segment Pools" {
         id = "header",
         title = "PAYLOAD DOMAINS",
         caption = "HASH_VERSION · domain prefix · parent id · payload recipe → SegmentId.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -306,7 +306,7 @@ explainer "Segment Pools" {
         id = "domain-message",
         title = "Message",
         detail = "wire + tokens",
-        x = 30, y = 110, width = 100, height = 90,
+        x = 96, y = 297, width = 270, height = 243,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -314,7 +314,7 @@ explainer "Segment Pools" {
         id = "domain-text",
         title = "Text",
         detail = "text-only",
-        x = 145, y = 110, width = 100, height = 90,
+        x = 406.5, y = 297, width = 270, height = 243,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -322,7 +322,7 @@ explainer "Segment Pools" {
         id = "domain-raw",
         title = "Raw",
         detail = "complete body",
-        x = 260, y = 110, width = 100, height = 90,
+        x = 717, y = 297, width = 270, height = 243,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -330,7 +330,7 @@ explainer "Segment Pools" {
         id = "domain-token",
         title = "TokenIds",
         detail = "native path",
-        x = 375, y = 110, width = 100, height = 90,
+        x = 1027.5, y = 297, width = 270, height = 243,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -338,7 +338,7 @@ explainer "Segment Pools" {
         id = "domain-media",
         title = "Media",
         detail = "multimodal",
-        x = 490, y = 110, width = 88, height = 78,
+        x = 1324.5, y = 297, width = 189, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.orange)
       )
@@ -346,7 +346,7 @@ explainer "Segment Pools" {
         id = "domain-trace",
         title = "TraceHash",
         detail = "sim identity",
-        x = 560, y = 110, width = 88, height = 78,
+        x = 1567.5, y = 297, width = 189, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.orange)
       )
@@ -354,7 +354,7 @@ explainer "Segment Pools" {
         id = "hash-recipe",
         title = "HASH_VERSION + domain + parent id",
         detail = "blake3 → SegmentId([u8;32])",
-        x = 150, y = 250, width = 400, height = 78,
+        x = 420, y = 675, width = 1080, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -363,7 +363,7 @@ explainer "Segment Pools" {
         from = { nodeId: "domain-message", anchor: "s" },
         to = { nodeId: "hash-recipe", anchor: "n" },
         opacity = 0.55,
-        strokeWidth = 2.4,
+        strokeWidth = 6.48,
         style = { stroke: theme(accent.tertiary) }
       )
 
@@ -397,7 +397,7 @@ explainer "Segment Pools" {
         id = "header",
         title = "BODYPLAN SPLICE",
         caption = "literals serialize · segment wires clone · Overrides patch the tail.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -405,7 +405,7 @@ explainer "Segment Pools" {
         id = "plan",
         title = "BodyPlan",
         detail = "shape + slots",
-        x = 40, y = 100, width = 160, height = 80,
+        x = 123, y = 270, width = 432, height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -414,13 +414,13 @@ explainer "Segment Pools" {
         mode = "route",
         from = { nodeId: "plan", anchor: "e" },
         to = { nodeId: "mat", anchor: "w" },
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.warning), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "mat",
         title = "JsonBodyMaterializer",
         detail = "walk once",
-        x = 250, y = 90, width = 200, height = 100,
+        x = 690, y = 243, width = 540, height = 270,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -429,13 +429,13 @@ explainer "Segment Pools" {
         mode = "route",
         from = { nodeId: "mat", anchor: "e" },
         to = { nodeId: "bytes", anchor: "w" },
-        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.green), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "bytes",
         title = "Bytes",
         detail = "wire body",
-        x = 500, y = 100, width = 160, height = 80,
+        x = 1365, y = 270, width = 432, height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -443,7 +443,7 @@ explainer "Segment Pools" {
         id = "literals",
         title = "literals",
         detail = "serde_json",
-        x = 80, y = 240, width = 160, height = 78,
+        x = 231, y = 648, width = 432, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -451,7 +451,7 @@ explainer "Segment Pools" {
         id = "wires",
         title = "segment wires",
         detail = "clone Bytes",
-        x = 280, y = 240, width = 160, height = 78,
+        x = 771, y = 648, width = 432, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -459,7 +459,7 @@ explainer "Segment Pools" {
         id = "overrides",
         title = "Overrides",
         detail = "stream · limits",
-        x = 480, y = 240, width = 160, height = 78,
+        x = 1311, y = 648, width = 432, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.orange)
       )
@@ -468,7 +468,7 @@ explainer "Segment Pools" {
         from = { nodeId: "plan", anchor: "e" },
         to = { nodeId: "bytes", anchor: "w" },
         opacity = 0.55,
-        strokeWidth = 2.4,
+        strokeWidth = 6.48,
         style = { stroke: theme(accent.tertiary) }
       )
 
@@ -506,7 +506,7 @@ explainer "Segment Pools" {
         id = "header",
         title = "PREFIX CHAINS",
         caption = "One shared prefix · many conversation branches by handle.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -514,7 +514,7 @@ explainer "Segment Pools" {
         id = "h0",
         title = "H0 system",
         detail = "shared once",
-        x = 40, y = 140, width = 140, height = 78,
+        x = 123, y = 378, width = 378, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -523,13 +523,13 @@ explainer "Segment Pools" {
         mode = "route",
         from = { nodeId: "h0", anchor: "e" },
         to = { nodeId: "h1", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.secondary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "h1",
         title = "H1 user",
         detail = "shared once",
-        x = 220, y = 140, width = 140, height = 78,
+        x = 609, y = 378, width = 378, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -538,13 +538,13 @@ explainer "Segment Pools" {
         from = { nodeId: "h1", anchor: "e" },
         to = [{ nodeId: "h2", anchor: "w" }, { nodeId: "h3", anchor: "w" }],
         axis = "x",
-        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.green), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "h2",
         title = "H2 assistant",
         detail = "C1 \"4\"",
-        x = 460, y = 100, width = 150, height = 78,
+        x = 1257, y = 270, width = 405, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -552,15 +552,15 @@ explainer "Segment Pools" {
         id = "h3",
         title = "H3 assistant",
         detail = "C2 novel",
-        x = 460, y = 220, width = 150, height = 78,
+        x = 1257, y = 594, width = 405, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
       sdk.Label(
         id = "footnote",
         text = "LCP trie / compose parent chains reuse H0·H1",
-        x = 150, y = 330, width = 400, height = 20,
-        fontSize = 12,
+        x = 420, y = 891, width = 1080, height = 54,
+        fontSize = 32.4,
         align = "middle",
         inkRole = theme(ink.secondary)
       )
@@ -599,7 +599,7 @@ explainer "Segment Pools" {
         id = "header",
         title = "DISPATCH PRECEDENCE",
         caption = "Raw → TokenIds → Messages · domain chooses the materializer path.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -607,7 +607,7 @@ explainer "Segment Pools" {
         id = "turn-body",
         title = "Turn.body",
         detail = "SmallVec handles",
-        x = 30, y = 140, width = 150, height = 80,
+        x = 96, y = 378, width = 405, height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -616,13 +616,13 @@ explainer "Segment Pools" {
         from = { nodeId: "turn-body", anchor: "e" },
         to = [{ nodeId: "raw", anchor: "w" }, { nodeId: "token", anchor: "w" }, { nodeId: "messages", anchor: "w" }],
         axis = "x",
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "raw",
         title = "Raw first?",
         detail = "complete body",
-        x = 280, y = 90, width = 170, height = 68,
+        x = 771, y = 243, width = 459, height = 183.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -630,7 +630,7 @@ explainer "Segment Pools" {
         id = "token",
         title = "TokenIds?",
         detail = "native / validate",
-        x = 280, y = 168, width = 170, height = 60,
+        x = 771, y = 453.6, width = 459, height = 162,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -638,7 +638,7 @@ explainer "Segment Pools" {
         id = "messages",
         title = "Messages",
         detail = "format array",
-        x = 280, y = 240, width = 170, height = 78,
+        x = 771, y = 648, width = 459, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -647,13 +647,13 @@ explainer "Segment Pools" {
         mode = "route",
         from = { nodeId: "token", anchor: "e" },
         to = { nodeId: "out", anchor: "w" },
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.warning), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "out",
         title = "BodyPlan → Bytes",
         detail = "domain path",
-        x = 500, y = 140, width = 160, height = 80,
+        x = 1365, y = 378, width = 432, height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -661,7 +661,7 @@ explainer "Segment Pools" {
         id = "motion-sig",
         edge = "arrow-out",
         opacity = 0.55,
-        strokeWidth = 2.4,
+        strokeWidth = 6.48,
         style = { stroke: theme(accent.tertiary) }
       )
 
@@ -683,47 +683,42 @@ explainer "Segment Pools" {
       id = "final-hdr",
       title = "Live evidence files",
       caption = "dataset path",
-      x = 18, y = 16, width = 664, height = 44,
+      x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
       surfaceRole = theme(surface.secondary),
       inkRole = theme(ink.secondary)
     )
     sdk.Panel(
       id = "f1",
       title = "rust/runtime/src/dataset/segment.rs",
-      detail = "SegmentPool · Handle · SegmentId",
-      x = 40, y = 90, width = 620, height = 36,
+      x = 123, y = 243, width = 1674, height = 97.2,
       surfaceRole = theme(surface.elevated),
       strokeRole = theme(accent.secondary)
     )
     sdk.Panel(
       id = "f2",
       title = "rust/runtime/src/dataset/model.rs",
-      detail = "Turn.body · dispatch_body precedence",
-      x = 40, y = 162, width = 620, height = 36,
+      x = 123, y = 405, width = 1674, height = 97.2,
       surfaceRole = theme(surface.elevated),
       strokeRole = theme(accent.secondary)
     )
     sdk.Panel(
       id = "f3",
       title = "rust/runtime/src/dataset/compose.rs",
-      detail = "cross-format policy · rebase",
-      x = 40, y = 234, width = 620, height = 36,
+      x = 123, y = 567, width = 1674, height = 97.2,
       surfaceRole = theme(surface.elevated),
       strokeRole = theme(accent.tertiary)
     )
     sdk.Panel(
       id = "f4",
       title = "rust/runtime/src/body_plan.rs",
-      detail = "BodyPlan · JsonBodyMaterializer",
-      x = 40, y = 306, width = 620, height = 36,
+      x = 123, y = 729, width = 1674, height = 97.2,
       surfaceRole = theme(surface.elevated),
       strokeRole = theme(accent.green)
     )
     sdk.Panel(
       id = "f5",
       title = "rust/runtime/src/graph/recorded/trie/",
-      detail = "LCP trie over block hashes",
-      x = 40, y = 378, width = 620, height = 36,
+      x = 123, y = 891, width = 1674, height = 97.2,
       surfaceRole = theme(surface.elevated),
       strokeRole = theme(accent.orange)
     )

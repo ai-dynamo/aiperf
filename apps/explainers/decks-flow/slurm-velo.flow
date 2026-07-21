@@ -39,10 +39,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s0-hdr",
         title = "BENCHMARK GOAL",
         caption = "many machines generate one combined load",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -50,10 +50,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s0-gens",
         title = "Many load generators",
         detail = "more machines = more traffic",
-        x = 74,
-        y = 138,
-        width = 220,
-        height = 96,
+        x = 214.8,
+        y = 372.6,
+        width = 594,
+        height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -62,16 +62,16 @@ explainer "SLURM + Velo from scratch" {
         mode = "route",
         from = { nodeId: "s0-gens", anchor: "e" },
         to = { nodeId: "s0-srv", anchor: "w" },
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.4 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 6.48 }
       )
       sdk.Label(
         id = "s0-req-l",
         text = "REQUESTS",
-        x = 311,
-        y = 160,
-        width = 90,
-        height = 14,
-        fontSize = 11,
+        x = 854.7,
+        y = 432,
+        width = 243,
+        height = 37.8,
+        fontSize = 29.7,
         weight = "bold",
         align = "middle",
         inkRole = theme(accent.primary)
@@ -80,10 +80,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s0-srv",
         title = "Inference server",
         detail = "the AI model endpoint",
-        x = 418,
-        y = 138,
-        width = 210,
-        height = 96,
+        x = 1143.6,
+        y = 372.6,
+        width = 567,
+        height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -91,12 +91,12 @@ explainer "SLURM + Velo from scratch" {
         id = "s0-motion",
         from = { nodeId: "s0-gens", anchor: "center" },
         to = { nodeId: "s0-srv", anchor: "center" },
-        x = 0,
+        x = 15,
         y = 0,
-        width = 700,
-        height = 400,
+        width = 1890,
+        height = 1080,
         opacity = 0.55,
-        strokeWidth = 2.4,
+        strokeWidth = 6.48,
         style = { fill: "none", stroke: theme(accent.primary) }
       )
 
@@ -132,10 +132,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s1-hdr",
         title = "SLURM RESERVES RESOURCES",
         caption = "the scheduler lends your job a set of machines",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -143,10 +143,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s1-slurm",
         title = "SLURM scheduler",
         detail = "finds and reserves machines",
-        x = 64,
-        y = 128,
-        width = 190,
-        height = 96,
+        x = 187.8,
+        y = 345.6,
+        width = 513,
+        height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -156,31 +156,31 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M254 176 H330",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Card(
         id = "s1-alloc",
         title = "Your allocation",
-        x = 330,
-        y = 98,
-        width = 304,
-        height = 130,
+        x = 906,
+        y = 264.6,
+        width = 820.8,
+        height = 351,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
-      sdk.Panel(id = "s1-task-0", title = "Task 0", detail = "machine", x = 350, y = 238, width = 54, height = 44, surfaceRole = theme(surface.elevated), strokeRole = theme(ink.secondary))
-      sdk.Panel(id = "s1-task-1", title = "Task 1", detail = "machine", x = 418, y = 238, width = 54, height = 44, surfaceRole = theme(surface.elevated), strokeRole = theme(ink.secondary))
-      sdk.Panel(id = "s1-task-2", title = "Task 2", detail = "machine", x = 486, y = 238, width = 54, height = 44, surfaceRole = theme(surface.elevated), strokeRole = theme(ink.secondary))
-      sdk.Panel(id = "s1-task-3", title = "Task 3", detail = "machine", x = 554, y = 238, width = 54, height = 44, surfaceRole = theme(surface.elevated), strokeRole = theme(ink.secondary))
+      sdk.Panel(id = "s1-task-0", title = "Task 0", detail = "machine", x = 960, y = 642.6, width = 145.8, height = 118.8, surfaceRole = theme(surface.elevated), strokeRole = theme(ink.secondary))
+      sdk.Panel(id = "s1-task-1", title = "Task 1", detail = "machine", x = 1143.6, y = 642.6, width = 145.8, height = 118.8, surfaceRole = theme(surface.elevated), strokeRole = theme(ink.secondary))
+      sdk.Panel(id = "s1-task-2", title = "Task 2", detail = "machine", x = 1327.2, y = 642.6, width = 145.8, height = 118.8, surfaceRole = theme(surface.elevated), strokeRole = theme(ink.secondary))
+      sdk.Panel(id = "s1-task-3", title = "Task 3", detail = "machine", x = 1510.8, y = 642.6, width = 145.8, height = 118.8, surfaceRole = theme(surface.elevated), strokeRole = theme(ink.secondary))
       sdk.Signal(
         id = "s1-motion",
         path = "M254 176 H330",
-        x = 0,
+        x = 15,
         y = 0,
-        width = 700,
-        height = 400,
+        width = 1890,
+        height = 1080,
         opacity = 0.55,
-        strokeWidth = 2.4,
+        strokeWidth = 6.48,
         style = { fill: "none", stroke: theme(accent.primary) }
       )
 
@@ -219,10 +219,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s2-hdr",
         title = "ONE COMMAND, MANY TASKS",
         caption = "SLURM_PROCID gives each copy a unique rank",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -230,10 +230,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s2-cmd",
         title = "aiperf slurm run --config benchmark.yaml",
         detail = "one identical command on every task",
-        x = 190,
-        y = 78,
-        width = 320,
-        height = 58,
+        x = 528,
+        y = 210.6,
+        width = 864,
+        height = 156.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -242,10 +242,10 @@ explainer "SLURM + Velo from scratch" {
         title = "Task 0",
         detail = "SLURM_PROCID = 0",
         subtitle = "rank decides the role",
-        x = 72,
-        y = 198,
-        width = 156,
-        height = 88,
+        x = 209.4,
+        y = 534.6,
+        width = 421.2,
+        height = 237.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -254,10 +254,10 @@ explainer "SLURM + Velo from scratch" {
         title = "Task 1",
         detail = "SLURM_PROCID = 1",
         subtitle = "rank decides the role",
-        x = 272,
-        y = 198,
-        width = 156,
-        height = 88,
+        x = 749.4,
+        y = 534.6,
+        width = 421.2,
+        height = 237.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -266,10 +266,10 @@ explainer "SLURM + Velo from scratch" {
         title = "Task 2",
         detail = "SLURM_PROCID = 2",
         subtitle = "rank decides the role",
-        x = 472,
-        y = 198,
-        width = 156,
-        height = 88,
+        x = 1289.4,
+        y = 534.6,
+        width = 421.2,
+        height = 237.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -279,7 +279,7 @@ explainer "SLURM + Velo from scratch" {
         to = [{ nodeId: "s2-task-0", anchor: "n" }, { nodeId: "s2-task-1", anchor: "n" }, { nodeId: "s2-task-2", anchor: "n" }],
         axis = "y",
         junction = { x: 350, y: 168 },
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.5 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 6.75 }
       )
 
       timeline main {
@@ -314,10 +314,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s3-hdr",
         title = "RANKS BECOME AIPERF ROLES",
         caption = "rank 0 coordinates · ranks 1…N generate load",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -326,10 +326,10 @@ explainer "SLURM + Velo from scratch" {
         title = "Rank 0",
         detail = "CONTROLLER",
         subtitle = "coordinates the benchmark",
-        x = 72,
-        y = 122,
-        width = 220,
-        height = 112,
+        x = 209.4,
+        y = 329.4,
+        width = 594,
+        height = 302.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -339,16 +339,16 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M292 178 H408",
-        style = { fill: "none", stroke: theme(ink.secondary), strokeWidth: 2, markerEnd: "none" }
+        style = { fill: "none", stroke: theme(ink.secondary), strokeWidth: 5.4, markerEnd: "none" }
       )
       sdk.Label(
         id = "s3-link-l",
         text = "SAME RUN",
-        x = 305,
-        y = 152,
-        width = 90,
-        height = 14,
-        fontSize = 11,
+        x = 838.5,
+        y = 410.4,
+        width = 243,
+        height = 37.8,
+        fontSize = 29.7,
         weight = "bold",
         align = "middle",
         inkRole = theme(ink.secondary)
@@ -358,22 +358,22 @@ explainer "SLURM + Velo from scratch" {
         title = "Ranks 1, 2, 3…",
         detail = "LOAD CELLS",
         subtitle = "cell 0 · cell 1 · cell 2… · send benchmark requests",
-        x = 408,
-        y = 98,
-        width = 220,
-        height = 160,
+        x = 1116.6,
+        y = 264.6,
+        width = 594,
+        height = 432,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Signal(
         id = "s3-motion",
         path = "M292 178 H408",
-        x = 0,
+        x = 15,
         y = 0,
-        width = 700,
-        height = 400,
+        width = 1890,
+        height = 1080,
         opacity = 0.55,
-        strokeWidth = 2.4,
+        strokeWidth = 6.48,
         style = { fill: "none", stroke: theme(accent.primary) }
       )
 
@@ -409,10 +409,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s4-hdr",
         title = "EVERY CELL FINDS RANK 0",
         caption = "the controller address is derived, not discovered",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -421,10 +421,10 @@ explainer "SLURM + Velo from scratch" {
         title = "SLURM nodelist",
         detail = "node01, node02…",
         subtitle = "+ port 9500",
-        x = 38,
-        y = 116,
-        width = 142,
-        height = 96,
+        x = 117.6,
+        y = 313.2,
+        width = 383.4,
+        height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -434,16 +434,16 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M180 164 H236",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Panel(
         id = "s4-coord",
         title = "Controller coordinate",
         detail = "tcp://node01:9500",
-        x = 236,
-        y = 116,
-        width = 190,
-        height = 96,
+        x = 652.2,
+        y = 313.2,
+        width = 513,
+        height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -453,29 +453,29 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M426 164 H470",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Card(
         id = "s4-cells",
         title = "Every cell dials",
         detail = "the same address",
         subtitle = "and reaches rank 0 · no discovery service",
-        x = 448,
-        y = 102,
-        width = 210,
-        height = 110,
+        x = 1224.6,
+        y = 275.4,
+        width = 567,
+        height = 297,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Signal(
         id = "s4-motion",
         path = "M572 164 H331 H572",
-        x = 0,
+        x = 15,
         y = 0,
-        width = 700,
-        height = 400,
+        width = 1890,
+        height = 1080,
         opacity = 0.55,
-        strokeWidth = 2.4,
+        strokeWidth = 6.48,
         style = { fill: "none", stroke: theme(accent.primary) }
       )
 
@@ -512,10 +512,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s5-hdr",
         title = "VELO = CONTROL MESSAGING",
         caption = "SLURM launches processes · Velo lets them talk",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -523,11 +523,11 @@ explainer "SLURM + Velo from scratch" {
         id = "s5-ctrl",
         title = "Controller",
         detail = "rank 0",
-        subtitle = "binds Velo listener · on port 9500",
-        x = 48,
-        y = 100,
-        width = 180,
-        height = 130,
+        subtitle = "binds Velo on :9500",
+        x = 144.6,
+        y = 270,
+        width = 529.2,
+        height = 221.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -535,10 +535,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s5-velo",
         title = "VELO",
         detail = "control walkie-talkie",
-        x = 270,
-        y = 132,
-        width = 160,
-        height = 86,
+        x = 744,
+        y = 356.4,
+        width = 432,
+        height = 232.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -547,10 +547,10 @@ explainer "SLURM + Velo from scratch" {
         title = "Load cells",
         detail = "ranks 1…N",
         subtitle = "dial controller · over Velo",
-        x = 472,
-        y = 100,
-        width = 180,
-        height = 130,
+        x = 1289.4,
+        y = 270,
+        width = 486,
+        height = 351,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -559,8 +559,8 @@ explainer "SLURM + Velo from scratch" {
         mode = "path",
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
-        path = "M228 155 H270",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.4 }
+        path = "M244 141 H270",
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 6.48 }
       )
       sdk.Edge(
         id = "s5-s2",
@@ -568,7 +568,7 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M430 155 H472",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.4 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 6.48 }
       )
       sdk.Edge(
         id = "s5-r1",
@@ -576,24 +576,24 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M472 195 H430",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.4 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 6.48 }
       )
       sdk.Edge(
         id = "s5-r2",
         mode = "path",
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
-        path = "M270 195 H228",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.4 }
+        path = "M270 175 H244",
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 6.48 }
       )
       sdk.Label(
         id = "s5-send",
         text = "SEND",
-        x = 224,
-        y = 108,
-        width = 50,
-        height = 12,
-        fontSize = 9.5,
+        x = 690,
+        y = 248.4,
+        width = 135,
+        height = 32.4,
+        fontSize = 25.65,
         weight = "bold",
         align = "middle",
         inkRole = theme(accent.primary)
@@ -601,11 +601,11 @@ explainer "SLURM + Velo from scratch" {
       sdk.Label(
         id = "s5-reply",
         text = "REPLY",
-        x = 426,
-        y = 240,
-        width = 50,
-        height = 12,
-        fontSize = 9.5,
+        x = 1165.2,
+        y = 648,
+        width = 135,
+        height = 32.4,
+        fontSize = 25.65,
         weight = "bold",
         align = "middle",
         inkRole = theme(accent.primary)
@@ -613,23 +613,23 @@ explainer "SLURM + Velo from scratch" {
       sdk.Label(
         id = "s5-note",
         text = "Velo carries short control messages — not the AI requests.",
-        x = 90,
-        y = 284,
-        width = 520,
-        height = 16,
-        fontSize = 13,
+        x = 258,
+        y = 766.8,
+        width = 1404,
+        height = 43.2,
+        fontSize = 35.1,
         align = "middle",
         inkRole = theme(ink.secondary)
       )
       sdk.Signal(
         id = "s5-motion",
         path = "M228 155 H472 V195 H228",
-        x = 0,
+        x = 15,
         y = 0,
-        width = 700,
-        height = 400,
+        width = 1890,
+        height = 1080,
         opacity = 0.55,
-        strokeWidth = 2.4,
+        strokeWidth = 6.48,
         style = { fill: "none", stroke: theme(accent.primary) }
       )
 
@@ -671,10 +671,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s6-hdr",
         title = "VELO HANDSHAKE",
         caption = "address in · peer connection out",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -682,10 +682,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s6-step-0",
         title = "Cell knows",
         detail = "tcp://node01:9500",
-        x = 28,
-        y = 128,
-        width = 140,
-        height = 100,
+        x = 90.6,
+        y = 345.6,
+        width = 378,
+        height = 270,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -693,10 +693,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s6-step-1",
         title = "velo.connect",
         detail = "hello handshake",
-        x = 196,
-        y = 128,
-        width = 140,
-        height = 100,
+        x = 544.2,
+        y = 345.6,
+        width = 378,
+        height = 270,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -704,10 +704,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s6-step-2",
         title = "Peers registered",
         detail = "controller ↔ cell",
-        x = 364,
-        y = 128,
-        width = 140,
-        height = 100,
+        x = 997.8,
+        y = 345.6,
+        width = 378,
+        height = 270,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -715,10 +715,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s6-step-3",
         title = "Ready to talk",
         detail = "named handlers",
-        x = 532,
-        y = 128,
-        width = 140,
-        height = 100,
+        x = 1451.4,
+        y = 345.6,
+        width = 378,
+        height = 270,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -728,7 +728,7 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M168 178 H196",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Edge(
         id = "s6-a1",
@@ -736,7 +736,7 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M336 178 H364",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Edge(
         id = "s6-a2",
@@ -744,7 +744,7 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M504 178 H532",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Edge(
         id = "s6-ret",
@@ -752,16 +752,16 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M602 248 H98",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.2 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 5.94 }
       )
       sdk.Label(
         id = "s6-ret-l",
         text = "HELLO REPLY RETURNS TO THE CELL",
-        x = 150,
-        y = 256,
-        width = 400,
-        height = 14,
-        fontSize = 10.5,
+        x = 420,
+        y = 691.2,
+        width = 1080,
+        height = 37.8,
+        fontSize = 28.35,
         weight = "bold",
         align = "middle",
         inkRole = theme(accent.primary)
@@ -769,23 +769,23 @@ explainer "SLURM + Velo from scratch" {
       sdk.Label(
         id = "s6-note",
         text = "No DNS discovery service. One a-priori address is enough.",
-        x = 90,
-        y = 276,
-        width = 520,
-        height = 14,
-        fontSize = 13,
+        x = 258,
+        y = 745.2,
+        width = 1404,
+        height = 37.8,
+        fontSize = 35.1,
         align = "middle",
         inkRole = theme(ink.secondary)
       )
       sdk.Signal(
         id = "s6-motion",
         path = "M98 178 H602 V248 H98",
-        x = 0,
+        x = 15,
         y = 0,
-        width = 700,
-        height = 400,
+        width = 1890,
+        height = 1080,
         opacity = 0.55,
-        strokeWidth = 2.4,
+        strokeWidth = 6.48,
         style = { fill: "none", stroke: theme(accent.primary) }
       )
 
@@ -827,10 +827,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s7-hdr",
         title = "REGISTER + START OVER VELO",
         caption = "Velo carries the readiness choreography",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -838,10 +838,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s7-step-0",
         title = "Connect",
         detail = "Velo hello",
-        x = 20,
-        y = 120,
-        width = 112,
-        height = 100,
+        x = 69,
+        y = 324,
+        width = 302.4,
+        height = 270,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -849,10 +849,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s7-step-1",
         title = "Register",
         detail = "aiperf.cell.register",
-        x = 156,
-        y = 120,
-        width = 112,
-        height = 100,
+        x = 436.2,
+        y = 324,
+        width = 302.4,
+        height = 270,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -860,10 +860,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s7-step-2",
         title = "Get slice",
         detail = "sliced envelope",
-        x = 292,
-        y = 120,
-        width = 112,
-        height = 100,
+        x = 803.4,
+        y = 324,
+        width = 302.4,
+        height = 270,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -871,10 +871,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s7-step-3",
         title = "Await START",
         detail = "EventHandle",
-        x = 428,
-        y = 120,
-        width = 112,
-        height = 100,
+        x = 1170.6,
+        y = 324,
+        width = 302.4,
+        height = 270,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -882,10 +882,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s7-step-4",
         title = "START!",
         detail = "all cells release",
-        x = 564,
-        y = 120,
-        width = 112,
-        height = 100,
+        x = 1537.8,
+        y = 324,
+        width = 302.4,
+        height = 270,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -895,7 +895,7 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M132 170 H156",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 5.4 }
       )
       sdk.Edge(
         id = "s7-a1",
@@ -903,7 +903,7 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M268 170 H292",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 5.4 }
       )
       sdk.Edge(
         id = "s7-a2",
@@ -911,7 +911,7 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M404 170 H428",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 5.4 }
       )
       sdk.Edge(
         id = "s7-a3",
@@ -919,28 +919,28 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M540 170 H564",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 5.4 }
       )
       sdk.Label(
         id = "s7-note",
         text = "All of this readiness choreography rides on Velo.",
-        x = 90,
-        y = 268,
-        width = 520,
-        height = 16,
-        fontSize = 13,
+        x = 258,
+        y = 723.6,
+        width = 1404,
+        height = 43.2,
+        fontSize = 35.1,
         align = "middle",
         inkRole = theme(ink.secondary)
       )
       sdk.Signal(
         id = "s7-motion",
         path = "M76 170 H620 H76",
-        x = 0,
+        x = 15,
         y = 0,
-        width = 700,
-        height = 400,
+        width = 1890,
+        height = 1080,
         opacity = 0.55,
-        strokeWidth = 2.4,
+        strokeWidth = 6.48,
         style = { fill: "none", stroke: theme(accent.primary) }
       )
 
@@ -982,10 +982,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s8-hdr",
         title = "HOT PATH IS NOT VELO",
         caption = "measured requests use HTTP / gRPC only",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -994,10 +994,10 @@ explainer "SLURM + Velo from scratch" {
         title = "Load cells",
         detail = "send requests",
         subtitle = "measure replies",
-        x = 40,
-        y = 100,
-        width = 170,
-        height = 120,
+        x = 123,
+        y = 270,
+        width = 459,
+        height = 324,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1007,16 +1007,16 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M210 160 H430",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 3 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 8.1 }
       )
       sdk.Label(
         id = "s8-hot-l",
         text = "HTTP / gRPC",
-        x = 260,
-        y = 132,
-        width = 120,
-        height = 14,
-        fontSize = 12,
+        x = 717,
+        y = 356.4,
+        width = 324,
+        height = 37.8,
+        fontSize = 32.4,
         weight = "bold",
         align = "middle",
         inkRole = theme(accent.primary)
@@ -1024,11 +1024,11 @@ explainer "SLURM + Velo from scratch" {
       sdk.Label(
         id = "s8-hot-n",
         text = "NOT Velo",
-        x = 270,
-        y = 168,
-        width = 100,
-        height = 14,
-        fontSize = 11,
+        x = 744,
+        y = 453.6,
+        width = 270,
+        height = 37.8,
+        fontSize = 29.7,
         align = "middle",
         inkRole = theme(ink.secondary)
       )
@@ -1036,10 +1036,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s8-srv",
         title = "Inference server",
         detail = "AI endpoint",
-        x = 430,
-        y = 100,
-        width = 170,
-        height = 120,
+        x = 1176,
+        y = 270,
+        width = 459,
+        height = 324,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1047,22 +1047,22 @@ explainer "SLURM + Velo from scratch" {
         id = "s8-hb",
         title = "Velo heartbeats only",
         detail = "progress summaries → rank 0",
-        x = 230,
-        y = 268,
-        width = 240,
-        height = 56,
+        x = 636,
+        y = 723.6,
+        width = 648,
+        height = 151.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Signal(
         id = "s8-motion",
         path = "M210 160 H430 H210",
-        x = 0,
+        x = 15,
         y = 0,
-        width = 700,
-        height = 400,
+        width = 1890,
+        height = 1080,
         opacity = 0.55,
-        strokeWidth = 2.4,
+        strokeWidth = 6.48,
         style = { fill: "none", stroke: theme(accent.primary) }
       )
 
@@ -1100,10 +1100,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s9-hdr",
         title = "THREE TRAFFIC PLANES",
         caption = "control · load · bulk files",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -1112,10 +1112,10 @@ explainer "SLURM + Velo from scratch" {
         title = "VELO",
         detail = "control",
         subtitle = "register · START · heartbeat · partition",
-        x = 60,
-        y = 84,
-        width = 580,
-        height = 76,
+        x = 177,
+        y = 226.8,
+        width = 1566,
+        height = 205.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1124,10 +1124,10 @@ explainer "SLURM + Velo from scratch" {
         title = "HTTP / gRPC",
         detail = "load",
         subtitle = "benchmark requests to the AI server",
-        x = 60,
-        y = 176,
-        width = 580,
-        height = 76,
+        x = 177,
+        y = 475.2,
+        width = 1566,
+        height = 205.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1136,22 +1136,22 @@ explainer "SLURM + Velo from scratch" {
         title = "HTTP/1 + zstd",
         detail = "bulk files",
         subtitle = "large per-record artifact uploads",
-        x = 60,
-        y = 268,
-        width = 580,
-        height = 76,
+        x = 177,
+        y = 723.6,
+        width = 1566,
+        height = 205.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Signal(
         id = "s9-motion",
         path = "M80 122 H620 V214 H80 V306 H620",
-        x = 0,
+        x = 15,
         y = 0,
-        width = 700,
-        height = 400,
+        width = 1890,
+        height = 1080,
         opacity = 0.55,
-        strokeWidth = 2.4,
+        strokeWidth = 6.48,
         style = { fill: "none", stroke: theme(accent.primary) }
       )
 
@@ -1186,10 +1186,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s10-hdr",
         title = "RESULTS OVER VELO",
         caption = "partitions return to the original rank-0 controller",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -1197,10 +1197,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s10-step-0",
         title = "Load cells",
         detail = "finish local work",
-        x = 26,
-        y = 126,
-        width = 136,
-        height = 104,
+        x = 85.2,
+        y = 340.2,
+        width = 367.2,
+        height = 280.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1208,10 +1208,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s10-step-1",
         title = "Velo ship",
         detail = "partition / store",
-        x = 196,
-        y = 126,
-        width = 136,
-        height = 104,
+        x = 544.2,
+        y = 340.2,
+        width = 367.2,
+        height = 280.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1219,10 +1219,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s10-step-2",
         title = "Rank-0 controller",
         detail = "receives + merges",
-        x = 366,
-        y = 126,
-        width = 136,
-        height = 104,
+        x = 1003.2,
+        y = 340.2,
+        width = 367.2,
+        height = 280.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1230,10 +1230,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s10-step-3",
         title = "One report",
         detail = "global benchmark",
-        x = 536,
-        y = 126,
-        width = 136,
-        height = 104,
+        x = 1462.2,
+        y = 340.2,
+        width = 367.2,
+        height = 280.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1243,7 +1243,7 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M162 178 H196",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.4 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 6.48 }
       )
       sdk.Edge(
         id = "s10-a1",
@@ -1251,7 +1251,7 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M332 178 H366",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.4 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 6.48 }
       )
       sdk.Edge(
         id = "s10-a2",
@@ -1259,16 +1259,16 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M502 178 H536",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.4 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 6.48 }
       )
       sdk.Label(
         id = "s10-note1",
         text = "Result summaries travel on Velo back to the original rank-0 controller.",
-        x = 50,
-        y = 268,
-        width = 600,
-        height = 16,
-        fontSize = 13,
+        x = 150,
+        y = 723.6,
+        width = 1620,
+        height = 43.2,
+        fontSize = 35.1,
         weight = "bold",
         align = "middle",
         inkRole = theme(ink.primary)
@@ -1276,23 +1276,23 @@ explainer "SLURM + Velo from scratch" {
       sdk.Label(
         id = "s10-note2",
         text = "Merge is work inside that controller process — not a separate “merge machine.”",
-        x = 50,
-        y = 310,
-        width = 600,
-        height = 14,
-        fontSize = 12,
+        x = 150,
+        y = 837,
+        width = 1620,
+        height = 37.8,
+        fontSize = 32.4,
         align = "middle",
         inkRole = theme(ink.secondary)
       )
       sdk.Signal(
         id = "s10-motion",
         path = "M162 178 H536",
-        x = 0,
+        x = 15,
         y = 0,
-        width = 700,
-        height = 400,
+        width = 1890,
+        height = 1080,
         opacity = 0.55,
-        strokeWidth = 2.4,
+        strokeWidth = 6.48,
         style = { fill: "none", stroke: theme(accent.primary) }
       )
 
@@ -1333,10 +1333,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s11-hdr",
         title = "BULK ARTIFACTS SEPARATE",
         caption = "large files use HTTP/1 + zstd, not Velo",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -1345,10 +1345,10 @@ explainer "SLURM + Velo from scratch" {
         title = "VELO PATH",
         detail = "small messages",
         subtitle = "register · START · heartbeat · partition",
-        x = 48,
-        y = 110,
-        width = 250,
-        height = 150,
+        x = 144.6,
+        y = 297,
+        width = 675,
+        height = 405,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1357,21 +1357,21 @@ explainer "SLURM + Velo from scratch" {
         title = "HTTP ARTIFACT PATH",
         detail = "large files",
         subtitle = "per-record exports · zstd upload + concat",
-        x = 402,
-        y = 110,
-        width = 250,
-        height = 150,
+        x = 1100.4,
+        y = 297,
+        width = 675,
+        height = 405,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Label(
         id = "s11-note",
         text = "Same controller host. Different purpose. Different port.",
-        x = 70,
-        y = 298,
-        width = 560,
-        height = 16,
-        fontSize = 13,
+        x = 204,
+        y = 804.6,
+        width = 1512,
+        height = 43.2,
+        fontSize = 35.1,
         align = "middle",
         inkRole = theme(ink.secondary)
       )
@@ -1406,10 +1406,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s12-hdr",
         title = "CONTROLLER ROLE VS NODE",
         caption = "role is required · whole node is optional",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -1418,10 +1418,10 @@ explainer "SLURM + Velo from scratch" {
         title = "Dedicated ROLE",
         detail = "always useful",
         subtitle = "keeps merge + sync · off the measured path",
-        x = 60,
-        y = 110,
-        width = 260,
-        height = 150,
+        x = 177,
+        y = 297,
+        width = 702,
+        height = 405,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1430,21 +1430,21 @@ explainer "SLURM + Velo from scratch" {
         title = "Dedicated NODE",
         detail = "optional",
         subtitle = "default script uses one · task per node",
-        x = 380,
-        y = 110,
-        width = 260,
-        height = 150,
+        x = 1041,
+        y = 297,
+        width = 702,
+        height = 405,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
       sdk.Label(
         id = "s12-note",
         text = "Co-locate controller + cell when machines are scarce.",
-        x = 70,
-        y = 298,
-        width = 560,
-        height = 16,
-        fontSize = 13,
+        x = 204,
+        y = 804.6,
+        width = 1512,
+        height = 43.2,
+        fontSize = 35.1,
         align = "middle",
         inkRole = theme(ink.secondary)
       )
@@ -1479,10 +1479,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s13-hdr",
         title = "FAN-OUT: ONE PLAN → MANY SLICES",
         caption = "rank 0 distributes distinct cell-owned work",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -1491,67 +1491,64 @@ explainer "SLURM + Velo from scratch" {
         title = "Rank 0",
         detail = "GLOBAL PLAN",
         subtitle = "requests 0…N",
-        x = 48,
-        y = 124,
-        width = 162,
-        height = 108,
+        x = 144.6,
+        y = 334.8,
+        width = 437.4,
+        height = 291.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
       sdk.Card(
         id = "s13-velo",
         title = "Velo",
-        x = 292,
-        y = 160,
-        width = 36,
-        height = 36,
+        x = 803.4,
+        y = 432,
+        width = 97.2,
+        height = 97.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Card(
         id = "s13-cell-0",
         title = "Cell 0",
-        detail = "slice 0",
-        subtitle = "disjoint owned work",
-        x = 410,
-        y = 96,
-        width = 186,
-        height = 38,
+        detail = "slice 0 · owned work",
+        x = 1122,
+        y = 232.2,
+        width = 502.2,
+        height = 167.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Card(
         id = "s13-cell-1",
         title = "Cell 1",
-        detail = "slice 1",
-        subtitle = "disjoint owned work",
-        x = 410,
-        y = 168,
-        width = 186,
-        height = 38,
+        detail = "slice 1 · owned work",
+        x = 1122,
+        y = 480.6,
+        width = 502.2,
+        height = 167.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Card(
         id = "s13-cell-2",
         title = "Cell 2",
-        detail = "slice 2",
-        subtitle = "disjoint owned work",
-        x = 410,
-        y = 240,
-        width = 186,
-        height = 38,
+        detail = "slice 2 · owned work",
+        x = 1122,
+        y = 729,
+        width = 502.2,
+        height = 167.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Label(
         id = "s13-note",
         text = "One plan branches into different slices — not copies of the same work.",
-        x = 50,
-        y = 310,
-        width = 600,
-        height = 16,
-        fontSize = 13,
+        x = 150,
+        y = 955.8,
+        width = 1620,
+        height = 43.2,
+        fontSize = 35.1,
         align = "middle",
         inkRole = theme(ink.secondary)
       )
@@ -1561,7 +1558,7 @@ explainer "SLURM + Velo from scratch" {
         to = [{ nodeId: "s13-cell-0", anchor: "w" }, { nodeId: "s13-cell-1", anchor: "w" }, { nodeId: "s13-cell-2", anchor: "w" }],
         axis = "x",
         junction = { x: 382, y: 178 },
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.4 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 6.48 }
       )
 
       timeline main {
@@ -1598,56 +1595,53 @@ explainer "SLURM + Velo from scratch" {
         id = "s14-hdr",
         title = "FAN-IN: MANY RESULTS → ONE REPORT",
         caption = "every cell returns one terminal result",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
       sdk.Card(
         id = "s14-cell-0",
         title = "Cell 0",
-        detail = "partition 0",
-        subtitle = "finished local result",
-        x = 104,
-        y = 96,
-        width = 186,
-        height = 44,
+        detail = "partition 0 · finished",
+        x = 295.8,
+        y = 232.2,
+        width = 502.2,
+        height = 167.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Card(
         id = "s14-cell-1",
         title = "Cell 1",
-        detail = "partition 1",
-        subtitle = "finished local result",
-        x = 104,
-        y = 162,
-        width = 186,
-        height = 38,
+        detail = "partition 1 · finished",
+        x = 295.8,
+        y = 480.6,
+        width = 502.2,
+        height = 167.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Card(
         id = "s14-cell-2",
         title = "Cell 2",
-        detail = "partition 2",
-        subtitle = "finished local result",
-        x = 104,
-        y = 240,
-        width = 186,
-        height = 38,
+        detail = "partition 2 · finished",
+        x = 295.8,
+        y = 729,
+        width = 502.2,
+        height = 167.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Card(
         id = "s14-velo",
         title = "Velo",
-        x = 372,
-        y = 160,
-        width = 36,
-        height = 36,
+        x = 1019.4,
+        y = 432,
+        width = 97.2,
+        height = 97.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1656,21 +1650,21 @@ explainer "SLURM + Velo from scratch" {
         title = "Rank 0",
         detail = "MERGE",
         subtitle = "one global report",
-        x = 454,
-        y = 124,
-        width = 166,
-        height = 108,
+        x = 1240.8,
+        y = 334.8,
+        width = 448.2,
+        height = 291.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Label(
         id = "s14-note",
         text = "Three terminal results converge; rank 0 combines them once all arrive.",
-        x = 50,
-        y = 310,
-        width = 600,
-        height = 16,
-        fontSize = 13,
+        x = 150,
+        y = 955.8,
+        width = 1620,
+        height = 43.2,
+        fontSize = 35.1,
         align = "middle",
         inkRole = theme(ink.secondary)
       )
@@ -1680,7 +1674,7 @@ explainer "SLURM + Velo from scratch" {
         to = { nodeId: "s14-r0", anchor: "w" },
         axis = "x",
         junction = { x: 318, y: 178 },
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2.4 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 6.48 }
       )
 
       timeline main {
@@ -1713,10 +1707,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s15-hdr",
         title = "FROM CONFIG TO REPORT",
         caption = "the generated script launches the complete run",
-        x = 18,
-        y = 16,
-        width = 664,
-        height = 44,
+        x = 63.6,
+        y = 43.2,
+        width = 1792.8,
+        height = 118.8,
         surfaceRole = theme(surface.primary),
         inkRole = theme(ink.secondary)
       )
@@ -1724,10 +1718,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s15-step-0",
         title = "Config v2",
         detail = "benchmark.yaml",
-        x = 20,
-        y = 126,
-        width = 108,
-        height = 94,
+        x = 69,
+        y = 340.2,
+        width = 291.6,
+        height = 253.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -1735,10 +1729,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s15-step-1",
         title = "Generate",
         detail = "job.sbatch",
-        x = 156,
-        y = 126,
-        width = 108,
-        height = 94,
+        x = 436.2,
+        y = 340.2,
+        width = 291.6,
+        height = 253.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -1746,10 +1740,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s15-step-2",
         title = "Submit",
         detail = "sbatch job.sbatch",
-        x = 292,
-        y = 126,
-        width = 108,
-        height = 94,
+        x = 803.4,
+        y = 340.2,
+        width = 291.6,
+        height = 253.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -1757,10 +1751,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s15-step-3",
         title = "SLURM + Velo",
         detail = "roles + messaging",
-        x = 428,
-        y = 126,
-        width = 108,
-        height = 94,
+        x = 1170.6,
+        y = 340.2,
+        width = 291.6,
+        height = 253.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -1768,10 +1762,10 @@ explainer "SLURM + Velo from scratch" {
         id = "s15-step-4",
         title = "AIPerf report",
         detail = "merged result",
-        x = 564,
-        y = 126,
-        width = 108,
-        height = 94,
+        x = 1537.8,
+        y = 340.2,
+        width = 291.6,
+        height = 253.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1781,7 +1775,7 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M128 173 H156",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 5.4 }
       )
       sdk.Edge(
         id = "s15-a1",
@@ -1789,7 +1783,7 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M264 173 H292",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 5.4 }
       )
       sdk.Edge(
         id = "s15-a2",
@@ -1797,7 +1791,7 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M400 173 H428",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 5.4 }
       )
       sdk.Edge(
         id = "s15-a3",
@@ -1805,17 +1799,17 @@ explainer "SLURM + Velo from scratch" {
         from = { x: 0, y: 0 },
         to = { x: 0, y: 0 },
         path = "M536 173 H564",
-        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 2 }
+        style = { fill: "none", stroke: theme(accent.primary), strokeWidth: 5.4 }
       )
       sdk.Signal(
         id = "s15-motion",
         path = "M128 173 H564",
-        x = 0,
+        x = 15,
         y = 0,
-        width = 700,
-        height = 400,
+        width = 1890,
+        height = 1080,
         opacity = 0.55,
-        strokeWidth = 2.4,
+        strokeWidth = 6.48,
         style = { fill: "none", stroke: theme(accent.primary) }
       )
 

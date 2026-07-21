@@ -1130,8 +1130,8 @@ function lowerPackageScene(
   const viewport =
     viewportRecord !== undefined
       ? {
-          width: Number(viewportRecord.width ?? 700),
-          height: Number(viewportRecord.height ?? 400),
+          width: Number(viewportRecord.width ?? 1920),
+          height: Number(viewportRecord.height ?? 1080),
         }
       : undefined;
   const sceneIr: SceneIr = {

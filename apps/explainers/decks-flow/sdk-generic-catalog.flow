@@ -27,14 +27,14 @@ explainer "SDK Generic Catalog" {
     narration: "Use this deck as both a visual reference and an authoring guide. Every focused page invokes the production SDK primitive it teaches."
     caption: "Reference the contract · study the variants · compose with confidence."
     render: @scene {
-      sdk.Header(id = "open-h", title = "GENERIC SDK CATALOG", caption = "53 primitives · 8 families", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary))
-      sdk.Title(id = "open-title", text = "Small primitives. Clear contracts.", x = 54, y = 105, width = 430, height = 42, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "open-copy", text = "Focused specimen, realistic variants,\nthen confident composition.", x = 54, y = 165, width = 330, height = 76, inkRole = theme(ink.secondary))
-      sdk.Badge(id = "open-b1", label = "content", variant = "info", x = 54, y = 270, width = 92, height = 28)
-      sdk.Badge(id = "open-b2", label = "status", variant = "success", x = 158, y = 270, width = 92, height = 28)
-      sdk.Badge(id = "open-b3", label = "data", variant = "warning", x = 262, y = 270, width = 92, height = 28)
-      sdk.Gauge(id = "open-g", label = "coverage", value = 1, x = 570, y = 120, width = 70, height = 72)
-      sdk.Caption(id = "open-cap", text = "100% coverage", x = 550, y = 215, width = 110, height = 20)
+      sdk.Header(id = "open-h", title = "GENERIC SDK CATALOG", caption = "53 primitives · 8 families", x = 63.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.secondary))
+      sdk.Title(id = "open-title", text = "Small primitives. Clear contracts.", x = 160.8, y = 283.5, width = 1161, height = 113.4, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "open-copy", text = "Focused specimen, realistic variants,\nthen confident composition.", x = 160.8, y = 445.5, width = 891, height = 205.2, inkRole = theme(ink.secondary))
+      sdk.Badge(id = "open-b1", label = "content", variant = "info", x = 160.8, y = 729, width = 248.4, height = 75.6)
+      sdk.Badge(id = "open-b2", label = "status", variant = "success", x = 441.6, y = 729, width = 248.4, height = 75.6)
+      sdk.Badge(id = "open-b3", label = "data", variant = "warning", x = 722.4, y = 729, width = 248.4, height = 75.6)
+      sdk.Gauge(id = "open-g", label = "coverage", value = 1, x = 1554, y = 324, width = 189, height = 194.4)
+      sdk.Caption(id = "open-cap", text = "100% coverage", x = 1500, y = 580.5, width = 297, height = 54)
       timeline main {
         at 0 reveal open-h duration 180
         after open-h reveal open-title duration 220
@@ -53,13 +53,13 @@ explainer "SDK Generic Catalog" {
     narration: "The foundations family supplies the raw visual and spatial vocabulary used by every later composition."
     caption: "Nine primitives · form, ink, media, connection, space."
     render: @scene {
-      sdk.Header(id = "c1-h", title = "FOUNDATIONS + SHAPES", caption = "01 / 08", x = 18, y = 16, width = 664, height = 44)
-      sdk.Shape(id = "c1-shape", variant = "rounded", label = "surface", x = 70, y = 120, width = 220, height = 130, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Title(id = "c1-title", text = "FORM · SURFACE", x = 90, y = 270, width = 180, height = 24)
-      sdk.Shape(id = "c1-target", variant = "rounded", label = "symbol target", x = 520, y = 130, width = 110, height = 70, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Arrow(id = "c1-arrow", label = "flow", from = { nodeId: "c1-shape", anchor: "e" }, to = { nodeId: "c1-target", anchor: "w" }, x = 290, y = 165, width = 230, height = 0, strokeRole = theme(accent.primary))
-      sdk.Icon(id = "c1-icon", icon = "code", x = 551, y = 220, width = 48, height = 48, inkRole = theme(accent.primary))
-      sdk.Caption(id = "c1-icon-l", text = "named icon", x = 520, y = 278, width = 110, height = 16)
+      sdk.Header(id = "c1-h", title = "FOUNDATIONS + SHAPES", caption = "01 / 08", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Shape(id = "c1-shape", variant = "rounded", label = "surface", x = 204, y = 324, width = 594, height = 351, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Title(id = "c1-title", text = "FORM · SURFACE", x = 258, y = 729, width = 486, height = 64.8)
+      sdk.Shape(id = "c1-target", variant = "rounded", label = "symbol target", x = 1419, y = 351, width = 297, height = 189, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Arrow(id = "c1-arrow", label = "flow", from = { nodeId: "c1-shape", anchor: "e" }, to = { nodeId: "c1-target", anchor: "w" }, x = 798, y = 445.5, width = 621, height = 0, strokeRole = theme(accent.primary))
+      sdk.Icon(id = "c1-icon", icon = "code", x = 1502.7, y = 594, width = 129.6, height = 129.6, inkRole = theme(accent.primary))
+      sdk.Caption(id = "c1-icon-l", text = "named icon", x = 1419, y = 750.6, width = 297, height = 43.2)
       timeline main { at 0 reveal c1-h duration 180 after c1-h stagger targets [c1-shape, c1-target] step 80 duration 220 after c1-target reveal c1-title duration 160 after c1-title trace c1-arrow duration 260 after c1-arrow reveal c1-icon duration 180 after c1-icon reveal c1-icon-l duration 140 }
     }
   }
@@ -71,14 +71,14 @@ explainer "SDK Generic Catalog" {
     narration: "Shape is the general-purpose visual surface. A rounded inference-service tile anchors the page; a rectangle and a circle compare basic geometry."
     caption: "Choose geometry deliberately; keep paint semantic."
     render: @scene {
-      sdk.Header(id = "shape-h", title = "SDK.SHAPE", caption = "surface primitive", x = 18, y = 16, width = 664, height = 44)
-      sdk.Shape(id = "shape-hero", label = "Inference service", variant = "rounded", x = 44, y = 104, width = 350, height = 150, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Label(id = "shape-hero-l", text = "HERO · ROUNDED SERVICE SURFACE", x = 44, y = 270, width = 350, height = 18)
-      sdk.Shape(id = "shape-v1", label = "rect", variant = "rect", x = 440, y = 112, width = 92, height = 70, surfaceRole = theme(surface.secondary))
-      sdk.Shape(id = "shape-v2", label = "circle", variant = "circle", x = 560, y = 112, width = 70, height = 70, surfaceRole = theme(accent.primary))
-      sdk.Label(id = "shape-v1-l", text = "RECT", x = 440, y = 198, width = 92, height = 18)
-      sdk.Label(id = "shape-v2-l", text = "CIRCLE", x = 560, y = 198, width = 70, height = 18)
-      sdk.Note(id = "shape-note", text = "Geometry is authored; theme roles own color.", x = 44, y = 320, width = 606, height = 30)
+      sdk.Header(id = "shape-h", title = "SDK.SHAPE", caption = "surface primitive", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Shape(id = "shape-hero", label = "Inference service", variant = "rounded", x = 133.8, y = 280.8, width = 945, height = 405, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Label(id = "shape-hero-l", text = "HERO · ROUNDED SERVICE SURFACE", x = 133.8, y = 729, width = 945, height = 48.6)
+      sdk.Shape(id = "shape-v1", label = "rect", variant = "rect", x = 1203, y = 302.4, width = 248.4, height = 189, surfaceRole = theme(surface.secondary))
+      sdk.Shape(id = "shape-v2", label = "circle", variant = "circle", x = 1527, y = 302.4, width = 189, height = 189, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "shape-v1-l", text = "RECT", x = 1203, y = 534.6, width = 248.4, height = 48.6)
+      sdk.Label(id = "shape-v2-l", text = "CIRCLE", x = 1527, y = 534.6, width = 189, height = 48.6)
+      sdk.Note(id = "shape-note", text = "Geometry is authored; theme roles own color.", x = 133.8, y = 864, width = 1636.2, height = 81)
       timeline main { at 0 reveal shape-h duration 160 after shape-h reveal shape-hero duration 240 after shape-hero reveal shape-hero-l duration 140 after shape-hero-l stagger targets [shape-v1, shape-v2] step 100 duration 180 after shape-v2 stagger targets [shape-v1-l, shape-v2-l] step 80 duration 140 after shape-v2-l reveal shape-note duration 160 }
     }
   }
@@ -90,14 +90,14 @@ explainer "SDK Generic Catalog" {
     narration: "Text is the direct core text primitive. Here it anchors a latency value and compares primary and secondary ink."
     caption: "Keep direct text short, legible, and purposeful."
     render: @scene {
-      sdk.Header(id = "text-h", title = "SDK.TEXT", caption = "direct copy", x = 18, y = 16, width = 664, height = 44)
-      sdk.Text(id = "text-hero", text = "18.7 ms", x = 54, y = 120, width = 330, height = 80, inkRole = theme(accent.primary))
-      sdk.Label(id = "text-hero-l", text = "HERO · P95 LATENCY", x = 54, y = 220, width = 330, height = 18)
-      sdk.Text(id = "text-v1", text = "ready", x = 450, y = 125, width = 160, height = 28, inkRole = theme(ink.primary))
-      sdk.Text(id = "text-v2", text = "updated 2m ago", x = 450, y = 180, width = 180, height = 28, inkRole = theme(ink.secondary))
-      sdk.Label(id = "text-v1-l", text = "PRIMARY", x = 450, y = 160, width = 160, height = 16)
-      sdk.Label(id = "text-v2-l", text = "SECONDARY", x = 450, y = 215, width = 180, height = 16)
-      sdk.Note(id = "text-note", text = "Prefer specialized typography primitives for longer content.", x = 54, y = 310, width = 586, height = 30)
+      sdk.Header(id = "text-h", title = "SDK.TEXT", caption = "direct copy", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Text(id = "text-hero", text = "18.7 ms", x = 160.8, y = 324, width = 891, height = 216, inkRole = theme(accent.primary))
+      sdk.Label(id = "text-hero-l", text = "HERO · P95 LATENCY", x = 160.8, y = 594, width = 891, height = 48.6)
+      sdk.Text(id = "text-v1", text = "ready", x = 1230, y = 337.5, width = 432, height = 75.6, inkRole = theme(ink.primary))
+      sdk.Text(id = "text-v2", text = "updated 2m ago", x = 1230, y = 486, width = 486, height = 75.6, inkRole = theme(ink.secondary))
+      sdk.Label(id = "text-v1-l", text = "PRIMARY", x = 1230, y = 432, width = 432, height = 43.2)
+      sdk.Label(id = "text-v2-l", text = "SECONDARY", x = 1230, y = 580.5, width = 486, height = 43.2)
+      sdk.Note(id = "text-note", text = "Prefer specialized typography primitives for longer content.", x = 160.8, y = 837, width = 1582.2, height = 81)
       timeline main { at 0 reveal text-h duration 160 after text-h reveal text-hero duration 240 after text-hero reveal text-hero-l duration 140 after text-hero-l reveal text-v1 duration 160 after text-v1 reveal text-v1-l duration 120 after text-v1-l reveal text-v2 duration 160 after text-v2 reveal text-v2-l duration 120 after text-v2-l reveal text-note duration 160 }
     }
   }
@@ -109,13 +109,13 @@ explainer "SDK Generic Catalog" {
     narration: "Rich text demonstrates a compact release summary, while a tip and a status note show short instructional and operational copy."
     caption: "Bound the region first; let copy express hierarchy."
     render: @scene {
-      sdk.Header(id = "rich-h", title = "SDK.RICHTEXT", caption = "structured prose", x = 18, y = 16, width = 664, height = 44)
-      sdk.RichText(id = "rich-hero", text = "Release 2.4\nFaster routing with deterministic fallback.", x = 44, y = 105, width = 350, height = 120, inkRole = theme(ink.primary))
-      sdk.Label(id = "rich-hero-l", text = "HERO · RELEASE SUMMARY", x = 44, y = 242, width = 350, height = 18)
-      sdk.RichText(id = "rich-v1", text = "Tip\nPin the model revision.", x = 440, y = 108, width = 190, height = 62, inkRole = theme(accent.primary))
-      sdk.RichText(id = "rich-v2", text = "Status\nAll regions healthy.", x = 440, y = 220, width = 190, height = 62, inkRole = theme(ink.secondary))
-      sdk.Label(id = "rich-v1-l", text = "TIP", x = 440, y = 192, width = 190, height = 16)
-      sdk.Label(id = "rich-v2-l", text = "STATUS", x = 440, y = 304, width = 190, height = 16)
+      sdk.Header(id = "rich-h", title = "SDK.RICHTEXT", caption = "structured prose", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.RichText(id = "rich-hero", text = "Release 2.4\nFaster routing with deterministic fallback.", x = 133.8, y = 283.5, width = 945, height = 324, inkRole = theme(ink.primary))
+      sdk.Label(id = "rich-hero-l", text = "HERO · RELEASE SUMMARY", x = 133.8, y = 653.4, width = 945, height = 48.6)
+      sdk.RichText(id = "rich-v1", text = "Tip\nPin the model revision.", x = 1203, y = 291.6, width = 513, height = 167.4, inkRole = theme(accent.primary))
+      sdk.RichText(id = "rich-v2", text = "Status\nAll regions healthy.", x = 1203, y = 594, width = 513, height = 167.4, inkRole = theme(ink.secondary))
+      sdk.Label(id = "rich-v1-l", text = "TIP", x = 1203, y = 518.4, width = 513, height = 43.2)
+      sdk.Label(id = "rich-v2-l", text = "STATUS", x = 1203, y = 820.8, width = 513, height = 43.2)
       timeline main { at 0 reveal rich-h duration 160 after rich-h reveal rich-hero duration 240 after rich-hero reveal rich-hero-l duration 140 after rich-hero-l reveal rich-v1 duration 160 after rich-v1 reveal rich-v1-l duration 120 after rich-v1-l reveal rich-v2 duration 160 after rich-v2 reveal rich-v2-l duration 120 }
     }
   }
@@ -127,15 +127,15 @@ explainer "SDK Generic Catalog" {
     narration: "A server icon anchors the page, while check, warning, and lock icons show the built-in semantic vocabulary."
     caption: "Pair unfamiliar symbols with a visible label."
     render: @scene {
-      sdk.Header(id = "icon-h", title = "SDK.ICON", caption = "named symbol", x = 18, y = 16, width = 664, height = 44)
-      sdk.Icon(id = "icon-hero", icon = "server", x = 120, y = 110, width = 120, height = 120, inkRole = theme(accent.primary))
-      sdk.Label(id = "icon-hero-l", text = "HERO · INFERENCE SERVER", x = 72, y = 250, width = 220, height = 18)
-      sdk.Icon(id = "icon-v1", icon = "check", x = 430, y = 125, width = 42, height = 42, inkRole = theme(accent.green))
-      sdk.Icon(id = "icon-v2", icon = "warning", x = 505, y = 125, width = 42, height = 42, inkRole = theme(accent.warning))
-      sdk.Icon(id = "icon-v3", icon = "lock", x = 580, y = 125, width = 42, height = 42, inkRole = theme(ink.primary))
-      sdk.Label(id = "icon-v1-l", text = "OK", x = 430, y = 178, width = 42, height = 16)
-      sdk.Label(id = "icon-v2-l", text = "WARN", x = 505, y = 178, width = 42, height = 16)
-      sdk.Label(id = "icon-v3-l", text = "SECURE", x = 580, y = 178, width = 50, height = 16)
+      sdk.Header(id = "icon-h", title = "SDK.ICON", caption = "named symbol", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Icon(id = "icon-hero", icon = "server", x = 339, y = 297, width = 324, height = 324, inkRole = theme(accent.primary))
+      sdk.Label(id = "icon-hero-l", text = "HERO · INFERENCE SERVER", x = 209.4, y = 675, width = 594, height = 48.6)
+      sdk.Icon(id = "icon-v1", icon = "check", x = 1176, y = 337.5, width = 113.4, height = 113.4, inkRole = theme(accent.green))
+      sdk.Icon(id = "icon-v2", icon = "warning", x = 1378.5, y = 337.5, width = 113.4, height = 113.4, inkRole = theme(accent.warning))
+      sdk.Icon(id = "icon-v3", icon = "lock", x = 1581, y = 337.5, width = 113.4, height = 113.4, inkRole = theme(ink.primary))
+      sdk.Label(id = "icon-v1-l", text = "OK", x = 1176, y = 480.6, width = 113.4, height = 43.2)
+      sdk.Label(id = "icon-v2-l", text = "WARN", x = 1378.5, y = 480.6, width = 113.4, height = 43.2)
+      sdk.Label(id = "icon-v3-l", text = "SECURE", x = 1581, y = 480.6, width = 135, height = 43.2)
       timeline main { at 0 reveal icon-h duration 160 after icon-h reveal icon-hero duration 240 after icon-hero reveal icon-hero-l duration 140 after icon-hero-l stagger targets [icon-v1, icon-v2, icon-v3] step 90 duration 180 after icon-v3 stagger targets [icon-v1-l, icon-v2-l, icon-v3-l] step 70 duration 140 }
     }
   }
@@ -147,13 +147,13 @@ explainer "SDK Generic Catalog" {
     narration: "The NVIDIA symbol is rendered from an existing repository asset served by Vite, comparing contain and cover fitting side by side."
     caption: "A valid source is required; fitting is an authored choice."
     render: @scene {
-      sdk.Header(id = "image-h", title = "SDK.IMAGE", caption = "repository media", x = 18, y = 16, width = 664, height = 44)
-      sdk.Image(id = "image-hero", src = "/nvidia-symbol.svg", label = "NVIDIA symbol", variant = "contain", x = 44, y = 100, width = 350, height = 165)
-      sdk.Label(id = "image-hero-l", text = "HERO · CONTAIN", x = 44, y = 280, width = 350, height = 18)
-      sdk.Image(id = "image-v1", src = "/nvidia-symbol.svg", label = "contained mark", variant = "contain", x = 440, y = 110, width = 90, height = 90)
-      sdk.Image(id = "image-v2", src = "/nvidia-symbol.svg", label = "covered mark", variant = "cover", x = 560, y = 110, width = 90, height = 90)
-      sdk.Label(id = "image-v1-l", text = "CONTAIN", x = 440, y = 210, width = 90, height = 16)
-      sdk.Label(id = "image-v2-l", text = "COVER", x = 560, y = 210, width = 90, height = 16)
+      sdk.Header(id = "image-h", title = "SDK.IMAGE", caption = "repository media", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Image(id = "image-hero", src = "/nvidia-symbol.svg", label = "NVIDIA symbol", variant = "contain", x = 133.8, y = 270, width = 945, height = 445.5)
+      sdk.Label(id = "image-hero-l", text = "HERO · CONTAIN", x = 133.8, y = 756, width = 945, height = 48.6)
+      sdk.Image(id = "image-v1", src = "/nvidia-symbol.svg", label = "contained mark", variant = "contain", x = 1203, y = 297, width = 243, height = 243)
+      sdk.Image(id = "image-v2", src = "/nvidia-symbol.svg", label = "covered mark", variant = "cover", x = 1527, y = 297, width = 243, height = 243)
+      sdk.Label(id = "image-v1-l", text = "CONTAIN", x = 1203, y = 567, width = 243, height = 43.2)
+      sdk.Label(id = "image-v2-l", text = "COVER", x = 1527, y = 567, width = 243, height = 43.2)
       timeline main { at 0 reveal image-h duration 160 after image-h reveal image-hero duration 240 after image-hero reveal image-hero-l duration 140 after image-hero-l stagger targets [image-v1, image-v2] step 100 duration 180 after image-v2 stagger targets [image-v1-l, image-v2-l] step 80 duration 140 }
     }
   }
@@ -165,15 +165,15 @@ explainer "SDK Generic Catalog" {
     narration: "A neutral line connects two paired regions; smaller lines compare restrained and emphasized strokes."
     caption: "If direction matters, choose an arrow."
     render: @scene {
-      sdk.Header(id = "line-h", title = "SDK.LINE", caption = "neutral connector", x = 18, y = 16, width = 664, height = 44)
-      sdk.Shape(id = "line-a", variant = "rounded", x = 54, y = 125, width = 110, height = 80, surfaceRole = theme(surface.elevated))
-      sdk.Shape(id = "line-b", variant = "rounded", x = 290, y = 125, width = 110, height = 80, surfaceRole = theme(surface.elevated))
-      sdk.Line(id = "line-hero", label = "related services", from = { x: 164, y: 165 }, to = { x: 290, y: 165 }, x = 164, y = 165, width = 126, height = 0, strokeRole = theme(accent.primary))
-      sdk.Label(id = "line-hero-l", text = "HERO · PEER RELATION", x = 120, y = 230, width = 220, height = 18)
-      sdk.Line(id = "line-v1", label = "quiet", from = { x: 450, y: 140 }, to = { x: 630, y: 140 }, x = 450, y = 140, width = 180, height = 0, strokeRole = theme(ink.secondary))
-      sdk.Line(id = "line-v2", label = "active", from = { x: 450, y: 210 }, to = { x: 630, y: 210 }, x = 450, y = 210, width = 180, height = 0, strokeRole = theme(accent.primary))
-      sdk.Label(id = "line-v1-l", text = "QUIET", x = 450, y = 155, width = 180, height = 16)
-      sdk.Label(id = "line-v2-l", text = "ACTIVE", x = 450, y = 225, width = 180, height = 16)
+      sdk.Header(id = "line-h", title = "SDK.LINE", caption = "neutral connector", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Shape(id = "line-a", variant = "rounded", x = 160.8, y = 337.5, width = 297, height = 216, surfaceRole = theme(surface.elevated))
+      sdk.Shape(id = "line-b", variant = "rounded", x = 798, y = 337.5, width = 297, height = 216, surfaceRole = theme(surface.elevated))
+      sdk.Line(id = "line-hero", label = "related services", from = { x: 164, y: 165 }, to = { x: 290, y: 165 }, x = 457.8, y = 445.5, width = 340.2, height = 0, strokeRole = theme(accent.primary))
+      sdk.Label(id = "line-hero-l", text = "HERO · PEER RELATION", x = 339, y = 621, width = 594, height = 48.6)
+      sdk.Line(id = "line-v1", label = "quiet", from = { x: 450, y: 140 }, to = { x: 630, y: 140 }, x = 1230, y = 378, width = 486, height = 0, strokeRole = theme(ink.secondary))
+      sdk.Line(id = "line-v2", label = "active", from = { x: 450, y: 210 }, to = { x: 630, y: 210 }, x = 1230, y = 567, width = 486, height = 0, strokeRole = theme(accent.primary))
+      sdk.Label(id = "line-v1-l", text = "QUIET", x = 1230, y = 418.5, width = 486, height = 43.2)
+      sdk.Label(id = "line-v2-l", text = "ACTIVE", x = 1230, y = 607.5, width = 486, height = 43.2)
       timeline main { at 0 reveal line-h duration 160 after line-h stagger targets [line-a, line-b] step 80 duration 180 after line-b trace line-hero duration 260 after line-hero reveal line-hero-l duration 140 after line-hero-l reveal line-v1 duration 160 after line-v1 reveal line-v1-l duration 120 after line-v1-l reveal line-v2 duration 160 after line-v2 reveal line-v2-l duration 120 }
     }
   }
@@ -185,19 +185,19 @@ explainer "SDK Generic Catalog" {
     narration: "An arrow shows a client dispatching a request to a server; smaller arrows distinguish forward progress from a descending transition."
     caption: "Arrowheads encode direction; labels explain intent."
     render: @scene {
-      sdk.Header(id = "arrow-h", title = "SDK.ARROW", caption = "directional connector", x = 18, y = 16, width = 664, height = 44)
-      sdk.Shape(id = "arrow-ha", variant = "rounded", label = "client", x = 48, y = 145, width = 70, height = 50, surfaceRole = theme(surface.elevated))
-      sdk.Shape(id = "arrow-hb", variant = "rounded", label = "server", x = 360, y = 145, width = 70, height = 50, surfaceRole = theme(surface.elevated))
-      sdk.Arrow(id = "arrow-hero", label = "dispatch request", from = { nodeId: "arrow-ha", anchor: "e" }, to = { nodeId: "arrow-hb", anchor: "w" }, x = 118, y = 170, width = 242, height = 0, strokeRole = theme(accent.primary))
-      sdk.Label(id = "arrow-hero-l", text = "HERO · DISPATCH REQUEST", x = 100, y = 205, width = 260, height = 18)
-      sdk.Shape(id = "arrow-v1a", variant = "rounded", label = "source", x = 440, y = 105, width = 44, height = 36, surfaceRole = theme(surface.elevated))
-      sdk.Shape(id = "arrow-v1b", variant = "rounded", label = "target", x = 610, y = 105, width = 44, height = 36, surfaceRole = theme(surface.elevated))
-      sdk.Arrow(id = "arrow-v1", label = "forward", from = { nodeId: "arrow-v1a", anchor: "e" }, to = { nodeId: "arrow-v1b", anchor: "w" }, x = 484, y = 123, width = 126, height = 0, strokeRole = theme(accent.green))
-      sdk.Label(id = "arrow-v1-l", text = "FORWARD", x = 440, y = 150, width = 214, height = 16)
-      sdk.Shape(id = "arrow-v2a", variant = "rounded", label = "source", x = 440, y = 185, width = 44, height = 36, surfaceRole = theme(surface.elevated))
-      sdk.Shape(id = "arrow-v2b", variant = "rounded", label = "target", x = 610, y = 230, width = 44, height = 36, surfaceRole = theme(surface.elevated))
-      sdk.Arrow(id = "arrow-v2", label = "handoff", from = { nodeId: "arrow-v2a", anchor: "e" }, to = { nodeId: "arrow-v2b", anchor: "w" }, x = 484, y = 203, width = 126, height = 45, strokeRole = theme(accent.warning))
-      sdk.Label(id = "arrow-v2-l", text = "HANDOFF", x = 440, y = 280, width = 214, height = 16)
+      sdk.Header(id = "arrow-h", title = "SDK.ARROW", caption = "directional connector", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Shape(id = "arrow-ha", variant = "rounded", label = "client", x = 144.6, y = 391.5, width = 189, height = 135, surfaceRole = theme(surface.elevated))
+      sdk.Shape(id = "arrow-hb", variant = "rounded", label = "server", x = 987, y = 391.5, width = 189, height = 135, surfaceRole = theme(surface.elevated))
+      sdk.Arrow(id = "arrow-hero", label = "dispatch request", from = { nodeId: "arrow-ha", anchor: "e" }, to = { nodeId: "arrow-hb", anchor: "w" }, x = 333.6, y = 459, width = 653.4, height = 0, strokeRole = theme(accent.primary))
+      sdk.Label(id = "arrow-hero-l", text = "HERO · DISPATCH REQUEST", x = 285, y = 553.5, width = 702, height = 48.6)
+      sdk.Shape(id = "arrow-v1a", variant = "rounded", label = "source", x = 1203, y = 283.5, width = 118.8, height = 97.2, surfaceRole = theme(surface.elevated))
+      sdk.Shape(id = "arrow-v1b", variant = "rounded", label = "target", x = 1662, y = 283.5, width = 118.8, height = 97.2, surfaceRole = theme(surface.elevated))
+      sdk.Arrow(id = "arrow-v1", label = "forward", from = { nodeId: "arrow-v1a", anchor: "e" }, to = { nodeId: "arrow-v1b", anchor: "w" }, x = 1321.8, y = 332.1, width = 340.2, height = 0, strokeRole = theme(accent.green))
+      sdk.Label(id = "arrow-v1-l", text = "FORWARD", x = 1203, y = 405, width = 577.8, height = 43.2)
+      sdk.Shape(id = "arrow-v2a", variant = "rounded", label = "source", x = 1203, y = 499.5, width = 118.8, height = 97.2, surfaceRole = theme(surface.elevated))
+      sdk.Shape(id = "arrow-v2b", variant = "rounded", label = "target", x = 1662, y = 621, width = 118.8, height = 97.2, surfaceRole = theme(surface.elevated))
+      sdk.Arrow(id = "arrow-v2", label = "handoff", from = { nodeId: "arrow-v2a", anchor: "e" }, to = { nodeId: "arrow-v2b", anchor: "w" }, x = 1321.8, y = 548.1, width = 340.2, height = 121.5, strokeRole = theme(accent.warning))
+      sdk.Label(id = "arrow-v2-l", text = "HANDOFF", x = 1203, y = 756, width = 577.8, height = 43.2)
       timeline main { at 0 reveal arrow-h duration 160 after arrow-h stagger targets [arrow-ha, arrow-hb] step 80 duration 160 after arrow-hb trace arrow-hero duration 280 after arrow-hero reveal arrow-hero-l duration 140 after arrow-hero-l stagger targets [arrow-v1a, arrow-v1b] step 60 duration 140 after arrow-v1b trace arrow-v1 duration 180 after arrow-v1 reveal arrow-v1-l duration 120 after arrow-v1-l stagger targets [arrow-v2a, arrow-v2b] step 60 duration 140 after arrow-v2b trace arrow-v2 duration 180 after arrow-v2 reveal arrow-v2-l duration 120 }
     }
   }
@@ -209,13 +209,13 @@ explainer "SDK Generic Catalog" {
     narration: "The outlined sections expose three real spacer instances. The primitive remains empty while annotations make its reserved dimensions visible."
     caption: "Spacing is structure, not decoration."
     render: @scene {
-      sdk.Header(id = "spacer-h", title = "SDK.SPACER", caption = "visible framing for invisible space", x = 18, y = 16, width = 664, height = 44)
-      sdk.Section(id = "spacer-frame", title = "reserved hero gap", x = 54, y = 100, width = 340, height = 160, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) { children { sdk.Spacer(id = "spacer-hero", label = "96 px gap", width = 96, height = 96) } }
-      sdk.Label(id = "spacer-hero-l", text = "HERO · 96 × 96 RESERVED", x = 54, y = 278, width = 340, height = 18)
-      sdk.Section(id = "spacer-f1", title = "inline", x = 440, y = 110, width = 90, height = 90, strokeRole = theme(ink.secondary)) { children { sdk.Spacer(id = "spacer-v1", label = "24", width = 24, height = 24) } }
-      sdk.Section(id = "spacer-f2", title = "section", x = 560, y = 110, width = 90, height = 90, strokeRole = theme(accent.green)) { children { sdk.Spacer(id = "spacer-v2", label = "48", width = 48, height = 48) } }
-      sdk.Label(id = "spacer-v1-l", text = "24 PX", x = 440, y = 210, width = 90, height = 16)
-      sdk.Label(id = "spacer-v2-l", text = "48 PX", x = 560, y = 210, width = 90, height = 16)
+      sdk.Header(id = "spacer-h", title = "SDK.SPACER", caption = "visible framing for invisible space", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Section(id = "spacer-frame", title = "reserved hero gap", x = 160.8, y = 270, width = 918, height = 432, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) { children { sdk.Spacer(id = "spacer-hero", label = "96 px gap", width = 259.2, height = 259.2) } }
+      sdk.Label(id = "spacer-hero-l", text = "HERO · 96 × 96 RESERVED", x = 160.8, y = 750.6, width = 918, height = 48.6)
+      sdk.Section(id = "spacer-f1", title = "inline", x = 1203, y = 297, width = 243, height = 243, strokeRole = theme(ink.secondary)) { children { sdk.Spacer(id = "spacer-v1", label = "24", width = 64.8, height = 64.8) } }
+      sdk.Section(id = "spacer-f2", title = "section", x = 1527, y = 297, width = 243, height = 243, strokeRole = theme(accent.green)) { children { sdk.Spacer(id = "spacer-v2", label = "48", width = 129.6, height = 129.6) } }
+      sdk.Label(id = "spacer-v1-l", text = "24 PX", x = 1203, y = 567, width = 243, height = 43.2)
+      sdk.Label(id = "spacer-v2-l", text = "48 PX", x = 1527, y = 567, width = 243, height = 43.2)
       timeline main { at 0 reveal spacer-h duration 160 after spacer-h reveal spacer-frame duration 220 after spacer-frame reveal spacer-hero-l duration 140 after spacer-hero-l stagger targets [spacer-f1, spacer-f2] step 100 duration 180 after spacer-f2 stagger targets [spacer-v1-l, spacer-v2-l] step 80 duration 140 }
     }
   }
@@ -227,13 +227,13 @@ explainer "SDK Generic Catalog" {
     narration: "An inset protects a deployment-ready message with generous padding; smaller insets compare compact and roomy gaps."
     caption: "Padding belongs to the container contract."
     render: @scene {
-      sdk.Header(id = "inset-h", title = "SDK.INSET", caption = "padded container", x = 18, y = 16, width = 664, height = 44)
-      sdk.Inset(id = "inset-hero", label = "deployment notice", gap = 24, x = 44, y = 100, width = 350, height = 150) { children { sdk.Alert(id = "inset-alert", title = "Deployment ready", variant = "success", width = 290, height = 76) } }
-      sdk.Label(id = "inset-hero-l", text = "HERO · 24 PX INSET", x = 44, y = 268, width = 350, height = 18)
-      sdk.Inset(id = "inset-v1", label = "compact", gap = 8, x = 440, y = 112, width = 90, height = 80) { children { sdk.Badge(id = "inset-b1", label = "8 px", variant = "info") } }
-      sdk.Inset(id = "inset-v2", label = "roomy", gap = 20, x = 560, y = 112, width = 90, height = 80) { children { sdk.Badge(id = "inset-b2", label = "20 px", variant = "success") } }
-      sdk.Label(id = "inset-v1-l", text = "COMPACT", x = 440, y = 202, width = 90, height = 16)
-      sdk.Label(id = "inset-v2-l", text = "ROOMY", x = 560, y = 202, width = 90, height = 16)
+      sdk.Header(id = "inset-h", title = "SDK.INSET", caption = "padded container", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Inset(id = "inset-hero", label = "deployment notice", gap = 64.8, x = 133.8, y = 270, width = 945, height = 405) { children { sdk.Alert(id = "inset-alert", title = "Deployment ready", variant = "success", width = 783, height = 205.2) } }
+      sdk.Label(id = "inset-hero-l", text = "HERO · 24 PX INSET", x = 133.8, y = 723.6, width = 945, height = 48.6)
+      sdk.Inset(id = "inset-v1", label = "compact", gap = 21.6, x = 1203, y = 302.4, width = 243, height = 216) { children { sdk.Badge(id = "inset-b1", label = "8 px", variant = "info") } }
+      sdk.Inset(id = "inset-v2", label = "roomy", gap = 54, x = 1527, y = 302.4, width = 243, height = 216) { children { sdk.Badge(id = "inset-b2", label = "20 px", variant = "success") } }
+      sdk.Label(id = "inset-v1-l", text = "COMPACT", x = 1203, y = 545.4, width = 243, height = 43.2)
+      sdk.Label(id = "inset-v2-l", text = "ROOMY", x = 1527, y = 545.4, width = 243, height = 43.2)
       timeline main { at 0 reveal inset-h duration 160 after inset-h reveal inset-hero duration 240 after inset-hero reveal inset-hero-l duration 140 after inset-hero-l stagger targets [inset-v1, inset-v2] step 100 duration 180 after inset-v2 stagger targets [inset-v1-l, inset-v2-l] step 80 duration 140 }
     }
   }
@@ -245,10 +245,10 @@ explainer "SDK Generic Catalog" {
     narration: "Typography components encode common reading roles so each deck does not reinvent hierarchy."
     caption: "Eight primitives · hierarchy, prose, evidence, structure."
     render: @scene {
-      sdk.Header(id = "c2-h", title = "TYPOGRAPHY + RICH CONTENT", caption = "02 / 08", x = 18, y = 16, width = 664, height = 44)
-      sdk.Title(id = "c2-title", text = "Readable by design", x = 70, y = 115, width = 400, height = 40)
-      sdk.Paragraph(id = "c2-copy", text = "The right text primitive makes purpose visible\nbefore every word is read.", x = 70, y = 175, width = 320, height = 80, inkRole = theme(ink.secondary))
-      sdk.CodeBlock(id = "c2-code", text = "sdk.Title(...)", x = 550, y = 115, width = 100, height = 120)
+      sdk.Header(id = "c2-h", title = "TYPOGRAPHY + RICH CONTENT", caption = "02 / 08", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Title(id = "c2-title", text = "Readable by design", x = 204, y = 310.5, width = 1080, height = 108)
+      sdk.Paragraph(id = "c2-copy", text = "The right text primitive makes purpose visible\nbefore every word is read.", x = 204, y = 472.5, width = 864, height = 216, inkRole = theme(ink.secondary))
+      sdk.CodeBlock(id = "c2-code", text = "sdk.Title(...)", x = 1500, y = 310.5, width = 270, height = 324)
       timeline main { at 0 reveal c2-h duration 180 after c2-h reveal c2-title duration 220 after c2-title reveal c2-copy duration 200 after c2-copy reveal c2-code duration 220 }
     }
   }
@@ -260,13 +260,13 @@ explainer "SDK Generic Catalog" {
     narration: "A product heading leads an inference overview; smaller titles show a section heading and an attention-drawing heading."
     caption: "One strong title beats a field of competing headings."
     render: @scene {
-      sdk.Header(id = "title-h", title = "SDK.TITLE", caption = "hierarchy anchor", x = 18, y = 16, width = 664, height = 44)
-      sdk.Title(id = "title-hero", text = "Inference overview", x = 54, y = 120, width = 350, height = 52)
-      sdk.Label(id = "title-hero-l", text = "HERO · PRODUCT VIEW", x = 54, y = 195, width = 350, height = 18)
-      sdk.Title(id = "title-v1", text = "Traffic", x = 450, y = 115, width = 180, height = 32)
-      sdk.Title(id = "title-v2", text = "Errors", x = 450, y = 180, width = 180, height = 32, inkRole = theme(accent.warning))
-      sdk.Label(id = "title-v1-l", text = "SECTION", x = 450, y = 152, width = 180, height = 16)
-      sdk.Label(id = "title-v2-l", text = "ATTENTION", x = 450, y = 218, width = 180, height = 16)
+      sdk.Header(id = "title-h", title = "SDK.TITLE", caption = "hierarchy anchor", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Title(id = "title-hero", text = "Inference overview", x = 160.8, y = 324, width = 945, height = 140.4)
+      sdk.Label(id = "title-hero-l", text = "HERO · PRODUCT VIEW", x = 160.8, y = 526.5, width = 945, height = 48.6)
+      sdk.Title(id = "title-v1", text = "Traffic", x = 1230, y = 310.5, width = 486, height = 86.4)
+      sdk.Title(id = "title-v2", text = "Errors", x = 1230, y = 486, width = 486, height = 86.4, inkRole = theme(accent.warning))
+      sdk.Label(id = "title-v1-l", text = "SECTION", x = 1230, y = 410.4, width = 486, height = 43.2)
+      sdk.Label(id = "title-v2-l", text = "ATTENTION", x = 1230, y = 588.6, width = 486, height = 43.2)
       timeline main { at 0 reveal title-h duration 160 after title-h reveal title-hero duration 240 after title-hero reveal title-hero-l duration 140 after title-hero-l reveal title-v1 duration 160 after title-v1 reveal title-v1-l duration 120 after title-v1-l reveal title-v2 duration 160 after title-v2 reveal title-v2-l duration 120 }
     }
   }
@@ -278,13 +278,13 @@ explainer "SDK Generic Catalog" {
     narration: "A paragraph explains a routing policy; smaller paragraphs contrast product guidance with subdued supporting context."
     caption: "Write for scanning: one idea per paragraph."
     render: @scene {
-      sdk.Header(id = "para-h", title = "SDK.PARAGRAPH", caption = "bounded prose", x = 18, y = 16, width = 664, height = 44)
-      sdk.Paragraph(id = "para-hero", text = "Stay in-region by default.\nFallback only below margin.", x = 44, y = 108, width = 330, height = 112)
-      sdk.Label(id = "para-hero-l", text = "HERO · POLICY EXPLANATION", x = 44, y = 238, width = 350, height = 18)
-      sdk.Paragraph(id = "para-v1", text = "Pin revisions before comparing runs.", x = 440, y = 112, width = 200, height = 62, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "para-v2", text = "Metrics refresh every 10 seconds.", x = 440, y = 228, width = 200, height = 62, inkRole = theme(ink.secondary))
-      sdk.Label(id = "para-v1-l", text = "GUIDANCE", x = 440, y = 184, width = 200, height = 16)
-      sdk.Label(id = "para-v2-l", text = "SUPPORTING", x = 440, y = 300, width = 200, height = 16)
+      sdk.Header(id = "para-h", title = "SDK.PARAGRAPH", caption = "bounded prose", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Paragraph(id = "para-hero", text = "Stay in-region by default.\nFallback only below margin.", x = 133.8, y = 291.6, width = 891, height = 302.4)
+      sdk.Label(id = "para-hero-l", text = "HERO · POLICY EXPLANATION", x = 133.8, y = 642.6, width = 945, height = 48.6)
+      sdk.Paragraph(id = "para-v1", text = "Pin revisions before comparing runs.", x = 1203, y = 302.4, width = 540, height = 167.4, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "para-v2", text = "Metrics refresh every 10 seconds.", x = 1203, y = 615.6, width = 540, height = 167.4, inkRole = theme(ink.secondary))
+      sdk.Label(id = "para-v1-l", text = "GUIDANCE", x = 1203, y = 496.8, width = 540, height = 43.2)
+      sdk.Label(id = "para-v2-l", text = "SUPPORTING", x = 1203, y = 810, width = 540, height = 43.2)
       timeline main { at 0 reveal para-h duration 160 after para-h reveal para-hero duration 240 after para-hero reveal para-hero-l duration 140 after para-hero-l reveal para-v1 duration 160 after para-v1 reveal para-v1-l duration 120 after para-v1-l reveal para-v2 duration 160 after para-v2 reveal para-v2-l duration 120 }
     }
   }
@@ -296,14 +296,14 @@ explainer "SDK Generic Catalog" {
     narration: "A caption anchors a sparkline's timestamp; smaller captions demonstrate source and unit labels."
     caption: "Captions support the story without competing with it."
     render: @scene {
-      sdk.Header(id = "caption-h", title = "SDK.CAPTION", caption = "secondary context", x = 18, y = 16, width = 664, height = 44)
-      sdk.Sparkline(id = "caption-chart", label = "throughput", values = [42, 48, 45, 57, 61, 59], x = 54, y = 105, width = 340, height = 110)
-      sdk.Caption(id = "caption-hero", text = "Last 30 minutes · updated 09:42 UTC", x = 54, y = 232, width = 340, height = 22)
-      sdk.Label(id = "caption-hero-l", text = "HERO · TEMPORAL CONTEXT", x = 54, y = 270, width = 340, height = 18)
-      sdk.Caption(id = "caption-v1", text = "Source: gateway", x = 450, y = 125, width = 180, height = 20)
-      sdk.Caption(id = "caption-v2", text = "Requests / second", x = 450, y = 185, width = 180, height = 20, inkRole = theme(ink.secondary))
-      sdk.Label(id = "caption-v1-l", text = "SOURCE", x = 450, y = 152, width = 180, height = 16)
-      sdk.Label(id = "caption-v2-l", text = "UNIT", x = 450, y = 212, width = 180, height = 16)
+      sdk.Header(id = "caption-h", title = "SDK.CAPTION", caption = "secondary context", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Sparkline(id = "caption-chart", label = "throughput", values = [42, 48, 45, 57, 61, 59], x = 160.8, y = 283.5, width = 918, height = 297)
+      sdk.Caption(id = "caption-hero", text = "Last 30 minutes · updated 09:42 UTC", x = 160.8, y = 626.4, width = 918, height = 59.4)
+      sdk.Label(id = "caption-hero-l", text = "HERO · TEMPORAL CONTEXT", x = 160.8, y = 729, width = 918, height = 48.6)
+      sdk.Caption(id = "caption-v1", text = "Source: gateway", x = 1230, y = 337.5, width = 486, height = 54)
+      sdk.Caption(id = "caption-v2", text = "Requests / second", x = 1230, y = 499.5, width = 486, height = 54, inkRole = theme(ink.secondary))
+      sdk.Label(id = "caption-v1-l", text = "SOURCE", x = 1230, y = 410.4, width = 486, height = 43.2)
+      sdk.Label(id = "caption-v2-l", text = "UNIT", x = 1230, y = 572.4, width = 486, height = 43.2)
       timeline main { at 0 reveal caption-h duration 160 after caption-h reveal caption-chart duration 220 after caption-chart reveal caption-hero duration 180 after caption-hero reveal caption-hero-l duration 140 after caption-hero-l reveal caption-v1 duration 160 after caption-v1 reveal caption-v1-l duration 120 after caption-v1-l reveal caption-v2 duration 160 after caption-v2 reveal caption-v2-l duration 120 }
     }
   }
@@ -315,13 +315,13 @@ explainer "SDK Generic Catalog" {
     narration: "A code block presents a production SDK invocation; smaller blocks compare a shell command and a configuration fragment."
     caption: "Keep examples short enough to read at presentation scale."
     render: @scene {
-      sdk.Header(id = "code-h", title = "SDK.CODEBLOCK", caption = "monospace evidence", x = 18, y = 16, width = 664, height = 44)
-      sdk.CodeBlock(id = "code-hero", text = "sdk.Progress(\n  value = 0.72\n)", x = 44, y = 92, width = 350, height = 170, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Label(id = "code-hero-l", text = "HERO · FLOW INVOCATION", x = 44, y = 278, width = 350, height = 18)
-      sdk.CodeBlock(id = "code-v1", text = "npm run verify", x = 435, y = 100, width = 215, height = 70)
-      sdk.CodeBlock(id = "code-v2", text = "workers: 8", x = 435, y = 216, width = 215, height = 70, variant = "info")
-      sdk.Label(id = "code-v1-l", text = "SHELL", x = 435, y = 188, width = 215, height = 16)
-      sdk.Label(id = "code-v2-l", text = "CONFIG", x = 435, y = 304, width = 215, height = 16)
+      sdk.Header(id = "code-h", title = "SDK.CODEBLOCK", caption = "monospace evidence", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.CodeBlock(id = "code-hero", text = "sdk.Progress(\n  value = 0.72\n)", x = 133.8, y = 248.4, width = 945, height = 459, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Label(id = "code-hero-l", text = "HERO · FLOW INVOCATION", x = 133.8, y = 750.6, width = 945, height = 48.6)
+      sdk.CodeBlock(id = "code-v1", text = "npm run verify", x = 1189.5, y = 270, width = 580.5, height = 189)
+      sdk.CodeBlock(id = "code-v2", text = "workers: 8", x = 1189.5, y = 583.2, width = 580.5, height = 189, variant = "info")
+      sdk.Label(id = "code-v1-l", text = "SHELL", x = 1189.5, y = 507.6, width = 580.5, height = 43.2)
+      sdk.Label(id = "code-v2-l", text = "CONFIG", x = 1189.5, y = 820.8, width = 580.5, height = 43.2)
       timeline main { at 0 reveal code-h duration 160 after code-h reveal code-hero duration 240 after code-hero reveal code-hero-l duration 140 after code-hero-l reveal code-v1 duration 160 after code-v1 reveal code-v1-l duration 120 after code-v1-l reveal code-v2 duration 160 after code-v2 reveal code-v2-l duration 120 }
     }
   }
@@ -333,13 +333,13 @@ explainer "SDK Generic Catalog" {
     narration: "A quote presents a design principle; smaller quotes compare customer feedback and an operational maxim."
     caption: "A quote should add authority, not decorative italics."
     render: @scene {
-      sdk.Header(id = "quote-h", title = "SDK.QUOTE", caption = "emphasized voice", x = 18, y = 16, width = 664, height = 44)
-      sdk.Quote(id = "quote-hero", text = "Measure the system users actually experience.", x = 44, y = 105, width = 350, height = 140, variant = "info")
-      sdk.Label(id = "quote-hero-l", text = "HERO · PRODUCT PRINCIPLE", x = 44, y = 262, width = 350, height = 18)
-      sdk.Quote(id = "quote-v1", text = "The graph made bottlenecks obvious.", x = 435, y = 105, width = 215, height = 80)
-      sdk.Quote(id = "quote-v2", text = "Trust evidence over intuition.", x = 435, y = 239, width = 215, height = 80, variant = "success")
-      sdk.Label(id = "quote-v1-l", text = "TESTIMONY", x = 435, y = 211, width = 215, height = 16)
-      sdk.Label(id = "quote-v2-l", text = "MAXIM", x = 435, y = 345, width = 215, height = 16)
+      sdk.Header(id = "quote-h", title = "SDK.QUOTE", caption = "emphasized voice", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Quote(id = "quote-hero", text = "Measure the system users actually experience.", x = 133.8, y = 283.5, width = 945, height = 378, variant = "info")
+      sdk.Label(id = "quote-hero-l", text = "HERO · PRODUCT PRINCIPLE", x = 133.8, y = 707.4, width = 945, height = 48.6)
+      sdk.Quote(id = "quote-v1", text = "The graph made bottlenecks obvious.", x = 1189.5, y = 283.5, width = 580.5, height = 216)
+      sdk.Quote(id = "quote-v2", text = "Trust evidence over intuition.", x = 1189.5, y = 645.3, width = 580.5, height = 216, variant = "success")
+      sdk.Label(id = "quote-v1-l", text = "TESTIMONY", x = 1189.5, y = 569.7, width = 580.5, height = 43.2)
+      sdk.Label(id = "quote-v2-l", text = "MAXIM", x = 1189.5, y = 931.5, width = 580.5, height = 43.2)
       timeline main { at 0 reveal quote-h duration 160 after quote-h reveal quote-hero duration 240 after quote-hero reveal quote-hero-l duration 140 after quote-hero-l reveal quote-v1 duration 160 after quote-v1 reveal quote-v1-l duration 120 after quote-v1-l reveal quote-v2 duration 160 after quote-v2 reveal quote-v2-l duration 120 }
     }
   }
@@ -351,13 +351,13 @@ explainer "SDK Generic Catalog" {
     narration: "A list forms a launch checklist; smaller lists show two-item guidance and a longer operational set."
     caption: "Use parallel phrasing and keep item count intentional."
     render: @scene {
-      sdk.Header(id = "list-h", title = "SDK.LIST", caption = "scan-friendly collection", x = 18, y = 16, width = 664, height = 44)
-      sdk.List(id = "list-hero", title = "Launch checklist", items = ["01 · Pin model revision", "02 · Warm the endpoint", "03 · Verify artifacts"], gap = 8, x = 44, y = 96, width = 350, height = 144)
-      sdk.Label(id = "list-hero-l", text = "HERO · CHECKLIST", x = 44, y = 258, width = 350, height = 18)
-      sdk.List(id = "list-v1", items = ["01 · Inspect", "02 · Compare"], x = 435, y = 105, width = 215, height = 72)
-      sdk.List(id = "list-v2", items = ["01 · Queue", "02 · Run", "03 · Export"], x = 435, y = 215, width = 215, height = 96)
-      sdk.Label(id = "list-v1-l", text = "COMPACT", x = 435, y = 185, width = 215, height = 16)
-      sdk.Label(id = "list-v2-l", text = "EXTENDED", x = 435, y = 323, width = 215, height = 16)
+      sdk.Header(id = "list-h", title = "SDK.LIST", caption = "scan-friendly collection", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.List(id = "list-hero", title = "Launch checklist", items = ["01 · Pin model revision", "02 · Warm the endpoint", "03 · Verify artifacts"], gap = 21.6, x = 133.8, y = 259.2, width = 945, height = 388.8)
+      sdk.Label(id = "list-hero-l", text = "HERO · CHECKLIST", x = 133.8, y = 696.6, width = 945, height = 48.6)
+      sdk.List(id = "list-v1", items = ["01 · Inspect", "02 · Compare"], x = 1189.5, y = 283.5, width = 580.5, height = 194.4)
+      sdk.List(id = "list-v2", items = ["01 · Queue", "02 · Run", "03 · Export"], x = 1189.5, y = 580.5, width = 580.5, height = 259.2)
+      sdk.Label(id = "list-v1-l", text = "COMPACT", x = 1189.5, y = 499.5, width = 580.5, height = 43.2)
+      sdk.Label(id = "list-v2-l", text = "EXTENDED", x = 1189.5, y = 872.1, width = 580.5, height = 43.2)
       timeline main { at 0 reveal list-h duration 160 after list-h reveal list-hero duration 240 after list-hero reveal list-hero-l duration 140 after list-hero-l reveal list-v1 duration 160 after list-v1 reveal list-v1-l duration 120 after list-v1-l reveal list-v2 duration 160 after list-v2 reveal list-v2-l duration 120 }
     }
   }
@@ -369,13 +369,13 @@ explainer "SDK Generic Catalog" {
     narration: "A key-value row highlights a model revision; smaller rows show region and protocol metadata."
     caption: "Keys orient; values carry the decision."
     render: @scene {
-      sdk.Header(id = "kv-h", title = "SDK.KEYVALUE", caption = "single metadata fact", x = 18, y = 16, width = 664, height = 44)
-      sdk.KeyValue(id = "kv-hero", entries = [{ key: "Model", value: "Llama 3.1 70B" }], x = 44, y = 110, width = 350, height = 88)
-      sdk.Label(id = "kv-hero-l", text = "HERO · MODEL IDENTITY", x = 44, y = 216, width = 350, height = 18)
-      sdk.KeyValue(id = "kv-v1", entries = [{ key: "Region", value: "us-west" }], x = 435, y = 105, width = 215, height = 54)
-      sdk.KeyValue(id = "kv-v2", entries = [{ key: "Protocol", value: "HTTP/2" }], x = 435, y = 205, width = 215, height = 54)
-      sdk.Label(id = "kv-v1-l", text = "LOCATION", x = 435, y = 169, width = 215, height = 16)
-      sdk.Label(id = "kv-v2-l", text = "TRANSPORT", x = 435, y = 269, width = 215, height = 16)
+      sdk.Header(id = "kv-h", title = "SDK.KEYVALUE", caption = "single metadata fact", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.KeyValue(id = "kv-hero", entries = [{ key: "Model", value: "Llama 3.1 70B" }], x = 133.8, y = 297, width = 945, height = 237.6)
+      sdk.Label(id = "kv-hero-l", text = "HERO · MODEL IDENTITY", x = 133.8, y = 583.2, width = 945, height = 48.6)
+      sdk.KeyValue(id = "kv-v1", entries = [{ key: "Region", value: "us-west" }], x = 1189.5, y = 283.5, width = 580.5, height = 145.8)
+      sdk.KeyValue(id = "kv-v2", entries = [{ key: "Protocol", value: "HTTP/2" }], x = 1189.5, y = 553.5, width = 580.5, height = 145.8)
+      sdk.Label(id = "kv-v1-l", text = "LOCATION", x = 1189.5, y = 456.3, width = 580.5, height = 43.2)
+      sdk.Label(id = "kv-v2-l", text = "TRANSPORT", x = 1189.5, y = 726.3, width = 580.5, height = 43.2)
       timeline main { at 0 reveal kv-h duration 160 after kv-h reveal kv-hero duration 240 after kv-hero reveal kv-hero-l duration 140 after kv-hero-l reveal kv-v1 duration 160 after kv-v1 reveal kv-v1-l duration 120 after kv-v1-l reveal kv-v2 duration 160 after kv-v2 reveal kv-v2-l duration 120 }
     }
   }
@@ -387,13 +387,13 @@ explainer "SDK Generic Catalog" {
     narration: "A property list describes an endpoint profile; smaller lists compare runtime and artifact summaries."
     caption: "Group only properties that answer one question."
     render: @scene {
-      sdk.Header(id = "props-h", title = "SDK.PROPERTYLIST", caption = "metadata group", x = 18, y = 16, width = 664, height = 44)
-      sdk.PropertyList(id = "props-hero", title = "Endpoint", entries = [{ key: "Model", value: "Nemotron" }, { key: "Region", value: "us-east" }, { key: "Mode", value: "streaming" }], gap = 6, x = 44, y = 96, width = 350, height = 154)
-      sdk.Label(id = "props-hero-l", text = "HERO · ENDPOINT PROFILE", x = 44, y = 266, width = 350, height = 18)
-      sdk.PropertyList(id = "props-v1", items = ["workers: 8", "dispatch: global"], x = 435, y = 100, width = 215, height = 82)
-      sdk.PropertyList(id = "props-v2", items = ["records: jsonl", "summary: json"], x = 435, y = 220, width = 215, height = 82)
-      sdk.Label(id = "props-v1-l", text = "RUNTIME", x = 435, y = 192, width = 215, height = 16)
-      sdk.Label(id = "props-v2-l", text = "ARTIFACTS", x = 435, y = 312, width = 215, height = 16)
+      sdk.Header(id = "props-h", title = "SDK.PROPERTYLIST", caption = "metadata group", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.PropertyList(id = "props-hero", title = "Endpoint", entries = [{ key: "Model", value: "Nemotron" }, { key: "Region", value: "us-east" }, { key: "Mode", value: "streaming" }], gap = 16.2, x = 133.8, y = 259.2, width = 945, height = 415.8)
+      sdk.Label(id = "props-hero-l", text = "HERO · ENDPOINT PROFILE", x = 133.8, y = 718.2, width = 945, height = 48.6)
+      sdk.PropertyList(id = "props-v1", items = ["workers: 8", "dispatch: global"], x = 1189.5, y = 270, width = 580.5, height = 221.4)
+      sdk.PropertyList(id = "props-v2", items = ["records: jsonl", "summary: json"], x = 1189.5, y = 594, width = 580.5, height = 221.4)
+      sdk.Label(id = "props-v1-l", text = "RUNTIME", x = 1189.5, y = 518.4, width = 580.5, height = 43.2)
+      sdk.Label(id = "props-v2-l", text = "ARTIFACTS", x = 1189.5, y = 842.4, width = 580.5, height = 43.2)
       timeline main { at 0 reveal props-h duration 160 after props-h reveal props-hero duration 240 after props-hero reveal props-hero-l duration 140 after props-hero-l reveal props-v1 duration 160 after props-v1 reveal props-v1-l duration 120 after props-v1-l reveal props-v2 duration 160 after props-v2 reveal props-v2-l duration 120 }
     }
   }
@@ -405,10 +405,10 @@ explainer "SDK Generic Catalog" {
     narration: "Status primitives combine restrained color with explicit labels so state remains understandable."
     caption: "Seven primitives · identity, state, attention, recovery."
     render: @scene {
-      sdk.Header(id = "c3-h", title = "STATUS + IDENTITY", caption = "03 / 08", x = 18, y = 16, width = 664, height = 44)
-      sdk.StatusCard(id = "c3-card", title = "Gateway healthy", variant = "success", x = 80, y = 120, width = 270, height = 120)
-      sdk.Avatar(id = "c3-avatar", label = "operator", icon = "user", variant = "info", x = 420, y = 125, width = 90, height = 90)
-      sdk.Badge(id = "c3-badge", label = "ON CALL", variant = "warning", x = 520, y = 155, width = 100, height = 28)
+      sdk.Header(id = "c3-h", title = "STATUS + IDENTITY", caption = "03 / 08", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.StatusCard(id = "c3-card", title = "Gateway healthy", variant = "success", x = 231, y = 324, width = 729, height = 324)
+      sdk.Avatar(id = "c3-avatar", label = "operator", icon = "user", variant = "info", x = 1149, y = 337.5, width = 243, height = 243)
+      sdk.Badge(id = "c3-badge", label = "ON CALL", variant = "warning", x = 1419, y = 418.5, width = 270, height = 75.6)
       timeline main { at 0 reveal c3-h duration 180 after c3-h reveal c3-card duration 220 after c3-card reveal c3-avatar duration 200 after c3-avatar reveal c3-badge duration 180 }
     }
   }
@@ -420,15 +420,15 @@ explainer "SDK Generic Catalog" {
     narration: "A large badge marks a production release in the success color; smaller badges demonstrate info, warning, and danger states."
     caption: "Color reinforces the label; it never replaces it."
     render: @scene {
-      sdk.Header(id = "badge-h", title = "SDK.BADGE", caption = "compact category", x = 18, y = 16, width = 664, height = 44)
-      sdk.Badge(id = "badge-hero", label = "PRODUCTION", variant = "success", x = 90, y = 130, width = 250, height = 64)
-      sdk.Label(id = "badge-hero-l", text = "HERO · RELEASE CHANNEL", x = 70, y = 220, width = 290, height = 18)
-      sdk.Badge(id = "badge-v1", label = "INFO", variant = "info", x = 430, y = 110, width = 90, height = 28)
-      sdk.Label(id = "badge-v1-l", text = "INFO", x = 430, y = 146, width = 90, height = 16)
-      sdk.Badge(id = "badge-v2", label = "BETA", variant = "warning", x = 540, y = 110, width = 90, height = 28)
-      sdk.Label(id = "badge-v2-l", text = "WARNING", x = 540, y = 146, width = 90, height = 16)
-      sdk.Badge(id = "badge-v3", label = "BLOCKED", variant = "danger", x = 485, y = 190, width = 100, height = 28)
-      sdk.Label(id = "badge-v3-l", text = "DANGER", x = 485, y = 226, width = 100, height = 16)
+      sdk.Header(id = "badge-h", title = "SDK.BADGE", caption = "compact category", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Badge(id = "badge-hero", label = "PRODUCTION", variant = "success", x = 258, y = 351, width = 675, height = 172.8)
+      sdk.Label(id = "badge-hero-l", text = "HERO · RELEASE CHANNEL", x = 204, y = 594, width = 783, height = 48.6)
+      sdk.Badge(id = "badge-v1", label = "INFO", variant = "info", x = 1176, y = 297, width = 243, height = 75.6)
+      sdk.Label(id = "badge-v1-l", text = "INFO", x = 1176, y = 394.2, width = 243, height = 43.2)
+      sdk.Badge(id = "badge-v2", label = "BETA", variant = "warning", x = 1473, y = 297, width = 243, height = 75.6)
+      sdk.Label(id = "badge-v2-l", text = "WARNING", x = 1473, y = 394.2, width = 243, height = 43.2)
+      sdk.Badge(id = "badge-v3", label = "BLOCKED", variant = "danger", x = 1324.5, y = 513, width = 270, height = 75.6)
+      sdk.Label(id = "badge-v3-l", text = "DANGER", x = 1324.5, y = 610.2, width = 270, height = 43.2)
       timeline main { at 0 reveal badge-h duration 160 after badge-h reveal badge-hero duration 240 after badge-hero reveal badge-hero-l duration 140 after badge-hero-l stagger targets [badge-v1, badge-v2] step 90 duration 160 after badge-v2 stagger targets [badge-v1-l, badge-v2-l] step 70 duration 120 after badge-v2-l reveal badge-v3 duration 160 after badge-v3 reveal badge-v3-l duration 120 }
     }
   }
@@ -440,16 +440,16 @@ explainer "SDK Generic Catalog" {
     narration: "A labeled status dot shows a healthy endpoint signal; smaller dots compare warning, danger, and informational states."
     caption: "A dot needs an adjacent label or accessible name."
     render: @scene {
-      sdk.Header(id = "dot-h", title = "SDK.STATUSDOT", caption = "minimal state signal", x = 18, y = 16, width = 664, height = 44)
-      sdk.StatusDot(id = "dot-hero", label = "endpoint healthy", variant = "success", x = 120, y = 130, width = 70, height = 70)
-      sdk.Title(id = "dot-copy", text = "Endpoint healthy", x = 210, y = 145, width = 190, height = 32)
-      sdk.Label(id = "dot-hero-l", text = "HERO · LABELED HEALTH", x = 90, y = 230, width = 300, height = 18)
-      sdk.StatusDot(id = "dot-v1", label = "warning", variant = "warning", x = 455, y = 130, width = 28, height = 28)
-      sdk.Label(id = "dot-v1-l", text = "WARN", x = 445, y = 170, width = 48, height = 16)
-      sdk.StatusDot(id = "dot-v2", label = "danger", variant = "danger", x = 520, y = 130, width = 28, height = 28)
-      sdk.Label(id = "dot-v2-l", text = "ERROR", x = 510, y = 170, width = 48, height = 16)
-      sdk.StatusDot(id = "dot-v3", label = "info", variant = "info", x = 585, y = 130, width = 28, height = 28)
-      sdk.Label(id = "dot-v3-l", text = "INFO", x = 575, y = 170, width = 48, height = 16)
+      sdk.Header(id = "dot-h", title = "SDK.STATUSDOT", caption = "minimal state signal", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.StatusDot(id = "dot-hero", label = "endpoint healthy", variant = "success", x = 339, y = 351, width = 189, height = 189)
+      sdk.Title(id = "dot-copy", text = "Endpoint healthy", x = 582, y = 391.5, width = 513, height = 86.4)
+      sdk.Label(id = "dot-hero-l", text = "HERO · LABELED HEALTH", x = 258, y = 621, width = 810, height = 48.6)
+      sdk.StatusDot(id = "dot-v1", label = "warning", variant = "warning", x = 1243.5, y = 351, width = 75.6, height = 75.6)
+      sdk.Label(id = "dot-v1-l", text = "WARN", x = 1216.5, y = 459, width = 129.6, height = 43.2)
+      sdk.StatusDot(id = "dot-v2", label = "danger", variant = "danger", x = 1419, y = 351, width = 75.6, height = 75.6)
+      sdk.Label(id = "dot-v2-l", text = "ERROR", x = 1392, y = 459, width = 129.6, height = 43.2)
+      sdk.StatusDot(id = "dot-v3", label = "info", variant = "info", x = 1594.5, y = 351, width = 75.6, height = 75.6)
+      sdk.Label(id = "dot-v3-l", text = "INFO", x = 1567.5, y = 459, width = 129.6, height = 43.2)
       timeline main { at 0 reveal dot-h duration 160 after dot-h reveal dot-hero duration 220 after dot-hero reveal dot-copy duration 160 after dot-copy reveal dot-hero-l duration 140 after dot-hero-l stagger targets [dot-v1, dot-v2, dot-v3] step 90 duration 180 after dot-v3 stagger targets [dot-v1-l, dot-v2-l, dot-v3-l] step 70 duration 140 }
     }
   }
@@ -461,15 +461,15 @@ explainer "SDK Generic Catalog" {
     narration: "An avatar represents the on-call owner; smaller avatars distinguish a human operator, a service, and an automated agent."
     caption: "Identity should be recognizable even without a photo."
     render: @scene {
-      sdk.Header(id = "avatar-h", title = "SDK.AVATAR", caption = "identity marker", x = 18, y = 16, width = 664, height = 44)
-      sdk.Avatar(id = "avatar-hero", label = "Mina, on call", icon = "user", variant = "info", x = 120, y = 105, width = 130, height = 130)
-      sdk.Label(id = "avatar-hero-l", text = "HERO · ON-CALL OWNER", x = 80, y = 255, width = 220, height = 18)
-      sdk.Avatar(id = "avatar-v1", label = "operator", icon = "user", variant = "neutral", x = 430, y = 120, width = 58, height = 58)
-      sdk.Label(id = "avatar-v1-l", text = "HUMAN", x = 430, y = 188, width = 58, height = 16)
-      sdk.Avatar(id = "avatar-v2", label = "service", icon = "server", variant = "success", x = 515, y = 120, width = 58, height = 58)
-      sdk.Label(id = "avatar-v2-l", text = "SERVICE", x = 515, y = 188, width = 58, height = 16)
-      sdk.Avatar(id = "avatar-v3", label = "automation", icon = "code", variant = "warning", x = 600, y = 120, width = 58, height = 58)
-      sdk.Label(id = "avatar-v3-l", text = "AGENT", x = 600, y = 188, width = 58, height = 16)
+      sdk.Header(id = "avatar-h", title = "SDK.AVATAR", caption = "identity marker", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Avatar(id = "avatar-hero", label = "Mina, on call", icon = "user", variant = "info", x = 339, y = 283.5, width = 351, height = 351)
+      sdk.Label(id = "avatar-hero-l", text = "HERO · ON-CALL OWNER", x = 231, y = 688.5, width = 594, height = 48.6)
+      sdk.Avatar(id = "avatar-v1", label = "operator", icon = "user", variant = "neutral", x = 1176, y = 324, width = 156.6, height = 156.6)
+      sdk.Label(id = "avatar-v1-l", text = "HUMAN", x = 1176, y = 507.6, width = 156.6, height = 43.2)
+      sdk.Avatar(id = "avatar-v2", label = "service", icon = "server", variant = "success", x = 1405.5, y = 324, width = 156.6, height = 156.6)
+      sdk.Label(id = "avatar-v2-l", text = "SERVICE", x = 1405.5, y = 507.6, width = 156.6, height = 43.2)
+      sdk.Avatar(id = "avatar-v3", label = "automation", icon = "code", variant = "warning", x = 1635, y = 324, width = 156.6, height = 156.6)
+      sdk.Label(id = "avatar-v3-l", text = "AGENT", x = 1635, y = 507.6, width = 156.6, height = 43.2)
       timeline main { at 0 reveal avatar-h duration 160 after avatar-h reveal avatar-hero duration 240 after avatar-hero reveal avatar-hero-l duration 140 after avatar-hero-l stagger targets [avatar-v1, avatar-v2, avatar-v3] step 90 duration 180 after avatar-v3 stagger targets [avatar-v1-l, avatar-v2-l, avatar-v3-l] step 70 duration 140 }
     }
   }
@@ -481,15 +481,15 @@ explainer "SDK Generic Catalog" {
     narration: "An icon label marks a private, secure endpoint; smaller labels show verified, storage, and cloud contexts."
     caption: "The label disambiguates the icon."
     render: @scene {
-      sdk.Header(id = "il-h", title = "SDK.ICONLABEL", caption = "symbol + words", x = 18, y = 16, width = 664, height = 44)
-      sdk.IconLabel(id = "il-hero", label = "Private endpoint", icon = "lock", variant = "success", x = 54, y = 125, width = 340, height = 70)
-      sdk.Label(id = "il-hero-l", text = "HERO · SECURITY CONTEXT", x = 54, y = 220, width = 340, height = 18)
-      sdk.IconLabel(id = "il-v1", label = "Verified", icon = "check", x = 430, y = 100, width = 210, height = 42)
-      sdk.Label(id = "il-v1-l", text = "STATE", x = 430, y = 158, width = 210, height = 14)
-      sdk.IconLabel(id = "il-v2", label = "Vector store", icon = "database", x = 430, y = 184, width = 210, height = 42)
-      sdk.Label(id = "il-v2-l", text = "RESOURCE", x = 430, y = 242, width = 210, height = 14)
-      sdk.IconLabel(id = "il-v3", label = "Cloud", icon = "cloud", x = 430, y = 268, width = 210, height = 42)
-      sdk.Label(id = "il-v3-l", text = "LOCATION", x = 430, y = 326, width = 210, height = 14)
+      sdk.Header(id = "il-h", title = "SDK.ICONLABEL", caption = "symbol + words", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.IconLabel(id = "il-hero", label = "Private endpoint", icon = "lock", variant = "success", x = 160.8, y = 337.5, width = 918, height = 189)
+      sdk.Label(id = "il-hero-l", text = "HERO · SECURITY CONTEXT", x = 160.8, y = 594, width = 918, height = 48.6)
+      sdk.IconLabel(id = "il-v1", label = "Verified", icon = "check", x = 1176, y = 270, width = 567, height = 113.4)
+      sdk.Label(id = "il-v1-l", text = "STATE", x = 1176, y = 426.6, width = 567, height = 37.8)
+      sdk.IconLabel(id = "il-v2", label = "Vector store", icon = "database", x = 1176, y = 496.8, width = 567, height = 113.4)
+      sdk.Label(id = "il-v2-l", text = "RESOURCE", x = 1176, y = 653.4, width = 567, height = 37.8)
+      sdk.IconLabel(id = "il-v3", label = "Cloud", icon = "cloud", x = 1176, y = 723.6, width = 567, height = 113.4)
+      sdk.Label(id = "il-v3-l", text = "LOCATION", x = 1176, y = 880.2, width = 567, height = 37.8)
       timeline main { at 0 reveal il-h duration 160 after il-h reveal il-hero duration 240 after il-hero reveal il-hero-l duration 140 after il-hero-l reveal il-v1 duration 140 after il-v1 reveal il-v1-l duration 100 after il-v1-l reveal il-v2 duration 140 after il-v2 reveal il-v2-l duration 100 after il-v2-l reveal il-v3 duration 140 after il-v3 reveal il-v3-l duration 100 }
     }
   }
@@ -501,15 +501,15 @@ explainer "SDK Generic Catalog" {
     narration: "An alert warns about capacity below the safety margin; smaller alerts compare informational, successful, and dangerous outcomes."
     caption: "State, message, and next action belong together."
     render: @scene {
-      sdk.Header(id = "alert-h", title = "SDK.ALERT", caption = "actionable interruption", x = 18, y = 16, width = 664, height = 44)
-      sdk.Alert(id = "alert-hero", title = "Capacity below safety margin", variant = "warning", x = 44, y = 105, width = 350, height = 140)
-      sdk.Label(id = "alert-hero-l", text = "HERO · CAPACITY WARNING", x = 44, y = 265, width = 350, height = 18)
-      sdk.Alert(id = "alert-v1", title = "Run queued", variant = "info", x = 430, y = 90, width = 220, height = 54)
-      sdk.Label(id = "alert-v1-l", text = "INFO", x = 430, y = 160, width = 220, height = 14)
-      sdk.Alert(id = "alert-v2", title = "Export complete", variant = "success", x = 430, y = 186, width = 220, height = 54)
-      sdk.Label(id = "alert-v2-l", text = "SUCCESS", x = 430, y = 256, width = 220, height = 14)
-      sdk.Alert(id = "alert-v3", title = "Connection failed", variant = "danger", x = 430, y = 282, width = 220, height = 54)
-      sdk.Label(id = "alert-v3-l", text = "DANGER", x = 430, y = 352, width = 220, height = 14)
+      sdk.Header(id = "alert-h", title = "SDK.ALERT", caption = "actionable interruption", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Alert(id = "alert-hero", title = "Capacity below safety margin", variant = "warning", x = 133.8, y = 283.5, width = 945, height = 378)
+      sdk.Label(id = "alert-hero-l", text = "HERO · CAPACITY WARNING", x = 133.8, y = 715.5, width = 945, height = 48.6)
+      sdk.Alert(id = "alert-v1", title = "Run queued", variant = "info", x = 1176, y = 243, width = 594, height = 145.8)
+      sdk.Label(id = "alert-v1-l", text = "INFO", x = 1176, y = 432, width = 594, height = 37.8)
+      sdk.Alert(id = "alert-v2", title = "Export complete", variant = "success", x = 1176, y = 502.2, width = 594, height = 145.8)
+      sdk.Label(id = "alert-v2-l", text = "SUCCESS", x = 1176, y = 691.2, width = 594, height = 37.8)
+      sdk.Alert(id = "alert-v3", title = "Connection failed", variant = "danger", x = 1176, y = 761.4, width = 594, height = 145.8)
+      sdk.Label(id = "alert-v3-l", text = "DANGER", x = 1176, y = 950.4, width = 594, height = 37.8)
       timeline main { at 0 reveal alert-h duration 160 after alert-h reveal alert-hero duration 240 after alert-hero reveal alert-hero-l duration 140 after alert-hero-l reveal alert-v1 duration 140 after alert-v1 reveal alert-v1-l duration 100 after alert-v1-l reveal alert-v2 duration 140 after alert-v2 reveal alert-v2-l duration 100 after alert-v2-l reveal alert-v3 duration 140 after alert-v3 reveal alert-v3-l duration 100 }
     }
   }
@@ -521,13 +521,13 @@ explainer "SDK Generic Catalog" {
     narration: "A status card summarizes a healthy gateway; smaller cards compare a degraded tokenizer and a failed exporter."
     caption: "Cards are persistent summaries; alerts are interruptions."
     render: @scene {
-      sdk.Header(id = "sc-h", title = "SDK.STATUSCARD", caption = "persistent health summary", x = 18, y = 16, width = 664, height = 44)
-      sdk.StatusCard(id = "sc-hero", title = "Gateway · healthy", variant = "success", x = 44, y = 100, width = 350, height = 155)
-      sdk.Label(id = "sc-hero-l", text = "HERO · PRIMARY SERVICE", x = 44, y = 272, width = 350, height = 18)
-      sdk.StatusCard(id = "sc-v1", title = "Tokenizer · degraded", variant = "warning", x = 430, y = 110, width = 220, height = 88)
-      sdk.StatusCard(id = "sc-v2", title = "Exporter · failed", variant = "danger", x = 430, y = 244, width = 220, height = 88)
-      sdk.Label(id = "sc-v1-l", text = "DEGRADED", x = 430, y = 216, width = 220, height = 16)
-      sdk.Label(id = "sc-v2-l", text = "FAILED", x = 430, y = 350, width = 220, height = 16)
+      sdk.Header(id = "sc-h", title = "SDK.STATUSCARD", caption = "persistent health summary", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.StatusCard(id = "sc-hero", title = "Gateway · healthy", variant = "success", x = 133.8, y = 270, width = 945, height = 418.5)
+      sdk.Label(id = "sc-hero-l", text = "HERO · PRIMARY SERVICE", x = 133.8, y = 734.4, width = 945, height = 48.6)
+      sdk.StatusCard(id = "sc-v1", title = "Tokenizer · degraded", variant = "warning", x = 1176, y = 297, width = 594, height = 237.6)
+      sdk.StatusCard(id = "sc-v2", title = "Exporter · failed", variant = "danger", x = 1176, y = 658.8, width = 594, height = 237.6)
+      sdk.Label(id = "sc-v1-l", text = "DEGRADED", x = 1176, y = 583.2, width = 594, height = 43.2)
+      sdk.Label(id = "sc-v2-l", text = "FAILED", x = 1176, y = 945, width = 594, height = 43.2)
       timeline main { at 0 reveal sc-h duration 160 after sc-h reveal sc-hero duration 240 after sc-hero reveal sc-hero-l duration 140 after sc-hero-l reveal sc-v1 duration 160 after sc-v1 reveal sc-v1-l duration 120 after sc-v1-l reveal sc-v2 duration 160 after sc-v2 reveal sc-v2-l duration 120 }
     }
   }
@@ -539,13 +539,13 @@ explainer "SDK Generic Catalog" {
     narration: "An empty state handles a workspace with no benchmark runs yet; smaller states distinguish no search results and no saved reports."
     caption: "Absence needs explanation, not a blank panel."
     render: @scene {
-      sdk.Header(id = "empty-h", title = "SDK.EMPTYSTATE", caption = "purposeful absence", x = 18, y = 16, width = 664, height = 44)
-      sdk.EmptyState(id = "empty-hero", title = "No benchmark runs yet", icon = "file", variant = "info", x = 44, y = 85, width = 350, height = 200)
-      sdk.Label(id = "empty-hero-l", text = "HERO · FIRST-RUN STATE", x = 44, y = 300, width = 350, height = 18)
-      sdk.EmptyState(id = "empty-v1", title = "No matches", icon = "file", x = 430, y = 95, width = 220, height = 105)
-      sdk.EmptyState(id = "empty-v2", title = "No reports saved", icon = "database", x = 430, y = 248, width = 220, height = 105)
-      sdk.Label(id = "empty-v1-l", text = "SEARCH", x = 430, y = 220, width = 220, height = 16)
-      sdk.Label(id = "empty-v2-l", text = "LIBRARY", x = 430, y = 373, width = 220, height = 16)
+      sdk.Header(id = "empty-h", title = "SDK.EMPTYSTATE", caption = "purposeful absence", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.EmptyState(id = "empty-hero", title = "No benchmark runs yet", icon = "file", variant = "info", x = 133.8, y = 229.5, width = 945, height = 540)
+      sdk.Label(id = "empty-hero-l", text = "HERO · FIRST-RUN STATE", x = 133.8, y = 810, width = 945, height = 48.6)
+      sdk.EmptyState(id = "empty-v1", title = "No matches", icon = "file", x = 1176, y = 256.5, width = 594, height = 283.5)
+      sdk.EmptyState(id = "empty-v2", title = "No reports saved", icon = "database", x = 1176, y = 669.6, width = 594, height = 283.5)
+      sdk.Label(id = "empty-v1-l", text = "SEARCH", x = 1176, y = 594, width = 594, height = 43.2)
+      sdk.Label(id = "empty-v2-l", text = "LIBRARY", x = 1176, y = 1007.1, width = 594, height = 43.2)
       timeline main { at 0 reveal empty-h duration 160 after empty-h reveal empty-hero duration 240 after empty-hero reveal empty-hero-l duration 140 after empty-hero-l reveal empty-v1 duration 160 after empty-v1 reveal empty-v1-l duration 120 after empty-v1-l reveal empty-v2 duration 160 after empty-v2 reveal empty-v2-l duration 120 }
     }
   }
@@ -557,10 +557,10 @@ explainer "SDK Generic Catalog" {
     narration: "Data display components move from compact summaries to structured comparisons."
     caption: "Six primitives · summary, trend, rows, cells, taxonomy."
     render: @scene {
-      sdk.Header(id = "c4-h", title = "DATA DISPLAY", caption = "04 / 08", x = 18, y = 16, width = 664, height = 44)
-      sdk.Stat(id = "c4-stat", title = "Throughput", items = ["1,284 req/s", "+8.2%"], x = 70, y = 120, width = 180, height = 110)
-      sdk.Metric(id = "c4-metric", title = "P95 latency", items = ["18.7 ms", "stable"], x = 270, y = 120, width = 190, height = 110)
-      sdk.TagList(id = "c4-tags", items = ["streaming", "h2", "gpu"], x = 480, y = 145, width = 160, height = 48)
+      sdk.Header(id = "c4-h", title = "DATA DISPLAY", caption = "04 / 08", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Stat(id = "c4-stat", title = "Throughput", items = ["1,284 req/s", "+8.2%"], x = 204, y = 324, width = 486, height = 297)
+      sdk.Metric(id = "c4-metric", title = "P95 latency", items = ["18.7 ms", "stable"], x = 744, y = 324, width = 513, height = 297)
+      sdk.TagList(id = "c4-tags", items = ["streaming", "h2", "gpu"], x = 1311, y = 391.5, width = 432, height = 129.6)
       timeline main { at 0 reveal c4-h duration 180 after c4-h reveal c4-stat duration 220 after c4-stat reveal c4-metric duration 200 after c4-metric reveal c4-tags duration 180 }
     }
   }
@@ -572,13 +572,13 @@ explainer "SDK Generic Catalog" {
     narration: "A stat spotlights throughput; smaller stats compare request count and active workers."
     caption: "Label, value, and one supporting fact are enough."
     render: @scene {
-      sdk.Header(id = "stat-h", title = "SDK.STAT", caption = "single-number summary", x = 18, y = 16, width = 664, height = 44)
-      sdk.Stat(id = "stat-hero", title = "Throughput", items = ["1,284 req/s", "+8.2% vs baseline"], x = 44, y = 105, width = 350, height = 120)
-      sdk.Label(id = "stat-hero-l", text = "HERO · PRIMARY KPI", x = 44, y = 242, width = 350, height = 18)
-      sdk.Stat(id = "stat-v1", title = "Requests", items = ["84,211"], x = 430, y = 105, width = 220, height = 72)
-      sdk.Stat(id = "stat-v2", title = "Workers", items = ["8 active"], x = 430, y = 215, width = 220, height = 72)
-      sdk.Label(id = "stat-v1-l", text = "COUNT", x = 430, y = 187, width = 220, height = 16)
-      sdk.Label(id = "stat-v2-l", text = "CAPACITY", x = 430, y = 297, width = 220, height = 16)
+      sdk.Header(id = "stat-h", title = "SDK.STAT", caption = "single-number summary", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Stat(id = "stat-hero", title = "Throughput", items = ["1,284 req/s", "+8.2% vs baseline"], x = 133.8, y = 283.5, width = 945, height = 324)
+      sdk.Label(id = "stat-hero-l", text = "HERO · PRIMARY KPI", x = 133.8, y = 653.4, width = 945, height = 48.6)
+      sdk.Stat(id = "stat-v1", title = "Requests", items = ["84,211"], x = 1176, y = 283.5, width = 594, height = 194.4)
+      sdk.Stat(id = "stat-v2", title = "Workers", items = ["8 active"], x = 1176, y = 580.5, width = 594, height = 194.4)
+      sdk.Label(id = "stat-v1-l", text = "COUNT", x = 1176, y = 504.9, width = 594, height = 43.2)
+      sdk.Label(id = "stat-v2-l", text = "CAPACITY", x = 1176, y = 801.9, width = 594, height = 43.2)
       timeline main { at 0 reveal stat-h duration 160 after stat-h reveal stat-hero duration 240 after stat-hero reveal stat-hero-l duration 140 after stat-hero-l reveal stat-v1 duration 160 after stat-v1 reveal stat-v1-l duration 120 after stat-v1-l reveal stat-v2 duration 160 after stat-v2 reveal stat-v2-l duration 120 }
     }
   }
@@ -590,13 +590,13 @@ explainer "SDK Generic Catalog" {
     narration: "A metric frames p95 latency against its SLO; smaller metrics show token rate and error ratio."
     caption: "Units and interpretation are part of the metric."
     render: @scene {
-      sdk.Header(id = "metric-h", title = "SDK.METRIC", caption = "measure + meaning", x = 18, y = 16, width = 664, height = 44)
-      sdk.Metric(id = "metric-hero", title = "P95 latency", items = ["18.7 ms", "within 25 ms SLO"], x = 44, y = 105, width = 350, height = 120)
-      sdk.Label(id = "metric-hero-l", text = "HERO · LATENCY SLO", x = 44, y = 242, width = 350, height = 18)
-      sdk.Metric(id = "metric-v1", title = "Output rate", items = ["92 tok/s"], x = 430, y = 105, width = 220, height = 72)
-      sdk.Metric(id = "metric-v2", title = "Errors", items = ["0.04%", "low"], x = 430, y = 215, width = 220, height = 72)
-      sdk.Label(id = "metric-v1-l", text = "RATE", x = 430, y = 187, width = 220, height = 16)
-      sdk.Label(id = "metric-v2-l", text = "RATIO", x = 430, y = 297, width = 220, height = 16)
+      sdk.Header(id = "metric-h", title = "SDK.METRIC", caption = "measure + meaning", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Metric(id = "metric-hero", title = "P95 latency", items = ["18.7 ms", "within 25 ms SLO"], x = 133.8, y = 283.5, width = 945, height = 324)
+      sdk.Label(id = "metric-hero-l", text = "HERO · LATENCY SLO", x = 133.8, y = 653.4, width = 945, height = 48.6)
+      sdk.Metric(id = "metric-v1", title = "Output rate", items = ["92 tok/s"], x = 1176, y = 283.5, width = 594, height = 194.4)
+      sdk.Metric(id = "metric-v2", title = "Errors", items = ["0.04%", "low"], x = 1176, y = 580.5, width = 594, height = 194.4)
+      sdk.Label(id = "metric-v1-l", text = "RATE", x = 1176, y = 504.9, width = 594, height = 43.2)
+      sdk.Label(id = "metric-v2-l", text = "RATIO", x = 1176, y = 801.9, width = 594, height = 43.2)
       timeline main { at 0 reveal metric-h duration 160 after metric-h reveal metric-hero duration 240 after metric-hero reveal metric-hero-l duration 140 after metric-hero-l reveal metric-v1 duration 160 after metric-v1 reveal metric-v1-l duration 120 after metric-v1-l reveal metric-v2 duration 160 after metric-v2 reveal metric-v2-l duration 120 }
     }
   }
@@ -608,13 +608,13 @@ explainer "SDK Generic Catalog" {
     narration: "A table establishes a benchmark comparison across models; smaller tables show compact capacity and artifact summaries."
     caption: "Columns should support comparison, not merely storage."
     render: @scene {
-      sdk.Header(id = "table-h", title = "SDK.TABLE", caption = "structured comparison", x = 18, y = 16, width = 664, height = 44)
-      sdk.Table(id = "table-hero", title = "Benchmark comparison", x = 35, y = 84, width = 390, height = 186) { rows { sdk.TableRow(id = "table-hr1", x = 0, y = 30, width = 390, height = 34) { cells { sdk.TableCell(id = "table-h11", label = "MODEL") sdk.TableCell(id = "table-h12", label = "P95") sdk.TableCell(id = "table-h13", label = "REQ/S") } } sdk.TableRow(id = "table-hr2", x = 0, y = 70, width = 390, height = 48) { cells { sdk.TableCell(id = "table-h21", label = "Llama 70B") sdk.TableCell(id = "table-h22", label = "18.7 ms") sdk.TableCell(id = "table-h23", label = "1,284") } } sdk.TableRow(id = "table-hr3", x = 0, y = 124, width = 390, height = 48) { cells { sdk.TableCell(id = "table-h31", label = "Nemotron") sdk.TableCell(id = "table-h32", label = "21.3 ms") sdk.TableCell(id = "table-h33", label = "1,102") } } } }
-      sdk.Label(id = "table-hero-l", text = "HERO · PERFORMANCE MATRIX", x = 35, y = 284, width = 390, height = 18)
-      sdk.Table(id = "table-v1", title = "Capacity", x = 450, y = 94, width = 200, height = 82) { rows { sdk.TableRow(id = "table-v1r", x = 0, y = 28, width = 200, height = 48) { cells { sdk.TableCell(id = "table-v1c1", label = "H100") sdk.TableCell(id = "table-v1c2", label = "72%") } } } }
-      sdk.Table(id = "table-v2", title = "Artifacts", x = 450, y = 214, width = 200, height = 82) { rows { sdk.TableRow(id = "table-v2r", x = 0, y = 28, width = 200, height = 48) { cells { sdk.TableCell(id = "table-v2c1", label = "JSONL") sdk.TableCell(id = "table-v2c2", label = "48 MB") } } } }
-      sdk.Label(id = "table-v1-l", text = "CAPACITY", x = 450, y = 184, width = 200, height = 16)
-      sdk.Label(id = "table-v2-l", text = "OUTPUTS", x = 450, y = 304, width = 200, height = 16)
+      sdk.Header(id = "table-h", title = "SDK.TABLE", caption = "structured comparison", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Table(id = "table-hero", title = "Benchmark comparison", x = 109.5, y = 226.8, width = 1053, height = 502.2) { rows { sdk.TableRow(id = "table-hr1", x = 15, y = 81, width = 1053, height = 91.8) { cells { sdk.TableCell(id = "table-h11", label = "MODEL") sdk.TableCell(id = "table-h12", label = "P95") sdk.TableCell(id = "table-h13", label = "REQ/S") } } sdk.TableRow(id = "table-hr2", x = 15, y = 189, width = 1053, height = 129.6) { cells { sdk.TableCell(id = "table-h21", label = "Llama 70B") sdk.TableCell(id = "table-h22", label = "18.7 ms") sdk.TableCell(id = "table-h23", label = "1,284") } } sdk.TableRow(id = "table-hr3", x = 15, y = 334.8, width = 1053, height = 129.6) { cells { sdk.TableCell(id = "table-h31", label = "Nemotron") sdk.TableCell(id = "table-h32", label = "21.3 ms") sdk.TableCell(id = "table-h33", label = "1,102") } } } }
+      sdk.Label(id = "table-hero-l", text = "HERO · PERFORMANCE MATRIX", x = 109.5, y = 766.8, width = 1053, height = 48.6)
+      sdk.Table(id = "table-v1", title = "Capacity", x = 1230, y = 253.8, width = 540, height = 221.4) { rows { sdk.TableRow(id = "table-v1r", x = 15, y = 75.6, width = 540, height = 129.6) { cells { sdk.TableCell(id = "table-v1c1", label = "H100") sdk.TableCell(id = "table-v1c2", label = "72%") } } } }
+      sdk.Table(id = "table-v2", title = "Artifacts", x = 1230, y = 577.8, width = 540, height = 221.4) { rows { sdk.TableRow(id = "table-v2r", x = 15, y = 75.6, width = 540, height = 129.6) { cells { sdk.TableCell(id = "table-v2c1", label = "JSONL") sdk.TableCell(id = "table-v2c2", label = "48 MB") } } } }
+      sdk.Label(id = "table-v1-l", text = "CAPACITY", x = 1230, y = 496.8, width = 540, height = 43.2)
+      sdk.Label(id = "table-v2-l", text = "OUTPUTS", x = 1230, y = 820.8, width = 540, height = 43.2)
       timeline main { at 0 reveal table-h duration 160 after table-h reveal table-hero duration 240 after table-hero reveal table-hero-l duration 140 after table-hero-l reveal table-v1 duration 160 after table-v1 reveal table-v1-l duration 120 after table-v1-l reveal table-v2 duration 160 after table-v2 reveal table-v2-l duration 120 }
     }
   }
@@ -626,13 +626,13 @@ explainer "SDK Generic Catalog" {
     narration: "A table row carries one benchmark result; smaller rows compare a header row and a highlighted summary row."
     caption: "Rows own horizontal alignment; cells own content."
     render: @scene {
-      sdk.Header(id = "row-h", title = "SDK.TABLEROW", caption = "horizontal record", x = 18, y = 16, width = 664, height = 44)
-      sdk.TableRow(id = "row-hero", label = "Llama benchmark row", x = 44, y = 120, width = 350, height = 54) { cells { sdk.TableCell(id = "row-hc1", label = "Llama 70B") sdk.TableCell(id = "row-hc2", label = "18.7 ms") sdk.TableCell(id = "row-hc3", label = "1,284/s") } }
-      sdk.Label(id = "row-hero-l", text = "HERO · RESULT RECORD", x = 44, y = 198, width = 350, height = 18)
-      sdk.TableRow(id = "row-v1", label = "header row", x = 430, y = 110, width = 220, height = 42) { cells { sdk.TableCell(id = "row-v1c1", label = "MODEL") sdk.TableCell(id = "row-v1c2", label = "P95") } }
-      sdk.TableRow(id = "row-v2", label = "summary row", x = 430, y = 202, width = 220, height = 42) { cells { sdk.TableCell(id = "row-v2c1", label = "TOTAL", surfaceRole = theme(accent.green)) sdk.TableCell(id = "row-v2c2", label = "84K", surfaceRole = theme(accent.green)) } }
-      sdk.Label(id = "row-v1-l", text = "HEADER", x = 430, y = 174, width = 220, height = 16)
-      sdk.Label(id = "row-v2-l", text = "SUMMARY", x = 430, y = 266, width = 220, height = 16)
+      sdk.Header(id = "row-h", title = "SDK.TABLEROW", caption = "horizontal record", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.TableRow(id = "row-hero", label = "Llama benchmark row", x = 133.8, y = 324, width = 945, height = 145.8) { cells { sdk.TableCell(id = "row-hc1", label = "Llama 70B") sdk.TableCell(id = "row-hc2", label = "18.7 ms") sdk.TableCell(id = "row-hc3", label = "1,284/s") } }
+      sdk.Label(id = "row-hero-l", text = "HERO · RESULT RECORD", x = 133.8, y = 534.6, width = 945, height = 48.6)
+      sdk.TableRow(id = "row-v1", label = "header row", x = 1176, y = 297, width = 594, height = 113.4) { cells { sdk.TableCell(id = "row-v1c1", label = "MODEL") sdk.TableCell(id = "row-v1c2", label = "P95") } }
+      sdk.TableRow(id = "row-v2", label = "summary row", x = 1176, y = 545.4, width = 594, height = 113.4) { cells { sdk.TableCell(id = "row-v2c1", label = "TOTAL", surfaceRole = theme(accent.green)) sdk.TableCell(id = "row-v2c2", label = "84K", surfaceRole = theme(accent.green)) } }
+      sdk.Label(id = "row-v1-l", text = "HEADER", x = 1176, y = 469.8, width = 594, height = 43.2)
+      sdk.Label(id = "row-v2-l", text = "SUMMARY", x = 1176, y = 718.2, width = 594, height = 43.2)
       timeline main { at 0 reveal row-h duration 160 after row-h reveal row-hero duration 240 after row-hero reveal row-hero-l duration 140 after row-hero-l reveal row-v1 duration 160 after row-v1 reveal row-v1-l duration 120 after row-v1-l reveal row-v2 duration 160 after row-v2 reveal row-v2-l duration 120 }
     }
   }
@@ -644,13 +644,13 @@ explainer "SDK Generic Catalog" {
     narration: "A table cell carries a model's identity; smaller cells compare numeric and status-bearing content."
     caption: "A cell is a content boundary, not a whole table."
     render: @scene {
-      sdk.Header(id = "cell-h", title = "SDK.TABLECELL", caption = "single table field", x = 18, y = 16, width = 664, height = 44)
-      sdk.TableCell(id = "cell-hero", label = "Model identity", x = 44, y = 110, width = 350, height = 90, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) { children { sdk.Title(id = "cell-title", text = "Llama 3.1 70B", width = 300, height = 36) } }
-      sdk.Label(id = "cell-hero-l", text = "HERO · RICH IDENTITY CELL", x = 44, y = 225, width = 350, height = 18)
-      sdk.TableCell(id = "cell-v1", label = "18.7 ms", x = 430, y = 110, width = 100, height = 54, surfaceRole = theme(surface.elevated))
-      sdk.TableCell(id = "cell-v2", label = "healthy", x = 550, y = 110, width = 100, height = 54, surfaceRole = theme(accent.green))
-      sdk.Label(id = "cell-v1-l", text = "VALUE", x = 430, y = 172, width = 100, height = 16)
-      sdk.Label(id = "cell-v2-l", text = "STATUS", x = 550, y = 172, width = 100, height = 16)
+      sdk.Header(id = "cell-h", title = "SDK.TABLECELL", caption = "single table field", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.TableCell(id = "cell-hero", label = "Model identity", x = 133.8, y = 297, width = 945, height = 243, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) { children { sdk.Title(id = "cell-title", text = "Llama 3.1 70B", width = 810, height = 97.2) } }
+      sdk.Label(id = "cell-hero-l", text = "HERO · RICH IDENTITY CELL", x = 133.8, y = 607.5, width = 945, height = 48.6)
+      sdk.TableCell(id = "cell-v1", label = "18.7 ms", x = 1176, y = 297, width = 270, height = 145.8, surfaceRole = theme(surface.elevated))
+      sdk.TableCell(id = "cell-v2", label = "healthy", x = 1500, y = 297, width = 270, height = 145.8, surfaceRole = theme(accent.green))
+      sdk.Label(id = "cell-v1-l", text = "VALUE", x = 1176, y = 464.4, width = 270, height = 43.2)
+      sdk.Label(id = "cell-v2-l", text = "STATUS", x = 1500, y = 464.4, width = 270, height = 43.2)
       timeline main { at 0 reveal cell-h duration 160 after cell-h reveal cell-hero duration 240 after cell-hero reveal cell-hero-l duration 140 after cell-hero-l stagger targets [cell-v1, cell-v2] step 100 duration 180 after cell-v2 stagger targets [cell-v1-l, cell-v2-l] step 80 duration 140 }
     }
   }
@@ -662,13 +662,13 @@ explainer "SDK Generic Catalog" {
     narration: "A tag list summarizes an endpoint's capabilities; smaller lists compare protocol and artifact facets."
     caption: "Tags classify; they do not narrate."
     render: @scene {
-      sdk.Header(id = "tags-h", title = "SDK.TAGLIST", caption = "compact facets", x = 18, y = 16, width = 664, height = 44)
-      sdk.TagList(id = "tags-hero", title = "Endpoint capabilities", items = ["streaming", "tools", "vision", "json"], gap = 10, x = 44, y = 120, width = 350, height = 54)
-      sdk.Label(id = "tags-hero-l", text = "HERO · CAPABILITY TAXONOMY", x = 44, y = 200, width = 350, height = 18)
-      sdk.TagList(id = "tags-v1", items = ["HTTP", "SSE"], gap = 6, x = 430, y = 110, width = 100, height = 42)
-      sdk.TagList(id = "tags-v2", items = ["JSONL", "CSV", "OTLP"], gap = 6, x = 430, y = 194, width = 220, height = 42)
-      sdk.Label(id = "tags-v1-l", text = "PROTOCOL", x = 430, y = 168, width = 220, height = 16)
-      sdk.Label(id = "tags-v2-l", text = "OUTPUTS", x = 430, y = 252, width = 220, height = 16)
+      sdk.Header(id = "tags-h", title = "SDK.TAGLIST", caption = "compact facets", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.TagList(id = "tags-hero", title = "Endpoint capabilities", items = ["streaming", "tools", "vision", "json"], gap = 27, x = 133.8, y = 324, width = 945, height = 145.8)
+      sdk.Label(id = "tags-hero-l", text = "HERO · CAPABILITY TAXONOMY", x = 133.8, y = 540, width = 945, height = 48.6)
+      sdk.TagList(id = "tags-v1", items = ["HTTP", "SSE"], gap = 16.2, x = 1176, y = 297, width = 270, height = 113.4)
+      sdk.TagList(id = "tags-v2", items = ["JSONL", "CSV", "OTLP"], gap = 16.2, x = 1176, y = 523.8, width = 594, height = 113.4)
+      sdk.Label(id = "tags-v1-l", text = "PROTOCOL", x = 1176, y = 453.6, width = 594, height = 43.2)
+      sdk.Label(id = "tags-v2-l", text = "OUTPUTS", x = 1176, y = 680.4, width = 594, height = 43.2)
       timeline main { at 0 reveal tags-h duration 160 after tags-h reveal tags-hero duration 240 after tags-hero reveal tags-hero-l duration 140 after tags-hero-l reveal tags-v1 duration 160 after tags-v1 reveal tags-v1-l duration 120 after tags-v1-l reveal tags-v2 duration 160 after tags-v2 reveal tags-v2-l duration 120 }
     }
   }
@@ -680,10 +680,10 @@ explainer "SDK Generic Catalog" {
     narration: "Navigation components reveal where the reader is, what alternatives exist, and what happened over time."
     caption: "Five primitives · location, mode, page, sequence, event."
     render: @scene {
-      sdk.Header(id = "c5-h", title = "NAVIGATION + ACTIONS", caption = "05 / 08", x = 18, y = 16, width = 664, height = 44)
-      sdk.Breadcrumb(id = "c5-bc", items = ["Workspace", "Benchmarks", "Run 42"], x = 70, y = 110, width = 390, height = 32)
-      sdk.Tabs(id = "c5-tabs", items = ["Overview", "Metrics", "Artifacts"], x = 70, y = 175, width = 330, height = 38)
-      sdk.Pagination(id = "c5-pages", items = ["1", "2", "3", "…", "12"], x = 70, y = 250, width = 220, height = 32)
+      sdk.Header(id = "c5-h", title = "NAVIGATION + ACTIONS", caption = "05 / 08", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Breadcrumb(id = "c5-bc", items = ["Workspace", "Benchmarks", "Run 42"], x = 204, y = 297, width = 1053, height = 86.4)
+      sdk.Tabs(id = "c5-tabs", items = ["Overview", "Metrics", "Artifacts"], x = 204, y = 472.5, width = 891, height = 102.6)
+      sdk.Pagination(id = "c5-pages", items = ["1", "2", "3", "…", "12"], x = 204, y = 675, width = 594, height = 86.4)
       timeline main { at 0 reveal c5-h duration 180 after c5-h reveal c5-bc duration 220 after c5-bc reveal c5-tabs duration 200 after c5-tabs reveal c5-pages duration 180 }
     }
   }
@@ -695,13 +695,13 @@ explainer "SDK Generic Catalog" {
     narration: "A breadcrumb locates a benchmark run; smaller breadcrumbs compare a shallow product path and a deeper artifact path."
     caption: "Show hierarchy, not browser history."
     render: @scene {
-      sdk.Header(id = "bc-h", title = "SDK.BREADCRUMB", caption = "hierarchical location", x = 18, y = 16, width = 664, height = 44)
-      sdk.Breadcrumb(id = "bc-hero", items = ["Workspace", "Benchmarks", "Run 42"], gap = 12, x = 44, y = 130, width = 350, height = 38)
-      sdk.Label(id = "bc-hero-l", text = "HERO · RUN LOCATION", x = 44, y = 195, width = 350, height = 18)
-      sdk.Breadcrumb(id = "bc-v1", items = ["Home", "Models"], x = 430, y = 110, width = 100, height = 30)
-      sdk.Breadcrumb(id = "bc-v2", items = ["Runs", "42", "Artifacts", "records"], x = 430, y = 188, width = 220, height = 30)
-      sdk.Label(id = "bc-v1-l", text = "SHALLOW", x = 430, y = 152, width = 220, height = 16)
-      sdk.Label(id = "bc-v2-l", text = "DEEP", x = 430, y = 230, width = 220, height = 16)
+      sdk.Header(id = "bc-h", title = "SDK.BREADCRUMB", caption = "hierarchical location", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Breadcrumb(id = "bc-hero", items = ["Workspace", "Benchmarks", "Run 42"], gap = 32.4, x = 133.8, y = 351, width = 945, height = 102.6)
+      sdk.Label(id = "bc-hero-l", text = "HERO · RUN LOCATION", x = 133.8, y = 526.5, width = 945, height = 48.6)
+      sdk.Breadcrumb(id = "bc-v1", items = ["Home", "Models"], x = 1176, y = 297, width = 270, height = 81)
+      sdk.Breadcrumb(id = "bc-v2", items = ["Runs", "42", "Artifacts", "records"], x = 1176, y = 507.6, width = 594, height = 81)
+      sdk.Label(id = "bc-v1-l", text = "SHALLOW", x = 1176, y = 410.4, width = 594, height = 43.2)
+      sdk.Label(id = "bc-v2-l", text = "DEEP", x = 1176, y = 621, width = 594, height = 43.2)
       timeline main { at 0 reveal bc-h duration 160 after bc-h reveal bc-hero duration 240 after bc-hero reveal bc-hero-l duration 140 after bc-hero-l reveal bc-v1 duration 160 after bc-v1 reveal bc-v1-l duration 120 after bc-v1-l reveal bc-v2 duration 160 after bc-v2 reveal bc-v2-l duration 120 }
     }
   }
@@ -713,13 +713,13 @@ explainer "SDK Generic Catalog" {
     narration: "Tabs switch between views in a run workspace; smaller tab sets compare compact two-way and broader four-way navigation."
     caption: "Tabs represent peers, not a workflow."
     render: @scene {
-      sdk.Header(id = "tabs-h", title = "SDK.TABS", caption = "peer view switcher", x = 18, y = 16, width = 664, height = 44)
-      sdk.Tabs(id = "tabs-hero", items = ["Overview", "Metrics", "Artifacts"], gap = 16, x = 44, y = 125, width = 350, height = 44)
-      sdk.Label(id = "tabs-hero-l", text = "HERO · RUN WORKSPACE", x = 44, y = 195, width = 350, height = 18)
-      sdk.Tabs(id = "tabs-v1", items = ["Live", "History"], x = 430, y = 110, width = 100, height = 34)
-      sdk.Tabs(id = "tabs-v2", items = ["All", "Healthy", "Warning", "Failed"], x = 430, y = 192, width = 220, height = 34)
-      sdk.Label(id = "tabs-v1-l", text = "BINARY", x = 430, y = 156, width = 220, height = 16)
-      sdk.Label(id = "tabs-v2-l", text = "FILTER SET", x = 430, y = 238, width = 220, height = 16)
+      sdk.Header(id = "tabs-h", title = "SDK.TABS", caption = "peer view switcher", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Tabs(id = "tabs-hero", items = ["Overview", "Metrics", "Artifacts"], gap = 43.2, x = 133.8, y = 337.5, width = 945, height = 118.8)
+      sdk.Label(id = "tabs-hero-l", text = "HERO · RUN WORKSPACE", x = 133.8, y = 526.5, width = 945, height = 48.6)
+      sdk.Tabs(id = "tabs-v1", items = ["Live", "History"], x = 1176, y = 297, width = 270, height = 91.8)
+      sdk.Tabs(id = "tabs-v2", items = ["All", "Healthy", "Warning", "Failed"], x = 1176, y = 518.4, width = 594, height = 91.8)
+      sdk.Label(id = "tabs-v1-l", text = "BINARY", x = 1176, y = 421.2, width = 594, height = 43.2)
+      sdk.Label(id = "tabs-v2-l", text = "FILTER SET", x = 1176, y = 642.6, width = 594, height = 43.2)
       timeline main { at 0 reveal tabs-h duration 160 after tabs-h reveal tabs-hero duration 240 after tabs-hero reveal tabs-hero-l duration 140 after tabs-hero-l reveal tabs-v1 duration 160 after tabs-v1 reveal tabs-v1-l duration 120 after tabs-v1-l reveal tabs-v2 duration 160 after tabs-v2 reveal tabs-v2-l duration 120 }
     }
   }
@@ -731,13 +731,13 @@ explainer "SDK Generic Catalog" {
     narration: "Pagination navigates benchmark history; smaller controls compare a short page range and a truncated one."
     caption: "Keep the current position and total scope visible."
     render: @scene {
-      sdk.Header(id = "pages-h", title = "SDK.PAGINATION", caption = "bounded result navigation", x = 18, y = 16, width = 664, height = 44)
-      sdk.Pagination(id = "pages-hero", items = ["Prev", "4", "5", "6", "Next"], gap = 12, x = 44, y = 125, width = 350, height = 42)
-      sdk.Label(id = "pages-hero-l", text = "HERO · BENCHMARK HISTORY", x = 44, y = 195, width = 350, height = 18)
-      sdk.Pagination(id = "pages-v1", items = ["1", "2", "3"], x = 430, y = 110, width = 62, height = 32)
-      sdk.Pagination(id = "pages-v2", items = ["1", "…", "12"], x = 430, y = 188, width = 62, height = 32)
-      sdk.Label(id = "pages-v1-l", text = "SHORT", x = 430, y = 154, width = 220, height = 16)
-      sdk.Label(id = "pages-v2-l", text = "TRUNCATED", x = 430, y = 232, width = 220, height = 16)
+      sdk.Header(id = "pages-h", title = "SDK.PAGINATION", caption = "bounded result navigation", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Pagination(id = "pages-hero", items = ["Prev", "4", "5", "6", "Next"], gap = 32.4, x = 133.8, y = 337.5, width = 945, height = 113.4)
+      sdk.Label(id = "pages-hero-l", text = "HERO · BENCHMARK HISTORY", x = 133.8, y = 526.5, width = 945, height = 48.6)
+      sdk.Pagination(id = "pages-v1", items = ["1", "2", "3"], x = 1176, y = 297, width = 167.4, height = 86.4)
+      sdk.Pagination(id = "pages-v2", items = ["1", "…", "12"], x = 1176, y = 507.6, width = 167.4, height = 86.4)
+      sdk.Label(id = "pages-v1-l", text = "SHORT", x = 1176, y = 415.8, width = 594, height = 43.2)
+      sdk.Label(id = "pages-v2-l", text = "TRUNCATED", x = 1176, y = 626.4, width = 594, height = 43.2)
       timeline main { at 0 reveal pages-h duration 160 after pages-h reveal pages-hero duration 240 after pages-hero reveal pages-hero-l duration 140 after pages-hero-l reveal pages-v1 duration 160 after pages-v1 reveal pages-v1-l duration 120 after pages-v1-l reveal pages-v2 duration 160 after pages-v2 reveal pages-v2-l duration 120 }
     }
   }
@@ -749,13 +749,13 @@ explainer "SDK Generic Catalog" {
     narration: "A timeline traces a benchmark's lifecycle from queued to complete; smaller timelines compare a deployment sequence and an incident sequence."
     caption: "Events should explain change over time."
     render: @scene {
-      sdk.Header(id = "timeline-h", title = "SDK.TIMELINE", caption = "ordered events", x = 18, y = 16, width = 664, height = 44)
-      sdk.Timeline(id = "timeline-hero", title = "Benchmark lifecycle", items = ["Queued · 09:40", "Running · 09:41", "Complete · 09:47"], gap = 8, x = 44, y = 92, width = 606, height = 70)
-      sdk.Label(id = "timeline-hero-l", text = "HERO · RUN LIFECYCLE", x = 44, y = 178, width = 606, height = 18)
-      sdk.Timeline(id = "timeline-v1", items = ["Build", "Deploy"], x = 44, y = 226, width = 220, height = 54)
-      sdk.Timeline(id = "timeline-v2", items = ["Alert", "Mitigate", "Resolve"], x = 350, y = 226, width = 300, height = 54)
-      sdk.Label(id = "timeline-v1-l", text = "DEPLOYMENT", x = 44, y = 296, width = 220, height = 16)
-      sdk.Label(id = "timeline-v2-l", text = "INCIDENT", x = 350, y = 296, width = 300, height = 16)
+      sdk.Header(id = "timeline-h", title = "SDK.TIMELINE", caption = "ordered events", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Timeline(id = "timeline-hero", title = "Benchmark lifecycle", items = ["Queued · 09:40", "Running · 09:41", "Complete · 09:47"], gap = 21.6, x = 133.8, y = 248.4, width = 1636.2, height = 189)
+      sdk.Label(id = "timeline-hero-l", text = "HERO · RUN LIFECYCLE", x = 133.8, y = 480.6, width = 1636.2, height = 48.6)
+      sdk.Timeline(id = "timeline-v1", items = ["Build", "Deploy"], x = 133.8, y = 610.2, width = 594, height = 145.8)
+      sdk.Timeline(id = "timeline-v2", items = ["Alert", "Mitigate", "Resolve"], x = 960, y = 610.2, width = 810, height = 145.8)
+      sdk.Label(id = "timeline-v1-l", text = "DEPLOYMENT", x = 133.8, y = 799.2, width = 594, height = 43.2)
+      sdk.Label(id = "timeline-v2-l", text = "INCIDENT", x = 960, y = 799.2, width = 810, height = 43.2)
       timeline main { at 0 reveal timeline-h duration 160 after timeline-h reveal timeline-hero duration 240 after timeline-hero reveal timeline-hero-l duration 140 after timeline-hero-l reveal timeline-v1 duration 160 after timeline-v1 reveal timeline-v1-l duration 120 after timeline-v1-l reveal timeline-v2 duration 160 after timeline-v2 reveal timeline-v2-l duration 120 }
     }
   }
@@ -767,13 +767,13 @@ explainer "SDK Generic Catalog" {
     narration: "A timeline item marks benchmark completion with supporting detail; smaller items compare an in-progress event and a failure."
     caption: "Each item should answer what changed and when."
     render: @scene {
-      sdk.Header(id = "ti-h", title = "SDK.TIMELINEITEM", caption = "single milestone", x = 18, y = 16, width = 664, height = 44)
-      sdk.TimelineItem(id = "ti-hero", title = "Benchmark complete · 09:47", detail = "84,211 requests · artifacts exported", x = 44, y = 115, width = 350, height = 80)
-      sdk.Label(id = "ti-hero-l", text = "HERO · COMPLETION EVENT", x = 44, y = 220, width = 350, height = 18)
-      sdk.TimelineItem(id = "ti-v1", title = "Running · 09:41", x = 430, y = 105, width = 220, height = 54)
-      sdk.TimelineItem(id = "ti-v2", title = "Failed · 09:44", x = 430, y = 197, width = 220, height = 54, surfaceRole = theme(accent.danger))
-      sdk.Label(id = "ti-v1-l", text = "ACTIVE", x = 430, y = 171, width = 220, height = 16)
-      sdk.Label(id = "ti-v2-l", text = "FAILURE", x = 430, y = 263, width = 220, height = 16)
+      sdk.Header(id = "ti-h", title = "SDK.TIMELINEITEM", caption = "single milestone", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.TimelineItem(id = "ti-hero", title = "Benchmark complete · 09:47", detail = "84,211 requests · artifacts exported", x = 133.8, y = 310.5, width = 945, height = 216)
+      sdk.Label(id = "ti-hero-l", text = "HERO · COMPLETION EVENT", x = 133.8, y = 594, width = 945, height = 48.6)
+      sdk.TimelineItem(id = "ti-v1", title = "Running · 09:41", x = 1176, y = 283.5, width = 594, height = 145.8)
+      sdk.TimelineItem(id = "ti-v2", title = "Failed · 09:44", x = 1176, y = 531.9, width = 594, height = 145.8, surfaceRole = theme(accent.danger))
+      sdk.Label(id = "ti-v1-l", text = "ACTIVE", x = 1176, y = 461.7, width = 594, height = 43.2)
+      sdk.Label(id = "ti-v2-l", text = "FAILURE", x = 1176, y = 710.1, width = 594, height = 43.2)
       timeline main { at 0 reveal ti-h duration 160 after ti-h reveal ti-hero duration 240 after ti-hero reveal ti-hero-l duration 140 after ti-hero-l reveal ti-v1 duration 160 after ti-v1 reveal ti-v1-l duration 120 after ti-v1-l reveal ti-v2 duration 160 after ti-v2 reveal ti-v2-l duration 120 }
     }
   }
@@ -785,10 +785,10 @@ explainer "SDK Generic Catalog" {
     narration: "Indicators compress numeric state while preserving labels and meaningful ranges."
     caption: "Six primitives · completion, range, level, trend, score, state."
     render: @scene {
-      sdk.Header(id = "c6-h", title = "INDICATORS", caption = "06 / 08", x = 18, y = 16, width = 664, height = 44)
-      sdk.Gauge(id = "c6-g", label = "utilization", value = 0.72, x = 80, y = 115, width = 180, height = 90)
-      sdk.Sparkline(id = "c6-s", label = "throughput", values = [3, 4, 5, 4, 7, 8], x = 300, y = 125, width = 220, height = 70)
-      sdk.Rating(id = "c6-rating", label = "quality", value = 0.8, x = 535, y = 145, width = 120, height = 30)
+      sdk.Header(id = "c6-h", title = "INDICATORS", caption = "06 / 08", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Gauge(id = "c6-g", label = "utilization", value = 0.72, x = 231, y = 310.5, width = 486, height = 243)
+      sdk.Sparkline(id = "c6-s", label = "throughput", values = [3, 4, 5, 4, 7, 8], x = 825, y = 337.5, width = 594, height = 189)
+      sdk.Rating(id = "c6-rating", label = "quality", value = 0.8, x = 1459.5, y = 391.5, width = 324, height = 81)
       timeline main { at 0 reveal c6-h duration 180 after c6-h reveal c6-g duration 220 after c6-g reveal c6-s duration 200 after c6-s reveal c6-rating duration 180 }
     }
   }
@@ -800,15 +800,15 @@ explainer "SDK Generic Catalog" {
     narration: "A progress bar tracks artifact export; smaller bars compare early, midpoint, and complete states."
     caption: "Progress implies a destination; do not use it for open-ended load."
     render: @scene {
-      sdk.Header(id = "progress-h", title = "SDK.PROGRESS", caption = "completion indicator", x = 18, y = 16, width = 664, height = 44)
-      sdk.Progress(id = "progress-hero", label = "Exporting artifacts", value = 0.72, x = 44, y = 135, width = 350, height = 28)
-      sdk.Label(id = "progress-hero-l", text = "HERO · 72% EXPORTED", x = 44, y = 190, width = 350, height = 18)
-      sdk.Progress(id = "progress-v1", label = "started", value = 0.15, x = 430, y = 100, width = 220, height = 16)
-      sdk.Label(id = "progress-v1-l", text = "EARLY", x = 430, y = 124, width = 220, height = 14)
-      sdk.Progress(id = "progress-v2", label = "halfway", value = 0.5, x = 430, y = 160, width = 220, height = 16)
-      sdk.Label(id = "progress-v2-l", text = "MIDPOINT", x = 430, y = 184, width = 220, height = 14)
-      sdk.Progress(id = "progress-v3", label = "complete", value = 1, x = 430, y = 220, width = 220, height = 16)
-      sdk.Label(id = "progress-v3-l", text = "COMPLETE", x = 430, y = 244, width = 220, height = 14)
+      sdk.Header(id = "progress-h", title = "SDK.PROGRESS", caption = "completion indicator", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Progress(id = "progress-hero", label = "Exporting artifacts", value = 0.72, x = 133.8, y = 364.5, width = 945, height = 75.6)
+      sdk.Label(id = "progress-hero-l", text = "HERO · 72% EXPORTED", x = 133.8, y = 513, width = 945, height = 48.6)
+      sdk.Progress(id = "progress-v1", label = "started", value = 0.15, x = 1176, y = 270, width = 594, height = 43.2)
+      sdk.Label(id = "progress-v1-l", text = "EARLY", x = 1176, y = 334.8, width = 594, height = 37.8)
+      sdk.Progress(id = "progress-v2", label = "halfway", value = 0.5, x = 1176, y = 432, width = 594, height = 43.2)
+      sdk.Label(id = "progress-v2-l", text = "MIDPOINT", x = 1176, y = 496.8, width = 594, height = 37.8)
+      sdk.Progress(id = "progress-v3", label = "complete", value = 1, x = 1176, y = 594, width = 594, height = 43.2)
+      sdk.Label(id = "progress-v3-l", text = "COMPLETE", x = 1176, y = 658.8, width = 594, height = 37.8)
       timeline main { at 0 reveal progress-h duration 160 after progress-h reveal progress-hero duration 240 after progress-hero reveal progress-hero-l duration 140 after progress-hero-l reveal progress-v1 duration 140 after progress-v1 reveal progress-v1-l duration 100 after progress-v1-l reveal progress-v2 duration 140 after progress-v2 reveal progress-v2-l duration 100 after progress-v2-l reveal progress-v3 duration 140 after progress-v3 reveal progress-v3-l duration 100 }
     }
   }
@@ -820,15 +820,15 @@ explainer "SDK Generic Catalog" {
     narration: "A meter shows GPU memory pressure within its range; smaller meters compare low, moderate, and high positions."
     caption: "Author min and max from the real domain."
     render: @scene {
-      sdk.Header(id = "meter-h", title = "SDK.METER", caption = "bounded quantity", x = 18, y = 16, width = 664, height = 44)
-      sdk.Meter(id = "meter-hero", label = "GPU memory", value = 76, min = 0, max = 100, x = 44, y = 135, width = 350, height = 30)
-      sdk.Label(id = "meter-hero-l", text = "HERO · 76 / 100 GB", x = 44, y = 192, width = 350, height = 18)
-      sdk.Meter(id = "meter-v1", label = "low", value = 20, min = 0, max = 100, x = 430, y = 100, width = 220, height = 18)
-      sdk.Label(id = "meter-v1-l", text = "LOW", x = 430, y = 126, width = 220, height = 14)
-      sdk.Meter(id = "meter-v2", label = "moderate", value = 55, min = 0, max = 100, x = 430, y = 160, width = 220, height = 18)
-      sdk.Label(id = "meter-v2-l", text = "MODERATE", x = 430, y = 186, width = 220, height = 14)
-      sdk.Meter(id = "meter-v3", label = "high", value = 90, min = 0, max = 100, x = 430, y = 220, width = 220, height = 18)
-      sdk.Label(id = "meter-v3-l", text = "HIGH", x = 430, y = 246, width = 220, height = 14)
+      sdk.Header(id = "meter-h", title = "SDK.METER", caption = "bounded quantity", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Meter(id = "meter-hero", label = "GPU memory", value = 76, min = 0, max = 100, x = 133.8, y = 364.5, width = 945, height = 81)
+      sdk.Label(id = "meter-hero-l", text = "HERO · 76 / 100 GB", x = 133.8, y = 518.4, width = 945, height = 48.6)
+      sdk.Meter(id = "meter-v1", label = "low", value = 20, min = 0, max = 100, x = 1176, y = 270, width = 594, height = 48.6)
+      sdk.Label(id = "meter-v1-l", text = "LOW", x = 1176, y = 340.2, width = 594, height = 37.8)
+      sdk.Meter(id = "meter-v2", label = "moderate", value = 55, min = 0, max = 100, x = 1176, y = 432, width = 594, height = 48.6)
+      sdk.Label(id = "meter-v2-l", text = "MODERATE", x = 1176, y = 502.2, width = 594, height = 37.8)
+      sdk.Meter(id = "meter-v3", label = "high", value = 90, min = 0, max = 100, x = 1176, y = 594, width = 594, height = 48.6)
+      sdk.Label(id = "meter-v3-l", text = "HIGH", x = 1176, y = 664.2, width = 594, height = 37.8)
       timeline main { at 0 reveal meter-h duration 160 after meter-h reveal meter-hero duration 240 after meter-hero reveal meter-hero-l duration 140 after meter-hero-l reveal meter-v1 duration 140 after meter-v1 reveal meter-v1-l duration 100 after meter-v1-l reveal meter-v2 duration 140 after meter-v2 reveal meter-v2-l duration 100 after meter-v2-l reveal meter-v3 duration 140 after meter-v3 reveal meter-v3-l duration 100 }
     }
   }
@@ -840,15 +840,15 @@ explainer "SDK Generic Catalog" {
     narration: "A gauge emphasizes accelerator utilization; smaller gauges compare idle, nominal, and saturated levels."
     caption: "Reserve gauges for values worth the visual weight."
     render: @scene {
-      sdk.Header(id = "gauge-h", title = "SDK.GAUGE", caption = "dashboard level", x = 18, y = 16, width = 664, height = 44)
-      sdk.Gauge(id = "gauge-hero", label = "GPU utilization", value = 0.82, x = 110, y = 105, width = 180, height = 110)
-      sdk.Label(id = "gauge-hero-l", text = "HERO · 82% UTILIZATION", x = 70, y = 240, width = 260, height = 18)
-      sdk.Gauge(id = "gauge-v1", label = "idle", value = 0.12, x = 420, y = 108, width = 80, height = 68)
-      sdk.Label(id = "gauge-v1-l", text = "IDLE", x = 420, y = 184, width = 80, height = 16)
-      sdk.Gauge(id = "gauge-v2", label = "nominal", value = 0.58, x = 505, y = 108, width = 80, height = 68)
-      sdk.Label(id = "gauge-v2-l", text = "NOMINAL", x = 505, y = 184, width = 80, height = 16)
-      sdk.Gauge(id = "gauge-v3", label = "saturated", value = 0.96, x = 590, y = 108, width = 80, height = 68)
-      sdk.Label(id = "gauge-v3-l", text = "HIGH", x = 590, y = 184, width = 80, height = 16)
+      sdk.Header(id = "gauge-h", title = "SDK.GAUGE", caption = "dashboard level", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Gauge(id = "gauge-hero", label = "GPU utilization", value = 0.82, x = 312, y = 283.5, width = 486, height = 297)
+      sdk.Label(id = "gauge-hero-l", text = "HERO · 82% UTILIZATION", x = 204, y = 648, width = 702, height = 48.6)
+      sdk.Gauge(id = "gauge-v1", label = "idle", value = 0.12, x = 1149, y = 291.6, width = 216, height = 183.6)
+      sdk.Label(id = "gauge-v1-l", text = "IDLE", x = 1149, y = 496.8, width = 216, height = 43.2)
+      sdk.Gauge(id = "gauge-v2", label = "nominal", value = 0.58, x = 1378.5, y = 291.6, width = 216, height = 183.6)
+      sdk.Label(id = "gauge-v2-l", text = "NOMINAL", x = 1378.5, y = 496.8, width = 216, height = 43.2)
+      sdk.Gauge(id = "gauge-v3", label = "saturated", value = 0.96, x = 1608, y = 291.6, width = 216, height = 183.6)
+      sdk.Label(id = "gauge-v3-l", text = "HIGH", x = 1608, y = 496.8, width = 216, height = 43.2)
       timeline main { at 0 reveal gauge-h duration 160 after gauge-h reveal gauge-hero duration 240 after gauge-hero reveal gauge-hero-l duration 140 after gauge-hero-l stagger targets [gauge-v1, gauge-v2, gauge-v3] step 90 duration 180 after gauge-v3 stagger targets [gauge-v1-l, gauge-v2-l, gauge-v3-l] step 70 duration 140 }
     }
   }
@@ -860,15 +860,15 @@ explainer "SDK Generic Catalog" {
     narration: "A sparkline shows rising throughput; smaller sparklines compare steady, volatile, and falling series."
     caption: "A sparkline supplies trend, not precise lookup."
     render: @scene {
-      sdk.Header(id = "spark-h", title = "SDK.SPARKLINE", caption = "compact trend", x = 18, y = 16, width = 664, height = 44)
-      sdk.Sparkline(id = "spark-hero", label = "rising throughput", values = [42, 45, 44, 51, 56, 60, 68], x = 44, y = 105, width = 350, height = 130)
-      sdk.Label(id = "spark-hero-l", text = "HERO · 30-MINUTE TREND", x = 44, y = 255, width = 350, height = 18)
-      sdk.Sparkline(id = "spark-v1", label = "steady", values = [5, 5, 6, 5, 5], x = 430, y = 95, width = 220, height = 42)
-      sdk.Label(id = "spark-v1-l", text = "STEADY", x = 430, y = 142, width = 220, height = 14)
-      sdk.Sparkline(id = "spark-v2", label = "volatile", values = [2, 8, 3, 9, 4], x = 430, y = 165, width = 220, height = 42)
-      sdk.Label(id = "spark-v2-l", text = "VOLATILE", x = 430, y = 212, width = 220, height = 14)
-      sdk.Sparkline(id = "spark-v3", label = "falling", values = [9, 8, 6, 4, 2], x = 430, y = 235, width = 220, height = 42)
-      sdk.Label(id = "spark-v3-l", text = "FALLING", x = 430, y = 282, width = 220, height = 14)
+      sdk.Header(id = "spark-h", title = "SDK.SPARKLINE", caption = "compact trend", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Sparkline(id = "spark-hero", label = "rising throughput", values = [42, 45, 44, 51, 56, 60, 68], x = 133.8, y = 283.5, width = 945, height = 351)
+      sdk.Label(id = "spark-hero-l", text = "HERO · 30-MINUTE TREND", x = 133.8, y = 688.5, width = 945, height = 48.6)
+      sdk.Sparkline(id = "spark-v1", label = "steady", values = [5, 5, 6, 5, 5], x = 1176, y = 256.5, width = 594, height = 113.4)
+      sdk.Label(id = "spark-v1-l", text = "STEADY", x = 1176, y = 383.4, width = 594, height = 37.8)
+      sdk.Sparkline(id = "spark-v2", label = "volatile", values = [2, 8, 3, 9, 4], x = 1176, y = 445.5, width = 594, height = 113.4)
+      sdk.Label(id = "spark-v2-l", text = "VOLATILE", x = 1176, y = 572.4, width = 594, height = 37.8)
+      sdk.Sparkline(id = "spark-v3", label = "falling", values = [9, 8, 6, 4, 2], x = 1176, y = 634.5, width = 594, height = 113.4)
+      sdk.Label(id = "spark-v3-l", text = "FALLING", x = 1176, y = 761.4, width = 594, height = 37.8)
       timeline main { at 0 reveal spark-h duration 160 after spark-h reveal spark-hero duration 240 after spark-hero reveal spark-hero-l duration 140 after spark-hero-l reveal spark-v1 duration 140 after spark-v1 reveal spark-v1-l duration 100 after spark-v1-l reveal spark-v2 duration 140 after spark-v2 reveal spark-v2-l duration 100 after spark-v2-l reveal spark-v3 duration 140 after spark-v3 reveal spark-v3-l duration 100 }
     }
   }
@@ -880,15 +880,15 @@ explainer "SDK Generic Catalog" {
     narration: "A rating reports response quality; smaller ratings compare low, medium, and excellent scores."
     caption: "Always explain what the score evaluates."
     render: @scene {
-      sdk.Header(id = "rating-h", title = "SDK.RATING", caption = "five-step score", x = 18, y = 16, width = 664, height = 44)
-      sdk.Rating(id = "rating-hero", label = "response quality", value = 0.8, x = 100, y = 125, width = 240, height = 48)
-      sdk.Label(id = "rating-hero-l", text = "HERO · 4 / 5 QUALITY", x = 70, y = 215, width = 300, height = 18)
-      sdk.Rating(id = "rating-v1", label = "low", value = 0.2, x = 500, y = 95, width = 130, height = 48)
-      sdk.Label(id = "rating-v1-l", text = "LOW", x = 500, y = 150, width = 130, height = 14)
-      sdk.Rating(id = "rating-v2", label = "medium", value = 0.6, x = 500, y = 174, width = 130, height = 48)
-      sdk.Label(id = "rating-v2-l", text = "MEDIUM", x = 500, y = 229, width = 130, height = 14)
-      sdk.Rating(id = "rating-v3", label = "excellent", value = 1, x = 500, y = 253, width = 130, height = 48)
-      sdk.Label(id = "rating-v3-l", text = "EXCELLENT", x = 500, y = 308, width = 130, height = 14)
+      sdk.Header(id = "rating-h", title = "SDK.RATING", caption = "five-step score", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Rating(id = "rating-hero", label = "response quality", value = 0.8, x = 260, y = 320, width = 720, height = 165)
+      sdk.Label(id = "rating-hero-l", text = "HERO · 4 / 5 QUALITY", x = 204, y = 580.5, width = 810, height = 48.6)
+      sdk.Rating(id = "rating-v1", label = "low", value = 0.2, x = 1365, y = 256.5, width = 351, height = 129.6)
+      sdk.Label(id = "rating-v1-l", text = "LOW", x = 1365, y = 405, width = 351, height = 37.8)
+      sdk.Rating(id = "rating-v2", label = "medium", value = 0.6, x = 1365, y = 469.8, width = 351, height = 129.6)
+      sdk.Label(id = "rating-v2-l", text = "MEDIUM", x = 1365, y = 618.3, width = 351, height = 37.8)
+      sdk.Rating(id = "rating-v3", label = "excellent", value = 1, x = 1365, y = 683.1, width = 351, height = 129.6)
+      sdk.Label(id = "rating-v3-l", text = "EXCELLENT", x = 1365, y = 831.6, width = 351, height = 37.8)
       timeline main { at 0 reveal rating-h duration 160 after rating-h reveal rating-hero duration 240 after rating-hero reveal rating-hero-l duration 140 after rating-hero-l reveal rating-v1 duration 140 after rating-v1 reveal rating-v1-l duration 100 after rating-v1-l reveal rating-v2 duration 140 after rating-v2 reveal rating-v2-l duration 100 after rating-v2-l reveal rating-v3 duration 140 after rating-v3 reveal rating-v3-l duration 100 }
     }
   }
@@ -900,15 +900,15 @@ explainer "SDK Generic Catalog" {
     narration: "A semaphore reports healthy admission; smaller semaphores compare blocked, caution, and healthy states."
     caption: "Discrete lights suit discrete operational decisions."
     render: @scene {
-      sdk.Header(id = "sem-h", title = "SDK.SEMAPHORE", caption = "three-state health", x = 18, y = 16, width = 664, height = 44)
-      sdk.Semaphore(id = "sem-hero", label = "admission healthy", value = 1, x = 120, y = 125, width = 180, height = 60)
-      sdk.Label(id = "sem-hero-l", text = "HERO · ADMISSION OPEN", x = 70, y = 215, width = 280, height = 18)
-      sdk.Semaphore(id = "sem-v1", label = "blocked", value = 0, x = 450, y = 100, width = 90, height = 36)
-      sdk.Label(id = "sem-v1-l", text = "BLOCKED", x = 450, y = 156, width = 120, height = 16)
-      sdk.Semaphore(id = "sem-v2", label = "caution", value = 0.5, x = 450, y = 182, width = 90, height = 36)
-      sdk.Label(id = "sem-v2-l", text = "CAUTION", x = 450, y = 238, width = 120, height = 16)
-      sdk.Semaphore(id = "sem-v3", label = "healthy", value = 1, x = 450, y = 264, width = 90, height = 36)
-      sdk.Label(id = "sem-v3-l", text = "HEALTHY", x = 450, y = 320, width = 120, height = 16)
+      sdk.Header(id = "sem-h", title = "SDK.SEMAPHORE", caption = "three-state health", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Semaphore(id = "sem-hero", label = "admission healthy", value = 1, x = 300, y = 320, width = 560, height = 195)
+      sdk.Label(id = "sem-hero-l", text = "HERO · ADMISSION OPEN", x = 204, y = 580.5, width = 756, height = 48.6)
+      sdk.Semaphore(id = "sem-v1", label = "blocked", value = 0, x = 1230, y = 270, width = 280, height = 112)
+      sdk.Label(id = "sem-v1-l", text = "BLOCKED", x = 1230, y = 421.2, width = 324, height = 43.2)
+      sdk.Semaphore(id = "sem-v2", label = "caution", value = 0.5, x = 1230, y = 491.4, width = 280, height = 112)
+      sdk.Label(id = "sem-v2-l", text = "CAUTION", x = 1230, y = 642.6, width = 324, height = 43.2)
+      sdk.Semaphore(id = "sem-v3", label = "healthy", value = 1, x = 1230, y = 712.8, width = 280, height = 112)
+      sdk.Label(id = "sem-v3-l", text = "HEALTHY", x = 1230, y = 864, width = 324, height = 43.2)
       timeline main { at 0 reveal sem-h duration 160 after sem-h reveal sem-hero duration 240 after sem-hero reveal sem-hero-l duration 140 after sem-hero-l reveal sem-v1 duration 140 after sem-v1 reveal sem-v1-l duration 100 after sem-v1-l reveal sem-v2 duration 140 after sem-v2 reveal sem-v2-l duration 100 after sem-v2-l reveal sem-v3 duration 140 after sem-v3 reveal sem-v3-l duration 100 }
     }
   }
@@ -920,11 +920,11 @@ explainer "SDK Generic Catalog" {
     narration: "Composition primitives own layout relationships so child components remain focused on content."
     caption: "Four primitives · region, actions, panes, media + body."
     render: @scene {
-      sdk.Header(id = "c7-h", title = "CONTAINERS + COMPOSITION", caption = "07 / 08", x = 18, y = 16, width = 664, height = 44)
-      sdk.Section(id = "c7-section", title = "Run workspace", x = 60, y = 100, width = 580, height = 190, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) {
+      sdk.Header(id = "c7-h", title = "CONTAINERS + COMPOSITION", caption = "07 / 08", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Section(id = "c7-section", title = "Run workspace", x = 177, y = 270, width = 1566, height = 513, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) {
         children {
-          sdk.Toolbar(id = "c7-toolbar", label = "actions", width = 520, height = 44) { children { sdk.Badge(id = "c7-b1", label = "RUN", variant = "success") sdk.Badge(id = "c7-b2", label = "EXPORT", variant = "info") } }
-          sdk.MediaObject(id = "c7-media", label = "latest result", width = 520, height = 90) { body { sdk.Metric(id = "c7-m", title = "Latest result · P95 latency", items = ["18.7 ms", "within SLO"], width = 480, height = 72) } }
+          sdk.Toolbar(id = "c7-toolbar", label = "actions", width = 1404, height = 118.8) { children { sdk.Badge(id = "c7-b1", label = "RUN", variant = "success") sdk.Badge(id = "c7-b2", label = "EXPORT", variant = "info") } }
+          sdk.MediaObject(id = "c7-media", label = "latest result", width = 1404, height = 243) { body { sdk.Metric(id = "c7-m", title = "Latest result · P95 latency", items = ["18.7 ms", "within SLO"], width = 1296, height = 194.4) } }
         }
       }
       timeline main { at 0 reveal c7-h duration 180 after c7-h reveal c7-section duration 240 after c7-section reveal c7-toolbar duration 200 after c7-toolbar reveal c7-media duration 220 }
@@ -938,13 +938,13 @@ explainer "SDK Generic Catalog" {
     narration: "A section contains a benchmark summary with its own stats; smaller sections compare a neutral filter region and an emphasized warning region."
     caption: "A section should answer one clear question."
     render: @scene {
-      sdk.Header(id = "section-h", title = "SDK.SECTION", caption = "bounded region", x = 18, y = 16, width = 664, height = 44)
-      sdk.Section(id = "section-hero", title = "Benchmark summary", x = 44, y = 85, width = 350, height = 205, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) { children { sdk.Stat(id = "section-stat", title = "Requests", items = ["84,211"]) sdk.Metric(id = "section-metric", title = "P95", items = ["18.7 ms"]) } }
-      sdk.Label(id = "section-hero-l", text = "HERO · SUMMARY REGION", x = 44, y = 305, width = 350, height = 18)
-      sdk.Section(id = "section-v1", title = "Filters", x = 430, y = 95, width = 220, height = 90, surfaceRole = theme(surface.elevated))
-      sdk.Section(id = "section-v2", title = "Attention", x = 430, y = 232, width = 220, height = 90, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.warning))
-      sdk.Label(id = "section-v1-l", text = "NEUTRAL", x = 430, y = 204, width = 220, height = 16)
-      sdk.Label(id = "section-v2-l", text = "EMPHASIZED", x = 430, y = 336, width = 220, height = 16)
+      sdk.Header(id = "section-h", title = "SDK.SECTION", caption = "bounded region", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Section(id = "section-hero", title = "Benchmark summary", x = 133.8, y = 229.5, width = 945, height = 553.5, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) { children { sdk.Stat(id = "section-stat", title = "Requests", items = ["84,211"]) sdk.Metric(id = "section-metric", title = "P95", items = ["18.7 ms"]) } }
+      sdk.Label(id = "section-hero-l", text = "HERO · SUMMARY REGION", x = 133.8, y = 823.5, width = 945, height = 48.6)
+      sdk.Section(id = "section-v1", title = "Filters", x = 1176, y = 256.5, width = 594, height = 243, surfaceRole = theme(surface.elevated))
+      sdk.Section(id = "section-v2", title = "Attention", x = 1176, y = 626.4, width = 594, height = 243, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.warning))
+      sdk.Label(id = "section-v1-l", text = "NEUTRAL", x = 1176, y = 550.8, width = 594, height = 43.2)
+      sdk.Label(id = "section-v2-l", text = "EMPHASIZED", x = 1176, y = 907.2, width = 594, height = 43.2)
       timeline main { at 0 reveal section-h duration 160 after section-h reveal section-hero duration 240 after section-hero reveal section-hero-l duration 140 after section-hero-l reveal section-v1 duration 160 after section-v1 reveal section-v1-l duration 120 after section-v1-l reveal section-v2 duration 160 after section-v2 reveal section-v2-l duration 120 }
     }
   }
@@ -956,13 +956,13 @@ explainer "SDK Generic Catalog" {
     narration: "A toolbar offers run, stop, and export actions; smaller toolbars compare a minimal icon bar and a status-oriented bar."
     caption: "Group actions by task, not by available space."
     render: @scene {
-      sdk.Header(id = "toolbar-h", title = "SDK.TOOLBAR", caption = "action rail", x = 18, y = 16, width = 664, height = 44)
-      sdk.Toolbar(id = "toolbar-hero", label = "run actions", gap = 14, x = 44, y = 115, width = 350, height = 64) { children { sdk.Badge(id = "toolbar-run", label = "RUN", variant = "success") sdk.Badge(id = "toolbar-stop", label = "STOP", variant = "danger") sdk.Badge(id = "toolbar-export", label = "EXPORT", variant = "info") } }
-      sdk.Label(id = "toolbar-hero-l", text = "HERO · RUN ACTIONS", x = 44, y = 205, width = 350, height = 18)
-      sdk.Toolbar(id = "toolbar-v1", label = "compact", gap = 8, x = 430, y = 105, width = 200, height = 40) { children { sdk.Icon(id = "toolbar-i1", icon = "check", width = 24, height = 24) sdk.Icon(id = "toolbar-i2", icon = "file", width = 24, height = 24) } }
-      sdk.Label(id = "toolbar-v1-l", text = "ICONS", x = 430, y = 152, width = 200, height = 16)
-      sdk.Toolbar(id = "toolbar-v2", label = "status", gap = 8, x = 430, y = 198, width = 200, height = 40) { children { sdk.Badge(id = "toolbar-d", label = "OK", variant = "success", width = 48, height = 24) sdk.Caption(id = "toolbar-c", text = "healthy", width = 80, height = 18) } }
-      sdk.Label(id = "toolbar-v2-l", text = "STATUS", x = 430, y = 248, width = 200, height = 16)
+      sdk.Header(id = "toolbar-h", title = "SDK.TOOLBAR", caption = "action rail", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Toolbar(id = "toolbar-hero", label = "run actions", gap = 37.8, x = 133.8, y = 310.5, width = 945, height = 172.8) { children { sdk.Badge(id = "toolbar-run", label = "RUN", variant = "success") sdk.Badge(id = "toolbar-stop", label = "STOP", variant = "danger") sdk.Badge(id = "toolbar-export", label = "EXPORT", variant = "info") } }
+      sdk.Label(id = "toolbar-hero-l", text = "HERO · RUN ACTIONS", x = 133.8, y = 553.5, width = 945, height = 48.6)
+      sdk.Toolbar(id = "toolbar-v1", label = "compact", gap = 21.6, x = 1176, y = 283.5, width = 540, height = 108) { children { sdk.Icon(id = "toolbar-i1", icon = "check", width = 64.8, height = 64.8) sdk.Icon(id = "toolbar-i2", icon = "file", width = 64.8, height = 64.8) } }
+      sdk.Label(id = "toolbar-v1-l", text = "ICONS", x = 1176, y = 410.4, width = 540, height = 43.2)
+      sdk.Toolbar(id = "toolbar-v2", label = "status", gap = 21.6, x = 1176, y = 534.6, width = 540, height = 108) { children { sdk.Badge(id = "toolbar-d", label = "OK", variant = "success", width = 129.6, height = 64.8) sdk.Caption(id = "toolbar-c", text = "healthy", width = 216, height = 48.6) } }
+      sdk.Label(id = "toolbar-v2-l", text = "STATUS", x = 1176, y = 669.6, width = 540, height = 43.2)
       timeline main { at 0 reveal toolbar-h duration 160 after toolbar-h reveal toolbar-hero duration 240 after toolbar-hero reveal toolbar-hero-l duration 140 after toolbar-hero-l reveal toolbar-v1 duration 160 after toolbar-v1 reveal toolbar-v1-l duration 120 after toolbar-v1-l reveal toolbar-v2 duration 160 after toolbar-v2 reveal toolbar-v2-l duration 120 }
     }
   }
@@ -974,13 +974,13 @@ explainer "SDK Generic Catalog" {
     narration: "A split pane pairs a configuration region with results; smaller panes compare compact horizontal and vertical arrangements."
     caption: "Use panes for persistent peers, not transient overlays."
     render: @scene {
-      sdk.Header(id = "split-h", title = "SDK.SPLITPANE", caption = "paired workspace", x = 18, y = 16, width = 664, height = 44)
-      sdk.SplitPane(id = "split-hero", label = "configure and inspect", direction = "row", gap = 14, x = 35, y = 85, width = 390, height = 210) { children { sdk.Section(id = "split-left", title = "Configuration", width = 180, height = 190) sdk.Section(id = "split-right", title = "Results", width = 180, height = 190, strokeRole = theme(accent.primary)) } }
-      sdk.Label(id = "split-hero-l", text = "HERO · CONFIG + RESULTS", x = 35, y = 310, width = 390, height = 18)
-      sdk.SplitPane(id = "split-v1", label = "horizontal", direction = "row", gap = 8, x = 450, y = 95, width = 200, height = 90) { children { sdk.Shape(id = "split-v1a", label = "A") sdk.Shape(id = "split-v1b", label = "B") } }
-      sdk.SplitPane(id = "split-v2", label = "vertical", direction = "column", gap = 8, x = 450, y = 220, width = 200, height = 90) { children { sdk.Shape(id = "split-v2a", label = "A") sdk.Shape(id = "split-v2b", label = "B") } }
-      sdk.Label(id = "split-v1-l", text = "HORIZONTAL", x = 450, y = 204, width = 200, height = 16)
-      sdk.Label(id = "split-v2-l", text = "VERTICAL", x = 450, y = 360, width = 200, height = 16)
+      sdk.Header(id = "split-h", title = "SDK.SPLITPANE", caption = "paired workspace", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.SplitPane(id = "split-hero", label = "configure and inspect", direction = "row", gap = 37.8, x = 109.5, y = 229.5, width = 1053, height = 567) { children { sdk.Section(id = "split-left", title = "Configuration", width = 486, height = 513) sdk.Section(id = "split-right", title = "Results", width = 486, height = 513, strokeRole = theme(accent.primary)) } }
+      sdk.Label(id = "split-hero-l", text = "HERO · CONFIG + RESULTS", x = 109.5, y = 837, width = 1053, height = 48.6)
+      sdk.SplitPane(id = "split-v1", label = "horizontal", direction = "row", gap = 21.6, x = 1230, y = 256.5, width = 540, height = 243) { children { sdk.Shape(id = "split-v1a", label = "A") sdk.Shape(id = "split-v1b", label = "B") } }
+      sdk.SplitPane(id = "split-v2", label = "vertical", direction = "column", gap = 21.6, x = 1230, y = 594, width = 540, height = 243) { children { sdk.Shape(id = "split-v2a", label = "A") sdk.Shape(id = "split-v2b", label = "B") } }
+      sdk.Label(id = "split-v1-l", text = "HORIZONTAL", x = 1230, y = 550.8, width = 540, height = 43.2)
+      sdk.Label(id = "split-v2-l", text = "VERTICAL", x = 1230, y = 972, width = 540, height = 43.2)
       timeline main { at 0 reveal split-h duration 160 after split-h reveal split-hero duration 240 after split-hero reveal split-hero-l duration 140 after split-hero-l reveal split-v1 duration 160 after split-v1 reveal split-v1-l duration 120 after split-v1-l reveal split-v2 duration 160 after split-v2 reveal split-v2-l duration 120 }
     }
   }
@@ -992,13 +992,13 @@ explainer "SDK Generic Catalog" {
     narration: "A media object presents the benchmark owner alongside a run summary; smaller objects compare a service row and an artifact row."
     caption: "Media establishes identity; the body carries meaning."
     render: @scene {
-      sdk.Header(id = "media-h", title = "SDK.MEDIAOBJECT", caption = "media + body pattern", x = 18, y = 16, width = 664, height = 44)
-      sdk.MediaObject(id = "media-hero", label = "benchmark owner", gap = 18, x = 44, y = 100, width = 350, height = 150) { media { sdk.Avatar(id = "media-av", label = "Mina", icon = "user", variant = "info", x = 8, y = 18, width = 64, height = 64) } body { sdk.PropertyList(id = "media-props", title = "Owner · Mina", items = ["Run: 42", "State: complete"], x = 92, y = 12, width = 240, height = 110) } }
-      sdk.Label(id = "media-hero-l", text = "HERO · OWNER + RUN SUMMARY", x = 44, y = 268, width = 350, height = 18)
-      sdk.MediaObject(id = "media-v1", label = "service", gap = 10, x = 430, y = 95, width = 220, height = 82) { leading { sdk.Icon(id = "media-server", icon = "server", x = 10, y = 12, width = 32, height = 32) } body { sdk.Caption(id = "media-server-c", text = "Gateway · healthy", x = 56, y = 16, width = 150, height = 18) } }
-      sdk.MediaObject(id = "media-v2", label = "artifact", gap = 10, x = 430, y = 218, width = 220, height = 82) { leading { sdk.Icon(id = "media-file", icon = "file", x = 10, y = 12, width = 32, height = 32) } body { sdk.Caption(id = "media-file-c", text = "records.jsonl · 48 MB", x = 56, y = 16, width = 150, height = 18) } }
-      sdk.Label(id = "media-v1-l", text = "SERVICE", x = 430, y = 184, width = 220, height = 16)
-      sdk.Label(id = "media-v2-l", text = "ARTIFACT", x = 430, y = 307, width = 220, height = 16)
+      sdk.Header(id = "media-h", title = "SDK.MEDIAOBJECT", caption = "media + body pattern", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.MediaObject(id = "media-hero", label = "benchmark owner", gap = 48.6, x = 133.8, y = 270, width = 945, height = 405) { media { sdk.Avatar(id = "media-av", label = "Mina", icon = "user", variant = "info", x = 36.6, y = 48.6, width = 172.8, height = 172.8) } body { sdk.PropertyList(id = "media-props", title = "Owner · Mina", items = ["Run: 42", "State: complete"], x = 263.4, y = 32.4, width = 648, height = 297) } }
+      sdk.Label(id = "media-hero-l", text = "HERO · OWNER + RUN SUMMARY", x = 133.8, y = 723.6, width = 945, height = 48.6)
+      sdk.MediaObject(id = "media-v1", label = "service", gap = 27, x = 1176, y = 256.5, width = 594, height = 221.4) { leading { sdk.Icon(id = "media-server", icon = "server", x = 42, y = 32.4, width = 86.4, height = 86.4) } body { sdk.Caption(id = "media-server-c", text = "Gateway · healthy", x = 166.2, y = 43.2, width = 405, height = 48.6) } }
+      sdk.MediaObject(id = "media-v2", label = "artifact", gap = 27, x = 1176, y = 588.6, width = 594, height = 221.4) { leading { sdk.Icon(id = "media-file", icon = "file", x = 42, y = 32.4, width = 86.4, height = 86.4) } body { sdk.Caption(id = "media-file-c", text = "records.jsonl · 48 MB", x = 166.2, y = 43.2, width = 405, height = 48.6) } }
+      sdk.Label(id = "media-v1-l", text = "SERVICE", x = 1176, y = 496.8, width = 594, height = 43.2)
+      sdk.Label(id = "media-v2-l", text = "ARTIFACT", x = 1176, y = 828.9, width = 594, height = 43.2)
       timeline main { at 0 reveal media-h duration 160 after media-h reveal media-hero duration 240 after media-hero reveal media-hero-l duration 140 after media-hero-l reveal media-v1 duration 160 after media-v1 reveal media-v1-l duration 120 after media-v1-l reveal media-v2 duration 160 after media-v2 reveal media-v2-l duration 120 }
     }
   }
@@ -1010,9 +1010,9 @@ explainer "SDK Generic Catalog" {
     narration: "Each deck composite expands into many primitives at once: a takeaway grid of accented cells and an ordered row of arrow-linked step boxes both come from one authored line."
     caption: "Eight composites · dividers, chains, figures, grids, sequences, axes, trees."
     render: @scene {
-      sdk.Header(id = "c8-h", title = "DECK COMPOSITES", caption = "08 / 08", x = 18, y = 16, width = 664, height = 44)
-      sdk.CompareGrid(id = "c8-grid", columns = 3, items = [{ label: "One call", detail: "one authored line" }, { label: "Many nodes", detail: "expanded primitives" }, { label: "Deck-ready", detail: "brand layout" }], x = 6, y = 90)
-      sdk.StepChain(id = "c8-chain", steps = [{ number: "01", label: "VALIDATE" }, { number: "02", label: "SCHEDULE" }, { number: "03", label: "EMIT" }], x = 52, y = 248)
+      sdk.Header(id = "c8-h", title = "DECK COMPOSITES", caption = "08 / 08", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.CompareGrid(id = "c8-grid", columns = 3, items = [{ label: "One call", detail: "one authored line" }, { label: "Many nodes", detail: "expanded primitives" }, { label: "Deck-ready", detail: "brand layout" }], x = 31.2, y = 243)
+      sdk.StepChain(id = "c8-chain", steps = [{ number: "01", label: "VALIDATE" }, { number: "02", label: "SCHEDULE" }, { number: "03", label: "EMIT" }], x = 155.4, y = 669.6)
       timeline main { at 0 reveal c8-h duration 180 after c8-h reveal c8-grid duration 240 after c8-grid reveal c8-chain duration 220 }
     }
   }
@@ -1024,8 +1024,8 @@ explainer "SDK Generic Catalog" {
     narration: "A large green monospace number sits above a bold black title and a gray subtitle, all aligned to the right edge, with a small green kicker above the number."
     caption: "One number, one title, one subtitle; alignment carries the weight."
     render: @scene {
-      sdk.Header(id = "divider-h", title = "SDK.SECTIONDIVIDER", caption = "chapter break", x = 18, y = 16, width = 664, height = 44)
-      sdk.SectionDivider(id = "divider-demo", eyebrow = "CHAPTER", number = "03", title = "Crate topology", subtitle = "Three crates share one workspace", x = 20, y = 84, width = 640)
+      sdk.Header(id = "divider-h", title = "SDK.SECTIONDIVIDER", caption = "chapter break", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.SectionDivider(id = "divider-demo", eyebrow = "CHAPTER", number = "03", title = "Crate topology", subtitle = "Three crates share one workspace", x = 69, y = 226.8, width = 1728)
       timeline main { at 0 reveal divider-h duration 180 after divider-h reveal divider-demo duration 280 }
     }
   }
@@ -1037,8 +1037,8 @@ explainer "SDK Generic Catalog" {
     narration: "Three numbered boxes run left to right, each with a green top edge, a green number, a bold label, and a line of detail; a green arrow points from each box into the next."
     caption: "Direction row or column; every box carries a green accent edge."
     render: @scene {
-      sdk.Header(id = "chain-h", title = "SDK.STEPCHAIN", caption = "ordered stages", x = 18, y = 16, width = 664, height = 44)
-      sdk.StepChain(id = "chain-demo", steps = [{ number: "01", label: "VALIDATE", detail: "config v2" }, { number: "02", label: "SCHEDULE", detail: "workload" }, { number: "03", label: "EMIT", detail: "records" }], x = 52, y = 150)
+      sdk.Header(id = "chain-h", title = "SDK.STEPCHAIN", caption = "ordered stages", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.StepChain(id = "chain-demo", steps = [{ number: "01", label: "VALIDATE", detail: "config v2" }, { number: "02", label: "SCHEDULE", detail: "workload" }, { number: "03", label: "EMIT", detail: "records" }], x = 155.4, y = 405)
       timeline main { at 0 reveal chain-h duration 180 after chain-h reveal chain-demo duration 300 }
     }
   }
@@ -1050,8 +1050,8 @@ explainer "SDK Generic Catalog" {
     narration: "An oversized green figure fills the upper area, with a bold black title and a gray description stacked directly beneath it."
     caption: "The value dominates; the title and description explain it."
     render: @scene {
-      sdk.Header(id = "bigstat-h", title = "SDK.BIGSTAT", caption = "hero figure", x = 18, y = 16, width = 664, height = 44)
-      sdk.BigStat(id = "bigstat-demo", value = "3", title = "execution modes", description = "online · offline replay · dry run", x = 54, y = 78, width = 480)
+      sdk.Header(id = "bigstat-h", title = "SDK.BIGSTAT", caption = "hero figure", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.BigStat(id = "bigstat-demo", value = "3", title = "execution modes", description = "online · offline replay · dry run", x = 160.8, y = 210.6, width = 1296)
       timeline main { at 0 reveal bigstat-h duration 180 after bigstat-h reveal bigstat-demo duration 300 }
     }
   }
@@ -1063,8 +1063,8 @@ explainer "SDK Generic Catalog" {
     narration: "Three equal cells sit in a row, each with a green top accent, a bold label, and a line of gray detail beneath it."
     caption: "Columns are configurable; every cell shares the green top accent."
     render: @scene {
-      sdk.Header(id = "compare-h", title = "SDK.COMPAREGRID", caption = "peer cells", x = 18, y = 16, width = 664, height = 44)
-      sdk.CompareGrid(id = "compare-demo", columns = 3, items = [{ label: "Deterministic", detail: "same seed, same run" }, { label: "Observable", detail: "every record captured" }, { label: "Composable", detail: "seams over monoliths" }], x = 6, y = 150)
+      sdk.Header(id = "compare-h", title = "SDK.COMPAREGRID", caption = "peer cells", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.CompareGrid(id = "compare-demo", columns = 3, items = [{ label: "Deterministic", detail: "same seed, same run" }, { label: "Observable", detail: "every record captured" }, { label: "Composable", detail: "seams over monoliths" }], x = 31.2, y = 405)
       timeline main { at 0 reveal compare-h duration 180 after compare-h reveal compare-demo duration 300 }
     }
   }
@@ -1076,8 +1076,8 @@ explainer "SDK Generic Catalog" {
     narration: "Four rows stack vertically. Each has a square index chip on the left, green where the step is emphasized and black otherwise, beside a bordered box naming the callback and what it records."
     caption: "Chips index the order; emphasis marks the steps that matter."
     render: @scene {
-      sdk.Header(id = "seq-h", title = "SDK.NUMBEREDSEQUENCE", caption = "indexed rows", x = 18, y = 16, width = 664, height = 44)
-      sdk.NumberedSequence(id = "seq-demo", items = [{ number: "1", title: "on_arrival", detail: "request enters the sink", emphasis: true }, { number: "2", title: "on_admit", detail: "admission gate opens" }, { number: "3", title: "on_token", detail: "first token is TTFT", emphasis: true }, { number: "4", title: "on_usage", detail: "terminal usage recorded" }], x = 54, y = 86)
+      sdk.Header(id = "seq-h", title = "SDK.NUMBEREDSEQUENCE", caption = "indexed rows", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.NumberedSequence(id = "seq-demo", items = [{ number: "1", title: "on_arrival", detail: "request enters the sink", emphasis: true }, { number: "2", title: "on_admit", detail: "admission gate opens" }, { number: "3", title: "on_token", detail: "first token is TTFT", emphasis: true }, { number: "4", title: "on_usage", detail: "terminal usage recorded" }], x = 160.8, y = 232.2)
       timeline main { at 0 reveal seq-h duration 180 after seq-h reveal seq-demo duration 300 }
     }
   }
@@ -1089,8 +1089,8 @@ explainer "SDK Generic Catalog" {
     narration: "A horizontal axis runs from zero to three milliseconds with labeled ticks below it, a filled green marker where a timer fires on time, a hollow gray marker for a late wake, and a dashed green line at the deadline."
     caption: "Ticks label the scale; filled marks are exact, hollow marks are late."
     render: @scene {
-      sdk.Header(id = "axis-h", title = "SDK.TIMELINEAXIS", caption = "labeled scale", x = 18, y = 16, width = 664, height = 44)
-      sdk.TimelineAxis(id = "axis-demo", start = 0, end = 3, unit = "ms", ticks = [{ at: 0, label: "0ms" }, { at: 1, label: "1ms" }, { at: 2, label: "2ms" }, { at: 3, label: "3ms" }], markers = [{ at: 1, label: "fire" }, { at: 2.4, label: "late wake", style: "late" }], target = { at: 2, label: "deadline" }, x = 60, y = 150, width = 560)
+      sdk.Header(id = "axis-h", title = "SDK.TIMELINEAXIS", caption = "labeled scale", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.TimelineAxis(id = "axis-demo", start = 0, end = 3, unit = "ms", ticks = [{ at: 0, label: "0ms" }, { at: 1, label: "1ms" }, { at: 2, label: "2ms" }, { at: 3, label: "3ms" }], markers = [{ at: 1, label: "fire" }, { at: 2.4, label: "late wake", style: "late" }], target = { at: 2, label: "deadline" }, x = 177, y = 405, width = 1512)
       timeline main { at 0 reveal axis-h duration 180 after axis-h reveal axis-demo duration 300 }
     }
   }
@@ -1102,8 +1102,8 @@ explainer "SDK Generic Catalog" {
     narration: "A green root box sits above a row of three child boxes, each joined to the root by a thin line, with a caption underneath explaining the ordering."
     caption: "The root can be filled to mark it; children hang from connecting lines."
     render: @scene {
-      sdk.Header(id = "tree-h", title = "SDK.NODETREE", caption = "root over children", x = 18, y = 16, width = 664, height = 44)
-      sdk.NodeTree(id = "tree-demo", root = { label: "pop", detail: "min deadline", emphasis: true }, children = [{ label: "t=1ms" }, { label: "t=2ms" }, { label: "t=4ms" }], orderNote = "The heap yields the earliest deadline first", x = 80, y = 90)
+      sdk.Header(id = "tree-h", title = "SDK.NODETREE", caption = "root over children", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.NodeTree(id = "tree-demo", root = { label: "pop", detail: "min deadline", emphasis: true }, children = [{ label: "t=1ms" }, { label: "t=2ms" }, { label: "t=4ms" }], orderNote = "The heap yields the earliest deadline first", x = 231, y = 291.6)
       timeline main { at 0 reveal tree-h duration 180 after tree-h reveal tree-demo duration 300 }
     }
   }
@@ -1115,8 +1115,8 @@ explainer "SDK Generic Catalog" {
     narration: "Four bordered cards form a two-by-two grid. Each card carries a colored left edge, a bold monospace title, and a line of gray detail."
     caption: "Left-edge color groups cards; the grid wraps by column count."
     render: @scene {
-      sdk.Header(id = "cards-h", title = "SDK.CARDGRID", caption = "titled cards", x = 18, y = 16, width = 664, height = 44)
-      sdk.CardGrid(id = "cards-demo", columns = 2, cards = [{ title: "aiperf-cli", detail: "CLI, routing, self-execution", accent: "green" }, { title: "aiperf-runtime", detail: "clocks, transports, metrics", accent: "green" }, { title: "aiperf-mock-server", detail: "deterministic inference target", accent: "black" }, { title: "pyext", detail: "pyo3 packaging module", accent: "gray" }], x = 80, y = 86)
+      sdk.Header(id = "cards-h", title = "SDK.CARDGRID", caption = "titled cards", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.CardGrid(id = "cards-demo", columns = 2, cards = [{ title: "aiperf-cli", detail: "CLI, routing, self-execution", accent: "green" }, { title: "aiperf-runtime", detail: "clocks, transports, metrics", accent: "green" }, { title: "aiperf-mock-server", detail: "deterministic inference target", accent: "black" }, { title: "pyext", detail: "pyo3 packaging module", accent: "gray" }], x = 231, y = 232.2)
       timeline main { at 0 reveal cards-h duration 180 after cards-h reveal cards-demo duration 300 }
     }
   }
@@ -1128,28 +1128,28 @@ explainer "SDK Generic Catalog" {
     narration: "The finale composes six generic families into a benchmark workspace. Every primitive remains production SDK output."
     caption: "Compose from semantic contracts; let hierarchy do the visual work."
     render: @scene {
-      sdk.Header(id = "final-h", title = "BENCHMARK · RUN 42", caption = "complete · us-west · Llama 3.1 70B", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary))
-      sdk.Breadcrumb(id = "final-bc", items = ["Workspace", "Benchmarks", "Run 42"], x = 32, y = 78, width = 360, height = 26)
-      sdk.Toolbar(id = "final-tools", label = "run actions", gap = 8, x = 440, y = 92, width = 228, height = 34) { children { sdk.Badge(id = "final-rerun", label = "RERUN", variant = "info") sdk.Badge(id = "final-export", label = "EXPORT", variant = "success") } }
-      sdk.SplitPane(id = "final-split", label = "benchmark workspace", direction = "row", gap = 14, x = 32, y = 138, width = 636, height = 202) {
+      sdk.Header(id = "final-h", title = "BENCHMARK · RUN 42", caption = "complete · us-west · Llama 3.1 70B", x = 63.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.secondary))
+      sdk.Breadcrumb(id = "final-bc", items = ["Workspace", "Benchmarks", "Run 42"], x = 101.4, y = 210.6, width = 972, height = 70.2)
+      sdk.Toolbar(id = "final-tools", label = "run actions", gap = 21.6, x = 1203, y = 248.4, width = 615.6, height = 91.8) { children { sdk.Badge(id = "final-rerun", label = "RERUN", variant = "info") sdk.Badge(id = "final-export", label = "EXPORT", variant = "success") } }
+      sdk.SplitPane(id = "final-split", label = "benchmark workspace", direction = "row", gap = 37.8, x = 101.4, y = 372.6, width = 1717.2, height = 545.4) {
         children {
-          sdk.Section(id = "final-summary", title = "Performance", width = 300, height = 210, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) {
+          sdk.Section(id = "final-summary", title = "Performance", width = 810, height = 680, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary)) {
             children {
               sdk.Stat(id = "final-stat", title = "Throughput", items = ["1,284 req/s", "+8.2%"])
               sdk.Metric(id = "final-metric", title = "P95 latency", items = ["18.7 ms", "within SLO"])
-              sdk.Progress(id = "final-progress", label = "artifact export", value = 1, width = 250, height = 18)
+              sdk.Progress(id = "final-progress", label = "artifact export", value = 1, width = 675, height = 48.6)
             }
           }
-          sdk.Section(id = "final-health", title = "Endpoint health", width = 300, height = 210, surfaceRole = theme(surface.elevated)) {
+          sdk.Section(id = "final-health", title = "Endpoint health", width = 810, height = 567, surfaceRole = theme(surface.elevated)) {
             children {
-              sdk.MediaObject(id = "final-owner", label = "owner", gap = 10, width = 260, height = 52) { body { sdk.IconLabel(id = "final-owner-label", label = "Mina · on call", icon = "check", width = 240, height = 40) } }
-              sdk.Sparkline(id = "final-spark", label = "throughput trend", values = [42, 45, 44, 51, 56, 60], width = 250, height = 44)
-              sdk.StatusCard(id = "final-status", title = "All systems healthy", variant = "success", width = 250, height = 50)
+              sdk.MediaObject(id = "final-owner", label = "owner", gap = 27, width = 702, height = 140.4) { body { sdk.IconLabel(id = "final-owner-label", label = "Mina · on call", icon = "check", width = 648, height = 108) } }
+              sdk.Sparkline(id = "final-spark", label = "throughput trend", values = [42, 45, 44, 51, 56, 60], width = 675, height = 118.8)
+              sdk.StatusCard(id = "final-status", title = "All systems healthy", variant = "success", width = 675, height = 135)
             }
           }
         }
       }
-      sdk.Caption(id = "final-cap", text = "Eight families · one coherent interface", x = 32, y = 380, width = 636, height = 16)
+      sdk.Caption(id = "final-cap", text = "Eight families · one coherent interface", x = 101.4, y = 1026, width = 1717.2, height = 43.2)
       timeline main {
         at 0 reveal final-h duration 180
         after final-h reveal final-bc duration 160

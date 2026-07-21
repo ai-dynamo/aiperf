@@ -45,7 +45,7 @@ explainer "Flow SDK Examples" {
         id = "s1-hdr",
         title = "DECK SHELL",
         caption = "filename.flow → id → /route → hub card → slides.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -53,21 +53,21 @@ explainer "Flow SDK Examples" {
         id = "s1-steps",
         steps = ["explainer {", "hub {", "slide …", "finalCard"],
         linked = true,
-        gap = 18,
-        x = 70, y = 88, width = 560, height = 28
+        gap = 48.6,
+        x = 204, y = 237.6, width = 1512, height = 75.6
       )
       sdk.Grid(
         id = "s1-grid",
         cols = 2,
-        gap = 14,
-        x = 70, y = 130, width = 560, height = 170
+        gap = 37.8,
+        x = 204, y = 351, width = 1512, height = 459
       ) {
         children {
           sdk.Panel(
             id = "s1-id",
             title = "id + route",
             detail = "flow-sdk-examples",
-            x = 0, y = 0, width = 260, height = 72,
+            x = 15, y = 0, width = 702, height = 194.4,
             surfaceRole = theme(surface.elevated),
             strokeRole = theme(accent.primary)
           )
@@ -75,7 +75,7 @@ explainer "Flow SDK Examples" {
             id = "s1-hub",
             title = "hub metadata",
             detail = "highlight · title · description",
-            x = 0, y = 0, width = 260, height = 72,
+            x = 15, y = 0, width = 702, height = 194.4,
             surfaceRole = theme(surface.elevated),
             strokeRole = theme(accent.secondary)
           )
@@ -83,7 +83,7 @@ explainer "Flow SDK Examples" {
             id = "s1-slide",
             title = "slide copy",
             detail = "lede · narration · term · points",
-            x = 0, y = 0, width = 260, height = 72,
+            x = 15, y = 0, width = 702, height = 194.4,
             surfaceRole = theme(surface.elevated),
             strokeRole = theme(accent.tertiary)
           )
@@ -91,7 +91,7 @@ explainer "Flow SDK Examples" {
             id = "s1-scene",
             title = "render: @scene",
             detail = "sdk.* + timeline main",
-            x = 0, y = 0, width = 260, height = 72,
+            x = 15, y = 0, width = 702, height = 194.4,
             surfaceRole = theme(surface.elevated),
             strokeRole = theme(accent.green)
           )
@@ -100,7 +100,7 @@ explainer "Flow SDK Examples" {
       sdk.Note(
         id = "s1-note",
         text = "Register id/route in EXPECTED_DECK_ROUTES before shipping.",
-        x = 70, y = 318, width = 560, height = 28,
+        x = 204, y = 858.6, width = 1512, height = 75.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -125,7 +125,7 @@ explainer "Flow SDK Examples" {
       meaning: "Semantic paint token such as theme(accent.primary) resolved at compile time — prefer roles over hard-coded hex colors."
     }
     points: [
-      "Standard header geometry: x=18, y=16, width=664, height=44.",
+      "Standard header geometry: x=63.6, y=43.2, width=1792.8, height=118.8.",
       "`sdk.divider` separates regions; `sdk.bracket` groups related panels.",
       "Evidence: `apps/explainers/src/flow/sdk/generic/chrome.ts`."
     ]
@@ -136,7 +136,7 @@ explainer "Flow SDK Examples" {
         id = "s2-hdr",
         title = "CHROME VOCABULARY",
         caption = "Structure first · annotate with SDK chrome.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -145,7 +145,7 @@ explainer "Flow SDK Examples" {
         title = "sdk.card",
         detail = "title + detail + subtitle",
         subtitle = "elevated surface",
-        x = 52, y = 104, width = 184, height = 92,
+        x = 155.4, y = 280.8, width = 496.8, height = 248.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -153,28 +153,28 @@ explainer "Flow SDK Examples" {
         id = "s2-panel",
         title = "sdk.panel",
         detail = "compact node",
-        x = 260, y = 112, width = 156, height = 76,
+        x = 717, y = 302.4, width = 421.2, height = 205.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Rail(
         id = "s2-tags",
         direction = "row",
-        gap = 12,
-        x = 440, y = 127, width = 192, height = 26
+        gap = 32.4,
+        x = 1203, y = 342.9, width = 518.4, height = 70.2
       ) {
         children {
           sdk.Chip(
             id = "s2-chip",
             label = "sdk.chip",
-            width = 96, height = 26,
+            width = 259.2, height = 70.2,
             surfaceRole = theme(surface.elevated),
             strokeRole = theme(accent.tertiary)
           )
           sdk.Label(
             id = "s2-label",
             text = "sdk.label",
-            width = 84, height = 20,
+            width = 226.8, height = 54,
             inkRole = theme(ink.primary)
           )
         }
@@ -182,23 +182,23 @@ explainer "Flow SDK Examples" {
       sdk.Callout(
         id = "s2-callout",
         text = "callout",
-        x = 440, y = 86, width = 96, height = 22,
+        x = 1203, y = 232.2, width = 259.2, height = 59.4,
         target = { x: 338, y: 112 },
         strokeRole = theme(accent.warning)
       )
       sdk.Divider(
         id = "s2-div",
         axis = "x",
-        x = 52, y = 206, length = 596,
+        x = 155.4, y = 556.2, length = 596,
         strokeRole = theme(ink.tertiary),
-        strokeWidth = 1.2
+        strokeWidth = 3.24
       )
       sdk.Bracket(
         id = "s2-bracket",
         side = "left",
-        x = 32, y = 98, width = 16, height = 104,
+        x = 101.4, y = 264.6, width = 43.2, height = 280.8,
         strokeRole = theme(accent.primary),
-        strokeWidth = 1.5
+        strokeWidth = 4.05
       )
       sdk.Legend(
         id = "s2-legend",
@@ -208,12 +208,12 @@ explainer "Flow SDK Examples" {
           { label: "secondary", colorRole: theme(accent.secondary) },
           { label: "tertiary", colorRole: theme(accent.tertiary) }
         ],
-        x = 52, y = 218, width = 204, height = 80
+        x = 155.4, y = 588.6, width = 550.8, height = 216
       )
       sdk.Note(
         id = "s2-note",
         text = "sdk.note — footnotes and constraints belong in notes, not stray rects.",
-        x = 52, y = 322, width = 596, height = 52,
+        x = 155.4, y = 869.4, width = 1609.2, height = 140.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -253,15 +253,15 @@ explainer "Flow SDK Examples" {
         id = "s3-hdr",
         title = "LAYOUT + SLOTS",
         caption = "Let layout factories place children.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
       sdk.Frame(
         id = "s3-frame",
         title = "sdk.frame — title-safe managed region",
-        x = 40, y = 78, width = 620, height = 116,
-        padding = 10,
+        x = 123, y = 210.6, width = 1730, height = 313.2,
+        padding = 27,
         align = "stretch",
         fixedWidth = true,
         fixedHeight = true
@@ -270,8 +270,8 @@ explainer "Flow SDK Examples" {
           sdk.Rail(
             id = "s3-rail",
             direction = "row",
-            gap = 12,
-            width = 600, height = 28,
+            gap = 32.4,
+            width = 1670, height = 95,
             align = "center",
             fixedWidth = true
           ) {
@@ -286,34 +286,34 @@ explainer "Flow SDK Examples" {
       sdk.Stack(
         id = "s3-stack",
         direction = "column",
-        gap = 10,
-        x = 40, y = 208, width = 176, height = 128
+        gap = 27,
+        x = 123, y = 561.6, width = 475.2, height = 345.6
       ) {
         children {
-          sdk.Panel(id = "s3-p0", title = "stack", detail = "column", width = 176, height = 54, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-          sdk.Panel(id = "s3-p1", title = "auto", detail = "gap", width = 176, height = 54, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
+          sdk.Panel(id = "s3-p0", title = "stack", detail = "column", width = 475.2, height = 145.8, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+          sdk.Panel(id = "s3-p1", title = "auto", detail = "gap", width = 475.2, height = 145.8, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
         }
       }
       sdk.Overlay(
         id = "s3-overlay",
-        x = 228, y = 208, width = 180, height = 128,
-        padding = 10,
+        x = 630.6, y = 561.6, width = 486, height = 345.6,
+        padding = 27,
         align = "center",
         justify = "center",
         fixedWidth = true,
         fixedHeight = true
       ) {
         children {
-          sdk.Panel(id = "s3-l0", title = "overlay", detail = "intentional", width = 140, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
-          sdk.Chip(id = "s3-l1", label = "centered", width = 92, height = 26, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.green))
+          sdk.Panel(id = "s3-l0", title = "overlay", detail = "intentional", width = 378, height = 194.4, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
+          sdk.Chip(id = "s3-l1", label = "centered", width = 248.4, height = 70.2, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.green))
         }
       }
       sdk.Stepper(
         id = "s3-stepper",
         steps = ["layout", "slots", "timeline"],
         linked = true,
-        gap = 10,
-        x = 430, y = 230, width = 228, height = 90
+        gap = 27,
+        x = 1176, y = 621, width = 615.6, height = 243
       )
 
       timeline main {
@@ -350,7 +350,7 @@ explainer "Flow SDK Examples" {
         id = "s4-hdr",
         title = "TOPOLOGY",
         caption = "Anchors · fans · pipelines.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -358,7 +358,7 @@ explainer "Flow SDK Examples" {
         id = "s4-src",
         title = "source",
         detail = "fan root",
-        x = 40, y = 120, width = 130, height = 78,
+        x = 123, y = 324, width = 351, height = 210.6,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -371,21 +371,21 @@ explainer "Flow SDK Examples" {
           { nodeId: "s4-c", anchor: "w" }
         ],
         axis = "x",
-        style = { stroke: theme(accent.secondary), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.secondary), strokeWidth: 5.94 }
       )
-      sdk.Panel(id = "s4-a", title = "A", detail = "target", x = 240, y = 80, width = 100, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
-      sdk.Panel(id = "s4-b", title = "B", detail = "target", x = 240, y = 160, width = 100, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
-      sdk.Panel(id = "s4-c", title = "C", detail = "target", x = 240, y = 240, width = 100, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
+      sdk.Panel(id = "s4-a", title = "A", detail = "target", x = 663, y = 216, width = 270, height = 194.4, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
+      sdk.Panel(id = "s4-b", title = "B", detail = "target", x = 663, y = 432, width = 270, height = 194.4, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
+      sdk.Panel(id = "s4-c", title = "C", detail = "target", x = 663, y = 648, width = 270, height = 194.4, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
       sdk.Pipeline(
         id = "s4-pipe",
         edgeMode = "route",
-        gap = 18,
-        x = 380, y = 120
+        gap = 48.6,
+        x = 1041, y = 324
       ) {
         nodes {
-          sdk.Panel(id = "s4-n0", title = "1", detail = "stage", x = 0, y = 0, width = 72, height = 68, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-          sdk.Panel(id = "s4-n1", title = "2", detail = "stage", x = 0, y = 0, width = 72, height = 68, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-          sdk.Panel(id = "s4-n2", title = "3", detail = "stage", x = 0, y = 0, width = 72, height = 68, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+          sdk.Panel(id = "s4-n0", title = "1", detail = "stage", x = 15, y = 0, width = 194.4, height = 183.6, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+          sdk.Panel(id = "s4-n1", title = "2", detail = "stage", x = 15, y = 0, width = 194.4, height = 183.6, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+          sdk.Panel(id = "s4-n2", title = "3", detail = "stage", x = 15, y = 0, width = 194.4, height = 183.6, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
         }
       }
       sdk.Edge(
@@ -393,7 +393,7 @@ explainer "Flow SDK Examples" {
         mode = "route",
         from = { nodeId: "s4-b", anchor: "e" },
         to = { nodeId: "s4-n0", anchor: "w" },
-        style = { stroke: theme(accent.warning), strokeWidth: 2.0 }
+        style = { stroke: theme(accent.warning), strokeWidth: 5.4 }
       )
 
       timeline main {
@@ -426,755 +426,755 @@ explainer "Flow SDK Examples" {
     caption: "81 ordered anchor pairs · one public SDK primitive."
 
     render: @scene {
-      sdk.Header(id = "rx1-hdr", title = "CURVE MATRIX · SOURCE × TARGET", caption = "rows = from · columns = to", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-col-center", text = "center", x = 48, y = 86, width = 54, height = 14, fontSize = 8, align = "middle", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-col-n", text = "n", x = 116, y = 86, width = 54, height = 14, fontSize = 8, align = "middle", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-col-s", text = "s", x = 184, y = 86, width = 54, height = 14, fontSize = 8, align = "middle", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-col-e", text = "e", x = 252, y = 86, width = 54, height = 14, fontSize = 8, align = "middle", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-col-w", text = "w", x = 320, y = 86, width = 54, height = 14, fontSize = 8, align = "middle", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-col-ne", text = "ne", x = 388, y = 86, width = 54, height = 14, fontSize = 8, align = "middle", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-col-nw", text = "nw", x = 456, y = 86, width = 54, height = 14, fontSize = 8, align = "middle", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-col-se", text = "se", x = 524, y = 86, width = 54, height = 14, fontSize = 8, align = "middle", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-col-sw", text = "sw", x = 592, y = 86, width = 54, height = 14, fontSize = 8, align = "middle", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-row-center", text = "center", x = 18, y = 104, width = 32, height = 14, fontSize = 8, align = "end", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-row-n", text = "n", x = 18, y = 131, width = 32, height = 14, fontSize = 8, align = "end", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-row-s", text = "s", x = 18, y = 158, width = 32, height = 14, fontSize = 8, align = "end", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-row-e", text = "e", x = 18, y = 185, width = 32, height = 14, fontSize = 8, align = "end", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-row-w", text = "w", x = 18, y = 212, width = 32, height = 14, fontSize = 8, align = "end", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-row-ne", text = "ne", x = 18, y = 239, width = 32, height = 14, fontSize = 8, align = "end", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-row-nw", text = "nw", x = 18, y = 266, width = 32, height = 14, fontSize = 8, align = "end", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-row-se", text = "se", x = 18, y = 293, width = 32, height = 14, fontSize = 8, align = "end", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx1-row-sw", text = "sw", x = 18, y = 320, width = 32, height = 14, fontSize = 8, align = "end", inkRole = theme(ink.secondary))
-      sdk.Shape(id = "rx1-center-center-src", variant = "rounded", x = 54, y = 108, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-center-center-dst", variant = "rounded", x = 96, y = 120, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-center-n-src", variant = "rounded", x = 122, y = 108, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-center-n-dst", variant = "rounded", x = 164, y = 120, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-center-s-src", variant = "rounded", x = 190, y = 108, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-center-s-dst", variant = "rounded", x = 232, y = 120, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-center-e-src", variant = "rounded", x = 258, y = 108, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-center-e-dst", variant = "rounded", x = 300, y = 120, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-center-w-src", variant = "rounded", x = 326, y = 108, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-center-w-dst", variant = "rounded", x = 368, y = 120, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-center-ne-src", variant = "rounded", x = 394, y = 108, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-center-ne-dst", variant = "rounded", x = 436, y = 120, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-center-nw-src", variant = "rounded", x = 462, y = 108, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-center-nw-dst", variant = "rounded", x = 504, y = 120, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-center-se-src", variant = "rounded", x = 530, y = 108, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-center-se-dst", variant = "rounded", x = 572, y = 120, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-center-sw-src", variant = "rounded", x = 598, y = 108, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-center-sw-dst", variant = "rounded", x = 640, y = 120, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-n-center-src", variant = "rounded", x = 54, y = 135, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-n-center-dst", variant = "rounded", x = 96, y = 147, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-n-n-src", variant = "rounded", x = 122, y = 135, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-n-n-dst", variant = "rounded", x = 164, y = 147, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-n-s-src", variant = "rounded", x = 190, y = 135, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-n-s-dst", variant = "rounded", x = 232, y = 147, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-n-e-src", variant = "rounded", x = 258, y = 135, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-n-e-dst", variant = "rounded", x = 300, y = 147, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-n-w-src", variant = "rounded", x = 326, y = 135, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-n-w-dst", variant = "rounded", x = 368, y = 147, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-n-ne-src", variant = "rounded", x = 394, y = 135, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-n-ne-dst", variant = "rounded", x = 436, y = 147, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-n-nw-src", variant = "rounded", x = 462, y = 135, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-n-nw-dst", variant = "rounded", x = 504, y = 147, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-n-se-src", variant = "rounded", x = 530, y = 135, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-n-se-dst", variant = "rounded", x = 572, y = 147, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-n-sw-src", variant = "rounded", x = 598, y = 135, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-n-sw-dst", variant = "rounded", x = 640, y = 147, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-s-center-src", variant = "rounded", x = 54, y = 162, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-s-center-dst", variant = "rounded", x = 96, y = 174, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-s-n-src", variant = "rounded", x = 122, y = 162, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-s-n-dst", variant = "rounded", x = 164, y = 174, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-s-s-src", variant = "rounded", x = 190, y = 162, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-s-s-dst", variant = "rounded", x = 232, y = 174, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-s-e-src", variant = "rounded", x = 258, y = 162, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-s-e-dst", variant = "rounded", x = 300, y = 174, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-s-w-src", variant = "rounded", x = 326, y = 162, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-s-w-dst", variant = "rounded", x = 368, y = 174, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-s-ne-src", variant = "rounded", x = 394, y = 162, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-s-ne-dst", variant = "rounded", x = 436, y = 174, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-s-nw-src", variant = "rounded", x = 462, y = 162, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-s-nw-dst", variant = "rounded", x = 504, y = 174, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-s-se-src", variant = "rounded", x = 530, y = 162, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-s-se-dst", variant = "rounded", x = 572, y = 174, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-s-sw-src", variant = "rounded", x = 598, y = 162, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-s-sw-dst", variant = "rounded", x = 640, y = 174, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-e-center-src", variant = "rounded", x = 54, y = 189, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-e-center-dst", variant = "rounded", x = 96, y = 201, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-e-n-src", variant = "rounded", x = 122, y = 189, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-e-n-dst", variant = "rounded", x = 164, y = 201, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-e-s-src", variant = "rounded", x = 190, y = 189, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-e-s-dst", variant = "rounded", x = 232, y = 201, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-e-e-src", variant = "rounded", x = 258, y = 189, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-e-e-dst", variant = "rounded", x = 300, y = 201, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-e-w-src", variant = "rounded", x = 326, y = 189, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-e-w-dst", variant = "rounded", x = 368, y = 201, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-e-ne-src", variant = "rounded", x = 394, y = 189, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-e-ne-dst", variant = "rounded", x = 436, y = 201, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-e-nw-src", variant = "rounded", x = 462, y = 189, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-e-nw-dst", variant = "rounded", x = 504, y = 201, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-e-se-src", variant = "rounded", x = 530, y = 189, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-e-se-dst", variant = "rounded", x = 572, y = 201, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-e-sw-src", variant = "rounded", x = 598, y = 189, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-e-sw-dst", variant = "rounded", x = 640, y = 201, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-w-center-src", variant = "rounded", x = 54, y = 216, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-w-center-dst", variant = "rounded", x = 96, y = 228, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-w-n-src", variant = "rounded", x = 122, y = 216, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-w-n-dst", variant = "rounded", x = 164, y = 228, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-w-s-src", variant = "rounded", x = 190, y = 216, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-w-s-dst", variant = "rounded", x = 232, y = 228, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-w-e-src", variant = "rounded", x = 258, y = 216, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-w-e-dst", variant = "rounded", x = 300, y = 228, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-w-w-src", variant = "rounded", x = 326, y = 216, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-w-w-dst", variant = "rounded", x = 368, y = 228, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-w-ne-src", variant = "rounded", x = 394, y = 216, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-w-ne-dst", variant = "rounded", x = 436, y = 228, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-w-nw-src", variant = "rounded", x = 462, y = 216, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-w-nw-dst", variant = "rounded", x = 504, y = 228, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-w-se-src", variant = "rounded", x = 530, y = 216, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-w-se-dst", variant = "rounded", x = 572, y = 228, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-w-sw-src", variant = "rounded", x = 598, y = 216, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-w-sw-dst", variant = "rounded", x = 640, y = 228, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-ne-center-src", variant = "rounded", x = 54, y = 243, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-ne-center-dst", variant = "rounded", x = 96, y = 255, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-ne-n-src", variant = "rounded", x = 122, y = 243, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-ne-n-dst", variant = "rounded", x = 164, y = 255, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-ne-s-src", variant = "rounded", x = 190, y = 243, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-ne-s-dst", variant = "rounded", x = 232, y = 255, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-ne-e-src", variant = "rounded", x = 258, y = 243, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-ne-e-dst", variant = "rounded", x = 300, y = 255, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-ne-w-src", variant = "rounded", x = 326, y = 243, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-ne-w-dst", variant = "rounded", x = 368, y = 255, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-ne-ne-src", variant = "rounded", x = 394, y = 243, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-ne-ne-dst", variant = "rounded", x = 436, y = 255, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-ne-nw-src", variant = "rounded", x = 462, y = 243, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-ne-nw-dst", variant = "rounded", x = 504, y = 255, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-ne-se-src", variant = "rounded", x = 530, y = 243, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-ne-se-dst", variant = "rounded", x = 572, y = 255, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-ne-sw-src", variant = "rounded", x = 598, y = 243, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-ne-sw-dst", variant = "rounded", x = 640, y = 255, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-nw-center-src", variant = "rounded", x = 54, y = 270, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-nw-center-dst", variant = "rounded", x = 96, y = 282, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-nw-n-src", variant = "rounded", x = 122, y = 270, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-nw-n-dst", variant = "rounded", x = 164, y = 282, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-nw-s-src", variant = "rounded", x = 190, y = 270, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-nw-s-dst", variant = "rounded", x = 232, y = 282, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-nw-e-src", variant = "rounded", x = 258, y = 270, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-nw-e-dst", variant = "rounded", x = 300, y = 282, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-nw-w-src", variant = "rounded", x = 326, y = 270, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-nw-w-dst", variant = "rounded", x = 368, y = 282, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-nw-ne-src", variant = "rounded", x = 394, y = 270, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-nw-ne-dst", variant = "rounded", x = 436, y = 282, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-nw-nw-src", variant = "rounded", x = 462, y = 270, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-nw-nw-dst", variant = "rounded", x = 504, y = 282, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-nw-se-src", variant = "rounded", x = 530, y = 270, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-nw-se-dst", variant = "rounded", x = 572, y = 282, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-nw-sw-src", variant = "rounded", x = 598, y = 270, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-nw-sw-dst", variant = "rounded", x = 640, y = 282, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-se-center-src", variant = "rounded", x = 54, y = 297, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-se-center-dst", variant = "rounded", x = 96, y = 309, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-se-n-src", variant = "rounded", x = 122, y = 297, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-se-n-dst", variant = "rounded", x = 164, y = 309, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-se-s-src", variant = "rounded", x = 190, y = 297, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-se-s-dst", variant = "rounded", x = 232, y = 309, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-se-e-src", variant = "rounded", x = 258, y = 297, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-se-e-dst", variant = "rounded", x = 300, y = 309, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-se-w-src", variant = "rounded", x = 326, y = 297, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-se-w-dst", variant = "rounded", x = 368, y = 309, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-se-ne-src", variant = "rounded", x = 394, y = 297, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-se-ne-dst", variant = "rounded", x = 436, y = 309, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-se-nw-src", variant = "rounded", x = 462, y = 297, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-se-nw-dst", variant = "rounded", x = 504, y = 309, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-se-se-src", variant = "rounded", x = 530, y = 297, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-se-se-dst", variant = "rounded", x = 572, y = 309, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-se-sw-src", variant = "rounded", x = 598, y = 297, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-se-sw-dst", variant = "rounded", x = 640, y = 309, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-sw-center-src", variant = "rounded", x = 54, y = 324, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-sw-center-dst", variant = "rounded", x = 96, y = 336, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-sw-n-src", variant = "rounded", x = 122, y = 324, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-sw-n-dst", variant = "rounded", x = 164, y = 336, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-sw-s-src", variant = "rounded", x = 190, y = 324, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-sw-s-dst", variant = "rounded", x = 232, y = 336, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-sw-e-src", variant = "rounded", x = 258, y = 324, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-sw-e-dst", variant = "rounded", x = 300, y = 336, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-sw-w-src", variant = "rounded", x = 326, y = 324, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-sw-w-dst", variant = "rounded", x = 368, y = 336, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-sw-ne-src", variant = "rounded", x = 394, y = 324, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-sw-ne-dst", variant = "rounded", x = 436, y = 336, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-sw-nw-src", variant = "rounded", x = 462, y = 324, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-sw-nw-dst", variant = "rounded", x = 504, y = 336, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-sw-se-src", variant = "rounded", x = 530, y = 324, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-sw-se-dst", variant = "rounded", x = 572, y = 336, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx1-sw-sw-src", variant = "rounded", x = 598, y = 324, width = 7, height = 7, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx1-sw-sw-dst", variant = "rounded", x = 640, y = 336, width = 7, height = 7, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Header(id = "rx1-hdr", title = "CURVE MATRIX · SOURCE × TARGET", caption = "rows = from · columns = to", x = 63.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-col-center", text = "center", x = 144.6, y = 232.2, width = 145.8, height = 37.8, fontSize = 21.6, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-col-n", text = "n", x = 328.2, y = 232.2, width = 145.8, height = 37.8, fontSize = 21.6, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-col-s", text = "s", x = 511.8, y = 232.2, width = 145.8, height = 37.8, fontSize = 21.6, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-col-e", text = "e", x = 695.4, y = 232.2, width = 145.8, height = 37.8, fontSize = 21.6, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-col-w", text = "w", x = 879, y = 232.2, width = 145.8, height = 37.8, fontSize = 21.6, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-col-ne", text = "ne", x = 1062.6, y = 232.2, width = 145.8, height = 37.8, fontSize = 21.6, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-col-nw", text = "nw", x = 1246.2, y = 232.2, width = 145.8, height = 37.8, fontSize = 21.6, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-col-se", text = "se", x = 1429.8, y = 232.2, width = 145.8, height = 37.8, fontSize = 21.6, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-col-sw", text = "sw", x = 1613.4, y = 232.2, width = 145.8, height = 37.8, fontSize = 21.6, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-row-center", text = "center", x = 63.6, y = 280.8, width = 86.4, height = 37.8, fontSize = 21.6, align = "end", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-row-n", text = "n", x = 63.6, y = 353.7, width = 86.4, height = 37.8, fontSize = 21.6, align = "end", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-row-s", text = "s", x = 63.6, y = 426.6, width = 86.4, height = 37.8, fontSize = 21.6, align = "end", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-row-e", text = "e", x = 63.6, y = 499.5, width = 86.4, height = 37.8, fontSize = 21.6, align = "end", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-row-w", text = "w", x = 63.6, y = 572.4, width = 86.4, height = 37.8, fontSize = 21.6, align = "end", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-row-ne", text = "ne", x = 63.6, y = 645.3, width = 86.4, height = 37.8, fontSize = 21.6, align = "end", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-row-nw", text = "nw", x = 63.6, y = 718.2, width = 86.4, height = 37.8, fontSize = 21.6, align = "end", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-row-se", text = "se", x = 63.6, y = 791.1, width = 86.4, height = 37.8, fontSize = 21.6, align = "end", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-row-sw", text = "sw", x = 63.6, y = 864, width = 86.4, height = 37.8, fontSize = 21.6, align = "end", inkRole = theme(ink.secondary))
+      sdk.Shape(id = "rx1-center-center-src", variant = "rounded", x = 160.8, y = 291.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-center-center-dst", variant = "rounded", x = 274.2, y = 324, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-center-n-src", variant = "rounded", x = 344.4, y = 291.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-center-n-dst", variant = "rounded", x = 457.8, y = 324, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-center-s-src", variant = "rounded", x = 528, y = 291.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-center-s-dst", variant = "rounded", x = 641.4, y = 324, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-center-e-src", variant = "rounded", x = 711.6, y = 291.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-center-e-dst", variant = "rounded", x = 825, y = 324, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-center-w-src", variant = "rounded", x = 895.2, y = 291.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-center-w-dst", variant = "rounded", x = 1008.6, y = 324, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-center-ne-src", variant = "rounded", x = 1078.8, y = 291.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-center-ne-dst", variant = "rounded", x = 1192.2, y = 324, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-center-nw-src", variant = "rounded", x = 1262.4, y = 291.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-center-nw-dst", variant = "rounded", x = 1375.8, y = 324, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-center-se-src", variant = "rounded", x = 1446, y = 291.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-center-se-dst", variant = "rounded", x = 1559.4, y = 324, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-center-sw-src", variant = "rounded", x = 1629.6, y = 291.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-center-sw-dst", variant = "rounded", x = 1743, y = 324, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-n-center-src", variant = "rounded", x = 160.8, y = 364.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-n-center-dst", variant = "rounded", x = 274.2, y = 396.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-n-n-src", variant = "rounded", x = 344.4, y = 364.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-n-n-dst", variant = "rounded", x = 457.8, y = 396.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-n-s-src", variant = "rounded", x = 528, y = 364.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-n-s-dst", variant = "rounded", x = 641.4, y = 396.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-n-e-src", variant = "rounded", x = 711.6, y = 364.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-n-e-dst", variant = "rounded", x = 825, y = 396.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-n-w-src", variant = "rounded", x = 895.2, y = 364.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-n-w-dst", variant = "rounded", x = 1008.6, y = 396.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-n-ne-src", variant = "rounded", x = 1078.8, y = 364.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-n-ne-dst", variant = "rounded", x = 1192.2, y = 396.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-n-nw-src", variant = "rounded", x = 1262.4, y = 364.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-n-nw-dst", variant = "rounded", x = 1375.8, y = 396.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-n-se-src", variant = "rounded", x = 1446, y = 364.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-n-se-dst", variant = "rounded", x = 1559.4, y = 396.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-n-sw-src", variant = "rounded", x = 1629.6, y = 364.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-n-sw-dst", variant = "rounded", x = 1743, y = 396.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-s-center-src", variant = "rounded", x = 160.8, y = 437.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-s-center-dst", variant = "rounded", x = 274.2, y = 469.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-s-n-src", variant = "rounded", x = 344.4, y = 437.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-s-n-dst", variant = "rounded", x = 457.8, y = 469.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-s-s-src", variant = "rounded", x = 528, y = 437.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-s-s-dst", variant = "rounded", x = 641.4, y = 469.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-s-e-src", variant = "rounded", x = 711.6, y = 437.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-s-e-dst", variant = "rounded", x = 825, y = 469.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-s-w-src", variant = "rounded", x = 895.2, y = 437.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-s-w-dst", variant = "rounded", x = 1008.6, y = 469.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-s-ne-src", variant = "rounded", x = 1078.8, y = 437.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-s-ne-dst", variant = "rounded", x = 1192.2, y = 469.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-s-nw-src", variant = "rounded", x = 1262.4, y = 437.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-s-nw-dst", variant = "rounded", x = 1375.8, y = 469.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-s-se-src", variant = "rounded", x = 1446, y = 437.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-s-se-dst", variant = "rounded", x = 1559.4, y = 469.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-s-sw-src", variant = "rounded", x = 1629.6, y = 437.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-s-sw-dst", variant = "rounded", x = 1743, y = 469.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-e-center-src", variant = "rounded", x = 160.8, y = 510.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-e-center-dst", variant = "rounded", x = 274.2, y = 542.7, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-e-n-src", variant = "rounded", x = 344.4, y = 510.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-e-n-dst", variant = "rounded", x = 457.8, y = 542.7, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-e-s-src", variant = "rounded", x = 528, y = 510.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-e-s-dst", variant = "rounded", x = 641.4, y = 542.7, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-e-e-src", variant = "rounded", x = 711.6, y = 510.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-e-e-dst", variant = "rounded", x = 825, y = 542.7, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-e-w-src", variant = "rounded", x = 895.2, y = 510.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-e-w-dst", variant = "rounded", x = 1008.6, y = 542.7, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-e-ne-src", variant = "rounded", x = 1078.8, y = 510.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-e-ne-dst", variant = "rounded", x = 1192.2, y = 542.7, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-e-nw-src", variant = "rounded", x = 1262.4, y = 510.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-e-nw-dst", variant = "rounded", x = 1375.8, y = 542.7, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-e-se-src", variant = "rounded", x = 1446, y = 510.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-e-se-dst", variant = "rounded", x = 1559.4, y = 542.7, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-e-sw-src", variant = "rounded", x = 1629.6, y = 510.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-e-sw-dst", variant = "rounded", x = 1743, y = 542.7, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-w-center-src", variant = "rounded", x = 160.8, y = 583.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-w-center-dst", variant = "rounded", x = 274.2, y = 615.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-w-n-src", variant = "rounded", x = 344.4, y = 583.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-w-n-dst", variant = "rounded", x = 457.8, y = 615.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-w-s-src", variant = "rounded", x = 528, y = 583.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-w-s-dst", variant = "rounded", x = 641.4, y = 615.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-w-e-src", variant = "rounded", x = 711.6, y = 583.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-w-e-dst", variant = "rounded", x = 825, y = 615.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-w-w-src", variant = "rounded", x = 895.2, y = 583.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-w-w-dst", variant = "rounded", x = 1008.6, y = 615.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-w-ne-src", variant = "rounded", x = 1078.8, y = 583.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-w-ne-dst", variant = "rounded", x = 1192.2, y = 615.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-w-nw-src", variant = "rounded", x = 1262.4, y = 583.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-w-nw-dst", variant = "rounded", x = 1375.8, y = 615.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-w-se-src", variant = "rounded", x = 1446, y = 583.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-w-se-dst", variant = "rounded", x = 1559.4, y = 615.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-w-sw-src", variant = "rounded", x = 1629.6, y = 583.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-w-sw-dst", variant = "rounded", x = 1743, y = 615.6, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-ne-center-src", variant = "rounded", x = 160.8, y = 656.1, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-ne-center-dst", variant = "rounded", x = 274.2, y = 688.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-ne-n-src", variant = "rounded", x = 344.4, y = 656.1, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-ne-n-dst", variant = "rounded", x = 457.8, y = 688.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-ne-s-src", variant = "rounded", x = 528, y = 656.1, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-ne-s-dst", variant = "rounded", x = 641.4, y = 688.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-ne-e-src", variant = "rounded", x = 711.6, y = 656.1, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-ne-e-dst", variant = "rounded", x = 825, y = 688.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-ne-w-src", variant = "rounded", x = 895.2, y = 656.1, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-ne-w-dst", variant = "rounded", x = 1008.6, y = 688.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-ne-ne-src", variant = "rounded", x = 1078.8, y = 656.1, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-ne-ne-dst", variant = "rounded", x = 1192.2, y = 688.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-ne-nw-src", variant = "rounded", x = 1262.4, y = 656.1, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-ne-nw-dst", variant = "rounded", x = 1375.8, y = 688.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-ne-se-src", variant = "rounded", x = 1446, y = 656.1, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-ne-se-dst", variant = "rounded", x = 1559.4, y = 688.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-ne-sw-src", variant = "rounded", x = 1629.6, y = 656.1, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-ne-sw-dst", variant = "rounded", x = 1743, y = 688.5, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-nw-center-src", variant = "rounded", x = 160.8, y = 729, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-nw-center-dst", variant = "rounded", x = 274.2, y = 761.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-nw-n-src", variant = "rounded", x = 344.4, y = 729, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-nw-n-dst", variant = "rounded", x = 457.8, y = 761.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-nw-s-src", variant = "rounded", x = 528, y = 729, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-nw-s-dst", variant = "rounded", x = 641.4, y = 761.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-nw-e-src", variant = "rounded", x = 711.6, y = 729, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-nw-e-dst", variant = "rounded", x = 825, y = 761.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-nw-w-src", variant = "rounded", x = 895.2, y = 729, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-nw-w-dst", variant = "rounded", x = 1008.6, y = 761.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-nw-ne-src", variant = "rounded", x = 1078.8, y = 729, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-nw-ne-dst", variant = "rounded", x = 1192.2, y = 761.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-nw-nw-src", variant = "rounded", x = 1262.4, y = 729, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-nw-nw-dst", variant = "rounded", x = 1375.8, y = 761.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-nw-se-src", variant = "rounded", x = 1446, y = 729, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-nw-se-dst", variant = "rounded", x = 1559.4, y = 761.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-nw-sw-src", variant = "rounded", x = 1629.6, y = 729, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-nw-sw-dst", variant = "rounded", x = 1743, y = 761.4, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-se-center-src", variant = "rounded", x = 160.8, y = 801.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-se-center-dst", variant = "rounded", x = 274.2, y = 834.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-se-n-src", variant = "rounded", x = 344.4, y = 801.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-se-n-dst", variant = "rounded", x = 457.8, y = 834.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-se-s-src", variant = "rounded", x = 528, y = 801.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-se-s-dst", variant = "rounded", x = 641.4, y = 834.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-se-e-src", variant = "rounded", x = 711.6, y = 801.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-se-e-dst", variant = "rounded", x = 825, y = 834.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-se-w-src", variant = "rounded", x = 895.2, y = 801.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-se-w-dst", variant = "rounded", x = 1008.6, y = 834.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-se-ne-src", variant = "rounded", x = 1078.8, y = 801.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-se-ne-dst", variant = "rounded", x = 1192.2, y = 834.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-se-nw-src", variant = "rounded", x = 1262.4, y = 801.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-se-nw-dst", variant = "rounded", x = 1375.8, y = 834.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-se-se-src", variant = "rounded", x = 1446, y = 801.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-se-se-dst", variant = "rounded", x = 1559.4, y = 834.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-se-sw-src", variant = "rounded", x = 1629.6, y = 801.9, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-se-sw-dst", variant = "rounded", x = 1743, y = 834.3, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-sw-center-src", variant = "rounded", x = 160.8, y = 874.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-sw-center-dst", variant = "rounded", x = 274.2, y = 907.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-sw-n-src", variant = "rounded", x = 344.4, y = 874.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-sw-n-dst", variant = "rounded", x = 457.8, y = 907.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-sw-s-src", variant = "rounded", x = 528, y = 874.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-sw-s-dst", variant = "rounded", x = 641.4, y = 907.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-sw-e-src", variant = "rounded", x = 711.6, y = 874.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-sw-e-dst", variant = "rounded", x = 825, y = 907.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-sw-w-src", variant = "rounded", x = 895.2, y = 874.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-sw-w-dst", variant = "rounded", x = 1008.6, y = 907.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-sw-ne-src", variant = "rounded", x = 1078.8, y = 874.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-sw-ne-dst", variant = "rounded", x = 1192.2, y = 907.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-sw-nw-src", variant = "rounded", x = 1262.4, y = 874.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-sw-nw-dst", variant = "rounded", x = 1375.8, y = 907.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-sw-se-src", variant = "rounded", x = 1446, y = 874.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-sw-se-dst", variant = "rounded", x = 1559.4, y = 907.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx1-sw-sw-src", variant = "rounded", x = 1629.6, y = 874.8, width = 18.9, height = 18.9, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx1-sw-sw-dst", variant = "rounded", x = 1743, y = 907.2, width = 18.9, height = 18.9, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
       sdk.Edge(
         id = "rx1-center-center-edge",
         mode = "curve",
         from = { nodeId: "rx1-center-center-src", anchor: "center" },
         to = { nodeId: "rx1-center-center-dst", anchor: "center" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-center-n-edge",
         mode = "curve",
         from = { nodeId: "rx1-center-n-src", anchor: "center" },
         to = { nodeId: "rx1-center-n-dst", anchor: "n" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-center-s-edge",
         mode = "curve",
         from = { nodeId: "rx1-center-s-src", anchor: "center" },
         to = { nodeId: "rx1-center-s-dst", anchor: "s" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-center-e-edge",
         mode = "curve",
         from = { nodeId: "rx1-center-e-src", anchor: "center" },
         to = { nodeId: "rx1-center-e-dst", anchor: "e" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-center-w-edge",
         mode = "curve",
         from = { nodeId: "rx1-center-w-src", anchor: "center" },
         to = { nodeId: "rx1-center-w-dst", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-center-ne-edge",
         mode = "curve",
         from = { nodeId: "rx1-center-ne-src", anchor: "center" },
         to = { nodeId: "rx1-center-ne-dst", anchor: "ne" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-center-nw-edge",
         mode = "curve",
         from = { nodeId: "rx1-center-nw-src", anchor: "center" },
         to = { nodeId: "rx1-center-nw-dst", anchor: "nw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-center-se-edge",
         mode = "curve",
         from = { nodeId: "rx1-center-se-src", anchor: "center" },
         to = { nodeId: "rx1-center-se-dst", anchor: "se" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-center-sw-edge",
         mode = "curve",
         from = { nodeId: "rx1-center-sw-src", anchor: "center" },
         to = { nodeId: "rx1-center-sw-dst", anchor: "sw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-n-center-edge",
         mode = "curve",
         from = { nodeId: "rx1-n-center-src", anchor: "n" },
         to = { nodeId: "rx1-n-center-dst", anchor: "center" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-n-n-edge",
         mode = "curve",
         from = { nodeId: "rx1-n-n-src", anchor: "n" },
         to = { nodeId: "rx1-n-n-dst", anchor: "n" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-n-s-edge",
         mode = "curve",
         from = { nodeId: "rx1-n-s-src", anchor: "n" },
         to = { nodeId: "rx1-n-s-dst", anchor: "s" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-n-e-edge",
         mode = "curve",
         from = { nodeId: "rx1-n-e-src", anchor: "n" },
         to = { nodeId: "rx1-n-e-dst", anchor: "e" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-n-w-edge",
         mode = "curve",
         from = { nodeId: "rx1-n-w-src", anchor: "n" },
         to = { nodeId: "rx1-n-w-dst", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-n-ne-edge",
         mode = "curve",
         from = { nodeId: "rx1-n-ne-src", anchor: "n" },
         to = { nodeId: "rx1-n-ne-dst", anchor: "ne" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-n-nw-edge",
         mode = "curve",
         from = { nodeId: "rx1-n-nw-src", anchor: "n" },
         to = { nodeId: "rx1-n-nw-dst", anchor: "nw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-n-se-edge",
         mode = "curve",
         from = { nodeId: "rx1-n-se-src", anchor: "n" },
         to = { nodeId: "rx1-n-se-dst", anchor: "se" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-n-sw-edge",
         mode = "curve",
         from = { nodeId: "rx1-n-sw-src", anchor: "n" },
         to = { nodeId: "rx1-n-sw-dst", anchor: "sw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-s-center-edge",
         mode = "curve",
         from = { nodeId: "rx1-s-center-src", anchor: "s" },
         to = { nodeId: "rx1-s-center-dst", anchor: "center" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-s-n-edge",
         mode = "curve",
         from = { nodeId: "rx1-s-n-src", anchor: "s" },
         to = { nodeId: "rx1-s-n-dst", anchor: "n" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-s-s-edge",
         mode = "curve",
         from = { nodeId: "rx1-s-s-src", anchor: "s" },
         to = { nodeId: "rx1-s-s-dst", anchor: "s" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-s-e-edge",
         mode = "curve",
         from = { nodeId: "rx1-s-e-src", anchor: "s" },
         to = { nodeId: "rx1-s-e-dst", anchor: "e" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-s-w-edge",
         mode = "curve",
         from = { nodeId: "rx1-s-w-src", anchor: "s" },
         to = { nodeId: "rx1-s-w-dst", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-s-ne-edge",
         mode = "curve",
         from = { nodeId: "rx1-s-ne-src", anchor: "s" },
         to = { nodeId: "rx1-s-ne-dst", anchor: "ne" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-s-nw-edge",
         mode = "curve",
         from = { nodeId: "rx1-s-nw-src", anchor: "s" },
         to = { nodeId: "rx1-s-nw-dst", anchor: "nw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-s-se-edge",
         mode = "curve",
         from = { nodeId: "rx1-s-se-src", anchor: "s" },
         to = { nodeId: "rx1-s-se-dst", anchor: "se" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-s-sw-edge",
         mode = "curve",
         from = { nodeId: "rx1-s-sw-src", anchor: "s" },
         to = { nodeId: "rx1-s-sw-dst", anchor: "sw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-e-center-edge",
         mode = "curve",
         from = { nodeId: "rx1-e-center-src", anchor: "e" },
         to = { nodeId: "rx1-e-center-dst", anchor: "center" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-e-n-edge",
         mode = "curve",
         from = { nodeId: "rx1-e-n-src", anchor: "e" },
         to = { nodeId: "rx1-e-n-dst", anchor: "n" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-e-s-edge",
         mode = "curve",
         from = { nodeId: "rx1-e-s-src", anchor: "e" },
         to = { nodeId: "rx1-e-s-dst", anchor: "s" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-e-e-edge",
         mode = "curve",
         from = { nodeId: "rx1-e-e-src", anchor: "e" },
         to = { nodeId: "rx1-e-e-dst", anchor: "e" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-e-w-edge",
         mode = "curve",
         from = { nodeId: "rx1-e-w-src", anchor: "e" },
         to = { nodeId: "rx1-e-w-dst", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-e-ne-edge",
         mode = "curve",
         from = { nodeId: "rx1-e-ne-src", anchor: "e" },
         to = { nodeId: "rx1-e-ne-dst", anchor: "ne" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-e-nw-edge",
         mode = "curve",
         from = { nodeId: "rx1-e-nw-src", anchor: "e" },
         to = { nodeId: "rx1-e-nw-dst", anchor: "nw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-e-se-edge",
         mode = "curve",
         from = { nodeId: "rx1-e-se-src", anchor: "e" },
         to = { nodeId: "rx1-e-se-dst", anchor: "se" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-e-sw-edge",
         mode = "curve",
         from = { nodeId: "rx1-e-sw-src", anchor: "e" },
         to = { nodeId: "rx1-e-sw-dst", anchor: "sw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-w-center-edge",
         mode = "curve",
         from = { nodeId: "rx1-w-center-src", anchor: "w" },
         to = { nodeId: "rx1-w-center-dst", anchor: "center" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-w-n-edge",
         mode = "curve",
         from = { nodeId: "rx1-w-n-src", anchor: "w" },
         to = { nodeId: "rx1-w-n-dst", anchor: "n" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-w-s-edge",
         mode = "curve",
         from = { nodeId: "rx1-w-s-src", anchor: "w" },
         to = { nodeId: "rx1-w-s-dst", anchor: "s" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-w-e-edge",
         mode = "curve",
         from = { nodeId: "rx1-w-e-src", anchor: "w" },
         to = { nodeId: "rx1-w-e-dst", anchor: "e" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-w-w-edge",
         mode = "curve",
         from = { nodeId: "rx1-w-w-src", anchor: "w" },
         to = { nodeId: "rx1-w-w-dst", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-w-ne-edge",
         mode = "curve",
         from = { nodeId: "rx1-w-ne-src", anchor: "w" },
         to = { nodeId: "rx1-w-ne-dst", anchor: "ne" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-w-nw-edge",
         mode = "curve",
         from = { nodeId: "rx1-w-nw-src", anchor: "w" },
         to = { nodeId: "rx1-w-nw-dst", anchor: "nw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-w-se-edge",
         mode = "curve",
         from = { nodeId: "rx1-w-se-src", anchor: "w" },
         to = { nodeId: "rx1-w-se-dst", anchor: "se" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-w-sw-edge",
         mode = "curve",
         from = { nodeId: "rx1-w-sw-src", anchor: "w" },
         to = { nodeId: "rx1-w-sw-dst", anchor: "sw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-ne-center-edge",
         mode = "curve",
         from = { nodeId: "rx1-ne-center-src", anchor: "ne" },
         to = { nodeId: "rx1-ne-center-dst", anchor: "center" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-ne-n-edge",
         mode = "curve",
         from = { nodeId: "rx1-ne-n-src", anchor: "ne" },
         to = { nodeId: "rx1-ne-n-dst", anchor: "n" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-ne-s-edge",
         mode = "curve",
         from = { nodeId: "rx1-ne-s-src", anchor: "ne" },
         to = { nodeId: "rx1-ne-s-dst", anchor: "s" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-ne-e-edge",
         mode = "curve",
         from = { nodeId: "rx1-ne-e-src", anchor: "ne" },
         to = { nodeId: "rx1-ne-e-dst", anchor: "e" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-ne-w-edge",
         mode = "curve",
         from = { nodeId: "rx1-ne-w-src", anchor: "ne" },
         to = { nodeId: "rx1-ne-w-dst", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-ne-ne-edge",
         mode = "curve",
         from = { nodeId: "rx1-ne-ne-src", anchor: "ne" },
         to = { nodeId: "rx1-ne-ne-dst", anchor: "ne" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-ne-nw-edge",
         mode = "curve",
         from = { nodeId: "rx1-ne-nw-src", anchor: "ne" },
         to = { nodeId: "rx1-ne-nw-dst", anchor: "nw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-ne-se-edge",
         mode = "curve",
         from = { nodeId: "rx1-ne-se-src", anchor: "ne" },
         to = { nodeId: "rx1-ne-se-dst", anchor: "se" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-ne-sw-edge",
         mode = "curve",
         from = { nodeId: "rx1-ne-sw-src", anchor: "ne" },
         to = { nodeId: "rx1-ne-sw-dst", anchor: "sw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-nw-center-edge",
         mode = "curve",
         from = { nodeId: "rx1-nw-center-src", anchor: "nw" },
         to = { nodeId: "rx1-nw-center-dst", anchor: "center" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-nw-n-edge",
         mode = "curve",
         from = { nodeId: "rx1-nw-n-src", anchor: "nw" },
         to = { nodeId: "rx1-nw-n-dst", anchor: "n" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-nw-s-edge",
         mode = "curve",
         from = { nodeId: "rx1-nw-s-src", anchor: "nw" },
         to = { nodeId: "rx1-nw-s-dst", anchor: "s" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-nw-e-edge",
         mode = "curve",
         from = { nodeId: "rx1-nw-e-src", anchor: "nw" },
         to = { nodeId: "rx1-nw-e-dst", anchor: "e" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-nw-w-edge",
         mode = "curve",
         from = { nodeId: "rx1-nw-w-src", anchor: "nw" },
         to = { nodeId: "rx1-nw-w-dst", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-nw-ne-edge",
         mode = "curve",
         from = { nodeId: "rx1-nw-ne-src", anchor: "nw" },
         to = { nodeId: "rx1-nw-ne-dst", anchor: "ne" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-nw-nw-edge",
         mode = "curve",
         from = { nodeId: "rx1-nw-nw-src", anchor: "nw" },
         to = { nodeId: "rx1-nw-nw-dst", anchor: "nw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-nw-se-edge",
         mode = "curve",
         from = { nodeId: "rx1-nw-se-src", anchor: "nw" },
         to = { nodeId: "rx1-nw-se-dst", anchor: "se" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-nw-sw-edge",
         mode = "curve",
         from = { nodeId: "rx1-nw-sw-src", anchor: "nw" },
         to = { nodeId: "rx1-nw-sw-dst", anchor: "sw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-se-center-edge",
         mode = "curve",
         from = { nodeId: "rx1-se-center-src", anchor: "se" },
         to = { nodeId: "rx1-se-center-dst", anchor: "center" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-se-n-edge",
         mode = "curve",
         from = { nodeId: "rx1-se-n-src", anchor: "se" },
         to = { nodeId: "rx1-se-n-dst", anchor: "n" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-se-s-edge",
         mode = "curve",
         from = { nodeId: "rx1-se-s-src", anchor: "se" },
         to = { nodeId: "rx1-se-s-dst", anchor: "s" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-se-e-edge",
         mode = "curve",
         from = { nodeId: "rx1-se-e-src", anchor: "se" },
         to = { nodeId: "rx1-se-e-dst", anchor: "e" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-se-w-edge",
         mode = "curve",
         from = { nodeId: "rx1-se-w-src", anchor: "se" },
         to = { nodeId: "rx1-se-w-dst", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-se-ne-edge",
         mode = "curve",
         from = { nodeId: "rx1-se-ne-src", anchor: "se" },
         to = { nodeId: "rx1-se-ne-dst", anchor: "ne" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-se-nw-edge",
         mode = "curve",
         from = { nodeId: "rx1-se-nw-src", anchor: "se" },
         to = { nodeId: "rx1-se-nw-dst", anchor: "nw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-se-se-edge",
         mode = "curve",
         from = { nodeId: "rx1-se-se-src", anchor: "se" },
         to = { nodeId: "rx1-se-se-dst", anchor: "se" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-se-sw-edge",
         mode = "curve",
         from = { nodeId: "rx1-se-sw-src", anchor: "se" },
         to = { nodeId: "rx1-se-sw-dst", anchor: "sw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-sw-center-edge",
         mode = "curve",
         from = { nodeId: "rx1-sw-center-src", anchor: "sw" },
         to = { nodeId: "rx1-sw-center-dst", anchor: "center" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-sw-n-edge",
         mode = "curve",
         from = { nodeId: "rx1-sw-n-src", anchor: "sw" },
         to = { nodeId: "rx1-sw-n-dst", anchor: "n" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-sw-s-edge",
         mode = "curve",
         from = { nodeId: "rx1-sw-s-src", anchor: "sw" },
         to = { nodeId: "rx1-sw-s-dst", anchor: "s" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-sw-e-edge",
         mode = "curve",
         from = { nodeId: "rx1-sw-e-src", anchor: "sw" },
         to = { nodeId: "rx1-sw-e-dst", anchor: "e" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-sw-w-edge",
         mode = "curve",
         from = { nodeId: "rx1-sw-w-src", anchor: "sw" },
         to = { nodeId: "rx1-sw-w-dst", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-sw-ne-edge",
         mode = "curve",
         from = { nodeId: "rx1-sw-ne-src", anchor: "sw" },
         to = { nodeId: "rx1-sw-ne-dst", anchor: "ne" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-sw-nw-edge",
         mode = "curve",
         from = { nodeId: "rx1-sw-nw-src", anchor: "sw" },
         to = { nodeId: "rx1-sw-nw-dst", anchor: "nw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-sw-se-edge",
         mode = "curve",
         from = { nodeId: "rx1-sw-se-src", anchor: "sw" },
         to = { nodeId: "rx1-sw-se-dst", anchor: "se" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
       sdk.Edge(
         id = "rx1-sw-sw-edge",
         mode = "curve",
         from = { nodeId: "rx1-sw-sw-src", anchor: "sw" },
         to = { nodeId: "rx1-sw-sw-dst", anchor: "sw" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.0, curvature: 0.32, clearance: 0, avoidObstacles: false }
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.7, curvature: 0.32, clearance: 0, avoidObstacles: false }
       )
-      sdk.Label(id = "rx1-note", text = "center · n · s · e · w · ne · nw · se · sw", x = 160, y = 362, width = 380, height = 16, fontSize = 9, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx1-note", text = "center · n · s · e · w · ne · nw · se · sw", x = 447, y = 977.4, width = 1026, height = 43.2, fontSize = 24.3, align = "middle", inkRole = theme(ink.secondary))
 
       timeline main {
         at 0 reveal rx1-hdr duration 220
@@ -1274,15 +1274,15 @@ explainer "Flow SDK Examples" {
     points: ["Copy one pair unchanged, then replace ids.", "Anchor names determine endpoint tangents.", "Curvature changes bow, not attachment."]
     caption: "N · S · E · W endpoint tangents."
     render: @scene {
-      sdk.Header(id = "rx2-hdr", title = "CARDINAL CURVES", caption = "tangent at both component edges", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
-      sdk.Panel(id = "rx2-w-src", title = "west", detail = "from e", x = 70, y = 100, width = 110, height = 54, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Panel(id = "rx2-w-dst", title = "east", detail = "to w", x = 500, y = 100, width = 110, height = 54, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Edge(id = "rx2-ew", mode = "curve", from = { nodeId: "rx2-w-src", anchor: "e" }, to = { nodeId: "rx2-w-dst", anchor: "w" }, style = { stroke: theme(accent.secondary), strokeWidth: 2.2 })
-      sdk.Panel(id = "rx2-n-src", title = "north", detail = "from s", x = 235, y = 76, width = 90, height = 48, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Panel(id = "rx2-n-dst", title = "south", detail = "to n", x = 355, y = 250, width = 90, height = 48, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Edge(id = "rx2-sn", mode = "curve", from = { nodeId: "rx2-n-src", anchor: "s" }, to = { nodeId: "rx2-n-dst", anchor: "n" }, style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 })
-      sdk.Label(id = "rx2-ew-label", text = "e → w · horizontal terminal legs", x = 190, y = 160, width = 300, height = 20, fontSize = 11, align = "middle", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx2-sn-label", text = "s → n · vertical terminal legs", x = 190, y = 310, width = 300, height = 20, fontSize = 11, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Header(id = "rx2-hdr", title = "CARDINAL CURVES", caption = "tangent at both component edges", x = 63.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
+      sdk.Panel(id = "rx2-w-src", title = "west", detail = "from e", x = 204, y = 270, width = 297, height = 145.8, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "rx2-w-dst", title = "east", detail = "to w", x = 1365, y = 270, width = 297, height = 145.8, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Edge(id = "rx2-ew", mode = "curve", from = { nodeId: "rx2-w-src", anchor: "e" }, to = { nodeId: "rx2-w-dst", anchor: "w" }, style = { stroke: theme(accent.secondary), strokeWidth: 5.94 })
+      sdk.Panel(id = "rx2-n-src", title = "north", detail = "from s", x = 649.5, y = 243, width = 243, height = 129.6, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "rx2-n-dst", title = "south", detail = "to n", x = 973.5, y = 680.4, width = 243, height = 129.6, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Edge(id = "rx2-sn", mode = "curve", from = { nodeId: "rx2-n-src", anchor: "s" }, to = { nodeId: "rx2-n-dst", anchor: "n" }, style = { stroke: theme(accent.tertiary), strokeWidth: 5.94 })
+      sdk.Label(id = "rx2-ew-label", text = "e → w · horizontal terminal legs", x = 528, y = 432, width = 810, height = 54, fontSize = 29.7, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx2-sn-label", text = "s → n · vertical terminal legs", x = 528, y = 869.4, width = 810, height = 54, fontSize = 29.7, align = "middle", inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal rx2-hdr duration 220
         at 200 stagger targets [rx2-w-src, rx2-w-dst, rx2-n-src, rx2-n-dst] step 70 duration 180
@@ -1303,17 +1303,17 @@ explainer "Flow SDK Examples" {
     points: ["ne, nw, se, sw use normalized diagonal tangents.", "center follows relative geometry.", "Aliases remain accepted at cardinal anchors."]
     caption: "Four corners · one peer-facing center."
     render: @scene {
-      sdk.Header(id = "rx3-hdr", title = "CORNERS + CENTER", caption = "diagonal tangents · peer-facing fallback", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
-      sdk.Panel(id = "rx3-center", title = "CENTER", detail = "soft anchor", x = 290, y = 165, width = 120, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Panel(id = "rx3-nw", title = "NW", detail = "to se", x = 60, y = 82, width = 90, height = 48, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Panel(id = "rx3-ne", title = "NE", detail = "to sw", x = 550, y = 82, width = 90, height = 48, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Panel(id = "rx3-sw", title = "SW", detail = "to ne", x = 60, y = 270, width = 90, height = 48, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Panel(id = "rx3-se", title = "SE", detail = "to nw", x = 550, y = 270, width = 90, height = 48, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Edge(id = "rx3-a", mode = "curve", from = { nodeId: "rx3-nw", anchor: "se" }, to = { nodeId: "rx3-center", anchor: "nw" }, style = { stroke: theme(accent.secondary), strokeWidth: 2.0, avoidObstacles: false })
-      sdk.Edge(id = "rx3-b", mode = "curve", from = { nodeId: "rx3-ne", anchor: "sw" }, to = { nodeId: "rx3-center", anchor: "ne" }, style = { stroke: theme(accent.tertiary), strokeWidth: 2.0, avoidObstacles: false })
-      sdk.Edge(id = "rx3-c", mode = "curve", from = { nodeId: "rx3-sw", anchor: "ne" }, to = { nodeId: "rx3-center", anchor: "sw" }, style = { stroke: theme(accent.secondary), strokeWidth: 2.0, avoidObstacles: false })
-      sdk.Edge(id = "rx3-d", mode = "curve", from = { nodeId: "rx3-se", anchor: "nw" }, to = { nodeId: "rx3-center", anchor: "se" }, style = { stroke: theme(accent.tertiary), strokeWidth: 2.0, avoidObstacles: false })
-      sdk.Edge(id = "rx3-center-edge", mode = "curve", from = { nodeId: "rx3-center", anchor: "center" }, to = { nodeId: "rx3-ne", anchor: "center" }, style = { stroke: theme(accent.green), strokeWidth: 1.5, avoidObstacles: false })
+      sdk.Header(id = "rx3-hdr", title = "CORNERS + CENTER", caption = "diagonal tangents · peer-facing fallback", x = 63.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
+      sdk.Panel(id = "rx3-center", title = "CENTER", detail = "soft anchor", x = 798, y = 445.5, width = 324, height = 194.4, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Panel(id = "rx3-nw", title = "NW", detail = "to se", x = 177, y = 221.4, width = 243, height = 129.6, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "rx3-ne", title = "NE", detail = "to sw", x = 1500, y = 221.4, width = 243, height = 129.6, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "rx3-sw", title = "SW", detail = "to ne", x = 177, y = 729, width = 243, height = 129.6, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "rx3-se", title = "SE", detail = "to nw", x = 1500, y = 729, width = 243, height = 129.6, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Edge(id = "rx3-a", mode = "curve", from = { nodeId: "rx3-nw", anchor: "se" }, to = { nodeId: "rx3-center", anchor: "nw" }, style = { stroke: theme(accent.secondary), strokeWidth: 5.4, avoidObstacles: false })
+      sdk.Edge(id = "rx3-b", mode = "curve", from = { nodeId: "rx3-ne", anchor: "sw" }, to = { nodeId: "rx3-center", anchor: "ne" }, style = { stroke: theme(accent.tertiary), strokeWidth: 5.4, avoidObstacles: false })
+      sdk.Edge(id = "rx3-c", mode = "curve", from = { nodeId: "rx3-sw", anchor: "ne" }, to = { nodeId: "rx3-center", anchor: "sw" }, style = { stroke: theme(accent.secondary), strokeWidth: 5.4, avoidObstacles: false })
+      sdk.Edge(id = "rx3-d", mode = "curve", from = { nodeId: "rx3-se", anchor: "nw" }, to = { nodeId: "rx3-center", anchor: "se" }, style = { stroke: theme(accent.tertiary), strokeWidth: 5.4, avoidObstacles: false })
+      sdk.Edge(id = "rx3-center-edge", mode = "curve", from = { nodeId: "rx3-center", anchor: "center" }, to = { nodeId: "rx3-ne", anchor: "center" }, style = { stroke: theme(accent.green), strokeWidth: 4.05, avoidObstacles: false })
       timeline main {
         at 0 reveal rx3-hdr duration 220
         at 200 stagger targets [rx3-center, rx3-nw, rx3-ne, rx3-sw, rx3-se] step 70 duration 180
@@ -1336,14 +1336,14 @@ explainer "Flow SDK Examples" {
     points: ["Same-side links retain both endpoint tangents.", "Self-loops evaluate perimeter candidates.", "preferredSide selects n, s, e, or w."]
     caption: "Outside the box · deterministic perimeter."
     render: @scene {
-      sdk.Header(id = "rx4-hdr", title = "SAME SIDE + SELF LOOP", caption = "outside component bounds", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
-      sdk.Panel(id = "rx4-a", title = "A", detail = "n → n", x = 70, y = 170, width = 100, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Panel(id = "rx4-b", title = "B", detail = "same side", x = 245, y = 170, width = 100, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Edge(id = "rx4-nn", mode = "curve", from = { nodeId: "rx4-a", anchor: "n" }, to = { nodeId: "rx4-b", anchor: "n" }, style = { stroke: theme(accent.secondary), strokeWidth: 2.2, preferredSide: "n" })
-      sdk.Panel(id = "rx4-loop-node", title = "SELF", detail = "w → w", x = 480, y = 170, width = 110, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
-      sdk.Edge(id = "rx4-loop", mode = "curve", from = { nodeId: "rx4-loop-node", anchor: "w" }, to = { nodeId: "rx4-loop-node", anchor: "w" }, style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, preferredSide: "w", clearance: 18 })
-      sdk.Label(id = "rx4-note-a", text = "same-side arc", x = 135, y = 104, width = 150, height = 20, fontSize = 11, align = "middle", inkRole = theme(ink.secondary))
-      sdk.Label(id = "rx4-note-b", text = "perimeter self-loop", x = 455, y = 104, width = 160, height = 20, fontSize = 11, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Header(id = "rx4-hdr", title = "SAME SIDE + SELF LOOP", caption = "outside component bounds", x = 63.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
+      sdk.Panel(id = "rx4-a", title = "A", detail = "n → n", x = 204, y = 459, width = 270, height = 194.4, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "rx4-b", title = "B", detail = "same side", x = 676.5, y = 459, width = 270, height = 194.4, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Edge(id = "rx4-nn", mode = "curve", from = { nodeId: "rx4-a", anchor: "n" }, to = { nodeId: "rx4-b", anchor: "n" }, style = { stroke: theme(accent.secondary), strokeWidth: 5.94, preferredSide: "n" })
+      sdk.Panel(id = "rx4-loop-node", title = "SELF", detail = "w → w", x = 1311, y = 459, width = 297, height = 194.4, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
+      sdk.Edge(id = "rx4-loop", mode = "curve", from = { nodeId: "rx4-loop-node", anchor: "w" }, to = { nodeId: "rx4-loop-node", anchor: "w" }, style = { stroke: theme(accent.tertiary), strokeWidth: 5.94, preferredSide: "w", clearance: 18 })
+      sdk.Label(id = "rx4-note-a", text = "same-side arc", x = 379.5, y = 280.8, width = 405, height = 54, fontSize = 29.7, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Label(id = "rx4-note-b", text = "perimeter self-loop", x = 1243.5, y = 280.8, width = 432, height = 54, fontSize = 29.7, align = "middle", inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal rx4-hdr duration 220
         at 220 stagger targets [rx4-a, rx4-b, rx4-loop-node] step 100 duration 180
@@ -1364,15 +1364,15 @@ explainer "Flow SDK Examples" {
     points: ["Default avoidance is on.", "preferredSide biases the selected corridor.", "avoidObstacles = false restores direct adaptive geometry."]
     caption: "Automatic detour · optional author controls."
     render: @scene {
-      sdk.Header(id = "rx5-hdr", title = "OBSTACLE AVOIDANCE", caption = "visibility graph · stable detour", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
-      sdk.Panel(id = "rx5-src", title = "source", detail = "from e", x = 40, y = 165, width = 100, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Panel(id = "rx5-wall-a", title = "obstacle A", detail = "clearance +12", x = 250, y = 100, width = 100, height = 90, surfaceRole = theme(surface.primary), strokeRole = theme(accent.warning))
-      sdk.Panel(id = "rx5-wall-b", title = "obstacle B", detail = "positive area", x = 370, y = 205, width = 100, height = 90, surfaceRole = theme(surface.primary), strokeRole = theme(accent.warning))
-      sdk.Panel(id = "rx5-dst", title = "target", detail = "to w", x = 560, y = 165, width = 100, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Edge(id = "rx5-default", mode = "curve", from = { nodeId: "rx5-src", anchor: "e" }, to = { nodeId: "rx5-dst", anchor: "w" }, style = { stroke: theme(accent.secondary), strokeWidth: 2.4, clearance: 12 })
-      sdk.Edge(id = "rx5-side", mode = "curve", from = { nodeId: "rx5-src", anchor: "se" }, to = { nodeId: "rx5-dst", anchor: "sw" }, style = { stroke: theme(accent.tertiary), strokeWidth: 1.8, clearance: 22, preferredSide: "s", parallelGap: 14 })
-      sdk.Edge(id = "rx5-direct", mode = "curve", from = { nodeId: "rx5-src", anchor: "ne" }, to = { nodeId: "rx5-dst", anchor: "nw" }, style = { stroke: theme(accent.warning), strokeWidth: 1.4, avoidObstacles: false, curvature: 0.2 })
-      sdk.Label(id = "rx5-key", text = "default · high clearance / south · avoidance off", x = 155, y = 320, width = 390, height = 20, fontSize = 10, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Header(id = "rx5-hdr", title = "OBSTACLE AVOIDANCE", caption = "visibility graph · stable detour", x = 63.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
+      sdk.Panel(id = "rx5-src", title = "source", detail = "from e", x = 123, y = 445.5, width = 270, height = 194.4, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "rx5-wall-a", title = "obstacle A", detail = "clearance +12", x = 690, y = 270, width = 270, height = 243, surfaceRole = theme(surface.primary), strokeRole = theme(accent.warning))
+      sdk.Panel(id = "rx5-wall-b", title = "obstacle B", detail = "positive area", x = 1014, y = 553.5, width = 270, height = 243, surfaceRole = theme(surface.primary), strokeRole = theme(accent.warning))
+      sdk.Panel(id = "rx5-dst", title = "target", detail = "to w", x = 1527, y = 445.5, width = 270, height = 194.4, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Edge(id = "rx5-default", mode = "curve", from = { nodeId: "rx5-src", anchor: "e" }, to = { nodeId: "rx5-dst", anchor: "w" }, style = { stroke: theme(accent.secondary), strokeWidth: 6.48, clearance: 12 })
+      sdk.Edge(id = "rx5-side", mode = "curve", from = { nodeId: "rx5-src", anchor: "se" }, to = { nodeId: "rx5-dst", anchor: "sw" }, style = { stroke: theme(accent.tertiary), strokeWidth: 4.86, clearance: 22, preferredSide: "s", parallelGap: 14 })
+      sdk.Edge(id = "rx5-direct", mode = "curve", from = { nodeId: "rx5-src", anchor: "ne" }, to = { nodeId: "rx5-dst", anchor: "nw" }, style = { stroke: theme(accent.warning), strokeWidth: 3.78, avoidObstacles: false, curvature: 0.2 })
+      sdk.Label(id = "rx5-key", text = "default · high clearance / south · avoidance off", x = 433.5, y = 864, width = 1053, height = 54, fontSize = 27, align = "middle", inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal rx5-hdr duration 220
         at 220 stagger targets [rx5-src, rx5-wall-a, rx5-wall-b, rx5-dst] step 90 duration 180
@@ -1394,13 +1394,13 @@ explainer "Flow SDK Examples" {
     points: ["Sibling order is deterministic.", "Offsets are symmetric around the base route.", "Endpoints never drift."]
     caption: "−gap · center · +gap."
     render: @scene {
-      sdk.Header(id = "rx6-hdr", title = "PARALLEL LANES", caption = "same endpoints · distinct routes", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
-      sdk.Panel(id = "rx6-src", title = "source", detail = "three edges", x = 70, y = 165, width = 120, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Panel(id = "rx6-dst", title = "target", detail = "same anchors", x = 510, y = 165, width = 120, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Edge(id = "rx6-lane-a", mode = "curve", from = { nodeId: "rx6-src", anchor: "e" }, to = { nodeId: "rx6-dst", anchor: "w" }, style = { stroke: theme(accent.primary), strokeWidth: 2.0, parallelGap: 14 })
-      sdk.Edge(id = "rx6-lane-b", mode = "curve", from = { nodeId: "rx6-src", anchor: "e" }, to = { nodeId: "rx6-dst", anchor: "w" }, style = { stroke: theme(accent.secondary), strokeWidth: 2.0, parallelGap: 14 })
-      sdk.Edge(id = "rx6-lane-c", mode = "curve", from = { nodeId: "rx6-src", anchor: "e" }, to = { nodeId: "rx6-dst", anchor: "w" }, style = { stroke: theme(accent.tertiary), strokeWidth: 2.0, parallelGap: 14 })
-      sdk.Label(id = "rx6-label", text = "lane offsets: −14 · 0 · +14", x = 210, y = 285, width = 280, height = 22, fontSize = 11, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Header(id = "rx6-hdr", title = "PARALLEL LANES", caption = "same endpoints · distinct routes", x = 63.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
+      sdk.Panel(id = "rx6-src", title = "source", detail = "three edges", x = 204, y = 445.5, width = 324, height = 194.4, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "rx6-dst", title = "target", detail = "same anchors", x = 1392, y = 445.5, width = 324, height = 194.4, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Edge(id = "rx6-lane-a", mode = "curve", from = { nodeId: "rx6-src", anchor: "e" }, to = { nodeId: "rx6-dst", anchor: "w" }, style = { stroke: theme(accent.primary), strokeWidth: 5.4, parallelGap: 14 })
+      sdk.Edge(id = "rx6-lane-b", mode = "curve", from = { nodeId: "rx6-src", anchor: "e" }, to = { nodeId: "rx6-dst", anchor: "w" }, style = { stroke: theme(accent.secondary), strokeWidth: 5.4, parallelGap: 14 })
+      sdk.Edge(id = "rx6-lane-c", mode = "curve", from = { nodeId: "rx6-src", anchor: "e" }, to = { nodeId: "rx6-dst", anchor: "w" }, style = { stroke: theme(accent.tertiary), strokeWidth: 5.4, parallelGap: 14 })
+      sdk.Label(id = "rx6-label", text = "lane offsets: −14 · 0 · +14", x = 582, y = 769.5, width = 756, height = 59.4, fontSize = 29.7, align = "middle", inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal rx6-hdr duration 220
         at 220 stagger targets [rx6-src, rx6-dst] step 100 duration 180
@@ -1422,13 +1422,13 @@ explainer "Flow SDK Examples" {
     points: ["All compatible siblings opt in.", "Edge ids and actions remain distinct.", "One corridor reduces visual noise."]
     caption: "Separate semantics · shared geometry."
     render: @scene {
-      sdk.Header(id = "rx7-hdr", title = "BUNDLED CORRIDOR", caption = "three ids · one path", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
-      sdk.Panel(id = "rx7-src", title = "producer", detail = "3 semantic edges", x = 70, y = 165, width = 130, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Panel(id = "rx7-dst", title = "consumer", detail = "shared corridor", x = 500, y = 165, width = 130, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Edge(id = "rx7-bundle-a", mode = "curve", from = { nodeId: "rx7-src", anchor: "e" }, to = { nodeId: "rx7-dst", anchor: "w" }, style = { stroke: theme(accent.primary), strokeWidth: 4.5, bundle: true })
-      sdk.Edge(id = "rx7-bundle-b", mode = "curve", from = { nodeId: "rx7-src", anchor: "e" }, to = { nodeId: "rx7-dst", anchor: "w" }, style = { stroke: theme(accent.secondary), strokeWidth: 2.8, bundle: true })
-      sdk.Edge(id = "rx7-bundle-c", mode = "curve", from = { nodeId: "rx7-src", anchor: "e" }, to = { nodeId: "rx7-dst", anchor: "w" }, style = { stroke: theme(accent.green), strokeWidth: 1.2, bundle: true })
-      sdk.Label(id = "rx7-label", text = "bundle: true · same canonical d", x = 210, y = 285, width = 280, height = 22, fontSize = 11, align = "middle", inkRole = theme(ink.secondary))
+      sdk.Header(id = "rx7-hdr", title = "BUNDLED CORRIDOR", caption = "three ids · one path", x = 63.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
+      sdk.Panel(id = "rx7-src", title = "producer", detail = "3 semantic edges", x = 204, y = 445.5, width = 351, height = 194.4, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "rx7-dst", title = "consumer", detail = "shared corridor", x = 1365, y = 445.5, width = 351, height = 194.4, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Edge(id = "rx7-bundle-a", mode = "curve", from = { nodeId: "rx7-src", anchor: "e" }, to = { nodeId: "rx7-dst", anchor: "w" }, style = { stroke: theme(accent.primary), strokeWidth: 12.15, bundle: true })
+      sdk.Edge(id = "rx7-bundle-b", mode = "curve", from = { nodeId: "rx7-src", anchor: "e" }, to = { nodeId: "rx7-dst", anchor: "w" }, style = { stroke: theme(accent.secondary), strokeWidth: 7.56, bundle: true })
+      sdk.Edge(id = "rx7-bundle-c", mode = "curve", from = { nodeId: "rx7-src", anchor: "e" }, to = { nodeId: "rx7-dst", anchor: "w" }, style = { stroke: theme(accent.green), strokeWidth: 3.24, bundle: true })
+      sdk.Label(id = "rx7-label", text = "bundle: true · same canonical d", x = 582, y = 769.5, width = 756, height = 59.4, fontSize = 29.7, align = "middle", inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal rx7-hdr duration 220
         at 220 stagger targets [rx7-src, rx7-dst] step 100 duration 180
@@ -1450,14 +1450,14 @@ explainer "Flow SDK Examples" {
     points: ["e/w → horizontal terminal leg.", "n/s → vertical terminal leg.", "Tall and wide displacements no longer override anchor intent."]
     caption: "terminal leg ⟂ component edge."
     render: @scene {
-      sdk.Header(id = "rx8-hdr", title = "ANCHOR-SAFE ORTHOGONAL", caption = "terminal leg ⟂ component edge", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
-      sdk.Panel(id = "rx8-left", title = "source", detail = "from e", x = 60, y = 90, width = 110, height = 54, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Panel(id = "rx8-right", title = "target", detail = "to w", x = 510, y = 165, width = 110, height = 54, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Edge(id = "rx8-ew", mode = "route", from = { nodeId: "rx8-left", anchor: "e" }, to = { nodeId: "rx8-right", anchor: "w" }, style = { stroke: theme(accent.green), strokeWidth: 2.4 })
-      sdk.Panel(id = "rx8-top", title = "source", detail = "from s", x = 300, y = 78, width = 100, height = 48, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
-      sdk.Panel(id = "rx8-bottom", title = "target", detail = "to n", x = 400, y = 270, width = 100, height = 48, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
-      sdk.Edge(id = "rx8-sn", mode = "route", from = { nodeId: "rx8-top", anchor: "s" }, to = { nodeId: "rx8-bottom", anchor: "n" }, style = { stroke: theme(accent.tertiary), strokeWidth: 2.0 })
-      sdk.Note(id = "rx8-note", text = "Before: displacement picked the bend axis. Now: anchors own the terminal direction.", x = 60, y = 330, width = 560, height = 28, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Header(id = "rx8-hdr", title = "ANCHOR-SAFE ORTHOGONAL", caption = "terminal leg ⟂ component edge", x = 63.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
+      sdk.Panel(id = "rx8-left", title = "source", detail = "from e", x = 177, y = 243, width = 297, height = 145.8, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "rx8-right", title = "target", detail = "to w", x = 1392, y = 445.5, width = 297, height = 145.8, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Edge(id = "rx8-ew", mode = "route", from = { nodeId: "rx8-left", anchor: "e" }, to = { nodeId: "rx8-right", anchor: "w" }, style = { stroke: theme(accent.green), strokeWidth: 6.48 })
+      sdk.Panel(id = "rx8-top", title = "source", detail = "from s", x = 825, y = 210.6, width = 270, height = 129.6, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
+      sdk.Panel(id = "rx8-bottom", title = "target", detail = "to n", x = 1095, y = 729, width = 270, height = 129.6, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
+      sdk.Edge(id = "rx8-sn", mode = "route", from = { nodeId: "rx8-top", anchor: "s" }, to = { nodeId: "rx8-bottom", anchor: "n" }, style = { stroke: theme(accent.tertiary), strokeWidth: 5.4 })
+      sdk.Note(id = "rx8-note", text = "Before: displacement picked the bend axis. Now: anchors own the terminal direction.", x = 177, y = 923.4, width = 1512, height = 75.6, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
       timeline main {
         at 0 reveal rx8-hdr duration 220
         at 220 stagger targets [rx8-left, rx8-right, rx8-top, rx8-bottom] step 80 duration 180
@@ -1478,19 +1478,19 @@ explainer "Flow SDK Examples" {
     points: ["Defaults are deterministic.", "Invalid values fall back safely.", "mode = route remains orthogonal; mode = curve uses these six controls."]
     caption: "Six controls · finite normalized defaults."
     render: @scene {
-      sdk.Header(id = "rx9-hdr", title = "ROUTING CONTROLS", caption = "clearance · curvature · avoidance · side · bundle · gap", x = 18, y = 16, width = 664, height = 44, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
-      sdk.Panel(id = "rx9-a0", title = "clearance", detail = "24", x = 40, y = 82, width = 92, height = 46, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Panel(id = "rx9-a1", title = "curvature", detail = "0.75", x = 40, y = 160, width = 92, height = 46, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
-      sdk.Panel(id = "rx9-a2", title = "avoid", detail = "false", x = 40, y = 238, width = 92, height = 46, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.warning))
-      sdk.Panel(id = "rx9-b0", title = "side", detail = "north", x = 360, y = 82, width = 92, height = 46, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
-      sdk.Panel(id = "rx9-b1", title = "bundle", detail = "true", x = 360, y = 160, width = 92, height = 46, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Panel(id = "rx9-b2", title = "parallelGap", detail = "16", x = 360, y = 238, width = 92, height = 46, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx9-t0", variant = "rounded", x = 285, y = 98, width = 12, height = 12, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx9-t1", variant = "rounded", x = 285, y = 176, width = 12, height = 12, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx9-t2", variant = "rounded", x = 285, y = 254, width = 12, height = 12, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
-      sdk.Shape(id = "rx9-u0", variant = "rounded", x = 605, y = 98, width = 12, height = 12, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx9-u1", variant = "rounded", x = 605, y = 176, width = 12, height = 12, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
-      sdk.Shape(id = "rx9-u2", variant = "rounded", x = 605, y = 254, width = 12, height = 12, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Header(id = "rx9-hdr", title = "ROUTING CONTROLS", caption = "clearance · curvature · avoidance · side · bundle · gap", x = 63.6, y = 43.2, width = 1792.8, height = 118.8, surfaceRole = theme(surface.secondary), inkRole = theme(ink.secondary))
+      sdk.Panel(id = "rx9-a0", title = "clearance", detail = "24", x = 123, y = 221.4, width = 248.4, height = 124.2, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Panel(id = "rx9-a1", title = "curvature", detail = "0.75", x = 123, y = 432, width = 248.4, height = 124.2, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
+      sdk.Panel(id = "rx9-a2", title = "avoid", detail = "false", x = 123, y = 642.6, width = 248.4, height = 124.2, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.warning))
+      sdk.Panel(id = "rx9-b0", title = "side", detail = "north", x = 987, y = 221.4, width = 248.4, height = 124.2, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
+      sdk.Panel(id = "rx9-b1", title = "bundle", detail = "true", x = 987, y = 432, width = 248.4, height = 124.2, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Panel(id = "rx9-b2", title = "parallelGap", detail = "16", x = 987, y = 642.6, width = 248.4, height = 124.2, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx9-t0", variant = "rounded", x = 784.5, y = 264.6, width = 32.4, height = 32.4, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx9-t1", variant = "rounded", x = 784.5, y = 475.2, width = 32.4, height = 32.4, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx9-t2", variant = "rounded", x = 784.5, y = 685.8, width = 32.4, height = 32.4, surfaceRole = theme(accent.green), strokeRole = theme(accent.green))
+      sdk.Shape(id = "rx9-u0", variant = "rounded", x = 1648.5, y = 264.6, width = 32.4, height = 32.4, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx9-u1", variant = "rounded", x = 1648.5, y = 475.2, width = 32.4, height = 32.4, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
+      sdk.Shape(id = "rx9-u2", variant = "rounded", x = 1648.5, y = 685.8, width = 32.4, height = 32.4, surfaceRole = theme(accent.primary), strokeRole = theme(accent.primary))
       sdk.Edge(id = "rx9-clearance", mode = "curve", from = { nodeId: "rx9-a0", anchor: "e" }, to = { nodeId: "rx9-t0", anchor: "w" }, style = { stroke: theme(accent.primary), clearance: 24 })
       sdk.Edge(id = "rx9-curvature", mode = "curve", from = { nodeId: "rx9-a1", anchor: "e" }, to = { nodeId: "rx9-t1", anchor: "w" }, style = { stroke: theme(accent.secondary), curvature: 0.75, avoidObstacles: false })
       sdk.Edge(id = "rx9-avoid", mode = "curve", from = { nodeId: "rx9-a2", anchor: "e" }, to = { nodeId: "rx9-t2", anchor: "w" }, style = { stroke: theme(accent.warning), avoidObstacles: false })
@@ -1532,7 +1532,7 @@ explainer "Flow SDK Examples" {
         id = "s5-hdr",
         title = "MOTION OVERLAYS",
         caption = "Reveal structure · trace motion.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -1540,7 +1540,7 @@ explainer "Flow SDK Examples" {
         id = "s5-left",
         title = "emitter",
         detail = "source",
-        x = 60, y = 130, width = 150, height = 80,
+        x = 177, y = 351, width = 405, height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1548,7 +1548,7 @@ explainer "Flow SDK Examples" {
         id = "s5-right",
         title = "sink",
         detail = "target",
-        x = 470, y = 130, width = 150, height = 80,
+        x = 1284, y = 351, width = 405, height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -1557,22 +1557,26 @@ explainer "Flow SDK Examples" {
         mode = "connector",
         from = { nodeId: "s5-left", anchor: "e" },
         to = { nodeId: "s5-right", anchor: "w" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.4 }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 6.48 }
       )
       sdk.Signal(
         id = "s5-signal",
         edge = "s5-edge",
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.primary) }
       )
-      sdk.Pulse(
-        id = "s5-pulse",
-        x = 448, y = 118, width = 194, height = 104,
-        opacity = 0.35,
-        strokeWidth = 2.0,
-        style = { stroke: theme(accent.warning) }
-      )
+      sdk.Overlay(id = "s5-pulse-overlay", x = 1689, y = 918, width = 2.7, height = 2.7, coordinateSpace = "absolute") {
+        children {
+          sdk.Pulse(
+            id = "s5-pulse",
+            x = 1224.6, y = 318.6, width = 523.8, height = 280.8,
+            opacity = 0.35,
+            strokeWidth = 5.4,
+            style = { stroke: theme(accent.warning), position: "absolute" }
+          )
+        }
+      }
 
       timeline main {
         at 0 reveal s5-hdr duration 220
@@ -1607,7 +1611,7 @@ explainer "Flow SDK Examples" {
         id = "s6-hdr",
         title = "TIMELINE RECIPES",
         caption = "at 0 · after chain · stagger lists.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -1615,14 +1619,14 @@ explainer "Flow SDK Examples" {
         id = "s6-recipe",
         steps = ["reveal", "trace", "stagger", "fade", "exit"],
         linked = true,
-        gap = 8,
-        x = 50, y = 82, width = 600, height = 28
+        gap = 21.6,
+        x = 150, y = 221.4, width = 1620, height = 75.6
       )
       sdk.Panel(
         id = "s6-focus",
         title = "exit target",
         detail = "exit action",
-        x = 80, y = 140, width = 200, height = 80,
+        x = 231, y = 378, width = 540, height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1630,7 +1634,7 @@ explainer "Flow SDK Examples" {
         id = "s6-dim",
         title = "fade target",
         detail = "secondary",
-        x = 320, y = 140, width = 200, height = 80,
+        x = 879, y = 378, width = 540, height = 216,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -1638,7 +1642,7 @@ explainer "Flow SDK Examples" {
         id = "s6-c",
         title = "C",
         detail = "stagger",
-        x = 560, y = 120, width = 100, height = 72,
+        x = 1527, y = 324, width = 270, height = 194.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1646,7 +1650,7 @@ explainer "Flow SDK Examples" {
         id = "s6-d",
         title = "D",
         detail = "stagger",
-        x = 560, y = 200, width = 100, height = 72,
+        x = 1527, y = 540, width = 270, height = 194.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1654,7 +1658,7 @@ explainer "Flow SDK Examples" {
         id = "s6-e",
         title = "E",
         detail = "stagger",
-        x = 560, y = 280, width = 100, height = 72,
+        x = 1527, y = 756, width = 270, height = 194.4,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1663,13 +1667,13 @@ explainer "Flow SDK Examples" {
         mode = "connector",
         from = { nodeId: "s6-focus", anchor: "e" },
         to = { nodeId: "s6-dim", anchor: "w" },
-        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.green), strokeWidth: 5.94 }
       )
-      sdk.Callout(
+      sdk.Note(
         id = "s6-callout",
         text = "after chain",
-        x = 170, y = 118, width = 100, height = 22,
-        target = { x: 180, y: 140 },
+        x = 231, y = 648, width = 324, height = 75.6,
+        surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
 
@@ -1708,26 +1712,26 @@ explainer "Flow SDK Examples" {
         id = "s7-hdr",
         title = "AIPERF.* COMPOSITES",
         caption = "Domain shape · generic slide copy.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
       aiperf.ControllerCells(
         id = "s7-cells",
         controllerLabel = "Controller",
-        cellLabels = ["Cell 0", "Cell 1", "Cell 2"],
-        x = 30, y = 70
+        cellLabels = ["Cell 0", "Cell 1"],
+        x = 96, y = 232.2
       )
       aiperf.MetricsExport(
         id = "s7-export",
         sourceLabel = "Metrics plane",
         exporterLabels = ["JSON", "CSV"],
-        x = 420, y = 240
+        x = 1068, y = 232.2
       )
       aiperf.RequestPipeline(
         id = "s7-pipe",
         stageLabels = ["Schedule", "Admission", "Transport", "Capture"],
-        x = 60, y = 250
+        x = 177, y = 729
       )
 
       timeline main {
@@ -1764,7 +1768,7 @@ explainer "Flow SDK Examples" {
         id = "s8-hdr",
         title = "FREEFORM ESCAPE HATCH",
         caption = "SDK first · freeform only for unique art.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -1772,14 +1776,14 @@ explainer "Flow SDK Examples" {
         id = "s8-sdk",
         title = "sdk.panel",
         detail = "surrounds art",
-        x = 94, y = 126, width = 200, height = 96,
+        x = 268.8, y = 340.2, width = 540, height = 259.2,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Note(
         id = "s8-note",
         text = "freeform { circle … } — raw primitive allowed inside block only",
-        x = 94, y = 250, width = 512, height = 44,
+        x = 268.8, y = 675, width = 1382.4, height = 118.8,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(ink.secondary)
       )
@@ -1822,20 +1826,20 @@ explainer "Flow SDK Examples" {
         id = "s9-hdr",
         title = "INTEGRATED FINALE",
         caption = "Compose patterns · do not reinvent layout.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
       sdk.Band(
         id = "s9-band",
         title = "mini load-generator slice",
-        x = 40, y = 78, width = 620, height = 266
+        x = 123, y = 210.6, width = 1674, height = 718.2
       )
       sdk.Rail(
         id = "s9-tags",
         direction = "row",
-        gap = 10,
-        x = 68, y = 112, width = 544, height = 26
+        gap = 27,
+        x = 198.6, y = 302.4, width = 918, height = 75.6
       ) {
         children {
           sdk.Chip(id = "s9-t0", label = "chrome", surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
@@ -1846,7 +1850,7 @@ explainer "Flow SDK Examples" {
       aiperf.RequestPipeline(
         id = "s9-pipeline",
         stageLabels = ["Profile", "Execute"],
-        x = 82, y = 182
+        x = 236.4, y = 491.4
       )
       sdk.FanOut(
         id = "s9-fan",
@@ -1856,10 +1860,10 @@ explainer "Flow SDK Examples" {
           { nodeId: "s9-csv", anchor: "w" }
         ],
         axis = "x",
-        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+        style = { stroke: theme(accent.green), strokeWidth: 5.94 }
       )
-      sdk.Panel(id = "s9-json", title = "JSON", detail = "artifact", x = 430, y = 150, width = 128, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
-      sdk.Panel(id = "s9-csv", title = "CSV", detail = "artifact", x = 430, y = 236, width = 128, height = 72, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Panel(id = "s9-json", title = "JSON", detail = "artifact", x = 1176, y = 405, width = 345.6, height = 194.4, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+      sdk.Panel(id = "s9-csv", title = "CSV", detail = "artifact", x = 1176, y = 637.2, width = 345.6, height = 194.4, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
       sdk.Flow(
         id = "s9-flow",
         edge = true,
@@ -1867,7 +1871,7 @@ explainer "Flow SDK Examples" {
         from = ref("s9-pipeline.output"),
         to = { nodeId: "s9-csv", anchor: "w" },
         opacity = 0.55,
-        strokeWidth = 2.2,
+        strokeWidth = 5.94,
         style = { stroke: theme(accent.primary) }
       )
 
@@ -1908,7 +1912,7 @@ explainer "Flow SDK Examples" {
         id = "s10-hdr",
         title = "SHIP CHECKLIST",
         caption = "Compile · register · verify · preview.",
-        x = 18, y = 16, width = 664, height = 44,
+        x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
@@ -1916,20 +1920,20 @@ explainer "Flow SDK Examples" {
         id = "s10-steps",
         steps = ["author", "register", "build", "verify", "preview"],
         linked = true,
-        gap = 12,
-        x = 40, y = 78, width = 620, height = 28
+        gap = 32.4,
+        x = 123, y = 210.6, width = 1674, height = 75.6
       )
       sdk.Stack(
         id = "s10-stack",
         direction = "column",
-        gap = 6,
-        x = 40, y = 100, width = 620, height = 200
+        gap = 16.2,
+        x = 123, y = 297, width = 1674, height = 702
       ) {
         children {
-          sdk.Panel(id = "s10-a", title = "native sdk.* scenes", detail = "no package-form roots", surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
-          sdk.Panel(id = "s10-b", title = "non-empty timelines", detail = "reveal → trace polish", surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
-          sdk.Panel(id = "s10-c", title = "evidence in points", detail = "cite rust/ or apps/ paths", surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
-          sdk.Panel(id = "s10-d", title = "make assert-explainer-packages", detail = "CI gate", surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green))
+          sdk.Panel(id = "s10-a", title = "native sdk.* scenes", surfaceRole = theme(surface.elevated), strokeRole = theme(accent.primary))
+          sdk.Panel(id = "s10-b", title = "non-empty timelines", surfaceRole = theme(surface.elevated), strokeRole = theme(accent.secondary))
+          sdk.Panel(id = "s10-c", title = "evidence in points", surfaceRole = theme(surface.elevated), strokeRole = theme(accent.tertiary))
+          sdk.Panel(id = "s10-d", title = "make assert-explainer-packages", width = 1674, height = 108, surfaceRole = theme(surface.elevated), strokeRole = theme(accent.green), style = { clip: true })
         }
       }
 
@@ -1946,7 +1950,7 @@ explainer "Flow SDK Examples" {
       id = "final-hdr",
       title = "Copy sources for agents",
       caption = "Flow SDK exemplar references",
-      x = 18, y = 16, width = 664, height = 44,
+      x = 63.6, y = 43.2, width = 1792.8, height = 118.8,
       surfaceRole = theme(surface.secondary),
       inkRole = theme(ink.secondary)
     )
@@ -1954,7 +1958,7 @@ explainer "Flow SDK Examples" {
       id = "f1",
       title = "apps/explainers/decks-flow/flow-sdk-examples.flow",
       detail = "this exemplar deck",
-      x = 40, y = 78, width = 620, height = 48,
+      x = 123, y = 210.6, width = 1674, height = 129.6,
       surfaceRole = theme(surface.elevated),
       strokeRole = theme(accent.primary)
     )
@@ -1962,7 +1966,7 @@ explainer "Flow SDK Examples" {
       id = "f2",
       title = "apps/explainers/src/flow/sdk/registry.ts",
       detail = "sdk.* component catalog + actions",
-      x = 40, y = 136, width = 620, height = 48,
+      x = 123, y = 394.2, width = 1674, height = 129.6,
       surfaceRole = theme(surface.elevated),
       strokeRole = theme(accent.secondary)
     )
@@ -1970,7 +1974,7 @@ explainer "Flow SDK Examples" {
       id = "f3",
       title = "apps/explainers/scripts/assert-sdk-authoring.mjs",
       detail = "strict authoring gate",
-      x = 40, y = 194, width = 620, height = 48,
+      x = 123, y = 577.8, width = 1674, height = 129.6,
       surfaceRole = theme(surface.elevated),
       strokeRole = theme(accent.tertiary)
     )
@@ -1978,7 +1982,7 @@ explainer "Flow SDK Examples" {
       id = "f4",
       title = "apps/explainers/decks-flow/synthetic-dataset-generator.flow",
       detail = "production reference · fans + finalCard",
-      x = 40, y = 252, width = 620, height = 48,
+      x = 123, y = 761.4, width = 1674, height = 129.6,
       surfaceRole = theme(surface.elevated),
       strokeRole = theme(accent.green)
     )

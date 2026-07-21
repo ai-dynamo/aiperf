@@ -332,7 +332,7 @@ export type SceneIr = Readonly<{
   title: string;
   /** Human-readable scene summary (SVG `<desc>` / a11y). */
   summary: string;
-  /** Optional diagram viewport (defaults to ~700×400 in ExplainerShell). */
+  /** Optional diagram viewport (defaults to ~1920×1080 in ExplainerShell). */
   viewport?: SceneViewportIr | undefined;
   roots: readonly RenderNodeIr[];
   camera: readonly CameraKeyframeIr[];

@@ -277,6 +277,26 @@ export function pathEndpointsCoincident(points, tolerance = 0.5) {
   return Math.hypot(first.x - last.x, first.y - last.y) <= tolerance;
 }
 
+/**
+ * True when a polyline covers meaningful travel, including closed loops and
+ * out-and-back motion strokes whose endpoints coincide by design.
+ */
+export function pathHasTravel(points, minTravel = 1) {
+  if (!Array.isArray(points) || points.length < 2) {
+    return false;
+  }
+  let travel = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1];
+    const current = points[index];
+    travel += Math.hypot(current.x - previous.x, current.y - previous.y);
+    if (travel >= minTravel) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function normalizeVector(vector) {
   const length = Math.hypot(vector.x, vector.y);
   if (length < 1e-6) {
@@ -815,15 +835,51 @@ function segmentBoundsPoints(start, segments) {
 }
 
 /**
+ * Shrink `bounds` so no point within `runway` of `point` counts as interior,
+ * instead of clearing only the exact point. Mirror of
+ * `shrinkBoundsForRunway` in connector-routing-search.ts: `smoothPolyline`
+ * guarantees every rounded segment travels at least `MIN_HANDLE` from its own
+ * waypoint before it can bend back, and the curvature ladder cannot shrink
+ * that runway below the handle floor.
+ */
+function shrinkBoundsForRunway(bounds, point, runway) {
+  if (!pointInBounds(point, bounds, true)) return bounds;
+  const left = bounds.x;
+  const right = bounds.x + bounds.width;
+  const top = bounds.y;
+  const bottom = bounds.y + bounds.height;
+  const distLeft = point.x - left;
+  const distRight = right - point.x;
+  const distTop = point.y - top;
+  const distBottom = bottom - point.y;
+  const minDist = Math.min(distLeft, distRight, distTop, distBottom);
+  if (minDist === distLeft) {
+    const edge = Math.min(point.x + runway, right);
+    return { x: edge, y: bounds.y, width: Math.max(right - edge, 0), height: bounds.height };
+  }
+  if (minDist === distRight) {
+    const edge = Math.max(point.x - runway, left);
+    return { x: bounds.x, y: bounds.y, width: Math.max(edge - left, 0), height: bounds.height };
+  }
+  if (minDist === distTop) {
+    const edge = Math.min(point.y + runway, bottom);
+    return { x: bounds.x, y: edge, width: bounds.width, height: Math.max(bottom - edge, 0) };
+  }
+  const edge = Math.max(point.y - runway, top);
+  return { x: bounds.x, y: bounds.y, width: bounds.width, height: Math.max(edge - top, 0) };
+}
+
+/**
  * Obstacles widened by `clearance` for post-smoothing penetration checks, with
- * each inflated rectangle shrunk away from the route's own `start`/`end`.
- * Mirror of `inflateForPenetrationCheck` in connector-routing-search.ts.
+ * each inflated rectangle shrunk away from the route's own `start`/`end` by
+ * the guaranteed `MIN_HANDLE` runway. Mirror of `inflateForPenetrationCheck`
+ * in connector-routing-search.ts.
  */
 function inflateForPenetrationCheck(obstacles, clearance, start, end) {
   return obstacles.flatMap((obstacle) => {
     let bounds = inflateBounds(obstacle.bounds, clearance);
-    bounds = shrinkBoundsToExcludePoint(bounds, start);
-    bounds = shrinkBoundsToExcludePoint(bounds, end);
+    bounds = shrinkBoundsForRunway(bounds, start, MIN_HANDLE);
+    bounds = shrinkBoundsForRunway(bounds, end, MIN_HANDLE);
     if (bounds.width <= 0 || bounds.height <= 0) return [];
     return [{ id: obstacle.id, bounds }];
   });

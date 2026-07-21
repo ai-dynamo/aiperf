@@ -458,12 +458,12 @@ function makeDescriptor(
 // `number` / `title` / `subtitle` / `eyebrow` ports.
 // ---------------------------------------------------------------------------
 
-const DIVIDER_WIDTH = 640;
-const DIVIDER_EYEBROW_H = 22;
-const DIVIDER_NUMBER_H = 148;
-const DIVIDER_TITLE_H = 64;
-const DIVIDER_SUBTITLE_H = 34;
-const DIVIDER_GAP = 8;
+const DIVIDER_WIDTH = 1728;
+const DIVIDER_EYEBROW_H = 59.4;
+const DIVIDER_NUMBER_H = 399.6;
+const DIVIDER_TITLE_H = 172.8;
+const DIVIDER_SUBTITLE_H = 91.8;
+const DIVIDER_GAP = 21.6;
 
 const sectionDividerFactory: SdkComponentFactory = (props, _slots, context) => {
   const diagnostics: Diagnostic[] = [];
@@ -502,7 +502,7 @@ const sectionDividerFactory: SdkComponentFactory = (props, _slots, context) => {
           id: eyebrowId,
           text: eyebrow,
           geometry: { x: 0, y: cursorY, width, height: DIVIDER_EYEBROW_H },
-          style: rightAlignedText(14, COLOR_ACCENT, { fontWeight: "bold", letterSpacing: 2 }),
+          style: rightAlignedText(37.8, COLOR_ACCENT, { fontWeight: "bold", letterSpacing: 5.4 }),
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.sectionDivider", context, "eyebrow"),
@@ -519,7 +519,7 @@ const sectionDividerFactory: SdkComponentFactory = (props, _slots, context) => {
         id: numberId,
         text: number,
         geometry: { x: 0, y: cursorY, width, height: DIVIDER_NUMBER_H },
-        style: rightAlignedText(120, COLOR_ACCENT, { fontFamily: MONO_FONT, fontWeight: "bold" }),
+        style: rightAlignedText(324, COLOR_ACCENT, { fontFamily: MONO_FONT, fontWeight: "bold" }),
         sourceMap: context.sourceMap,
       }),
       makeOrigin("sdk.sectionDivider", context, "number"),
@@ -535,7 +535,7 @@ const sectionDividerFactory: SdkComponentFactory = (props, _slots, context) => {
         id: titleId,
         text: title,
         geometry: { x: 0, y: cursorY, width, height: DIVIDER_TITLE_H },
-        style: rightAlignedText(48, COLOR_INK, { fontWeight: "bold" }),
+        style: rightAlignedText(129.6, COLOR_INK, { fontWeight: "bold" }),
         sourceMap: context.sourceMap,
       }),
       makeOrigin("sdk.sectionDivider", context, "title"),
@@ -549,14 +549,14 @@ const sectionDividerFactory: SdkComponentFactory = (props, _slots, context) => {
     // The subtitle is the one free-form prose field; grow its own box (and thus
     // the divider group) to fit wrapped lines. No sibling shift is needed since
     // it is the last stacked element.
-    const subtitleH = flowTextHeight(subtitle, width, 20, DIVIDER_SUBTITLE_H);
+    const subtitleH = flowTextHeight(subtitle, width, 54, DIVIDER_SUBTITLE_H);
     children.push(
       attachSdkOrigin(
         buildText({
           id: subtitleId,
           text: subtitle,
           geometry: { x: 0, y: cursorY, width, height: subtitleH },
-          style: rightAlignedText(20, COLOR_SECONDARY, {}),
+          style: rightAlignedText(54, COLOR_SECONDARY, {}),
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.sectionDivider", context, "subtitle"),
@@ -612,17 +612,17 @@ export const SECTION_DIVIDER_DEFINITION: SdkComponentDefinition = {
 
 type StepEntry = Readonly<{ number: string; label: string; detail?: string }>;
 
-const STEP_ACCENT_THICKNESS = 3;
-const STEP_INSET = 14;
+const STEP_ACCENT_THICKNESS = 8.1;
+const STEP_INSET = 37.8;
 
 // Row-mode box + arrow-gap sizing.
-const STEP_ROW_BOX_W = 168;
-const STEP_ROW_BOX_H = 116;
-const STEP_ROW_ARROW_GAP = 46;
+const STEP_ROW_BOX_W = 453.6;
+const STEP_ROW_BOX_H = 313.2;
+const STEP_ROW_ARROW_GAP = 124.2;
 // Column-mode box + arrow-gap sizing.
-const STEP_COL_BOX_W = 280;
-const STEP_COL_BOX_H = 92;
-const STEP_COL_ARROW_GAP = 40;
+const STEP_COL_BOX_W = 756;
+const STEP_COL_BOX_H = 248.4;
+const STEP_COL_ARROW_GAP = 108;
 
 function parseSteps(
   props: Readonly<Record<string, JsonValue>>,
@@ -702,18 +702,18 @@ const stepChainFactory: SdkComponentFactory = (props, _slots, context) => {
   const stepBoxNodes: FlowNode[] = steps.map((step, index) => {
     const boxId = `${rootId}__step-${index}`;
     const inner: FlowNode[] = [
-      { id: `${boxId}__number`, measure: textFlowLeaf(step.number, scaledSceneFontSize(15), "bold") },
+      { id: `${boxId}__number`, measure: textFlowLeaf(step.number, scaledSceneFontSize(40.5), "bold") },
       {
         id: `${boxId}__label`,
-        measure: textFlowLeaf(step.label, scaledSceneFontSize(18), "bold"),
-        margin: { top: 6 },
+        measure: textFlowLeaf(step.label, scaledSceneFontSize(48.6), "bold"),
+        margin: { top: 16.2 },
       },
     ];
     if (step.detail !== undefined) {
       inner.push({
         id: `${boxId}__detail`,
-        measure: textFlowLeaf(step.detail, scaledSceneFontSize(13)),
-        margin: { top: 6 },
+        measure: textFlowLeaf(step.detail, scaledSceneFontSize(35.1)),
+        margin: { top: 16.2 },
       });
     }
     return {
@@ -772,7 +772,7 @@ const stepChainFactory: SdkComponentFactory = (props, _slots, context) => {
           id: `${boxId}__number`,
           text: step.number,
           geometry: localGeometry(numberBox, stepBox),
-          style: { fontSize: 15, fontFamily: MONO_FONT, fontWeight: "bold", fill: COLOR_ACCENT, textAnchor: "start" },
+          style: { fontSize: 40.5, fontFamily: MONO_FONT, fontWeight: "bold", fill: COLOR_ACCENT, textAnchor: "start" },
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.stepChain", context, "number"),
@@ -786,7 +786,7 @@ const stepChainFactory: SdkComponentFactory = (props, _slots, context) => {
           id: `${boxId}__label`,
           text: step.label,
           geometry: localGeometry(labelBox, stepBox),
-          style: { fontSize: 18, fontWeight: "bold", fill: COLOR_INK, textAnchor: "start" },
+          style: { fontSize: 48.6, fontWeight: "bold", fill: COLOR_INK, textAnchor: "start" },
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.stepChain", context, "label"),
@@ -801,7 +801,7 @@ const stepChainFactory: SdkComponentFactory = (props, _slots, context) => {
             id: `${boxId}__detail`,
             text: step.detail,
             geometry: localGeometry(detailBox, stepBox),
-            style: { fontSize: 13, fill: COLOR_MUTED, textAnchor: "start" },
+            style: { fontSize: 35.1, fill: COLOR_MUTED, textAnchor: "start" },
             sourceMap: context.sourceMap,
           }),
           makeOrigin("sdk.stepChain", context, "detail"),
@@ -819,7 +819,7 @@ const stepChainFactory: SdkComponentFactory = (props, _slots, context) => {
             coordinateSpace: "local",
             fill: COLOR_SURFACE,
             stroke: COLOR_BORDER,
-            strokeWidth: 1,
+            strokeWidth: 2.7,
           },
           children: boxChildren,
           label: `${step.number} ${step.label}`,
@@ -853,7 +853,7 @@ const stepChainFactory: SdkComponentFactory = (props, _slots, context) => {
           buildConnector({
             id: arrowId,
             geometry: arrowGeometry,
-            style: { fill: "none", stroke: COLOR_ACCENT, strokeWidth: 2, markerEnd: "arrow" },
+            style: { fill: "none", stroke: COLOR_ACCENT, strokeWidth: 5.4, markerEnd: "arrow" },
             from: { nodeId: `${rootId}__step-${index}`, anchor: isColumn ? "s" : "e" },
             to: { nodeId: `${rootId}__step-${index + 1}`, anchor: isColumn ? "n" : "w" },
             label: `step ${index} to ${index + 1}`,
@@ -906,12 +906,12 @@ export const STEP_CHAIN_DEFINITION: SdkComponentDefinition = {
 // `core.text` children. Exposes `value` / `title` / `description` ports.
 // ---------------------------------------------------------------------------
 
-const BIG_STAT_VALUE_FONT = 200;
-const BIG_STAT_VALUE_H = 220;
-const BIG_STAT_TITLE_H = 40;
-const BIG_STAT_DESCRIPTION_H = 30;
-const BIG_STAT_WIDTH = 480;
-const BIG_STAT_GAP = 10;
+const BIG_STAT_VALUE_FONT = 540;
+const BIG_STAT_VALUE_H = 594;
+const BIG_STAT_TITLE_H = 108;
+const BIG_STAT_DESCRIPTION_H = 81;
+const BIG_STAT_WIDTH = 1296;
+const BIG_STAT_GAP = 27;
 
 const bigStatFactory: SdkComponentFactory = (props, _slots, context) => {
   const diagnostics: Diagnostic[] = [];
@@ -961,7 +961,7 @@ const bigStatFactory: SdkComponentFactory = (props, _slots, context) => {
           id: titleId,
           text: title,
           geometry: { x: 0, y: cursorY, width, height: BIG_STAT_TITLE_H },
-          style: { fontSize: 28, fontWeight: "bold", fill: COLOR_INK, textAnchor: "start" },
+          style: { fontSize: 75.6, fontWeight: "bold", fill: COLOR_INK, textAnchor: "start" },
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.bigStat", context, "title"),
@@ -976,14 +976,14 @@ const bigStatFactory: SdkComponentFactory = (props, _slots, context) => {
     // Description is the one free-form prose field; grow its own box (and the
     // stat group) to fit wrapped lines. It is the last stacked element, so no
     // sibling shift is needed.
-    const descriptionH = flowTextHeight(description, width, 16, BIG_STAT_DESCRIPTION_H);
+    const descriptionH = flowTextHeight(description, width, 43.2, BIG_STAT_DESCRIPTION_H);
     children.push(
       attachSdkOrigin(
         buildText({
           id: descriptionId,
           text: description,
           geometry: { x: 0, y: cursorY, width, height: descriptionH },
-          style: { fontSize: 16, fill: COLOR_SECONDARY, textAnchor: "start" },
+          style: { fontSize: 43.2, fill: COLOR_SECONDARY, textAnchor: "start" },
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.bigStat", context, "description"),
@@ -1037,10 +1037,10 @@ export const BIG_STAT_DEFINITION: SdkComponentDefinition = {
 type CompareItem = Readonly<{ label: string; detail?: string }>;
 
 const COMPARE_DEFAULT_COLUMNS = 3;
-const COMPARE_CELL_W = 220;
-const COMPARE_CELL_H = 120;
-const COMPARE_GAP = 16;
-const COMPARE_INSET = 16;
+const COMPARE_CELL_W = 594;
+const COMPARE_CELL_H = 324;
+const COMPARE_GAP = 43.2;
+const COMPARE_INSET = 43.2;
 
 function parseCompareItems(
   props: Readonly<Record<string, JsonValue>>,
@@ -1108,14 +1108,14 @@ const compareGridFactory: SdkComponentFactory = (props, _slots, context) => {
   // row auto-sizes to that row's tallest wrapped-detail content (see
   // `computeGridCellBoxes`), replacing the older grid-wide single-height math.
   const detailWidth = COMPARE_CELL_W - COMPARE_INSET * 2;
-  const detailTopY = STEP_ACCENT_THICKNESS + 54;
+  const detailTopY = STEP_ACCENT_THICKNESS + 145.8;
   const layout = computeGridCellBoxes({
     rootId,
     cellIdFor: (index) => `${rootId}__cell-${index}`,
     detailLeafIdFor: (index) => `${rootId}__cell-${index}__detail`,
     cells: items.map((item) => ({
       ...(item.detail !== undefined ? { detail: item.detail } : {}),
-      detailFontSize: 14,
+      detailFontSize: 37.8,
     })),
     columns,
     cellWidth: COMPARE_CELL_W,
@@ -1146,11 +1146,11 @@ const compareGridFactory: SdkComponentFactory = (props, _slots, context) => {
           text: item.label,
           geometry: {
             x: COMPARE_INSET,
-            y: STEP_ACCENT_THICKNESS + 18,
+            y: STEP_ACCENT_THICKNESS + 48.6,
             width: COMPARE_CELL_W - COMPARE_INSET * 2,
-            height: 28,
+            height: 75.6,
           },
-          style: { fontSize: 20, fontWeight: "bold", fill: COLOR_INK, textAnchor: "start" },
+          style: { fontSize: 54, fontWeight: "bold", fill: COLOR_INK, textAnchor: "start" },
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.compareGrid", context, "label"),
@@ -1168,9 +1168,9 @@ const compareGridFactory: SdkComponentFactory = (props, _slots, context) => {
               x: COMPARE_INSET,
               y: detailTopY,
               width: detailWidth,
-              height: detailBox?.height ?? grownTextHeight(item.detail, detailWidth, 14, 48),
+              height: detailBox?.height ?? grownTextHeight(item.detail, detailWidth, 37.8, 129.6),
             },
-            style: { fontSize: 14, fill: COLOR_MUTED, textAnchor: "start" },
+            style: { fontSize: 37.8, fill: COLOR_MUTED, textAnchor: "start" },
             sourceMap: context.sourceMap,
           }),
           makeOrigin("sdk.compareGrid", context, "detail"),
@@ -1188,7 +1188,7 @@ const compareGridFactory: SdkComponentFactory = (props, _slots, context) => {
             coordinateSpace: "local",
             fill: COLOR_SURFACE,
             stroke: COLOR_BORDER,
-            strokeWidth: 1,
+            strokeWidth: 2.7,
           },
           children: cellChildren,
           label: item.label,
@@ -1268,12 +1268,12 @@ type SequenceEntry = Readonly<{
   emphasis: boolean;
 }>;
 
-const SEQ_CHIP = 44; // square index chip edge length
-const SEQ_ROW_H = 56; // box height per row
-const SEQ_ROW_GAP = 12; // vertical gap between rows
-const SEQ_CHIP_GAP = 14; // horizontal gap chip → box
-const SEQ_BOX_W = 380; // bordered detail box width
-const SEQ_INSET = 14;
+const SEQ_CHIP = 118.8; // square index chip edge length
+const SEQ_ROW_H = 151.2; // box height per row
+const SEQ_ROW_GAP = 32.4; // vertical gap between rows
+const SEQ_CHIP_GAP = 37.8; // horizontal gap chip → box
+const SEQ_BOX_W = 1026; // bordered detail box width
+const SEQ_INSET = 37.8;
 
 function parseSequenceItems(
   props: Readonly<Record<string, JsonValue>>,
@@ -1349,13 +1349,13 @@ const numberedSequenceFactory: SdkComponentFactory = (props, _slots, context) =>
   const rowNodes: FlowNode[] = items.map((item, index) => {
     const rowId = `${rootId}__row-${index}`;
     const boxInner: FlowNode[] = [
-      { id: `${rowId}__title`, measure: textFlowLeaf(item.title, scaledSceneFontSize(16), "bold") },
+      { id: `${rowId}__title`, measure: textFlowLeaf(item.title, scaledSceneFontSize(43.2), "bold") },
     ];
     if (item.detail !== undefined) {
       boxInner.push({
         id: `${rowId}__detail`,
-        measure: textFlowLeaf(item.detail, scaledSceneFontSize(13)),
-        margin: { top: 4 },
+        measure: textFlowLeaf(item.detail, scaledSceneFontSize(35.1)),
+        margin: { top: 10.8 },
       });
     }
     return {
@@ -1426,10 +1426,10 @@ const numberedSequenceFactory: SdkComponentFactory = (props, _slots, context) =>
         buildText({
           id: `${rowId}__number`,
           text: item.number,
-          geometry: { x: 0, y: 12, width: SEQ_CHIP, height: 22 },
+          geometry: { x: 0, y: 32.4, width: SEQ_CHIP, height: 59.4 },
           style: {
             position: "absolute",
-            fontSize: 18,
+            fontSize: 48.6,
             fontFamily: MONO_FONT,
             fontWeight: "bold",
             fill: COLOR_SURFACE,
@@ -1463,7 +1463,7 @@ const numberedSequenceFactory: SdkComponentFactory = (props, _slots, context) =>
           id: `${rowId}__title`,
           text: item.title,
           geometry: localGeometry(titleBox, boxBox),
-          style: { fontSize: 16, fontFamily: MONO_FONT, fontWeight: "bold", fill: COLOR_INK, textAnchor: "start" },
+          style: { fontSize: 43.2, fontFamily: MONO_FONT, fontWeight: "bold", fill: COLOR_INK, textAnchor: "start" },
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.numberedSequence", context, "title"),
@@ -1477,7 +1477,7 @@ const numberedSequenceFactory: SdkComponentFactory = (props, _slots, context) =>
             id: `${rowId}__detail`,
             text: item.detail,
             geometry: localGeometry(detailBox, boxBox),
-            style: { fontSize: 13, fill: COLOR_MUTED, textAnchor: "start" },
+            style: { fontSize: 35.1, fill: COLOR_MUTED, textAnchor: "start" },
             sourceMap: context.sourceMap,
           }),
           makeOrigin("sdk.numberedSequence", context, "detail"),
@@ -1490,7 +1490,7 @@ const numberedSequenceFactory: SdkComponentFactory = (props, _slots, context) =>
           id: `${rowId}__box`,
           capabilityId: "core.group",
           geometry: { ...localGeometry(boxBox, rowBox), width: SEQ_BOX_W, height: boxBox.height },
-          style: { coordinateSpace: "local", fill: COLOR_SURFACE, stroke: COLOR_BORDER, strokeWidth: 1 },
+          style: { coordinateSpace: "local", fill: COLOR_SURFACE, stroke: COLOR_BORDER, strokeWidth: 2.7 },
           children: boxChildren,
           label: item.title,
           sourceMap: context.sourceMap,
@@ -1561,17 +1561,17 @@ export const NUMBERED_SEQUENCE_DEFINITION: SdkComponentDefinition = {
 type AxisTick = Readonly<{ at: number; label: string }>;
 type AxisMarker = Readonly<{ at: number; label: string; late: boolean }>;
 
-const AXIS_WIDTH = 640; // pixel span of the axis line
-const AXIS_LINE_Y = 60; // y of the horizontal axis within the group
-const AXIS_LINE_THICKNESS = 2;
-const AXIS_TICK_H = 10; // tick mark height below the axis
-const AXIS_MARKER_R = 8; // marker circle radius
-const AXIS_TARGET_TOP = 12; // dashed target line top y
-const AXIS_HEIGHT = 128;
-const AXIS_LABEL_FONT = 12; // tick / marker / target caption font size
-const AXIS_TICK_LABEL_W = 80; // tick caption box width
-const AXIS_MARKER_LABEL_W = 120; // marker / target caption box width
-const AXIS_LABEL_H = 16; // single-line caption box height floor
+const AXIS_WIDTH = 1728; // pixel span of the axis line
+const AXIS_LINE_Y = 162; // y of the horizontal axis within the group
+const AXIS_LINE_THICKNESS = 5.4;
+const AXIS_TICK_H = 27; // tick mark height below the axis
+const AXIS_MARKER_R = 21.6; // marker circle radius
+const AXIS_TARGET_TOP = 32.4; // dashed target line top y
+const AXIS_HEIGHT = 345.6;
+const AXIS_LABEL_FONT = 32.4; // tick / marker / target caption font size
+const AXIS_TICK_LABEL_W = 216; // tick caption box width
+const AXIS_MARKER_LABEL_W = 324; // marker / target caption box width
+const AXIS_LABEL_H = 43.2; // single-line caption box height floor
 
 function parseAxisTicks(value: JsonValue | undefined): readonly AxisTick[] {
   const raw = jsonArray(value);
@@ -1682,8 +1682,8 @@ const timelineAxisFactory: SdkComponentFactory = (props, _slots, context) => {
           // The deadline drop-line runs from above the axis down to the axis
           // line (stopping at it, not crossing it) so it does not overlap the
           // axis, ticks, or tick labels as a flat sibling.
-          geometry: { x: targetX, y: AXIS_TARGET_TOP, width: 1, height: AXIS_LINE_Y - AXIS_TARGET_TOP },
-          style: { fill: COLOR_ACCENT, strokeDasharray: "4 3" },
+          geometry: { x: targetX, y: AXIS_TARGET_TOP, width: 2.7, height: AXIS_LINE_Y - AXIS_TARGET_TOP },
+          style: { fill: COLOR_ACCENT, strokeDasharray: "10.8 8.1" },
           label: `target ${targetLabel}`,
           sourceMap: context.sourceMap,
         }),
@@ -1700,7 +1700,7 @@ const timelineAxisFactory: SdkComponentFactory = (props, _slots, context) => {
           // single-line height) rather than a fixed line box.
           geometry: {
             x: targetX - AXIS_MARKER_LABEL_W / 2,
-            y: AXIS_TARGET_TOP - 20,
+            y: AXIS_TARGET_TOP - 54,
             width: AXIS_MARKER_LABEL_W,
             height: flowTextHeight(targetLabel, AXIS_MARKER_LABEL_W, AXIS_LABEL_FONT, AXIS_LABEL_H, "bold"),
           },
@@ -1723,7 +1723,7 @@ const timelineAxisFactory: SdkComponentFactory = (props, _slots, context) => {
           id: tickId,
           // Tick marks hang just below the axis line (not starting on it) so they
           // touch rather than overlap the axis rect as flat siblings.
-          geometry: { x: tickX, y: AXIS_LINE_Y + AXIS_LINE_THICKNESS, width: 1, height: AXIS_TICK_H },
+          geometry: { x: tickX, y: AXIS_LINE_Y + AXIS_LINE_THICKNESS, width: 2.7, height: AXIS_TICK_H },
           style: { fill: COLOR_SECONDARY },
           label: `tick ${tick.label}`,
           sourceMap: context.sourceMap,
@@ -1738,7 +1738,7 @@ const timelineAxisFactory: SdkComponentFactory = (props, _slots, context) => {
           text: tick.label,
           geometry: {
             x: tickX - AXIS_TICK_LABEL_W / 2,
-            y: AXIS_LINE_Y + AXIS_LINE_THICKNESS + AXIS_TICK_H + 4,
+            y: AXIS_LINE_Y + AXIS_LINE_THICKNESS + AXIS_TICK_H + 10.8,
             width: AXIS_TICK_LABEL_W,
             height: flowTextHeight(tick.label, AXIS_TICK_LABEL_W, AXIS_LABEL_FONT, AXIS_LABEL_H),
           },
@@ -1755,7 +1755,7 @@ const timelineAxisFactory: SdkComponentFactory = (props, _slots, context) => {
   markers.forEach((marker, index) => {
     const markerX = toX(marker.at);
     const markerId = `${rootId}__marker-${index}`;
-    const markerCy = AXIS_LINE_Y - AXIS_MARKER_R - 6;
+    const markerCy = AXIS_LINE_Y - AXIS_MARKER_R - 16.2;
     // core.rect used as a circle proxy via borderRadius so we avoid a new
     // capability; a full radius on a square reads as a disc.
     children.push(
@@ -1769,7 +1769,7 @@ const timelineAxisFactory: SdkComponentFactory = (props, _slots, context) => {
             height: AXIS_MARKER_R * 2,
           },
           style: marker.late
-            ? { fill: "none", stroke: COLOR_MUTED, strokeWidth: 2, borderRadius: AXIS_MARKER_R }
+            ? { fill: "none", stroke: COLOR_MUTED, strokeWidth: 5.4, borderRadius: AXIS_MARKER_R }
             : { fill: COLOR_ACCENT, borderRadius: AXIS_MARKER_R },
           label: `marker ${marker.label}`,
           sourceMap: context.sourceMap,
@@ -1784,7 +1784,7 @@ const timelineAxisFactory: SdkComponentFactory = (props, _slots, context) => {
           text: marker.label,
           geometry: {
             x: markerX - AXIS_MARKER_LABEL_W / 2,
-            y: markerCy - AXIS_MARKER_R - 18,
+            y: markerCy - AXIS_MARKER_R - 48.6,
             width: AXIS_MARKER_LABEL_W,
             height: flowTextHeight(marker.label, AXIS_MARKER_LABEL_W, AXIS_LABEL_FONT, AXIS_LABEL_H, "bold"),
           },
@@ -1849,12 +1849,12 @@ export const TIMELINE_AXIS_DEFINITION: SdkComponentDefinition = {
 
 type TreeNode = Readonly<{ label: string; detail?: string; emphasis: boolean }>;
 
-const TREE_BOX_W = 150;
-const TREE_BOX_H = 60;
-const TREE_CHILD_GAP = 40; // horizontal gap between child boxes
-const TREE_LEVEL_GAP = 70; // vertical gap root → children row
-const TREE_CAPTION_H = 24;
-const TREE_INSET = 12;
+const TREE_BOX_W = 405;
+const TREE_BOX_H = 162;
+const TREE_CHILD_GAP = 108; // horizontal gap between child boxes
+const TREE_LEVEL_GAP = 189; // vertical gap root → children row
+const TREE_CAPTION_H = 64.8;
+const TREE_INSET = 32.4;
 
 function parseTreeNode(
   value: JsonValue | undefined,
@@ -1889,7 +1889,7 @@ function buildTreeBox(
           position: "absolute",
           fill: filled ? COLOR_ACCENT : COLOR_SURFACE,
           stroke: filled ? COLOR_ACCENT : COLOR_BORDER,
-          strokeWidth: 1,
+          strokeWidth: 2.7,
         },
         label: `${args.node.label} backdrop`,
         sourceMap: context.sourceMap,
@@ -1902,13 +1902,13 @@ function buildTreeBox(
         text: args.node.label,
         geometry: {
           x: TREE_INSET,
-          y: args.node.detail !== undefined ? 12 : (TREE_BOX_H - 20) / 2,
+          y: args.node.detail !== undefined ? 32.4 : (TREE_BOX_H - 54) / 2,
           width: TREE_BOX_W - TREE_INSET * 2,
-          height: 20,
+          height: 54,
         },
         style: {
           position: "absolute",
-          fontSize: 16,
+          fontSize: 43.2,
           fontFamily: MONO_FONT,
           fontWeight: "bold",
           fill: filled ? COLOR_SURFACE : COLOR_INK,
@@ -1925,10 +1925,10 @@ function buildTreeBox(
         buildText({
           id: `${args.id}__detail`,
           text: args.node.detail,
-          geometry: { x: TREE_INSET, y: 34, width: TREE_BOX_W - TREE_INSET * 2, height: 16 },
+          geometry: { x: TREE_INSET, y: 91.8, width: TREE_BOX_W - TREE_INSET * 2, height: 43.2 },
           style: {
             position: "absolute",
-            fontSize: 12,
+            fontSize: 32.4,
             fill: filled ? COLOR_SURFACE : COLOR_MUTED,
             textAnchor: "middle",
           },
@@ -2055,7 +2055,7 @@ const nodeTreeFactory: SdkComponentFactory = (props, _slots, context) => {
         buildConnector({
           id: lineId,
           geometry: lineGeometry,
-          style: { fill: "none", stroke: COLOR_BORDER, strokeWidth: 1.5 },
+          style: { fill: "none", stroke: COLOR_BORDER, strokeWidth: 4.05 },
           from: { nodeId: rootBoxId, anchor: "s" },
           to: { nodeId: childBoxId, anchor: "n" },
           label: `root to child ${index}`,
@@ -2086,21 +2086,21 @@ const nodeTreeFactory: SdkComponentFactory = (props, _slots, context) => {
     // The order-note caption is the one free-form prose field; grow its own box
     // (and the tree group) to fit wrapped lines. It is the last element, so no
     // sibling shift is needed.
-    const captionH = flowTextHeight(orderNote, width, 13, TREE_CAPTION_H);
+    const captionH = flowTextHeight(orderNote, width, 35.1, TREE_CAPTION_H);
     nodes.push(
       attachSdkOrigin(
         buildText({
           id: captionId,
           text: orderNote,
-          geometry: { x: 0, y: height + 8, width, height: captionH },
-          style: { fontSize: 13, fill: COLOR_SECONDARY, textAnchor: "middle" },
+          geometry: { x: 0, y: height + 21.6, width, height: captionH },
+          style: { fontSize: 35.1, fill: COLOR_SECONDARY, textAnchor: "middle" },
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.nodeTree", context, "caption"),
       ),
     );
     ports.caption = { nodeId: captionId };
-    height += 8 + captionH;
+    height += 21.6 + captionH;
   }
 
   const rootNode = attachSdkOrigin(
@@ -2147,11 +2147,11 @@ type CardAccent = "green" | "black" | "gray";
 type CardEntry = Readonly<{ title: string; detail: string; accent: CardAccent }>;
 
 const CARD_DEFAULT_COLUMNS = 2;
-const CARD_W = 260;
-const CARD_H = 108;
-const CARD_GAP = 16;
-const CARD_INSET = 18;
-const CARD_ACCENT_W = 4; // left border strip width
+const CARD_W = 702;
+const CARD_H = 291.6;
+const CARD_GAP = 43.2;
+const CARD_INSET = 48.6;
+const CARD_ACCENT_W = 10.8; // left border strip width
 
 function cardAccentColor(accent: CardAccent): string {
   switch (accent) {
@@ -2233,12 +2233,12 @@ const cardGridFactory: SdkComponentFactory = (props, _slots, context) => {
   // row auto-sizes to that row's tallest wrapped-detail content (see
   // `computeGridCellBoxes`), replacing the older grid-wide single-height math.
   const cardDetailWidth = CARD_W - CARD_INSET * 2;
-  const cardDetailTopY = 54;
+  const cardDetailTopY = 145.8;
   const layout = computeGridCellBoxes({
     rootId,
     cellIdFor: (index) => `${rootId}__card-${index}`,
     detailLeafIdFor: (index) => `${rootId}__card-${index}__detail`,
-    cells: cards.map((card) => ({ detail: card.detail, detailFontSize: 14 })),
+    cells: cards.map((card) => ({ detail: card.detail, detailFontSize: 37.8 })),
     columns,
     cellWidth: CARD_W,
     detailWidth: cardDetailWidth,
@@ -2267,8 +2267,8 @@ const cardGridFactory: SdkComponentFactory = (props, _slots, context) => {
         buildText({
           id: `${cardId}__title`,
           text: card.title,
-          geometry: { x: CARD_INSET, y: 20, width: CARD_W - CARD_INSET * 2, height: 24 },
-          style: { fontSize: 18, fontFamily: MONO_FONT, fontWeight: "bold", fill: COLOR_INK, textAnchor: "start" },
+          geometry: { x: CARD_INSET, y: 54, width: CARD_W - CARD_INSET * 2, height: 64.8 },
+          style: { fontSize: 48.6, fontFamily: MONO_FONT, fontWeight: "bold", fill: COLOR_INK, textAnchor: "start" },
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.cardGrid", context, "title"),
@@ -2281,9 +2281,9 @@ const cardGridFactory: SdkComponentFactory = (props, _slots, context) => {
             x: CARD_INSET,
             y: cardDetailTopY,
             width: cardDetailWidth,
-            height: detailBox?.height ?? grownTextHeight(card.detail, cardDetailWidth, 14, 44),
+            height: detailBox?.height ?? grownTextHeight(card.detail, cardDetailWidth, 37.8, 118.8),
           },
-          style: { fontSize: 14, fill: COLOR_MUTED, textAnchor: "start" },
+          style: { fontSize: 37.8, fill: COLOR_MUTED, textAnchor: "start" },
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.cardGrid", context, "detail"),
@@ -2296,7 +2296,7 @@ const cardGridFactory: SdkComponentFactory = (props, _slots, context) => {
           id: cardId,
           capabilityId: "core.group",
           geometry: { x: cardBox.x, y: cardBox.y, width: CARD_W, height: cardBox.height },
-          style: { coordinateSpace: "local", fill: COLOR_SURFACE, stroke: COLOR_BORDER, strokeWidth: 1 },
+          style: { coordinateSpace: "local", fill: COLOR_SURFACE, stroke: COLOR_BORDER, strokeWidth: 2.7 },
           children: cardChildren,
           label: card.title,
           sourceMap: context.sourceMap,

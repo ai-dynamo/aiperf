@@ -3,11 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { DeckDefinition } from "./types";
-import {
-  loadDeckFlowById,
-  loadDeckPackages,
-} from "./load-deck-flows";
+import manifestJson from "./deck-manifest.generated.json";
+import type { DeckHubMeta } from "./types";
 
 /** Canonical registry ids and routes — must stay bookmark-stable. */
 export const EXPECTED_DECK_ROUTES = [
@@ -20,6 +17,7 @@ export const EXPECTED_DECK_ROUTES = [
   ["cellular-internals", "/cellular-internals"],
   ["cellular-algorithms", "/cellular-algorithms"],
   ["dynosim", "/dynosim"],
+  ["steppable-replay-engine", "/steppable-replay-engine"],
   ["tstar-warmup", "/tstar-warmup"],
   ["synthetic-dataset-generator", "/synthetic-dataset-generator"],
   ["aiperf-vs-locust", "/aiperf-vs-locust"],
@@ -31,84 +29,63 @@ export const EXPECTED_DECK_ROUTES = [
 export type RegisteredDeckId = (typeof EXPECTED_DECK_ROUTES)[number][0];
 
 /**
- * Load a deck exclusively from its live Flow source.
- * Throws when the source is missing or id/route diverge from the bookmark map.
+ * Lightweight per-deck metadata compiled once, server-side, by
+ * `scripts/build-deck-artifacts.mjs` — never a full slide/scene compile.
+ * The Hub screen and the app's route table run entirely off this; a deck's
+ * full `DeckPackage` (slides, scenes, glossary) only compiles when its own
+ * route is actually visited, via `load-deck-flows.ts`.
  */
-export function deckFromFlow(
-  id: RegisteredDeckId,
-  expectedRoute: string,
-): DeckDefinition {
-  const fromFlow = loadDeckFlowById(id);
-  if (fromFlow === undefined) {
-    throw new Error(
-      `Missing live Flow source for "${id}" under decks-flow ` +
-        `(expected ${id}.flow compiled via compileExplainerSource)`,
-    );
-  }
-  if (fromFlow.id !== id) {
-    throw new Error(
-      `Live Flow source for "${id}" has mismatched id "${fromFlow.id}"`,
-    );
-  }
-  if (fromFlow.route !== expectedRoute) {
-    throw new Error(
-      `Live Flow source for "${id}" has route "${fromFlow.route}", expected "${expectedRoute}"`,
-    );
-  }
-  return fromFlow;
+export type DeckManifestEntry = {
+  id: string;
+  route: string;
+  topic: string;
+  eyebrowLabel: string;
+  hub: DeckHubMeta;
+  slideCount: number;
+};
+
+export const DECK_MANIFEST: readonly DeckManifestEntry[] = manifestJson;
+
+export function deckManifestByRoute(route: string): DeckManifestEntry | undefined {
+  return DECK_MANIFEST.find((entry) => entry.route === route);
 }
 
-export const DECK_REGISTRY: readonly DeckDefinition[] = EXPECTED_DECK_ROUTES.map(
-  ([id, route]) => deckFromFlow(id, route),
-);
-
-export function deckByRoute(route: string): DeckDefinition | undefined {
-  return DECK_REGISTRY.find((deck) => deck.route === route);
+export function deckManifestById(id: string): DeckManifestEntry | undefined {
+  return DECK_MANIFEST.find((entry) => entry.id === id);
 }
 
-export function deckById(id: string): DeckDefinition | undefined {
-  return DECK_REGISTRY.find((deck) => deck.id === id);
-}
-
-/** Whether any raw Flow source is currently discoverable and compilable. */
-export function registryUsesLiveFlowSources(): boolean {
-  return loadDeckPackages().length > 0;
-}
-
-export function validateDeckRegistry(decks: readonly DeckDefinition[] = DECK_REGISTRY): string[] {
+export function validateDeckManifest(
+  manifest: readonly DeckManifestEntry[] = DECK_MANIFEST,
+): string[] {
   const errors: string[] = [];
   const routes = new Set<string>();
   const ids = new Set<string>();
 
-  if (decks.length !== EXPECTED_DECK_ROUTES.length) {
+  if (manifest.length !== EXPECTED_DECK_ROUTES.length) {
     errors.push(
-      `expected ${EXPECTED_DECK_ROUTES.length} decks, found ${decks.length}`,
+      `expected ${EXPECTED_DECK_ROUTES.length} decks, found ${manifest.length}`,
     );
   }
 
   for (const [expectedId, expectedRoute] of EXPECTED_DECK_ROUTES) {
-    const deck = decks.find((entry) => entry.id === expectedId);
-    if (deck === undefined) {
+    const entry = manifest.find((candidate) => candidate.id === expectedId);
+    if (entry === undefined) {
       errors.push(`missing deck id: ${expectedId}`);
       continue;
     }
-    if (deck.route !== expectedRoute) {
+    if (entry.route !== expectedRoute) {
       errors.push(
-        `${expectedId}: route "${deck.route}" does not match expected "${expectedRoute}"`,
+        `${expectedId}: route "${entry.route}" does not match expected "${expectedRoute}"`,
       );
     }
   }
 
-  for (const deck of decks) {
-    if (routes.has(deck.route)) errors.push(`duplicate route: ${deck.route}`);
-    routes.add(deck.route);
-    if (ids.has(deck.id)) errors.push(`duplicate id: ${deck.id}`);
-    ids.add(deck.id);
-    if (deck.slides.length === 0) errors.push(`${deck.id}: no slides`);
-    deck.slides.forEach((slide, index) => {
-      if (!slide.narration.trim()) errors.push(`${deck.id}: slide ${index + 1} missing narration`);
-      if (!slide.title.trim()) errors.push(`${deck.id}: slide ${index + 1} missing title`);
-    });
+  for (const entry of manifest) {
+    if (routes.has(entry.route)) errors.push(`duplicate route: ${entry.route}`);
+    routes.add(entry.route);
+    if (ids.has(entry.id)) errors.push(`duplicate id: ${entry.id}`);
+    ids.add(entry.id);
+    if (entry.slideCount === 0) errors.push(`${entry.id}: no slides`);
   }
 
   return errors;

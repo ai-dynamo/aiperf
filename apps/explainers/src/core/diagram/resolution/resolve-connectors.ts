@@ -5,10 +5,14 @@
 
 //! Pure canonical connector resolution and source-mapped geometry diagnostics.
 //!
-//! Fan-in/fan-out topology (`core.fan-*`, `kind:"fan"`) is intentionally excluded
-//! from canonical connector resolution: SceneRenderer still computes fan trunk/branch
-//! geometry locally, and the verifier validates cardinality/trace cues only. Treat
-//! fans as an accepted exception until fan geometry is canonicalized.
+//! Fan-in/fan-out topology (`core.fan-*`, `kind:"fan"`) resolves separately in
+//! `resolve-fans.ts` and is exposed alongside this module's connectors on
+//! `ResolvedScene.fanGeometryById` (and `ResolvedSceneSnapshot.fans`): a fan
+//! authors one node with N branch trajectories rather than N independent
+//! connector nodes, so it needs its own junction/trajectory resolution instead
+//! of `resolveConnectors`'s one-source/one-target shape. Both resolvers are
+//! canonical — SceneRenderer and the flow verifier consume the same resolved
+//! connector and fan geometry rather than recomputing either locally.
 
 import {
   elbowPathData,
@@ -41,8 +45,8 @@ import type {
   SceneResolutionDiagnostic,
 } from "./types.js";
 
-const ENDPOINT_TOLERANCE = 2;
-const DEFAULT_CLEARANCE = 12;
+const ENDPOINT_TOLERANCE = 5.4;
+const DEFAULT_CLEARANCE = 32.4;
 const UNKNOWN_RANGE: SceneSourceRangeLike = Object.freeze({
   source: "<scene>",
   start: Object.freeze({ offset: 0, line: 1, column: 1 }),
@@ -50,7 +54,7 @@ const UNKNOWN_RANGE: SceneSourceRangeLike = Object.freeze({
 });
 
 /** Maximum resolved height for annotation text excluded from routing obstacles. */
-const ANNOTATION_TEXT_MAX_HEIGHT = 32;
+const ANNOTATION_TEXT_MAX_HEIGHT = 86.4;
 
 /** Decorative capabilities that must not block automatic connector routing. */
 const NON_ROUTING_CAPABILITIES = new Set([

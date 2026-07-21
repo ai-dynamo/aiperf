@@ -4,7 +4,7 @@
  */
 
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
-import { DECK_REGISTRY } from "./core/deck-registry";
+import { DECK_MANIFEST } from "./core/deck-registry";
 import { ThemeProvider } from "./core/ui";
 import { Hub } from "./routes/Hub";
 import { DeckRoute } from "./routes/DeckRoute";
@@ -15,8 +15,8 @@ export function App() {
       <HashRouter>
         <Routes>
           <Route path="/" element={<Hub />} />
-          {DECK_REGISTRY.map((deck) => (
-            <Route key={deck.id} path={deck.route} element={<DeckRoute />} />
+          {DECK_MANIFEST.map((entry) => (
+            <Route key={entry.id} path={entry.route} element={<DeckRoute />} />
           ))}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

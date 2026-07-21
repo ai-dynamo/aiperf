@@ -66,4 +66,39 @@ describe("resolvedSceneSnapshot", () => {
     expect(snapshot.diagnostics).toEqual(resolved.diagnostics);
     expect(snapshot.nodes.map(({ id }) => id)).toEqual(["task-1", "credit"]);
   });
+
+  it("serializes canonical fan geometry into the snapshot's `fans` array", () => {
+    const scene: SceneIrLike = {
+      id: "fan-snapshot-scene",
+      roots: [
+        {
+          id: "fan",
+          kind: "fan",
+          capabilityId: "core.fan-out",
+          geometry: { x: 0, y: 0, width: 0, height: 0 },
+          axis: "x",
+          from: { x: 0, y: 100 },
+          to: [
+            { x: 300, y: 50 },
+            { x: 300, y: 150 },
+          ],
+        },
+      ],
+      timeline: [],
+    };
+    const resolved = resolveScene(scene);
+
+    const snapshot = JSON.parse(
+      JSON.stringify(resolvedSceneSnapshot(resolved)),
+    ) as ReturnType<typeof resolvedSceneSnapshot>;
+
+    expect(snapshot.fans).toHaveLength(1);
+    expect(snapshot.fans[0]).toMatchObject({
+      id: "fan",
+      capability: "core.fan-out",
+    });
+    expect(snapshot.fans[0]?.trajectories).toEqual(
+      resolved.fanGeometryById.get("fan")?.trajectories,
+    );
+  });
 });

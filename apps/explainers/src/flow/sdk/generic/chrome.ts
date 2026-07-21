@@ -58,31 +58,31 @@ import type {
 // Shared geometry constants live in text-metrics.ts (single source of truth).
 // ---------------------------------------------------------------------------
 
-const HEADER_DEFAULT_GEOMETRY = { x: 18, y: 16, width: 664, height: 66 } as const;
-const PANEL_DEFAULT_GEOMETRY = { width: 160, height: 70 } as const;
-const CHIP_DEFAULT_GEOMETRY = { width: 84, height: 26 } as const;
-const NOTE_DEFAULT_GEOMETRY = { width: 160, height: 48 } as const;
-const LABEL_DEFAULT_GEOMETRY = { width: 120, height: 22 } as const;
-const CALLOUT_DEFAULT_GEOMETRY = { width: 140, height: 48 } as const;
-const CALLOUT_STEM_DROP = 24;
-const DIVIDER_DEFAULT_LENGTH = 200;
-const BRACKET_DEFAULT_VERTICAL = { width: 24, height: 120 } as const;
-const BRACKET_DEFAULT_HORIZONTAL = { width: 120, height: 24 } as const;
+const HEADER_DEFAULT_GEOMETRY = { x: 48.6, y: 43.2, width: 1792.8, height: 178.2 } as const;
+const PANEL_DEFAULT_GEOMETRY = { width: 432, height: 189 } as const;
+const CHIP_DEFAULT_GEOMETRY = { width: 226.8, height: 70.2 } as const;
+const NOTE_DEFAULT_GEOMETRY = { width: 432, height: 129.6 } as const;
+const LABEL_DEFAULT_GEOMETRY = { width: 324, height: 59.4 } as const;
+const CALLOUT_DEFAULT_GEOMETRY = { width: 378, height: 129.6 } as const;
+const CALLOUT_STEM_DROP = 64.8;
+const DIVIDER_DEFAULT_LENGTH = 540;
+const BRACKET_DEFAULT_VERTICAL = { width: 64.8, height: 324 } as const;
+const BRACKET_DEFAULT_HORIZONTAL = { width: 324, height: 64.8 } as const;
 
-const LEGEND_ROW_HEIGHT = 20;
-const LEGEND_ROW_GAP = 4;
-const LEGEND_SWATCH_SIZE = 10;
-const LEGEND_LABEL_GAP = 8;
-const LEGEND_DEFAULT_WIDTH = 180;
+const LEGEND_ROW_HEIGHT = 54;
+const LEGEND_ROW_GAP = 10.8;
+const LEGEND_SWATCH_SIZE = 27;
+const LEGEND_LABEL_GAP = 21.6;
+const LEGEND_DEFAULT_WIDTH = 486;
 const LEGEND_DEFAULT_SWATCH_ROLE = "@theme.accent.control";
 
 type CardSizePreset = Readonly<{ width: number; height: number }>;
 
 /** Named `sdk.card` size presets replacing raw pixel clusters at call sites. */
 const CARD_SIZE_PRESETS: Readonly<Record<string, CardSizePreset>> = {
-  compact: { width: 150, height: 88 },
-  standard: { width: 190, height: 88 },
-  wide: { width: 250, height: 88 },
+  compact: { width: 405, height: 237.6 },
+  standard: { width: 513, height: 237.6 },
+  wide: { width: 675, height: 237.6 },
 };
 
 /** Public actions shared by every generic chrome / content component. */
@@ -743,7 +743,7 @@ const NOTE_DESCRIPTOR = makeDescriptor("sdk.note", "Note", "core.note", {
   width: { type: "number", required: false, default: NOTE_DEFAULT_GEOMETRY.width },
   height: { type: "number", required: false, default: NOTE_DEFAULT_GEOMETRY.height },
   radius: { type: "number", required: false, default: 0 },
-  strokeWidth: { type: "number", required: false, default: 1 },
+  strokeWidth: { type: "number", required: false, default: 2.7 },
   surfaceRole: { type: "string", required: false, default: "@theme.surface.elevated" },
   strokeRole: { type: "string", required: false, default: "@theme.ink.secondary" },
   inkRole: { type: "string", required: false, default: "@theme.ink.secondary" },
@@ -781,7 +781,7 @@ const noteFactory: SdkComponentFactory = (props, _slots, context) => {
   const strokeRole = stringProp(props, "strokeRole") ?? "@theme.ink.secondary";
   const inkRole = stringProp(props, "inkRole") ?? "@theme.ink.secondary";
   const radius = numberProp(props, "radius") ?? 0;
-  const strokeWidth = numberProp(props, "strokeWidth") ?? 1;
+  const strokeWidth = numberProp(props, "strokeWidth") ?? 2.7;
 
   const captionId = `${rootId}__caption`;
 
@@ -828,7 +828,7 @@ const LABEL_DESCRIPTOR = makeDescriptor("sdk.label", "Label", "core.text", {
   y: { type: "number", required: false, default: 0 },
   width: { type: "number", required: false, default: LABEL_DEFAULT_GEOMETRY.width },
   height: { type: "number", required: false, default: LABEL_DEFAULT_GEOMETRY.height },
-  fontSize: { type: "number", required: false, default: 12 },
+  fontSize: { type: "number", required: false, default: 32.4 },
   weight: { type: "string", required: false, default: "regular" },
   align: { type: "string", required: false, default: "middle" },
   inkRole: { type: "string", required: false },
@@ -849,7 +849,7 @@ const labelFactory: SdkComponentFactory = (props, _slots, context) => {
     width: numberProp(props, "width") ?? LABEL_DEFAULT_GEOMETRY.width,
     height: numberProp(props, "height") ?? LABEL_DEFAULT_GEOMETRY.height,
   };
-  const fontSize = numberProp(props, "fontSize") ?? 12;
+  const fontSize = numberProp(props, "fontSize") ?? 32.4;
   const weight = stringProp(props, "weight") ?? "regular";
   const align = stringProp(props, "align") ?? "middle";
   const inkRole = stringProp(props, "inkRole");
@@ -966,14 +966,14 @@ const legendFactory: SdkComponentFactory = (props, _slots, context) => {
   const rowHeight = numberProp(props, "rowHeight") ?? LEGEND_ROW_HEIGHT;
   const authoredWidth = numberProp(props, "width") ?? LEGEND_DEFAULT_WIDTH;
   const titleWidth =
-    title !== undefined ? estimateTextWidth(title, 12, "bold") + INSET : 0;
+    title !== undefined ? estimateTextWidth(title, 32.4, "bold") + INSET : 0;
   const entryWidth = entries.reduce(
     (maximum, entry) =>
       Math.max(
         maximum,
         LEGEND_SWATCH_SIZE +
           LEGEND_LABEL_GAP +
-          estimateTextWidth(entry.label, 11) +
+          estimateTextWidth(entry.label, 29.7) +
           INSET,
       ),
     0,
@@ -992,7 +992,7 @@ const legendFactory: SdkComponentFactory = (props, _slots, context) => {
           id: titleId,
           text: title,
           geometry: { x: 0, y: cursorY, width, height: TITLE_HEIGHT },
-          style: { fontSize: 12, fontWeight: "bold", textAnchor: "start" },
+          style: { fontSize: 32.4, fontWeight: "bold", textAnchor: "start" },
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.legend", context, "title"),
@@ -1033,7 +1033,7 @@ const legendFactory: SdkComponentFactory = (props, _slots, context) => {
           width: Math.max(width - LEGEND_SWATCH_SIZE - LEGEND_LABEL_GAP, 0),
           height: rowHeight,
         },
-        style: { fontSize: 11, textAnchor: "start" },
+        style: { fontSize: 29.7, textAnchor: "start" },
         sourceMap: context.sourceMap,
       }),
       makeOrigin("sdk.legend", context, "label"),
@@ -1145,7 +1145,7 @@ const calloutFactory: SdkComponentFactory = (props, _slots, context) => {
       id: textId,
       text,
       geometry: { x: 0, y: 0, width: geometry.width, height: geometry.height },
-      style: { fontSize: 12, textAnchor: "middle" },
+      style: { fontSize: 32.4, textAnchor: "middle" },
       sourceMap: context.sourceMap,
     }),
     makeOrigin("sdk.callout", context, "label"),
@@ -1162,7 +1162,7 @@ const calloutFactory: SdkComponentFactory = (props, _slots, context) => {
         height: Math.abs(localTarget.y - localAnchor.y),
       },
       style: {
-        strokeWidth: 1.25,
+        strokeWidth: 3.38,
         fill: "none",
         markerEnd: "none",
         ...(strokeRole !== undefined ? { stroke: strokeRole } : {}),
@@ -1213,7 +1213,7 @@ const DIVIDER_DESCRIPTOR = makeDescriptor("sdk.divider", "Divider", "core.divide
   y: { type: "number", required: false, default: 0 },
   length: { type: "number", required: false, default: DIVIDER_DEFAULT_LENGTH },
   strokeRole: { type: "string", required: false },
-  strokeWidth: { type: "number", required: false, default: 1.2 },
+  strokeWidth: { type: "number", required: false, default: 3.24 },
 });
 
 const dividerFactory: SdkComponentFactory = (props, _slots, context) => {
@@ -1229,7 +1229,7 @@ const dividerFactory: SdkComponentFactory = (props, _slots, context) => {
   const x = numberProp(props, "x") ?? 0;
   const y = numberProp(props, "y") ?? 0;
   const strokeRole = stringProp(props, "strokeRole");
-  const strokeWidth = numberProp(props, "strokeWidth") ?? 1.2;
+  const strokeWidth = numberProp(props, "strokeWidth") ?? 3.24;
 
   const geometry: GeometryIr =
     axis === "y" ? { x, y, width: 0, height: length } : { x, y, width: length, height: 0 };
@@ -1288,7 +1288,7 @@ const BRACKET_DESCRIPTOR = makeDescriptor("sdk.bracket", "Bracket", "core.bracke
   width: { type: "number", required: false },
   height: { type: "number", required: false },
   strokeRole: { type: "string", required: false },
-  strokeWidth: { type: "number", required: false, default: 1.5 },
+  strokeWidth: { type: "number", required: false, default: 4.05 },
 });
 
 const bracketFactory: SdkComponentFactory = (props, _slots, context) => {
@@ -1309,7 +1309,7 @@ const bracketFactory: SdkComponentFactory = (props, _slots, context) => {
     height: numberProp(props, "height") ?? defaultSize.height,
   };
   const strokeRole = stringProp(props, "strokeRole");
-  const strokeWidth = numberProp(props, "strokeWidth") ?? 1.5;
+  const strokeWidth = numberProp(props, "strokeWidth") ?? 4.05;
   const path = bracePath(geometry, side);
   const anchors = bracketPortAnchors(side);
 

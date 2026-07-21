@@ -38,22 +38,22 @@ explainer "Cellular internals" {
     caption: "authored run → many cells → one report."
 
     render: @scene {
-      sdk.Header(id = "hdr0", title = "LAUNCH · ONE RUN, MANY CELLS", caption = "authored run → many cells → one report.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Stepper(id = "phase0", steps = ["CONTROL", "EXECUTE", "RESULTS"], linked = true, x = 40, y = 86, width = 280, height = 26, gap = 10)
-      sdk.Rail(id = "tags0", x = 340, y = 88, width = 330, height = 24, direction = "row", gap = 10) {
+      sdk.Header(id = "hdr0", title = "LAUNCH · ONE RUN, MANY CELLS", caption = "authored run → many cells → one report.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Stepper(id = "phase0", steps = ["CONTROL", "EXECUTE", "RESULTS"], linked = true, x = 123, y = 232.2, width = 756, height = 70.2, gap = 27)
+      sdk.Rail(id = "tags0", x = 933, y = 237.6, width = 920, height = 75, direction = "row", gap = 27) {
         children {
           sdk.Chip(id = "chip0a", label = "one identity", surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
           sdk.Chip(id = "chip0b", label = "autonomous", surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
           sdk.Chip(id = "chip0c", label = "authoritative", surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary")
         }
       }
-      sdk.Card(id = "authored", title = "Authored run", detail = "one identity", subtitle = "Config v2 request", x = 40, y = 140, width = 160, height = 90, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "cell-k", title = "Cell k / N", detail = "autonomous", subtitle = "own runtime", x = 280, y = 140, width = 150, height = 90, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "report", title = "One report", detail = "authoritative", subtitle = "merged result", x = 510, y = 140, width = 150, height = 90, strokeRole = "@theme.accent.tertiary")
-      sdk.Edge(id = "a0a", mode = "connector", from = { nodeId: "authored", anchor: "e" }, to = { nodeId: "cell-k", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a0b", mode = "connector", from = { nodeId: "cell-k", anchor: "e" }, to = { nodeId: "report", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Label(id = "note0", text = "placement changes · measurement contract does not", x = 120, y = 300, width = 500, height = 20, fontSize = 12, align = "start")
-      sdk.Label(id = "ev0", text = "cellular_controller.rs", x = 480, y = 330, width = 180, height = 20, fontSize = 10, align = "end")
+      sdk.Card(id = "authored", title = "Authored run", detail = "one identity", subtitle = "Config v2 request", x = 123, y = 378, width = 432, height = 243, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "cell-k", title = "Cell k / N", detail = "autonomous", subtitle = "own runtime", x = 771, y = 378, width = 405, height = 243, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "report", title = "One report", detail = "authoritative", subtitle = "merged result", x = 1392, y = 378, width = 405, height = 243, strokeRole = "@theme.accent.tertiary")
+      sdk.Edge(id = "a0a", mode = "connector", from = { nodeId: "authored", anchor: "e" }, to = { nodeId: "cell-k", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a0b", mode = "connector", from = { nodeId: "cell-k", anchor: "e" }, to = { nodeId: "report", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.Label(id = "note0", text = "placement changes · measurement contract does not", x = 339, y = 810, width = 1350, height = 54, fontSize = 32.4, align = "start")
+      sdk.Label(id = "ev0", text = "cellular_controller.rs", x = 1311, y = 891, width = 486, height = 54, fontSize = 27, align = "end")
       timeline primary {
         at 0 reveal hdr0 duration 260
         after hdr0 reveal phase0 duration 260
@@ -86,15 +86,15 @@ explainer "Cellular internals" {
     caption: "one authored Config v2 request · resolved before fan-out."
 
     render: @scene {
-      sdk.Header(id = "hdr1", title = "LAUNCH · CONFIG V2 SOURCE", caption = "one authored Config v2 request · resolved before fan-out.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase1", text = "RESOLVE ONCE · FAN OUT IDENTICALLY", x = 40, y = 78, width = 340, height = 20, fontSize = 11, align = "start")
-      sdk.Card(id = "cfg", title = "Config v2", detail = "ProfileFlags → BenchmarkRun", subtitle = "single source of truth", x = 230, y = 110, width = 240, height = 96, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "cell0", title = "cell 0", detail = "same request", subtitle = "slice 0", x = 40, y = 270, width = 145, height = 88, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "cell1", title = "cell 1", detail = "same request", subtitle = "slice 1", x = 200, y = 270, width = 145, height = 88, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "cell2", title = "cell 2", detail = "same request", subtitle = "slice 2", x = 360, y = 270, width = 145, height = 88, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "cell3", title = "cell 3", detail = "same request", subtitle = "slice 3", x = 520, y = 270, width = 145, height = 88, strokeRole = "@theme.accent.secondary")
-      sdk.FanOut(id = "config-fan", from = { nodeId: "cfg", anchor: "s" }, to = [{ nodeId: "cell0", anchor: "n" }, { nodeId: "cell1", anchor: "n" }, { nodeId: "cell2", anchor: "n" }, { nodeId: "cell3", anchor: "n" }], axis = "y", junction = { x: 350, y: 238 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Label(id = "ev1", text = "flags.rs · resolve before children", x = 40, y = 360, width = 300, height = 20, fontSize = 10, align = "start")
+      sdk.Header(id = "hdr1", title = "LAUNCH · CONFIG V2 SOURCE", caption = "one authored Config v2 request · resolved before fan-out.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase1", text = "RESOLVE ONCE · FAN OUT IDENTICALLY", x = 123, y = 210.6, width = 918, height = 54, fontSize = 29.7, align = "start")
+      sdk.Card(id = "cfg", title = "Config v2", detail = "ProfileFlags → BenchmarkRun", subtitle = "single source of truth", x = 636, y = 297, width = 648, height = 259.2, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "cell0", title = "cell 0", detail = "same request", subtitle = "slice 0", x = 123, y = 729, width = 391.5, height = 237.6, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "cell1", title = "cell 1", detail = "same request", subtitle = "slice 1", x = 555, y = 729, width = 391.5, height = 237.6, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "cell2", title = "cell 2", detail = "same request", subtitle = "slice 2", x = 987, y = 729, width = 391.5, height = 237.6, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "cell3", title = "cell 3", detail = "same request", subtitle = "slice 3", x = 1419, y = 729, width = 391.5, height = 237.6, strokeRole = "@theme.accent.secondary")
+      sdk.FanOut(id = "config-fan", from = { nodeId: "cfg", anchor: "s" }, to = [{ nodeId: "cell0", anchor: "n" }, { nodeId: "cell1", anchor: "n" }, { nodeId: "cell2", anchor: "n" }, { nodeId: "cell3", anchor: "n" }], axis = "y", junction = { x: 350, y: 238 }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Label(id = "ev1", text = "flags.rs · resolve before children", x = 123, y = 972, width = 810, height = 54, fontSize = 27, align = "start")
       timeline primary {
         at 0 reveal hdr1 duration 260
         after hdr1 reveal phase1 duration 260
@@ -126,16 +126,16 @@ explainer "Cellular internals" {
     caption: "self-exec --execute · protocol-v2 boundary."
 
     render: @scene {
-      sdk.Header(id = "hdr2", title = "LAUNCH · SELF-EXEC BOUNDARY", caption = "self-exec --execute · protocol-v2 boundary.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase2", text = "PARENT SHELL → SELF-EXEC CHILD", x = 40, y = 78, width = 300, height = 20, fontSize = 11, align = "start")
-      sdk.Chip(id = "chip2", label = "protocol-v2", x = 520, y = 88, width = 140, height = 24, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "profile", title = "profile", detail = "parent shell", subtitle = "CLI entry", x = 30, y = 140, width = 140, height = 90, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "execbin", title = "exec_bin", detail = "current_exe()", subtitle = "same image", x = 220, y = 140, width = 140, height = 90, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "execute", title = "--execute", detail = "protocol-v2 child", subtitle = "hidden mode", x = 410, y = 140, width = 150, height = 90, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "stdio", title = "stdin: one envelope", detail = "stdout: one terminal", subtitle = "stdio handoff", x = 230, y = 280, width = 220, height = 88, strokeRole = "@theme.accent.primary")
-      sdk.Edge(id = "a2a", mode = "connector", from = { nodeId: "profile", anchor: "e" }, to = { nodeId: "execbin", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a2b", mode = "connector", from = { nodeId: "execbin", anchor: "e" }, to = { nodeId: "execute", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a2c", mode = "route", from = { nodeId: "execute", anchor: "s" }, to = { nodeId: "stdio", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Header(id = "hdr2", title = "LAUNCH · SELF-EXEC BOUNDARY", caption = "self-exec --execute · protocol-v2 boundary.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase2", text = "PARENT SHELL → SELF-EXEC CHILD", x = 123, y = 210.6, width = 810, height = 54, fontSize = 29.7, align = "start")
+      sdk.Chip(id = "chip2", label = "protocol-v2", x = 1419, y = 237.6, width = 378, height = 64.8, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "profile", title = "profile", detail = "parent shell", subtitle = "CLI entry", x = 96, y = 378, width = 378, height = 243, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "execbin", title = "exec_bin", detail = "current_exe()", subtitle = "same image", x = 609, y = 378, width = 378, height = 243, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "execute", title = "--execute", detail = "protocol-v2 child", subtitle = "hidden mode", x = 1122, y = 378, width = 405, height = 243, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "stdio", title = "stdin: one envelope", detail = "stdout: one terminal", subtitle = "stdio handoff", x = 636, y = 756, width = 594, height = 237.6, strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "a2a", mode = "connector", from = { nodeId: "profile", anchor: "e" }, to = { nodeId: "execbin", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a2b", mode = "connector", from = { nodeId: "execbin", anchor: "e" }, to = { nodeId: "execute", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a2c", mode = "route", from = { nodeId: "execute", anchor: "s" }, to = { nodeId: "stdio", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal hdr2 duration 260
         after hdr2 reveal phase2 duration 260
@@ -168,14 +168,14 @@ explainer "Cellular internals" {
     caption: "cells > 1 → promote one coordinator."
 
     render: @scene {
-      sdk.Header(id = "hdr3", title = "LAUNCH · CONTROLLER PROMOTION", caption = "cells > 1 → promote one coordinator.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase3", text = "CELLS > 1 → COORDINATOR ROLE", x = 40, y = 78, width = 300, height = 20, fontSize = 11, align = "start")
-      sdk.Card(id = "exec3", title = "--execute", detail = "cells > 1", subtitle = "promotion gate", x = 30, y = 140, width = 150, height = 90, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "ctrl", title = "Controller", detail = "coordinate · no load", subtitle = "partition + merge", x = 240, y = 140, width = 180, height = 90, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "single", title = "single cell", detail = "stays direct", subtitle = "no promotion", x = 60, y = 270, width = 150, height = 82, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "roles", title = "controller / cell / aggregator", detail = "native K8s roles", subtitle = "same entrypoints", x = 470, y = 270, width = 220, height = 88, strokeRole = "@theme.accent.tertiary")
-      sdk.Edge(id = "a3a", mode = "connector", from = { nodeId: "exec3", anchor: "e" }, to = { nodeId: "ctrl", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a3b", mode = "route", from = { nodeId: "ctrl", anchor: "s" }, to = { nodeId: "roles", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Header(id = "hdr3", title = "LAUNCH · CONTROLLER PROMOTION", caption = "cells > 1 → promote one coordinator.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase3", text = "CELLS > 1 → COORDINATOR ROLE", x = 123, y = 210.6, width = 810, height = 54, fontSize = 29.7, align = "start")
+      sdk.Card(id = "exec3", title = "--execute", detail = "cells > 1", subtitle = "promotion gate", x = 96, y = 378, width = 405, height = 243, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "ctrl", title = "Controller", detail = "coordinate · no load", subtitle = "partition + merge", x = 663, y = 378, width = 486, height = 243, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "single", title = "single cell", detail = "stays direct", subtitle = "no promotion", x = 177, y = 729, width = 405, height = 221.4, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "roles", title = "controller / cell / aggregator", detail = "native K8s roles", subtitle = "same entrypoints", x = 1284, y = 729, width = 594, height = 237.6, strokeRole = "@theme.accent.tertiary")
+      sdk.Edge(id = "a3a", mode = "connector", from = { nodeId: "exec3", anchor: "e" }, to = { nodeId: "ctrl", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a3b", mode = "route", from = { nodeId: "ctrl", anchor: "s" }, to = { nodeId: "roles", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal hdr3 duration 260
         after hdr3 reveal phase3 duration 260
@@ -206,16 +206,16 @@ explainer "Cellular internals" {
     caption: "eligibility gate → reject unsupported shapes."
 
     render: @scene {
-      sdk.Header(id = "hdr4", title = "LAUNCH · VALIDATE / FAIL CLOSED", caption = "eligibility gate → reject unsupported shapes.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase4", text = "FAIL CLOSED BEFORE LAUNCH", x = 40, y = 78, width = 280, height = 20, fontSize = 11, align = "start")
-      sdk.Chip(id = "chip4", label = "eligibility gate", x = 520, y = 88, width = 140, height = 24, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "ctrl4", title = "Controller", detail = "validate_cellular_run_shape", subtitle = "pre-launch", x = 250, y = 105, width = 200, height = 88, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "rej1", title = "scheduled infinite", detail = "rejected", subtitle = "unbounded", x = 40, y = 260, width = 170, height = 80, strokeRole = "@theme.accent.tertiary")
-      sdk.Card(id = "rej2", title = "DynoSim cellular", detail = "rejected", subtitle = "unsupported", x = 260, y = 260, width = 170, height = 80, strokeRole = "@theme.accent.tertiary")
-      sdk.Card(id = "ok4", title = "eligible shape", detail = "launch", subtitle = "proceed", x = 480, y = 260, width = 180, height = 80, strokeRole = "@theme.accent.secondary")
-      sdk.Edge(id = "a4a", mode = "path", from = { nodeId: "ctrl4", anchor: "s" }, to = { nodeId: "rej1", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a4b", mode = "path", from = { nodeId: "ctrl4", anchor: "s" }, to = { nodeId: "rej2", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a4c", mode = "path", from = { nodeId: "ctrl4", anchor: "s" }, to = { nodeId: "ok4", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Header(id = "hdr4", title = "LAUNCH · VALIDATE / FAIL CLOSED", caption = "eligibility gate → reject unsupported shapes.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase4", text = "FAIL CLOSED BEFORE LAUNCH", x = 123, y = 210.6, width = 756, height = 54, fontSize = 29.7, align = "start")
+      sdk.Chip(id = "chip4", label = "eligibility gate", x = 1419, y = 237.6, width = 378, height = 64.8, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "ctrl4", title = "Controller", detail = "validate_cellular_run_shape", subtitle = "pre-launch", x = 690, y = 283.5, width = 540, height = 237.6, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "rej1", title = "scheduled infinite", detail = "rejected", subtitle = "unbounded", x = 123, y = 702, width = 459, height = 216, strokeRole = "@theme.accent.tertiary")
+      sdk.Card(id = "rej2", title = "DynoSim cellular", detail = "rejected", subtitle = "unsupported", x = 717, y = 702, width = 459, height = 216, strokeRole = "@theme.accent.tertiary")
+      sdk.Card(id = "ok4", title = "eligible shape", detail = "launch", subtitle = "proceed", x = 1311, y = 702, width = 486, height = 216, strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a4a", mode = "path", from = { nodeId: "ctrl4", anchor: "s" }, to = { nodeId: "rej1", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a4b", mode = "path", from = { nodeId: "ctrl4", anchor: "s" }, to = { nodeId: "rej2", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a4c", mode = "path", from = { nodeId: "ctrl4", anchor: "s" }, to = { nodeId: "ok4", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal hdr4 duration 260
         after hdr4 reveal phase4 duration 260
@@ -248,17 +248,17 @@ explainer "Cellular internals" {
     caption: "global budget → disjoint modulo tiles."
 
     render: @scene {
-      sdk.Header(id = "hdr5", title = "DISTRIBUTE · MODULO PARTITION", caption = "global budget → disjoint modulo tiles.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase5", text = "DETERMINISTIC OWNERSHIP TILES", x = 40, y = 78, width = 300, height = 20, fontSize = 11, align = "start")
-      sdk.Card(id = "ctrl5", title = "Controller", detail = "global budget", subtitle = "requests 0…N", x = 30, y = 140, width = 150, height = 90, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "mod", title = "ModuloCellPartition", detail = "i % cells == id", subtitle = "no overlap", x = 230, y = 140, width = 160, height = 90, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "own0", title = "cell 0 owns", detail = "i % 3 == 0", subtitle = "disjoint tile", x = 440, y = 95, width = 220, height = 80, strokeRole = "@theme.accent.tertiary")
-      sdk.Card(id = "own1", title = "cell 1 owns", detail = "i % 3 == 1", subtitle = "disjoint tile", x = 440, y = 185, width = 220, height = 80, strokeRole = "@theme.accent.tertiary")
-      sdk.Card(id = "own2", title = "cell 2 owns", detail = "i % 3 == 2", subtitle = "disjoint tile", x = 440, y = 275, width = 220, height = 80, strokeRole = "@theme.accent.tertiary")
-      sdk.Edge(id = "a5a", mode = "connector", from = { nodeId: "ctrl5", anchor: "e" }, to = { nodeId: "mod", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a5c0", mode = "path", from = { nodeId: "mod", anchor: "e" }, to = { nodeId: "own0", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a5c1", mode = "path", from = { nodeId: "mod", anchor: "e" }, to = { nodeId: "own1", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a5c2", mode = "path", from = { nodeId: "mod", anchor: "e" }, to = { nodeId: "own2", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Header(id = "hdr5", title = "DISTRIBUTE · MODULO PARTITION", caption = "global budget → disjoint modulo tiles.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase5", text = "DETERMINISTIC OWNERSHIP TILES", x = 123, y = 210.6, width = 810, height = 54, fontSize = 29.7, align = "start")
+      sdk.Card(id = "ctrl5", title = "Controller", detail = "global budget", subtitle = "requests 0…N", x = 96, y = 378, width = 405, height = 243, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "mod", title = "ModuloCellPartition", detail = "i % cells == id", subtitle = "no overlap", x = 636, y = 378, width = 432, height = 243, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "own0", title = "cell 0 owns", detail = "i % 3 == 0", subtitle = "disjoint tile", x = 1203, y = 256.5, width = 594, height = 216, strokeRole = "@theme.accent.tertiary")
+      sdk.Card(id = "own1", title = "cell 1 owns", detail = "i % 3 == 1", subtitle = "disjoint tile", x = 1203, y = 499.5, width = 594, height = 216, strokeRole = "@theme.accent.tertiary")
+      sdk.Card(id = "own2", title = "cell 2 owns", detail = "i % 3 == 2", subtitle = "disjoint tile", x = 1203, y = 742.5, width = 594, height = 216, strokeRole = "@theme.accent.tertiary")
+      sdk.Edge(id = "a5a", mode = "connector", from = { nodeId: "ctrl5", anchor: "e" }, to = { nodeId: "mod", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a5c0", mode = "path", from = { nodeId: "mod", anchor: "e" }, to = { nodeId: "own0", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a5c1", mode = "path", from = { nodeId: "mod", anchor: "e" }, to = { nodeId: "own1", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a5c2", mode = "path", from = { nodeId: "mod", anchor: "e" }, to = { nodeId: "own2", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal hdr5 duration 260
         after hdr5 reveal phase5 duration 260
@@ -292,19 +292,19 @@ explainer "Cellular internals" {
     caption: "register all → trigger → synchronized dispatch."
 
     render: @scene {
-      sdk.Header(id = "hdr6", title = "DISTRIBUTE · START BARRIER", caption = "register all → trigger → synchronized dispatch.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase6", text = "REGISTER → AWAIT_ALL → TRIGGER", x = 40, y = 78, width = 320, height = 20, fontSize = 11, align = "start")
-      sdk.Card(id = "c0", title = "c0", detail = "register", subtitle = "ready", x = 30, y = 270, width = 95, height = 88, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "c1", title = "c1", detail = "register", subtitle = "ready", x = 135, y = 270, width = 95, height = 88, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "c2", title = "c2", detail = "register", subtitle = "ready", x = 240, y = 270, width = 95, height = 88, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "c3", title = "c3", detail = "register", subtitle = "ready", x = 345, y = 270, width = 95, height = 88, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "barrier", title = "Barrier", detail = "await_all → trigger", subtitle = "Velo START", x = 440, y = 145, width = 200, height = 90, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "start", title = "START", detail = "synchronized dispatch", subtitle = "release together", x = 200, y = 110, width = 230, height = 88, strokeRole = "@theme.accent.tertiary")
-      sdk.Edge(id = "a6a0", mode = "path", from = { nodeId: "c0", anchor: "n" }, to = { nodeId: "barrier", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a6a1", mode = "path", from = { nodeId: "c1", anchor: "n" }, to = { nodeId: "barrier", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a6a2", mode = "path", from = { nodeId: "c2", anchor: "n" }, to = { nodeId: "barrier", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a6a3", mode = "path", from = { nodeId: "c3", anchor: "n" }, to = { nodeId: "barrier", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a6b", mode = "route", from = { nodeId: "barrier", anchor: "n" }, to = { nodeId: "start", anchor: "e" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Header(id = "hdr6", title = "DISTRIBUTE · START BARRIER", caption = "register all → trigger → synchronized dispatch.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase6", text = "REGISTER → AWAIT_ALL → TRIGGER", x = 123, y = 210.6, width = 864, height = 54, fontSize = 29.7, align = "start")
+      sdk.Card(id = "c0", title = "c0", detail = "register", subtitle = "ready", x = 96, y = 729, width = 256.5, height = 237.6, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "c1", title = "c1", detail = "register", subtitle = "ready", x = 379.5, y = 729, width = 256.5, height = 237.6, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "c2", title = "c2", detail = "register", subtitle = "ready", x = 663, y = 729, width = 256.5, height = 237.6, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "c3", title = "c3", detail = "register", subtitle = "ready", x = 946.5, y = 729, width = 256.5, height = 237.6, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "barrier", title = "Barrier", detail = "await_all → trigger", subtitle = "Velo START", x = 1203, y = 391.5, width = 540, height = 243, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "start", title = "START", detail = "synchronized dispatch", subtitle = "release together", x = 555, y = 297, width = 621, height = 237.6, strokeRole = "@theme.accent.tertiary")
+      sdk.Edge(id = "a6a0", mode = "path", from = { nodeId: "c0", anchor: "n" }, to = { nodeId: "barrier", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a6a1", mode = "path", from = { nodeId: "c1", anchor: "n" }, to = { nodeId: "barrier", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a6a2", mode = "path", from = { nodeId: "c2", anchor: "n" }, to = { nodeId: "barrier", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a6a3", mode = "path", from = { nodeId: "c3", anchor: "n" }, to = { nodeId: "barrier", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a6b", mode = "route", from = { nodeId: "barrier", anchor: "n" }, to = { nodeId: "start", anchor: "e" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal hdr6 duration 260
         after hdr6 reveal phase6 duration 260
@@ -340,15 +340,15 @@ explainer "Cellular internals" {
     caption: "synchronized · phaser · barrier-free · shared origin."
 
     render: @scene {
-      sdk.Header(id = "hdr7", title = "DISTRIBUTE · START POLICIES", caption = "synchronized · phaser · barrier-free · shared origin.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase7", text = "THREE START POLICIES · ONE ORIGIN OPTION", x = 40, y = 78, width = 360, height = 20, fontSize = 11, align = "start")
-      sdk.Card(id = "pol0", title = "synchronized", detail = "default barrier", subtitle = "await all", x = 40, y = 105, width = 190, height = 82, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "pol1", title = "phaser", detail = "opt-in generations", subtitle = "feature-gated", x = 40, y = 200, width = 190, height = 82, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "pol2", title = "barrier-free", detail = "k6-class", subtitle = "no wait", x = 40, y = 295, width = 190, height = 82, strokeRole = "@theme.accent.tertiary")
-      sdk.Card(id = "origin", title = "shared timing origin", detail = "zero at barrier · opt-in", subtitle = "clock alignment", x = 390, y = 145, width = 270, height = 96, strokeRole = "@theme.accent.primary")
-      sdk.Edge(id = "a7a", mode = "path", from = { nodeId: "pol0", anchor: "e" }, to = { nodeId: "origin", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a7b", mode = "path", from = { nodeId: "pol2", anchor: "e" }, to = { nodeId: "origin", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Label(id = "ev7", text = "timing origin optional · policies change rendezvous only", x = 390, y = 300, width = 270, height = 20, fontSize = 10, align = "start")
+      sdk.Header(id = "hdr7", title = "DISTRIBUTE · START POLICIES", caption = "synchronized · phaser · barrier-free · shared origin.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase7", text = "THREE START POLICIES · ONE ORIGIN OPTION", x = 123, y = 210.6, width = 972, height = 54, fontSize = 29.7, align = "start")
+      sdk.Card(id = "pol0", title = "synchronized", detail = "default barrier", subtitle = "await all", x = 123, y = 283.5, width = 513, height = 221.4, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "pol1", title = "phaser", detail = "opt-in generations", subtitle = "feature-gated", x = 123, y = 540, width = 513, height = 221.4, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "pol2", title = "barrier-free", detail = "k6-class", subtitle = "no wait", x = 123, y = 796.5, width = 513, height = 221.4, strokeRole = "@theme.accent.tertiary")
+      sdk.Card(id = "origin", title = "shared timing origin", detail = "zero at barrier · opt-in", subtitle = "clock alignment", x = 1068, y = 391.5, width = 729, height = 259.2, strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "a7a", mode = "path", from = { nodeId: "pol0", anchor: "e" }, to = { nodeId: "origin", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a7b", mode = "path", from = { nodeId: "pol2", anchor: "e" }, to = { nodeId: "origin", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.Label(id = "ev7", text = "timing origin optional · policies change rendezvous only", x = 1068, y = 810, width = 729, height = 54, fontSize = 27, align = "start")
       timeline primary {
         at 0 reveal hdr7 duration 260
         after hdr7 reveal phase7 duration 260
@@ -380,16 +380,16 @@ explainer "Cellular internals" {
     caption: "Velo overlay · Stage G HTTP+zstd · owned inputs only."
 
     render: @scene {
-      sdk.Header(id = "hdr8", title = "DISTRIBUTE · DATASET DELIVERY", caption = "Velo overlay · Stage G HTTP+zstd · owned inputs only.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase8", text = "OWNERSHIP CHUNKS → CELL-LOCAL INPUTS", x = 40, y = 78, width = 340, height = 20, fontSize = 11, align = "start")
-      sdk.Card(id = "own8", title = "Ownership", detail = "request-id chunks", subtitle = "modulo tiles", x = 30, y = 140, width = 150, height = 90, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "velo", title = "Velo overlay", detail = "fan-out verify", subtitle = "control plane", x = 350, y = 105, width = 200, height = 78, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "stage", title = "Stage G serve", detail = "HTTP + zstd", subtitle = "bulk path", x = 350, y = 205, width = 200, height = 78, strokeRole = "@theme.accent.tertiary")
-      sdk.Card(id = "cell8", title = "cell", detail = "owned only", subtitle = "no strangers", x = 575, y = 155, width = 110, height = 78, strokeRole = "@theme.accent.primary")
-      sdk.Edge(id = "a8a", mode = "path", from = { nodeId: "own8", anchor: "e" }, to = { nodeId: "velo", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a8b", mode = "path", from = { nodeId: "own8", anchor: "e" }, to = { nodeId: "stage", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a8c", mode = "path", from = { nodeId: "velo", anchor: "e" }, to = { nodeId: "cell8", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a8d", mode = "path", from = { nodeId: "stage", anchor: "e" }, to = { nodeId: "cell8", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Header(id = "hdr8", title = "DISTRIBUTE · DATASET DELIVERY", caption = "Velo overlay · Stage G HTTP+zstd · owned inputs only.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase8", text = "OWNERSHIP CHUNKS → CELL-LOCAL INPUTS", x = 123, y = 210.6, width = 918, height = 54, fontSize = 29.7, align = "start")
+      sdk.Card(id = "own8", title = "Ownership", detail = "request-id chunks", subtitle = "modulo tiles", x = 96, y = 378, width = 405, height = 243, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "velo", title = "Velo overlay", detail = "fan-out verify", subtitle = "control plane", x = 960, y = 283.5, width = 540, height = 210.6, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "stage", title = "Stage G serve", detail = "HTTP + zstd", subtitle = "bulk path", x = 960, y = 553.5, width = 540, height = 210.6, strokeRole = "@theme.accent.tertiary")
+      sdk.Card(id = "cell8", title = "cell", detail = "owned only", subtitle = "no strangers", x = 1567.5, y = 418.5, width = 297, height = 210.6, strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "a8a", mode = "path", from = { nodeId: "own8", anchor: "e" }, to = { nodeId: "velo", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a8b", mode = "path", from = { nodeId: "own8", anchor: "e" }, to = { nodeId: "stage", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a8c", mode = "path", from = { nodeId: "velo", anchor: "e" }, to = { nodeId: "cell8", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a8d", mode = "path", from = { nodeId: "stage", anchor: "e" }, to = { nodeId: "cell8", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal hdr8 duration 260
         after hdr8 reveal phase8 duration 260
@@ -422,17 +422,17 @@ explainer "Cellular internals" {
     caption: "owned ids only · indexed → in-flight → done."
 
     render: @scene {
-      sdk.Header(id = "hdr9", title = "DISTRIBUTE · OWNERSHIP INDEX", caption = "owned ids only · indexed → in-flight → done.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase9", text = "ONE IDENTITY · EXACTLY ONE CELL", x = 40, y = 78, width = 300, height = 20, fontSize = 11, align = "start")
-      sdk.Card(id = "idx", title = "DatasetIndex", detail = "cell-local", subtitle = "owned ids", x = 40, y = 140, width = 160, height = 90, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "indexed", title = "Indexed", detail = "owned ids", subtitle = "ready", x = 260, y = 110, width = 160, height = 82, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "inflight", title = "InFlight", detail = "dispatched", subtitle = "hot", x = 260, y = 192, width = 160, height = 82, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "completed", title = "Done", detail = "captured", subtitle = "terminal", x = 260, y = 289, width = 160, height = 82, strokeRole = "@theme.accent.tertiary")
-      sdk.Label(id = "note9", text = "one identity → exactly one cell", x = 450, y = 185, width = 220, height = 20, fontSize = 12, align = "start")
-      sdk.Chip(id = "chip9", label = "no double ownership", x = 450, y = 220, width = 180, height = 28, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary")
-      sdk.Edge(id = "a9a", mode = "connector", from = { nodeId: "idx", anchor: "e" }, to = { nodeId: "indexed", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a9b", mode = "path", from = { nodeId: "indexed", anchor: "s" }, to = { nodeId: "inflight", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a9c", mode = "path", from = { nodeId: "inflight", anchor: "s" }, to = { nodeId: "completed", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Header(id = "hdr9", title = "DISTRIBUTE · OWNERSHIP INDEX", caption = "owned ids only · indexed → in-flight → done.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase9", text = "ONE IDENTITY · EXACTLY ONE CELL", x = 123, y = 210.6, width = 810, height = 54, fontSize = 29.7, align = "start")
+      sdk.Card(id = "idx", title = "DatasetIndex", detail = "cell-local", subtitle = "owned ids", x = 123, y = 378, width = 432, height = 243, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "indexed", title = "Indexed", detail = "owned ids", subtitle = "ready", x = 717, y = 297, width = 432, height = 221.4, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "inflight", title = "InFlight", detail = "dispatched", subtitle = "hot", x = 717, y = 518.4, width = 432, height = 221.4, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "completed", title = "Done", detail = "captured", subtitle = "terminal", x = 717, y = 780.3, width = 432, height = 221.4, strokeRole = "@theme.accent.tertiary")
+      sdk.Label(id = "note9", text = "one identity → exactly one cell", x = 1230, y = 499.5, width = 594, height = 54, fontSize = 32.4, align = "start")
+      sdk.Chip(id = "chip9", label = "no double ownership", x = 1230, y = 594, width = 486, height = 75.6, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary")
+      sdk.Edge(id = "a9a", mode = "connector", from = { nodeId: "idx", anchor: "e" }, to = { nodeId: "indexed", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a9b", mode = "path", from = { nodeId: "indexed", anchor: "s" }, to = { nodeId: "inflight", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a9c", mode = "path", from = { nodeId: "inflight", anchor: "s" }, to = { nodeId: "completed", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal hdr9 duration 260
         after hdr9 reveal phase9 duration 260
@@ -466,17 +466,17 @@ explainer "Cellular internals" {
     caption: "sliced envelope → autonomous cell process."
 
     render: @scene {
-      sdk.Header(id = "hdr10", title = "EXECUTE · AUTONOMOUS CELL", caption = "sliced envelope → autonomous cell process.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase10", text = "CONTROL + DATA + TIMING → ONE PROCESS", x = 40, y = 78, width = 360, height = 20, fontSize = 11, align = "start")
-      sdk.Card(id = "env", title = "sliced envelope", detail = "control", subtitle = "partition", x = 30, y = 100, width = 160, height = 80, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "inputs", title = "owned inputs", detail = "data", subtitle = "local only", x = 30, y = 192, width = 160, height = 80, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "torigin", title = "shared origin", detail = "timing", subtitle = "opt-in", x = 30, y = 284, width = 160, height = 80, strokeRole = "@theme.accent.tertiary")
-      sdk.Card(id = "auto", title = "Autonomous cell", detail = "own runtime + metrics", subtitle = "no hot-path lock", x = 310, y = 145, width = 220, height = 100, strokeRole = "@theme.accent.primary")
-      sdk.Label(id = "note10", text = "no hot-path collector lock", x = 340, y = 290, width = 300, height = 20, fontSize = 12, align = "start")
-      sdk.Chip(id = "chip10", label = "worker-local", x = 540, y = 160, width = 120, height = 28, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
-      sdk.Edge(id = "a10a", mode = "path", from = { nodeId: "env", anchor: "e" }, to = { nodeId: "auto", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a10b", mode = "path", from = { nodeId: "inputs", anchor: "e" }, to = { nodeId: "auto", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a10c", mode = "path", from = { nodeId: "torigin", anchor: "e" }, to = { nodeId: "auto", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Header(id = "hdr10", title = "EXECUTE · AUTONOMOUS CELL", caption = "sliced envelope → autonomous cell process.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase10", text = "CONTROL + DATA + TIMING → ONE PROCESS", x = 123, y = 210.6, width = 972, height = 54, fontSize = 29.7, align = "start")
+      sdk.Card(id = "env", title = "sliced envelope", detail = "control", subtitle = "partition", x = 96, y = 270, width = 432, height = 216, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "inputs", title = "owned inputs", detail = "data", subtitle = "local only", x = 96, y = 518.4, width = 432, height = 216, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "torigin", title = "shared origin", detail = "timing", subtitle = "opt-in", x = 96, y = 766.8, width = 432, height = 216, strokeRole = "@theme.accent.tertiary")
+      sdk.Card(id = "auto", title = "Autonomous cell", detail = "own runtime + metrics", subtitle = "no hot-path lock", x = 852, y = 391.5, width = 594, height = 270, strokeRole = "@theme.accent.primary")
+      sdk.Label(id = "note10", text = "no hot-path collector lock", x = 933, y = 783, width = 810, height = 54, fontSize = 32.4, align = "start")
+      sdk.Chip(id = "chip10", label = "worker-local", x = 1473, y = 432, width = 324, height = 75.6, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a10a", mode = "path", from = { nodeId: "env", anchor: "e" }, to = { nodeId: "auto", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a10b", mode = "path", from = { nodeId: "inputs", anchor: "e" }, to = { nodeId: "auto", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a10c", mode = "path", from = { nodeId: "torigin", anchor: "e" }, to = { nodeId: "auto", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal hdr10 duration 260
         after hdr10 reveal phase10 duration 260
@@ -510,16 +510,16 @@ explainer "Cellular internals" {
     caption: "cell slice → worker shards · second disjoint partition."
 
     render: @scene {
-      sdk.Header(id = "hdr11", title = "EXECUTE · WORKER SHARDS", caption = "cell slice → worker shards · second disjoint partition.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase11", text = "SECOND DISJOINT PARTITION · THREAD-PER-CORE", x = 40, y = 78, width = 380, height = 20, fontSize = 11, align = "start")
-      sdk.Card(id = "slice", title = "Cell slice", detail = "owned positions", subtitle = "modulo tile", x = 40, y = 140, width = 160, height = 90, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "w0", title = "worker 0", detail = "local 0,2,…", subtitle = "even locals", x = 260, y = 100, width = 170, height = 74, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "w1", title = "worker 1", detail = "local 1,3,…", subtitle = "odd locals", x = 260, y = 210, width = 170, height = 74, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "store", title = "worker-local store", detail = "thread-per-core", subtitle = "merge later", x = 490, y = 145, width = 170, height = 90, strokeRole = "@theme.accent.tertiary")
-      sdk.Edge(id = "a11a", mode = "path", from = { nodeId: "slice", anchor: "e" }, to = { nodeId: "w0", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a11d", mode = "path", from = { nodeId: "slice", anchor: "e" }, to = { nodeId: "w1", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a11b", mode = "path", from = { nodeId: "w0", anchor: "e" }, to = { nodeId: "store", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a11c", mode = "path", from = { nodeId: "w1", anchor: "e" }, to = { nodeId: "store", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Header(id = "hdr11", title = "EXECUTE · WORKER SHARDS", caption = "cell slice → worker shards · second disjoint partition.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase11", text = "SECOND DISJOINT PARTITION · THREAD-PER-CORE", x = 123, y = 210.6, width = 1026, height = 54, fontSize = 29.7, align = "start")
+      sdk.Card(id = "slice", title = "Cell slice", detail = "owned positions", subtitle = "modulo tile", x = 123, y = 378, width = 432, height = 243, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "w0", title = "worker 0", detail = "local 0,2,…", subtitle = "even locals", x = 717, y = 270, width = 459, height = 199.8, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "w1", title = "worker 1", detail = "local 1,3,…", subtitle = "odd locals", x = 717, y = 567, width = 459, height = 199.8, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "store", title = "worker-local store", detail = "thread-per-core", subtitle = "merge later", x = 1338, y = 391.5, width = 459, height = 243, strokeRole = "@theme.accent.tertiary")
+      sdk.Edge(id = "a11a", mode = "path", from = { nodeId: "slice", anchor: "e" }, to = { nodeId: "w0", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a11d", mode = "path", from = { nodeId: "slice", anchor: "e" }, to = { nodeId: "w1", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a11b", mode = "path", from = { nodeId: "w0", anchor: "e" }, to = { nodeId: "store", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a11c", mode = "path", from = { nodeId: "w1", anchor: "e" }, to = { nodeId: "store", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal hdr11 duration 260
         after hdr11 reveal phase11 duration 260
@@ -552,17 +552,17 @@ explainer "Cellular internals" {
     caption: "local progress → stable global ordinal."
 
     render: @scene {
-      sdk.Header(id = "hdr12", title = "EXECUTE · GLOBAL ORDINAL", caption = "local progress → stable global ordinal.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase12", text = "LOCAL → GLOBAL WITHOUT COLLISION", x = 40, y = 78, width = 320, height = 20, fontSize = 11, align = "start")
-      sdk.Card(id = "global-ord", title = "global_ordinal", detail = "phase_base + local × cell_count + cell_id", subtitle = "stable across cells", x = 120, y = 105, width = 460, height = 92, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "ord0", title = "ordinal 0", detail = "cell + 0·N", subtitle = "unique", x = 40, y = 250, width = 130, height = 74, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "ord1", title = "ordinal 1", detail = "cell + 1·N", subtitle = "unique", x = 200, y = 250, width = 130, height = 74, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "ord2", title = "ordinal 2", detail = "cell + 2·N", subtitle = "unique", x = 360, y = 250, width = 130, height = 74, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "ord3", title = "ordinal 3", detail = "cell + 3·N", subtitle = "unique", x = 520, y = 250, width = 130, height = 74, strokeRole = "@theme.accent.secondary")
-      sdk.Edge(id = "a120", mode = "path", from = { nodeId: "global-ord", anchor: "s" }, to = { nodeId: "ord0", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a121", mode = "path", from = { nodeId: "global-ord", anchor: "s" }, to = { nodeId: "ord1", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a122", mode = "path", from = { nodeId: "global-ord", anchor: "s" }, to = { nodeId: "ord2", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a123", mode = "path", from = { nodeId: "global-ord", anchor: "s" }, to = { nodeId: "ord3", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Header(id = "hdr12", title = "EXECUTE · GLOBAL ORDINAL", caption = "local progress → stable global ordinal.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase12", text = "LOCAL → GLOBAL WITHOUT COLLISION", x = 123, y = 210.6, width = 864, height = 54, fontSize = 29.7, align = "start")
+      sdk.Card(id = "global-ord", title = "global_ordinal", detail = "phase_base + local × cell_count + cell_id", subtitle = "stable across cells", x = 339, y = 283.5, width = 1242, height = 248.4, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "ord0", title = "ordinal 0", detail = "cell + 0·N", subtitle = "unique", x = 123, y = 675, width = 351, height = 199.8, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "ord1", title = "ordinal 1", detail = "cell + 1·N", subtitle = "unique", x = 555, y = 675, width = 351, height = 199.8, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "ord2", title = "ordinal 2", detail = "cell + 2·N", subtitle = "unique", x = 987, y = 675, width = 351, height = 199.8, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "ord3", title = "ordinal 3", detail = "cell + 3·N", subtitle = "unique", x = 1419, y = 675, width = 351, height = 199.8, strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a120", mode = "path", from = { nodeId: "global-ord", anchor: "s" }, to = { nodeId: "ord0", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a121", mode = "path", from = { nodeId: "global-ord", anchor: "s" }, to = { nodeId: "ord1", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a122", mode = "path", from = { nodeId: "global-ord", anchor: "s" }, to = { nodeId: "ord2", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a123", mode = "path", from = { nodeId: "global-ord", anchor: "s" }, to = { nodeId: "ord3", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal hdr12 duration 260
         after hdr12 reveal phase12 duration 260
@@ -596,16 +596,16 @@ explainer "Cellular internals" {
     caption: "clock-injected HTTP/gRPC · DynoSim cellular rejected."
 
     render: @scene {
-      sdk.Header(id = "hdr13", title = "EXECUTE · ONLINE DISPATCH", caption = "clock-injected HTTP/gRPC · DynoSim cellular rejected.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase13", text = "HOT PATH IS HTTP/gRPC · NOT VELO", x = 40, y = 78, width = 320, height = 20, fontSize = 11, align = "start")
-      sdk.Chip(id = "chip13", label = "clock-injected", x = 520, y = 88, width = 140, height = 24, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "shard", title = "worker shard", detail = "RequestSink", subtitle = "dispatch", x = 40, y = 140, width = 150, height = 90, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "http", title = "HTTP / gRPC", detail = "clock-injected", subtitle = "measured", x = 350, y = 125, width = 180, height = 74, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "dyno", title = "DynoSim cellular", detail = "fail closed", subtitle = "rejected", x = 350, y = 230, width = 180, height = 74, strokeRole = "@theme.accent.tertiary")
-      sdk.Card(id = "srv", title = "server", detail = "response", subtitle = "endpoint", x = 580, y = 125, width = 100, height = 74, strokeRole = "@theme.accent.secondary")
-      sdk.Edge(id = "a13a", mode = "path", from = { nodeId: "shard", anchor: "e" }, to = { nodeId: "http", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a13b", mode = "path", from = { nodeId: "shard", anchor: "e" }, to = { nodeId: "dyno", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a13c", mode = "path", from = { nodeId: "http", anchor: "e" }, to = { nodeId: "srv", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Header(id = "hdr13", title = "EXECUTE · ONLINE DISPATCH", caption = "clock-injected HTTP/gRPC · DynoSim cellular rejected.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase13", text = "HOT PATH IS HTTP/gRPC · NOT VELO", x = 123, y = 210.6, width = 864, height = 54, fontSize = 29.7, align = "start")
+      sdk.Chip(id = "chip13", label = "clock-injected", x = 1419, y = 237.6, width = 378, height = 64.8, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "shard", title = "worker shard", detail = "RequestSink", subtitle = "dispatch", x = 123, y = 378, width = 405, height = 243, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "http", title = "HTTP / gRPC", detail = "clock-injected", subtitle = "measured", x = 960, y = 337.5, width = 486, height = 199.8, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "dyno", title = "DynoSim cellular", detail = "fail closed", subtitle = "rejected", x = 960, y = 621, width = 486, height = 199.8, strokeRole = "@theme.accent.tertiary")
+      sdk.Card(id = "srv", title = "server", detail = "response", subtitle = "endpoint", x = 1581, y = 337.5, width = 270, height = 199.8, strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a13a", mode = "path", from = { nodeId: "shard", anchor: "e" }, to = { nodeId: "http", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a13b", mode = "path", from = { nodeId: "shard", anchor: "e" }, to = { nodeId: "dyno", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a13c", mode = "path", from = { nodeId: "http", anchor: "e" }, to = { nodeId: "srv", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal hdr13 duration 260
         after hdr13 reveal phase13 duration 260
@@ -638,19 +638,19 @@ explainer "Cellular internals" {
     caption: "observe events → one CapturedRecord."
 
     render: @scene {
-      sdk.Header(id = "hdr14", title = "EXECUTE · CAPTURED RECORD", caption = "observe events → one CapturedRecord.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase14", text = "OBSERVER EVENTS → ONE RECORD", x = 40, y = 78, width = 300, height = 20, fontSize = 11, align = "start")
-      sdk.Card(id = "ev0", title = "arrival", detail = "event", subtitle = "observe", x = 20, y = 110, width = 108, height = 82, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "ev1", title = "admission", detail = "event", subtitle = "observe", x = 136, y = 110, width = 108, height = 82, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "ev2", title = "token", detail = "event", subtitle = "observe", x = 252, y = 110, width = 108, height = 82, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "ev3", title = "usage", detail = "event", subtitle = "observe", x = 368, y = 110, width = 108, height = 82, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "ev4", title = "terminal", detail = "event", subtitle = "observe", x = 484, y = 110, width = 108, height = 82, strokeRole = "@theme.accent.tertiary")
-      sdk.Card(id = "cap", title = "CapturedRecord", detail = "finalized · storage begins", subtitle = "terminal", x = 230, y = 250, width = 240, height = 90, strokeRole = "@theme.accent.primary")
-      sdk.Edge(id = "a140", mode = "path", from = { nodeId: "ev0", anchor: "e" }, to = { nodeId: "ev1", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a141", mode = "path", from = { nodeId: "ev1", anchor: "e" }, to = { nodeId: "ev2", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a142", mode = "path", from = { nodeId: "ev2", anchor: "e" }, to = { nodeId: "ev3", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a143", mode = "path", from = { nodeId: "ev3", anchor: "e" }, to = { nodeId: "ev4", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a14v", mode = "path", from = { nodeId: "ev2", anchor: "s" }, to = { nodeId: "cap", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Header(id = "hdr14", title = "EXECUTE · CAPTURED RECORD", caption = "observe events → one CapturedRecord.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase14", text = "OBSERVER EVENTS → ONE RECORD", x = 123, y = 210.6, width = 810, height = 54, fontSize = 29.7, align = "start")
+      sdk.Card(id = "ev0", title = "arrival", detail = "event", subtitle = "observe", x = 69, y = 297, width = 291.6, height = 221.4, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "ev1", title = "admission", detail = "event", subtitle = "observe", x = 382.2, y = 297, width = 291.6, height = 221.4, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "ev2", title = "token", detail = "event", subtitle = "observe", x = 695.4, y = 297, width = 291.6, height = 221.4, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "ev3", title = "usage", detail = "event", subtitle = "observe", x = 1008.6, y = 297, width = 291.6, height = 221.4, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "ev4", title = "terminal", detail = "event", subtitle = "observe", x = 1321.8, y = 297, width = 291.6, height = 221.4, strokeRole = "@theme.accent.tertiary")
+      sdk.Card(id = "cap", title = "CapturedRecord", detail = "finalized · storage begins", subtitle = "terminal", x = 636, y = 675, width = 648, height = 243, strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "a140", mode = "path", from = { nodeId: "ev0", anchor: "e" }, to = { nodeId: "ev1", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a141", mode = "path", from = { nodeId: "ev1", anchor: "e" }, to = { nodeId: "ev2", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a142", mode = "path", from = { nodeId: "ev2", anchor: "e" }, to = { nodeId: "ev3", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a143", mode = "path", from = { nodeId: "ev3", anchor: "e" }, to = { nodeId: "ev4", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a14v", mode = "path", from = { nodeId: "ev2", anchor: "s" }, to = { nodeId: "cap", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal hdr14 duration 260
         after hdr14 reveal phase14 duration 260
@@ -686,14 +686,14 @@ explainer "Cellular internals" {
     caption: "keep rows → ship Partition → global-order merge."
 
     render: @scene {
-      sdk.Header(id = "hdr15", title = "REDUCE · RETAIN ROWS", caption = "keep rows → ship Partition → global-order merge.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase15", text = "KEEP RAW ARTIFACTS AVAILABLE", x = 40, y = 78, width = 300, height = 20, fontSize = 11, align = "start")
-      sdk.Card(id = "disp15", title = "dispatch", detail = "CapturedRecord", subtitle = "per request", x = 40, y = 140, width = 160, height = 90, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "retain", title = "Retained rows", detail = "Vec<Record> · O(records)", subtitle = "exact mode", x = 270, y = 140, width = 180, height = 90, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "part", title = "Partition", detail = "global-order merge", subtitle = "ship to rank 0", x = 520, y = 140, width = 150, height = 90, strokeRole = "@theme.accent.tertiary")
-      sdk.Edge(id = "a15a", mode = "connector", from = { nodeId: "disp15", anchor: "e" }, to = { nodeId: "retain", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a15b", mode = "connector", from = { nodeId: "retain", anchor: "e" }, to = { nodeId: "part", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Label(id = "note15", text = "keeps raw record artifacts available", x = 230, y = 290, width = 470, height = 20, fontSize = 12, align = "start")
+      sdk.Header(id = "hdr15", title = "REDUCE · RETAIN ROWS", caption = "keep rows → ship Partition → global-order merge.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase15", text = "KEEP RAW ARTIFACTS AVAILABLE", x = 123, y = 210.6, width = 810, height = 54, fontSize = 29.7, align = "start")
+      sdk.Card(id = "disp15", title = "dispatch", detail = "CapturedRecord", subtitle = "per request", x = 123, y = 378, width = 432, height = 243, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "retain", title = "Retained rows", detail = "Vec<Record> · O(records)", subtitle = "exact mode", x = 744, y = 378, width = 486, height = 243, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "part", title = "Partition", detail = "global-order merge", subtitle = "ship to rank 0", x = 1419, y = 378, width = 405, height = 243, strokeRole = "@theme.accent.tertiary")
+      sdk.Edge(id = "a15a", mode = "connector", from = { nodeId: "disp15", anchor: "e" }, to = { nodeId: "retain", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a15b", mode = "connector", from = { nodeId: "retain", anchor: "e" }, to = { nodeId: "part", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.Label(id = "note15", text = "keeps raw record artifacts available", x = 636, y = 783, width = 1269, height = 54, fontSize = 32.4, align = "start")
       timeline primary {
         at 0 reveal hdr15 duration 260
         after hdr15 reveal phase15 duration 260
@@ -724,14 +724,14 @@ explainer "Cellular internals" {
     caption: "fold each record → exact store · drop row."
 
     render: @scene {
-      sdk.Header(id = "hdr16", title = "REDUCE · EXACT FOLD", caption = "fold each record → exact store · drop row.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase16", text = "EXACT AGGREGATES · DROP ROWS", x = 40, y = 78, width = 300, height = 20, fontSize = 11, align = "start")
-      sdk.Card(id = "disp16", title = "dispatch", detail = "each record", subtitle = "stream", x = 40, y = 140, width = 160, height = 90, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "fold", title = "fold_streaming", detail = "exact ColumnStore", subtitle = "mergeable", x = 270, y = 140, width = 200, height = 90, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "drop", title = "drop row", detail = "bounded", subtitle = "no retain", x = 540, y = 140, width = 130, height = 90, strokeRole = "@theme.accent.tertiary")
-      sdk.Edge(id = "a16a", mode = "connector", from = { nodeId: "disp16", anchor: "e" }, to = { nodeId: "fold", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a16b", mode = "connector", from = { nodeId: "fold", anchor: "e" }, to = { nodeId: "drop", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Label(id = "note16", text = "exact aggregates without retaining rows", x = 230, y = 290, width = 470, height = 20, fontSize = 12, align = "start")
+      sdk.Header(id = "hdr16", title = "REDUCE · EXACT FOLD", caption = "fold each record → exact store · drop row.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase16", text = "EXACT AGGREGATES · DROP ROWS", x = 123, y = 210.6, width = 810, height = 54, fontSize = 29.7, align = "start")
+      sdk.Card(id = "disp16", title = "dispatch", detail = "each record", subtitle = "stream", x = 123, y = 378, width = 432, height = 243, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "fold", title = "fold_streaming", detail = "exact ColumnStore", subtitle = "mergeable", x = 744, y = 378, width = 540, height = 243, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "drop", title = "drop row", detail = "bounded", subtitle = "no retain", x = 1473, y = 378, width = 351, height = 243, strokeRole = "@theme.accent.tertiary")
+      sdk.Edge(id = "a16a", mode = "connector", from = { nodeId: "disp16", anchor: "e" }, to = { nodeId: "fold", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a16b", mode = "connector", from = { nodeId: "fold", anchor: "e" }, to = { nodeId: "drop", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.Label(id = "note16", text = "exact aggregates without retaining rows", x = 636, y = 783, width = 1269, height = 54, fontSize = 32.4, align = "start")
       timeline primary {
         at 0 reveal hdr16 duration 260
         after hdr16 reveal phase16 duration 260
@@ -762,15 +762,15 @@ explainer "Cellular internals" {
     caption: "finite values → t-digest + exact moments."
 
     render: @scene {
-      sdk.Header(id = "hdr17", title = "REDUCE · SKETCH", caption = "finite values → t-digest + exact moments.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase17", text = "T-DIGEST SKETCH · MIXED FIDELITY", x = 40, y = 78, width = 320, height = 20, fontSize = 11, align = "start")
-      sdk.Card(id = "fin", title = "finite values", detail = "metric stream", subtitle = "per record", x = 40, y = 140, width = 160, height = 90, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "sketch", title = "TagSketch", detail = "t-digest + moments", subtitle = "mergeable", x = 270, y = 140, width = 200, height = 90, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "exact", title = "exact", detail = "count · sum · extrema · std", subtitle = "preserved", x = 140, y = 275, width = 210, height = 88, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "approx", title = "approximate", detail = "percentiles", subtitle = "estimate", x = 380, y = 275, width = 210, height = 88, strokeRole = "@theme.accent.tertiary")
-      sdk.Edge(id = "a17a", mode = "connector", from = { nodeId: "fin", anchor: "e" }, to = { nodeId: "sketch", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a17b", mode = "path", from = { nodeId: "sketch", anchor: "s" }, to = { nodeId: "exact", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a17c", mode = "path", from = { nodeId: "sketch", anchor: "s" }, to = { nodeId: "approx", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Header(id = "hdr17", title = "REDUCE · SKETCH", caption = "finite values → t-digest + exact moments.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase17", text = "T-DIGEST SKETCH · MIXED FIDELITY", x = 123, y = 210.6, width = 864, height = 54, fontSize = 29.7, align = "start")
+      sdk.Card(id = "fin", title = "finite values", detail = "metric stream", subtitle = "per record", x = 123, y = 378, width = 432, height = 243, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "sketch", title = "TagSketch", detail = "t-digest + moments", subtitle = "mergeable", x = 744, y = 378, width = 540, height = 243, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "exact", title = "exact", detail = "count · sum · extrema · std", subtitle = "preserved", x = 393, y = 742.5, width = 567, height = 237.6, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "approx", title = "approximate", detail = "percentiles", subtitle = "estimate", x = 1041, y = 742.5, width = 567, height = 237.6, strokeRole = "@theme.accent.tertiary")
+      sdk.Edge(id = "a17a", mode = "connector", from = { nodeId: "fin", anchor: "e" }, to = { nodeId: "sketch", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a17b", mode = "path", from = { nodeId: "sketch", anchor: "s" }, to = { nodeId: "exact", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a17c", mode = "path", from = { nodeId: "sketch", anchor: "s" }, to = { nodeId: "approx", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal hdr17 duration 260
         after hdr17 reveal phase17 duration 260
@@ -802,20 +802,20 @@ explainer "Cellular internals" {
     caption: "flat + tree merge → artifacts + report · external planned."
 
     render: @scene {
-      sdk.Header(id = "hdr18", title = "SCALE · MERGE & PUBLISH", caption = "flat + tree merge → artifacts + report · external planned.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase18", text = "FLAT OR TREE → ONE REPORT", x = 40, y = 78, width = 280, height = 20, fontSize = 11, align = "start")
-      sdk.Card(id = "cell180", title = "cell 0", detail = "store", subtitle = "local", x = 30, y = 102, width = 120, height = 68, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "cell181", title = "cell 1", detail = "store", subtitle = "local", x = 160, y = 102, width = 120, height = 68, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "cell182", title = "cell 2", detail = "store", subtitle = "local", x = 30, y = 196, width = 120, height = 68, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "cell183", title = "cell 3", detail = "store", subtitle = "local", x = 160, y = 196, width = 120, height = 68, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "agg0", title = "aggregator 0", detail = "subtree fold", subtitle = "optional", x = 310, y = 118, width = 150, height = 88, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "agg1", title = "aggregator 1", detail = "subtree fold", subtitle = "optional", x = 310, y = 212, width = 150, height = 88, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "merge", title = "Controller merge", detail = "one report", subtitle = "authoritative", x = 500, y = 130, width = 150, height = 90, strokeRole = "@theme.accent.tertiary")
-      sdk.Panel(id = "sink", title = "external sink", x = 470, y = 248, width = 210, height = 52, strokeRole = "@theme.accent.primary")
-      sdk.FanIn(id = "cells-to-agg0", from = [{ nodeId: "cell180", anchor: "e" }, { nodeId: "cell181", anchor: "e" }], to = { nodeId: "agg0", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.FanIn(id = "cells-to-agg1", from = [{ nodeId: "cell182", anchor: "e" }, { nodeId: "cell183", anchor: "e" }], to = { nodeId: "agg1", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.FanIn(id = "aggs-to-merge", from = [{ nodeId: "agg0", anchor: "e" }, { nodeId: "agg1", anchor: "e" }], to = { nodeId: "merge", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Edge(id = "merge-to-sink", mode = "route", from = { nodeId: "merge", anchor: "s" }, to = { nodeId: "sink", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Header(id = "hdr18", title = "SCALE · MERGE & PUBLISH", caption = "flat + tree merge → artifacts + report · external planned.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase18", text = "FLAT OR TREE → ONE REPORT", x = 123, y = 210.6, width = 756, height = 54, fontSize = 29.7, align = "start")
+      sdk.Card(id = "cell180", title = "cell 0", detail = "store", subtitle = "local", x = 96, y = 275.4, width = 324, height = 183.6, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "cell181", title = "cell 1", detail = "store", subtitle = "local", x = 447, y = 275.4, width = 324, height = 183.6, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "cell182", title = "cell 2", detail = "store", subtitle = "local", x = 96, y = 529.2, width = 324, height = 183.6, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "cell183", title = "cell 3", detail = "store", subtitle = "local", x = 447, y = 529.2, width = 324, height = 183.6, strokeRole = "@theme.accent.secondary")
+      sdk.Card(id = "agg0", title = "aggregator 0", detail = "subtree fold", subtitle = "optional", x = 852, y = 318.6, width = 405, height = 237.6, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "agg1", title = "aggregator 1", detail = "subtree fold", subtitle = "optional", x = 852, y = 572.4, width = 405, height = 237.6, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "merge", title = "Controller merge", detail = "one report", subtitle = "authoritative", x = 1365, y = 351, width = 405, height = 243, strokeRole = "@theme.accent.tertiary")
+      sdk.Panel(id = "sink", title = "external sink", x = 1284, y = 669.6, width = 567, height = 140.4, strokeRole = "@theme.accent.primary")
+      sdk.FanIn(id = "cells-to-agg0", from = [{ nodeId: "cell180", anchor: "e" }, { nodeId: "cell181", anchor: "e" }], to = { nodeId: "agg0", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.FanIn(id = "cells-to-agg1", from = [{ nodeId: "cell182", anchor: "e" }, { nodeId: "cell183", anchor: "e" }], to = { nodeId: "agg1", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.FanIn(id = "aggs-to-merge", from = [{ nodeId: "agg0", anchor: "e" }, { nodeId: "agg1", anchor: "e" }], to = { nodeId: "merge", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.Edge(id = "merge-to-sink", mode = "route", from = { nodeId: "merge", anchor: "s" }, to = { nodeId: "sink", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal hdr18 duration 260
         after hdr18 reveal phase18 duration 260
@@ -852,15 +852,15 @@ explainer "Cellular internals" {
     caption: "all planes together · one measurement contract."
 
     render: @scene {
-      sdk.Header(id = "hdr19", title = "SCALE · FULL SYSTEM ATLAS", caption = "all planes together · one measurement contract.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "phase19", text = "FOUR PLANES · ONE CONTRACT", x = 40, y = 86, width = 280, height = 20, fontSize = 11, align = "start")
-      sdk.Panel(id = "ctrl19", title = "CONTROL — coordinate & authority", x = 30, y = 111, width = 640, height = 52, strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "data19", title = "DATA — distribute & timing", x = 30, y = 181, width = 640, height = 52, strokeRole = "@theme.accent.secondary")
-      sdk.Panel(id = "exec19", title = "EXECUTE — request / load", x = 30, y = 251, width = 640, height = 52, strokeRole = "@theme.accent.tertiary")
-      sdk.Panel(id = "res19", title = "RESULTS — reduce & publish", x = 30, y = 321, width = 640, height = 52, strokeRole = "@theme.accent.primary")
-      sdk.Edge(id = "a19a", mode = "path", from = { nodeId: "ctrl19", anchor: "s" }, to = { nodeId: "data19", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a19b", mode = "path", from = { nodeId: "data19", anchor: "s" }, to = { nodeId: "exec19", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "a19c", mode = "path", from = { nodeId: "exec19", anchor: "s" }, to = { nodeId: "res19", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Header(id = "hdr19", title = "SCALE · FULL SYSTEM ATLAS", caption = "all planes together · one measurement contract.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase19", text = "FOUR PLANES · ONE CONTRACT", x = 123, y = 232.2, width = 756, height = 54, fontSize = 29.7, align = "start")
+      sdk.Panel(id = "ctrl19", title = "CONTROL — coordinate & authority", x = 96, y = 299.7, width = 1728, height = 140.4, strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "data19", title = "DATA — distribute & timing", x = 96, y = 488.7, width = 1728, height = 140.4, strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "exec19", title = "EXECUTE — request / load", x = 96, y = 677.7, width = 1728, height = 140.4, strokeRole = "@theme.accent.tertiary")
+      sdk.Panel(id = "res19", title = "RESULTS — reduce & publish", x = 96, y = 866.7, width = 1728, height = 140.4, strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "a19a", mode = "path", from = { nodeId: "ctrl19", anchor: "s" }, to = { nodeId: "data19", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a19b", mode = "path", from = { nodeId: "data19", anchor: "s" }, to = { nodeId: "exec19", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "a19c", mode = "path", from = { nodeId: "exec19", anchor: "s" }, to = { nodeId: "res19", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal hdr19 duration 260
         after hdr19 reveal phase19 duration 260
@@ -876,15 +876,15 @@ explainer "Cellular internals" {
   }
 
   finalCard: @scene {
-      sdk.Header(id = "f-hdr", title = "SCALE · FULL SYSTEM ATLAS", caption = "all planes together · one measurement contract.", x = 18, y = 16, width = 664, height = 44)
-      sdk.Label(id = "f-phase", text = "FOUR PLANES · ONE CONTRACT", x = 40, y = 86, width = 280, height = 20, fontSize = 11, align = "start")
-      sdk.Panel(id = "f-ctrl", title = "CONTROL — coordinate & authority", x = 30, y = 111, width = 640, height = 52, strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "f-data", title = "DATA — distribute & timing", x = 30, y = 181, width = 640, height = 52, strokeRole = "@theme.accent.secondary")
-      sdk.Panel(id = "f-exec", title = "EXECUTE — request / load", x = 30, y = 251, width = 640, height = 52, strokeRole = "@theme.accent.tertiary")
-      sdk.Panel(id = "f-res", title = "RESULTS — reduce & publish", x = 30, y = 321, width = 640, height = 52, strokeRole = "@theme.accent.primary")
-      sdk.Edge(id = "f-a", mode = "path", from = { nodeId: "f-ctrl", anchor: "s" }, to = { nodeId: "f-data", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Edge(id = "f-b", mode = "path", from = { nodeId: "f-data", anchor: "s" }, to = { nodeId: "f-exec", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Edge(id = "f-c", mode = "path", from = { nodeId: "f-exec", anchor: "s" }, to = { nodeId: "f-res", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Header(id = "f-hdr", title = "SCALE · FULL SYSTEM ATLAS", caption = "all planes together · one measurement contract.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "f-phase", text = "FOUR PLANES · ONE CONTRACT", x = 123, y = 232.2, width = 756, height = 54, fontSize = 29.7, align = "start")
+      sdk.Panel(id = "f-ctrl", title = "CONTROL — coordinate & authority", x = 96, y = 299.7, width = 1728, height = 140.4, strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "f-data", title = "DATA — distribute & timing", x = 96, y = 488.7, width = 1728, height = 140.4, strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "f-exec", title = "EXECUTE — request / load", x = 96, y = 677.7, width = 1728, height = 140.4, strokeRole = "@theme.accent.tertiary")
+      sdk.Panel(id = "f-res", title = "RESULTS — reduce & publish", x = 96, y = 866.7, width = 1728, height = 140.4, strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "f-a", mode = "path", from = { nodeId: "f-ctrl", anchor: "s" }, to = { nodeId: "f-data", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
+      sdk.Edge(id = "f-b", mode = "path", from = { nodeId: "f-data", anchor: "s" }, to = { nodeId: "f-exec", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 5.94 })
+      sdk.Edge(id = "f-c", mode = "path", from = { nodeId: "f-exec", anchor: "s" }, to = { nodeId: "f-res", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal f-hdr duration 260
         at 170 reveal f-phase duration 260

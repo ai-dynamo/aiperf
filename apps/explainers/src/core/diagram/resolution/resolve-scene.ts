@@ -15,9 +15,11 @@ import type {
   SceneGeometryLike,
   SceneIrLike,
   SceneNodeLike,
+  SceneSdkOriginLike,
   SceneSourceRangeLike,
 } from "../scene-types.js";
 import { resolveConnectors } from "./resolve-connectors.js";
+import { resolveFans } from "./resolve-fans.js";
 import type {
   ResolvedConnector,
   ResolvedGeneratedPart,
@@ -248,6 +250,146 @@ function boundsOverlap(
   );
 }
 
+function sdkOriginOf(node: SceneNodeLike | undefined): SceneSdkOriginLike | undefined {
+  if (node === undefined) {
+    return undefined;
+  }
+  const origin = node.sdkOrigin;
+  if (
+    origin === undefined ||
+    typeof origin.componentId !== "string" ||
+    typeof origin.instanceId !== "string" ||
+    typeof origin.generatedRole !== "string"
+  ) {
+    return undefined;
+  }
+  return origin;
+}
+
+const INDICATOR_FILL_COMPONENTS = new Set([
+  "sdk.progress",
+  "sdk.meter",
+  "sdk.gauge",
+]);
+
+const PANEL_BADGE_HOST_COMPONENTS = new Set(["sdk.panel", "sdk.card"]);
+
+function isIndicatorTrackValuePair(
+  left: SceneNodeLike,
+  right: SceneNodeLike,
+): boolean {
+  const leftOrigin = sdkOriginOf(left);
+  const rightOrigin = sdkOriginOf(right);
+  if (leftOrigin === undefined || rightOrigin === undefined) {
+    return false;
+  }
+  if (
+    leftOrigin.instanceId !== rightOrigin.instanceId ||
+    leftOrigin.componentId !== rightOrigin.componentId ||
+    !INDICATOR_FILL_COMPONENTS.has(leftOrigin.componentId)
+  ) {
+    return false;
+  }
+  const roles = new Set([leftOrigin.generatedRole, rightOrigin.generatedRole]);
+  return roles.has("track") && roles.has("value");
+}
+
+function geometryArea(geometry: SceneGeometryLike): number {
+  return Math.max(geometry.width, 0) * Math.max(geometry.height, 0);
+}
+
+function isPanelBadgePair(
+  left: SceneNodeLike,
+  right: SceneNodeLike,
+  leftGeometry: SceneGeometryLike,
+  rightGeometry: SceneGeometryLike,
+): boolean {
+  const leftCapability = capabilityOf(left);
+  const rightCapability = capabilityOf(right);
+  let host = left;
+  let badge = right;
+  let hostGeometry = leftGeometry;
+  let badgeGeometry = rightGeometry;
+  if (leftCapability === "core.chip" && rightCapability !== "core.chip") {
+    badge = left;
+    host = right;
+    badgeGeometry = leftGeometry;
+    hostGeometry = rightGeometry;
+  } else if (rightCapability === "core.chip" && leftCapability !== "core.chip") {
+    badge = right;
+    host = left;
+    badgeGeometry = rightGeometry;
+    hostGeometry = leftGeometry;
+  } else {
+    return false;
+  }
+  if (capabilityOf(badge) !== "core.chip") {
+    return false;
+  }
+  const hostCapability = capabilityOf(host);
+  if (hostCapability !== "core.panel" && hostCapability !== "core.card") {
+    return false;
+  }
+  const badgeOrigin = sdkOriginOf(badge);
+  const hostOrigin = sdkOriginOf(host);
+  if (
+    badgeOrigin?.componentId !== "sdk.chip" ||
+    hostOrigin === undefined ||
+    !PANEL_BADGE_HOST_COMPONENTS.has(hostOrigin.componentId)
+  ) {
+    return false;
+  }
+  const badgeArea = geometryArea(badgeGeometry);
+  const hostArea = geometryArea(hostGeometry);
+  if (badgeArea <= 0 || hostArea <= 0 || badgeArea >= hostArea) {
+    return false;
+  }
+  // Status chips hang off a panel edge/corner. A chip fully inside a panel is a
+  // real collision, not an intentional badge.
+  const fullyContained =
+    badgeGeometry.x >= hostGeometry.x &&
+    badgeGeometry.y >= hostGeometry.y &&
+    badgeGeometry.x + badgeGeometry.width <=
+      hostGeometry.x + hostGeometry.width &&
+    badgeGeometry.y + badgeGeometry.height <=
+      hostGeometry.y + hostGeometry.height;
+  if (fullyContained) {
+    return false;
+  }
+  const badgeMargin = 24;
+  const hostFrame = {
+    x: hostGeometry.x - badgeMargin,
+    y: hostGeometry.y - badgeMargin,
+    width: hostGeometry.width + badgeMargin * 2,
+    height: hostGeometry.height + badgeMargin * 2,
+  };
+  if (!boundsOverlap(hostFrame, badgeGeometry)) {
+    return false;
+  }
+  const overlapWidth =
+    Math.min(hostGeometry.x + hostGeometry.width, badgeGeometry.x + badgeGeometry.width) -
+    Math.max(hostGeometry.x, badgeGeometry.x);
+  const overlapHeight =
+    Math.min(hostGeometry.y + hostGeometry.height, badgeGeometry.y + badgeGeometry.height) -
+    Math.max(hostGeometry.y, badgeGeometry.y);
+  if (overlapWidth <= 0 || overlapHeight <= 0) {
+    return false;
+  }
+  return (overlapWidth * overlapHeight) / badgeArea >= 0.25;
+}
+
+function shouldSuppressSiblingOverlap(
+  leftNode: SceneNodeLike,
+  rightNode: SceneNodeLike,
+  leftGeometry: SceneGeometryLike,
+  rightGeometry: SceneGeometryLike,
+): boolean {
+  return (
+    isIndicatorTrackValuePair(leftNode, rightNode) ||
+    isPanelBadgePair(leftNode, rightNode, leftGeometry, rightGeometry)
+  );
+}
+
 function boundsEscapeViewport(
   bounds: SceneGeometryLike,
   viewport: Readonly<{ width: number; height: number }>,
@@ -269,7 +411,7 @@ function appendFinalValidationDiagnostics(input: {
   connectorsById: ReadonlyMap<string, ResolvedConnector>;
   diagnostics: SceneResolutionDiagnostic[];
 }): void {
-  const viewport = input.scene.viewport ?? { width: 700, height: 400 };
+  const viewport = input.scene.viewport ?? { width: 1920, height: 1080 };
   const siblingGroups = new Map<string, string[]>();
   const escapedNodeIds = new Set<string>();
   for (const [id, node] of input.nodesById) {
@@ -327,6 +469,16 @@ function appendFinalValidationDiagnostics(input: {
         const left = input.worldGeometryById.get(leftId);
         const right = input.worldGeometryById.get(rightId);
         if (left === undefined || right === undefined || !boundsOverlap(left, right)) {
+          continue;
+        }
+        if (
+          shouldSuppressSiblingOverlap(
+            leftNode ?? { id: leftId },
+            rightNode ?? { id: rightId },
+            left,
+            right,
+          )
+        ) {
           continue;
         }
         input.diagnostics.push({
@@ -585,6 +737,7 @@ export function resolveScene(scene: SceneIrLike): ResolvedScene {
     generatedPartIds: new Set(generatedPartsById.keys()),
   });
   diagnostics.push(...connectors.diagnostics);
+  const fanGeometryById = resolveFans({ nodesById, worldGeometryById });
   appendFinalValidationDiagnostics({
     scene,
     nodesById,
@@ -609,6 +762,7 @@ export function resolveScene(scene: SceneIrLike): ResolvedScene {
     ancestorIdsById,
     generatedPartsById,
     connectorsById: connectors.connectorsById,
+    fanGeometryById,
     diagnostics: Object.freeze(diagnostics),
   });
 }

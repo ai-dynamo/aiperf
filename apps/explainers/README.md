@@ -26,6 +26,7 @@ Routes (hash router):
 - `/#/cellular-internals`
 - `/#/cellular-algorithms`
 - `/#/dynosim`
+- `/#/steppable-replay-engine`
 - `/#/tstar-warmup`
 - `/#/synthetic-dataset-generator`
 - `/#/aiperf-vs-locust`

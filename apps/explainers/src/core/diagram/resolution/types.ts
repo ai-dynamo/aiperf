@@ -66,6 +66,31 @@ export type ResolvedConnector = Readonly<{
   penetratedObstacleIds: readonly string[];
 }>;
 
+/** One resolved fan painted stroke segment (trunk, branch, or merge-trunk). */
+export type FanSegment = Readonly<{
+  id: string;
+  d: string;
+  directed: true;
+  showMarker: boolean;
+  role: "trunk" | "branch" | "merge-trunk";
+}>;
+
+/** One resolved fan complete source-to-destination trajectory. */
+export type FanTrajectory = Readonly<{
+  id: string;
+  d: string;
+  role: "trunk" | "branch" | "merge-trunk";
+}>;
+
+/** One canonical fan-out/fan-in topology resolution and its painted geometry. */
+export type ResolvedFanGeometry = Readonly<{
+  id: string;
+  capability: "core.fan-out" | "core.fan-in";
+  junction: ResolvedPoint;
+  segments: readonly FanSegment[];
+  trajectories: readonly FanTrajectory[];
+}>;
+
 /** Pure canonical scene output consumed by rendering and later verification. */
 export type ResolvedScene = Readonly<{
   scene: SceneIrLike;
@@ -74,6 +99,7 @@ export type ResolvedScene = Readonly<{
   ancestorIdsById: ReadonlyMap<string, readonly string[]>;
   generatedPartsById: ReadonlyMap<string, ResolvedGeneratedPart>;
   connectorsById: ReadonlyMap<string, ResolvedConnector>;
+  fanGeometryById: ReadonlyMap<string, ResolvedFanGeometry>;
   diagnostics: readonly SceneResolutionDiagnostic[];
 }>;
 
@@ -89,5 +115,6 @@ export type ResolvedSceneSnapshot = Readonly<{
   }>[];
   generatedParts: readonly ResolvedGeneratedPart[];
   connectors: readonly ResolvedConnector[];
+  fans: readonly ResolvedFanGeometry[];
   diagnostics: readonly SceneResolutionDiagnostic[];
 }>;

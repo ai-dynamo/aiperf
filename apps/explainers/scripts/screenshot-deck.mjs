@@ -30,7 +30,7 @@ function parseArgs(argv) {
     deck: "flow-sdk-examples",
     baseUrl: null,
     out: null,
-    viewport: { width: 1440, height: 1100 },
+    viewport: { width: 3840, height: 2160 },
     onlySlide: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -246,6 +246,23 @@ async function slideCount(page) {
 }
 
 async function currentSlideIndex(page) {
+  const currentSegment = page.locator(
+    '.ex-progress__segment[aria-current="step"]',
+  );
+  if (await currentSegment.count()) {
+    const index = await currentSegment.evaluate((element) => {
+      const segments = element.parentElement?.querySelectorAll(
+        ".ex-progress__segment",
+      );
+      if (!segments) {
+        return 0;
+      }
+      return Array.from(segments).indexOf(element) + 1;
+    });
+    if (index > 0) {
+      return index;
+    }
+  }
   const chapter = await page
     .locator(".ex-bottom-nav__chapter")
     .textContent()
@@ -276,33 +293,40 @@ async function goToSlide(page, slideIndex1Based) {
   return false;
 }
 
-async function ensureSlide(page, slideIndex1Based, totalSlides) {
-  for (let attempt = 0; attempt < 24; attempt += 1) {
+async function ensureSlide(page, slideIndex1Based) {
+  for (let attempt = 0; attempt < 32; attempt += 1) {
+    await page.locator(".ex-stage-copy").scrollIntoViewIfNeeded().catch(() => {});
     const current = await currentSlideIndex(page);
     if (current === slideIndex1Based) {
-      return true;
-    }
-    if (current !== null && current < slideIndex1Based) {
-      const moved = await goNext(page);
-      if (moved) {
-        await page.waitForTimeout(350);
-        continue;
+      const eyebrow = await page
+        .locator(".ex-stage-copy .ex-eyebrow")
+        .first()
+        .textContent()
+        .catch(() => null);
+      const eyebrowMatch = eyebrow?.match(/^(\d+)\s*\//);
+      if (eyebrowMatch && Number(eyebrowMatch[1]) === slideIndex1Based) {
+        return true;
       }
     }
-    const jumped = await goToSlide(page, slideIndex1Based);
-    if (jumped) {
-      await page.waitForTimeout(350);
-      continue;
+    const labeled = page.getByRole("button", {
+      name: new RegExp(`^Go to slide ${slideIndex1Based}:`, "i"),
+    });
+    if (await labeled.count()) {
+      await labeled.first().click({ force: true });
+    } else if (current !== null && current < slideIndex1Based) {
+      if (!(await goNext(page))) {
+        return false;
+      }
+    } else {
+      const segment = page.locator(".ex-progress__segment").nth(slideIndex1Based - 1);
+      if (!(await segment.count())) {
+        return false;
+      }
+      await segment.click({ force: true });
     }
-    const segment = page.locator(".ex-progress__segment").nth(slideIndex1Based - 1);
-    if (await segment.count()) {
-      await segment.click({ force: true }).catch(() => {});
-      await page.waitForTimeout(350);
-      continue;
-    }
-    break;
+    await page.waitForTimeout(450);
   }
-  return (await currentSlideIndex(page)) === slideIndex1Based;
+  return false;
 }
 
 async function goNext(page) {
@@ -387,7 +411,7 @@ async function main() {
     for (let i = startIndex; i < endIndex; i += 1) {
       await dismissStartGate(page);
       await pausePlayback(page);
-      const reached = await ensureSlide(page, i + 1, total);
+      const reached = await ensureSlide(page, i + 1);
       if (!reached) {
         console.error(
           `  stopped: could not reach slide ${i + 1}/${total} (current ${await currentSlideIndex(page)})`,
@@ -396,9 +420,20 @@ async function main() {
       }
       await pausePlayback(page);
       await waitForSceneSettle(page, 1800);
+      await page
+        .locator("svg.scene-renderer")
+        .first()
+        .scrollIntoViewIfNeeded()
+        .catch(() => {});
+      await page.waitForTimeout(200);
       const name = `slide-${String(i + 1).padStart(2, "0")}.png`;
       const path = join(outDir, name);
-      await page.screenshot({ path, fullPage: false });
+      const stage = page.locator(".ex-content-card").first();
+      if (await stage.count()) {
+        await stage.screenshot({ path });
+      } else {
+        await page.screenshot({ path, fullPage: false });
+      }
       paths.push(path);
       console.error(`  wrote ${name}`);
 

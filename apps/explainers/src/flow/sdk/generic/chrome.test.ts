@@ -136,12 +136,12 @@ describe("sdk chrome factory default geometry floors", () => {
   const registry = createSdkRegistry();
 
   it.each([
-    ["sdk.header", { id: "hdr", title: "Title" }, { height: 66 }],
-    ["sdk.panel", { id: "pnl", title: "Title", detail: "Detail" }, { height: 70 }],
-    ["sdk.card", { id: "crd", title: "Title", detail: "Detail", subtitle: "Sub" }, { height: 88 }],
-    ["sdk.note", { id: "nt", text: "Note" }, { height: 48 }],
-    ["sdk.label", { id: "lbl", text: "Label" }, { height: 22 }],
-    ["sdk.callout", { id: "co", text: "Callout" }, { height: 48 }],
+    ["sdk.header", { id: "hdr", title: "Title" }, { height: 178.2 }],
+    ["sdk.panel", { id: "pnl", title: "Title", detail: "Detail" }, { height: 189 }],
+    ["sdk.card", { id: "crd", title: "Title", detail: "Detail", subtitle: "Sub" }, { height: 237.6 }],
+    ["sdk.note", { id: "nt", text: "Note" }, { height: 129.6 }],
+    ["sdk.label", { id: "lbl", text: "Label" }, { height: 59.4 }],
+    ["sdk.callout", { id: "co", text: "Callout" }, { height: 129.6 }],
   ] as const)(
     "%s uses raised default geometry when height is omitted",
     (componentId, props, expected) => {
@@ -155,10 +155,10 @@ describe("sdk chrome factory default geometry floors", () => {
   );
 
   it.each([
-    ["compact", 88],
-    ["standard", 88],
-    ["wide", 88],
-  ] as const)("sdk.card size preset %s defaults to height %i", (size, height) => {
+    ["compact", 237.6],
+    ["standard", 237.6],
+    ["wide", 237.6],
+  ] as const)("sdk.card size preset %s defaults to height %d", (size, height) => {
     const result = registry.lookup("sdk.card")!.factory(
       { id: "card", title: "Title", detail: "Detail", subtitle: "Sub", size },
       {},
