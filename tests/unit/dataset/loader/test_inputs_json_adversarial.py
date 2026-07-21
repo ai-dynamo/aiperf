@@ -3,9 +3,9 @@
 """Adversarial coverage for InputsJsonPayloadLoader.
 
 Pins current behavior for edge cases in `can_load` and `load_dataset`,
-and marks two xfail-strict tests that will flip to pass when the known
-bugs (duplicate session_id overwrite, bare KeyError on missing keys) are
-fixed in Wave 2.
+and directly asserts the Wave 2 fixes (duplicate session_id rejection,
+ValueError on missing keys, non-object entry rejection) via
+`pytest.raises`.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 import orjson
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.dataset.loader.inputs_json import InputsJsonPayloadLoader
 from aiperf.dataset.loader.models import InputsJsonSession
@@ -29,7 +30,10 @@ def _make_loader(filename):
 
 
 class TestCanLoadAdversarial:
-    @pytest.mark.parametrize("bad_data", [[], "s", 123])
+    @pytest.mark.parametrize(
+        "bad_data",
+        [param([]), param("s"), param(123)],
+    )  # fmt: skip
     def test_can_load_non_dict_data_returns_false(self, bad_data):
         """`can_load` with non-dict `data` must return False, not raise."""
         assert InputsJsonPayloadLoader.can_load(data=bad_data) is False
@@ -133,6 +137,24 @@ class TestWave2FixForwardCompatibility:
         path.write_bytes(orjson.dumps({"data": [{"payloads": [{"x": 1}]}]}))
         loader = _make_loader(path)
         with pytest.raises(ValueError, match="session_id"):
+            loader.load_dataset()
+
+    @pytest.mark.parametrize(
+        "bad_entry",
+        [
+            param(None, id="null"),
+            param(42, id="number"),
+            param([{"session_id": "s"}], id="list"),
+            param("session", id="string"),
+        ],
+    )  # fmt: skip
+    def test_load_dataset_non_object_entry_raises_value_error(
+        self, tmp_path, bad_entry
+    ):
+        path = tmp_path / "inputs.json"
+        path.write_bytes(orjson.dumps({"data": [bad_entry]}))
+        loader = _make_loader(path)
+        with pytest.raises(ValueError, match="must be an object"):
             loader.load_dataset()
 
 

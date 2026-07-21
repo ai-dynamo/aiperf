@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.dataset.loader.raw_payload import RawPayloadDatasetLoader
 
@@ -28,7 +29,10 @@ def _make_loader(filename):
 
 
 class TestCanLoadDataShape:
-    @pytest.mark.parametrize("bad_data", [[], "string", 123])
+    @pytest.mark.parametrize(
+        "bad_data",
+        [param([]), param("string"), param(123)],
+    )  # fmt: skip
     def test_can_load_non_dict_data_returns_false(self, bad_data):
         """can_load guards against non-dict inputs and returns False cleanly.
         Auto-detection plugins feed arbitrary first-record shapes here; prior
