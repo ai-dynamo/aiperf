@@ -20,6 +20,9 @@ describe("ChipNode", () => {
         positionAbsoluteX={0}
         positionAbsoluteY={0}
         dragging={false}
+        draggable={false}
+        selectable={false}
+        deletable={false}
       />,
     );
     expect(screen.getByText("one identity")).toBeInTheDocument();
@@ -37,6 +40,9 @@ describe("ChipNode", () => {
         positionAbsoluteX={0}
         positionAbsoluteY={0}
         dragging={false}
+        draggable={false}
+        selectable={false}
+        deletable={false}
       />,
     );
     const root = container.firstElementChild as HTMLElement;

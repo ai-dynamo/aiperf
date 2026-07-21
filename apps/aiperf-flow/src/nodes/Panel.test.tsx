@@ -22,6 +22,9 @@ describe("PanelNode", () => {
           positionAbsoluteX={0}
           positionAbsoluteY={0}
           dragging={false}
+          draggable={false}
+          selectable={false}
+          deletable={false}
         />
       </ReactFlowProvider>,
     );
@@ -42,6 +45,9 @@ describe("PanelNode", () => {
           positionAbsoluteX={0}
           positionAbsoluteY={0}
           dragging={false}
+          draggable={false}
+          selectable={false}
+          deletable={false}
         />
       </ReactFlowProvider>,
     );
@@ -61,6 +67,9 @@ describe("PanelNode", () => {
           positionAbsoluteX={0}
           positionAbsoluteY={0}
           dragging={false}
+          draggable={false}
+          selectable={false}
+          deletable={false}
         />
       </ReactFlowProvider>,
     );
