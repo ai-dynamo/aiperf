@@ -13,6 +13,7 @@ from aiperf.post_processors.raw_record_writer_processor import (
     RawRecordAggregator,
     RawRecordWriterProcessor,
 )
+from aiperf.post_processors.record_observer_context import RecordObserverContext
 from tests.unit.post_processors.conftest import (
     create_exporter_config,
     create_metric_metadata,
@@ -96,7 +97,11 @@ class TestRawRecordWriterProcessorProcessRecord:
                 x_correlation_id="corr-123",
             )
 
-            await processor.process_record(sample_parsed_record, metadata)
+            await processor.observe(
+                RecordObserverContext(
+                    record=sample_parsed_record, metadata=metadata, produced={}
+                )
+            )
 
         assert processor.output_file.exists()
         lines = processor.output_file.read_text().splitlines()
@@ -128,7 +133,11 @@ class TestRawRecordWriterProcessorProcessRecord:
                 conversation_id="conv-error",
             )
 
-            await processor.process_record(error_parsed_record, metadata)
+            await processor.observe(
+                RecordObserverContext(
+                    record=error_parsed_record, metadata=metadata, produced={}
+                )
+            )
 
         record_dict = orjson.loads(processor.output_file.read_text().splitlines()[0])
 
@@ -155,7 +164,11 @@ class TestRawRecordWriterProcessorProcessRecord:
                     conversation_id=f"conv-{i}",
                     x_request_id=f"req-{i}",
                 )
-                await processor.process_record(sample_parsed_record, metadata)
+                await processor.observe(
+                    RecordObserverContext(
+                        record=sample_parsed_record, metadata=metadata, produced={}
+                    )
+                )
 
         assert processor.lines_written == 5
         lines = processor.output_file.read_text().splitlines()
@@ -185,7 +198,11 @@ class TestRawRecordWriterProcessorFileFormat:
                 turn_index=2,
             )
 
-            await processor.process_record(sample_parsed_record, metadata)
+            await processor.observe(
+                RecordObserverContext(
+                    record=sample_parsed_record, metadata=metadata, produced={}
+                )
+            )
 
         lines = processor.output_file.read_text().splitlines()
 
@@ -227,7 +244,11 @@ class TestRawRecordAggregator:
                         session_num=i * 2 + j,
                         conversation_id=f"conv-{i}-{j}",
                     )
-                    await processor.process_record(sample_parsed_record, metadata)
+                    await processor.observe(
+                        RecordObserverContext(
+                            record=sample_parsed_record, metadata=metadata, produced={}
+                        )
+                    )
 
         # Run aggregator
         exporter_config = create_exporter_config(cfg_raw)
@@ -303,7 +324,11 @@ class TestRawRecordAggregator:
         # Create a processor file
         async with raw_record_processor("processor-1", run_raw) as processor:
             metadata = create_metric_metadata()
-            await processor.process_record(sample_parsed_record, metadata)
+            await processor.observe(
+                RecordObserverContext(
+                    record=sample_parsed_record, metadata=metadata, produced={}
+                )
+            )
 
         # Run aggregator
         exporter_config = create_exporter_config(cfg_raw)

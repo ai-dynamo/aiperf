@@ -6,6 +6,7 @@ import json
 import pytest
 
 from aiperf.common.models import Image, Text
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.models import MultiTurn, SingleTurn
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 from aiperf.plugin.enums import CustomDatasetType
@@ -651,3 +652,11 @@ def test_multi_turn_loader_propagates_per_inner_turn_extra(tmp_path, default_cfg
     assert turns[0].extra_body == {"vendor_a": 1}
     assert turns[1].extra_body == {"vendor_b": 2}
     assert turns[2].extra_body is None
+
+
+def test_multi_turn_loader_rejects_uuid_and_strip():
+    run = make_run_from_cli(CLIConfig(model_names=["test-model"], uuid_and_strip=True))
+    loader = MultiTurnDatasetLoader(filename="dummy.jsonl", run=run)
+
+    with pytest.raises(NotImplementedError, match="uuid-and-strip"):
+        loader.convert_to_conversations({})

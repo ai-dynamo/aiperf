@@ -37,6 +37,7 @@ from aiperf.post_processors.raw_record_writer_processor import (
     RawRecordAggregator,
     RawRecordWriterProcessor,
 )
+from aiperf.post_processors.record_observer_context import RecordObserverContext
 from tests.unit.post_processors.conftest import (
     create_exporter_config,
     create_metric_metadata,
@@ -439,19 +440,28 @@ class TestAggregatorUnlinkSemantics:
 
         # Build three processor files with one record each
         async with raw_record_processor("processor-A", run_raw) as proc_a:
-            await proc_a.process_record(
-                sample_parsed_record_with_raw_responses,
-                create_metric_metadata(conversation_id="c-a"),
+            await proc_a.observe(
+                RecordObserverContext(
+                    record=sample_parsed_record_with_raw_responses,
+                    metadata=create_metric_metadata(conversation_id="c-a"),
+                    produced={},
+                )
             )
         async with raw_record_processor("processor-B", run_raw) as proc_b:
-            await proc_b.process_record(
-                sample_parsed_record_with_raw_responses,
-                create_metric_metadata(conversation_id="c-b"),
+            await proc_b.observe(
+                RecordObserverContext(
+                    record=sample_parsed_record_with_raw_responses,
+                    metadata=create_metric_metadata(conversation_id="c-b"),
+                    produced={},
+                )
             )
         async with raw_record_processor("processor-C", run_raw) as proc_c:
-            await proc_c.process_record(
-                sample_parsed_record_with_raw_responses,
-                create_metric_metadata(conversation_id="c-c"),
+            await proc_c.observe(
+                RecordObserverContext(
+                    record=sample_parsed_record_with_raw_responses,
+                    metadata=create_metric_metadata(conversation_id="c-c"),
+                    produced={},
+                )
             )
 
         inputs_before = sorted(raw_dir.glob("raw_records_*.jsonl"))

@@ -27,6 +27,7 @@ from aiperf_mock_server.metrics_utils import (
     record_ttft,
 )
 from aiperf_mock_server.models import (
+    AnthropicMessagesRequest,
     ChatCompletionRequest,
     CohereRerankRequest,
     CompletionRequest,
@@ -456,6 +457,8 @@ def _maybe_record_request(
 def _create_request_id(request: RequestT) -> str:
     """Generate request ID based on request type."""
     match request:
+        case AnthropicMessagesRequest():
+            return f"msg_mock_{uuid.uuid4().hex}"
         case ChatCompletionRequest():
             return f"chatcmpl-{uuid.uuid4()}"
         case CompletionRequest() | TGIGenerateRequest():
@@ -626,3 +629,274 @@ async def stream_tgi_completion(
             yield _sse(chunk)
     finally:
         ctx.latency_sim.cancel()
+
+
+def _anthropic_sse(event_type: str, data: dict[str, Any]) -> bytes:
+    """Format data as Anthropic SSE event bytes with event type."""
+    return b"event: " + event_type.encode() + b"\ndata: " + orjson.dumps(data) + b"\n\n"
+
+
+# Real Anthropic stop_reason vocabulary. The mock's token generator produces
+# OpenAI-style finish reasons ("stop"/"length"); map them so the wire shape
+# matches the Messages API contract (end_turn / max_tokens / tool_use).
+_ANTHROPIC_STOP_REASON_MAP: dict[str, str] = {
+    "stop": "end_turn",
+    "length": "max_tokens",
+}
+
+
+def anthropic_stop_reason(finish_reason: str) -> str:
+    """Map an OpenAI-style finish reason to the Anthropic stop_reason value."""
+    return _ANTHROPIC_STOP_REASON_MAP.get(finish_reason, finish_reason)
+
+
+# Prompt-cache simulation state: (model, prefix_hash) entries seen so far.
+# Server-lifetime persistence, like a real prefix cache without TTL expiry.
+# Process-local: with --workers > 1 identical requests can land on different
+# processes and miss unpredictably — run cache benchmarks with --workers 1
+# (the default).
+_ANTHROPIC_PREFIX_CACHE: set[tuple[str, str]] = set()
+
+
+def reset_anthropic_prefix_cache() -> None:
+    """Clear the simulated prompt-cache (test isolation)."""
+    _ANTHROPIC_PREFIX_CACHE.clear()
+
+
+def simulate_anthropic_cache(
+    model: str,
+    system: Any,
+    messages: list[dict[str, Any]],
+    total_prompt_tokens: int,
+) -> tuple[int, int, int]:
+    """Simulate Anthropic prompt caching with DISJOINT accounting.
+
+    Returns ``(input_tokens, cache_read_input_tokens,
+    cache_creation_input_tokens)`` such that the three always sum to
+    ``total_prompt_tokens`` — mirroring the real API contract where
+    ``input_tokens`` counts only the uncached remainder.
+
+    Prefix granularity is message boundaries: the longest previously-seen
+    serialized ``system + messages[:k]`` prefix is served from cache
+    (``cache_read``), everything after it is written (``cache_creation``,
+    the request's ``cache_control`` breakpoint covers the full prompt), and
+    the uncached remainder is 0. Token attribution across boundaries is
+    char-proportional against the mock tokenizer's total, which keeps the
+    simulation deterministic without a second tokenization pass.
+    """
+    import hashlib
+
+    acc = bytearray(orjson.dumps(system) if system is not None else b"")
+    boundaries: list[tuple[str, int]] = []
+    for message in messages:
+        acc += orjson.dumps(message)
+        boundaries.append((hashlib.sha256(bytes(acc)).hexdigest(), len(acc)))
+
+    if not boundaries or total_prompt_tokens <= 0:
+        return total_prompt_tokens, 0, 0
+
+    total_chars = boundaries[-1][1]
+    read_tokens = 0
+    for digest, chars in boundaries:
+        if (model, digest) in _ANTHROPIC_PREFIX_CACHE:
+            read_tokens = max(
+                read_tokens, round(total_prompt_tokens * chars / total_chars)
+            )
+    for digest, _ in boundaries:
+        _ANTHROPIC_PREFIX_CACHE.add((model, digest))
+
+    read_tokens = min(read_tokens, total_prompt_tokens)
+    creation_tokens = total_prompt_tokens - read_tokens
+    return 0, read_tokens, creation_tokens
+
+
+def _anthropic_usage(
+    input_tokens: int, cache_read: int, cache_creation: int, output_tokens: int
+) -> dict[str, int]:
+    """Anthropic usage dict in the modern full shape (all keys present)."""
+    return {
+        "input_tokens": input_tokens,
+        "cache_creation_input_tokens": cache_creation,
+        "cache_read_input_tokens": cache_read,
+        "output_tokens": output_tokens,
+    }
+
+
+_INPUT_JSON_FRAGMENT_CHARS = 16
+"""Real servers chunk ``input_json_delta`` across many fragments; stream in
+small pieces so consumers exercise the reassembly path."""
+
+
+async def stream_anthropic_messages(
+    ctx: RequestCtx,
+    endpoint: str,
+    tool_use_block: dict[str, Any] | None = None,
+    cache_triple: tuple[int, int, int] | None = None,
+) -> AsyncGenerator[bytes, None]:
+    """Stream Anthropic Messages tokens as SSE events.
+
+    Wire shapes mirror the real API as captured from live traffic:
+
+    - ``message_start`` usage carries the full key set (input + cache
+      read/creation + ``output_tokens: 1``).
+    - ``message_delta`` usage is CUMULATIVE (all keys, final output count) by
+      default — what api.anthropic.com and Dynamo emit today. Setting
+      ``server_config.anthropic_split_usage`` reverts to the docs-canonical
+      split shape (``output_tokens`` only) so endpoint usage-merge handling
+      stays regression-tested.
+    - ``cache_triple`` is the disjoint ``(input, read, creation)`` accounting
+      from ``simulate_anthropic_cache``; defaults to no-cache identity.
+
+    When ``tool_use_block`` is supplied, append a ``tool_use`` content block
+    after the thinking/text blocks, streaming its ``input`` dict as chunked
+    ``input_json_delta`` fragments. The final ``message_delta`` then carries
+    ``stop_reason="tool_use"``.
+    """
+    has_thinking = bool(ctx.reasoning_content_tokens)
+    total_prompt = ctx.usage["prompt_tokens"]
+    input_tokens, cache_read, cache_creation = cache_triple or (total_prompt, 0, 0)
+
+    yield _anthropic_sse(
+        "message_start",
+        {
+            "type": "message_start",
+            "message": {
+                "id": ctx.request_id,
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": ctx.model,
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": _anthropic_usage(input_tokens, cache_read, cache_creation, 1),
+            },
+        },
+    )
+
+    yield _anthropic_sse("ping", {"type": "ping"})
+
+    block_index = 0
+
+    # Thinking blocks (if any)
+    if has_thinking:
+        yield _anthropic_sse(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": block_index,
+                "content_block": {"type": "thinking", "thinking": ""},
+            },
+        )
+
+        for token in ctx.reasoning_content_tokens:
+            await ctx.latency_sim.wait_for_next_token()
+            record_streamed_token(endpoint, ctx.model)
+            yield _anthropic_sse(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": block_index,
+                    "delta": {"type": "thinking_delta", "thinking": token},
+                },
+            )
+
+        # Signature delta
+        yield _anthropic_sse(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": block_index,
+                "delta": {"type": "signature_delta", "signature": "mock-signature"},
+            },
+        )
+
+        yield _anthropic_sse(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": block_index},
+        )
+        block_index += 1
+
+    # Text block
+    yield _anthropic_sse(
+        "content_block_start",
+        {
+            "type": "content_block_start",
+            "index": block_index,
+            "content_block": {"type": "text", "text": ""},
+        },
+    )
+
+    for token in ctx.tokens:
+        await ctx.latency_sim.wait_for_next_token()
+        record_streamed_token(endpoint, ctx.model)
+        yield _anthropic_sse(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": block_index,
+                "delta": {"type": "text_delta", "text": token},
+            },
+        )
+
+    yield _anthropic_sse(
+        "content_block_stop",
+        {"type": "content_block_stop", "index": block_index},
+    )
+
+    stop_reason = anthropic_stop_reason(ctx.finish_reason)
+
+    # Tool use block (if requested): stream the input as chunked
+    # input_json_delta fragments to mirror the real Anthropic wire shape.
+    if tool_use_block is not None:
+        block_index += 1
+        envelope: dict[str, Any] = {
+            k: v for k, v in tool_use_block.items() if k != "type"
+        }
+        # Open with empty input; deltas fill it.
+        envelope_with_empty_input = {**envelope, "input": {}}
+        yield _anthropic_sse(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": block_index,
+                "content_block": {"type": "tool_use", **envelope_with_empty_input},
+            },
+        )
+        partial_json = orjson.dumps(tool_use_block.get("input") or {}).decode()
+        for i in range(0, len(partial_json), _INPUT_JSON_FRAGMENT_CHARS):
+            yield _anthropic_sse(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": block_index,
+                    "delta": {
+                        "type": "input_json_delta",
+                        "partial_json": partial_json[
+                            i : i + _INPUT_JSON_FRAGMENT_CHARS
+                        ],
+                    },
+                },
+            )
+        yield _anthropic_sse(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": block_index},
+        )
+        stop_reason = "tool_use"
+
+    output_tokens = ctx.usage["completion_tokens"]
+    if server_config.anthropic_split_usage:
+        delta_usage: dict[str, int] = {"output_tokens": output_tokens}
+    else:
+        delta_usage = _anthropic_usage(
+            input_tokens, cache_read, cache_creation, output_tokens
+        )
+    yield _anthropic_sse(
+        "message_delta",
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+            "usage": delta_usage,
+        },
+    )
+
+    yield _anthropic_sse("message_stop", {"type": "message_stop"})

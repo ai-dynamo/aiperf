@@ -1,25 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the static record-type routing infrastructure.
+"""Tests for metadata-driven record routing in ``RecordsManager``.
 
-Two static lookup helpers in ``records_manager_processing`` dispatch
-records to accumulators and stream exporters:
-
-* :func:`accumulators_for_record_type` and
-  :func:`stream_exporters_for_record_type` — pure functions that read the
-  ``record_types`` metadata from ``plugins.iter_entries(...)`` and return
-  the matching accumulator/exporter instances. Called once at
-  ``RecordsManager.__init__`` time so the hot path is a list iteration,
-  not a per-record plugin scan.
-* ``_send_record_to_accumulators`` — fans a record out to the precomputed
-  ``_metric_record_accumulators`` and ``_metric_record_stream_exporters``
-  lists; per-handler exceptions are caught so one bad handler does not
-  abort the others.
+``RecordsManager`` builds a ``record_type -> handlers`` table from the
+``record_types`` metadata on accumulator and stream-exporter plugins. The hot path
+then dispatches each typed record to the handlers for its ``record_type``.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -35,16 +26,14 @@ from aiperf.common.accumulator_protocols import (
     SummaryContext,
 )
 from aiperf.common.exceptions import PluginDisabled
-from aiperf.plugin.enums import AccumulatorType, StreamExporterType
+from aiperf.plugin.enums import AccumulatorType, PluginType, StreamExporterType
 from aiperf.records.records_manager import RecordsManager
 from aiperf.records.records_manager_processing import (
-    accumulators_for_record_type,
     load_accumulators,
-    stream_exporters_for_record_type,
 )
 
 # ---------------------------------------------------------------------------
-# Fake plugin entries (k8s plugin metadata shape)
+# Fake plugin entries
 # ---------------------------------------------------------------------------
 
 
@@ -57,7 +46,7 @@ def _make_entry(name: str, record_types: list[str]) -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# Stub processors (protocol-conformant)
+# Stub handlers (protocol-conformant)
 # ---------------------------------------------------------------------------
 
 
@@ -98,238 +87,244 @@ class StubStreamExporter:
         self.get_export_info = MagicMock()
 
 
-# ---------------------------------------------------------------------------
-# Tests: accumulators_for_record_type / stream_exporters_for_record_type
-# ---------------------------------------------------------------------------
+def _set_plugin_entries(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    accumulator_entries: list[MagicMock] | None = None,
+    stream_exporter_entries: list[MagicMock] | None = None,
+) -> None:
+    accumulator_entries = accumulator_entries or []
+    stream_exporter_entries = stream_exporter_entries or []
 
+    def _iter_entries(category: PluginType):
+        if category == PluginType.ACCUMULATOR:
+            return iter(accumulator_entries)
+        if category == PluginType.STREAM_EXPORTER:
+            return iter(stream_exporter_entries)
+        return iter(())
 
-class TestAccumulatorsForRecordType:
-    """Static plugin-metadata lookup replaces the source's _routing_table."""
-
-    def test_single_accumulator_matches_record_type(self, monkeypatch) -> None:
-        acc = StubAccumulator()
-        accs = {AccumulatorType.METRIC_RESULTS: acc}
-        entries = [_make_entry("metric_results", ["metric_records"])]
-
-        monkeypatch.setattr(
-            "aiperf.records.records_manager_processing.plugins.iter_entries",
-            lambda category: iter(entries),
-        )
-
-        matched = accumulators_for_record_type(accs, "metric_records")
-        assert matched == [acc]
-
-    def test_no_match_for_unknown_record_type(self, monkeypatch) -> None:
-        acc = StubAccumulator()
-        accs = {AccumulatorType.METRIC_RESULTS: acc}
-        entries = [_make_entry("metric_results", ["metric_records"])]
-
-        monkeypatch.setattr(
-            "aiperf.records.records_manager_processing.plugins.iter_entries",
-            lambda category: iter(entries),
-        )
-
-        matched = accumulators_for_record_type(accs, "telemetry_records")
-        assert matched == []
-
-    def test_only_matching_accumulators_returned(self, monkeypatch) -> None:
-        """Different accumulators register under different record_types."""
-        acc_metric = StubAccumulator()
-        acc_telemetry = StubAccumulator()
-        accs = {
-            AccumulatorType.METRIC_RESULTS: acc_metric,
-            AccumulatorType.GPU_TELEMETRY: acc_telemetry,
-        }
-        entries = [
-            _make_entry("metric_results", ["metric_records"]),
-            _make_entry("gpu_telemetry", ["telemetry_records"]),
-        ]
-
-        monkeypatch.setattr(
-            "aiperf.records.records_manager_processing.plugins.iter_entries",
-            lambda category: iter(entries),
-        )
-
-        assert accumulators_for_record_type(accs, "metric_records") == [acc_metric]
-        assert accumulators_for_record_type(accs, "telemetry_records") == [
-            acc_telemetry
-        ]
-
-    def test_skips_entries_not_in_loaded_dict(self, monkeypatch) -> None:
-        """Entries with no instantiated accumulator (disabled) are skipped."""
-        acc = StubAccumulator()
-        accs = {AccumulatorType.METRIC_RESULTS: acc}
-        # Two entries declare "metric_records" but only one is loaded.
-        entries = [
-            _make_entry("metric_results", ["metric_records"]),
-            _make_entry("server_metrics", ["metric_records"]),
-        ]
-
-        monkeypatch.setattr(
-            "aiperf.records.records_manager_processing.plugins.iter_entries",
-            lambda category: iter(entries),
-        )
-
-        matched = accumulators_for_record_type(accs, "metric_records")
-        assert matched == [acc]
-
-    def test_empty_accumulators_dict_returns_empty(self, monkeypatch) -> None:
-        entries = [_make_entry("metric_results", ["metric_records"])]
-        monkeypatch.setattr(
-            "aiperf.records.records_manager_processing.plugins.iter_entries",
-            lambda category: iter(entries),
-        )
-        assert accumulators_for_record_type({}, "metric_records") == []
-
-
-class TestStreamExportersForRecordType:
-    def test_single_stream_exporter_matches(self, monkeypatch) -> None:
-        exp = StubStreamExporter()
-        exporters = {StreamExporterType.RECORD_EXPORT: exp}
-        entries = [_make_entry("record_export", ["metric_records"])]
-
-        monkeypatch.setattr(
-            "aiperf.records.records_manager_processing.plugins.iter_entries",
-            lambda category: iter(entries),
-        )
-
-        matched = stream_exporters_for_record_type(exporters, "metric_records")
-        assert matched == [exp]
-
-    def test_only_matching_exporters_returned(self, monkeypatch) -> None:
-        exp_record = StubStreamExporter()
-        exp_telemetry = StubStreamExporter()
-        exporters = {
-            StreamExporterType.RECORD_EXPORT: exp_record,
-            StreamExporterType.GPU_TELEMETRY_JSONL_WRITER: exp_telemetry,
-        }
-        entries = [
-            _make_entry("record_export", ["metric_records"]),
-            _make_entry("gpu_telemetry_jsonl_writer", ["telemetry_records"]),
-        ]
-
-        monkeypatch.setattr(
-            "aiperf.records.records_manager_processing.plugins.iter_entries",
-            lambda category: iter(entries),
-        )
-
-        assert stream_exporters_for_record_type(exporters, "metric_records") == [
-            exp_record
-        ]
-
-
-# ---------------------------------------------------------------------------
-# Tests: _send_record_to_accumulators (per-record dispatch hot path)
-# ---------------------------------------------------------------------------
-
-
-def _make_dispatch_manager_mock(
-    accumulators_list: list[Any],
-    exporters_list: list[Any],
-) -> MagicMock:
-    """Mock RecordsManager with the precomputed dispatch lists pre-populated.
-
-    Mirrors the source-branch ``_make_manager_mock`` helper but adapts to
-    K8s's static lookup: ``_metric_record_accumulators`` and
-    ``_metric_record_stream_exporters`` are computed in ``__init__`` from
-    ``accumulators_for_record_type`` / ``stream_exporters_for_record_type``,
-    so we set them directly.
-    """
-    mgr = MagicMock()
-    mgr._metric_record_accumulators = accumulators_list
-    mgr._metric_record_stream_exporters = exporters_list
-    mgr.error = MagicMock()
-    mgr.warning = MagicMock()
-    mgr.debug = MagicMock()
-    mgr._send_record_to_accumulators = (
-        RecordsManager._send_record_to_accumulators.__get__(mgr)
+    monkeypatch.setattr(
+        "aiperf.records.records_manager.plugins.iter_entries",
+        _iter_entries,
     )
-    return mgr
 
 
-class TestSendRecordToAccumulators:
-    """Test K8s's per-record fan-out (replaces source's _dispatch_record)."""
+# ---------------------------------------------------------------------------
+# Tests: _build_routing_table
+# ---------------------------------------------------------------------------
+
+
+class TestBuildRoutingTable:
+    """Plugin metadata controls which handlers receive each record type."""
+
+    def test_single_accumulator_matches_record_type(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        acc = StubAccumulator()
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._accumulators = {AccumulatorType.METRIC_RESULTS: acc}
+        manager._stream_exporters = {}
+        _set_plugin_entries(
+            monkeypatch,
+            accumulator_entries=[_make_entry("metric_results", ["metric_records"])],
+        )
+
+        table = manager._build_routing_table()
+
+        assert table == {"metric_records": [acc]}
+
+    def test_only_matching_handlers_are_routed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        metric_acc = StubAccumulator()
+        telemetry_acc = StubAccumulator()
+        exporter = StubStreamExporter()
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._accumulators = {
+            AccumulatorType.METRIC_RESULTS: metric_acc,
+            AccumulatorType.GPU_TELEMETRY: telemetry_acc,
+        }
+        manager._stream_exporters = {
+            StreamExporterType.RECORD_EXPORT: exporter,
+        }
+        _set_plugin_entries(
+            monkeypatch,
+            accumulator_entries=[
+                _make_entry("metric_results", ["metric_records"]),
+                _make_entry("gpu_telemetry", ["gpu_telemetry"]),
+            ],
+            stream_exporter_entries=[
+                _make_entry("record_export", ["metric_records"]),
+            ],
+        )
+
+        table = manager._build_routing_table()
+
+        assert table["metric_records"] == [metric_acc, exporter]
+        assert table["gpu_telemetry"] == [telemetry_acc]
+
+    def test_skips_entries_not_loaded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        acc = StubAccumulator()
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._accumulators = {AccumulatorType.METRIC_RESULTS: acc}
+        manager._stream_exporters = {}
+        _set_plugin_entries(
+            monkeypatch,
+            accumulator_entries=[
+                _make_entry("metric_results", ["metric_records"]),
+                _make_entry("server_metrics", ["metric_records"]),
+            ],
+        )
+
+        table = manager._build_routing_table()
+
+        assert table["metric_records"] == [acc]
+
+    def test_empty_loaded_handlers_returns_empty_table(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._accumulators = {}
+        manager._stream_exporters = {}
+        _set_plugin_entries(
+            monkeypatch,
+            accumulator_entries=[_make_entry("metric_results", ["metric_records"])],
+        )
+
+        assert manager._build_routing_table() == {}
+
+
+# ---------------------------------------------------------------------------
+# Tests: _dispatch_record
+# ---------------------------------------------------------------------------
+
+
+class TestDispatchRecord:
+    """Per-record fan-out uses the metadata-derived routing table."""
+
+    def _manager(self, routing_table: dict[str, list[Any]]) -> RecordsManager:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._routing_table = routing_table
+        manager._warned_unrouted_record_types = set()
+        manager.error = MagicMock()
+        manager.debug = MagicMock()
+        manager.warning = MagicMock()
+        return manager
 
     @pytest.mark.asyncio
     async def test_dispatch_calls_all_handlers(self) -> None:
         acc = StubAccumulator()
         exp = StubStreamExporter()
-        mgr = _make_dispatch_manager_mock([acc], [exp])
+        manager = self._manager({"metric_records": [acc, exp]})
+        record = MagicMock(record_type="metric_records")
 
-        record = MagicMock()
-        await mgr._send_record_to_accumulators(record)
+        errors = await manager._dispatch_record(record)
 
-        acc.process_record.assert_called_once_with(record)
-        exp.process_record.assert_called_once_with(record)
-
-    @pytest.mark.asyncio
-    async def test_dispatch_with_no_handlers_is_noop(self) -> None:
-        """Empty dispatch lists short-circuit — no error, no crash."""
-        mgr = _make_dispatch_manager_mock([], [])
-
-        await mgr._send_record_to_accumulators(MagicMock())
-
-        # No errors reported
-        mgr.error.assert_not_called()
+        assert errors == []
+        acc.process_record.assert_awaited_once_with(record)
+        exp.process_record.assert_awaited_once_with(record)
 
     @pytest.mark.asyncio
-    async def test_dispatch_handler_exception_logged(self) -> None:
-        """One handler raising does not prevent other handlers from running."""
+    async def test_dispatch_with_no_handlers_warns_once(self) -> None:
+        manager = self._manager({})
+        record = MagicMock(record_type="metric_records")
+
+        errors = await manager._dispatch_record(record)
+        # A second unrouted record of the same type must not re-warn.
+        errors += await manager._dispatch_record(record)
+
+        assert errors == []
+        manager.warning.assert_called_once()
+        manager.error.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_unrouted_control_plane_does_not_warn(self) -> None:
+        # Control-plane records (e.g. credit_phase_stats) are consumed elsewhere
+        # and only OPTIONALLY streamed, so an absent handler is expected -- passing
+        # warn_if_unrouted=False must suppress the misleading "records dropped" warning.
+        manager = self._manager({})
+        record = MagicMock(record_type="credit_phase_stats")
+
+        errors = await manager._dispatch_record(record, warn_if_unrouted=False)
+
+        assert errors == []
+        manager.warning.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_missing_record_type_returns_error(self) -> None:
+        manager = self._manager({})
+        record = object()
+
+        errors = await manager._dispatch_record(record)
+
+        assert len(errors) == 1
+        assert isinstance(errors[0], TypeError)
+        manager.error.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_handler_exception_logged_and_returned(self) -> None:
         acc = StubAccumulator()
         acc.process_record.side_effect = RuntimeError("boom")
         exp = StubStreamExporter()
-        mgr = _make_dispatch_manager_mock([acc], [exp])
+        manager = self._manager({"metric_records": [acc, exp]})
+        record = MagicMock(record_type="metric_records")
 
-        record = MagicMock()
-        await mgr._send_record_to_accumulators(record)
+        errors = await manager._dispatch_record(record)
 
-        # Exporter should still be called despite accumulator failure
-        exp.process_record.assert_called_once_with(record)
-        # Error should be logged
-        mgr.error.assert_called_once()
-        assert "boom" in mgr.error.call_args[0][0]
+        exp.process_record.assert_awaited_once_with(record)
+        assert len(errors) == 1
+        assert isinstance(errors[0], RuntimeError)
+        manager.error.assert_called_once()
+        assert "boom" in manager.error.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_dispatch_best_effort_handler_exception_not_counted(self) -> None:
+        # A best-effort handler (streaming telemetry like OTel/MLflow) that raises
+        # must be logged but NOT counted -- a downed collector is not an inference
+        # failure and must not pollute the benchmark's phase error summary.
+        best_effort = StubStreamExporter()
+        best_effort.is_best_effort = True
+        best_effort.process_record.side_effect = RuntimeError("collector down")
+        strict = StubStreamExporter()
+        strict.process_record.side_effect = ValueError("real failure")
+        manager = self._manager({"metric_records": [best_effort, strict]})
+
+        errors = await manager._dispatch_record(MagicMock(record_type="metric_records"))
+
+        # Only the strict handler's failure is returned; both are logged.
+        assert len(errors) == 1
+        assert isinstance(errors[0], ValueError)
+        assert manager.error.call_count == 2
 
     @pytest.mark.asyncio
     async def test_dispatch_multiple_handler_exceptions(self) -> None:
-        """Multiple handler failures are each logged independently."""
         acc = StubAccumulator()
         acc.process_record.side_effect = RuntimeError("acc error")
         exp = StubStreamExporter()
         exp.process_record.side_effect = ValueError("exp error")
-        mgr = _make_dispatch_manager_mock([acc], [exp])
+        manager = self._manager({"metric_records": [acc, exp]})
 
-        await mgr._send_record_to_accumulators(MagicMock())
+        errors = await manager._dispatch_record(MagicMock(record_type="metric_records"))
 
-        assert mgr.error.call_count == 2
+        assert len(errors) == 2
+        assert manager.error.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_handler_order_accumulators_before_exporters(self) -> None:
-        """Accumulators run before stream exporters in the gather targets."""
-        call_order: list[str] = []
-
+    async def test_handler_cancelled_error_is_counted_not_reraised(self) -> None:
+        # A handler-level CancelledError (captured by gather's return_exceptions)
+        # means one handler's coroutine was cancelled, not this task. It must be
+        # returned as an error -- not re-raised -- so the caller still advances the
+        # tracker update and the (timeout-less) completion barrier. Genuine task
+        # cancellation makes the gather itself raise and never reaches this code.
         acc = StubAccumulator()
+        acc.process_record.side_effect = asyncio.CancelledError
+        manager = self._manager({"metric_records": [acc]})
 
-        async def acc_record(_record: Any) -> None:
-            call_order.append("acc")
+        errors = await manager._dispatch_record(MagicMock(record_type="metric_records"))
 
-        acc.process_record.side_effect = acc_record
-
-        exp = StubStreamExporter()
-
-        async def exp_record(_record: Any) -> None:
-            call_order.append("exp")
-
-        exp.process_record.side_effect = exp_record
-
-        mgr = _make_dispatch_manager_mock([acc], [exp])
-
-        await mgr._send_record_to_accumulators(MagicMock())
-
-        # Targets list is [*accumulators, *exporters] — gather may interleave
-        # but the *targets* list ordering is observable via zip in the error
-        # path. Both must have run.
-        assert "acc" in call_order
-        assert "exp" in call_order
+        assert len(errors) == 1
+        assert isinstance(errors[0], asyncio.CancelledError)
+        manager.error.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -388,7 +383,6 @@ class TestFinalizeStreamExporters:
     async def test_finalize_empty_exporters_noop(self) -> None:
         mgr = _make_finalize_manager_mock({})
         await mgr._finalize_stream_exporters()
-        # No error, no crash
         mgr.error.assert_not_called()
 
     @pytest.mark.asyncio
@@ -406,10 +400,8 @@ class TestFinalizeStreamExporters:
 
         await mgr._finalize_stream_exporters()
 
-        # Both should be called (gather runs all concurrently)
         exp1.finalize.assert_called_once()
         exp2.finalize.assert_called_once()
-        # Error logged for the failing one
         mgr.error.assert_called_once()
         assert "flush failed" in mgr.error.call_args[0][0]
 
@@ -429,32 +421,6 @@ class TestFinalizeStreamExporters:
         await mgr._finalize_stream_exporters()
 
         assert mgr.error.call_count == 2
-
-
-# ---------------------------------------------------------------------------
-# Source-branch _dispatch_record / _routing_table — intentionally absent
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skip(
-    reason="k8s uses static accumulators_for_record_type, not _dispatch_record"
-)
-def test_dispatch_record_method_exists() -> None:
-    """Source branch had RecordsManager._dispatch_record. K8s replaced it
-    with _send_record_to_accumulators driven by precomputed lists set in
-    __init__ via accumulators_for_record_type / stream_exporters_for_record_type.
-    See TestSendRecordToAccumulators above for the ported behavior."""
-
-
-@pytest.mark.skip(
-    reason="k8s uses static accumulators_for_record_type, not _routing_table"
-)
-def test_routing_table_attribute_exists() -> None:
-    """Source branch built RecordsManager._routing_table at init time as
-    dict[str, list[handler]] keyed by record_type. K8s replaces it with two
-    precomputed flat lists per record type (just metric_records today). See
-    TestAccumulatorsForRecordType / TestStreamExportersForRecordType above
-    for the ported behavior."""
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +461,7 @@ class TestLoadAccumulatorsConstructionFailure:
     a silent skip."""
 
     def test_load_accumulators_metric_results_construction_failure_reraises(
-        self, monkeypatch
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         entries = [_make_entry("metric_results", ["metric_records"])]
         monkeypatch.setattr(
@@ -512,9 +478,9 @@ class TestLoadAccumulatorsConstructionFailure:
             load_accumulators(host)
 
     def test_load_accumulators_optional_accumulator_failure_swallowed(
-        self, monkeypatch
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        entries = [_make_entry("gpu_telemetry", ["telemetry_records"])]
+        entries = [_make_entry("gpu_telemetry", ["gpu_telemetry"])]
         monkeypatch.setattr(
             "aiperf.records.records_manager_processing.plugins.iter_entries",
             lambda _plugin_type: entries,
@@ -531,7 +497,7 @@ class TestLoadAccumulatorsConstructionFailure:
         host.error.assert_called_once()
 
     def test_load_accumulators_metric_results_disabled_is_silent_skip(
-        self, monkeypatch
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         entries = [_make_entry("metric_results", ["metric_records"])]
         monkeypatch.setattr(

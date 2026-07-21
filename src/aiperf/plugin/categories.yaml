@@ -146,38 +146,20 @@ transport:
 
 record_processor:
   protocol: aiperf.post_processors.protocols:RecordProcessorProtocol
+  metadata_class: aiperf.plugin.schema.schemas:RecordProducerMetadata
   enum: RecordProcessorType
   description: |
-    Record processors stream records and compute metrics in a distributed manner.
-    First stage of metrics pipeline, handling per-record computations.
-    One-to-many mapping: multiple processors can be loaded simultaneously.
+    Record PRODUCERS parse a record and emit one typed result on a declared
+    record-type channel. First stage of the metrics pipeline, handling per-record
+    computations. One-to-many mapping: multiple producers can be loaded simultaneously.
 
-results_processor:
-  protocol: aiperf.post_processors.base_metrics_processor:BaseMetricsProcessor
-  enum: ResultsProcessorType
+record_observer:
+  protocol: aiperf.post_processors.protocols:RecordObserverProtocol
+  enum: RecordObserverType
   description: |
-    Results processors aggregate results from record processors and compute derived metrics.
-    Final stage of metrics pipeline for aggregated statistics and summaries.
-    One-to-many mapping: multiple processors can be loaded simultaneously.
-
-gpu_telemetry_processor:
-  protocol: aiperf.post_processors.base_metrics_processor:BaseMetricsProcessor
-  enum: GPUTelemetryProcessorType
-  description: |
-    GPU telemetry processors aggregate and export GPU telemetry records locally
-    within GPUTelemetryManager. Side-channel pipeline that keeps telemetry
-    records in their origin process rather than routing through RecordsManager.
-    One-to-many mapping: multiple processors can be loaded simultaneously.
-
-server_metrics_processor:
-  protocol: aiperf.post_processors.base_metrics_processor:BaseMetricsProcessor
-  enum: ServerMetricsProcessorType
-  description: |
-    Server metrics processors aggregate and export Prometheus server metrics
-    records locally within ServerMetricsManager. Side-channel pipeline that
-    keeps server metrics records in their origin process rather than routing
-    through RecordsManager.
-    One-to-many mapping: multiple processors can be loaded simultaneously.
+    Record OBSERVERS view the produced results + the record and act (e.g. write
+    JSONL); they return nothing and emit no channel record. Second stage of the
+    record-processor service. One-to-many mapping: multiple observers loaded simultaneously.
 
 accumulator:
   protocol: aiperf.common.accumulator_protocols:AccumulatorProtocol
@@ -196,6 +178,17 @@ stream_exporter:
     Stream exporters write each record to an external sink (e.g. JSONL files) as it
     arrives. No summarization dependencies. Finalized after all records are processed.
     One-to-many mapping: multiple exporters loaded simultaneously.
+
+analyzer:
+  protocol: aiperf.common.accumulator_protocols:AnalyzerProtocol
+  metadata_class: aiperf.plugin.schema.schemas:AnalyzerMetadata
+  enum: AnalyzerType
+  description: |
+    Analyzers run at summarize time and join across accumulators, reading peer
+    state from the SummaryContext to compute cross-accumulator metrics (e.g.
+    energy efficiency joins GPU telemetry to inference tokens). They store no
+    records and declare the accumulators they require; skipped when any is absent.
+    One-to-many mapping: multiple analyzers loaded simultaneously.
 
 # =============================================================================
 # Accuracy Categories
