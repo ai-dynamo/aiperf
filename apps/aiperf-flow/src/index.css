@@ -4,6 +4,36 @@
 @theme {
   --font-sans: "Manrope", system-ui, sans-serif;
   --font-mono: "Roboto Mono", monospace;
+
+  --color-ink-primary: #000000;
+  --color-ink-secondary: #555555;
+  --color-ink-tertiary: #a7a7a7;
+  --color-ink-quaternary: #c4c4c4;
+  --color-ink-link: #3d6b00;
+
+  --color-surface-page: #ffffff;
+  --color-surface-chrome: #fafafa;
+  --color-surface-elevated: #ffffff;
+  --color-surface-panel: #f7f7f7;
+
+  --color-stroke-primary: #111111;
+  --color-stroke-secondary: #e4e4e4;
+  --color-stroke-tertiary: #efefef;
+
+  --color-accent-primary: #76b900;
+  --color-accent-tint: #f2f7ea;
+  --color-accent-control: #3987a6;
+
+  --color-category-green: #5e8a1f;
+  --color-category-yellow: #b08a1e;
+  --color-category-purple: #6e4fa6;
+  --color-category-blue: #2a78d6;
+  --color-category-red: #a63244;
+  --color-category-orange: #b05e2a;
+  --color-category-cyan: #3987a6;
+  --color-category-gray: #7e838e;
+
+  --radius-none: 0px;
 }
 
 body {
