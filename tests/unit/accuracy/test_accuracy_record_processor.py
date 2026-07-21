@@ -63,6 +63,20 @@ def _make_dataset_metadata(
     )
 
 
+class TestAccuracyRecordProcessorInit:
+    def test_raises_when_accuracy_not_enabled(self, monkeypatch) -> None:
+        """PostProcessorDisabled raised when accuracy mode is off."""
+        from aiperf.common.exceptions import PostProcessorDisabled
+
+        run = make_benchmark_run(
+            model_names=["m"],
+            endpoint_type=EndpointType.COMPLETIONS,
+            streaming=False,
+        )
+        with pytest.raises(PostProcessorDisabled):
+            AccuracyRecordProcessor(run=run, service_id="test")
+
+
 class TestAccuracyRecordProcessorOnDatasetConfigured:
     def test_populates_ground_truths_from_metadata(self, monkeypatch) -> None:
         processor = _make_processor(monkeypatch)
@@ -420,4 +434,43 @@ class TestExtractOutputAndThinking:
         record = self._record([CustomResponseData()])
         output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
         assert output == "correct"
+        assert thinking is None
+
+    def test_none_data_in_response_is_skipped(self) -> None:
+        """resp.data=None entries are skipped without error."""
+        from aiperf.common.models.record_models import TextResponseData
+
+        record = MagicMock(spec=ParsedResponseRecord)
+        record.content_responses = [
+            ParsedResponse(perf_ns=0, data=None),
+            ParsedResponse(perf_ns=1, data=TextResponseData(text="hello")),
+        ]
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == "hello"
+        assert thinking is None
+
+    def test_tool_call_response_includes_content_and_tool_call_text(self) -> None:
+        """ToolCallResponseData appends content then tool_call_text to model_output."""
+        from aiperf.common.models.record_models import ToolCallResponseData
+
+        record = self._record(
+            [
+                ToolCallResponseData(
+                    tool_call_text='{"name":"fn"}', content="Sure, calling:"
+                )
+            ]
+        )
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == 'Sure, calling:{"name":"fn"}'
+        assert thinking is None
+
+    def test_tool_call_response_no_content_uses_tool_call_text_only(self) -> None:
+        """ToolCallResponseData with content=None only adds tool_call_text."""
+        from aiperf.common.models.record_models import ToolCallResponseData
+
+        record = self._record(
+            [ToolCallResponseData(tool_call_text='{"name":"fn"}', content=None)]
+        )
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == '{"name":"fn"}'
         assert thinking is None
