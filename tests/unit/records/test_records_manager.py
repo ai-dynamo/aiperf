@@ -345,7 +345,9 @@ class TestRecordsManagerMetricRecordDispatchErrors:
             start_ns=7_000_000_000,
             requests_end_ns=9_000_000_000,
         )
-        manager._has_multiple_phase_instances = lambda phase: phase == CreditPhase.PROFILING
+        manager._has_multiple_phase_instances = (
+            lambda phase: phase == CreditPhase.PROFILING
+        )
         manager._records_tracker = MagicMock()
         manager._records_tracker._phase_trackers = {
             (CreditPhase.PROFILING, 0): first_tracker,
@@ -420,7 +422,9 @@ class TestRecordsManagerMetricRecordDispatchErrors:
             start_ns=7_000_000_000,
             requests_end_ns=9_000_000_000,
         )
-        manager._has_multiple_phase_instances = lambda phase: phase == CreditPhase.WARMUP
+        manager._has_multiple_phase_instances = (
+            lambda phase: phase == CreditPhase.WARMUP
+        )
         manager._records_tracker = MagicMock()
         manager._records_tracker._phase_trackers = {
             (CreditPhase.WARMUP, 0): first_tracker,
@@ -481,14 +485,16 @@ class TestRecordsManagerMetricRecordDispatchErrors:
     ) -> None:
         manager = RecordsManager.__new__(RecordsManager)
         manager._records_tracker = MagicMock()
-        manager._records_tracker.create_stats_for_phase.return_value = PhaseRecordsStats(
-            phase=CreditPhase.PROFILING,
-            phase_index=2,
-            phase_name="storm",
-            phase_kind="profiling",
-            start_ns=0,
-            records_end_ns=1_000_000_000,
-            success_records=1,
+        manager._records_tracker.create_stats_for_phase.return_value = (
+            PhaseRecordsStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=2,
+                phase_name="storm",
+                phase_kind="profiling",
+                start_ns=0,
+                records_end_ns=1_000_000_000,
+                success_records=1,
+            )
         )
         manager._metric_record_accumulators = []
         manager._prev_realtime_snapshot = (10, 5.0)
@@ -510,7 +516,9 @@ class TestRecordsManagerMetricRecordDispatchErrors:
 
         captured: dict[str, object] = {}
 
-        def fake_render(metric_results, phase_stats, prev_snapshot, server_snapshot=None):
+        def fake_render(
+            metric_results, phase_stats, prev_snapshot, server_snapshot=None
+        ):
             captured["prev_snapshot"] = prev_snapshot
             return "rendered"
 
@@ -524,7 +532,9 @@ class TestRecordsManagerMetricRecordDispatchErrors:
             "filter_display_metrics",
             lambda metrics: metrics,
         )
-        monkeypatch.setattr(records_manager_module, "_render_realtime_block", fake_render)
+        monkeypatch.setattr(
+            records_manager_module, "_render_realtime_block", fake_render
+        )
 
         await manager._report_realtime_metrics(emit_log_block=False)
 
