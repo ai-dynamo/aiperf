@@ -7,13 +7,12 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { getDeck } from "./registry.js";
 import { Slide } from "./Slide.js";
+import { PresentationShell } from "../shell/PresentationShell.js";
 
 export function DeckRoute(): React.JSX.Element {
   const { deckId } = useParams<{ deckId: string }>();
   const deck = deckId !== undefined ? getDeck(deckId) : undefined;
-  // Intentionally not yet wired to navigation; multi-slide navigation lands
-  // in a subsequent task.
-  const [slideIndex] = useState(0);
+  const [slideIndex, setSlideIndex] = useState(0);
 
   if (deck === undefined) {
     return <div className="p-6">No deck registered for id "{deckId}".</div>;
@@ -24,5 +23,9 @@ export function DeckRoute(): React.JSX.Element {
     return <div className="p-6">Deck "{deck.id}" has no slides.</div>;
   }
 
-  return <Slide slide={slide} />;
+  return (
+    <PresentationShell slides={deck.slides} slideIndex={slideIndex} onSlideIndexChange={setSlideIndex}>
+      <Slide slide={slide} />
+    </PresentationShell>
+  );
 }
