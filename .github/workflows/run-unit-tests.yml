@@ -11,7 +11,8 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    # Windows x64 runners can finish the component tier just past 30 minutes.
+    timeout-minutes: 45
     # Force CPython UTF-8 mode so file reads default to UTF-8 instead of the
     # Windows cp1252 code page (no-op on POSIX). Without it, reading a UTF-8
     # file on Windows raises UnicodeDecodeError on bytes like 0x8f.

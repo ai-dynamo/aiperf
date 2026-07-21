@@ -74,9 +74,18 @@ class MediaConversionMixin:
         if values is None or not isinstance(values, Iterable):
             return []
 
-        # If already correct media objects, return as is
+        # If already correct media objects, return as is. Per-Image `uuids`
+        # (when supplied via the embedded-object form) ride along on the model.
         if all(isinstance(v, media_class) for v in values):
             return values
+
+        image_uuids = getattr(data, "image_uuids", None)
+        if field == MediaType.IMAGE and image_uuids:
+            contents = [
+                self._handle_media_content(v, media_type=MediaType.IMAGE) if v else ""
+                for v in values
+            ]
+            return [media_class(name=name, contents=contents, uuids=list(image_uuids))]
 
         # Handle media content (encode local files to base64)
         if field in [MediaType.IMAGE, MediaType.VIDEO, MediaType.AUDIO]:

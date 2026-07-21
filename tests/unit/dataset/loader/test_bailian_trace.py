@@ -479,6 +479,26 @@ class TestBailianTraceDatasetLoader:
             mean=100, stddev=0, hash_ids=[]
         )
 
+    def test_stray_request_body_key_does_not_replace_extra(
+        self, create_jsonl_file, mock_prompt_generator, default_cfg
+    ):
+        """extra="allow" lets a stray "request_body" JSONL key become a trace
+        attribute; only the documented "extra" dict may reach Turn.extra_body."""
+        content = [
+            '{"chat_id": 1, "timestamp": 1.0, "input_length": 10, "output_length": 5,'
+            ' "extra": {"nvext": {"priority": 1}}, "request_body": {"rogue": true}}',
+        ]
+        filename = create_jsonl_file(content)
+
+        loader = BailianTraceDatasetLoader(
+            filename=filename,
+            run=make_run_from_cli(default_cfg),
+            prompt_generator=mock_prompt_generator,
+        )
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+
+        assert conversations[0].turns[0].extra_body == {"nvext": {"priority": 1}}
+
     @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     def test_parallel_decode_length_mismatch_raises(
         self, mock_parallel_decode, mock_prompt_generator, default_cfg

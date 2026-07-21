@@ -6,7 +6,7 @@ from typing import ClassVar, Generic, TypeVar, get_args, get_origin
 from aiperf.common.enums import MetricFlags, MetricValueTypeVarT
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
-from aiperf.metrics.metric_dicts import MetricAggregator, MetricResultsDict
+from aiperf.metrics.metric_dicts import MetricResultsDict
 
 RecordMetricT = TypeVar("RecordMetricT", bound=BaseRecordMetric)
 
@@ -56,12 +56,7 @@ class DerivedSumMetric(
         value = metric_results.get(cls.record_metric_type.tag)
         if value is None:
             raise ValueError(f"{cls.record_metric_type.tag} is missing in the metrics.")
-        # Two engines feed this: the MetricsAccumulator pipeline already stores
-        # the running-sum scalar in ``scalar_dict[tag]`` (see
-        # ``MetricsAccumulator._collect_scalars_and_arrays``), so the value
-        # already IS the sum. The legacy ``MetricResultsProcessor`` (kept alive
-        # for the otel / timeslice side-channel) instead stores a
-        # ``MetricAggregator`` (e.g. ``MetricArray``) whose ``.sum`` must be read.
-        if isinstance(value, MetricAggregator):
-            return value.sum
+        # MetricsAccumulator stores the running-sum scalar in ``scalar_dict[tag]``
+        # (see ``MetricsAccumulator._collect_scalars_and_arrays``), so the value
+        # already IS the sum.
         return value

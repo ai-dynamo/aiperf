@@ -5,10 +5,14 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.enums import CommAddress, CommandType
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    make_result_producer_capability,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_init, on_stop
 from aiperf.common.messages import (
@@ -55,6 +59,10 @@ class GPUTelemetryManager(BaseComponentService):
         run: BenchmarkRun carrying the BenchmarkConfig + per-run state.
         service_id: Optional unique identifier for this service instance
     """
+
+    extra_capabilities: ClassVar[tuple[str, ...]] = (
+        make_result_producer_capability("telemetry"),
+    )
 
     def __init__(
         self,

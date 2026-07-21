@@ -7,6 +7,7 @@ import time
 
 import msgspec
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.messages import (
@@ -115,25 +116,33 @@ class TestCreditReturnValidation:
     """Test CreditReturn struct, including first_token_sent for deadlock prevention."""
 
     @pytest.mark.parametrize(
-        "first_token_sent,cancelled,error",
-        [(True, False, None), (False, True, None)],  # Sample: normal and cancelled
-    )  # fmt: skip
+        "first_token_sent,cancelled,error,request_latency_ns",
+        [
+            param(True, False, None, 123_000_000, id="successful"),
+            param(False, True, None, None, id="cancelled"),
+        ],
+    )
     def test_credit_return_scenarios(
-        self, sample_credit, first_token_sent, cancelled, error
-    ):
+        self,
+        sample_credit: Credit,
+        first_token_sent: bool,
+        cancelled: bool,
+        error: None,
+        request_latency_ns: int | None,
+    ) -> None:
         """CreditReturn handles various completion scenarios."""
         credit_return = CreditReturn(
             credit=sample_credit,
             first_token_sent=first_token_sent,
             cancelled=cancelled,
             error=error,
-            request_latency_ns=123_000_000,
+            request_latency_ns=request_latency_ns,
         )
 
         assert credit_return.first_token_sent is first_token_sent
         assert credit_return.cancelled is cancelled
         assert credit_return.error == error
-        assert credit_return.request_latency_ns == 123_000_000
+        assert credit_return.request_latency_ns == request_latency_ns
 
     def test_credit_return_serialization_roundtrip(self, sample_credit: Credit) -> None:
         """CreditReturn preserves all fields through msgpack serialization."""
@@ -142,6 +151,8 @@ class TestCreditReturnValidation:
             first_token_sent=True,
             cancelled=False,
             request_latency_ns=456_000_000,
+            inter_token_latency_ns=12_000_000,
+            output_sequence_length=128,
         )
         decoded = msgspec.msgpack.decode(
             msgspec.msgpack.encode(original), type=CreditReturn
@@ -150,6 +161,8 @@ class TestCreditReturnValidation:
         assert decoded.first_token_sent == original.first_token_sent
         assert decoded.cancelled == original.cancelled
         assert decoded.request_latency_ns == original.request_latency_ns
+        assert decoded.inter_token_latency_ns == original.inter_token_latency_ns
+        assert decoded.output_sequence_length == original.output_sequence_length
 
 
 # =============================================================================
