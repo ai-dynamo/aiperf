@@ -15,14 +15,13 @@ import pytest
 from aiperf.common.enums import (
     CreditPhase,
     ExportLevel,
-    MessageType,
     MetricFlags,
     MetricValueTypeT,
     ModelSelectionStrategy,
 )
 from aiperf.common.enums.metric_enums import GenericMetricUnit
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.messages import MetricRecordsMessage
+from aiperf.common.messages import MetricRecordsData
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ErrorDetails,
@@ -52,7 +51,6 @@ from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin.enums import EndpointType
-from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from aiperf.post_processors.raw_record_writer_processor import RawRecordWriterProcessor
 from tests.unit.conftest import (
     DEFAULT_FIRST_RESPONSE_NS,
@@ -598,25 +596,6 @@ def setup_mock_registry_sequences(
     return valid_tags, error_tags
 
 
-def create_results_processor_with_metrics(
-    run, *metrics: type[BaseMetric]
-) -> MetricResultsProcessor:
-    """Create a MetricResultsProcessor with pre-configured metrics.
-
-    Args:
-        run: BenchmarkRun for the processor
-        metrics: list of metric classes
-
-    Returns:
-        Configured MetricResultsProcessor instance
-    """
-
-    processor = MetricResultsProcessor(run)
-    processor._tags_to_types = {metric.tag: metric.type for metric in metrics}
-    processor._instances_map = {metric.tag: metric() for metric in metrics}
-    return processor
-
-
 def create_accumulator_with_metrics(run, *metrics: type[BaseMetric]):
     """Construct a :class:`MetricsAccumulator` pre-configured with ``metrics``.
 
@@ -655,9 +634,7 @@ def mock_metric_registry(monkeypatch):
     monkeypatch.setattr(
         "aiperf.post_processors.base_metrics_processor.MetricRegistry", mock_registry
     )
-    monkeypatch.setattr(
-        "aiperf.post_processors.metric_results_processor.MetricRegistry", mock_registry
-    )
+    monkeypatch.setattr("aiperf.metrics.accumulator.MetricRegistry", mock_registry)
     monkeypatch.setattr("aiperf.metrics.display_units.MetricRegistry", mock_registry)
 
     return mock_registry
@@ -816,7 +793,7 @@ def create_metric_metadata(
     )
 
 
-def create_metric_records_message(
+def create_metric_records_data(
     service_id: str = "test-processor",
     results: list[dict[MetricTagT, MetricValueTypeT]] | None = None,
     error: ErrorDetails | None = None,
@@ -824,13 +801,13 @@ def create_metric_records_message(
     x_request_id: str | None = None,
     trace_data: Any | None = None,
     **metadata_kwargs,
-) -> MetricRecordsMessage:
+) -> MetricRecordsData:
     """
-    Create a MetricRecordsMessage with sensible defaults.
+    Create a finished MetricRecordsData with sensible defaults.
 
     Args:
-        service_id: Service ID
-        results: List of metric result dictionaries
+        service_id: Service ID (unused; kept for call-site compatibility)
+        results: List of metric result dictionaries, merged into the metrics dict
         error: Error details if any
         metadata: Pre-built metadata, or None to build from kwargs
         x_request_id: Record ID (set as x_request_id in metadata if provided)
@@ -838,7 +815,7 @@ def create_metric_records_message(
         **metadata_kwargs: Args passed to create_metric_metadata if metadata is None
 
     Returns:
-        MetricRecordsMessage object
+        MetricRecordsData object
     """
     if results is None:
         results = []
@@ -849,13 +826,15 @@ def create_metric_records_message(
             metadata_kwargs["x_request_id"] = x_request_id
         metadata = create_metric_metadata(**metadata_kwargs)
 
-    return MetricRecordsMessage(
-        message_type=MessageType.METRIC_RECORDS,
-        service_id=service_id,
+    metrics: dict[MetricTagT, MetricValueTypeT] = {}
+    for result in results:
+        metrics.update(result)
+
+    return MetricRecordsData(
         metadata=metadata,
-        results=results,
-        error=error,
+        metrics=metrics,
         trace_data=trace_data,
+        error=error,
     )
 
 

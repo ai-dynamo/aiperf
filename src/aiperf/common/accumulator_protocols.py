@@ -79,14 +79,28 @@ class ExportContext:
     cancelled: bool = False
     """True when the profile run was cancelled — exporters may emit partial artifacts."""
 
+    warmup_start_ns: int | None = None
+    """Inclusive start of the warmup window (ns), for accumulators that export a
+    separate warmup summary alongside the profiling one (e.g. server metrics)."""
+
+    warmup_end_ns: int | None = None
+    """Exclusive end of the warmup window (ns); see ``warmup_start_ns``."""
+
 
 @dataclass(slots=True)
 class SummaryContext:
-    """Typed cross-accumulator communication context for dependency-ordered summarization.
+    """Typed cross-accumulator communication context for summarize-time analyzers.
 
-    NOT a Pydantic model — this is never serialized over the wire. It is created
-    by RecordsManager._process_results() and passed through the topological-sort
-    pipeline so each accumulator can read outputs from its declared dependencies.
+    NOT a Pydantic model — never serialized over the wire. Created by
+    RecordsManager during summarization: accumulators run first and register
+    their instances in ``accumulators`` and their summaries in
+    ``accumulator_outputs``; then ``analyzer`` plugins read peer state via
+    ``get_accumulator()`` / ``get_output()`` to compute cross-accumulator
+    metrics (e.g. energy efficiency joins GPU telemetry to inference tokens).
+
+    Dependencies are currently one level deep (analyzers depend on accumulators,
+    not on each other), so a flat two-stage run suffices; a topological sort
+    over analyzer-to-analyzer dependencies is the extension point if that changes.
     """
 
     accumulators: dict[AccumulatorType, Any] = field(default_factory=dict)
@@ -156,6 +170,27 @@ class AccumulatorProtocol(Protocol):
         Args:
             ctx: ExportContext with profiling time window, error summary, and cancelled flag.
         """
+        ...
+
+
+@runtime_checkable
+class AnalyzerProtocol(Protocol):
+    """Protocol for summarize-time analyzers that join across accumulators.
+
+    Analyzers run once after every accumulator has summarized. Unlike an
+    accumulator, an analyzer stores no records — it reads peer accumulator state
+    from the ``SummaryContext`` (via ``get_accumulator()`` / ``get_output()``)
+    and returns derived ``MetricResult`` rows that are merged into the profiling
+    summary. The first analyzer is energy efficiency, which joins GPU-telemetry
+    energy to inference token totals.
+
+    An analyzer declares its ``required_accumulators`` in plugin metadata; the
+    RecordsManager skips it when any declared accumulator is absent (e.g. energy
+    efficiency is skipped when GPU telemetry is disabled).
+    """
+
+    async def analyze(self, ctx: SummaryContext) -> list[MetricResult]:
+        """Compute cross-accumulator metrics from ``ctx`` and return them."""
         ...
 
 
