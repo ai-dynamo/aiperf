@@ -539,6 +539,13 @@ class _HTTPSettings(BaseSettings):
         "When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, "
         "and NO_PROXY environment variables.",
     )
+    X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
+        default=False,
+        description="Also send X-Dynamo-Session-ID with the stable X-Correlation-ID value, "
+        "plus X-Dynamo-Parent-Session-ID on subagent children. Use this with a Dynamo "
+        "frontend running --router-session-affinity-ttl-secs to pin every turn of a "
+        "session to the replica holding its KV prefix.",
+    )
     VIDEO_POLL_INTERVAL: float = Field(
         ge=0.001,
         le=10.0,
