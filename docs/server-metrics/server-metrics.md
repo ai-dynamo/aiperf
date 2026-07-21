@@ -294,6 +294,9 @@ Line-delimited JSON with metrics snapshots over time:
 
 Aggregated statistics from profiling period. Metrics from all endpoints are merged, each series tagged with `endpoint_url`.
 
+> [!NOTE]
+> For named multi-phase workflows, `server_metrics_export.json` remains the backward-compatible aggregate export. Its phase ranges use the legacy semantic phase view and may span gaps between multiple phases of the same kind. For exact phase-scoped server metrics, use `phases/<phase_name>/server_metrics.json`, referenced from `phase_manifest.json`.
+
 ```json
 {
   "schema_version": "1.0",

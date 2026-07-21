@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, ClassVar
 
 from aiperf.common.base_component_service import BaseComponentService
@@ -38,6 +39,11 @@ from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+
+
+_SERVER_METRICS_SCRAPE_PHASE: ContextVar[CreditPhase | None] = ContextVar(
+    "server_metrics_scrape_phase", default=None
+)
 
 
 class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
@@ -147,6 +153,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                 error_callback=self._on_server_metrics_error,
                 collector_id=redact_url(endpoint_url),
             )
+            self._attach_phase_scoped_collection(collector)
 
             try:
                 is_reachable = await collector.is_url_reachable()
@@ -209,28 +216,19 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         """Capture a one-shot server-metrics scrape for a phase boundary."""
         if self._server_metrics_disabled or not self._collectors:
             return
-        previous_phase = self._active_phase
         boundary_phase = (
             CreditPhase.WARMUP
             if message.phase_kind == "warmup"
             else CreditPhase.PROFILING
         )
-        self._active_phase_token += 1
-        baseline_token = self._active_phase_token
-        self._active_phase = boundary_phase
         errors: list[str] = []
-        try:
-            for endpoint_url, collector in list(self._collectors.items()):
-                try:
-                    await collector.collect_and_process_metrics()
-                except Exception as exc:
-                    errors.append(f"{endpoint_url}: {type(exc).__name__}: {exc}")
-        finally:
-            if (
-                self._active_phase_token == baseline_token
-                and previous_phase is not None
-            ):
-                self._active_phase = previous_phase
+        for endpoint_url, collector in list(self._collectors.items()):
+            try:
+                await self._collect_and_process_metrics_for_phase(
+                    collector, boundary_phase
+                )
+            except Exception as exc:
+                errors.append(f"{endpoint_url}: {type(exc).__name__}: {exc}")
         if errors:
             raise RuntimeError("; ".join(errors))
 
@@ -302,43 +300,28 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         after the profiling phase completes and should still tag the final
         scrape as profiling.
         """
-        warmup_complete_token: int | None = None
         if message.stats.phase == CreditPhase.WARMUP and self._collectors:
             self.info(
                 "Server Metrics: Warmup complete, capturing final warmup metrics..."
             )
-            previous_phase = self._active_phase
-            self._active_phase_token += 1
-            warmup_complete_token = self._active_phase_token
-            self._active_phase = CreditPhase.WARMUP
-            try:
-                for endpoint_url, collector in list(self._collectors.items()):
-                    try:
-                        await collector.collect_and_process_metrics()
-                        self.debug(
-                            lambda url=endpoint_url: (
-                                f"Server Metrics: Captured warmup final state from {url}"
-                            )
+            for endpoint_url, collector in list(self._collectors.items()):
+                try:
+                    await self._collect_and_process_metrics_for_phase(
+                        collector, CreditPhase.WARMUP
+                    )
+                    self.debug(
+                        lambda url=endpoint_url: (
+                            f"Server Metrics: Captured warmup final state from {url}"
                         )
-                    except Exception as e:  # noqa: BLE001 - one endpoint's scrape failure must not skip the rest
-                        self.warning(
-                            f"Server Metrics: Failed to capture warmup final state from {endpoint_url}: {e}"
-                        )
-            finally:
-                # Compare-and-set: message handlers run as independent tasks,
-                # so CREDIT_PHASE_START(PROFILING) can land while the scrapes
-                # above are awaited. Blindly restoring/clearing would clobber
-                # the newer phase and tag the whole profiling run as None.
-                if self._active_phase_token == warmup_complete_token:
-                    self._active_phase = previous_phase
+                    )
+                except Exception as e:  # noqa: BLE001 - one endpoint's scrape failure must not skip the rest
+                    self.warning(
+                        f"Server Metrics: Failed to capture warmup final state from {endpoint_url}: {e}"
+                    )
 
         if (
             message.stats.phase != CreditPhase.PROFILING
             and self._active_phase == message.stats.phase
-            and (
-                message.stats.phase != CreditPhase.WARMUP
-                or self._active_phase_token == warmup_complete_token
-            )
         ):
             self._active_phase_token += 1
             self._active_phase = None
@@ -370,13 +353,13 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             return
 
         self.info("Server Metrics: Profiling complete, capturing final metrics...")
-        self._active_phase_token += 1
-        self._active_phase = CreditPhase.PROFILING
 
         # Trigger final scrape from all collectors
         for endpoint_url, collector in list(self._collectors.items()):
             try:
-                await collector.collect_and_process_metrics()
+                await self._collect_and_process_metrics_for_phase(
+                    collector, CreditPhase.PROFILING
+                )
                 self.debug(
                     lambda url=endpoint_url: (
                         f"Server Metrics: Captured final state from {url}"
@@ -448,6 +431,33 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         await asyncio.sleep(Environment.SERVER_METRICS.SHUTDOWN_DELAY)
         await asyncio.shield(self.stop())
 
+    def _attach_phase_scoped_collection(
+        self, collector: ServerMetricsDataCollector
+    ) -> None:
+        original_collect = collector.collect_and_process_metrics
+
+        async def collect_with_phase_snapshot() -> None:
+            if _SERVER_METRICS_SCRAPE_PHASE.get() is not None:
+                await original_collect()
+                return
+
+            token = _SERVER_METRICS_SCRAPE_PHASE.set(self._active_phase)
+            try:
+                await original_collect()
+            finally:
+                _SERVER_METRICS_SCRAPE_PHASE.reset(token)
+
+        collector.collect_and_process_metrics = collect_with_phase_snapshot
+
+    async def _collect_and_process_metrics_for_phase(
+        self, collector: ServerMetricsDataCollector, phase: CreditPhase | None
+    ) -> None:
+        token = _SERVER_METRICS_SCRAPE_PHASE.set(phase)
+        try:
+            await collector.collect_and_process_metrics()
+        finally:
+            _SERVER_METRICS_SCRAPE_PHASE.reset(token)
+
     async def _on_server_metrics_records(
         self, records: list[ServerMetricsRecord], collector_id: str
     ) -> None:
@@ -472,8 +482,9 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
 
         for record in records:
             try:
+                scrape_phase = _SERVER_METRICS_SCRAPE_PHASE.get()
                 record = record.model_copy(
-                    update={"benchmark_phase": self._active_phase}
+                    update={"benchmark_phase": scrape_phase or self._active_phase}
                 )
                 message = ServerMetricsRecordMessage(
                     service_id=self.service_id,

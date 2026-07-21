@@ -407,6 +407,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # (completed_records, elapsed_seconds) from the prior realtime tick, used
         # to render the instantaneous (delta) RPS in the realtime stats block.
         self._prev_realtime_snapshot: tuple[int, float] | None = None
+        self._prev_realtime_phase_index: int | None = None
 
         # Latest BranchStats snapshot received via CreditPhaseCompleteMessage
         # for the PROFILING phase. None for non-DAG runs (TimingManager
@@ -570,13 +571,18 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             handler_names = [handler.__class__.__name__ for handler in handlers]
             self.debug(lambda rt=record_type, hn=handler_names: f"  {rt} -> {hn}")
 
-    def _has_multiple_profiling_phases(self) -> bool:
-        """Return whether this run has more than one profiling-kind phase."""
+    def _has_multiple_phase_instances(self, phase: CreditPhase) -> bool:
+        """Return whether this run has more than one concrete phase of a kind."""
         try:
             phases = self.run.cfg.phases
         except AttributeError:
             return False
-        return sum(1 for phase in phases if phase.kind == "profiling") > 1
+        phase_kind = "warmup" if phase == CreditPhase.WARMUP else "profiling"
+        return sum(1 for cfg_phase in phases if cfg_phase.kind == phase_kind) > 1
+
+    def _has_multiple_profiling_phases(self) -> bool:
+        """Return whether this run has more than one profiling-kind phase."""
+        return self._has_multiple_phase_instances(CreditPhase.PROFILING)
 
     def _check_all_records_received(self, phase: CreditPhase) -> bool:
         """Check record completion for a phase kind."""
@@ -1089,10 +1095,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 start_ns=phase_stats.start_ns
             )
 
+        prev_realtime_snapshot = (
+            self._prev_realtime_snapshot
+            if self._prev_realtime_phase_index == phase_stats.phase_index
+            else None
+        )
         rendered = _render_realtime_block(
             raw_metrics,
             phase_stats,
-            self._prev_realtime_snapshot,
+            prev_realtime_snapshot,
             server_snapshot=server_snapshot,
         )
         if rendered:
@@ -1100,6 +1111,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 phase_stats.total_records,
                 phase_stats.records_elapsed_time,
             )
+            self._prev_realtime_phase_index = phase_stats.phase_index
             if emit_log_block and self.run.cfg.ui_type != UIType.DASHBOARD:
                 # One record per line: multi-line records interleave with
                 # other services' writes on the shared console stream.
@@ -1273,15 +1285,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
             if ts:
                 timeslices = ts
-        self._adjust_multi_profiling_aggregate_rates(phase, records_results)
+        self._adjust_multi_phase_aggregate_rates(phase, records_results)
         return records_results, timeslices, error_results, summary_ctx
 
-    def _adjust_multi_profiling_aggregate_rates(
+    def _adjust_multi_phase_aggregate_rates(
         self, phase: CreditPhase, records_results: list[MetricResult]
     ) -> None:
-        if phase != CreditPhase.PROFILING or not self._has_multiple_profiling_phases():
+        if not self._has_multiple_phase_instances(phase):
             return
-        duration_ns = self._profiling_active_duration_ns()
+        duration_ns = self._phase_active_duration_ns(phase)
         if not duration_ns:
             return
         by_tag = {result.tag: result for result in records_results}
@@ -1305,9 +1317,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 by_tag, "total_token_throughput", (total_isl + total_osl) / duration_sec
             )
 
-    def _profiling_active_duration_ns(self) -> int | None:
+    def _phase_active_duration_ns(self, phase: CreditPhase) -> int | None:
         total = 0
-        for stats in self._iter_concrete_phase_stats(CreditPhase.PROFILING):
+        for stats in self._iter_concrete_phase_stats(phase):
             if stats.start_ns is None or stats.requests_end_ns is None:
                 continue
             duration = stats.requests_end_ns - stats.start_ns
@@ -1345,7 +1357,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             result.avg = value
 
     def _create_result_stats_for_phase(self, phase: CreditPhase) -> PhaseRecordsStats:
-        if phase == CreditPhase.PROFILING and self._has_multiple_profiling_phases():
+        if self._has_multiple_phase_instances(phase):
             return self._records_tracker.create_aggregate_stats_for_phase(phase)
         return self._records_tracker.create_stats_for_phase(phase)
 

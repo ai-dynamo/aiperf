@@ -125,6 +125,12 @@ The current schema version is exported as the top-level `schema_version` field o
 
 The `schema_version` documented on this page applies only to `profile_export_aiperf.json`. The other files evolve on their own cadence.
 
+### Named phase artifacts
+
+Named multi-phase workflows keep the root exports (`profile_export_aiperf.{json,csv}`, `server_metrics_export.{json,csv}`, and related files) as backward-compatible aggregate artifacts. Phase-scoped artifacts are additive and are referenced from `phase_manifest.json`, for example `phases/<phase_name>/profile_export_aiperf.json`, `phases/<phase_name>/profile_export_aiperf.csv`, and, when server metrics produced data for that phase, `phases/<phase_name>/server_metrics.json`.
+
+For server metrics specifically, the root `server_metrics_export.json` preserves the legacy aggregate semantic phase view; in workflows with multiple phases of the same kind, its phase ranges may span inter-phase gaps. Consumers that need exact per-phase telemetry should read the phase-scoped `server_metrics.json` files.
+
 ## For downstream parsers
 
 - **Treat absent fields as "not applicable to this metric type," not "data missing."** A derived-metric block with no `count` is normal; a record-metric block with no `count` indicates a bug.

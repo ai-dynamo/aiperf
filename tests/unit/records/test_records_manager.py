@@ -41,7 +41,9 @@ from aiperf.credit.messages import (
 from aiperf.metrics.accumulator import MetricsAccumulator
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
 from aiperf.metrics.cache_reporting_hint import CACHE_REPORTING_HINT
-from aiperf.plugin.enums import AccumulatorType, TimingMode
+from aiperf.plugin.enums import AccumulatorType, TimingMode, UIType
+from aiperf.records import records_manager as records_manager_module
+from aiperf.records import records_manager_processing
 from aiperf.records.error_tracker import ErrorTracker
 from aiperf.records.records_manager import ErrorTrackingState, RecordsManager
 from aiperf.records.records_manager_processing import LoadedAnalyzer
@@ -343,7 +345,7 @@ class TestRecordsManagerMetricRecordDispatchErrors:
             start_ns=7_000_000_000,
             requests_end_ns=9_000_000_000,
         )
-        manager._has_multiple_profiling_phases = lambda: True
+        manager._has_multiple_phase_instances = lambda phase: phase == CreditPhase.PROFILING
         manager._records_tracker = MagicMock()
         manager._records_tracker._phase_trackers = {
             (CreditPhase.PROFILING, 0): first_tracker,
@@ -387,7 +389,7 @@ class TestRecordsManagerMetricRecordDispatchErrors:
             ),
         ]
 
-        RecordsManager._adjust_multi_profiling_aggregate_rates(
+        RecordsManager._adjust_multi_phase_aggregate_rates(
             manager, CreditPhase.PROFILING, records
         )
 
@@ -397,6 +399,138 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         assert by_tag["input_token_throughput"].avg == 40
         assert by_tag["output_token_throughput"].avg == 10
         assert by_tag["total_token_throughput"].avg == 50
+
+    def test_multi_warmup_aggregate_rates_use_active_phase_duration(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        first_tracker = MagicMock()
+        first_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.WARMUP,
+            phase_index=0,
+            phase_name="prime",
+            phase_kind="warmup",
+            start_ns=1_000_000_000,
+            requests_end_ns=2_000_000_000,
+        )
+        second_tracker = MagicMock()
+        second_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.WARMUP,
+            phase_index=2,
+            phase_name="settle",
+            phase_kind="warmup",
+            start_ns=7_000_000_000,
+            requests_end_ns=9_000_000_000,
+        )
+        manager._has_multiple_phase_instances = lambda phase: phase == CreditPhase.WARMUP
+        manager._records_tracker = MagicMock()
+        manager._records_tracker._phase_trackers = {
+            (CreditPhase.WARMUP, 0): first_tracker,
+            (CreditPhase.WARMUP, 2): second_tracker,
+        }
+        records = [
+            MetricResult(
+                tag="benchmark_duration",
+                header="Benchmark Duration",
+                unit="sec",
+                avg=8,
+            ),
+            MetricResult(
+                tag="request_count", header="Request Count", unit="requests", avg=24
+            ),
+            MetricResult(
+                tag="request_throughput",
+                header="Request Throughput",
+                unit="requests/sec",
+                avg=3,
+            ),
+            MetricResult(tag="total_isl", header="Total ISL", unit="tokens", avg=96),
+            MetricResult(tag="total_osl", header="Total OSL", unit="tokens", avg=48),
+            MetricResult(
+                tag="input_token_throughput",
+                header="Input Token Throughput",
+                unit="tokens/sec",
+                avg=12,
+            ),
+            MetricResult(
+                tag="output_token_throughput",
+                header="Output Token Throughput",
+                unit="tokens/sec",
+                avg=6,
+            ),
+            MetricResult(
+                tag="total_token_throughput",
+                header="Total Token Throughput",
+                unit="tokens/sec",
+                avg=18,
+            ),
+        ]
+
+        RecordsManager._adjust_multi_phase_aggregate_rates(
+            manager, CreditPhase.WARMUP, records
+        )
+
+        by_tag = {result.tag: result for result in records}
+        assert by_tag["benchmark_duration"].avg == 3
+        assert by_tag["request_throughput"].avg == 8
+        assert by_tag["input_token_throughput"].avg == 32
+        assert by_tag["output_token_throughput"].avg == 16
+        assert by_tag["total_token_throughput"].avg == 48
+
+    @pytest.mark.asyncio
+    async def test_realtime_delta_resets_when_phase_index_changes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._records_tracker = MagicMock()
+        manager._records_tracker.create_stats_for_phase.return_value = PhaseRecordsStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=2,
+            phase_name="storm",
+            phase_kind="profiling",
+            start_ns=0,
+            records_end_ns=1_000_000_000,
+            success_records=1,
+        )
+        manager._metric_record_accumulators = []
+        manager._prev_realtime_snapshot = (10, 5.0)
+        manager._prev_realtime_phase_index = 1
+        manager._server_metrics_accumulator = None
+        manager.publish = AsyncMock()
+        manager.service_id = "records_manager"
+        manager.run = SimpleNamespace(cfg=SimpleNamespace(ui_type=UIType.NONE))
+
+        async def fake_generate_realtime_metrics(*args, **kwargs):
+            return [
+                MetricResult(
+                    tag="request_throughput",
+                    header="Request Throughput",
+                    unit="requests/sec",
+                    avg=1.0,
+                )
+            ]
+
+        captured: dict[str, object] = {}
+
+        def fake_render(metric_results, phase_stats, prev_snapshot, server_snapshot=None):
+            captured["prev_snapshot"] = prev_snapshot
+            return "rendered"
+
+        monkeypatch.setattr(
+            records_manager_module,
+            "generate_realtime_metrics",
+            fake_generate_realtime_metrics,
+        )
+        monkeypatch.setattr(
+            records_manager_processing,
+            "filter_display_metrics",
+            lambda metrics: metrics,
+        )
+        monkeypatch.setattr(records_manager_module, "_render_realtime_block", fake_render)
+
+        await manager._report_realtime_metrics(emit_log_block=False)
+
+        assert captured["prev_snapshot"] is None
+        assert manager._prev_realtime_snapshot == (1, 1.0)
+        assert manager._prev_realtime_phase_index == 2
 
     @pytest.mark.asyncio
     async def test_disabled_observability_skips_phase_exports(self) -> None:

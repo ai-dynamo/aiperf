@@ -388,6 +388,74 @@ class TestManagerCallbackFunctionality:
         assert call_args.record.benchmark_phase == CreditPhase.WARMUP
 
     @pytest.mark.asyncio
+    async def test_scoped_collect_tags_records_with_captured_phase(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        manager._active_phase = CreditPhase.PROFILING
+        manager.records_push_client.push = AsyncMock()
+
+        test_record = ServerMetricsRecord(
+            endpoint_url="http://localhost:8081/metrics",
+            timestamp_ns=1_000_000_000,
+            endpoint_latency_ns=5_000_000,
+            metrics={},
+        )
+
+        class _Collector:
+            async def collect_and_process_metrics(self):
+                await manager._on_server_metrics_records(
+                    [test_record], "test_collector"
+                )
+
+        await manager._collect_and_process_metrics_for_phase(
+            _Collector(), CreditPhase.WARMUP
+        )
+
+        call_args = manager.records_push_client.push.call_args[0][0]
+        assert call_args.record is not None
+        assert call_args.record.benchmark_phase == CreditPhase.WARMUP
+        assert manager._active_phase == CreditPhase.PROFILING
+
+    @pytest.mark.asyncio
+    async def test_collect_snapshot_tags_records_with_start_phase_after_phase_flip(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        manager._active_phase = CreditPhase.WARMUP
+        manager.records_push_client.push = AsyncMock()
+
+        test_record = ServerMetricsRecord(
+            endpoint_url="http://localhost:8081/metrics",
+            timestamp_ns=1_000_000_000,
+            endpoint_latency_ns=5_000_000,
+            metrics={},
+        )
+
+        class _Collector:
+            async def collect_and_process_metrics(self):
+                manager._active_phase = CreditPhase.PROFILING
+                await manager._on_server_metrics_records(
+                    [test_record], "test_collector"
+                )
+
+        collector = _Collector()
+        manager._attach_phase_scoped_collection(collector)
+
+        await collector.collect_and_process_metrics()
+
+        call_args = manager.records_push_client.push.call_args[0][0]
+        assert call_args.record is not None
+        assert call_args.record.benchmark_phase == CreditPhase.WARMUP
+        assert manager._active_phase == CreditPhase.PROFILING
+
+    @pytest.mark.asyncio
     async def test_error_callback_logs_error(
         self,
         cli_config: CLIConfig,
