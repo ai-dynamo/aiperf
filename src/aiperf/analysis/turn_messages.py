@@ -356,14 +356,14 @@ def write_turn_messages_html(
 
     payload_b64 = base64.b64encode(compressed).decode()
     html = (
-        VIEWER_TEMPLATE.read_text()
-        .replace("__FZSTD_JS__", FZSTD_JS.read_text())
+        VIEWER_TEMPLATE.read_text(encoding="utf-8")
+        .replace("__FZSTD_JS__", FZSTD_JS.read_text(encoding="utf-8"))
         .replace("__PAYLOAD_B64__", payload_b64)
     )
     default_dir = run_dir.parent if run_dir.is_file() else run_dir
     out_path = out or (default_dir / "turn_messages.html")
     try:
-        out_path.write_text(html)
+        out_path.write_text(html, encoding="utf-8")
     except OSError as e:
         raise TurnMessagesError(f"could not write {out_path}: {e}") from e
     return out_path

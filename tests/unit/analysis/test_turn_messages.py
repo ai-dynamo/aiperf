@@ -61,9 +61,9 @@ def _accumulated(conv: str, n_turns: int) -> list[dict]:
     history: list[dict] = [{"role": "system", "content": "you are a test agent"}]
     recs = []
     for t in range(n_turns):
-        history = history + [{"role": "user", "content": f"question {t}"}]
+        history = [*history, {"role": "user", "content": f"question {t}"}]
         recs.append(_rec(conv, t, list(history), start_s=float(t)))
-        history = history + [{"role": "assistant", "content": f"answer {t}"}]
+        history = [*history, {"role": "assistant", "content": f"answer {t}"}]
     return recs
 
 
