@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 import { PageTabs, type PageTabDefinition } from "../../shell/PageTabs.js";
+import { TopBar } from "../../shell/TopBar.js";
 import { OverviewPage } from "./OverviewPage.js";
 import { PoolPage } from "./PoolPage.js";
 import { PayloadsPage } from "./PayloadsPage.js";
@@ -39,7 +40,8 @@ export function SegmentPoolsDeck(): React.JSX.Element {
 
   return (
     <div className="flex h-screen flex-col bg-surface-chrome">
-      <div className="border-b border-stroke-secondary bg-surface-page px-8 py-4">
+      <TopBar section="Segment Pools" />
+      <div className="border-b border-stroke-secondary bg-surface-page px-8 py-3">
         <PageTabs pages={PAGES} current={page} onChange={setPage} />
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
