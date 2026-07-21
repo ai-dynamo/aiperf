@@ -20,6 +20,7 @@ import { Row } from "../../layout/Row.js";
 import { Button } from "../../prose/Button.js";
 import { Code } from "../../prose/Code.js";
 import { Divider } from "../../layout/Divider.js";
+import { Eyebrow } from "../../prose/Eyebrow.js";
 import { inkClassName } from "../../theme/tokens.js";
 import { Inspector } from "./Inspector.js";
 import { buildAtlasGraph } from "./atlasGraph.js";
@@ -55,9 +56,7 @@ function StoryRail({ page, onPage }: { page: number; onPage: (page: number) => v
     <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
       {STORY_CHAPTERS.map((chapter) => (
         <Stack key={chapter.label} gap={6}>
-          <span className={`text-xs font-bold uppercase tracking-wide ${inkClassName("tertiary")}`}>
-            {chapter.label}
-          </span>
+          <Eyebrow>{chapter.label}</Eyebrow>
           <Row gap={5} wrap>
             {chapter.pages.map((number) => {
               const isCurrent = page === number;
@@ -102,9 +101,7 @@ function ReductionSimulation({ mode }: { mode: ReductionMode }): React.JSX.Eleme
             (index === 2 ? "bg-surface-panel" : "")
           }
         >
-          <div className={`text-xs font-bold uppercase tracking-wide ${inkClassName("tertiary")}`}>
-            {REDUCTION_LABELS[index]}
-          </div>
+          <Eyebrow>{REDUCTION_LABELS[index]}</Eyebrow>
           <div className={`mt-1 text-sm font-semibold ${inkClassName("primary")}`}>{value}</div>
         </div>
       ))}
@@ -116,9 +113,7 @@ function ScaleBoundaryStrip(): React.JSX.Element {
   return (
     <Stack gap={8}>
       <Row gap={10} align="center" wrap>
-        <span className={`text-xs font-bold uppercase tracking-wide ${inkClassName("tertiary")}`}>
-          Cellular fidelity ladder
-        </span>
+        <Eyebrow>Cellular fidelity ladder</Eyebrow>
         <span className="rounded-none border border-category-yellow px-2 py-0.5 text-xs font-semibold text-category-yellow">
           Scheduled duration/unbounded rejected · graph duration built
         </span>
@@ -149,10 +144,10 @@ function ScaleBoundaryStrip(): React.JSX.Element {
 function EvidenceMargin({ step, selectedId }: { step: StoryStep; selectedId: string }): React.JSX.Element {
   return (
     <Stack gap={10} className="border-l border-stroke-secondary pl-4">
-      <span className={`text-xs font-bold uppercase tracking-wide ${inkClassName("tertiary")}`}>Invariant</span>
+      <Eyebrow>Invariant</Eyebrow>
       <span className={`text-sm ${inkClassName("primary")}`}>{step.invariant}</span>
       <Divider />
-      <span className={`text-xs font-bold uppercase tracking-wide ${inkClassName("tertiary")}`}>Source evidence</span>
+      <Eyebrow>Source evidence</Eyebrow>
       <Code>{step.symbol}</Code>
       <span className={`text-sm ${inkClassName("secondary")}`}>{step.path}</span>
       <span className={`text-xs ${inkClassName("tertiary")}`}>{step.proof}</span>
@@ -211,9 +206,9 @@ export function StoryPage(): React.JSX.Element {
   return (
     <Stack gap={16}>
       <div>
-        <div className={`text-xs font-bold uppercase tracking-wide ${inkClassName("tertiary")}`}>
+        <Eyebrow>
           Cellular story · {step.chapter} · Page {page} of 20
-        </div>
+        </Eyebrow>
         <h2 className={`mt-1 text-lg font-semibold ${inkClassName("primary")}`}>{step.title}</h2>
         <p className={`mt-1 max-w-3xl text-sm ${inkClassName("secondary")}`}>{step.thesis}</p>
       </div>

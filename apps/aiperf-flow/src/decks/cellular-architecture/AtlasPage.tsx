@@ -23,6 +23,7 @@ import { Stat } from "../../prose/Stat.js";
 import { Callout } from "../../prose/Callout.js";
 import { Legend } from "../../prose/Legend.js";
 import { Code } from "../../prose/Code.js";
+import { Eyebrow } from "../../prose/Eyebrow.js";
 import { inkClassName } from "../../theme/tokens.js";
 import { Inspector } from "./Inspector.js";
 import { buildAtlasGraph } from "./atlasGraph.js";
@@ -212,7 +213,7 @@ export function AtlasPage(): React.JSX.Element {
 
       <div className="flex flex-col gap-3 border border-stroke-secondary px-4 py-3 lg:flex-row lg:items-end">
         <Stack gap={5} className="lg:flex-1">
-          <span className={`text-xs font-bold uppercase tracking-wide ${inkClassName("tertiary")}`}>Fidelity recipe</span>
+          <Eyebrow>Fidelity recipe</Eyebrow>
           <Row gap={6} wrap>
             {RECIPES.map(([id, label]) => (
               <button

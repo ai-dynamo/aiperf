@@ -15,6 +15,7 @@ import "@xyflow/react/dist/style.css";
 import clsx from "clsx";
 import { nodeTypes } from "../../nodes/nodeTypes.js";
 import { edgeTypes } from "../../edges/edgeTypes.js";
+import { Eyebrow } from "../../prose/Eyebrow.js";
 import { categoryClassName, inkClassName } from "../../theme/tokens.js";
 import type { VeloPageId } from "./VeloInAiperfDeck.js";
 
@@ -76,9 +77,7 @@ export function IndexPage({ onSelect }: { onSelect: (id: VeloPageId) => void }):
   return (
     <div className="flex h-full w-full flex-col gap-4">
       <div>
-        <div className={clsx("text-[11px] font-bold uppercase tracking-wide", categoryClassName("cyan"))}>
-          AIPerf cellular transport
-        </div>
+        <Eyebrow tone="cyan">AIPerf cellular transport</Eyebrow>
         <h2 className={clsx("mt-1 text-2xl font-semibold", inkClassName("primary"))}>Velo mechanisms</h2>
         <p className={clsx("mt-1 max-w-2xl text-sm", inkClassName("secondary"))}>
           Ten interactive instruments expose how cellular identity, synchronization, distribution,

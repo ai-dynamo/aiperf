@@ -9,7 +9,8 @@
 //! the same cyan accent, so the class strings live here as literals for Tailwind's scanner.
 
 import clsx from "clsx";
-import { categoryClassName, inkClassName } from "../../theme/tokens.js";
+import { Eyebrow } from "../../prose/Eyebrow.js";
+import { inkClassName } from "../../theme/tokens.js";
 
 /**
  * Node highlight class — a cyan border + cyan ink, expressed as complete literal strings so
@@ -30,9 +31,7 @@ export function MechHeader({
 }): React.JSX.Element {
   return (
     <div>
-      <div className={clsx("text-[11px] font-bold uppercase tracking-wide", categoryClassName("cyan"))}>
-        {eyebrow}
-      </div>
+      <Eyebrow tone="cyan">{eyebrow}</Eyebrow>
       <h2 className={clsx("mt-1 text-lg font-semibold", inkClassName("primary"))}>{title}</h2>
       <p className={clsx("mt-1 max-w-3xl text-sm", inkClassName("secondary"))}>{sentence}</p>
     </div>
