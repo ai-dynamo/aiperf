@@ -1155,10 +1155,10 @@ class TestDataLoaderLoadRunWithGPUTelemetry:
         # Verify rich telemetry fields from real data
         expected_fields = [
             "gpu_index",
-            "gpu_utilization",
-            "gpu_power_usage",
-            "gpu_memory_used",
-            "gpu_temperature",
+            "nvidia_gpu_utilization",
+            "nvidia_power_usage",
+            "nvidia_memory_used",
+            "nvidia_temperature",
             "sm_clock_frequency",
             "memory_clock_frequency",
             "dcgm_url",
@@ -1186,10 +1186,10 @@ class TestDataLoaderLoadGPUTelemetryJSONL:
         assert df is not None
         assert len(df) > 0
         assert "timestamp_s" in df.columns
-        assert "gpu_utilization" in df.columns
-        assert "gpu_power_usage" in df.columns
-        assert "gpu_memory_used" in df.columns
-        assert "gpu_temperature" in df.columns
+        assert "nvidia_gpu_utilization" in df.columns
+        assert "nvidia_power_usage" in df.columns
+        assert "nvidia_memory_used" in df.columns
+        assert "nvidia_temperature" in df.columns
 
         # Check relative timestamp conversion
         # Note: First timestamp can be negative if telemetry started before first request
@@ -1309,10 +1309,10 @@ class TestDataLoaderLoadGPUTelemetryJSONL:
         assert "hostname" in df.columns
 
         # Verify telemetry_data fields are flattened to top level
-        assert "gpu_utilization" in df.columns
-        assert "gpu_power_usage" in df.columns
-        assert "gpu_memory_used" in df.columns
-        assert "gpu_temperature" in df.columns
+        assert "nvidia_gpu_utilization" in df.columns
+        assert "nvidia_power_usage" in df.columns
+        assert "nvidia_memory_used" in df.columns
+        assert "nvidia_temperature" in df.columns
         assert "sm_clock_frequency" in df.columns
         assert "memory_clock_frequency" in df.columns
 
