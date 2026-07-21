@@ -148,10 +148,13 @@ cargo build
 cargo build --release
 cargo test
 cargo test -p aiperf-runtime
+cargo test -p aiperf-runtime --features engine
 cargo test -p aiperf-mock-server
 cargo clippy --all-targets
 cargo fmt --check
 ```
+
+`aiperf-runtime`'s `engine` module (protocol-v2 execution, dataset construction, native run assembly) sits behind the `engine` Cargo feature, off by default; `cargo test -p aiperf-runtime` alone silently runs zero tests under it, so run both invocations above.
 
 Feature-bearing builds:
 
