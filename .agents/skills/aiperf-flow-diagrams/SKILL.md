@@ -53,6 +53,23 @@ Boxes in a diagram are React Flow nodes. Register via
 Every node's `data` accepts an optional `className`, merged via `clsx` onto
 the component's own classes (yours appended last, never silently dropped).
 
+### The one-`ReactFlowProvider`-per-`<ReactFlow>` trap
+
+Every `<ReactFlow>` instance needs its **own** ancestor `<ReactFlowProvider>`.
+If a page renders more than one `<ReactFlow>` (e.g. two diagrams side by side
+in a `Grid`) and they share a single outer `<ReactFlowProvider>`, they
+silently collide onto the same internal store — only the **last-mounted**
+diagram's nodes actually render; the others render an empty canvas with no
+error. This hit two independent deck ports in the same session before being
+fixed. Wrap each diagram's own `<ReactFlow>` in its own local
+`<ReactFlowProvider>` inside whatever shared "diagram frame" component you
+build (see `src/decks/rust-aiperf-architecture/shared.tsx`'s `DeckDiagram` for
+the reference pattern) — never rely on one page-level provider covering
+multiple `<ReactFlow>` instances. A test rendering only one page's diagram in
+isolation will not catch this; it only surfaces when a page composes more
+than one diagram together, so check pages with multiple `DeckDiagram`s (or
+equivalent) specifically.
+
 ### Edges (`src/edges/`)
 
 `import { edgeTypes } from "../../edges/edgeTypes.js"`, pass to
@@ -70,15 +87,18 @@ comparison tables. Real CSS flex/grid, not diagram nodes.
 - `Stack` (`src/layout/Stack.tsx`) — vertical flex column, `{ children, gap?, className? }`
 - `Row` (`src/layout/Row.tsx`) — horizontal flex row, `{ children, gap?, align?, justify?, wrap?, className? }`
 - `Grid` (`src/layout/Grid.tsx`) — CSS grid, `{ children, columns: number(1-12) | string, gap?, align?, className? }` — a static lookup table maps 1-12 to real `grid-cols-N` classes; a string falls through to inline `gridTemplateColumns`. **Never** build `` `grid-cols-${n}` `` yourself — see "The Tailwind JIT trap" below.
-- `Callout` (`src/prose/Callout.tsx`) — `{ tone?: "info"|"warning"|"danger"|"success", title?, children, className? }`
+- `Callout` (`src/prose/Callout.tsx`) — `{ tone?: "info"|"warning"|"danger"|"success"|"neutral", title?, children, className? }`
 - `Table` (`src/prose/Table.tsx`) — real `<table>`, `{ columns: {key,label,align?}[], rows: (Record<string,ReactNode> & {tone?: "neutral"|"success"|"warning"|"danger"})[], className? }`
 - `Stat` (`src/prose/Stat.tsx`) — KPI tile, `{ label, value, trend?, tone?: "neutral"|"positive"|"negative", className? }`
 - `Legend` / `Swatch` (`src/prose/Legend.tsx`, `Swatch.tsx`) — color-key rows, `{ entries: { color: CategoryRole; label: string }[] }`
+- `Pill` (`src/prose/Pill.tsx`) — compact tag/status chip, `{ children, active?: boolean, tone?: CategoryRole, onClick?: () => void, className? }`. Renders a `<span>`, or a `<button>` with `aria-pressed={active}` when `onClick` is given. `tone` colors it by `CategoryRole` (ports a source canvas's colored status tag); omit `tone` for the plain neutral/active-accent chip (a selected filter, a status tag, a source-file badge). **Use this instead of writing a local `Pill`/`Badge`/`Tag`/`TonePill` component** — four independent deck ports each built the identical shape from scratch before this was consolidated; check here first.
 
-Note these three components use three *different* tone vocabularies
-(`Callout`: info/warning/danger/success; `Table`: neutral/success/warning/danger;
+Note `Callout`/`Table`/`Stat` use three *different* tone vocabularies
+(`Callout`: info/warning/danger/success/neutral; `Table`: neutral/success/warning/danger;
 `Stat`: neutral/positive/negative) — each is individually correct for what it
 expresses (severity vs. direction), but don't assume they're interchangeable.
+`Callout`'s `neutral` tone (gray category) exists for an admonition that isn't
+severity-graded — don't approximate it with `info`/`warning`/`success` anymore.
 
 ### State and animation
 
@@ -147,6 +167,14 @@ Before considering a deck/component done:
    `npm run build` for the literal class strings you expect to see.
 5. TDD: was the test written before the implementation, and does it assert
    real rendered content/behavior (not just "renders without crashing")?
+6. Does any page render more than one `<ReactFlow>`? If so, confirm each one
+   has its own `<ReactFlowProvider>` (see the trap above), and that the
+   page's test asserts on content from *every* diagram on the page, not just
+   the first — a shared-provider collision only shows up when you check the
+   diagrams other than the last-mounted one.
+7. Wrote a new `Pill`/`Badge`/`Tag`/status-chip? Check `src/prose/Pill.tsx`
+   first — it already covers plain, active/toggle, clickable, and
+   category-tone-colored variants.
 
 ## Worked example
 
