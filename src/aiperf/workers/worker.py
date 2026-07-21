@@ -14,6 +14,7 @@ from aiperf.common.enums import (
     CommandType,
     ConversationBranchMode,
     CreditPhase,
+    MemoryMapFormat,
     MessageType,
 )
 from aiperf.common.environment import Environment
@@ -41,12 +42,14 @@ from aiperf.common.mixins import ProcessHealthMixin
 from aiperf.common.models import (
     Conversation,
     ErrorDetails,
+    MemoryMapClientMetadata,
     ModelEndpointInfo,
     ParsedResponse,
     ProcessHealth,
     RequestInfo,
     RequestRecord,
     SSEMessage,
+    Turn,
     WorkerTaskStats,
 )
 from aiperf.common.models.record_models import find_last_non_empty_usage
@@ -77,6 +80,7 @@ from aiperf.workers.session_manager import UserSession, UserSessionManager
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.transports.base_transports import FirstTokenCallback
 
 
 def _phase_needs_first_token_callback(phase) -> bool:
@@ -226,6 +230,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Initialized when DatasetConfiguredNotification is received via factory
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
+        # True when the mmap dataset ships pre-encoded per-turn payload bytes
+        # (PAYLOAD_BYTES format); enables the verbatim-replay fast path.
+        self._is_payload_bytes: bool = False
 
         # Detecting first token requires parsing each SSE chunk, so only enable
         # FirstToken messages when a downstream consumer needs them.
@@ -263,6 +270,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._dataset_client = ClientStoreClass(client_metadata=msg.client_metadata)
         await self._dataset_client.initialize()
         self.session_manager.set_default_context_mode(msg.metadata.default_context_mode)
+        if isinstance(msg.client_metadata, MemoryMapClientMetadata):
+            self._is_payload_bytes = (
+                msg.client_metadata.format == MemoryMapFormat.PAYLOAD_BYTES
+            )
         self._dataset_configured_event.set()
         self.debug(
             lambda: (
@@ -487,6 +498,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 return True
 
         try:
+            if await self._try_payload_bytes_fast_path(
+                credit_context, x_request_id, first_token_callback
+            ):
+                return
+
             session = self.session_manager.get(x_correlation_id)
             if session is None:
                 _conversation = await self._retrieve_conversation(
@@ -525,29 +541,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             if record.error is not None:
                 credit_context.error = record.error
 
-            if session.should_store_response() and (
-                resp_turn := self.inference_client.endpoint.build_assistant_turn(record)
-            ):
-                session.store_response(resp_turn)
-
-            parsed_responses = self._parsed_responses_for_record(record)
-            content_perf_ns = self._content_response_perf_ns_for_record(
-                record, parsed_responses
-            )
-            credit_context.request_latency_ns = self._request_latency_ns_for_record(
-                record, content_perf_ns
-            )
-            credit_context.output_sequence_length = (
-                self._output_sequence_length_for_responses(parsed_responses)
-            )
-            credit_context.inter_token_latency_ns = (
-                self._inter_token_latency_ns_for_record(
-                    record,
-                    content_perf_ns,
-                    parsed_responses,
-                    credit_context.output_sequence_length,
-                )
-            )
+            self._maybe_store_response(session, record)
+            self._populate_response_metrics(credit_context, record)
 
         except asyncio.CancelledError:
             # Mark cancelled before re-raising so finally can evict session
@@ -560,6 +555,86 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # Evict session on final turn OR if cancelled (no retry expected)
             if credit_context.credit.is_final_turn or credit_context.cancelled:
                 self._release_and_evict_for_terminal(credit, x_correlation_id)
+
+    async def _try_payload_bytes_fast_path(
+        self,
+        credit_context: CreditContext,
+        x_request_id: str,
+        first_token_callback: FirstTokenCallback | None,
+    ) -> bool:
+        """Serve the credit from pre-encoded mmap payload bytes when possible.
+
+        Payload bytes fast path: stream pre-encoded bytes from the mmap
+        verbatim, bypassing session/conversation deserialization and
+        per-request payload formatting entirely. Skipped for DAG descendants
+        (agent_depth > 0), whose turn accumulation needs session state.
+
+        Returns:
+            True when the request was fully handled (sent + result emitted);
+            False when the caller should take the normal session path.
+        """
+        credit = credit_context.credit
+        if (
+            not self._is_payload_bytes
+            or self._dataset_client is None
+            or credit.agent_depth != 0
+        ):
+            return False
+        payload_bytes = await self._dataset_client.get_payload_bytes(
+            credit.conversation_id, credit.turn_index
+        )
+        if payload_bytes is None:
+            return False
+
+        self.task_stats.total += 1
+        request_info = self._create_request_info(
+            credit_context=credit_context,
+            x_request_id=x_request_id,
+            payload_bytes=payload_bytes,
+            turns=[Turn(role="user")],
+        )
+        record = await self.inference_client.send_request(
+            request_info, first_token_callback=first_token_callback
+        )
+        self._populate_response_metrics(credit_context, record)
+        await self._send_inference_result_message(record)
+        if record.error is not None:
+            credit_context.error = record.error
+        return True
+
+    def _maybe_store_response(
+        self, session: UserSession, record: RequestRecord
+    ) -> None:
+        """Store the assistant turn on the session when the mode retains history."""
+        if session.should_store_response() and (
+            resp_turn := self.inference_client.endpoint.build_assistant_turn(record)
+        ):
+            session.store_response(resp_turn)
+
+    def _populate_response_metrics(
+        self, credit_context: CreditContext, record: RequestRecord
+    ) -> None:
+        """Derive latency/OSL/ITL from ``record`` onto ``credit_context``.
+
+        Shared by the normal session path and the payload-bytes fast path so
+        both emit identical CreditReturn timing fields from the same record.
+        """
+        parsed_responses = self._parsed_responses_for_record(record)
+        content_perf_ns = self._content_response_perf_ns_for_record(
+            record, parsed_responses
+        )
+        credit_context.request_latency_ns = self._request_latency_ns_for_record(
+            record, content_perf_ns
+        )
+        credit_context.output_sequence_length = (
+            self._output_sequence_length_for_responses(parsed_responses)
+        )
+        credit_context.inter_token_latency_ns = self._inter_token_latency_ns_for_record(
+            record,
+            content_perf_ns,
+            parsed_responses,
+            credit_context.output_sequence_length,
+        )
 
     def _parsed_responses_for_record(
         self, record: RequestRecord
@@ -703,10 +778,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self,
         *,
         x_request_id: str,
-        session: UserSession,
         credit_context: CreditContext,
+        session: UserSession | None = None,
         system_message: str | None = None,
         user_context_message: str | None = None,
+        payload_bytes: bytes | None = None,
+        turns: list[Turn] | None = None,
     ) -> RequestInfo:
         """Create RequestInfo for inference request with session state and credit metadata.
 
@@ -716,27 +793,42 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         - Track request timing (drop_perf_ns for credit drop latency)
         - Handle cancellation (cancel_after_ns if specified)
 
+        When ``session`` is provided (normal path), conversation state comes
+        from the session. When omitted (payload-bytes fast path), fields are
+        taken directly from the credit.
+
         Args:
             x_request_id: Unique ID for this request (X-Request-ID header)
-            session: Session containing conversation history and current turn index
             credit_context: Context with credit metadata (num, phase, timestamps)
+            session: Session containing conversation history and current turn
+                index (None for the payload-bytes fast path)
             system_message: Optional shared system message to prepend to first turn
             user_context_message: Optional per-conversation user context message
+            payload_bytes: Pre-encoded payload bytes from the mmap dataset
+                (payload-bytes fast path); sent verbatim by the transport
+            turns: Explicit turns list; takes precedence over session-derived
+                turns when provided (payload-bytes fast path)
 
         Returns:
             RequestInfo with all data needed to send inference request
         """
         credit = credit_context.credit
+        if turns is None:
+            turns = session.turn_list if session else []
         return RequestInfo(
             model_endpoint=self.model_endpoint,
             credit_num=credit.id,
             credit_phase=credit.phase,
             cancel_after_ns=credit.cancel_after_ns,
             x_request_id=x_request_id,
-            x_correlation_id=session.x_correlation_id,
-            conversation_id=session.conversation.session_id,
-            turn_index=session.turn_index,
-            turns=session.turn_list,
+            x_correlation_id=session.x_correlation_id
+            if session
+            else credit.x_correlation_id,
+            conversation_id=session.conversation.session_id
+            if session
+            else credit.conversation_id,
+            turn_index=session.turn_index if session else credit.turn_index,
+            turns=turns,
             drop_perf_ns=credit_context.drop_perf_ns,
             credit_issued_ns=credit.issued_at_ns,
             system_message=system_message,
@@ -745,7 +837,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             agent_depth=credit.agent_depth,
             parent_correlation_id=credit.parent_correlation_id,
             # Use session's url_index to ensure all turns hit the same backend
-            url_index=session.url_index,
+            url_index=session.url_index if session else credit.url_index,
+            payload_bytes=payload_bytes,
         )
 
     @staticmethod
