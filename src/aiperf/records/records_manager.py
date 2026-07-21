@@ -1284,7 +1284,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         by_tag = {result.tag: result for result in records_results}
         duration_sec = duration_ns / NANOS_PER_SECOND
         self._set_metric_avg(by_tag, "benchmark_duration", duration_sec)
-        self._set_rate_metric(by_tag, "request_throughput", "request_count", duration_sec)
+        self._set_rate_metric(
+            by_tag, "request_throughput", "request_count", duration_sec
+        )
         self._set_rate_metric(
             by_tag, "input_token_throughput", "total_isl", duration_sec
         )

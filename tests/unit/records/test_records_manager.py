@@ -365,12 +365,8 @@ class TestRecordsManagerMetricRecordDispatchErrors:
                 unit="requests/sec",
                 avg=7.5,
             ),
-            MetricResult(
-                tag="total_isl", header="Total ISL", unit="tokens", avg=120
-            ),
-            MetricResult(
-                tag="total_osl", header="Total OSL", unit="tokens", avg=30
-            ),
+            MetricResult(tag="total_isl", header="Total ISL", unit="tokens", avg=120),
+            MetricResult(tag="total_osl", header="Total OSL", unit="tokens", avg=30),
             MetricResult(
                 tag="input_token_throughput",
                 header="Input Token Throughput",
