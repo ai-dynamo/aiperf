@@ -64,6 +64,6 @@ describe("Table", () => {
     );
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toContain("extra-table-class");
-    expect(root.className).toContain("rounded-none");
+    expect(root.className).toContain("border-collapse");
   });
 });

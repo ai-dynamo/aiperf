@@ -21,7 +21,14 @@ export type FramedProps = {
  */
 export function Framed({ children, surfaceRole = "page", className }: FramedProps): React.JSX.Element {
   return (
-    <div className={clsx("rounded-none border p-3", strokeClassName("tertiary"), surfaceClassName(surfaceRole), className)}>
+    <div
+      className={clsx(
+        "rounded-lg border p-3 shadow-sm",
+        strokeClassName("tertiary"),
+        surfaceClassName(surfaceRole),
+        className,
+      )}
+    >
       {children}
     </div>
   );

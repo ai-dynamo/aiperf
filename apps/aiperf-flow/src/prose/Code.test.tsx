@@ -21,7 +21,7 @@ describe("Code", () => {
     const { container } = render(<Code>{"const x = 1;"}</Code>);
     const pre = container.querySelector("pre") as HTMLElement;
     expect(pre.className).toContain("font-mono");
-    expect(pre.className).toContain("rounded-none");
+    expect(pre.className).toMatch(/rounded-(sm|md|lg|xl|full)/);
     expect(pre.className).toContain("border-stroke-secondary");
     expect(pre.className).toContain("bg-surface-panel");
   });

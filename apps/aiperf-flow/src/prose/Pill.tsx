@@ -30,7 +30,7 @@ export type PillProps = {
 /**
  * Compact tag/status chip shared by every deck. Consolidates the `Pill` / `Badge` / `TonePill`
  * one-offs that independent porting agents each built locally for the same shape: a
- * `rounded-none` bordered label, optionally clickable/toggleable, optionally colored by
+ * `rounded-md` bordered label, optionally clickable/toggleable, optionally colored by
  * `CategoryRole` instead of the neutral active/inactive palette.
  */
 export function Pill({
@@ -42,13 +42,13 @@ export function Pill({
   className,
 }: PillProps): React.JSX.Element {
   const base = clsx(
-    "inline-flex items-center rounded-none border px-2 py-0.5 text-xs font-semibold tracking-wide transition-colors",
+    "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold tracking-wide transition-colors",
     tone
       ? clsx("border-transparent", categoryBgTintClassName(tone), categoryClassName(tone))
       : active
         ? clsx("border-accent-primary", accentClassName("primary"))
         : clsx(strokeClassName("secondary"), inkClassName("secondary")),
-    onClick && "cursor-pointer hover:border-accent-primary",
+    onClick && "cursor-pointer hover:border-accent-primary hover:shadow-sm",
     className,
   );
 

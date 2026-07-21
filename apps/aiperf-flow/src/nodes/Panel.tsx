@@ -11,13 +11,13 @@ import type { PanelNodeData } from "./types.js";
 
 export type PanelNodeType = Node<PanelNodeData, "panel">;
 
-const HANDLE_CLASS_NAME = "!rounded-none !border-stroke-primary !bg-accent-primary !h-2 !w-2";
+const HANDLE_CLASS_NAME = "!rounded-full !border-stroke-primary !bg-accent-primary !h-2 !w-2";
 
 export function PanelNode({ data }: NodeProps<PanelNodeType>): React.JSX.Element {
   return (
     <div
       className={clsx(
-        "min-w-[150px] rounded-none border border-l-2 px-4 py-3",
+        "min-w-[150px] rounded-lg border border-l-2 px-4 py-3 shadow-sm",
         surfaceClassName(data.surfaceRole ?? "elevated"),
         strokeClassName(data.strokeRole ?? "secondary"),
         "border-l-accent-primary",

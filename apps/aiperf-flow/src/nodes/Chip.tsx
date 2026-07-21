@@ -14,7 +14,7 @@ export function ChipNode({ data }: NodeProps<ChipNodeType>): React.JSX.Element {
   return (
     <div
       className={clsx(
-        "rounded-none border px-3 py-1.5 text-xs font-semibold tracking-wide",
+        "rounded-md border px-3 py-1.5 text-xs font-semibold tracking-wide shadow-sm",
         surfaceClassName("panel"),
         strokeClassName(data.strokeRole ?? "secondary"),
         inkClassName("secondary"),

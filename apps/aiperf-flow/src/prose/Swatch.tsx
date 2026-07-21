@@ -16,7 +16,7 @@ export type SwatchProps = {
 export function Swatch({ color, className }: SwatchProps): React.JSX.Element {
   return (
     <span
-      className={clsx("h-3 w-3 shrink-0 rounded-none", categoryBgClassName(color), className)}
+      className={clsx("h-3 w-3 shrink-0 rounded-sm", categoryBgClassName(color), className)}
       aria-hidden="true"
     />
   );

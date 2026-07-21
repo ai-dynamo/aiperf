@@ -33,7 +33,7 @@ export function PresentationShell({
             type="button"
             aria-label={`Go to slide ${index + 1}`}
             onClick={() => onSlideIndexChange(index)}
-            className={`h-[3px] flex-1 rounded-none transition-colors ${index === slideIndex ? "bg-accent-primary" : "bg-[--color-stroke-secondary] hover:bg-[--color-stroke-primary]"}`}
+            className={`h-[3px] flex-1 rounded-full transition-colors ${index === slideIndex ? "bg-accent-primary" : "bg-[--color-stroke-secondary] hover:bg-[--color-stroke-primary]"}`}
           />
         ))}
       </div>

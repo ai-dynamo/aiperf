@@ -48,6 +48,6 @@ describe("Callout", () => {
     const { container } = render(<Callout className="extra-callout-class">Body</Callout>);
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toContain("extra-callout-class");
-    expect(root.className).toContain("rounded-none");
+    expect(root.className).toMatch(/rounded-(sm|md|lg|xl|full)/);
   });
 });

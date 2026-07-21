@@ -32,7 +32,7 @@ export function Select({ options, value, onChange, label, className }: SelectPro
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className={clsx(
-          "w-full appearance-none rounded-none border border-stroke-primary bg-surface-elevated px-3 py-2 pr-8 text-sm text-ink-primary transition-colors duration-150",
+          "w-full appearance-none rounded-md border border-stroke-primary bg-surface-elevated px-3 py-2 pr-8 text-sm text-ink-primary shadow-sm transition-colors duration-150",
           "hover:border-stroke-secondary",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-page",
           className,

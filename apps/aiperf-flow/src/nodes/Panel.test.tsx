@@ -75,6 +75,6 @@ describe("PanelNode", () => {
     );
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toContain("extra-panel-class");
-    expect(root.className).toContain("rounded-none");
+    expect(root.className).toMatch(/rounded-(md|lg|xl)/);
   });
 });

@@ -10,9 +10,9 @@ import { accentClassName, inkClassName, strokeClassName } from "../theme/tokens.
 function BrandMark(): React.JSX.Element {
   return (
     <span aria-hidden="true" className="flex items-end gap-[3px]">
-      <span className="h-3 w-[5px] bg-accent-primary" />
-      <span className="h-5 w-[5px] bg-accent-primary" />
-      <span className="h-4 w-[5px] bg-accent-primary" />
+      <span className="h-3 w-[5px] rounded-t-sm bg-accent-primary" />
+      <span className="h-5 w-[5px] rounded-t-sm bg-accent-primary" />
+      <span className="h-4 w-[5px] rounded-t-sm bg-accent-primary" />
     </span>
   );
 }
@@ -32,7 +32,7 @@ export function TopBar({
 }): React.JSX.Element {
   return (
     <header
-      className={`relative flex items-center justify-between border-b bg-surface-page px-8 py-4 ${strokeClassName("secondary")}`}
+      className={`relative flex items-center justify-between border-b bg-surface-page px-8 py-4 shadow-sm ${strokeClassName("secondary")}`}
     >
       <div className="flex items-center gap-4">
         <a href="/" className="flex items-center gap-3">

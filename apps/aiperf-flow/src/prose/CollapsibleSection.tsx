@@ -27,13 +27,13 @@ export function CollapsibleSection({
   const [open, setOpen] = useState(defaultOpen);
 
   return (
-    <div className={clsx("rounded-none", className)}>
+    <div className={clsx("rounded-lg", className)}>
       <button
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((prev) => !prev)}
         className={clsx(
-          "flex w-full items-center gap-2 rounded-none px-1 py-1.5 text-left text-sm font-semibold transition-colors duration-150",
+          "flex w-full items-center gap-2 rounded-md px-1 py-1.5 text-left text-sm font-semibold transition-colors duration-150",
           "hover:bg-surface-chrome",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-page",
           inkClassName("primary"),

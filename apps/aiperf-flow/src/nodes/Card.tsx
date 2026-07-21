@@ -11,13 +11,13 @@ import type { CardNodeData } from "./types.js";
 
 export type CardNodeType = Node<CardNodeData, "card">;
 
-const HANDLE_CLASS_NAME = "!rounded-none !border-stroke-primary !bg-accent-primary !h-2 !w-2";
+const HANDLE_CLASS_NAME = "!rounded-full !border-stroke-primary !bg-accent-primary !h-2 !w-2";
 
 export function CardNode({ data }: NodeProps<CardNodeType>): React.JSX.Element {
   return (
     <div
       className={clsx(
-        "min-w-[180px] rounded-none border border-l-2 px-4 py-3",
+        "min-w-[180px] rounded-lg border border-l-2 px-4 py-3 shadow-sm",
         surfaceClassName("elevated"),
         strokeClassName(data.strokeRole ?? "primary"),
         "border-l-accent-primary",

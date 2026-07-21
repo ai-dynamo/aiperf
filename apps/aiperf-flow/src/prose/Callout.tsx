@@ -58,7 +58,7 @@ export function Callout({
   return (
     <div
       className={clsx(
-        "rounded-none border border-l-4 px-4 py-3.5",
+        "rounded-lg border border-l-4 px-4 py-3.5 shadow-sm",
         surfaceClassName("elevated"),
         strokeClassName("secondary"),
         CATEGORY_BORDER_L_CLASSES[category],

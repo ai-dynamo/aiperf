@@ -54,10 +54,10 @@ describe("CollapsibleSection", () => {
     expect(chevron?.getAttribute("class")).toContain("rotate-90");
   });
 
-  it("has no rounded corners or box shadow on the root", () => {
+  it("has rounded corners but no box shadow on the root (borderless disclosure row)", () => {
     const { container } = render(<CollapsibleSection title="Details">Body text</CollapsibleSection>);
     const root = container.firstElementChild as HTMLElement;
-    expect(root.className).toContain("rounded-none");
+    expect(root.className).toContain("rounded-lg");
     expect(root.className).not.toContain("shadow");
   });
 
@@ -69,6 +69,6 @@ describe("CollapsibleSection", () => {
     );
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toContain("extra-class");
-    expect(root.className).toContain("rounded-none");
+    expect(root.className).toContain("rounded-lg");
   });
 });

@@ -32,7 +32,7 @@ export function Button({
     <button
       type={type}
       className={clsx(
-        "rounded-none border px-4 py-2 text-sm font-semibold tracking-wide transition-colors duration-150",
+        "rounded-md border px-4 py-2 text-sm font-semibold tracking-wide shadow-sm transition-colors duration-150 hover:shadow-md",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-page",
         "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-inherit disabled:active:bg-inherit",
         VARIANT_CLASSES[variant],

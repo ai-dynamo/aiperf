@@ -115,9 +115,25 @@ severity-graded — don't approximate it with `info`/`warning`/`success` anymore
 
 ## Design rules
 
-Flat, boxy, purposeful — matches the existing NVIDIA-deck visual language.
+Soft and elevated, purposeful — a modern SaaS-dashboard feel on the app's dark
+charcoal-grey/green palette. (Earlier revisions of this app used a strictly flat/boxy
+`rounded-none`, no-shadow language; that rule was deliberately retired in favor of the
+one below — don't reintroduce `rounded-none` on new work.)
 
-- **No gradients, no box-shadows, no emojis as decoration.** `rounded-none` everywhere (the design-token `--radius-none: 0px` is the only radius token; nothing rounds except `PageTabs`' pills, a documented deliberate exception).
+- **Radius scale**: `rounded-md` for compact elements (`Pill`, `Chip`, `Button`, form
+  controls like `Toggle`/`Select`). `rounded-lg` for standard containers (`Panel`, `Card`,
+  `Callout`, `Table`'s wrapper, `Framed`, deck content cards). `rounded-xl` for large
+  top-level surfaces (e.g. Home's deck cards). `PageTabs`' pill row stays `rounded-full`.
+  Never `rounded-none` — use the smallest of these scales that isn't obviously wrong
+  before inventing a new radius value.
+- **Shadow scale**: `shadow-sm` as the default resting elevation on any `"elevated"`/
+  `"panel"` surface (`Card`, `Panel`, `Callout`, `Table`, `Framed`) — Tailwind's default
+  black-based shadow reads as a soft depth cue on this dark palette without a custom
+  shadow color. `shadow-md` on hover/focus or otherwise emphasized states (an existing
+  `hover:` class list, a selected tab, a clicked `Pill`). Add the shadow alongside the
+  existing border, don't replace one with the other — depth comes from both together.
+- **Still no gradients, no emojis as decoration.** Rounded corners and shadows are the
+  modernization; gradients weren't asked for and would be scope creep.
 - **Colors only from `theme/tokens.ts` role helpers.** Never a raw hex value, never an undefined Tailwind class.
 - **Don't wrap everything in a bordered box.** Mix open sections with `Card`/`Panel`-bordered ones.
 - **Real content only.** Never render a placeholder ("TODO", "Add content here", an empty table). If you don't have the real data/copy, say so and ask, don't fabricate it.
@@ -163,18 +179,20 @@ Before considering a deck/component done:
    template-string interpolation (see above).
 3. Any color, spacing, or typography value not traceable to `theme/tokens.ts`
    or an existing component's established scale?
-4. Run `cd apps/aiperf-flow && npm test && npm run build` — both must be
+4. Any `rounded-none`, or a bordered box with no `shadow-*`? Apply the
+   radius/shadow scale above instead — see "Design rules".
+5. Run `cd apps/aiperf-flow && npm test && npm run build` — both must be
    clean. `npm test` alone does not prove the Tailwind-JIT bug is absent; if
    you touched any dynamic class name, also grep `dist/assets/*.css` after
    `npm run build` for the literal class strings you expect to see.
-5. TDD: was the test written before the implementation, and does it assert
+6. TDD: was the test written before the implementation, and does it assert
    real rendered content/behavior (not just "renders without crashing")?
-6. Does any page render more than one `<ReactFlow>`? If so, confirm each one
+7. Does any page render more than one `<ReactFlow>`? If so, confirm each one
    has its own `<ReactFlowProvider>` (see the trap above), and that the
    page's test asserts on content from *every* diagram on the page, not just
    the first — a shared-provider collision only shows up when you check the
    diagrams other than the last-mounted one.
-7. Wrote a new `Pill`/`Badge`/`Tag`/status-chip? Check `src/prose/Pill.tsx`
+8. Wrote a new `Pill`/`Badge`/`Tag`/status-chip? Check `src/prose/Pill.tsx`
    first — it already covers plain, active/toggle, clickable, and
    category-tone-colored variants. Wrote an uppercase/tracking-wide label
    span (a section kicker, a field label, a status word)? Check

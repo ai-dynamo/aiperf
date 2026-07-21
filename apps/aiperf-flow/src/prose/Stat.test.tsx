@@ -53,7 +53,7 @@ describe("Stat", () => {
     );
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toContain("extra-stat-class");
-    expect(root.className).toContain("rounded-none");
+    expect(root.className).toMatch(/rounded-(sm|md|lg|xl|full)/);
   });
 
   it("gives the label small uppercase tracking-wide styling", () => {

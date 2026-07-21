@@ -58,7 +58,7 @@ function toneClassName(tone: TableRowTone | undefined): string | undefined {
  */
 export function Table({ columns, rows, className }: TableProps): React.JSX.Element {
   return (
-    <table className={clsx("w-full rounded-none border-collapse text-sm", className)}>
+    <table className={clsx("w-full border-collapse text-sm", className)}>
       <thead>
         <tr className={clsx("border-b-2", strokeClassName("primary"))}>
           {columns.map((column) => (

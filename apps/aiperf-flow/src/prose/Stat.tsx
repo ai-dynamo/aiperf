@@ -43,7 +43,7 @@ export function Stat({ label, value, trend, tone = "neutral", className }: StatP
   return (
     <div
       className={clsx(
-        "rounded-none border px-4 py-3",
+        "rounded-lg border px-4 py-3 shadow-sm",
         surfaceClassName("elevated"),
         strokeClassName("secondary"),
         className,

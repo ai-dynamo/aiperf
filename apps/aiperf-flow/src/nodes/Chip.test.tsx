@@ -47,6 +47,6 @@ describe("ChipNode", () => {
     );
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toContain("extra-chip-class");
-    expect(root.className).toContain("rounded-none");
+    expect(root.className).toMatch(/rounded-(md|lg|xl)/);
   });
 });

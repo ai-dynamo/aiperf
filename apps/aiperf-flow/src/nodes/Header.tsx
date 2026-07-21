@@ -14,7 +14,7 @@ export function HeaderNode({ data }: NodeProps<HeaderNodeType>): React.JSX.Eleme
   return (
     <div
       className={clsx(
-        "min-w-[280px] rounded-none border-b px-4 py-3",
+        "min-w-[280px] rounded-lg border-b px-4 py-3 shadow-sm",
         surfaceClassName(data.surfaceRole ?? "chrome"),
         strokeClassName("tertiary"),
         data.className,

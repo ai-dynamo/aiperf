@@ -165,7 +165,7 @@ function DeckCard({ deck }: { deck: DeckListing }): React.JSX.Element {
   return (
     <Link
       to={deck.path}
-      className={`group block rounded-none border p-6 transition-colors hover:border-accent-primary hover:bg-surface-panel ${surfaceClassName("elevated")} ${strokeClassName("primary")}`}
+      className={`group block rounded-xl border p-6 shadow-sm transition-colors hover:border-accent-primary hover:bg-surface-panel hover:shadow-md ${surfaceClassName("elevated")} ${strokeClassName("primary")}`}
     >
       <Stack gap={8}>
         <h2
