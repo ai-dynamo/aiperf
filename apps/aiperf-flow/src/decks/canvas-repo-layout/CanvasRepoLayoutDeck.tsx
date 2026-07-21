@@ -14,8 +14,9 @@ import { Grid } from "../../layout/Grid.js";
 import { Divider } from "../../layout/Divider.js";
 import { Callout } from "../../prose/Callout.js";
 import { Code } from "../../prose/Code.js";
+import { Pill } from "../../prose/Pill.js";
 import { Table } from "../../prose/Table.js";
-import { categoryBgTintClassName, categoryClassName, type CategoryRole } from "../../theme/tokens.js";
+import type { CategoryRole } from "../../theme/tokens.js";
 
 // Ported from docs/canvases/canvas-repo-layout.canvas.tsx (a real, hand-authored Cursor
 // Canvas). Single-view canvas: no PageTabs union in the source, so this is one component.
@@ -103,14 +104,7 @@ const SYMLINK_COMMAND = `ln -s "$PWD/docs/canvases/my-topic.canvas.tsx" \\
   ~/.cursor/projects/home-anthony-nvidia-projects-aiperf-ajc-rust/canvases/`;
 
 function TonePill({ tone }: { tone: FlowStepTone }): React.JSX.Element {
-  const category = TONE_CATEGORY[tone];
-  return (
-    <span
-      className={`rounded-none px-2 py-0.5 text-xs font-semibold ${categoryBgTintClassName(category)} ${categoryClassName(category)}`}
-    >
-      {tone}
-    </span>
-  );
+  return <Pill tone={TONE_CATEGORY[tone]}>{tone}</Pill>;
 }
 
 /**
@@ -130,15 +124,9 @@ export function CanvasRepoLayoutDeck(): React.JSX.Element {
           through its managed canvases directory.
         </p>
         <Row gap={8} wrap>
-          <span className={`rounded-none px-2 py-0.5 text-xs font-semibold ${categoryBgTintClassName("green")} ${categoryClassName("green")}`}>
-            7 canvases migrated
-          </span>
-          <span className={`rounded-none px-2 py-0.5 text-xs font-semibold ${categoryBgTintClassName("blue")} ${categoryClassName("blue")}`}>
-            docs/canvases/
-          </span>
-          <span className={`rounded-none px-2 py-0.5 text-xs font-semibold ${categoryBgTintClassName("gray")} ${categoryClassName("gray")}`}>
-            symlink bridge
-          </span>
+          <Pill tone="green">7 canvases migrated</Pill>
+          <Pill tone="blue">docs/canvases/</Pill>
+          <Pill tone="gray">symlink bridge</Pill>
         </Row>
       </Stack>
 

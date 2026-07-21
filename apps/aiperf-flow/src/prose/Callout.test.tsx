@@ -30,11 +30,12 @@ describe("Callout", () => {
   });
 
   it("maps each tone to its category color", () => {
-    const cases: Array<["info" | "warning" | "danger" | "success", string]> = [
+    const cases: Array<["info" | "warning" | "danger" | "success" | "neutral", string]> = [
       ["info", "border-l-category-blue"],
       ["warning", "border-l-category-yellow"],
       ["danger", "border-l-category-red"],
       ["success", "border-l-category-green"],
+      ["neutral", "border-l-category-gray"],
     ];
     for (const [tone, expected] of cases) {
       const { container } = render(<Callout tone={tone}>Body</Callout>);

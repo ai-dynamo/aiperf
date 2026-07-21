@@ -14,35 +14,14 @@ import { Row } from "../../layout/Row.js";
 import { Grid } from "../../layout/Grid.js";
 import { Divider } from "../../layout/Divider.js";
 import { Callout } from "../../prose/Callout.js";
+import { Pill as Badge } from "../../prose/Pill.js";
 import { TopBar } from "../../shell/TopBar.js";
-import { inkClassName, strokeClassName, surfaceClassName, accentClassName } from "../../theme/tokens.js";
+import { inkClassName, strokeClassName, surfaceClassName } from "../../theme/tokens.js";
 
 //! Ported from docs/canvases/weka-segment-store.canvas.tsx (single-view Cursor canvas, no
 //! internal page tabs). Content plane: content-addressed segment pool dedup, the unified
 //! on-disk store (content.idx/content.blob + nodes.idx/nodes.blob), and A1-vs-A2 format
 //! detection at read time (rust/aiperf-graph segment store, WEKA_UNIFIED_STORE).
-
-/** One-off local badge, scoped to this deck. No shared `Pill`/badge primitive exists yet in `apps/aiperf-flow`. */
-function Badge({
-  children,
-  active,
-}: {
-  children: React.ReactNode;
-  active?: boolean;
-}): React.JSX.Element {
-  return (
-    <span
-      className={clsx(
-        "rounded-none border px-2 py-0.5 text-xs font-semibold",
-        strokeClassName(active ? "primary" : "secondary"),
-        active ? surfaceClassName("elevated") : surfaceClassName("panel"),
-        active ? accentClassName("primary") : inkClassName("secondary"),
-      )}
-    >
-      {children}
-    </span>
-  );
-}
 
 /** One-off local segment-id chip, scoped to this deck (ported from the canvas's `SegChip`). */
 function SegChip({ id, shared }: { id: string; shared?: boolean }): React.JSX.Element {

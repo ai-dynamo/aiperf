@@ -14,6 +14,7 @@ import { Row } from "../../layout/Row.js";
 import { Grid } from "../../layout/Grid.js";
 import { Divider } from "../../layout/Divider.js";
 import { Callout } from "../../prose/Callout.js";
+import { Pill } from "../../prose/Pill.js";
 import { Table } from "../../prose/Table.js";
 import { Stat } from "../../prose/Stat.js";
 import { inkClassName, strokeClassName } from "../../theme/tokens.js";
@@ -24,16 +25,6 @@ import { inkClassName, strokeClassName } from "../../theme/tokens.js";
 // collapse a 13-kind NodeUnion into a two-effect Step/Emit IR, scoped to a
 // graph lane kept permanently separate from the legacy Conversation/Turn
 // runtime. Source: specs/2026-06-30-graph-step-emit-separated-runtime-strategy.md.
-
-function Pill({ children }: { children: React.ReactNode }): React.JSX.Element {
-  return (
-    <span
-      className={`rounded-none border px-2 py-0.5 text-xs font-semibold ${strokeClassName("secondary")} ${inkClassName("secondary")}`}
-    >
-      {children}
-    </span>
-  );
-}
 
 // -----------------------------------------------------------------------
 // Header

@@ -10,43 +10,10 @@
 
 import type { ReactNode } from "react";
 import clsx from "clsx";
-import {
-  inkClassName,
-  strokeClassName,
-  surfaceClassName,
-  accentClassName,
-} from "../../theme/tokens.js";
+import { inkClassName, strokeClassName, surfaceClassName } from "../../theme/tokens.js";
 import type { Status } from "./data.js";
 
-/** A compact tag/label; `active` reads as the selected/current variant. */
-export function Pill({
-  children,
-  active = false,
-  onClick,
-  className,
-}: {
-  children: ReactNode;
-  active?: boolean;
-  onClick?: () => void;
-  className?: string;
-}): React.JSX.Element {
-  const base = clsx(
-    "inline-flex items-center rounded-none border px-2 py-0.5 text-xs font-medium",
-    active
-      ? clsx("border-accent-primary", accentClassName("primary"))
-      : clsx(strokeClassName("secondary"), inkClassName("secondary")),
-    onClick && "cursor-pointer",
-    className,
-  );
-  if (onClick) {
-    return (
-      <button type="button" className={base} onClick={onClick} aria-pressed={active}>
-        {children}
-      </button>
-    );
-  }
-  return <span className={base}>{children}</span>;
-}
+export { Pill } from "../../prose/Pill.js";
 
 const STATUS_LABELS: Readonly<Record<Status, string>> = {
   built: "Built",

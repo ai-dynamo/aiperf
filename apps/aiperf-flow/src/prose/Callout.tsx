@@ -13,7 +13,7 @@ import {
 } from "../theme/tokens.js";
 import type { CategoryRole } from "../theme/tokens.js";
 
-export type CalloutTone = "info" | "warning" | "danger" | "success";
+export type CalloutTone = "info" | "warning" | "danger" | "success" | "neutral";
 
 export type CalloutProps = {
   /** Semantic tone. Selects the accent border and title color. Defaults to `"info"`. */
@@ -30,6 +30,21 @@ const toneCategory: Record<CalloutTone, CategoryRole> = {
   warning: "yellow",
   danger: "red",
   success: "green",
+  neutral: "gray",
+};
+
+// Tailwind's compiler only picks up classes it can see as literal strings in source, so a
+// dynamically interpolated `border-l-category-${category}` would be purged for any role whose
+// exact string doesn't happen to appear verbatim elsewhere (see the same note in theme/tokens.ts).
+const CATEGORY_BORDER_L_CLASSES: Record<CategoryRole, string> = {
+  green: "border-l-category-green",
+  yellow: "border-l-category-yellow",
+  purple: "border-l-category-purple",
+  blue: "border-l-category-blue",
+  red: "border-l-category-red",
+  orange: "border-l-category-orange",
+  cyan: "border-l-category-cyan",
+  gray: "border-l-category-gray",
 };
 
 /** Tone-colored admonition box for calling out important notes in prose content. */
@@ -46,7 +61,7 @@ export function Callout({
         "rounded-none border border-l-4 px-4 py-3",
         surfaceClassName("elevated"),
         strokeClassName("secondary"),
-        `border-l-category-${category}`,
+        CATEGORY_BORDER_L_CLASSES[category],
         className,
       )}
     >
