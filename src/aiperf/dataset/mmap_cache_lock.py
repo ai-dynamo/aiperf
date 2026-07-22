@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import time
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -37,14 +38,27 @@ _LOCK_LOG_EVERY_SECONDS = 10.0
 _LOCK_DEFAULT_TIMEOUT_S = 1800.0
 # Substring of the ``NotImplementedError`` message raised by filelock's
 # ``UnixFileLock`` when ``fcntl.flock`` is unavailable (NFS without flock,
-# some FUSE mounts). Anchored to filelock 3.13–3.24 (``filelock>=3.13``);
-# filelock>=3.25 auto-mutates to SoftFileLock instead of raising, so this
-# branch is only hit on the lower end of the pin. A test asserts this
-# constant so a future filelock upgrade that drops the string fails loudly.
+# some FUSE mounts). Present in filelock 3.14–3.23; 3.13.x typo'd it as
+# ``"user SoftFileLock instead"``; filelock>=3.24 auto-mutates to SoftFileLock
+# instead of raising, so this branch is only hit on the mid-range of
+# ``filelock>=3.13``. A test asserts this constant so a future filelock
+# upgrade that drops the string fails loudly.
 _FLOCK_UNSUPPORTED_HINT = "use SoftFileLock instead"
 # Group-writable so multiple users sharing a cache dir can contend on the
 # same lock file under a restrictive umask (common on shared NFS clusters).
+# FileLock applies this via fchmod; SoftFileLock only passes it to os.open
+# (umask-masked), so callers must chmod after SoftFileLock acquire.
 _LOCK_FILE_MODE = 0o664
+
+
+def _ensure_lock_file_mode(lock_path: Path) -> None:
+    """Force ``_LOCK_FILE_MODE`` on ``lock_path`` (SoftFileLock is umask-masked)."""
+    try:
+        os.chmod(lock_path, _LOCK_FILE_MODE)
+    except OSError:
+        _logger.debug(
+            lambda: f"Best-effort chmod of mmap-cache lock {lock_path} failed."
+        )
 
 
 def _blocking_acquire(
@@ -182,6 +196,11 @@ async def acquire_cache_lock(
             acquired = await asyncio.to_thread(
                 _blocking_acquire, lock, timeout, lock_path, _cache_complete
             )
+            # SoftFileLock only applies mode via os.open (umask-masked); FileLock
+            # fchmods. Force group-writable so a second user can contend under
+            # umask 077 (else EPERM falls through to the unlocked-populate path).
+            if acquired:
+                await asyncio.to_thread(_ensure_lock_file_mode, lock_path)
     except Timeout:
         # A populator SIGKILLed *before* completing (e.g. on the SoftFileLock/NFS
         # path, where the lock tombstone persists) leaves an incomplete entry, so

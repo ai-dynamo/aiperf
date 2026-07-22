@@ -1123,6 +1123,9 @@ class TestAcquireCacheLockBypassAndFallback:
     async def test_soft_file_lock_fallback_on_flock_unsupported(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        import os
+        import stat
+
         from filelock import FileLock, SoftFileLock
 
         from aiperf.dataset import mmap_cache_lock
@@ -1132,8 +1135,8 @@ class TestAcquireCacheLockBypassAndFallback:
         assert mmap_cache_lock._FLOCK_UNSUPPORTED_HINT == "use SoftFileLock instead"
 
         attempted: list[type] = []
-        soft_modes: list[int | None] = []
         real_blocking = mmap_cache_lock._blocking_acquire
+        lock_path_holder: list[Path] = []
 
         def flock_then_soft(lock, timeout, lock_path, cache_complete_check=None):
             attempted.append(type(lock))
@@ -1141,16 +1144,25 @@ class TestAcquireCacheLockBypassAndFallback:
                 raise NotImplementedError(
                     f"FileLock is unavailable, {mmap_cache_lock._FLOCK_UNSUPPORTED_HINT}"
                 )
-            soft_modes.append(getattr(lock, "mode", None))
+            lock_path_holder.append(Path(lock_path))
             return real_blocking(lock, timeout, lock_path, cache_complete_check)
 
         monkeypatch.setattr(mmap_cache_lock, "_blocking_acquire", flock_then_soft)
 
-        async with mmap_cache.acquire_cache_lock("softlock", timeout=5.0):
-            pass
-
-        assert attempted == [FileLock, SoftFileLock]
-        assert soft_modes == [mmap_cache_lock._LOCK_FILE_MODE]
+        # SoftFileLock's mode= is umask-masked; the post-acquire chmod must still
+        # yield 0o664 under a restrictive cluster umask.
+        old_umask = os.umask(0o077)
+        try:
+            async with mmap_cache.acquire_cache_lock("softlock", timeout=5.0):
+                assert attempted == [FileLock, SoftFileLock]
+                assert lock_path_holder, "SoftFileLock acquire path was not exercised"
+                on_disk = stat.S_IMODE(lock_path_holder[0].stat().st_mode)
+                assert on_disk == mmap_cache_lock._LOCK_FILE_MODE, (
+                    f"SoftFileLock lock file mode {oct(on_disk)} != "
+                    f"{oct(mmap_cache_lock._LOCK_FILE_MODE)} under umask 077"
+                )
+        finally:
+            os.umask(old_umask)
 
     @pytest.mark.asyncio
     async def test_unrelated_not_implemented_error_propagates(
