@@ -63,6 +63,20 @@ def _make_dataset_metadata(
     )
 
 
+class TestAccuracyRecordProcessorInit:
+    def test_raises_when_accuracy_not_enabled(self, monkeypatch) -> None:
+        """PostProcessorDisabled raised when accuracy mode is off."""
+        from aiperf.common.exceptions import PostProcessorDisabled
+
+        run = make_benchmark_run(
+            model_names=["m"],
+            endpoint_type=EndpointType.COMPLETIONS,
+            streaming=False,
+        )
+        with pytest.raises(PostProcessorDisabled):
+            AccuracyRecordProcessor(run=run, service_id="test")
+
+
 class TestAccuracyRecordProcessorOnDatasetConfigured:
     def test_populates_ground_truths_from_metadata(self, monkeypatch) -> None:
         processor = _make_processor(monkeypatch)
@@ -222,6 +236,52 @@ class TestAccuracyRecordProcessorSessionBounds:
         assert result.task is None
         assert result.passed is True
 
+    async def test_process_record_grades_reasoning_model_on_content_only(
+        self, monkeypatch
+    ) -> None:
+        """Grader receives only the answer content, not reasoning + content.
+
+        Regression test for https://github.com/ai-dynamo/aiperf/issues/1136:
+        reasoning models returned 0% because the CoT preamble was concatenated
+        with the final answer before exact-match comparison.
+        """
+        from aiperf.common.models.record_models import ReasoningResponseData
+
+        processor = _make_processor(monkeypatch)
+        processor._ground_truths = ["True"]
+
+        grading_result = GradingResult(
+            correct=True,
+            confidence=1.0,
+            reasoning="Correct",
+            extracted_answer="True",
+            ground_truth="True",
+        )
+        processor.grader.grade = AsyncMock(return_value=grading_result)
+
+        reasoning_record = MagicMock(spec=ParsedResponseRecord)
+        reasoning_record.content_responses = [
+            ParsedResponse(
+                perf_ns=0,
+                data=ReasoningResponseData(
+                    reasoning="Thinking Process:\n\n1. Analyze the request... True",
+                    content="\n\nTrue",
+                ),
+            ),
+        ]
+
+        metadata = create_metric_metadata(session_num=0)
+        result = await processor.process_record(reasoning_record, metadata)
+
+        assert result.passed is True
+        # Grader must have received only the answer content, not the CoT preamble.
+        processor.grader.grade.assert_awaited_once_with("\n\nTrue", "True")
+        assert result.model_output == "\n\nTrue"
+        assert (
+            result.model_thinking
+            == "Thinking Process:\n\n1. Analyze the request... True"
+        )
+
     async def test_process_record_raises_if_not_configured(
         self, monkeypatch, sample_parsed_record
     ) -> None:
@@ -329,4 +389,88 @@ class TestExtractOutputAndThinking:
         record = self._record([])
         output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
         assert output == ""
+        assert thinking is None
+
+    def test_reasoning_only_content_none_falls_back_to_reasoning(self) -> None:
+        """content=None with reasoning present → reasoning used as model_output fallback."""
+        from aiperf.common.models.record_models import ReasoningResponseData
+
+        record = self._record(
+            [ReasoningResponseData(content=None, reasoning="Thinking... True")]
+        )
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == "Thinking... True"
+        assert thinking == "Thinking... True"
+
+    def test_reasoning_only_content_empty_falls_back_to_reasoning(self) -> None:
+        """content='' is treated as missing; reasoning used as model_output fallback."""
+        from aiperf.common.models.record_models import ReasoningResponseData
+
+        record = self._record(
+            [ReasoningResponseData(content="", reasoning="Thinking... True")]
+        )
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == "Thinking... True"
+        assert thinking == "Thinking... True"
+
+    def test_unknown_subclass_uses_get_text_not_content_attr(self) -> None:
+        """Non-Reasoning/ToolCall subclasses go through get_text(), not .content.
+
+        Regression: the old getattr-based implementation would have read the
+        .content attribute directly, returning the wrong value for any
+        BaseResponseData subclass whose .content differs from .get_text().
+        """
+        from dataclasses import dataclass
+
+        from aiperf.common.models.record_models import BaseResponseData
+
+        @dataclass(slots=True)
+        class CustomResponseData(BaseResponseData):
+            content: str = "wrong"
+
+            def get_text(self) -> str:
+                return "correct"
+
+        record = self._record([CustomResponseData()])
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == "correct"
+        assert thinking is None
+
+    def test_none_data_in_response_is_skipped(self) -> None:
+        """resp.data=None entries are skipped without error."""
+        from aiperf.common.models.record_models import TextResponseData
+
+        record = MagicMock(spec=ParsedResponseRecord)
+        record.content_responses = [
+            ParsedResponse(perf_ns=0, data=None),
+            ParsedResponse(perf_ns=1, data=TextResponseData(text="hello")),
+        ]
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == "hello"
+        assert thinking is None
+
+    def test_tool_call_response_includes_content_and_tool_call_text(self) -> None:
+        """ToolCallResponseData appends content then tool_call_text to model_output."""
+        from aiperf.common.models.record_models import ToolCallResponseData
+
+        record = self._record(
+            [
+                ToolCallResponseData(
+                    tool_call_text='{"name":"fn"}', content="Sure, calling:"
+                )
+            ]
+        )
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == 'Sure, calling:{"name":"fn"}'
+        assert thinking is None
+
+    def test_tool_call_response_no_content_uses_tool_call_text_only(self) -> None:
+        """ToolCallResponseData with content=None only adds tool_call_text."""
+        from aiperf.common.models.record_models import ToolCallResponseData
+
+        record = self._record(
+            [ToolCallResponseData(tool_call_text='{"name":"fn"}', content=None)]
+        )
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == '{"name":"fn"}'
         assert thinking is None

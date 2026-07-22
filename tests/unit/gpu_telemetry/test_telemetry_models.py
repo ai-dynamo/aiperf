@@ -70,6 +70,56 @@ def counter_time_series() -> GpuMetricTimeSeries:
     return ts
 
 
+class TestTelemetryMetrics:
+    """Test TelemetryMetrics field naming and compatibility behavior."""
+
+    def test_legacy_nvidia_fields_validate_to_nvidia_field_names(self) -> None:
+        """Legacy NVIDIA input aliases are accepted but not re-emitted."""
+        metrics = TelemetryMetrics(
+            gpu_power_usage=75.5,
+            energy_consumption=1.25,
+            gpu_utilization=85.0,
+            mem_utilization=45.0,
+            gpu_memory_used=15.26,
+            gpu_temperature=67.0,
+            sm_utilization=91.0,
+            decoder_utilization=25.0,
+            encoder_utilization=30.0,
+            jpg_utilization=10.0,
+            xid_errors=0.0,
+            power_violation=5000.0,
+        )
+
+        assert metrics.nvidia_power_usage == 75.5
+        assert metrics.nvidia_energy_consumption == 1.25
+        assert metrics.nvidia_gpu_utilization == 85.0
+        assert metrics.nvidia_memory_utilization == 45.0
+        assert metrics.nvidia_memory_used == 15.26
+        assert metrics.nvidia_temperature == 67.0
+        assert metrics.nvidia_sm_utilization == 91.0
+        assert metrics.nvidia_decoder_utilization == 25.0
+        assert metrics.nvidia_encoder_utilization == 30.0
+        assert metrics.nvidia_jpg_utilization == 10.0
+        assert metrics.nvidia_xid_errors == 0.0
+        assert metrics.nvidia_power_violation == 5000.0
+
+        dumped = metrics.model_dump(exclude_none=True)
+        assert dumped == {
+            "nvidia_power_usage": 75.5,
+            "nvidia_energy_consumption": 1.25,
+            "nvidia_gpu_utilization": 85.0,
+            "nvidia_memory_utilization": 45.0,
+            "nvidia_memory_used": 15.26,
+            "nvidia_temperature": 67.0,
+            "nvidia_sm_utilization": 91.0,
+            "nvidia_decoder_utilization": 25.0,
+            "nvidia_encoder_utilization": 30.0,
+            "nvidia_jpg_utilization": 10.0,
+            "nvidia_xid_errors": 0.0,
+            "nvidia_power_violation": 5000.0,
+        }
+
+
 class TestTelemetryRecord:
     """Test TelemetryRecord model validation and data structure integrity.
 
@@ -96,10 +146,10 @@ class TestTelemetryRecord:
             device="nvidia0",
             hostname="ed7e7a5e585f",
             telemetry_data=TelemetryMetrics(
-                gpu_power_usage=75.5,
-                energy_consumption=1000000000,
-                gpu_utilization=85.0,
-                gpu_memory_used=15.26,
+                nvidia_power_usage=75.5,
+                nvidia_energy_consumption=1000000000,
+                nvidia_gpu_utilization=85.0,
+                nvidia_memory_used=15.26,
             ),
         )
 
@@ -113,10 +163,10 @@ class TestTelemetryRecord:
         assert record.device == "nvidia0"
         assert record.hostname == "ed7e7a5e585f"
 
-        assert record.telemetry_data.gpu_power_usage == 75.5
-        assert record.telemetry_data.energy_consumption == 1000000000
-        assert record.telemetry_data.gpu_utilization == 85.0
-        assert record.telemetry_data.gpu_memory_used == 15.26
+        assert record.telemetry_data.nvidia_power_usage == 75.5
+        assert record.telemetry_data.nvidia_energy_consumption == 1000000000
+        assert record.telemetry_data.nvidia_gpu_utilization == 85.0
+        assert record.telemetry_data.nvidia_memory_used == 15.26
 
     def test_telemetry_record_minimal_creation(self):
         """Test creating a TelemetryRecord with only required fields.
@@ -145,10 +195,10 @@ class TestTelemetryRecord:
         assert record.pci_bus_id is None
         assert record.device is None
         assert record.hostname is None
-        assert record.telemetry_data.gpu_power_usage is None
-        assert record.telemetry_data.energy_consumption is None
-        assert record.telemetry_data.gpu_utilization is None
-        assert record.telemetry_data.gpu_memory_used is None
+        assert record.telemetry_data.nvidia_power_usage is None
+        assert record.telemetry_data.nvidia_energy_consumption is None
+        assert record.telemetry_data.nvidia_gpu_utilization is None
+        assert record.telemetry_data.nvidia_memory_used is None
 
     def test_telemetry_record_field_validation(self):
         """Test Pydantic validation of required fields.
@@ -217,17 +267,17 @@ class TestGpuTelemetrySnapshot:
         snapshot = GpuTelemetrySnapshot(
             timestamp_ns=1000000000,
             metrics={
-                "gpu_power_usage": 75.5,
-                "gpu_utilization": 85.0,
-                "gpu_memory_used": 15.26,
+                "nvidia_power_usage": 75.5,
+                "nvidia_gpu_utilization": 85.0,
+                "nvidia_memory_used": 15.26,
             },
         )
 
         assert snapshot.timestamp_ns == 1000000000
         assert len(snapshot.metrics) == 3
-        assert snapshot.metrics["gpu_power_usage"] == 75.5
-        assert snapshot.metrics["gpu_utilization"] == 85.0
-        assert snapshot.metrics["gpu_memory_used"] == 15.26
+        assert snapshot.metrics["nvidia_power_usage"] == 75.5
+        assert snapshot.metrics["nvidia_gpu_utilization"] == 85.0
+        assert snapshot.metrics["nvidia_memory_used"] == 15.26
 
     def test_snapshot_empty_metrics(self):
         """Test creating a snapshot with no metrics."""
@@ -806,44 +856,44 @@ class TestGpuTelemetryData:
         """Test adding TelemetryRecord creates grouped snapshots."""
         record = _make_record(
             1_000_000_000,
-            gpu_power_usage=100.0,
-            gpu_utilization=80.0,
-            gpu_memory_used=15.0,
+            nvidia_power_usage=100.0,
+            nvidia_gpu_utilization=80.0,
+            nvidia_memory_used=15.0,
         )
         gpu_telemetry_data.add_record(record)
 
         ts = gpu_telemetry_data.time_series
         assert len(ts) == 1
         assert ts.timestamps[0] == 1_000_000_000
-        assert ts.get_metric_array("gpu_power_usage")[0] == 100.0
-        assert ts.get_metric_array("gpu_utilization")[0] == 80.0
-        assert ts.get_metric_array("gpu_memory_used")[0] == 15.0
+        assert ts.get_metric_array("nvidia_power_usage")[0] == 100.0
+        assert ts.get_metric_array("nvidia_gpu_utilization")[0] == 80.0
+        assert ts.get_metric_array("nvidia_memory_used")[0] == 15.0
 
     def test_add_record_filters_none_values(self, gpu_telemetry_data: GpuTelemetryData):
         """Test that None metric values are filtered out."""
         record = _make_record(
             1_000_000_000,
-            gpu_power_usage=100.0,
-            gpu_memory_used=15.0,
-            # gpu_utilization intentionally omitted (will be None)
+            nvidia_power_usage=100.0,
+            nvidia_memory_used=15.0,
+            # nvidia_gpu_utilization intentionally omitted (will be None)
         )
         gpu_telemetry_data.add_record(record)
 
         ts = gpu_telemetry_data.time_series
         assert len(ts) == 1
-        assert ts.get_metric_array("gpu_power_usage") is not None
-        assert ts.get_metric_array("gpu_memory_used") is not None
-        assert ts.get_metric_array("gpu_utilization") is None
+        assert ts.get_metric_array("nvidia_power_usage") is not None
+        assert ts.get_metric_array("nvidia_memory_used") is not None
+        assert ts.get_metric_array("nvidia_gpu_utilization") is None
 
     def test_get_metric_result(self, gpu_telemetry_data: GpuTelemetryData):
         """Test getting MetricResult for a specific metric."""
         for i, power in enumerate([100.0, 120.0, 80.0]):
             gpu_telemetry_data.add_record(
-                _make_record(1_000_000_000 + i * 1_000_000, gpu_power_usage=power)
+                _make_record(1_000_000_000 + i * 1_000_000, nvidia_power_usage=power)
             )
 
         result = gpu_telemetry_data.get_metric_result(
-            "gpu_power_usage", "power_tag", "GPU Power", "W"
+            "nvidia_power_usage", "power_tag", "GPU Power", "W"
         )
 
         assert result.tag == "power_tag"
@@ -860,13 +910,13 @@ class TestGpuTelemetryData:
         # Add records: warmup + profiling
         for ts, power in [(1, 50.0), (2, 100.0), (3, 120.0), (4, 80.0)]:
             gpu_telemetry_data.add_record(
-                _make_record(ts * 1_000_000_000, gpu_power_usage=power)
+                _make_record(ts * 1_000_000_000, nvidia_power_usage=power)
             )
 
         # Exclude warmup at 1s
         time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=5_000_000_000)
         result = gpu_telemetry_data.get_metric_result(
-            "gpu_power_usage", "power_tag", "GPU Power", "W", time_filter=time_filter
+            "nvidia_power_usage", "power_tag", "GPU Power", "W", time_filter=time_filter
         )
 
         # Stats should exclude warmup value of 50.0
@@ -882,12 +932,12 @@ class TestGpuTelemetryData:
         # Add records: baseline + profiling
         for ts, energy in [(1, 1000.0), (2, 1200.0), (3, 1500.0), (4, 1800.0)]:
             gpu_telemetry_data.add_record(
-                _make_record(ts * 1_000_000_000, energy_consumption=energy)
+                _make_record(ts * 1_000_000_000, nvidia_energy_consumption=energy)
             )
 
         time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=5_000_000_000)
         result = gpu_telemetry_data.get_metric_result(
-            "energy_consumption",
+            "nvidia_energy_consumption",
             "energy_tag",
             "Energy",
             "MJ",

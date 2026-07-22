@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import BaselineKind, CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.models import (
     ConversationMetadata,
@@ -14,6 +14,7 @@ from aiperf.common.models import (
     DatasetMetadata,
     TurnMetadata,
 )
+from aiperf.config.rate_series import RateSeriesConfig
 from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import ArrivalPattern, DatasetSamplingStrategy, TimingMode
@@ -62,6 +63,14 @@ class MockStrategy:
         self.handle_credit_return_calls.append(credit)
 
 
+@dataclass
+class MockRateSettableStrategy(MockStrategy):
+    rate_updates: list[float] = field(default_factory=list)
+
+    def set_request_rate(self, rate: float) -> None:
+        self.rate_updates.append(rate)
+
+
 def mock_conc_mgr() -> MagicMock:
     m = MagicMock()
     m.configure_for_phase = MagicMock()
@@ -99,6 +108,7 @@ def cfg(
     conc_ramp: float | None = None,
     prefill_ramp: float | None = None,
     rate_ramp: float | None = None,
+    rate_series: RateSeriesConfig | None = None,
 ) -> CreditPhaseConfig:
     return CreditPhaseConfig(
         phase=phase,
@@ -114,6 +124,7 @@ def cfg(
         concurrency_ramp_duration_sec=conc_ramp,
         prefill_concurrency_ramp_duration_sec=prefill_ramp,
         request_rate_ramp_duration_sec=rate_ramp,
+        request_rate_series=rate_series,
     )
 
 
@@ -148,6 +159,7 @@ def conv_src() -> MagicMock:
 def pub() -> MagicMock:
     m = MagicMock()
     m.publish_phase_start = AsyncMock()
+    m.publish_phase_baseline_request = AsyncMock()
     m.publish_phase_sending_complete = AsyncMock()
     m.publish_phase_complete = AsyncMock()
     m.publish_progress = AsyncMock()
@@ -192,6 +204,69 @@ async def runner(
 
 
 class TestPhaseRunnerLifecycle:
+    async def test_baseline_boundary_capture_is_fire_and_forget(
+        self, runner: PhaseRunner, pub: MagicMock
+    ) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_publish(*args, **kwargs):
+            started.set()
+            await release.wait()
+
+        pub.publish_phase_baseline_request = AsyncMock(side_effect=slow_publish)
+
+        boundary_ns = runner._capture_baseline_boundary("phase-1", BaselineKind.START)
+
+        assert isinstance(boundary_ns, int)
+        await asyncio.wait_for(started.wait(), timeout=0.1)
+        pub.publish_phase_baseline_request.assert_called_once_with(
+            runner._config, "phase-1", BaselineKind.START
+        )
+        release.set()
+        await asyncio.sleep(0)
+
+    async def test_return_complete_waits_for_end_baseline_publish_before_phase_complete(
+        self, runner: PhaseRunner, pub: MagicMock
+    ) -> None:
+        events: list[str] = []
+        release_baseline = asyncio.Event()
+
+        async def slow_baseline_publish(*args, **kwargs):
+            events.append("baseline_start")
+            await release_baseline.wait()
+            events.append("baseline_done")
+
+        async def record_phase_complete(*args, **kwargs):
+            events.append("phase_complete")
+
+        pub.publish_phase_baseline_request = AsyncMock(
+            side_effect=slow_baseline_publish
+        )
+        pub.publish_phase_complete = AsyncMock(side_effect=record_phase_complete)
+        runner._baseline_start_ns = None
+        runner._baseline_end_ns = None
+        runner._lifecycle.start()
+        runner._lifecycle.mark_sending_complete(timeout_triggered=False)
+        runner._progress.all_credits_returned_event.set()
+
+        task = asyncio.create_task(
+            runner._wait_for_returning_complete(phase_id="phase-1")
+        )
+        await asyncio.wait_for(asyncio.sleep(0), timeout=0.1)
+
+        assert events == ["baseline_start"]
+        assert not task.done()
+        pub.publish_phase_complete.assert_not_called()
+
+        release_baseline.set()
+        await asyncio.wait_for(task, timeout=0.1)
+
+        assert events == ["baseline_start", "baseline_done", "phase_complete"]
+        pub.publish_phase_baseline_request.assert_called_once_with(
+            runner._config, "phase-1", BaselineKind.END
+        )
+
     async def test_run_creates_strategy_via_factory(
         self,
         conv_src: MagicMock,
@@ -391,6 +466,66 @@ class TestRamperCreation:
     ) -> None:
         r = make_runner(
             cfg(rate=100.0, rate_ramp=10.0), conv_src, pub, router, conc, cancel, cb
+        )
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
+        ):
+            r._progress.all_credits_sent_event.set()
+            r._progress.all_credits_returned_event.set()
+            await r.run(is_final_phase=True)
+            assert len(r._rampers) == 0
+
+    async def test_rate_series_controller_created_for_rate_settable_strategy(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        rate_series = RateSeriesConfig(
+            points=[{"time_s": 0, "qps": 5}, {"time_s": 10, "qps": 15}]
+        )
+        r = make_runner(
+            cfg(rate=5.0, rate_series=rate_series),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
+        )
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockRateSettableStrategy(),
+        ):
+            r._progress.all_credits_sent_event.set()
+            r._progress.all_credits_returned_event.set()
+            await r.run(is_final_phase=True)
+            assert len(r._rampers) == 1
+
+    async def test_rate_series_requires_rate_settable_strategy(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        rate_series = RateSeriesConfig(
+            points=[{"time_s": 0, "qps": 5}, {"time_s": 10, "qps": 15}]
+        )
+        r = make_runner(
+            cfg(rate=5.0, rate_series=rate_series),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
         )
         with patch(
             "aiperf.timing.phase.runner.plugins.get_class",
