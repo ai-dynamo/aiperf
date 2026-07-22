@@ -148,12 +148,14 @@ def amdsmi_get_gpu_device_bdf(handle: _Handle) -> str:
 
 
 def amdsmi_get_power_info(handle: _Handle) -> dict[str, Any]:
-    """Return power info. ``current_socket_power`` is in W; ``average`` is 'N/A'.
+    """Return power info. All three collector probe fields are populated.
 
-    On real MI300X/MI355X parts ``average_socket_power`` returns the literal
-    ``'N/A'`` string, which the collector falls back from to ``current_socket_power``.
+    ``socket_power`` is the ROCm 7.0+ unified field (primary probe).
+    ``current_socket_power`` is the MI300+ fallback.
+    ``average_socket_power`` returns ``'N/A'`` on Instinct parts (MI300+).
     """
     return {
+        "socket_power": handle.config.power_w,
         "current_socket_power": handle.config.power_w,
         "average_socket_power": _NA,
     }
