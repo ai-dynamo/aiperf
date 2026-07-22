@@ -6,7 +6,7 @@ from datetime import datetime
 import orjson
 
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
+from aiperf.common.enums import CreditPhase, PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.finite import scrub_non_finite
 from aiperf.common.models.server_metrics_models import (
@@ -113,7 +113,7 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
         # degenerate windows, and a raise here would drop all server metrics.
         phase_time_ranges: dict[str, TimeRangeFilter] = {}
         if self._server_metrics_results.start_ns < self._server_metrics_results.end_ns:
-            phase_time_ranges["profiling"] = TimeRangeFilter(
+            phase_time_ranges[CreditPhase.PROFILING] = TimeRangeFilter(
                 start_ns=self._server_metrics_results.start_ns,
                 end_ns=self._server_metrics_results.end_ns,
             )
@@ -123,7 +123,7 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
             and self._server_metrics_results.warmup_start_ns
             < self._server_metrics_results.warmup_end_ns
         ):
-            phase_time_ranges["warmup"] = TimeRangeFilter(
+            phase_time_ranges[CreditPhase.WARMUP] = TimeRangeFilter(
                 start_ns=self._server_metrics_results.warmup_start_ns,
                 end_ns=self._server_metrics_results.warmup_end_ns,
             )

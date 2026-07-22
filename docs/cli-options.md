@@ -60,6 +60,10 @@ Assemble per-category SPEED-Bench aiperf results into a matrix report.
 
 Synthesize a dataset workload.
 
+### [`turn-messages`](#aiperf-turn-messages)
+
+Render a collapsible HTML viewer of the per-turn input messages a run sent.
+
 ### [`validate`](#aiperf-validate)
 
 Validate a benchmark artifact.
@@ -610,7 +614,7 @@ Standard deviation for synthetic input prompt token lengths. Creates variability
 
 #### `--prompt-input-tokens-block-size`, `--synthetic-input-tokens-block-size`, `--isl-block-size` `<int>`
 
-Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. Only supported with synthetic datasets: with `--input-file` the flag is rejected at convert time, and trace replay loaders always use the `default_block_size` from their plugin metadata (16 for `bailian_trace`, 64 for `baseten_trace`, 512 for `mooncake_trace`).
+Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. With `--input-file` this overrides the trace loader's `default_block_size` plugin metadata (16 for `bailian_trace`, 512 for `mooncake_trace`) for loaders that reconstruct prompts from `hash_ids`; it has no effect on `baseten_trace`, which replays literal recorded prompts. Set it when a trace was recorded at a block size different from its loader default (e.g. a Mooncake-format trace recorded at 16).
 <br/>_Constraints: ≥ 1_
 
 #### `--seq-dist`, `--sequence-distribution` `<str>`
@@ -2040,7 +2044,7 @@ Standard deviation for synthetic input prompt token lengths. Creates variability
 
 #### `--prompt-input-tokens-block-size`, `--synthetic-input-tokens-block-size`, `--isl-block-size` `<int>`
 
-Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. Only supported with synthetic datasets: with `--input-file` the flag is rejected at convert time, and trace replay loaders always use the `default_block_size` from their plugin metadata (16 for `bailian_trace`, 64 for `baseten_trace`, 512 for `mooncake_trace`).
+Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. With `--input-file` this overrides the trace loader's `default_block_size` plugin metadata (16 for `bailian_trace`, 512 for `mooncake_trace`) for loaders that reconstruct prompts from `hash_ids`; it has no effect on `baseten_trace`, which replays literal recorded prompts. Set it when a trace was recorded at a block size different from its loader default (e.g. a Mooncake-format trace recorded at 16).
 <br/>_Constraints: ≥ 1_
 
 #### `--seq-dist`, `--sequence-distribution` `<str>`
@@ -3069,6 +3073,35 @@ Maximum input sequence length.
 #### `--max-osl` `<int>`
 
 Maximum output sequence length.
+
+<hr/>
+
+## `aiperf turn-messages`
+
+Render a collapsible HTML viewer of the per-turn input messages a run sent.
+
+#### `--run-dirs`, `--empty-run-dirs` `<list>` _(Required)_
+
+One or more AIPerf run directories.
+
+#### `-o`, `--out` `<str>`
+
+Output HTML path. Only valid when a single run directory is given.
+
+#### `-n`, `--limit-conversations` `<int>`
+
+Max conversations to render (roots first, then by earliest request time).
+<br/>_Default: `40`_
+
+#### `--max-turns` `<int>`
+
+Max turns rendered per conversation; the rest are summarized as a hidden count.
+<br/>_Default: `60`_
+
+#### `--content-cap` `<int>`
+
+Max characters kept per unique message body; longer bodies are truncated with a remaining-chars note. Raise for full fidelity.
+<br/>_Default: `8000`_
 
 <hr/>
 
