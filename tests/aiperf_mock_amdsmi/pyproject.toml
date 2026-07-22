@@ -13,7 +13,7 @@ description = "Fake amdsmi bindings that let AIPerf's AMD ROCm telemetry path ru
 authors = []
 dependencies = []
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.14"
 
 # Exposes the top-level import name `amdsmi`, shadowing the real ROCm bindings
 # in any venv where this package is installed AND AIPERF_MOCK_AMDSMI is set.
