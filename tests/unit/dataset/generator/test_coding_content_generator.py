@@ -378,3 +378,50 @@ class TestSeedDeterminism:
         prompt_b = gen_b.generate_prompt(150)
 
         assert prompt_a == prompt_b
+
+
+class TestCodingContentGeneratorPrefixApis:
+    """Prefix/shared-system/user-context must work on coding (same surface as sonnet)."""
+
+    @pytest.fixture
+    def tokenizer(self, mock_tokenizer_cls):
+        return mock_tokenizer_cls.from_pretrained("gpt2")
+
+    def test_prefix_pool_and_random_sample(self, tokenizer):
+        from aiperf.config.dataset.content import PrefixPromptConfig
+
+        gen = CodingContentGenerator(
+            PromptConfig(),
+            tokenizer,
+            prefix_prompts=PrefixPromptConfig(pool_size=3, length=8),
+        )
+        assert len(gen._prefix_prompts) == 3
+        sample = gen.get_random_prefix_prompt()
+        assert isinstance(sample, str)
+        assert sample in gen._prefix_prompts
+
+    def test_shared_system_prompt(self, tokenizer):
+        from aiperf.config.dataset.content import PrefixPromptConfig
+
+        gen = CodingContentGenerator(
+            PromptConfig(),
+            tokenizer,
+            prefix_prompts=PrefixPromptConfig(shared_system_length=12),
+        )
+        prompt = gen.get_shared_system_prompt()
+        assert isinstance(prompt, str)
+        assert len(prompt) > 0
+
+    def test_user_context_prompt_on_demand(self, tokenizer):
+        from aiperf.config.dataset.content import PrefixPromptConfig
+
+        gen = CodingContentGenerator(
+            PromptConfig(),
+            tokenizer,
+            prefix_prompts=PrefixPromptConfig(user_context_length=10),
+        )
+        a = gen.generate_user_context_prompt(0)
+        b = gen.generate_user_context_prompt(1)
+        assert isinstance(a, str)
+        assert isinstance(b, str)
+        assert a == gen.generate_user_context_prompt(0)

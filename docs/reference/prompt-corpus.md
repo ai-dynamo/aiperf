@@ -50,3 +50,9 @@ datasets:
 ```
 
 Do not author a top-level ``prompt_corpus`` field; use ``prompts.corpus``.
+
+## Prefix prompts
+
+``coding`` uses the same synthetic prefix / shared-system / user-context
+surface as ``sonnet``: those features sample from the selected corpus rather
+than requiring a separate generator type.

@@ -29,6 +29,7 @@ def resolve_prompt_generator(
         return CodingContentGenerator(
             config=prompts or PromptConfig(),
             tokenizer=tokenizer,
+            prefix_prompts=prefix_prompts,
         )
     return PromptGenerator(
         prompts=prompts,

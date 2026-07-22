@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Port the Rust-style `prompts.corpus` / `--prompt-corpus` seam so `sonnet` and `coding` are selected by one shared factory and actually drive synthetic + trace synthesis.
+**Goal:** Unify the `prompts.corpus` / `--prompt-corpus` seam so `sonnet` and `coding` are selected by one shared factory and actually drive synthetic + trace synthesis.
 
 **Architecture:** Rename authored field to `prompts.corpus` on all dataset types; add `resolve_prompt_generator()` in `dataset/generator/corpus.py`; wire Base/Custom/Public composers through it; hard-cut flat `prompt_corpus`.
 
@@ -25,7 +25,8 @@ SPDX-License-Identifier: Apache-2.0
 - Dependencies via `uv`; tests via `uv run pytest`
 - DCO sign-off on commits: `git commit -s`
 - Docs required for CLI + new `docs/reference/prompt-corpus.md` + `docs/index.yml`
-- Known limitation: `CodingContentGenerator` has no prefix-prompt API; prefix prompts stay sonnet-only
+- Coding and sonnet share the PromptGenerator-compatible surface (prefix /
+  shared-system / user-context sample from the selected corpus)
 
 ## File Structure
 

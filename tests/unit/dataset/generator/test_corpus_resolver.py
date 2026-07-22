@@ -39,3 +39,19 @@ def test_resolve_prompt_generator_selection(
         prompts=PromptConfig(),
     )
     assert isinstance(gen, expected_type)
+
+
+def test_resolve_prompt_generator_passes_prefix_prompts_to_coding(mock_tokenizer):
+    from aiperf.config.dataset.content import PrefixPromptConfig
+
+    prefix = PrefixPromptConfig(pool_size=2, length=5)
+    gen = resolve_prompt_generator(
+        corpus=PromptCorpus.CODING,
+        default_corpus=None,
+        tokenizer=mock_tokenizer,
+        prompts=PromptConfig(),
+        prefix_prompts=prefix,
+    )
+    assert isinstance(gen, CodingContentGenerator)
+    assert gen.prefix_prompts is prefix
+    assert len(gen._prefix_prompts) == 2

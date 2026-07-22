@@ -7,21 +7,19 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Purpose
 
-Port the Rust branch's clean `--prompt-corpus` / `prompts.corpus` seam into
-this Python branch for `sonnet` and `coding` only. Today the flag is accepted
-and routed, but synthetic generation always uses Shakespeare, file/public
-author a flat `prompt_corpus` field, and each composer selects the generator
-independently. The goal is one authored field, one resolver, and real effect
-everywhere prompt content is synthesized.
-
-Reference: `../rust/docs/specs/prompt-corpus.md` (subset: no `random`).
+Unify `--prompt-corpus` / `prompts.corpus` into one clean seam for `sonnet`
+and `coding` only. Today the flag is accepted and routed, but synthetic
+generation always uses Shakespeare, file/public author a flat `prompt_corpus`
+field, and each composer selects the generator independently. The goal is one
+authored field, one resolver, and real effect everywhere prompt content is
+synthesized.
 
 ## Decisions (locked)
 
 | Decision | Choice |
 |---|---|
 | Corpus values | `sonnet` / `coding` only (`random` out of scope) |
-| Authored shape | Always `prompts.corpus` (match Rust) |
+| Authored shape | Always `prompts.corpus` |
 | Defaults when omitted | Keep loader `default_prompt_corpus` from `plugins.yaml` |
 | Selector location | Shared factory module (not only a base-composer method) |
 | Old flat field | Hard cut — no top-level `prompt_corpus` alias |
@@ -172,7 +170,7 @@ flowchart LR
 ## Out of scope
 
 - `random` corpus
-- Rust decode/re-encode exact-ISL repair loop
+- Exact decode/re-encode ISL repair loops beyond existing generators
 - Changing any loader's registered `default_prompt_corpus` values
 - Broader `prompts` nesting for unrelated file/public fields (cache-bust may
   remain as today)
