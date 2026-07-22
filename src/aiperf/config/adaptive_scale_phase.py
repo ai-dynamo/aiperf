@@ -73,6 +73,13 @@ _ADAPTIVE_SCALE_FIELD_MAP = {
 }
 
 
+_ADAPTIVE_SCALE_CONTROL_FIELD_MAP = {
+    "variable": "adaptive_control_variable",
+    "min": "adaptive_control_min",
+    "max": "adaptive_control_max",
+}
+
+
 _ADAPTIVE_SCALE_STRATEGY_FIELD_MAP = {
     "type": "adaptive_scale_strategy_type",
     "step_policy": "adaptive_scale_step_policy",
@@ -84,13 +91,6 @@ _ADAPTIVE_SCALE_STRATEGY_FIELD_MAP = {
     "step_percent": "adaptive_scale_step_percent",
     "stepPercent": "adaptive_scale_step_percent",
 }
-
-
-_ADAPTIVE_SCALE_BLOCK_KEYS = {"enabled", "control", "strategy", "sla"} | set(
-    _ADAPTIVE_SCALE_FIELD_MAP
-)
-_ADAPTIVE_SCALE_CONTROL_KEYS = {"variable", "min", "max"}
-_ADAPTIVE_SCALE_STRATEGY_KEYS = set(_ADAPTIVE_SCALE_STRATEGY_FIELD_MAP)
 
 
 def _to_lower_camel(field_name: str) -> str:
@@ -119,9 +119,9 @@ def _copy_mapped_fields(
 
 
 def _reject_unknown_keys(
-    data: dict[str, object], allowed: set[str], scope: str
+    data: dict[str, object], scope: str, *allowed: set[str] | dict[str, object]
 ) -> None:
-    unknown = sorted(set(data) - allowed)
+    unknown = sorted(set(data) - set().union(*allowed))
     if unknown:
         joined = ", ".join(unknown)
         raise ValueError(f"{scope} contains unsupported field(s): {joined}")
@@ -146,7 +146,12 @@ def lower_adaptive_scale_details(
     lowered: dict[str, object], block: dict[str, object], *, use_aliases: bool = False
 ) -> None:
     """Lower nested adaptive-scale YAML settings into flat phase fields."""
-    _reject_unknown_keys(block, _ADAPTIVE_SCALE_BLOCK_KEYS, "adaptive_scale")
+    _reject_unknown_keys(
+        block,
+        "adaptive_scale",
+        {"enabled", "control", "strategy", "sla"},
+        _ADAPTIVE_SCALE_FIELD_MAP,
+    )
     lowered[_target_field("adaptive_scale", use_aliases=use_aliases)] = _parse_enabled(
         block.get("enabled")
     )
@@ -158,26 +163,20 @@ def lower_adaptive_scale_details(
     if not isinstance(control, dict):
         raise ValueError("adaptive_scale.control must be a mapping")
     _reject_unknown_keys(
-        control, _ADAPTIVE_SCALE_CONTROL_KEYS, "adaptive_scale.control"
+        control, "adaptive_scale.control", _ADAPTIVE_SCALE_CONTROL_FIELD_MAP
     )
-    if "variable" in control:
-        lowered[_target_field("adaptive_control_variable", use_aliases=use_aliases)] = (
-            control["variable"]
-        )
-    if "min" in control:
-        lowered[_target_field("adaptive_control_min", use_aliases=use_aliases)] = (
-            control["min"]
-        )
-    if "max" in control:
-        lowered[_target_field("adaptive_control_max", use_aliases=use_aliases)] = (
-            control["max"]
-        )
+    _copy_mapped_fields(
+        lowered,
+        control,
+        _ADAPTIVE_SCALE_CONTROL_FIELD_MAP,
+        use_aliases=use_aliases,
+    )
 
     strategy = block.get("strategy", {})
     if not isinstance(strategy, dict):
         raise ValueError("adaptive_scale.strategy must be a mapping")
     _reject_unknown_keys(
-        strategy, _ADAPTIVE_SCALE_STRATEGY_KEYS, "adaptive_scale.strategy"
+        strategy, "adaptive_scale.strategy", _ADAPTIVE_SCALE_STRATEGY_FIELD_MAP
     )
     _copy_mapped_fields(
         lowered,
