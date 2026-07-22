@@ -838,6 +838,14 @@ class ConfigSchemaGenerator(Generator):
         ge_one_numeric = numeric_schema(minimum=1)
         ge_one_integer = integer_schema(minimum=1)
 
+        boolean_string_schema = {
+            "type": "string",
+            "enum": ["true", "false", "yes", "no", "on", "off", "1", "0"],
+        }
+        false_string_schema = {
+            "type": "string",
+            "enum": ["false", "no", "off", "0"],
+        }
         control_variable_schema = {
             "type": "string",
             "enum": [
@@ -851,7 +859,7 @@ class ConfigSchemaGenerator(Generator):
             "type": "object",
             "additionalProperties": False,
             "properties": {
-                "enabled": {"type": "boolean"},
+                "enabled": {"anyOf": [{"type": "boolean"}, boolean_string_schema]},
                 "control": {
                     "type": "object",
                     "additionalProperties": False,
@@ -897,10 +905,10 @@ class ConfigSchemaGenerator(Generator):
                 "control_min": copy.deepcopy(positive_numeric),
                 "controlMax": copy.deepcopy(positive_numeric),
                 "control_max": copy.deepcopy(positive_numeric),
-                "minConcurrency": {"type": "integer"},
-                "min_concurrency": {"type": "integer"},
-                "maxConcurrency": {"type": "integer"},
-                "max_concurrency": {"type": "integer"},
+                "minConcurrency": copy.deepcopy(ge_one_integer),
+                "min_concurrency": copy.deepcopy(ge_one_integer),
+                "maxConcurrency": copy.deepcopy(ge_one_integer),
+                "max_concurrency": copy.deepcopy(ge_one_integer),
                 "window": copy.deepcopy(ge_one_numeric),
                 "assessmentPeriod": copy.deepcopy(ge_one_numeric),
                 "assessment_period": copy.deepcopy(ge_one_numeric),
@@ -914,7 +922,7 @@ class ConfigSchemaGenerator(Generator):
             adaptive_scale_object_schema
         )
         disabled_adaptive_scale_object_schema["properties"]["enabled"] = {
-            "const": False
+            "anyOf": [{"const": False}, false_string_schema]
         }
         disabled_adaptive_scale_object_schema["required"] = ["enabled"]
 

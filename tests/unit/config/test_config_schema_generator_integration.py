@@ -542,6 +542,53 @@ def test_generated_schema_accepts_nested_adaptive_scale_numeric_templates() -> N
     _assert_schema_accepts(schema, config)
 
 
+def test_generated_schema_accepts_nested_adaptive_scale_string_enabled() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptiveScale": {
+                    "enabled": "false",
+                    "sustainDuration": 120,
+                    "sla": {"request_latency": {"p95": {"le": 30000}}},
+                },
+            }
+        ]
+    )
+
+    AIPerfConfig.model_validate(copy.deepcopy(config))
+    _assert_schema_accepts(schema, config)
+
+
+def test_generated_schema_rejects_nested_adaptive_scale_alias_invalid_bounds() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptiveScale": {
+                    "enabled": True,
+                    "minConcurrency": 0,
+                    "maxConcurrency": 0,
+                    "sustainDuration": 120,
+                    "sla": {"request_latency": {"p95": {"le": 30000}}},
+                },
+            }
+        ]
+    )
+
+    with pytest.raises(ValidationError):
+        AIPerfConfig.model_validate(copy.deepcopy(config))
+    assert _schema_error_messages(schema, config)
+
+
 def test_generated_schema_rejects_nested_adaptive_scale_invalid_bounds() -> None:
     schema = _generated_schema()
     config = _minimal_benchmark_config(
@@ -597,6 +644,47 @@ def test_generated_schema_rejects_nested_adaptive_scale_unknown_keys() -> None:
     with pytest.raises(ValidationError, match="unsupported field"):
         AIPerfConfig.model_validate(copy.deepcopy(config))
     assert _schema_error_messages(schema, config)
+
+
+def test_config_rejects_adaptive_search_with_adaptive_scale_phase() -> None:
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptive_scale": {
+                    "enabled": True,
+                    "control": {"variable": "concurrency", "min": 20, "max": 200},
+                    "sustain_duration": 120,
+                    "sla": {"request_latency": {"p95": {"le": 30000}}},
+                },
+            }
+        ],
+    )
+    config["sweep"] = {
+        "type": "adaptive_search",
+        "search_space": [
+            {
+                "path": "phases.profiling.concurrency",
+                "lo": 1,
+                "hi": 1000,
+                "kind": "int",
+            }
+        ],
+        "objectives": [
+            {
+                "metric": "output_token_throughput",
+                "stat": "avg",
+                "direction": "maximize",
+            }
+        ],
+        "max_iterations": 6,
+    }
+
+    with pytest.raises(ValidationError, match="adaptive_search sweeps cannot"):
+        AIPerfConfig.model_validate(config)
 
 
 def test_generated_schema_rejects_fixed_schedule_adaptive_scale() -> None:

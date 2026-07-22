@@ -18496,7 +18496,24 @@
       "additionalProperties": false,
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "enum": [
+                "true",
+                "false",
+                "yes",
+                "no",
+                "on",
+                "off",
+                "1",
+                "0"
+              ]
+            }
+          ]
         },
         "control": {
           "type": "object",
@@ -18834,7 +18851,8 @@
         "minConcurrency": {
           "oneOf": [
             {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1
             },
             {
               "type": "string",
@@ -18846,13 +18864,13 @@
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
-          ],
-          "x-jinja2-supported": true
+          ]
         },
         "min_concurrency": {
           "oneOf": [
             {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1
             },
             {
               "type": "string",
@@ -18864,13 +18882,13 @@
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
-          ],
-          "x-jinja2-supported": true
+          ]
         },
         "maxConcurrency": {
           "oneOf": [
             {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1
             },
             {
               "type": "string",
@@ -18882,13 +18900,13 @@
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
-          ],
-          "x-jinja2-supported": true
+          ]
         },
         "max_concurrency": {
           "oneOf": [
             {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1
             },
             {
               "type": "string",
@@ -18900,8 +18918,7 @@
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
-          ],
-          "x-jinja2-supported": true
+          ]
         },
         "window": {
           "anyOf": [
@@ -19056,7 +19073,20 @@
       "additionalProperties": false,
       "properties": {
         "enabled": {
-          "const": false
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "type": "string",
+              "enum": [
+                "false",
+                "no",
+                "off",
+                "0"
+              ]
+            }
+          ]
         },
         "control": {
           "type": "object",
@@ -19394,7 +19424,8 @@
         "minConcurrency": {
           "oneOf": [
             {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1
             },
             {
               "type": "string",
@@ -19406,13 +19437,13 @@
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
-          ],
-          "x-jinja2-supported": true
+          ]
         },
         "min_concurrency": {
           "oneOf": [
             {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1
             },
             {
               "type": "string",
@@ -19424,13 +19455,13 @@
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
-          ],
-          "x-jinja2-supported": true
+          ]
         },
         "maxConcurrency": {
           "oneOf": [
             {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1
             },
             {
               "type": "string",
@@ -19442,13 +19473,13 @@
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
-          ],
-          "x-jinja2-supported": true
+          ]
         },
         "max_concurrency": {
           "oneOf": [
             {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1
             },
             {
               "type": "string",
@@ -19460,8 +19491,7 @@
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
-          ],
-          "x-jinja2-supported": true
+          ]
         },
         "window": {
           "anyOf": [
