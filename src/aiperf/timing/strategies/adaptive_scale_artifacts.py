@@ -87,6 +87,14 @@ class AdaptiveScaleArtifactWriter:
         return artifact_dir / filename
 
     @staticmethod
+    def phase_scoped_path(
+        artifact_dir: Path | None, phase_name: str | None, filename: str
+    ) -> Path | None:
+        if artifact_dir is None or phase_name is None:
+            return None
+        return artifact_dir / "phases" / phase_name / filename
+
+    @staticmethod
     def correlation_payload(
         *,
         run_id: str | None,
@@ -98,11 +106,17 @@ class AdaptiveScaleArtifactWriter:
         phase_start_ts: str | None = None,
         phase_end_ts: str | None = None,
         fault_window_id: str | None = None,
+        phase_index: int | None = None,
+        profiling_index: int | None = None,
+        phase_kind: str | None = None,
     ) -> dict[str, Any]:
         return {
             "run_id": run_id,
             "phase_id": phase_id,
+            "phase_index": phase_index,
+            "profiling_index": profiling_index,
             "phase_name": phase_name,
+            "phase_kind": phase_kind,
             "phase_start_ts": phase_start_ts,
             "phase_end_ts": phase_end_ts,
             "adaptive_iteration": adaptive_iteration,
@@ -333,5 +347,39 @@ class AdaptiveScaleArtifactWriter:
                 summary, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS
             )
             path.write_bytes(encoded + b"\n")
+
+        self._schedule_write(write)
+
+    def write_manifest_entry(
+        self, artifact_dir: Path | None, entry: dict[str, Any]
+    ) -> None:
+        if artifact_dir is None:
+            return
+        manifest_path = artifact_dir / "adaptive_scale_manifest.json"
+
+        def write() -> None:
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            if manifest_path.exists():
+                payload = orjson.loads(manifest_path.read_bytes())
+            else:
+                payload = {"schema_version": SCHEMA_VERSION, "adaptive_phases": []}
+            phases = payload.setdefault("adaptive_phases", [])
+            phases = [
+                phase
+                for phase in phases
+                if phase.get("phase_name") != entry.get("phase_name")
+                or phase.get("phase_index") != entry.get("phase_index")
+            ]
+            phases.append(entry)
+            phases.sort(
+                key=lambda item: item.get("phase_index")
+                if item.get("phase_index") is not None
+                else 10**9
+            )
+            payload["adaptive_phases"] = phases
+            encoded = orjson.dumps(
+                payload, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS
+            )
+            manifest_path.write_bytes(encoded + b"\n")
 
         self._schedule_write(write)

@@ -20,7 +20,7 @@ class TestEmbeddingsEndpoint:
             f"""
             aiperf profile \
                 --model nomic-ai/nomic-embed-text-v1.5 \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type embeddings \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \

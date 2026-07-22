@@ -13,6 +13,7 @@ nav:
   - Advanced Features:
     - Multi-Turn Conversations: tutorials/multi-turn.md
     - Request Cancellation: tutorials/request-cancellation.md
+    - Multi-Phase Workflows: tutorials/multi-phase-workflows.md
     - Fixed Schedule: tutorials/fixed-schedule.md
     - Time-based Benchmarking: tutorials/time-based-benchmarking.md
     - Sequence Distributions: tutorials/sequence-distributions.md

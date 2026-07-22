@@ -375,12 +375,12 @@ class TestCollection:
         assert td0.amd_mm_activity is None
 
         # NVML-named fields must NOT be set by the AMD collector.
-        assert td0.gpu_utilization is None
-        assert td0.sm_utilization is None
-        assert td0.mem_utilization is None
-        assert td0.encoder_utilization is None
-        assert td0.decoder_utilization is None
-        assert td0.jpg_utilization is None
+        assert td0.nvidia_gpu_utilization is None
+        assert td0.nvidia_sm_utilization is None
+        assert td0.nvidia_memory_utilization is None
+        assert td0.nvidia_encoder_utilization is None
+        assert td0.nvidia_decoder_utilization is None
+        assert td0.nvidia_jpg_utilization is None
 
         # VRAM: 183_678_435_328 bytes -> ~183.68 GB
         assert td0.amd_memory_used == pytest.approx(183.68, rel=1e-3)
@@ -430,8 +430,8 @@ class TestCollection:
         # GPU 1 not throttling -> 0.0.
         assert records1[1].telemetry_data.amd_throttle_status == 0.0
         assert records2[1].telemetry_data.amd_throttle_status == 0.0
-        # The synthesized power_violation field is no longer populated.
-        assert records2[0].telemetry_data.power_violation is None
+        # The synthesized nvidia_power_violation field is no longer populated.
+        assert records2[0].telemetry_data.nvidia_power_violation is None
 
     @pytest.mark.asyncio
     async def test_temperature_normalized_when_returned_in_millidegrees(
@@ -559,9 +559,9 @@ class TestCollection:
         records = await initialized_collector._loop_to_thread_collect()
         assert records[0].telemetry_data.amd_ecc_uncorrectable == 0.0
         assert records[1].telemetry_data.amd_ecc_uncorrectable == 2.0
-        # The synthesized xid_errors alias is no longer populated.
-        assert records[0].telemetry_data.xid_errors is None
-        assert records[1].telemetry_data.xid_errors is None
+        # The synthesized nvidia_xid_errors alias is no longer populated.
+        assert records[0].telemetry_data.nvidia_xid_errors is None
+        assert records[1].telemetry_data.nvidia_xid_errors is None
 
 
 # ---------------------------------------------------------------------------
