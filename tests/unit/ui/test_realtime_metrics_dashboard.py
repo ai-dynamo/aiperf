@@ -55,3 +55,23 @@ class TestRealtimeMetricsTable:
             )
 
             assert table._should_skip(metric_result) is should_skip
+
+    def test_update_allows_unregistered_metric_results(self) -> None:
+        run = Mock()
+        table = RealtimeMetricsTable(run)
+        table.data_table = Mock()
+        table.data_table.is_mounted = True
+        table.data_table.add_row.return_value = "row-1"
+
+        metric_result = MetricResult(
+            tag="prefix_cache_hit_rate",
+            header="Prefix Cache Hit Rate",
+            unit="%",
+            avg=42.0,
+            current=42.0,
+        )
+
+        table.update([metric_result])
+
+        table.data_table.add_row.assert_called_once()
+        assert "prefix_cache_hit_rate" in table._metric_row_keys

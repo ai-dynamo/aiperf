@@ -6,14 +6,16 @@ on file (mooncake_trace, single_turn, ...) datasets.
 
 These flags previously leaked through ``_apply_dataset_type``'s strip into
 ``FileDataset`` validation and crashed with ``extra_forbidden`` (e.g.
-``--isl-block-size`` carried via ``prompts.block_size``, ``--seq-dist`` via
-``prompts.sequence_distribution``). The strip in ``_apply_dataset_type``
-covers ``prompts``/``prefix_prompts``/``rankings``/``audio``/``images``/
-``video`` keys at FILE-type discrimination time, but ``_apply_sequence_distribution``
-runs *after* and can re-add ``prompts``. Reject at convert-time instead so
-the user sees a clear flag-level error rather than a Pydantic stack trace
-or silently-dropped flags (the prior behavior of ``--isl-block-size`` on
-mooncake_trace, which masked the use of the hardcoded block-size fallback).
+``--seq-dist`` via ``prompts.sequence_distribution``). The strip in
+``_apply_dataset_type`` covers ``prompts``/``prefix_prompts``/``rankings``/
+``audio``/``images``/``video`` keys at FILE-type discrimination time, but
+``_apply_sequence_distribution`` runs *after* and can re-add ``prompts``.
+Reject at convert-time instead so the user sees a clear flag-level error
+rather than a Pydantic stack trace or silently-dropped flags.
+
+``--isl-block-size`` is the exception: it is NOT rejected on file datasets
+(AIP-1016). Block size partitions the recorded ISL into cache blocks for
+trace replay, so it is meaningful, and it routes onto ``FileDataset.block_size``.
 """
 
 from __future__ import annotations
@@ -56,11 +58,6 @@ def _file_user(mc_jsonl: Path, *, prompt_kwargs: dict | None = None) -> CLIConfi
 @pytest.mark.parametrize(
     "prompt_kwargs, expected_flag_fragment",
     [
-        param(
-            {"prompt_input_tokens_block_size": 20},
-            "--isl-block-size",
-            id="isl-block-size",
-        ),
         param(
             {"prompt_input_tokens_mean": 128},
             "--isl",
@@ -137,3 +134,21 @@ def test_mooncake_trace_without_synthetic_flags_validates_cleanly(
     assert len(datasets) == 1
     assert datasets[0].type == "file"
     assert str(datasets[0].path) == str(mc_jsonl)
+
+
+def test_isl_block_size_routes_to_file_dataset_block_size(mc_jsonl: Path) -> None:
+    """AIP-1016: --isl-block-size is NOT rejected on file datasets. It routes
+    onto the flat FileDataset.block_size field (not prompts.block_size, which
+    is stripped for file datasets), overriding the loader's default_block_size
+    plugin metadata. Needed for e.g. a Mooncake-format trace recorded at 16."""
+    user = _file_user(mc_jsonl, prompt_kwargs={"prompt_input_tokens_block_size": 16})
+
+    out = build_dataset(user)
+    assert out["type"] == "file"
+    assert out["block_size"] == 16
+    # It must land on the flat field, never on a (stripped) prompts subtable.
+    assert "prompts" not in out
+
+    # Full envelope validates and preserves the override.
+    aiperf_cfg = convert_cli_to_aiperf(user)
+    assert aiperf_cfg.benchmark.datasets[0].block_size == 16

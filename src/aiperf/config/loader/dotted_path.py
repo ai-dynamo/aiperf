@@ -35,6 +35,7 @@ _SWEEP_PATH_ALIASES = {
     "concurrency_ramp": "phases.profiling.concurrency_ramp",
     "prefill_ramp": "phases.profiling.prefill_ramp",
     "rate_ramp": "phases.profiling.rate_ramp",
+    "rate_series": "phases.profiling.rate_series",
 }
 
 

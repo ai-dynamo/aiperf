@@ -13,6 +13,7 @@ from aiperf.common.models import (
     BaseResponseData,
     EmbeddingResponseData,
     ExtractedPayload,
+    Image,
     InferenceServerResponse,
     Media,
     ModelEndpointInfo,
@@ -258,10 +259,16 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
 
         parts: list[dict[str, Any]] = []
         self._extend_parts(parts, turn.texts, self._render_text_part)
-        self._extend_parts(parts, turn.images, self._render_image_part)
+        self._extend_image_parts(parts, turn.images)
         self._extend_parts(parts, turn.audios, self._render_audio_part)
         self._extend_parts(parts, turn.videos, self._render_video_part)
         return parts
+
+    def _extend_image_parts(
+        self, parts: list[dict[str, Any]], images: list[Image]
+    ) -> None:
+        """Append rendered image parts for each non-empty content string."""
+        self._extend_parts(parts, images, self._render_image_part)
 
     @staticmethod
     def _extend_parts(

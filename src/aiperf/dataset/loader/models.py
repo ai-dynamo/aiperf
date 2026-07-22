@@ -69,6 +69,18 @@ class SingleTurn(AIPerfBaseModel):
         None,
         description="List of image strings or Image objects format",
     )
+    image_uuids: list[str] | None = Field(
+        None,
+        description="Optional cache UUIDs aligned 1:1 with string-form `images`. "
+        "When `images` is omitted, UUID-only references normalize to empty "
+        "image slots. "
+        "Only supported when `images` is `list[str]`; for `Image` objects, "
+        "set `Image.uuids` directly instead. The singular `image` field is "
+        "not supported. "
+        "vLLM-extension only: opaque IDs that let the server reuse cached "
+        "image embeddings across requests. Authored UUIDs pass through on the "
+        "chat endpoint; `--uuid-and-strip` additionally strips repeated content.",
+    )
     audio: str | None = Field(None, description="Simple audio string content")
     audios: list[str] | list[Audio] | None = Field(
         None,
@@ -119,6 +131,29 @@ class SingleTurn(AIPerfBaseModel):
             raise ValueError("video and videos cannot be set together")
         if self.timestamp and self.delay:
             raise ValueError("timestamp and delay cannot be set together")
+        return self
+
+    @model_validator(mode="after")
+    def validate_image_uuids_alignment(self) -> "SingleTurn":
+        """Normalize UUID-only images and reject ambiguous UUID mappings."""
+        if self.image_uuids is None:
+            return self
+        if self.image is not None:
+            raise ValueError("image_uuids cannot be used with the singular image field")
+        if not self.images:
+            self.images = [""] * len(self.image_uuids)
+        if any(isinstance(img, Image) for img in self.images):
+            raise ValueError(
+                "image_uuids cannot be set when images is provided as Image "
+                "objects; use Image.uuids on each Image instead."
+            )
+        if len(self.image_uuids) != len(self.images):
+            raise ValueError(
+                f"image_uuids length ({len(self.image_uuids)}) must match "
+                f"images length ({len(self.images)})"
+            )
+        if any(uuid == "" for uuid in self.image_uuids):
+            raise ValueError("image_uuids must not contain empty strings")
         return self
 
     @model_validator(mode="after")

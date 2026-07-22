@@ -327,3 +327,29 @@ class TestEdgeCasesNumericalStability:
 
         # All zeros should result in empty or zero sums
         assert all(v == 0.0 for v in sums.values()) or len(sums) == 0
+
+
+class TestHistogramStatsWindowGuards:
+    """Guards for time filters that exclude every histogram sample."""
+
+    def test_histogram_stats_none_when_filter_ends_before_first_sample(self):
+        """A window ending before the first sample yields no stats (final_idx None)."""
+        ts = ServerMetricsTimeSeries()
+        add_histogram_snapshots(
+            ts,
+            "ttft",
+            [
+                (10 * NANOS_PER_SECOND, hist({"0.5": 0.0, "+Inf": 0.0}, 0.0, 0.0)),
+                (
+                    20 * NANOS_PER_SECOND,
+                    hist({"0.5": 50.0, "+Inf": 100.0}, 70.0, 100.0),
+                ),
+            ],
+        )
+
+        result = _compute_histogram_stats(
+            get_histogram(ts, "ttft"),
+            make_time_filter(start_ns=0, end_ns=5 * NANOS_PER_SECOND),
+        )
+
+        assert result is None

@@ -151,6 +151,9 @@ class MetricsConfigLoader(AIPerfLoggerMixin):
             "gb": MetricSizeUnit.GIGABYTES,
             "mb": MetricSizeUnit.MEGABYTES,
             "kb": MetricSizeUnit.KILOBYTES,
+            "gib": MetricSizeUnit.GIGABYTES,
+            "mib": MetricSizeUnit.MEGABYTES,
+            "kib": MetricSizeUnit.KILOBYTES,
             "mhz": FrequencyMetricUnit.MEGAHERTZ,
             "ghz": FrequencyMetricUnit.GIGAHERTZ,
             "c": TemperatureMetricUnit.CELSIUS,
@@ -217,7 +220,13 @@ class MetricsConfigLoader(AIPerfLoggerMixin):
                 )
                 continue
 
-            internal_name = dcgm_field.replace("DCGM_FI_DEV_", "").lower()
+            if dcgm_field.startswith("DCGM_FI_DEV_"):
+                dcgm_suffix = dcgm_field.removeprefix("DCGM_FI_DEV_")
+            elif dcgm_field.startswith("DCGM_FI_PROF_"):
+                dcgm_suffix = dcgm_field.removeprefix("DCGM_FI_PROF_")
+            else:
+                dcgm_suffix = dcgm_field
+            internal_name = f"nvidia_{dcgm_suffix.lower()}"
             display_name = help_msg.split("(")[0].strip()
 
             if not display_name:

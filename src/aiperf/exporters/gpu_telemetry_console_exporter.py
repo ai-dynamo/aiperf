@@ -112,7 +112,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
         Returns:
             Formatted title string with endpoint status
         """
-        title_lines = ["NVIDIA AIPerf | GPU Telemetry Summary"]
+        title_lines = ["AIPerf | GPU Telemetry Summary"]
 
         endpoints_configured = self._telemetry_results.summary.endpoints_configured
         endpoints_successful = self._telemetry_results.summary.endpoints_successful
@@ -122,15 +122,15 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
 
         if failed_count == 0:
             title_lines.append(
-                f"[bold green]{successful_count}/{total_count} DCGM endpoints reachable[/bold green]"
+                f"[bold green]{successful_count}/{total_count} telemetry sources reachable[/bold green]"
             )
         elif successful_count == 0:
             title_lines.append(
-                f"[bold red]{successful_count}/{total_count} DCGM endpoints reachable[/bold red]"
+                f"[bold red]{successful_count}/{total_count} telemetry sources reachable[/bold red]"
             )
         else:
             title_lines.append(
-                f"[bold yellow]{successful_count}/{total_count} DCGM endpoints reachable[/bold yellow]"
+                f"[bold yellow]{successful_count}/{total_count} telemetry sources reachable[/bold yellow]"
             )
 
         for endpoint in endpoints_configured:

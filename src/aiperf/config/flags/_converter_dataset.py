@@ -498,11 +498,13 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
         "prompt_prefix_user_context_length",
         "--user-context-prompt-length",
     ),
-    # ISL / prompt-shaping flags only apply to synthetic generation. File
-    # datasets (including mooncake_trace) source ISL from the trace records
-    # themselves — silently dropping these flags hid bugs (e.g. trace replay
-    # using the hardcoded block_size=512 fallback while ignoring user's
-    # --isl-block-size). Reject at convert-time with a clear error.
+    # ISL length shaping only applies to synthetic generation. File datasets
+    # (including mooncake_trace) source ISL from the trace records themselves —
+    # silently dropping these flags hid bugs. Reject at convert-time with a
+    # clear error. NOTE: --isl-block-size is NOT rejected — block size is
+    # meaningful for trace replay (it partitions the recorded ISL into cache
+    # blocks) and is routed onto FileDataset.block_size by
+    # _apply_file_block_size.
     (
         "prompt_input_tokens_mean",
         "--isl/--prompt-input-tokens-mean/--synthetic-input-tokens-mean",
@@ -510,10 +512,6 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
     (
         "prompt_input_tokens_stddev",
         "--isl-stddev/--prompt-input-tokens-stddev/--synthetic-input-tokens-stddev",
-    ),
-    (
-        "prompt_input_tokens_block_size",
-        "--isl-block-size/--prompt-input-tokens-block-size/--synthetic-input-tokens-block-size",
     ),
     ("prompt_batch_size", "--prompt-batch-size/--batch-size-text"),
     ("prompt_sequence_distribution", "--seq-dist/--sequence-distribution"),
@@ -528,16 +526,17 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
 def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
     """Reject synthetic-only flags when --input-file is set.
 
-    Flags rejected: prefix prompts, ISL shaping (--isl/--isl-stddev/
-    --isl-block-size), --prompt-batch-size, --seq-dist, multimodal
-    batch_size. These are only meaningful for synthetic datasets; on file
-    datasets they were previously silently dropped by the strip in
-    ``_apply_dataset_type`` (or worse, leaked through and crashed
-    AIPerfConfig validation with ``extra_forbidden`` on the
+    Flags rejected: prefix prompts, ISL length shaping (--isl/--isl-stddev),
+    --prompt-batch-size, --seq-dist, multimodal batch_size. These are only
+    meaningful for synthetic datasets; on file datasets they were previously
+    silently dropped by the strip in ``_apply_dataset_type`` (or worse, leaked
+    through and crashed AIPerfConfig validation with ``extra_forbidden`` on the
     FileDataset). Surface a clear message instead.
 
-    --osl / --osl-stddev are NOT rejected — they're routed onto
-    ``FileDataset.osl`` by ``_apply_file_osl`` as a per-record fallback.
+    NOT rejected: --osl / --osl-stddev (routed onto ``FileDataset.osl`` by
+    ``_apply_file_osl``) and --isl-block-size (routed onto
+    ``FileDataset.block_size`` by ``_apply_file_block_size``, since block size
+    partitions the recorded ISL into cache blocks for trace replay).
     """
     if not cli.input_file:
         return
@@ -720,6 +719,29 @@ def _apply_file_osl(d: dict[str, Any], cli: CLIConfig) -> None:
     d["osl"] = osl
 
 
+def _apply_file_block_size(d: dict[str, Any], cli: CLIConfig) -> None:
+    """Route ``--isl-block-size`` onto ``FileDataset.block_size`` when
+    --input-file is set.
+
+    Synthetic datasets carry block size on ``prompts.block_size`` (handled by
+    ``_build_prompts``, then stripped for file datasets in
+    ``_apply_dataset_type``). For trace/file datasets, route the same value to
+    the flat ``FileDataset.block_size`` field, which overrides the loader's
+    ``default_block_size`` plugin metadata (needed when a trace was recorded at
+    a block size different from its loader default).
+    """
+    from aiperf.common.enums import DatasetType
+
+    if d.get("type") != DatasetType.FILE:
+        return
+    if (
+        "prompt_input_tokens_block_size" not in cli.model_fields_set
+        or cli.prompt_input_tokens_block_size is None
+    ):
+        return
+    d["block_size"] = cli.prompt_input_tokens_block_size
+
+
 def _apply_inter_turn_delay_cap(d: dict[str, Any], cli: CLIConfig) -> None:
     """Route ``--inter-turn-delay-cap-seconds`` onto ``FileDataset``.
 
@@ -839,6 +861,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     _apply_synthesis(d, cli)
     _apply_implicit_media_batch(d, cli)
     _apply_file_osl(d, cli)
+    _apply_file_block_size(d, cli)
     _apply_inter_turn_delay_cap(d, cli)
     if "random_seed" in cli.model_fields_set:
         d["random_seed"] = cli.random_seed
