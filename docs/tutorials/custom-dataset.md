@@ -341,7 +341,7 @@ aiperf profile \
 **Behavior:**
 - The system prompt persists across all turns and is not counted as a turn (the example above runs 2 turns, not 3).
 - Only a **leading**, **text-only** system turn is hoisted. A `system` turn that appears mid-conversation, one that carries image/audio/video media, or one that sets dispatch-time fields (`timestamp`, `delay`, `output_length`, `extra`) stays a normal turn.
-- Hoisting only takes effect on endpoints that send a system message (`chat`, `responses`). On other endpoints (e.g. `completions`) the leading system turn is left in place, so it is dispatched as a normal turn rather than being silently dropped.
+- Hoisting only takes effect on endpoints that send a system message (`chat`, `responses`, `messages`, `chat_embeddings`). On other endpoints (e.g. `completions`) the leading system turn is left in place, so it is dispatched as a normal turn rather than being silently dropped.
 - The same form works in the inline `records` config.
 
 ---

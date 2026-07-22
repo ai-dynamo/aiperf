@@ -964,9 +964,9 @@ class TestMultiTurnDatasetLoaderSystemPromptHoist:
     def test_hoist_skipped_when_endpoint_does_not_consume_system_message(self):
         """Endpoints that do not send ``system_message`` keep the system turn.
 
-        Only chat/responses emit ``conversation.system_message``; on completions
-        (and other endpoints) hoisting would silently drop it - and on
-        completions the leading system turn would also bypass the
+        Only system-message-aware endpoints emit ``conversation.system_message``;
+        on completions (and other endpoints) hoisting would silently drop it -
+        and on completions the leading system turn would also bypass the
         "only supports one turn" error. So the system turn is left in place.
         """
         cfg = CLIConfig(
@@ -995,9 +995,18 @@ class TestMultiTurnDatasetLoaderSystemPromptHoist:
         assert conversation.turns[0].role == "system"
         assert conversation.turns[0].texts[0].contents == ["You are an assistant."]
 
-    def test_hoist_applied_for_system_message_aware_endpoint(self):
-        """Chat (a ``system_message``-aware endpoint) still hoists the system turn."""
-        cfg = CLIConfig(model_names=["test-model"], endpoint_type=EndpointType.CHAT)
+    @pytest.mark.parametrize(
+        "endpoint_type",
+        [
+            param(EndpointType.CHAT, id="chat"),
+            param(EndpointType.RESPONSES, id="responses"),
+            param(EndpointType.MESSAGES, id="messages"),
+            param(EndpointType.CHAT_EMBEDDINGS, id="chat_embeddings"),
+        ],
+    )  # fmt: skip
+    def test_hoist_applied_for_system_message_aware_endpoint(self, endpoint_type):
+        """System-message-aware endpoints hoist the leading system turn."""
+        cfg = CLIConfig(model_names=["test-model"], endpoint_type=endpoint_type)
         data = {
             "session_1": [
                 MultiTurn(

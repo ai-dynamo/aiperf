@@ -252,6 +252,7 @@ endpoint:
       produces_tokens: true
       tokenizes_input: true
       supports_images: true
+      consumes_system_message: true
       metrics_title: LLM Metrics
 
   chat_embeddings:

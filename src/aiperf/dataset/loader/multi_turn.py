@@ -109,8 +109,9 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     (user-less) request. The endpoint then prepends it to every turn's
     message array, so the system prompt persists across all turns and does
     not consume a turn slot or skew per-turn metrics. Hoisting only applies to
-    endpoints that send ``system_message`` (chat, responses); on others the
-    system turn is left in place rather than silently dropped. A conversation
+    endpoints that send ``system_message`` (chat, responses, messages,
+    chat_embeddings); on others the system turn is left in place rather than
+    silently dropped. A conversation
     that leads with two or more consecutive ``role: "system"`` turns is
     un-hoisted: the endpoint only merges ``system_message`` into a rendered
     leading system message during warmup, so a hoisted prompt sitting in front
@@ -243,10 +244,11 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
         """Whether the configured endpoint sends ``system_message`` on the wire.
 
         Hoisting is endpoint-blind, but only system-message-aware endpoints
-        (chat, responses) emit ``conversation.system_message``. On the others it
-        would be silently dropped - and on completions the leading system turn
-        would also bypass the "only supports one turn" error - so hoisting is
-        gated on this capability and the system turn is left in place otherwise.
+        (chat, responses, messages, chat_embeddings) emit
+        ``conversation.system_message``. On the others it would be silently
+        dropped - and on completions the leading system turn would also bypass
+        the "only supports one turn" error - so hoisting is gated on this
+        capability and the system turn is left in place otherwise.
         """
         return plugins.get_endpoint_metadata(
             self.run.cfg.endpoint.type
