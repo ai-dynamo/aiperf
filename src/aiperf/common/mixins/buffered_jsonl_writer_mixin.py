@@ -228,6 +228,46 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 # Give some time to recover, just in case.
                 await asyncio.sleep(0.001)
 
+    async def _final_flush_and_close(self, buffer_to_flush: list[bytes]) -> None:
+        """Flush detached records then close the file handle.
+
+        Kept as one unit so a cancel cannot close the handle out from under an
+        in-flight write (which would drop already-detached records), and so the
+        handle is always closed even when the outer wait is cancelled.
+        """
+        try:
+            await self._flush_buffer(buffer_to_flush)
+        except Exception as e:
+            self.error(f"Failed to flush remaining buffer during shutdown: {e}")
+
+        async with self._file_lock:
+            if self._file_handle is not None:
+                try:
+                    await self._file_handle.close()
+                    self.debug(lambda: f"File handle closed: {self.output_file}")
+                except Exception as e:
+                    self.exception(f"Failed to close file handle during shutdown: {e}")
+                finally:
+                    self._file_handle = None
+
+    async def _await_shielded_cleanup(self, cleanup_task: asyncio.Task) -> None:
+        """Await a shielded cleanup task through outer cancellation.
+
+        If we are cancelled while waiting on the shield, the inner task keeps
+        running. Drain our cancellation so we can await it to completion before
+        leaving — otherwise the caller would return with the handle still open
+        (or a naive finally-close would race the still-running flush).
+        """
+        current = asyncio.current_task()
+        try:
+            await asyncio.shield(cleanup_task)
+        finally:
+            if current is not None:
+                while current.cancelling():
+                    current.uncancel()
+            if not cleanup_task.done():
+                await cleanup_task
+
     @on_stop
     async def _close_file(self) -> None:
         """Flush remaining buffer and close the file handle (called automatically on shutdown)."""
@@ -259,23 +299,11 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
 
         buffer_to_flush = self._buffer
         self._buffer = []
-
-        try:
-            # Shield the final flush so a shutdown-path cancel can't interrupt
-            # the write and drop records already detached from self._buffer.
-            await asyncio.shield(self._flush_buffer(buffer_to_flush))
-        except Exception as e:
-            self.error(f"Failed to flush remaining buffer during shutdown: {e}")
-
-        async with self._file_lock:
-            if self._file_handle is not None:
-                try:
-                    await self._file_handle.close()
-                    self.debug(lambda: f"File handle closed: {self.output_file}")
-                except Exception as e:
-                    self.exception(f"Failed to close file handle during shutdown: {e}")
-                finally:
-                    self._file_handle = None
+        # Shield so a shutdown-path cancel can't interrupt the write and drop
+        # records already detached from self._buffer.
+        await self._await_shielded_cleanup(
+            asyncio.create_task(self._final_flush_and_close(buffer_to_flush))
+        )
 
         self.debug(
             f"{self.__class__.__name__}: {self.lines_written} JSONL lines written to {self.output_file}"

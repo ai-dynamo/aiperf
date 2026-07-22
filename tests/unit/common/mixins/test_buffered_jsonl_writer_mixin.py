@@ -218,3 +218,52 @@ class TestBufferedJSONLWriterMixin:
         assert not unrelated_task.done()
         await writer.cancel_all_tasks()
         await asyncio.gather(unrelated_task, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_close_file_closes_handle_when_cancelled_mid_flush(
+        self, temp_output_file
+    ):
+        """Cancel during the final flush must still close the file handle.
+
+        ``asyncio.shield`` keeps the flush running, but ``CancelledError`` still
+        exits the outer ``_close_file`` await. Cleanup must finish flush+close
+        before returning so the handle is not leaked and drained records are
+        not dropped by closing under an in-flight write.
+        """
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=10,
+        )
+        await writer.initialize()
+        await writer.buffered_write(SampleRecord(id=1, value="pending"))
+
+        real_flush = writer._flush_buffer
+        flush_started = asyncio.Event()
+        flush_continue = asyncio.Event()
+
+        async def blocked_flush(buffer_to_flush: list[bytes]) -> None:
+            flush_started.set()
+            await flush_continue.wait()
+            await real_flush(buffer_to_flush)
+
+        writer._flush_buffer = blocked_flush
+
+        close_task = asyncio.create_task(writer._close_file())
+        for _ in range(10_000):
+            if flush_started.is_set() or close_task.done():
+                break
+            await asyncio.sleep(0)
+        assert flush_started.is_set(), "final flush never started"
+
+        close_task.cancel()
+        # Let the cancel land on the shield await before unblocking the flush.
+        await asyncio.sleep(0)
+        flush_continue.set()
+        with contextlib.suppress(asyncio.CancelledError):
+            await close_task
+
+        assert writer._file_handle is None
+        with open(temp_output_file) as f:
+            lines = [line.strip() for line in f if line.strip()]
+        assert len(lines) == 1
+        assert json.loads(lines[0])["id"] == 1
