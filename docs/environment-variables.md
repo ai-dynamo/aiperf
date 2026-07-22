@@ -276,7 +276,6 @@ User interface and dashboard configuration. Controls refresh rates, update thres
 |----------------------|---------|-------------|-------------|
 | `AIPERF_UI_LOG_REFRESH_INTERVAL` | `0.1` | ≥ 0.01, ≤ 100000.0 | Log viewer refresh interval in seconds (default: 10 FPS) |
 | `AIPERF_UI_MIN_UPDATE_PERCENT` | `1.0` | ≥ 0.01, ≤ 100.0 | Minimum percentage difference from last update to trigger a UI update (for non-dashboard UIs) |
-| `AIPERF_UI_NOTIFICATION_TIMEOUT` | `3` | ≥ 1, ≤ 100000 | Duration in seconds to display UI notifications before auto-dismissing |
 | `AIPERF_UI_REALTIME_METRICS_INTERVAL` | `None` | ≥ 0.0, ≤ 1000.0 | Interval in seconds between real-time metrics messages (and the per-tick stats log block). 0 disables the log block; dashboards still poll. When None, `realtime_metrics_interval(ui_type)` auto-defaults to 5.0 under --ui dashboard, 30.0 otherwise. |
 | `AIPERF_UI_REALTIME_METRICS_ENABLED` | `False` | — | Enable real-time metrics collection and reporting despite UI type |
 | `AIPERF_UI_SPINNER_REFRESH_RATE` | `0.1` | ≥ 0.1, ≤ 100.0 | Progress spinner refresh rate in seconds (default: 10 FPS) |
