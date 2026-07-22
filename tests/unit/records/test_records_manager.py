@@ -275,6 +275,34 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         )
 
     @pytest.mark.asyncio
+    async def test_context_overflow_skip_counts_as_success_not_error(self) -> None:
+        """AGENTIC_REPLAY overflow skips must advance the success counter and
+        must NOT inflate error_records (which would trip --failed-request-threshold).
+        """
+        manager = self._make_manager()
+        manager._dispatch_record = AsyncMock(return_value=[])
+        record = create_metric_record_data(1_000, 2_000)
+        record.metadata.context_overflow_skip = True
+        message = RecordsMessage(
+            service_id="rp",
+            metadata=record.metadata,
+            records=[record],
+            error=ErrorDetails(code=400, type="ContextOverflow", message="overflow"),
+        )
+
+        await manager._on_records(message)
+
+        assert manager._skipped_context_overflow_count == 1
+        manager._records_tracker.update_from_request.assert_called_once_with(
+            message.metadata, None
+        )
+        manager._dispatch_record.assert_not_called()
+        assert (
+            manager._error_tracker.get_error_summary_for_phase(CreditPhase.PROFILING)
+            == []
+        )
+
+    @pytest.mark.asyncio
     async def test_warmup_plus_single_profiling_builds_phase_results(self) -> None:
         manager = RecordsManager.__new__(RecordsManager)
         manager._records_tracker = MagicMock()

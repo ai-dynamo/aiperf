@@ -805,6 +805,32 @@ def _apply_inter_turn_delay_cap(d: dict[str, Any], cli: CLIConfig) -> None:
     d["inter_turn_delay_cap_seconds"] = cli.inter_turn_delay_cap_seconds
 
 
+def _apply_trace_delay_flags(d: dict[str, Any], cli: CLIConfig) -> None:
+    """Route trace-replay delay knobs onto ``FileDataset``/``PublicDataset``.
+
+    ``--ignore-trace-delays``, ``--use-think-time-only``,
+    ``--use-end-to-start-delays``, and ``--trace-idle-gap-cap-seconds`` live on
+    both FILE and PUBLIC dataset models and bake into ``Turn.delay`` /
+    ``Turn.timestamp`` at load time. Without this route the CLI flags are
+    silently dropped (YAML / scenario paths set the fields directly).
+    Mutual exclusivity of ignore vs think-only is enforced by the dataset
+    model validators after conversion.
+    """
+    from aiperf.common.enums import DatasetType
+
+    if d.get("type") not in (DatasetType.FILE, DatasetType.PUBLIC):
+        return
+    s = cli.model_fields_set
+    if "ignore_trace_delays" in s:
+        d["ignore_trace_delays"] = cli.ignore_trace_delays
+    if "use_think_time_only" in s:
+        d["use_think_time_only"] = cli.use_think_time_only
+    if "use_end_to_start_delays" in s:
+        d["use_end_to_start_delays"] = cli.use_end_to_start_delays
+    if "trace_idle_gap_cap_seconds" in s and cli.trace_idle_gap_cap_seconds is not None:
+        d["trace_idle_gap_cap_seconds"] = cli.trace_idle_gap_cap_seconds
+
+
 def _apply_max_context_length(d: dict[str, Any], cli: CLIConfig) -> None:
     """Route ``--max-context-length`` onto ``FileDataset``/``PublicDataset``.
 
@@ -990,6 +1016,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     # also rejects weka / non-hash-id formats). Do not also call
     # _apply_file_block_size — that helper is broader and redundant here.
     _apply_inter_turn_delay_cap(d, cli)
+    _apply_trace_delay_flags(d, cli)
     _apply_max_context_length(d, cli)
     _apply_block_size(d, cli)
     _apply_corpus_and_cache_bust(d, cli)

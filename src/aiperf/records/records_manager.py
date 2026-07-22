@@ -752,7 +752,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         if phase == CreditPhase.PROFILING:
             self._skipped_context_overflow_count += 1
-        self._records_tracker.update_from_request(message.metadata, message.error)
+        # Intentional skip: count as success so --failed-request-threshold and
+        # console error counts stay honest. message.error (if any) describes
+        # the overflow classification, not a failed request.
+        self._records_tracker.update_from_request(message.metadata, None)
         if (
             phase in self._complete_credit_phases
             and (

@@ -246,13 +246,14 @@ class InferenceClient(AIPerfLifecycleMixin):
     ) -> RequestRecord:
         """Enrich a RequestRecord with the original request info.
 
-        The hoisted metric inputs ``max_tokens`` and ``audio_duration_seconds``
-        live only on the originating turn — they are NOT ``RecordContext``
-        fields on ``request_info`` and so are not copied by the downcast in
-        ``_enrich_request_record``. Populate them explicitly so the record
-        processor (``osl_mismatch`` / ``audio_duration`` metrics) reads them
-        directly off the slim record without the full ``turns`` list on the
-        wire: ``max_tokens`` from the dispatch (last) turn,
+        The hoisted metric inputs ``max_tokens``, ``audio_duration_seconds``,
+        and ``scheduled_send_ms`` live only on the originating turn — they are
+        NOT ``RecordContext`` fields on ``request_info`` and so are not copied
+        by the downcast in ``_enrich_request_record``. Populate them explicitly
+        so the record processor (``osl_mismatch`` / ``audio_duration`` /
+        ``replay_send_schedule_offset`` metrics) reads them directly off the
+        slim record without the full ``turns`` list on the wire:
+        ``max_tokens`` and ``scheduled_send_ms`` from the dispatch (last) turn,
         ``audio_duration_seconds`` from the first turn (ASR requests are
         single-turn; mirrors the pre-hoist ``turns[0]`` read).
         """
@@ -266,6 +267,11 @@ class InferenceClient(AIPerfLifecycleMixin):
             record.request_info.max_tokens = last_turn.max_tokens if last_turn else None
             record.request_info.audio_duration_seconds = (
                 first_turn.audio_duration_seconds if first_turn else None
+            )
+            record.request_info.scheduled_send_ms = (
+                float(last_turn.timestamp)
+                if last_turn is not None and last_turn.timestamp is not None
+                else None
             )
 
             # When stripping is enabled (large-prompt memory optimization,

@@ -32,6 +32,7 @@ from aiperf.common.enums import (
     SSEFieldType,
 )
 from aiperf.common.exceptions import InvalidInferenceResultError
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.dataset_models import Turn
@@ -897,6 +898,14 @@ class RecordContext(AIPerfBaseModel):
         description="``audio_duration_seconds`` from the originating turn. Populated at "
         "record-enrichment time so the record processor reads it directly off the record without "
         "the full ``turns`` list on the wire. None for non-ASR requests.",
+    )
+    scheduled_send_ms: FiniteFloat | None = Field(
+        default=None,
+        description="Absolute schedule timestamp (ms, schedule-relative) from the "
+        "dispatched turn's ``Turn.timestamp``. Populated at record-enrichment time "
+        "so fixed-schedule replay lag metrics can read it off the slim record "
+        "without the full ``turns`` list on the wire. None for delay-scheduled "
+        "continuation turns and non-fixed-schedule datasets.",
     )
 
     # --- Cache-bust marker (sourced from Credit, exported in raw JSONL) -------

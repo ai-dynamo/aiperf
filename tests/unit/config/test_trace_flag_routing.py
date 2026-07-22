@@ -115,6 +115,90 @@ class TestInterTurnDelayCapRouting:
         assert ds.inter_turn_delay_cap_seconds == 60.0
 
 
+class TestTraceDelayFlagRouting:
+    """``--ignore-trace-delays`` / ``--use-think-time-only`` /
+    ``--use-end-to-start-delays`` / ``--trace-idle-gap-cap-seconds`` must route
+    onto FILE and PUBLIC datasets. Without an ``_apply_*`` helper they are
+    silently dropped by ``build_dataset`` even when set on ``CLIConfig``.
+    """
+
+    @pytest.mark.parametrize(
+        "cli_factory_id",
+        [param("file", id="file"), param("public", id="public_weka_hf")],
+    )
+    def test_ignore_trace_delays_routes(
+        self, trace_jsonl: Path, cli_factory_id: str
+    ) -> None:
+        def _cli() -> CLIConfig:
+            return (
+                _file_cli(trace_jsonl, ignore_trace_delays=True)
+                if cli_factory_id == "file"
+                else _public_cli(ignore_trace_delays=True)
+            )
+
+        out = build_dataset(_cli())
+        assert out.get("ignore_trace_delays") is True
+        ds = convert_cli_to_aiperf(_cli()).benchmark.datasets[0]
+        assert ds.ignore_trace_delays is True
+
+    @pytest.mark.parametrize(
+        "cli_factory_id",
+        [param("file", id="file"), param("public", id="public_weka_hf")],
+    )
+    def test_use_think_time_only_routes(
+        self, trace_jsonl: Path, cli_factory_id: str
+    ) -> None:
+        def _cli() -> CLIConfig:
+            return (
+                _file_cli(trace_jsonl, use_think_time_only=True)
+                if cli_factory_id == "file"
+                else _public_cli(use_think_time_only=True)
+            )
+
+        out = build_dataset(_cli())
+        assert out.get("use_think_time_only") is True
+        ds = convert_cli_to_aiperf(_cli()).benchmark.datasets[0]
+        assert ds.use_think_time_only is True
+
+    @pytest.mark.parametrize(
+        "cli_factory_id",
+        [param("file", id="file"), param("public", id="public_weka_hf")],
+    )
+    def test_use_end_to_start_delays_routes(
+        self, trace_jsonl: Path, cli_factory_id: str
+    ) -> None:
+        def _cli() -> CLIConfig:
+            return (
+                _file_cli(trace_jsonl, use_end_to_start_delays=True)
+                if cli_factory_id == "file"
+                else _public_cli(use_end_to_start_delays=True)
+            )
+
+        out = build_dataset(_cli())
+        assert out.get("use_end_to_start_delays") is True
+        ds = convert_cli_to_aiperf(_cli()).benchmark.datasets[0]
+        assert ds.use_end_to_start_delays is True
+
+    @pytest.mark.parametrize(
+        "cli_factory_id",
+        [param("file", id="file"), param("public", id="public_weka_hf")],
+    )
+    def test_trace_idle_gap_cap_routes(
+        self, trace_jsonl: Path, cli_factory_id: str
+    ) -> None:
+        def _cli() -> CLIConfig:
+            return (
+                _file_cli(trace_jsonl, trace_idle_gap_cap_seconds=10.0)
+                if cli_factory_id == "file"
+                else _public_cli(trace_idle_gap_cap_seconds=10.0)
+            )
+
+        out = build_dataset(_cli())
+        assert out.get("trace_idle_gap_cap_seconds") == 10.0
+        ds = convert_cli_to_aiperf(_cli()).benchmark.datasets[0]
+        assert ds.trace_idle_gap_cap_seconds == 10.0
+
+
 class TestSynthesisCapRouting:
     """--max-isl/--max-osl cap weka replay; the weka loader reads
     synthesis.max_isl/max_osl. PublicDataset (weka_hf) now carries a synthesis

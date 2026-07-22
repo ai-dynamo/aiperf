@@ -30,6 +30,7 @@ class TestRecordContext:
         assert ctx.payload_bytes is None
         assert ctx.max_tokens is None
         assert ctx.audio_duration_seconds is None
+        assert ctx.scheduled_send_ms is None
 
     def test_explicit_dag_fields(self):
         ctx = _make_record_context(
@@ -72,6 +73,7 @@ class TestRequestInfoIsRecordContext:
         # The hoisted scalars stay on RecordContext (they cross the wire).
         assert "max_tokens" not in extras
         assert "audio_duration_seconds" not in extras
+        assert "scheduled_send_ms" not in extras
         assert "payload_bytes" not in extras
 
 

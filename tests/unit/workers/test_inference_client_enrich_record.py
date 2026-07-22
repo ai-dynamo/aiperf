@@ -81,3 +81,4 @@ class TestEnrichRequestRecord:
         assert "payload_bytes" in dump
         assert "max_tokens" in dump
         assert "audio_duration_seconds" in dump
+        assert "scheduled_send_ms" in dump

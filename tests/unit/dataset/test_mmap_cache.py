@@ -1050,6 +1050,33 @@ class TestSettingsPayloadFromRun:
         assert payload["prompt"], "synthetic run should carry a prompt config"
         assert "cache_bust" not in payload["prompt"]
 
+    def test_use_end_to_start_delays_keys_the_cache(self, tmp_path: Path) -> None:
+        """Load-time delay mode must enter the key: end-to-start vs start-to-start
+        bake different Turn.delay bytes into the mmap."""
+        from aiperf.plugin.enums import CustomDatasetType
+
+        trace = _write_input_file(
+            tmp_path,
+            b'{"session_id": "s1", "timestamp": 0, "input_length": 8}\n',
+        )
+
+        def _key(*, use_end: bool) -> str | None:
+            run = make_run_from_cli(
+                CLIConfig(
+                    model_names=["test-model"],
+                    input_file=str(trace),
+                    custom_dataset_type=CustomDatasetType.WEKA_TRACE,
+                    use_end_to_start_delays=use_end,
+                    trace_idle_gap_cap_seconds=10.0,
+                )
+            )
+            payload = mmap_cache._settings_payload_from_run(run)
+            assert "use_end_to_start_delays" in payload
+            assert payload["use_end_to_start_delays"] is use_end
+            return mmap_cache.compute_cache_key_from_run(run)
+
+        assert _key(use_end=False) != _key(use_end=True)
+
     def test_public_dataset_source_plugin_only(self) -> None:
         """A public dataset without an HF source reduces to its plugin name."""
         from aiperf.plugin.enums import PublicDatasetType
