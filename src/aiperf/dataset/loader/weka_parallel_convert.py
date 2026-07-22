@@ -439,7 +439,9 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             # the serial path emits 0.0, breaking the module's byte-identical
             # serial/parallel contract. (Child / flat-chain paths intentionally
             # do not floor in either path, so they stay in parity untouched.)
-            delay_ms = max(delay_ms, 0.0)
+            # Clamp maps non-finite delays to None — skip the floor.
+            if delay_ms is not None:
+                delay_ms = max(delay_ms, 0.0)
 
         parent_delta = parent_recon.turn_delta()
         theoretical_hit_blocks = req["theoretical_hit_blocks"]

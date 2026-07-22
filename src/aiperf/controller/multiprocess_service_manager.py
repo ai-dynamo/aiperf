@@ -266,9 +266,10 @@ class MultiProcessServiceManager(BaseServiceManager):
         bus; by the time we reach here that path has already been given its
         delivery grace. ``Process.terminate()`` (SIGTERM) is therefore a
         no-op on POSIX, and waiting ``TASK_CANCEL_TIMEOUT_SHORT`` (~2s) on
-        ``join()`` before ``kill()`` only burns wall-clock per process.
-        Skip straight to ``kill()`` (SIGKILL on POSIX; ``TerminateProcess``
-        on Windows, where ``kill``/``terminate`` are equivalent).
+        ``join()`` *before* ``kill()`` only burns wall-clock per process.
+        Go straight to ``kill()`` (SIGKILL on POSIX; ``TerminateProcess``
+        on Windows, where ``kill``/``terminate`` are equivalent), then
+        ``join()`` to reap so the child does not linger as a zombie.
         """
         if not info.process or not info.process.is_alive():
             return
@@ -279,6 +280,14 @@ class MultiProcessServiceManager(BaseServiceManager):
             "TerminateProcess — children ignore SIGTERM)"
         )
         info.process.kill()
+        await asyncio.to_thread(
+            info.process.join, timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT
+        )
+        if info.process.is_alive():
+            self.warning(
+                f"Service {info.service_type} process (pid: {info.process.pid}) "
+                "still alive after kill()+join timeout"
+            )
 
     async def wait_for_all_services_start(
         self,

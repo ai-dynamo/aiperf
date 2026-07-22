@@ -76,6 +76,26 @@ def test_tracker_non_finite_maps_to_none_and_counts():
     assert tracker.max_observed_ms == 0.0
 
 
+def test_parent_floor_after_clamp_skips_none_for_non_finite():
+    """Parent reconstruct floors after clamp; must not ``max(None, 0.0)``.
+
+    Mirrors ``weka_trace`` / ``weka_parallel_convert`` parent paths: clamp
+    scrubbed non-finite delays to None, then the floor must be gated.
+    """
+    tracker = DelayCapTracker(cap_seconds=60.0)
+    delay_ms: float | None = float("nan")
+    delay_ms = tracker.clamp(delay_ms)
+    if delay_ms is not None:
+        delay_ms = max(delay_ms, 0.0)
+    assert delay_ms is None
+
+    delay_ms = tracker.clamp(-50.0)
+    assert delay_ms == -50.0
+    if delay_ms is not None:
+        delay_ms = max(delay_ms, 0.0)
+    assert delay_ms == 0.0
+
+
 def test_tracker_log_summary_warns_on_non_finite(caplog):
     tracker = DelayCapTracker(cap_seconds=60.0)
     tracker.clamp(float("nan"))

@@ -331,8 +331,9 @@ class TestWaitForProcess:
     """Test _wait_for_process force-kill after bus shutdown grace.
 
     Children ``SIG_IGN`` SIGTERM (see ``bootstrap.py``), so this path must
-    not call ``terminate()``+``join()`` — that only burned
-    ``TASK_CANCEL_TIMEOUT_SHORT`` before ``kill()``.
+    not call ``terminate()`` then wait — that only burned
+    ``TASK_CANCEL_TIMEOUT_SHORT`` before ``kill()``. After ``kill()`` we
+    still ``join()`` to reap the zombie.
     """
 
     @pytest.fixture
@@ -386,11 +387,18 @@ class TestWaitForProcess:
     async def test_alive_process_skips_terminate_goes_straight_to_kill(
         self, service_manager: MultiProcessServiceManager, _make_process_info
     ):
-        """Alive straggler is killed immediately; terminate/join must not run."""
+        """Alive straggler is killed immediately; terminate must not run.
+
+        ``join()`` still runs *after* ``kill()`` so the child is reaped.
+        """
         info = _make_process_info(is_alive=True)
+        # Initial is_alive gate is True; after kill the post-join check is False.
+        info.process.is_alive.side_effect = [True, False]
 
         await service_manager._wait_for_process(info)
 
         info.process.terminate.assert_not_called()
-        info.process.join.assert_not_called()
         info.process.kill.assert_called_once()
+        info.process.join.assert_called_once()
+        method_names = [c[0] for c in info.process.method_calls]
+        assert method_names.index("kill") < method_names.index("join")

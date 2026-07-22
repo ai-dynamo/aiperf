@@ -1936,7 +1936,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     # Floor at 0: a negative inter-turn delay (corrupt
                     # think_time, or a non-monotonic timestamp gap) would tell
                     # the load generator to dispatch a request in the past.
-                    delay_ms = max(delay_ms, 0.0)
+                    # Clamp maps non-finite delays to None — skip the floor.
+                    if delay_ms is not None:
+                        delay_ms = max(delay_ms, 0.0)
                 delta = recon.turn_delta()
                 theoretical_hit_blocks, theoretical_total_blocks = trace_metric_values[
                     (plan.trace_id, k)
