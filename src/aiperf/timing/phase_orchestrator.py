@@ -14,9 +14,16 @@ Progress reporting is delegated to PhaseRunner.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
+from aiperf.common.control_hooks import (
+    PreparedEndpointControlHooks,
+    start_server_profiler,
+    stop_server_profiler,
+)
+from aiperf.common.control_plane_http import ControlPlaneHttpError
+from aiperf.common.enums import CreditPhase
 from aiperf.common.hooks import on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.credit.callback_handler import CreditCallbackHandler
@@ -33,6 +40,54 @@ if TYPE_CHECKING:
     from aiperf.credit.sticky_router import CreditRouterProtocol
     from aiperf.timing.config import TimingConfig
     from aiperf.timing.phase.publisher import PhasePublisher
+
+
+async def run_phase_with_server_profiler(
+    *,
+    phase: CreditPhase,
+    hooks: Any | None,
+    headers: dict[str, str],
+    run_phase: Callable[[], Awaitable[None]],
+    start_fn: Callable[..., Awaitable[None]],
+    stop_fn: Callable[..., Awaitable[None]],
+    warn_fn: Callable[[str], None],
+    defer_stop: bool = False,
+) -> bool:
+    """Start/stop server profiler around a profiling phase only.
+
+    When ``defer_stop`` is True (seamless non-final profiling), start runs
+    before ``run_phase`` but stop is left to the caller after drain. Returns
+    True when a deferred stop is still owed; False otherwise.
+    """
+    enabled = (
+        phase == CreditPhase.PROFILING
+        and hooks is not None
+        and bool(getattr(hooks, "profiler_start_urls", None))
+    )
+    if not enabled:
+        await run_phase()
+        return False
+
+    await start_fn(hooks, headers)
+    if defer_stop:
+        try:
+            await run_phase()
+        except Exception:
+            try:
+                await stop_fn(hooks, headers)
+            except ControlPlaneHttpError as error:
+                warn_fn(f"server_profiler stop failed: {error}")
+            raise
+        return True
+
+    try:
+        await run_phase()
+    finally:
+        try:
+            await stop_fn(hooks, headers)
+        except ControlPlaneHttpError as error:
+            warn_fn(f"server_profiler stop failed: {error}")
+    return False
 
 
 class PhaseOrchestrator(AIPerfLifecycleMixin):
@@ -86,6 +141,8 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         phase_publisher: PhasePublisher,
         credit_router: CreditRouterProtocol,
         dataset_metadata: DatasetMetadata,
+        control_hooks: PreparedEndpointControlHooks | None = None,
+        control_headers: dict[str, str] | None = None,
         **kwargs,
     ) -> None:
         """Initialize timing strategy and orchestration components.
@@ -95,12 +152,17 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             phase_publisher: Publishes phase events to message bus
             credit_router: Routes credits to workers
             dataset_metadata: Dataset for conversation sampling
+            control_hooks: Prepared endpoint control hooks (profiler URLs);
+                owned by TimingManager, never by workers
+            control_headers: Auth headers for control-plane POSTs
         """
         super().__init__(**kwargs)
         self._config = config
         self._phase_publisher = phase_publisher
         self._credit_router = credit_router
         self._dataset_metadata = dataset_metadata
+        self._control_hooks = control_hooks
+        self._control_headers = control_headers or {}
 
         # Create dataset sampler
         SamplerClass = plugins.get_class(
@@ -211,9 +273,22 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 url_selection_strategy=self._url_sampler,
             )
 
-            # For seamless non-final phases, set callback to remove from active runners
-            # when background return wait completes
-            if is_seamless_non_final:
+            # Seamless non-final profiling: stop after drain (phase-complete
+            # callback), not when run() returns at send-complete.
+            profiler_will_defer_stop = (
+                is_seamless_non_final
+                and phase_config.phase == CreditPhase.PROFILING
+                and self._control_hooks is not None
+                and bool(self._control_hooks.profiler_start_urls)
+            )
+
+            # For seamless non-final phases, set callback before run() so a
+            # fast drain cannot fire the wrong (cleanup-only) callback.
+            if profiler_will_defer_stop:
+                runner.set_phase_complete_callback(
+                    self._phase_runner_cleanup_and_stop_profiler_callback(runner)
+                )
+            elif is_seamless_non_final:
                 runner.set_phase_complete_callback(
                     self._phase_runner_cleanup_callback(runner)
                 )
@@ -221,10 +296,25 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             # Track active runner (multiple possible with seamless mode)
             self._active_runners.append(runner)
 
-            try:
+            async def _run(
+                phase_runner: PhaseRunner = runner,
+                final: bool = is_final_phase,
+            ) -> None:
                 # Execute phase (runner.run() returns after sending complete for seamless,
                 # or after all returns complete for non-seamless/final phases)
-                await runner.run(is_final_phase=is_final_phase)
+                await phase_runner.run(is_final_phase=final)
+
+            try:
+                await run_phase_with_server_profiler(
+                    phase=phase_config.phase,
+                    hooks=self._control_hooks,
+                    headers=self._control_headers,
+                    run_phase=_run,
+                    start_fn=start_server_profiler,
+                    stop_fn=stop_server_profiler,
+                    warn_fn=self.warning,
+                    defer_stop=profiler_will_defer_stop,
+                )
             except Exception as e:
                 self.error(f"Error executing phase {runner.phase}: {e!r}")
                 await self.cancel()
@@ -245,6 +335,28 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
 
         return cleanup
 
+    def _phase_runner_cleanup_and_stop_profiler_callback(
+        self, runner: PhaseRunner
+    ) -> Callable[[], None]:
+        """Seamless profiling: after drain, remove runner and stop the profiler."""
+
+        cleanup = self._phase_runner_cleanup_callback(runner)
+
+        def cleanup_and_stop() -> None:
+            cleanup()
+            self.execute_async(self._stop_server_profiler_warn_only())
+
+        return cleanup_and_stop
+
+    async def _stop_server_profiler_warn_only(self) -> None:
+        """Best-effort deferred profiler stop (seamless non-final profiling)."""
+        if self._control_hooks is None or not self._control_hooks.profiler_stop_urls:
+            return
+        try:
+            await stop_server_profiler(self._control_hooks, self._control_headers)
+        except ControlPlaneHttpError as error:
+            self.warning(f"server_profiler stop failed: {error}")
+
     async def cancel(self) -> None:
         """Cancel the orchestrator gracefully.
 
@@ -257,6 +369,8 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         await self._credit_router.cancel_all_credits()
 
         self._cancel_active_runners()
+        # If seamless profiling deferred stop, cancel may skip the drain callback.
+        await self._stop_server_profiler_warn_only()
 
     @on_stop
     async def _stop_orchestrator(self) -> None:

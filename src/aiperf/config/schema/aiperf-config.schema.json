@@ -10197,6 +10197,30 @@
           "title": "Waitformodelmode",
           "type": "string"
         },
+        "resetKvCache": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResetKvCacheConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When enabled, POST a KV-cache reset once per logical benchmark cell before warmup/profiling. Accepts false | true | {timeout_seconds?, path?}."
+        },
+        "serverProfiler": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ServerProfilerConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When enabled, start/stop the server profiler around each profiling phase. Accepts false | true | {timeout_seconds?, start_path?, stop_path?}."
+        },
         "url": {
           "description": "Shorthand for 'urls'. Accepts a single value which will be converted to a list/dict. List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Example: ['http://localhost:8000/v1/chat/completions']",
           "oneOf": [
@@ -14947,6 +14971,51 @@
       "title": "RequestContentType",
       "type": "string"
     },
+    "ResetKvCacheConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "timeoutSeconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Timeout in seconds for the reset_kv_cache POST. When unset, uses endpoint.timeout.",
+          "title": "Timeoutseconds",
+          "x-jinja2-supported": true
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative path for KV-cache reset. Default: /reset_prefix_cache.",
+          "title": "Path"
+        }
+      },
+      "title": "ResetKvCacheConfig",
+      "type": "object"
+    },
     "RuntimeConfig": {
       "additionalProperties": false,
       "description": "Runtime configuration for benchmark execution.",
@@ -15895,6 +15964,64 @@
       ],
       "title": "ServerMetricsFormat",
       "type": "string"
+    },
+    "ServerProfilerConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "timeoutSeconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Timeout in seconds for profiler start/stop POSTs. When unset, uses endpoint.timeout.",
+          "title": "Timeoutseconds",
+          "x-jinja2-supported": true
+        },
+        "startPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative path for profiler start. Default: /start_profile.",
+          "title": "Startpath"
+        },
+        "stopPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative path for profiler stop. Default: /stop_profile.",
+          "title": "Stoppath"
+        }
+      },
+      "title": "ServerProfilerConfig",
+      "type": "object"
     },
     "ServiceRunType": {
       "enum": [

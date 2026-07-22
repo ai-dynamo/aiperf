@@ -328,6 +328,38 @@ Seconds between endpoint readiness probe attempts.
 <br/>_Constraints: > 0.0_
 <br/>_Default: `5.0`_
 
+#### `--reset-kv-cache`
+
+Enable once-per-cell KV-cache reset via POST to the endpoint.
+<br/>_Flag (no value required)_
+
+#### `--reset-kv-cache-timeout-seconds` `<float>`
+
+Timeout seconds for reset_kv_cache control requests.
+<br/>_Constraints: > 0_
+
+#### `--reset-kv-cache-path` `<str>`
+
+Relative path for reset_kv_cache (default /reset_prefix_cache).
+
+#### `--server-profiler`
+
+Enable server profiler start/stop around profiling phases.
+<br/>_Flag (no value required)_
+
+#### `--server-profiler-timeout-seconds` `<float>`
+
+Timeout seconds for server_profiler control requests.
+<br/>_Constraints: > 0_
+
+#### `--server-profiler-start-path` `<str>`
+
+Relative path for profiler start (default /start_profile).
+
+#### `--server-profiler-stop-path` `<str>`
+
+Relative path for profiler stop (default /stop_profile).
+
 #### `--api-key` `<str>`
 
 API authentication key for the endpoint. When provided, automatically included in request headers as `Authorization: Bearer <api_key>`.
@@ -1757,6 +1789,38 @@ How readiness probes the endpoint: 'models' checks /v1/models, 'inference' sends
 Seconds between endpoint readiness probe attempts.
 <br/>_Constraints: > 0.0_
 <br/>_Default: `5.0`_
+
+#### `--reset-kv-cache`
+
+Enable once-per-cell KV-cache reset via POST to the endpoint.
+<br/>_Flag (no value required)_
+
+#### `--reset-kv-cache-timeout-seconds` `<float>`
+
+Timeout seconds for reset_kv_cache control requests.
+<br/>_Constraints: > 0_
+
+#### `--reset-kv-cache-path` `<str>`
+
+Relative path for reset_kv_cache (default /reset_prefix_cache).
+
+#### `--server-profiler`
+
+Enable server profiler start/stop around profiling phases.
+<br/>_Flag (no value required)_
+
+#### `--server-profiler-timeout-seconds` `<float>`
+
+Timeout seconds for server_profiler control requests.
+<br/>_Constraints: > 0_
+
+#### `--server-profiler-start-path` `<str>`
+
+Relative path for profiler start (default /start_profile).
+
+#### `--server-profiler-stop-path` `<str>`
+
+Relative path for profiler stop (default /stop_profile).
 
 #### `--api-key` `<str>`
 

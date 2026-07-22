@@ -270,6 +270,56 @@ class CLIConfig(BaseConfig):
         ),
     ] = 5.0
 
+    reset_kv_cache: Annotated[
+        bool,
+        Field(
+            description="Enable once-per-cell KV-cache reset via POST to the endpoint."
+        ),
+        CLIParameter(name=("--reset-kv-cache",), group=Groups.ENDPOINT),
+    ] = False
+
+    reset_kv_cache_timeout_seconds: Annotated[
+        float | None,
+        Field(gt=0, description="Timeout seconds for reset_kv_cache control requests."),
+        CLIParameter(name=("--reset-kv-cache-timeout-seconds",), group=Groups.ENDPOINT),
+    ] = None
+
+    reset_kv_cache_path: Annotated[
+        str | None,
+        Field(
+            description="Relative path for reset_kv_cache (default /reset_prefix_cache)."
+        ),
+        CLIParameter(name=("--reset-kv-cache-path",), group=Groups.ENDPOINT),
+    ] = None
+
+    server_profiler: Annotated[
+        bool,
+        Field(description="Enable server profiler start/stop around profiling phases."),
+        CLIParameter(name=("--server-profiler",), group=Groups.ENDPOINT),
+    ] = False
+
+    server_profiler_timeout_seconds: Annotated[
+        float | None,
+        Field(
+            gt=0, description="Timeout seconds for server_profiler control requests."
+        ),
+        CLIParameter(
+            name=("--server-profiler-timeout-seconds",), group=Groups.ENDPOINT
+        ),
+    ] = None
+
+    server_profiler_start_path: Annotated[
+        str | None,
+        Field(description="Relative path for profiler start (default /start_profile)."),
+        CLIParameter(name=("--server-profiler-start-path",), group=Groups.ENDPOINT),
+    ] = None
+
+    server_profiler_stop_path: Annotated[
+        str | None,
+        Field(description="Relative path for profiler stop (default /stop_profile)."),
+        CLIParameter(name=("--server-profiler-stop-path",), group=Groups.ENDPOINT),
+    ] = None
+
     api_key: Annotated[
         str | None,
         Field(

@@ -8,6 +8,8 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.control_hooks import prepare_endpoint_control_hooks
+from aiperf.common.endpoint_auth import auth_headers_for_endpoint
 from aiperf.common.enums import CommandType, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.event_loop_monitor import EventLoopMonitor
@@ -134,12 +136,18 @@ class TimingManager(BaseComponentService):
 
         self.debug(f"Configuring phase orchestrator for {self.service_id}")
 
+        endpoint = self.run.cfg.endpoint
+        control_hooks = prepare_endpoint_control_hooks(endpoint)
+        control_headers = auth_headers_for_endpoint(endpoint)
+
         # Create orchestrator that executes phases
         self._phase_orchestrator = PhaseOrchestrator(
             config=self.config,
             phase_publisher=self.phase_publisher,
             credit_router=self.sticky_router,
             dataset_metadata=self._dataset_metadata,
+            control_hooks=control_hooks,
+            control_headers=control_headers,
         )
         await self._phase_orchestrator.initialize()
 
