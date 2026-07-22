@@ -35,7 +35,7 @@ class TestRankingsEndpoint:
             aiperf profile \
                 --model test-reranker \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type {endpoint_type} \
                 --input-file {dataset_path} \
                 --custom-dataset-type single_turn \
@@ -57,7 +57,7 @@ class TestRankingsEndpoint:
             aiperf profile \
                 --model test-reranker \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type nim_rankings \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \

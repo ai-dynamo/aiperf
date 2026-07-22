@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from aiperf.common.enums import BaselineKind
+from aiperf.common.messages import PhaseBaselineRequestMessage
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
     CreditPhaseProgressMessage,
@@ -58,6 +60,21 @@ class PhasePublisher:
             service_id=self._service_id,
             stats=phase_stats,
             config=config,
+        )
+        await self._pub_client.publish(msg)
+
+    async def publish_phase_baseline_request(
+        self, config: CreditPhaseConfig, phase_id: str, kind: BaselineKind
+    ) -> None:
+        """Publish a best-effort phase boundary baseline request."""
+        msg = PhaseBaselineRequestMessage(
+            phase_id=phase_id,
+            phase_index=config.phase_index,
+            profiling_index=config.profiling_index,
+            phase_name=config.phase_name
+            or f"{config.phase.value}_{config.phase_index}",
+            phase_kind=config.phase_kind,
+            kind=kind,
         )
         await self._pub_client.publish(msg)
 

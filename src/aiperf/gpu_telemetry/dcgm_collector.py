@@ -12,16 +12,19 @@ from aiperf.common.mixins import (
     TRecordCallback,
 )
 from aiperf.common.models import GpuMetadata, TelemetryMetrics, TelemetryRecord
-from aiperf.gpu_telemetry.constants import DCGM_TO_FIELD_MAPPING
+from aiperf.gpu_telemetry.constants import (
+    DCGM_TO_FIELD_MAPPING,
+    NVIDIA_GPU_TELEMETRY_PLATFORM,
+)
 
 __all__ = ["DCGMTelemetryCollector"]
 
 # Unit conversion scaling factors for DCGM metrics
 SCALING_FACTORS = {
-    "energy_consumption": 1e-9,  # mJ -> MJ
-    "gpu_memory_used": 1.048576e-3,  # MiB -> GB
-    "sm_utilization": 100,  # ratio (0-1) -> percentage (0-100)
-    "power_violation": 1e-3,  # ns -> µs
+    "nvidia_energy_consumption": 1e-9,  # mJ -> MJ
+    "nvidia_memory_used": 1.048576e-3,  # MiB -> GB
+    "nvidia_sm_utilization": 100,  # ratio (0-1) -> percentage (0-100)
+    "nvidia_power_violation": 1e-3,  # ns -> µs
 }
 
 
@@ -154,6 +157,7 @@ class DCGMTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
                             hostname=labels.get("Hostname"),
                             namespace=labels.get("namespace"),
                             pod_name=labels.get("pod"),
+                            platform=NVIDIA_GPU_TELEMETRY_PLATFORM,
                         )
 
                     base_metric_name = metric_name.removesuffix("_total")
