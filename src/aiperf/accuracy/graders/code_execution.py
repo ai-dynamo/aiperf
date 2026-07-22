@@ -40,7 +40,7 @@ import orjson
 
 from aiperf.accuracy.graders.base import BaseGrader
 from aiperf.accuracy.models import GradingResult
-from aiperf.common.utils import allow_daemon_children
+from aiperf.common.utils import allow_daemon_children, use_fork_start_method
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -182,22 +182,30 @@ class CodeExecutionGrader(BaseGrader):
 def _run_codegen_metrics(
     evaluation_sample: list[dict[str, str]], generated_code: list[list[str]]
 ) -> tuple[dict[str, Any], Any]:
-    """Run lighteval's ``codegen_metrics`` with the daemon flag cleared.
+    """Run lighteval's ``codegen_metrics`` under fork, with the daemon flag cleared.
 
-    ``codegen_metrics`` fans out to a ProcessPoolExecutor. AIPerf runs the
-    record processor as a daemon (every service is spawned with
-    ``daemon=True``), and Python forbids daemons from spawning child
-    processes, so the flag must be cleared for the duration of the fork or
-    grading dies with "daemonic processes are not allowed to have children"
-    — silently mislabeled as unparsed.
+    Two process-model constraints have to be satisfied for lighteval's sandbox
+    to actually execute the candidate code:
 
-    TODO: This flag-flipping is a pragmatic workaround. The cleaner design is
-    to own the sandboxed-execution pool outside the daemon (e.g. a non-daemon
-    executor service the record processor delegates to) so no daemon state is
-    mutated. Revisit if sandboxed grading needs to scale beyond a single
-    per-record pool.
+    - ``allow_daemon_children``: ``codegen_metrics`` fans out to a
+      ProcessPoolExecutor, and Python forbids daemon processes (every AIPerf
+      service is spawned ``daemon=True``) from spawning children — without the
+      clear, grading dies with "daemonic processes are not allowed to have
+      children" and is mislabeled unparsed.
+    - ``use_fork_start_method``: lighteval's ``check_correctness`` passes a
+      nested local function as the ``multiprocessing.Process`` target, which is
+      only picklable-free under ``fork``. Under ``spawn``/``forkserver`` (the
+      default on macOS, and configurable on Linux) the sandbox subprocess never
+      starts, so every test case is scored as failed and ``pass@1`` is a
+      constant 0 for correct code (issue #1145).
+
+    TODO: This state-flipping is a pragmatic workaround. The cleaner design is
+    to own the sandboxed-execution pool outside the daemon (e.g. a non-daemon,
+    fork-context executor service the record processor delegates to) so no
+    process-global state is mutated. Revisit if sandboxed grading needs to scale
+    beyond a single per-record pool.
     """
-    with allow_daemon_children():
+    with allow_daemon_children(), use_fork_start_method():
         return codegen_metrics(
             evaluation_sample,
             generated_code,

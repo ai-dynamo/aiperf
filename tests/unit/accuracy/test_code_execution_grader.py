@@ -142,6 +142,48 @@ class TestGradeClearsDaemonFlag:
         assert result.unparsed is False
         assert result.correct is True
 
+    @pytest.mark.skipif(
+        "fork" not in mp.get_all_start_methods(),
+        reason="fork start method unavailable on this platform",
+    )
+    async def test_codegen_metrics_runs_under_fork_start_method(
+        self, monkeypatch
+    ) -> None:
+        """Regression for issue #1145: lighteval's check_correctness passes a
+        nested local function as the Process target, which only works under the
+        fork start method. Under spawn/forkserver the sandbox subprocess never
+        starts and every test is scored as failed (pass@1=0). grade() must force
+        fork around codegen_metrics regardless of the process-wide default."""
+        seen: dict[str, str] = {}
+
+        def fake_codegen_metrics(*_args, **_kwargs):
+            seen["start_method"] = mp.get_start_method()
+            return {"pass@1": 1.0}, {}
+
+        monkeypatch.setattr(code_execution, "_HAS_LIGHTEVAL_LCB", True)
+        monkeypatch.setattr(code_execution, "codegen_metrics", fake_codegen_metrics)
+        monkeypatch.setattr(code_execution, "extract_code", lambda _text: "print(1)")
+
+        grader = CodeExecutionGrader(run=MagicMock())
+        payload = orjson.dumps(
+            {"public_test_cases": [{"input": "1", "output": "1"}], "metadata": ""}
+        ).decode()
+
+        original = mp.get_start_method(allow_none=True)
+        try:
+            mp.set_start_method("spawn", force=True)
+            result = await grader.grade("```python\nprint(1)\n```", payload)
+            # codegen_metrics ran under fork (the fix)...
+            assert seen["start_method"] == "fork"
+            # ...and the process-wide default was restored to spawn afterward.
+            assert mp.get_start_method() == "spawn"
+        finally:
+            if original is not None:
+                mp.set_start_method(original, force=True)
+
+        assert result.unparsed is False
+        assert result.correct is True
+
     async def test_codegen_metrics_exception_becomes_grading_failure(
         self, monkeypatch
     ) -> None:

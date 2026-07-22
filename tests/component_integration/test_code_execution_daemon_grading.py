@@ -87,3 +87,91 @@ class TestDaemonProcessPoolSpawn:
         status, payload = _run_in_daemon(_pool_with_guard)
         assert status == "ok", f"expected daemon spawn to succeed, got: {payload}"
         assert payload == [2, 4, 6]
+
+
+def _nested_target_process(queue: mp.Queue) -> None:
+    """Reproduce lighteval's check_correctness mechanism: a NESTED local function
+    passed as the multiprocessing.Process target, with no fork guard. Under
+    spawn/forkserver the target can't be pickled, so the child never runs and the
+    "result" stays empty — exactly how LCB grading scored every test as failed."""
+
+    def _inner(result):  # nested/local, matches lighteval's ``_temp_run``
+        result.append("ran")
+
+    try:
+        manager = mp.Manager()
+        result = manager.list()
+        p = mp.Process(target=_inner, args=(result,))
+        p.start()
+        p.join(timeout=10)
+        if p.is_alive():
+            p.kill()
+        # Empty result == the child never executed (the bug).
+        queue.put(("ok", list(result)))
+    except Exception as exc:
+        queue.put(("error", repr(exc)))
+
+
+def _nested_target_process_with_fork(queue: mp.Queue) -> None:
+    """Same nested-target mechanism, but under ``use_fork_start_method`` (the fix):
+    fork inherits the parent's memory so the nested target needs no pickling and
+    the child actually runs."""
+    from aiperf.common.utils import allow_daemon_children, use_fork_start_method
+
+    def _inner(result):
+        result.append("ran")
+
+    try:
+        with allow_daemon_children(), use_fork_start_method():
+            manager = mp.Manager()
+            result = manager.list()
+            p = mp.Process(target=_inner, args=(result,))
+            p.start()
+            p.join(timeout=10)
+            if p.is_alive():
+                p.kill()
+        queue.put(("ok", list(result)))
+    except Exception as exc:
+        queue.put(("error", repr(exc)))
+
+
+def _run_in_process(target, start_method: str) -> tuple[str, object]:
+    """Run ``target(queue)`` in a child using an explicit start method."""
+    ctx = mp.get_context(start_method)
+    queue: mp.Queue = ctx.Queue()
+    proc = ctx.Process(target=target, args=(queue,), daemon=True)
+    proc.start()
+    try:
+        status, payload = queue.get(timeout=120)
+    finally:
+        proc.join(timeout=30)
+    return status, payload
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    "fork" not in mp.get_all_start_methods(),
+    reason="fork start method unavailable on this platform",
+)
+class TestForkStartMethodForCodegen:
+    """Guards issue #1145: lighteval's LCB codegen sandbox passes a nested local
+    function as the Process target, which only works under fork. These tests
+    exercise that real mechanism (no lighteval dependency) under spawn."""
+
+    def test_nested_target_never_runs_under_spawn_without_guard(self) -> None:
+        """Pins the bug: under spawn, a nested-local Process target can't be
+        pickled, the child never runs, and the result comes back empty — which is
+        exactly how check_correctness scored every LCB test case as failed."""
+        status, payload = _run_in_process(_nested_target_process, "spawn")
+        # Either the result is empty (child never ran) or the spawn raised; both
+        # demonstrate the mechanism. The key point is the target did NOT run.
+        assert status == "error" or payload == [], (
+            f"expected nested target to fail under spawn, got: {status} {payload}"
+        )
+
+    def test_nested_target_runs_under_spawn_with_fork_guard(self) -> None:
+        """``use_fork_start_method`` makes the same nested-target Process actually
+        run even when the parent default is spawn — the fix for #1145."""
+        status, payload = _run_in_process(_nested_target_process_with_fork, "spawn")
+        assert status == "ok", f"expected fork-guarded run to succeed, got: {payload}"
+        assert payload == ["ran"]
