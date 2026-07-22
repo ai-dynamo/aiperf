@@ -86,21 +86,6 @@ _ADAPTIVE_SCALE_STRATEGY_FIELD_MAP = {
 }
 
 
-_ADAPTIVE_SCALE_FIELD_ALIASES = {
-    "adaptive_scale": "adaptiveScale",
-    "adaptive_sustain_duration": "adaptiveSustainDuration",
-    "adaptive_assessment_period": "adaptiveAssessmentPeriod",
-    "adaptive_min_completed_requests": "adaptiveMinCompletedRequests",
-    "adaptive_control_variable": "adaptiveControlVariable",
-    "adaptive_control_min": "adaptiveControlMin",
-    "adaptive_control_max": "adaptiveControlMax",
-    "adaptive_scale_strategy_type": "adaptiveScaleStrategyType",
-    "adaptive_scale_step_policy": "adaptiveScaleStepPolicy",
-    "adaptive_scale_base_step": "adaptiveScaleBaseStep",
-    "adaptive_scale_max_step_multiplier": "adaptiveScaleMaxStepMultiplier",
-    "adaptive_scale_step_percent": "adaptiveScaleStepPercent",
-}
-
 _ADAPTIVE_SCALE_BLOCK_KEYS = {"enabled", "control", "strategy", "sla"} | set(
     _ADAPTIVE_SCALE_FIELD_MAP
 )
@@ -108,10 +93,15 @@ _ADAPTIVE_SCALE_CONTROL_KEYS = {"variable", "min", "max"}
 _ADAPTIVE_SCALE_STRATEGY_KEYS = set(_ADAPTIVE_SCALE_STRATEGY_FIELD_MAP)
 
 
+def _to_lower_camel(field_name: str) -> str:
+    first, *rest = field_name.split("_")
+    return first + "".join(part.capitalize() for part in rest)
+
+
 def _target_field(field_name: str, *, use_aliases: bool) -> str:
     if not use_aliases:
         return field_name
-    return _ADAPTIVE_SCALE_FIELD_ALIASES[field_name]
+    return _to_lower_camel(field_name)
 
 
 def _copy_mapped_fields(
