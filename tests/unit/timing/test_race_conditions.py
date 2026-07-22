@@ -7,6 +7,7 @@ import pytest
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import CreditPhaseStats
+from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.credit.sticky_router import StickyCreditRouter, WorkerLoad
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin.enums import TimingMode
@@ -189,6 +190,79 @@ class TestRecordsManagerRace:
         assert not rt.check_and_set_all_records_received_for_phase(
             CreditPhase.PROFILING
         )
+
+    def test_same_kind_phases_track_counts_and_metadata_independently(self):
+        rt = RecordsTracker()
+        low = CreditPhaseStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=0,
+            profiling_index=0,
+            phase_name="low",
+            phase_kind="profiling",
+            final_requests_completed=1,
+            start_ns=1000,
+        )
+        storm = CreditPhaseStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=1,
+            profiling_index=1,
+            phase_name="storm",
+            phase_kind="profiling",
+            final_requests_completed=2,
+            start_ns=2000,
+        )
+        rt.update_phase_info(low)
+        rt.update_phase_info(storm)
+        rt._get_phase_tracker(
+            CreditPhase.PROFILING, phase_index=0
+        ).increment_success_records()
+        for _ in range(2):
+            rt._get_phase_tracker(
+                CreditPhase.PROFILING, phase_index=1
+            ).increment_success_records()
+
+        assert rt.check_and_set_all_records_received_for_stats(low)
+        assert rt.check_and_set_all_records_received_for_stats(storm)
+        low_stats = rt.create_stats_for_phase(CreditPhase.PROFILING, phase_index=0)
+        storm_stats = rt.create_stats_for_phase(CreditPhase.PROFILING, phase_index=1)
+
+        assert low_stats.total_records == 1
+        assert low_stats.phase_name == "low"
+        assert low_stats.profiling_index == 0
+        assert storm_stats.total_records == 2
+        assert storm_stats.phase_name == "storm"
+        assert storm_stats.profiling_index == 1
+
+    def test_early_phase_only_stats_read_does_not_block_named_phase_completion(self):
+        rt = RecordsTracker()
+
+        early_stats = rt.create_stats_for_phase(CreditPhase.PROFILING)
+
+        assert early_stats.phase == CreditPhase.PROFILING
+        assert early_stats.total_records == 0
+        assert rt._phase_trackers == {}
+
+        for phase_index, phase_name in ((0, "low"), (1, "recovery")):
+            rt.update_phase_info(
+                CreditPhaseStats(
+                    phase=CreditPhase.PROFILING,
+                    phase_index=phase_index,
+                    profiling_index=phase_index,
+                    phase_name=phase_name,
+                    phase_kind="profiling",
+                    final_requests_completed=1,
+                    start_ns=1000 + phase_index,
+                    requests_end_ns=2000 + phase_index,
+                )
+            )
+            rt._get_phase_tracker(
+                CreditPhase.PROFILING, phase_index=phase_index
+            ).increment_success_records()
+
+        assert rt.check_and_set_all_records_received_for_phase(CreditPhase.PROFILING)
+        aggregate = rt.create_aggregate_stats_for_phase(CreditPhase.PROFILING)
+        assert aggregate.final_requests_completed == 2
+        assert aggregate.success_records == 2
 
 
 @pytest.mark.asyncio
@@ -584,6 +658,385 @@ class TestRecordsTrackerPhase:
             st.success_records == 28
             and st.error_records == 2
             and st.total_records == 30
+        )
+
+    def test_baseline_window_propagates_to_phase_and_aggregate_stats(self):
+        rt = RecordsTracker()
+        rt.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=0,
+                profiling_index=0,
+                phase_name="low",
+                phase_kind="profiling",
+                start_ns=1000,
+                requests_end_ns=2000,
+                baseline_start_ns=900,
+                baseline_end_ns=2100,
+            )
+        )
+        rt.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=2,
+                profiling_index=1,
+                phase_name="storm",
+                phase_kind="profiling",
+                start_ns=3000,
+                requests_end_ns=4000,
+                baseline_start_ns=2900,
+                baseline_end_ns=4100,
+            )
+        )
+
+        first = rt.create_stats_for_phase(CreditPhase.PROFILING, phase_index=0)
+        aggregate = rt.create_aggregate_stats_for_phase(CreditPhase.PROFILING)
+
+        assert first.baseline_start_ns == 900
+        assert first.baseline_end_ns == 2100
+        assert aggregate.baseline_start_ns == 900
+        assert aggregate.baseline_end_ns == 4100
+
+    def test_orphan_records_count_toward_aggregate_completion(self):
+        rt = RecordsTracker()
+        rt.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=0,
+                final_requests_completed=2,
+                start_ns=1000,
+            )
+        )
+        rt.update_from_request(
+            MetricRecordMetadata(
+                session_num=0,
+                conversation_id="concrete",
+                turn_index=0,
+                request_start_ns=1100,
+                request_end_ns=1200,
+                worker_id="worker-1",
+                record_processor_id="processor-1",
+                benchmark_phase=CreditPhase.PROFILING,
+                phase_index=0,
+            ),
+            error=None,
+        )
+        rt.update_from_request(
+            MetricRecordMetadata(
+                session_num=0,
+                conversation_id="orphan",
+                turn_index=0,
+                request_start_ns=1300,
+                request_end_ns=1400,
+                worker_id="worker-1",
+                record_processor_id="processor-1",
+                benchmark_phase=CreditPhase.PROFILING,
+                phase_index=None,
+            ),
+            error=None,
+        )
+
+        assert rt.check_and_set_all_records_received_for_phase(CreditPhase.PROFILING)
+        stats = rt.create_aggregate_stats_for_phase(CreditPhase.PROFILING)
+        assert stats.success_records == 2
+        assert stats.final_requests_completed == 2
+
+    def test_read_path_does_not_rewrite_latest_phase_index(self):
+        rt = RecordsTracker()
+        rt.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=0,
+                phase_name="first",
+                phase_kind="profiling",
+                start_ns=1000,
+            )
+        )
+        rt.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=2,
+                phase_name="second",
+                phase_kind="profiling",
+                start_ns=2000,
+            )
+        )
+
+        assert rt.create_stats_for_phase(CreditPhase.PROFILING).phase_name == "second"
+        assert (
+            rt.create_stats_for_phase(CreditPhase.PROFILING, phase_index=0).phase_name
+            == "first"
+        )
+        assert rt.create_stats_for_phase(CreditPhase.PROFILING).phase_name == "second"
+
+    def test_late_older_phase_update_does_not_move_latest_phase_backward(self):
+        rt = RecordsTracker()
+        rt.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=0,
+                phase_name="first",
+                phase_kind="profiling",
+                start_ns=1000,
+            )
+        )
+        rt.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=1,
+                phase_name="second",
+                phase_kind="profiling",
+                start_ns=2000,
+            )
+        )
+        rt.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=0,
+                phase_name="first",
+                phase_kind="profiling",
+                final_requests_completed=0,
+            )
+        )
+        rt.update_from_request(
+            MetricRecordMetadata(
+                session_num=0,
+                conversation_id="late-orphan",
+                turn_index=0,
+                request_start_ns=2100,
+                request_end_ns=2200,
+                worker_id="worker-1",
+                record_processor_id="processor-1",
+                benchmark_phase=CreditPhase.PROFILING,
+                phase_index=None,
+            ),
+            error=None,
+        )
+
+        assert (
+            rt.create_stats_for_phase(
+                CreditPhase.PROFILING, phase_index=0
+            ).success_records
+            == 0
+        )
+        assert (
+            rt.create_stats_for_phase(
+                CreditPhase.PROFILING, phase_index=1
+            ).success_records
+            == 1
+        )
+        assert rt.create_stats_for_phase(CreditPhase.PROFILING).phase_name == "second"
+
+    def test_orphan_record_does_not_replace_concrete_latest_phase_index(self):
+        rt = RecordsTracker()
+        rt.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=0,
+                phase_name="first",
+                phase_kind="profiling",
+                start_ns=1000,
+            )
+        )
+        rt.update_from_request(
+            MetricRecordMetadata(
+                session_num=0,
+                conversation_id="orphan",
+                turn_index=0,
+                request_start_ns=1300,
+                request_end_ns=1400,
+                worker_id="worker-1",
+                record_processor_id="processor-1",
+                benchmark_phase=CreditPhase.PROFILING,
+                phase_index=None,
+            ),
+            error=None,
+        )
+
+        assert rt.create_stats_for_phase(CreditPhase.PROFILING).phase_name == "first"
+
+    def test_existing_orphan_bucket_does_not_complete_missing_concrete_phase(self):
+        rt = RecordsTracker()
+        rt.update_from_request(
+            MetricRecordMetadata(
+                session_num=0,
+                conversation_id="early-orphan",
+                turn_index=0,
+                request_start_ns=900,
+                request_end_ns=950,
+                worker_id="worker-1",
+                record_processor_id="processor-1",
+                benchmark_phase=CreditPhase.PROFILING,
+                phase_index=None,
+            ),
+            error=None,
+        )
+        rt.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=0,
+                phase_name="first",
+                phase_kind="profiling",
+                final_requests_completed=1,
+            )
+        )
+        rt.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=1,
+                phase_name="second",
+                phase_kind="profiling",
+                final_requests_completed=1,
+            )
+        )
+        rt.update_from_request(
+            MetricRecordMetadata(
+                session_num=0,
+                conversation_id="first",
+                turn_index=0,
+                request_start_ns=1000,
+                request_end_ns=1100,
+                worker_id="worker-1",
+                record_processor_id="processor-1",
+                benchmark_phase=CreditPhase.PROFILING,
+                phase_index=0,
+            ),
+            error=None,
+        )
+
+        assert not rt.check_and_set_all_records_received_for_phase(
+            CreditPhase.PROFILING
+        )
+
+    def test_pending_concrete_phase_blocks_aggregate_completion(self):
+        rt = RecordsTracker()
+        rt.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=0,
+                phase_name="seamless_a",
+                phase_kind="profiling",
+                start_ns=1000,
+            )
+        )
+        rt.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=1,
+                phase_name="profiling_b",
+                phase_kind="profiling",
+                final_requests_completed=1,
+            )
+        )
+        rt.update_from_request(
+            MetricRecordMetadata(
+                session_num=0,
+                conversation_id="profiling-b",
+                turn_index=0,
+                request_start_ns=2000,
+                request_end_ns=2100,
+                worker_id="worker-1",
+                record_processor_id="processor-1",
+                benchmark_phase=CreditPhase.PROFILING,
+                phase_index=1,
+            ),
+            error=None,
+        )
+
+        assert not rt.check_and_set_all_records_received_for_phase(
+            CreditPhase.PROFILING
+        )
+
+        rt.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=0,
+                phase_name="seamless_a",
+                phase_kind="profiling",
+                final_requests_completed=0,
+            )
+        )
+
+        assert rt.check_and_set_all_records_received_for_phase(CreditPhase.PROFILING)
+
+    def test_early_orphan_is_preserved_in_aggregate_but_not_completion_gate(self):
+        rt = RecordsTracker()
+        rt.update_from_request(
+            MetricRecordMetadata(
+                session_num=0,
+                conversation_id="early-orphan",
+                turn_index=0,
+                request_start_ns=900,
+                request_end_ns=950,
+                worker_id="worker-1",
+                record_processor_id="processor-1",
+                benchmark_phase=CreditPhase.PROFILING,
+                phase_index=None,
+            ),
+            error=None,
+        )
+        for idx, name in ((0, "first"), (1, "second")):
+            rt.update_phase_info(
+                CreditPhaseStats(
+                    phase=CreditPhase.PROFILING,
+                    phase_index=idx,
+                    phase_name=name,
+                    phase_kind="profiling",
+                    final_requests_completed=1,
+                )
+            )
+            rt.update_from_request(
+                MetricRecordMetadata(
+                    session_num=0,
+                    conversation_id=name,
+                    turn_index=0,
+                    request_start_ns=1000 + idx * 100,
+                    request_end_ns=1050 + idx * 100,
+                    worker_id="worker-1",
+                    record_processor_id="processor-1",
+                    benchmark_phase=CreditPhase.PROFILING,
+                    phase_index=idx,
+                ),
+                error=None,
+            )
+
+        assert rt.check_and_set_all_records_received_for_phase(CreditPhase.PROFILING)
+        aggregate = rt.create_aggregate_stats_for_phase(CreditPhase.PROFILING)
+        assert aggregate.final_requests_completed == 2
+        assert aggregate.success_records == 3
+
+    def test_orphan_record_after_phase_info_counts_for_latest_concrete_phase(self):
+        rt = RecordsTracker()
+        rt.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=0,
+                phase_name="first",
+                phase_kind="profiling",
+                final_requests_completed=1,
+            )
+        )
+        rt.update_from_request(
+            MetricRecordMetadata(
+                session_num=0,
+                conversation_id="latest",
+                turn_index=0,
+                request_start_ns=1000,
+                request_end_ns=1100,
+                worker_id="worker-1",
+                record_processor_id="processor-1",
+                benchmark_phase=CreditPhase.PROFILING,
+                phase_index=None,
+            ),
+            error=None,
+        )
+
+        assert rt.check_and_set_all_records_received_for_phase(CreditPhase.PROFILING)
+        assert (
+            rt.create_stats_for_phase(
+                CreditPhase.PROFILING, phase_index=0
+            ).success_records
+            == 1
         )
 
 

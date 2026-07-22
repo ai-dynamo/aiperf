@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -109,12 +110,35 @@ benchmark:
     assert result.json is not None
     assert result.json.was_cancelled is False
 
-    event_path = result.artifacts_dir / "adaptive_scale_events.jsonl"
-    summary_path = result.artifacts_dir / "adaptive_scale_summary.json"
-    assert event_path.exists()
-    assert summary_path.exists()
+    manifest_path = result.artifacts_dir / "adaptive_scale_manifest.json"
+    assert await asyncio.to_thread(manifest_path.exists)
+    manifest_bytes = await asyncio.to_thread(manifest_path.read_bytes)
+    manifest = orjson.loads(manifest_bytes)
+    assert manifest["schema_version"] == 2
+    [adaptive_phase] = manifest["adaptive_phases"]
+    assert adaptive_phase["phase_name"] == "profiling"
+    assert adaptive_phase["phase_kind"] == "profiling"
+    assert adaptive_phase["phase_index"] == 0
+    assert adaptive_phase["profiling_index"] == 0
 
-    events = _load_jsonl(event_path)
+    assert adaptive_phase["events_path"] == (
+        "phases/profiling/adaptive_scale_events.jsonl"
+    )
+    assert adaptive_phase["summary_path"] == (
+        "phases/profiling/adaptive_scale_summary.json"
+    )
+    event_path = result.artifacts_dir / adaptive_phase["events_path"]
+    summary_path = result.artifacts_dir / adaptive_phase["summary_path"]
+    assert await asyncio.to_thread(event_path.exists)
+    assert await asyncio.to_thread(summary_path.exists)
+    assert not await asyncio.to_thread(
+        (result.artifacts_dir / "adaptive_scale_events.jsonl").exists
+    )
+    assert not await asyncio.to_thread(
+        (result.artifacts_dir / "adaptive_scale_summary.json").exists
+    )
+
+    events = await asyncio.to_thread(_load_jsonl, event_path)
     assert events
     event_names = {event["event"] for event in events}
     assert "adaptive_phase_started" in event_names

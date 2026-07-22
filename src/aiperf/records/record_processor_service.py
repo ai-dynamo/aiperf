@@ -233,6 +233,10 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             turn_index=record.request_info.turn_index,
             record_processor_id=self.service_id,
             benchmark_phase=record.request_info.credit_phase,
+            phase_index=record.request_info.phase_index,
+            profiling_index=record.request_info.profiling_index,
+            phase_name=record.request_info.phase_name,
+            phase_kind=record.request_info.phase_kind,
             x_request_id=record.request_info.x_request_id,
             x_correlation_id=record.request_info.x_correlation_id,
             session_num=record.request_info.credit_num,
@@ -397,9 +401,17 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             if record.request_info is not None:
                 session_num = record.request_info.credit_num
                 benchmark_phase = record.request_info.credit_phase
+                phase_index = record.request_info.phase_index
+                profiling_index = record.request_info.profiling_index
+                phase_name = record.request_info.phase_name
+                phase_kind = record.request_info.phase_kind
             else:
                 session_num = -1
                 benchmark_phase = CreditPhase.PROFILING
+                phase_index = None
+                profiling_index = None
+                phase_name = None
+                phase_kind = None
             metadata = MetricRecordMetadata(
                 session_num=session_num,
                 request_start_ns=record.timestamp_ns,
@@ -407,6 +419,10 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 worker_id=message.service_id,
                 record_processor_id=self.service_id,
                 benchmark_phase=benchmark_phase,
+                phase_index=phase_index,
+                profiling_index=profiling_index,
+                phase_name=phase_name,
+                phase_kind=phase_kind,
             )
         error = record.error or ErrorDetails.from_exception(exc)
         # The producers didn't run, so ship a RecordsMessage carrying a single
