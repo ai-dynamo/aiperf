@@ -452,6 +452,7 @@ def _apply_synthesis(d: dict[str, Any], cli: CLIConfig) -> None:
         ("synthesis_output_len_multiplier", "output_len_multiplier"),
         ("synthesis_max_isl", "max_isl"),
         ("synthesis_max_osl", "max_osl"),
+        ("allow_dataset_wrap", "allow_dataset_wrap"),
     ):
         if cli_attr in set_fields:
             value = getattr(cli, cli_attr)
@@ -786,6 +787,25 @@ def _apply_inter_turn_delay_cap(d: dict[str, Any], cli: CLIConfig) -> None:
     d["inter_turn_delay_cap_seconds"] = cli.inter_turn_delay_cap_seconds
 
 
+def _apply_max_context_length(d: dict[str, Any], cli: CLIConfig) -> None:
+    """Route ``--max-context-length`` onto ``FileDataset``/``PublicDataset``.
+
+    Weka (file and HF) selection filters traces whose peak prompt+output
+    exceeds this ceiling before applying ``--num-dataset-entries``. Without
+    this route the CLI flag is silently ignored on trace datasets.
+    """
+    from aiperf.common.enums import DatasetType
+
+    if d.get("type") not in (DatasetType.FILE, DatasetType.PUBLIC):
+        return
+    if (
+        "max_context_length" not in cli.model_fields_set
+        or cli.max_context_length is None
+    ):
+        return
+    d["max_context_length"] = cli.max_context_length
+
+
 # FILE custom_dataset_types whose loaders decode hash_ids into token blocks of
 # ``block_size`` (the BaseTraceDatasetLoader family). These CONSUME
 # --isl-block-size. weka is excluded deliberately: it carries its own inline
@@ -950,6 +970,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     _apply_file_osl(d, cli)
     _apply_file_block_size(d, cli)
     _apply_inter_turn_delay_cap(d, cli)
+    _apply_max_context_length(d, cli)
     _apply_block_size(d, cli)
     _apply_corpus_and_cache_bust(d, cli)
     if "random_seed" in cli.model_fields_set:

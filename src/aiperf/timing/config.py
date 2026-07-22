@@ -133,6 +133,12 @@ class TimingConfig(AIPerfBaseModel):
         "per-trajectory start position, as a fraction of the trace's total "
         "turn count. Effective per-trace ceiling is min(int(max_ratio * n), n - 2).",
     )
+    allow_dataset_wrap: bool = Field(
+        default=False,
+        description="Allow AGENTIC_REPLAY to reuse distinct eligible traces "
+        "across concurrency lanes when concurrency exceeds the loaded pool. "
+        "Defaults to False so over-subscription requires explicit opt-in.",
+    )
 
     @classmethod
     def from_run(cls, run: BenchmarkRun) -> TimingConfig:
@@ -188,6 +194,10 @@ class TimingConfig(AIPerfBaseModel):
         concurrency = getattr(first_profiling, "concurrency", None)
         trajectory_min = getattr(first_profiling, "trajectory_start_min_ratio", 0.25)
         trajectory_max = getattr(first_profiling, "trajectory_start_max_ratio", 0.75)
+        synthesis = getattr(cfg.get_default_dataset(), "synthesis", None)
+        allow_dataset_wrap = bool(
+            getattr(synthesis, "allow_dataset_wrap", False) if synthesis else False
+        )
 
         return cls(
             phase_configs=configs,
@@ -198,6 +208,7 @@ class TimingConfig(AIPerfBaseModel):
             random_seed=run.random_seed,
             trajectory_start_min_ratio=trajectory_min,
             trajectory_start_max_ratio=trajectory_max,
+            allow_dataset_wrap=allow_dataset_wrap,
         )
 
 

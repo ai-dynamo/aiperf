@@ -71,6 +71,7 @@ def make_weka_run(
     max_isl: int | None = None,
     max_osl: int | None = None,
     max_context_length: int | None = None,
+    entries: int | None = None,
     ignore_trace_delays: bool = False,
     use_think_time_only: bool = False,
     inter_turn_delay_cap_seconds: float | None = None,
@@ -114,6 +115,8 @@ def make_weka_run(
         dataset["synthesis"] = synthesis
     if max_context_length is not None:
         dataset["max_context_length"] = max_context_length
+    if entries is not None:
+        dataset["entries"] = entries
     if ignore_trace_delays:
         dataset["ignore_trace_delays"] = ignore_trace_delays
     if use_think_time_only:

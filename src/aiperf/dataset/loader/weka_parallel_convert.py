@@ -28,11 +28,10 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from multiprocessing import shared_memory
-from typing import TypeAlias, TypedDict
+from typing import NotRequired, TypeAlias, TypedDict
 
 import numpy as np
 from numpy.typing import NDArray
-from typing_extensions import NotRequired
 
 from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
 from aiperf.common.tokenizer import Tokenizer
@@ -693,9 +692,11 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                     "model": task.model_map.get(creq["model"], creq["model"]),
                     # Flat-chain children carry capped_output_length (their
                     # rows were top-level and honor --max-osl); subagent
-                    # children keep the recorded output_length.
-                    "max_tokens": creq.get(
-                        "capped_output_length", creq["output_length"]
+                    # children keep the recorded output_length. Clamp 0→1
+                    # so Turn.max_tokens (ge=1) accepts aborted captures.
+                    "max_tokens": max(
+                        1,
+                        creq.get("capped_output_length", creq["output_length"]),
                     ),
                     "raw_messages": child_delta.delta_messages,
                     "reset_context": child_delta.reset_context,

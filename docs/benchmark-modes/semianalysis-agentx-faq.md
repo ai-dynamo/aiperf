@@ -73,8 +73,10 @@ transparency.
   `--use-server-token-count`, `--artifact-dir`.
 - **Sizing to your server** (optional, not scenario-checked): add
   `--max-context-length <your server's context window>` to drop traces whose peak prompt+output
-  wouldn't fit; a ~256k-window server should instead pick a `_256k` corpus
-  ([§3](#3-how-realistic-are-the-prompts-and-token-counts)).
+  wouldn't fit (then keep the first N eligible when `--num-dataset-entries` is set); a ~256k-window
+  server should instead pick a `_256k` corpus
+  ([§3](#3-how-realistic-are-the-prompts-and-token-counts)). When concurrency exceeds the loaded
+  pool, pass `--allow-dataset-wrap` or lower concurrency (wrapping defaults off).
 
 The [AgentX MVP tutorial](../tutorials/agentx-mvp.md#quick-start)'s Quick Start is the same run,
 written slightly differently: it uses the rolling `semianalysis_cc_traces_weka_with_subagents` alias
@@ -508,7 +510,8 @@ granularities, and the difference matters for fidelity:
   ~28k). The trace stays multi-turn; what survives is the portion of each session a 256k window can
   actually serve.
 - **`--max-context-length`** is a load-time filter that drops *whole traces* whose peak prompt+output
-  exceeds the limit. A trace with even one over-limit turn is removed entirely (and if it would drop
+  exceeds the limit, then (with `--num-dataset-entries`) keeps the first N eligible traces
+  (filter-then-cap). A trace with even one over-limit turn is removed entirely (and if it would drop
   every trace, the run errors rather than running empty).
 
 So for a ~256k server, prefer the `_256k` corpus: you keep more of the agentic session structure
@@ -772,7 +775,7 @@ the context-overflow bound is evaluated during the run.
 | Locked rule | Enforced value | What violates it | Effect |
 |---|---|---|---|
 | Agentic-replay timing | Recorded timing replayed; no request-rate knob | Forcing as-fast-as-possible or a request-rate/schedule mode | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
-| SemiAnalysis corpus | A pinned `*_weka_*` corpus, or the `weka_trace` / `weka_hf` loaders | A non-pinned dataset (or another `--hf-weka-dataset` under the scenario) | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
+| SemiAnalysis corpus | A pinned `*_weka_*` corpus, or the `weka_trace` / `weka_hf` loaders | A non-pinned dataset (or another `--hf-weka-dataset` under the scenario); omitting a dataset entirely (CLI synthetic default) | Explicit wrong loader: refuses to start (or `submission_valid: false` via `--unsafe-override`). Missing/synthetic: always refuses — `--unsafe-override` cannot bypass |
 | `ignore_eos` | Injected `ignore_eos=true` | Explicit `ignore_eos=false` | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
 | Streaming | `--streaming` auto-enabled | Explicit `--no-streaming` | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
 | Honored trace delays | Recorded think-time gaps waited; idle gaps capped at 10s | `--ignore-trace-delays` | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
@@ -982,10 +985,14 @@ Not as a *valid* run: any `--benchmark-duration` below 900s refuses to start (th
 ≥900s to reach steady state), and running it anyway with `--unsafe-override` stamps
 `submission_valid: false`. What the shrink levers actually do:
 
-- **`--num-dataset-entries N`** loads only the first N traces and is not scenario-locked — the run
-  stays valid and the reconstruction cost shrinks roughly proportionally. Caveat: it keys a
-  *different* dataset-cache entry, so a shrunk smoke run does not warm the cache for the
-  full-corpus run.
+- **`--num-dataset-entries N`** loads only the first N *eligible* traces after
+  `--max-context-length` filtering and is not scenario-locked — the run stays
+  valid and the reconstruction cost
+  shrinks roughly proportionally. Caveat: it keys a *different* dataset-cache
+  entry, so a shrunk smoke run does not warm the cache for the full-corpus
+  run. If `--concurrency` exceeds N (and you have a duration/session budget
+  that needs wrapping), pass `--allow-dataset-wrap` or lower concurrency.
+  Wrapping defaults to off; cache-bust alone does not enable it.
 - **Lowering `--concurrency`** lightens the load but shortens nothing — the 900s floor is
   wall-clock. A small concurrency at 900s is the cheapest *valid* run.
 - **A true minutes-long shakeout** (connectivity, endpoint, artifacts) is `--unsafe-override` plus a

@@ -156,6 +156,41 @@ def _seed_for_trace_lane(base_seed: int, trace_id: str, lane_index: int) -> int:
     return int.from_bytes(h[:8], "big")
 
 
+def validate_dataset_wrap_policy(
+    *,
+    distinct: int,
+    concurrency: int,
+    allow_dataset_wrap: bool,
+    expected_num_sessions: int | None,
+    total_expected_requests: int | None,
+    expected_duration_sec: float | None,
+) -> None:
+    """Fail loud when concurrency over-subscribes a non-wrapping corpus.
+
+    Wrapping is opt-in. Cache-bust alone does **not** enable wrap. One-pass runs (no
+    sessions/requests/duration bound) and session budgets that fit the distinct
+    pool are allowed even when concurrency exceeds the corpus.
+    """
+    if allow_dataset_wrap:
+        return
+    one_pass = (
+        expected_num_sessions is None
+        and total_expected_requests is None
+        and expected_duration_sec is None
+    )
+    if one_pass or (
+        expected_num_sessions is not None and expected_num_sessions <= distinct
+    ):
+        return
+    if concurrency > distinct:
+        raise ValueError(
+            f"concurrency {concurrency} exceeds the {distinct} distinct loaded "
+            "traces while dataset wrapping is disabled; reduce concurrency to "
+            f"at most {distinct}, bound sessions within the loaded corpus, or "
+            "set dataset.synthesis.allow_dataset_wrap=true / --allow-dataset-wrap"
+        )
+
+
 class TrajectorySource(ConversationSource):
     """ConversationSource that samples a fixed set of trajectories with a randomized
     per-trajectory start position drawn from [start_min_ratio, start_max_ratio] of
@@ -174,6 +209,10 @@ class TrajectorySource(ConversationSource):
         random_seed: int,
         start_min_ratio: float = 0.25,
         start_max_ratio: float = 0.75,
+        allow_dataset_wrap: bool = False,
+        expected_num_sessions: int | None = None,
+        total_expected_requests: int | None = None,
+        expected_duration_sec: float | None = None,
     ) -> None:
         super().__init__(
             dataset_metadata=dataset_metadata, dataset_sampler=dataset_sampler
@@ -198,8 +237,17 @@ class TrajectorySource(ConversationSource):
             for conv in dataset_metadata.conversations
             if getattr(conv, "is_root", True) is not False
         )
+        validate_dataset_wrap_policy(
+            distinct=pool_size,
+            concurrency=concurrency,
+            allow_dataset_wrap=allow_dataset_wrap,
+            expected_num_sessions=expected_num_sessions,
+            total_expected_requests=total_expected_requests,
+            expected_duration_sec=expected_duration_sec,
+        )
         self._concurrency = concurrency
         self._pool_size = pool_size
+        self._allow_dataset_wrap = allow_dataset_wrap
         self._children_by_parent: dict[str, set[str]] = self._build_child_index()
         self._warned_live_delta_snapshot = False
         # One trajectory per concurrency lane, sampled straight from the dataset
@@ -208,6 +256,8 @@ class TrajectorySource(ConversationSource):
         # exceeds the pool). Trace SELECTION and the snapshot/t* fast-forward are
         # decoupled: each lane snapshots its sampled trace independently, seeded
         # by the absolute lane index, so repeated traces resume at different t*.
+        # Wrapping requires ``allow_dataset_wrap`` (or a one-pass / in-corpus
+        # session budget); see ``validate_dataset_wrap_policy``.
         self._target_size = concurrency
         self.trajectories: list[Trajectory] = self._build_trajectories()
 

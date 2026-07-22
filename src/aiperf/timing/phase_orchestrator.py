@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from aiperf.common.enums import CreditPhase
 from aiperf.common.hooks import on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.credit.callback_handler import CreditCallbackHandler
@@ -150,6 +151,14 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                     "AGENTIC_REPLAY timing mode requires concurrency to be set on "
                     "TimingConfig (sourced from the profiling phase concurrency)."
                 )
+            profiling = next(
+                (
+                    pc
+                    for pc in config.phase_configs
+                    if pc.phase == CreditPhase.PROFILING
+                ),
+                None,
+            )
             self._conversation_source = TrajectorySource(
                 dataset_metadata=self._dataset_metadata,
                 dataset_sampler=self._dataset_sampler,
@@ -157,6 +166,16 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 random_seed=config.random_seed if config.random_seed is not None else 0,
                 start_min_ratio=config.trajectory_start_min_ratio,
                 start_max_ratio=config.trajectory_start_max_ratio,
+                allow_dataset_wrap=config.allow_dataset_wrap,
+                expected_num_sessions=(
+                    profiling.expected_num_sessions if profiling is not None else None
+                ),
+                total_expected_requests=(
+                    profiling.total_expected_requests if profiling is not None else None
+                ),
+                expected_duration_sec=(
+                    profiling.expected_duration_sec if profiling is not None else None
+                ),
             )
         else:
             self._conversation_source = ConversationSource(

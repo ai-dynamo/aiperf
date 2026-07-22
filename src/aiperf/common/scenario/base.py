@@ -183,15 +183,37 @@ class ScenarioOutcome(AIPerfBaseModel):
 
 
 class ScenarioLockError(ValueError):
-    """Raised when a scenario lock is violated and --unsafe-override is not set."""
+    """Raised when a scenario lock is violated and cannot proceed.
 
-    def __init__(self, violations: list[ScenarioViolation]) -> None:
+    By default the message suggests ``--unsafe-override``. Pass
+    ``bypassable=False`` when the violations include hard locks that the
+    override cannot downgrade (e.g. AgentX on a synthetic default dataset).
+    """
+
+    def __init__(
+        self,
+        violations: list[ScenarioViolation],
+        *,
+        bypassable: bool = True,
+    ) -> None:
         self.violations = violations
+        self.bypassable = bypassable
         joined = "\n  - ".join(str(v) for v in violations)
+        if bypassable:
+            hint = (
+                "Pass --unsafe-override to convert to warnings "
+                "(run will be marked submission_valid=false)."
+            )
+        else:
+            hint = (
+                "These violations cannot be bypassed with --unsafe-override. "
+                "Provide --public-dataset (e.g. semianalysis_cc_traces_weka_062126) "
+                "or --custom-dataset-type weka_trace --input-file <dir>."
+            )
         super().__init__(
             f"Scenario invariants violated ({len(violations)} conflict"
             f"{'s' if len(violations) != 1 else ''}):\n  - {joined}\n"
-            "Pass --unsafe-override to convert to warnings (run will be marked submission_valid=false)."
+            f"{hint}"
         )
 
 

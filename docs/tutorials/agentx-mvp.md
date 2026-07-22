@@ -120,7 +120,9 @@ what you must set, what you may tune, and what you shouldn't touch:
   Weka tutorial for how multiple `--model` values map.
 - **`--max-context-length 128000`** drops traces whose peak **input + output**
   — the prompt plus that turn's requested `max_tokens` — exceeds 128k tokens
-  before replay. Set it to the maximum context your server accepts — i.e. the
+  before replay. Filtering happens before `--num-dataset-entries` is applied,
+  so the cap keeps the first N *eligible* traces.
+  Set it to the maximum context your server accepts — i.e. the
   model's native maximum, since AgentX MVP expects the server to run at its
   default max length. Because it mirrors the server's real capacity, the run
   replays only traces the server can serve — which is why the scenario allows
@@ -130,7 +132,9 @@ what you must set, what you may tune, and what you shouldn't touch:
   and count toward the 1% context-overflow threshold instead.
 - **`--concurrency`** sets how many session trees stay live throughout the
   run, i.e. the sustained load. It must be a single integer under
-  `--scenario`; comma-list sweeps are rejected.
+  `--scenario`; comma-list sweeps are rejected. When concurrency exceeds the
+  number of distinct loaded traces, the run **fails** unless you pass
+  `--allow-dataset-wrap`; cache-bust alone does not enable wrapping.
 - `--url`, `--endpoint-type chat`, `--use-server-token-count`, and `--ui`
   round out the group ([`--use-server-token-count`](#tokenization-options---apply-chat-template-and---use-server-token-count)
   is explained below).
@@ -169,10 +173,12 @@ explicit value is honored *silently*, with no error and no change to the
   [Reading the Result](#reading-the-result-submission_valid) below for where
   the `submission_valid` stamp lands.
 - The full corpus (393 traces) loads by default; `--num-dataset-entries N`
-  caps loading to the first N traces. Reducing the corpus changes the
-  replayed workload and is *not* caught by the scenario locks — the run
-  still stamps `submission_valid: true` — so use it only for smoke tests,
-  never for runs you intend to compare against other AgentX MVP results.
+  keeps the first N *eligible* traces after `--max-context-length` filtering
+  (filter-then-cap). Reducing the corpus changes the replayed workload and is
+  *not* caught by the scenario locks — the run still stamps
+  `submission_valid: true` — so use it only for smoke tests, never for runs
+  you intend to compare against other AgentX MVP results. If your smoke
+  concurrency exceeds N, pass `--allow-dataset-wrap` or lower concurrency.
 
 You don't need to touch the scheduling or warmup knobs: the scenario picks
 the agentic-replay scheduler and auto-fills the values shown above. Don't
@@ -511,8 +517,12 @@ aiperf profile \
 
 What `--unsafe-override` does:
 
-- **Converts every scenario rule violation from an error into a warning.** The
+- **Converts most scenario rule violations from an error into a warning.** The
   run starts.
+- **Does not bypass a missing weka loader.** If you omit `--public-dataset` /
+  `--input-file`, the CLI defaults to synthetic; AgentX still refuses to start
+  (continuing would look like a corpus load while producing 1-turn sessions
+  that empty the trajectory pool). Pass an allowed weka loader explicitly.
 - **Stamps `submission_valid: false`** in every JSON output (per-run and, when
   `--num-profile-runs >= 2`, the aggregate file), with `"unsafe_override"` in
   `submission_invalid_reasons` — but only when at least one rule was actually
@@ -547,6 +557,14 @@ machine, replay a local Weka-format trace directory via
 [Weka Traces tutorial](weka-trace.md) for how to obtain or capture one, and
 note the model tokenizer must also be available offline (pre-populate the HF
 cache and set `HF_HUB_OFFLINE=1`, or point `--tokenizer` at a local path).
+
+**`ScenarioLockError` … `got synthetic` / `cannot be bypassed with --unsafe-override`**
+You set `--scenario inferencex-agentx-mvp` (and maybe `--unsafe-override` for
+a short smoke duration) but omitted a weka dataset source. The CLI then
+defaults to synthetic prompts (`session_000000`, 1 turn each). AgentX refuses
+that combination even under `--unsafe-override`. Add
+`--public-dataset semianalysis_cc_traces_weka_062126` (or another allowed
+alias / local `--custom-dataset-type weka_trace --input-file <dir>`).
 
 **The tokenizer can't be resolved or downloaded**
 The Weka loaders rebuild every prompt through a HuggingFace tokenizer

@@ -113,25 +113,9 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._validate_rows, ds)
 
-    def _validate_rows(self, ds: Any) -> dict[str, list[WekaTrace]]:
-        total_rows = len(ds)
-        # Auto-load full corpus unless --num-dataset-entries (-> dataset.entries)
-        # was explicitly set. model_fields_set is the only reliable signal that
-        # the user pinned a row cap (a default value is indistinguishable).
-        dataset = self.run.cfg.get_default_dataset()
-        cap = getattr(dataset, "entries", None)
-        explicit_cap = "entries" in dataset.model_fields_set and cap is not None
-        n_rows = min(cap, total_rows) if explicit_cap else total_rows
-        if n_rows < total_rows:
-            ds = ds.select(range(n_rows))
-            self.info(
-                f"Loading {n_rows}/{total_rows} traces "
-                f"(--num-dataset-entries={cap}; pass a higher value to load "
-                f"more, up to {total_rows})"
-            )
-        else:
-            self.info(f"Loading all {total_rows} traces")
-
+    def _load_all_traces(self, ds: Any, total_rows: int) -> dict[str, list[WekaTrace]]:
+        """Validate every HF row when no filter-then-cap constraints apply."""
+        self.info(f"Loading all {total_rows} traces")
         out: dict[str, list[WekaTrace]] = {}
         for i, row in enumerate(ds):
             try:
@@ -147,6 +131,80 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
                     f"{self.hf_dataset_name}"
                 )
             out[trace.id] = [trace]
+        return out
+
+    def _validate_rows(self, ds: Any) -> dict[str, list[WekaTrace]]:
+        """Validate HF rows with filter-then-cap selection.
+
+        Scans rows in order, drops traces whose peak context exceeds
+        ``--max-context-length``, then keeps the first N *eligible* traces when
+        ``--num-dataset-entries`` is explicit. Never caps the raw HF prefix
+        before filtering (that was the silent 100→15 pool shrink).
+        """
+        from aiperf.dataset.loader.selection import (
+            filter_then_cap,
+            log_selection_summary,
+        )
+        from aiperf.dataset.loader.weka_trace import _trace_peak_context_length
+
+        total_rows = len(ds)
+        dataset = self.run.cfg.get_default_dataset()
+        cap = getattr(dataset, "entries", None)
+        explicit_cap = bool(getattr(dataset, "entries_explicit", False)) or (
+            "entries" in dataset.model_fields_set and cap is not None
+        )
+        num_entries = cap if explicit_cap else None
+        max_ctx = getattr(dataset, "max_context_length", None)
+        synthesis = getattr(dataset, "synthesis", None)
+        max_osl = getattr(synthesis, "max_osl", None) if synthesis else None
+
+        def _candidates() -> Any:
+            for i, row in enumerate(ds):
+                try:
+                    trace = WekaTrace.model_validate(row)
+                except ValidationError as e:
+                    raise DatasetLoaderError(
+                        f"Row {i} of {self.hf_dataset_name} failed WekaTrace "
+                        f"validation: {e}"
+                    ) from e
+                peak = _trace_peak_context_length(trace, max_osl=max_osl)
+                yield (i, trace), peak
+
+        if num_entries is None and max_ctx is None:
+            return self._load_all_traces(ds, total_rows)
+
+        kept_pairs, stats = filter_then_cap(
+            _candidates(),
+            num_dataset_entries=num_entries,
+            max_context_length=max_ctx,
+        )
+        log_selection_summary(
+            stats,
+            source=self.hf_dataset_name,
+            num_dataset_entries=num_entries,
+            max_context_length=max_ctx,
+        )
+        if not kept_pairs:
+            raise DatasetLoaderError(
+                f"No eligible traces in {self.hf_dataset_name} after "
+                f"filter-then-cap (scanned {stats.scanned}, "
+                f"--max-context-length={max_ctx}, "
+                f"--num-dataset-entries={num_entries})."
+            )
+
+        out = {}
+        for i, trace in kept_pairs:
+            if trace.id in out:
+                raise DatasetLoaderError(
+                    f"Duplicate trace id '{trace.id}' at row {i} of "
+                    f"{self.hf_dataset_name}"
+                )
+            out[trace.id] = [trace]
+        self.info(
+            f"Loaded {len(out)}/{total_rows} eligible traces "
+            f"(filter-then-cap; --num-dataset-entries={num_entries}, "
+            f"--max-context-length={max_ctx})"
+        )
         return out
 
     async def convert_to_conversations(

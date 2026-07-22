@@ -716,6 +716,21 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    allow_dataset_wrap: Annotated[
+        bool,
+        Field(
+            description="Allow weka/agentic replay to wrap (reuse distinct eligible "
+            "traces across concurrency lanes) when concurrency exceeds the loaded "
+            "pool. Defaults to False: over-subscription fails unless wrapping is "
+            "explicitly enabled.",
+        ),
+        CLIParameter(
+            name=("--allow-dataset-wrap",),
+            group=Groups.INPUT,
+            negative="--no-allow-dataset-wrap",
+        ),
+    ] = False
+
     random_seed: Annotated[
         int | None,
         Field(

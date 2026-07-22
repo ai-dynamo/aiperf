@@ -319,6 +319,34 @@ def test_synthetic_default_dataset_raises_clean_loader_lock_not_value_error() ->
     assert "--input-file (loader)" in flags
 
 
+def test_synthetic_loader_not_bypassable_via_unsafe_override() -> None:
+    """``--unsafe-override`` must NOT allow AgentX to run on synthetic.
+
+    Without ``--public-dataset`` / ``--input-file``, the CLI defaults to
+    synthetic. Combined with ``--num-dataset-entries 393`` (the Weka corpus
+    size) that looks like a successful Weka load but produces 1-turn
+    Shakespeare sessions that empty the trajectory pool. Explicit wrong
+    loaders (e.g. sharegpt) remain overridable; missing/synthetic is not.
+    """
+    run = _build_run(
+        streaming=True,
+        extra={"ignore_eos": True},
+        dataset={"name": "main", "type": "synthetic", "entries": 393},
+        unsafe_override=True,
+        duration=30,
+    )
+    with pytest.raises(ScenarioLockError) as exc:
+        apply_scenario(run)
+    assert exc.value.bypassable is False
+    assert "synthetic" in str(exc.value).lower()
+    assert "--unsafe-override cannot bypass" in str(exc.value).lower() or (
+        "cannot be bypassed with --unsafe-override" in str(exc.value)
+    )
+    loader_vs = [v for v in exc.value.violations if v.flag == "--input-file (loader)"]
+    assert loader_vs
+    assert loader_vs[0].current_value == "synthetic"
+
+
 @pytest.mark.parametrize(
     "loader",
     [

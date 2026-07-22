@@ -1185,48 +1185,69 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         peak across parent and subagent requests is the trace's worst case;
         any conversation branch exceeding it would 4xx mid-run.
         """
-        kept: dict[str, list[WekaTrace]] = {}
-        max_seen = 0
-        max_osl = self._max_osl
-        for trace_id, wekas in data.items():
-            peak = _trace_peak_context_length(wekas[0], max_osl=max_osl)
-            if peak > max_seen:
-                max_seen = peak
-            if peak <= max_ctx:
-                kept[trace_id] = wekas
+        return self._select_traces_filter_then_cap(
+            data,
+            num_dataset_entries=None,
+            max_context_length=max_ctx,
+        )
 
-        total = len(data)
-        dropped = total - len(kept)
-        if dropped:
-            _logger.info(
-                "--max-context-length=%d: dropped %d/%d traces exceeding the "
-                "limit (largest observed: %d tokens).",
-                max_ctx,
-                dropped,
-                total,
-                max_seen,
-            )
-        else:
-            _logger.info(
-                "--max-context-length=%d: all %d traces within limit "
-                "(largest: %d tokens).",
-                max_ctx,
-                total,
-                max_seen,
-            )
-        if not kept:
+    def _select_traces_filter_then_cap(
+        self,
+        data: dict[str, list[WekaTrace]],
+        *,
+        num_dataset_entries: int | None,
+        max_context_length: int | None,
+    ) -> dict[str, list[WekaTrace]]:
+        """Filter by peak context, then keep the first N eligible traces."""
+        from aiperf.common.exceptions import DatasetLoaderError
+        from aiperf.dataset.loader.selection import (
+            filter_then_cap,
+            log_selection_summary,
+        )
+
+        if num_dataset_entries is None and max_context_length is None:
+            return data
+
+        max_osl = self._max_osl
+
+        def _candidates() -> Any:
+            for trace_id, wekas in data.items():
+                peak = _trace_peak_context_length(wekas[0], max_osl=max_osl)
+                yield (trace_id, wekas), peak
+
+        kept_pairs, stats = filter_then_cap(
+            _candidates(),
+            num_dataset_entries=num_dataset_entries,
+            max_context_length=max_context_length,
+        )
+        log_selection_summary(
+            stats,
+            source="weka_trace",
+            num_dataset_entries=num_dataset_entries,
+            max_context_length=max_context_length,
+        )
+        if not kept_pairs:
             raise DatasetLoaderError(
-                f"All {total} traces exceed --max-context-length={max_ctx} "
-                "tokens; nothing left to benchmark. Raise the limit or use "
-                "a smaller-context dataset."
+                f"All traces rejected by filter-then-cap "
+                f"(scanned {stats.scanned}, "
+                f"--max-context-length={max_context_length}, "
+                f"--num-dataset-entries={num_dataset_entries})."
             )
-        return kept
+        return {trace_id: wekas for trace_id, wekas in kept_pairs}
 
     def _cap_output(self, req: _NormalRequestT) -> int:
+        """Resolve recorded ``out`` to a sendable ``Turn.max_tokens``.
+
+        Honors ``--synthesis-max-osl`` when set. A recorded ``out`` of 0
+        (aborted / empty capture) is upgraded to 1 because
+        ``Turn.max_tokens`` is ``ge=1`` and OpenAI-compatible servers reject
+        ``max_tokens: 0``.
+        """
         max_osl = self._max_osl
-        if max_osl is not None and req.output_length > max_osl:
-            return max_osl
-        return req.output_length
+        capped = req.output_length
+        if max_osl is not None and capped > max_osl:
+            capped = max_osl
+        return capped if capped >= 1 else 1
 
     def _trace_idle_gap_cap_seconds(self) -> float | None:
         """Optional per-trace idle-gap cap; robust to MagicMock test configs."""
@@ -1630,9 +1651,23 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         # their child conversations must also be pruned.
         dropped_per_trace: dict[str, set[int]] = {}
 
-        max_ctx = self._max_context_length
-        if max_ctx is not None:
-            data = self._filter_traces_by_max_context(data, max_ctx)
+        # File-backed weka still needs filter-then-cap here. HF-backed
+        # SemiAnalysisCCTracesWekaLoader already selected before delegation
+        # (filename/path is None in that mode).
+        if self._path is not None:
+            dataset = self.run.cfg.get_default_dataset()
+            entries = getattr(dataset, "entries", None)
+            entries_explicit = (
+                "entries" in dataset.model_fields_set and entries is not None
+            )
+            num_entries = entries if entries_explicit else None
+            max_ctx = self._max_context_length
+            if max_ctx is not None or num_entries is not None:
+                data = self._select_traces_filter_then_cap(
+                    data,
+                    num_dataset_entries=num_entries,
+                    max_context_length=max_ctx,
+                )
 
         plans = self._build_reconstruction_plans(data)
         parent_plans = plans.parent_plans
@@ -2238,7 +2273,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         source_inner_idx=cp.request_inner_indices[k],
                         source_kind="weka_subagent",
                         model=child_model_map.get(creq.model, creq.model),
-                        max_tokens=creq.output_length,
+                        max_tokens=(
+                            creq.output_length if creq.output_length >= 1 else 1
+                        ),
                         raw_messages=child_delta.delta_messages,
                         reset_context=child_delta.reset_context,
                         theoretical_prefix_cache_hit_blocks=theoretical_hit_blocks,

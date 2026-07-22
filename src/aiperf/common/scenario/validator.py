@@ -65,8 +65,10 @@ def apply_scenario(run: BenchmarkRun) -> ScenarioOutcome:
     default and validates each hard invariant, collecting violations. Raises
     :class:`ScenarioLockError` on a hard conflict unless ``run.cfg.unsafe_override``
     is set (which downgrades violations to warnings and stamps
-    ``submission_valid=False``). The result is stored on
-    ``run.resolved.scenario_outcome`` and also returned.
+    ``submission_valid=False``). One exception: a synthetic default dataset
+    under ``require_loader`` always raises, even with ``unsafe_override``,
+    because continuing would silently build unusable 1-turn sessions.
+    The result is stored on ``run.resolved.scenario_outcome`` and also returned.
     """
     scenario_name = getattr(run.cfg, "scenario", None)
     if scenario_name is None:
@@ -93,6 +95,14 @@ def apply_scenario(run: BenchmarkRun) -> ScenarioOutcome:
     _apply_trace_idle_gap_cap(run, spec, violations, applied)
     _apply_random_seed(run, spec, applied)
 
+    # Synthetic (CLI default when no --public-dataset/--input-file) under a
+    # require_loader scenario is never a meaningful override — it silently
+    # builds 1-turn Shakespeare sessions that empty the AgentX trajectory
+    # pool. Fail hard even with --unsafe-override.
+    hard = _non_overridable_violations(run, violations)
+    if hard:
+        raise ScenarioLockError(violations, bypassable=False)
+
     unsafe = bool(getattr(run.cfg, "unsafe_override", False))
     if violations and not unsafe:
         raise ScenarioLockError(violations)
@@ -118,6 +128,25 @@ def apply_scenario(run: BenchmarkRun) -> ScenarioOutcome:
     )
     run.resolved.scenario_outcome = outcome
     return outcome
+
+
+def _non_overridable_violations(
+    run: BenchmarkRun,
+    violations: list[ScenarioViolation],
+) -> list[ScenarioViolation]:
+    """Return loader violations that ``--unsafe-override`` must not downgrade.
+
+    Explicit wrong loaders (e.g. ``sharegpt``) stay overridable for ablations.
+    A synthetic default dataset means the user omitted a weka source entirely;
+    continuing would look like a corpus load while producing unusable 1-turn
+    sessions.
+    """
+    from aiperf.config.dataset import SyntheticDataset
+
+    dataset = run.cfg.get_default_dataset()
+    if not isinstance(dataset, SyntheticDataset):
+        return []
+    return [v for v in violations if v.flag == "--input-file (loader)"]
 
 
 def _is_falsy_extra_input(value: Any) -> bool:
@@ -439,12 +468,26 @@ def _apply_require_loader(
     detected = _detect_loader(run)
     if detected not in allowed:
         display = allowed[0] if len(allowed) == 1 else f"any of {sorted(allowed)}"
+        from aiperf.config.dataset import SyntheticDataset
+
+        dataset = run.cfg.get_default_dataset()
+        if isinstance(dataset, SyntheticDataset):
+            current: str | None = "synthetic"
+            message = (
+                f"scenario {spec.name!r} requires loader={display}; "
+                "got synthetic (CLI default when --public-dataset / "
+                "--input-file is omitted). --unsafe-override cannot bypass "
+                "a missing weka loader"
+            )
+        else:
+            current = detected
+            message = f"scenario {spec.name!r} requires loader={display}"
         violations.append(
             ScenarioViolation(
                 flag="--input-file (loader)",
-                current_value=detected,
+                current_value=current,
                 required_value=display,
-                message=f"scenario {spec.name!r} requires loader={display}",
+                message=message,
             )
         )
     else:
