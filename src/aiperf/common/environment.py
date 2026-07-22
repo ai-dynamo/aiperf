@@ -1163,6 +1163,17 @@ class _UISettings(BaseSettings):
         env_prefix="AIPERF_UI_",
     )
 
+    CONSOLE_EXPORT_WIDTH: int = Field(
+        ge=40,
+        le=10000,
+        default=140,
+        description=(
+            "Fixed column width used to render the post-run console exporter "
+            "tables. Applied both to the recording console that produces "
+            "profile_export_console.txt and to the live console when stdout "
+            "is not a tty (so non-tty CI logs match the saved artifact)."
+        ),
+    )
     LOG_REFRESH_INTERVAL: float = Field(
         ge=0.01,
         le=100000.0,
@@ -1182,7 +1193,7 @@ class _UISettings(BaseSettings):
         description=(
             "Interval in seconds between real-time metrics messages (and the "
             "per-tick stats log block). 0 disables the log block; dashboards "
-            "still poll. When None, ``realtime_metrics_interval(ui_type)`` "
+            "still poll. When None, `realtime_metrics_interval(ui_type)` "
             "auto-defaults to 5.0 under --ui dashboard, 30.0 otherwise."
         ),
     )
