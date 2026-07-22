@@ -8,8 +8,10 @@ read to pin every turn of a replayed conversation to the same backend worker
 worker stays unaware of wire-body internals: the policy (which lifecycle action
 to emit) lives in :func:`build_session_control`, and the mechanism (overlaying
 it onto the structured request body) in :func:`merge_session_control`. The
-single caller is the serialization chokepoint
-:meth:`aiperf.workers.inference_client.InferenceClient._send_request_to_transport`,
+live caller is
+:meth:`aiperf.workers.session_routing.DynamoNvextRouting.transform_body`,
+invoked from the serialization chokepoint in
+:meth:`aiperf.workers.inference_client.InferenceClient._send_request_to_transport`
 right after the endpoint formats the request dict.
 
 The verbatim PAYLOAD_BYTES mmap fast path (raw_payload / inputs_json /

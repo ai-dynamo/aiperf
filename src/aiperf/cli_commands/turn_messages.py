@@ -36,13 +36,13 @@ def turn_messages(
 
     Examples:
         # Render the newest run (writes <run_dir>/turn_messages.html)
-        aiperf turn-messages ./artifacts/my-run/
+        aiperf analyze turn-messages ./artifacts/my-run/
 
         # Multiple runs in one invocation
-        aiperf turn-messages ./artifacts/run_a/ ./artifacts/run_b/
+        aiperf analyze turn-messages ./artifacts/run_a/ ./artifacts/run_b/
 
         # Single run, explicit output path, show more conversations, full bodies
-        aiperf turn-messages ./artifacts/my-run/ -o /tmp/msgs.html \
+        aiperf analyze turn-messages ./artifacts/my-run/ -o /tmp/msgs.html \
             -n 1000 --content-cap 1000000
 
     Args:

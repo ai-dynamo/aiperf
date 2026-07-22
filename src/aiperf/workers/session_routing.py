@@ -143,26 +143,19 @@ class DynamoNvextRouting(SessionRoutingBase[DynamoNvextOptions]):
     def transform_body(
         self, payload: dict[str, Any], ctx: RoutingContext
     ) -> dict[str, Any]:
-        if ctx.is_final_turn:
-            session_control: dict[str, Any] = {
-                "session_id": ctx.x_correlation_id,
-                "action": "close",
-            }
-        else:
-            session_control = {
-                "session_id": ctx.x_correlation_id,
-                "action": "bind",
-                "timeout": self.options.timeout_seconds,
-            }
-        merged = dict(payload)
-        raw_nvext = merged.get("nvext")
-        nvext = dict(raw_nvext) if isinstance(raw_nvext, dict) else {}
-        raw_sc = nvext.get("session_control")
-        merged_sc = dict(raw_sc) if isinstance(raw_sc, dict) else {}
-        merged_sc.update(session_control)
-        nvext["session_control"] = merged_sc
-        merged["nvext"] = nvext
-        return merged
+        from aiperf.workers.dynamo_session_control import (
+            build_session_control,
+            merge_session_control,
+        )
+
+        return merge_session_control(
+            payload,
+            build_session_control(
+                session_id=ctx.x_correlation_id,
+                is_final_turn=ctx.is_final_turn,
+                timeout_seconds=self.options.timeout_seconds,
+            ),
+        )
 
 
 class SmgRoutingKeyRouting(SessionRoutingBase[EmptyRoutingOptions]):
