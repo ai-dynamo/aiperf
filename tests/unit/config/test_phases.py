@@ -113,7 +113,7 @@ class TestGetPhaseRate:
 
 class TestAdaptiveScalePhaseValidation:
     def test_adaptive_scale_enabled_rejects_non_boolean_values(self) -> None:
-        with pytest.raises(ValidationError, match="adaptive_scale.enabled"):
+        with pytest.raises(ValidationError, match=r"adaptive_scale\.enabled"):
             ConcurrencyPhase(
                 name="profiling",
                 type=PhaseType.CONCURRENCY,
@@ -127,7 +127,7 @@ class TestAdaptiveScalePhaseValidation:
             )
 
     def test_flat_adaptive_scale_rejects_non_boolean_values(self) -> None:
-        with pytest.raises(ValidationError, match="adaptive_scale.enabled"):
+        with pytest.raises(ValidationError, match=r"adaptive_scale\.enabled"):
             ConcurrencyPhase(
                 name="profiling",
                 type=PhaseType.CONCURRENCY,
@@ -175,14 +175,37 @@ class TestAdaptiveScalePhaseValidation:
             )
         ]
 
+    def test_adaptive_scale_field_takes_precedence_over_stale_alias(self) -> None:
+        phase = ConcurrencyPhase(
+            name="profiling",
+            type=PhaseType.CONCURRENCY,
+            concurrency=20,
+            duration=10,
+            adaptive_scale=False,
+            adaptiveScale={
+                "enabled": True,
+                "control": {"variable": "concurrency", "min": 2, "max": 20},
+                "sustainDuration": 1,
+                "sla": {"request_latency": {"p95": {"le": 1000}}},
+            },
+        )
+
+        assert phase.adaptive_scale is False
+
     @pytest.mark.parametrize(
         "adaptive_scale",
         [
-            {"enabled": True, "typo": 1},
-            {"enabled": True, "control": {"variable": "concurrency", "typo": 1}},
-            {"enabled": True, "strategy": {"type": "ramp_until_fail", "typo": 1}},
+            pytest.param({"enabled": True, "typo": 1}, id="top-level-unknown"),
+            pytest.param(
+                {"enabled": True, "control": {"variable": "concurrency", "typo": 1}},
+                id="control-unknown",
+            ),
+            pytest.param(
+                {"enabled": True, "strategy": {"type": "ramp_until_fail", "typo": 1}},
+                id="strategy-unknown",
+            ),
         ],
-    )
+    )  # fmt: skip
     def test_nested_adaptive_scale_rejects_unknown_keys(
         self, adaptive_scale: dict[str, object]
     ) -> None:

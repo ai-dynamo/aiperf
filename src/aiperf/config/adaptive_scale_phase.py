@@ -108,14 +108,24 @@ _ADAPTIVE_SCALE_CONTROL_KEYS = {"variable", "min", "max"}
 _ADAPTIVE_SCALE_STRATEGY_KEYS = set(_ADAPTIVE_SCALE_STRATEGY_FIELD_MAP)
 
 
+def _target_field(field_name: str, *, use_aliases: bool) -> str:
+    if not use_aliases:
+        return field_name
+    return _ADAPTIVE_SCALE_FIELD_ALIASES[field_name]
+
+
 def _copy_mapped_fields(
     lowered: dict[str, object],
     source_data: dict[str, object],
     field_map: dict[str, str],
+    *,
+    use_aliases: bool,
 ) -> None:
     for source, target in field_map.items():
         if source in source_data:
-            lowered[target] = source_data[source]
+            lowered[_target_field(target, use_aliases=use_aliases)] = source_data[
+                source
+            ]
 
 
 def _reject_unknown_keys(
@@ -142,19 +152,17 @@ def _parse_enabled(value: object) -> bool:
     raise ValueError("adaptive_scale.enabled must be a boolean")
 
 
-def _use_adaptive_scale_aliases(lowered: dict[str, object]) -> None:
-    for field_name, alias in _ADAPTIVE_SCALE_FIELD_ALIASES.items():
-        if field_name in lowered:
-            lowered[alias] = lowered.pop(field_name)
-
-
 def lower_adaptive_scale_details(
-    lowered: dict[str, object], block: dict[str, object]
+    lowered: dict[str, object], block: dict[str, object], *, use_aliases: bool = False
 ) -> None:
     """Lower nested adaptive-scale YAML settings into flat phase fields."""
     _reject_unknown_keys(block, _ADAPTIVE_SCALE_BLOCK_KEYS, "adaptive_scale")
-    lowered["adaptive_scale"] = _parse_enabled(block.get("enabled"))
-    _copy_mapped_fields(lowered, block, _ADAPTIVE_SCALE_FIELD_MAP)
+    lowered[_target_field("adaptive_scale", use_aliases=use_aliases)] = _parse_enabled(
+        block.get("enabled")
+    )
+    _copy_mapped_fields(
+        lowered, block, _ADAPTIVE_SCALE_FIELD_MAP, use_aliases=use_aliases
+    )
 
     control = block.get("control", {})
     if not isinstance(control, dict):
@@ -163,11 +171,17 @@ def lower_adaptive_scale_details(
         control, _ADAPTIVE_SCALE_CONTROL_KEYS, "adaptive_scale.control"
     )
     if "variable" in control:
-        lowered["adaptive_control_variable"] = control["variable"]
+        lowered[_target_field("adaptive_control_variable", use_aliases=use_aliases)] = (
+            control["variable"]
+        )
     if "min" in control:
-        lowered["adaptive_control_min"] = control["min"]
+        lowered[_target_field("adaptive_control_min", use_aliases=use_aliases)] = (
+            control["min"]
+        )
     if "max" in control:
-        lowered["adaptive_control_max"] = control["max"]
+        lowered[_target_field("adaptive_control_max", use_aliases=use_aliases)] = (
+            control["max"]
+        )
 
     strategy = block.get("strategy", {})
     if not isinstance(strategy, dict):
@@ -175,7 +189,12 @@ def lower_adaptive_scale_details(
     _reject_unknown_keys(
         strategy, _ADAPTIVE_SCALE_STRATEGY_KEYS, "adaptive_scale.strategy"
     )
-    _copy_mapped_fields(lowered, strategy, _ADAPTIVE_SCALE_STRATEGY_FIELD_MAP)
+    _copy_mapped_fields(
+        lowered,
+        strategy,
+        _ADAPTIVE_SCALE_STRATEGY_FIELD_MAP,
+        use_aliases=use_aliases,
+    )
 
     sla = block.get("sla")
     if sla is None:
@@ -305,6 +324,8 @@ class AdaptiveScalePhaseMixin:
         if not isinstance(data, dict):
             return data
         lowered = dict(data)
+        if "adaptive_scale" in data:
+            lowered.pop("adaptiveScale", None)
         if isinstance(lowered.get("sla"), dict):
             lowered["sla"] = normalize_adaptive_sla(lowered["sla"])
 
@@ -318,14 +339,12 @@ class AdaptiveScalePhaseMixin:
             if (
                 "adaptive_scale" in data or "adaptiveScale" in data
             ) and block is not None:
-                lowered["adaptive_scale"] = _parse_enabled(block)
-                if uses_alias:
-                    _use_adaptive_scale_aliases(lowered)
+                lowered[_target_field("adaptive_scale", use_aliases=uses_alias)] = (
+                    _parse_enabled(block)
+                )
             return lowered
 
-        lower_adaptive_scale_details(lowered, block)
-        if uses_alias:
-            _use_adaptive_scale_aliases(lowered)
+        lower_adaptive_scale_details(lowered, block, use_aliases=uses_alias)
         return lowered
 
     @model_validator(mode="after")

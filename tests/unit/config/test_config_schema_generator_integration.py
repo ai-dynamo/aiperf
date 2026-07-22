@@ -508,6 +508,72 @@ def test_generated_schema_accepts_runtime_normalization_special_cases(
     _assert_schema_accepts(schema, config)
 
 
+def test_generated_schema_accepts_nested_adaptive_scale_numeric_templates() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptiveScale": {
+                    "enabled": True,
+                    "control": {
+                        "variable": "concurrency",
+                        "min": "${ADAPTIVE_MIN:1}",
+                        "max": "{{ adaptive_max }}",
+                    },
+                    "assessmentPeriod": "${ADAPTIVE_WINDOW:30}",
+                    "minCompletedRequests": "{{ min_completed }}",
+                    "sustainDuration": "${ADAPTIVE_SUSTAIN:120}",
+                    "strategy": {
+                        "type": "ramp_until_fail",
+                        "baseStep": "{{ base_step }}",
+                        "maxStepMultiplier": "${MAX_STEP_MULTIPLIER:2}",
+                        "stepPercent": "{{ step_percent }}",
+                    },
+                    "sla": {"request_latency": {"p95": {"le": 30000}}},
+                },
+            }
+        ]
+    )
+
+    _assert_schema_accepts(schema, config)
+
+
+def test_generated_schema_rejects_nested_adaptive_scale_invalid_bounds() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptiveScale": {
+                    "enabled": True,
+                    "control": {"variable": "concurrency", "min": 0, "max": 0},
+                    "assessmentPeriod": 0,
+                    "minCompletedRequests": 0,
+                    "sustainDuration": 0,
+                    "strategy": {
+                        "type": "ramp_until_fail",
+                        "baseStep": 0,
+                        "maxStepMultiplier": 0,
+                        "stepPercent": 0,
+                    },
+                    "sla": {"request_latency": {"p95": {"le": 30000}}},
+                },
+            }
+        ]
+    )
+
+    messages = _schema_error_messages(schema, config)
+    assert messages
+    assert any("not valid under any of the given schemas" in msg for msg in messages)
+
+
 def test_generated_schema_rejects_nested_adaptive_scale_unknown_keys() -> None:
     schema = _generated_schema()
     config = _minimal_benchmark_config(

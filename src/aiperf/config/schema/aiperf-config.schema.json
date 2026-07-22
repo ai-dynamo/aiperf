@@ -18473,15 +18473,47 @@
               ]
             },
             "min": {
-              "type": [
-                "integer",
-                "number"
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
               ]
             },
             "max": {
-              "type": [
-                "integer",
-                "number"
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
               ]
             }
           }
@@ -18511,34 +18543,120 @@
               ]
             },
             "baseStep": {
-              "type": "integer",
-              "minimum": 1
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
             },
             "base_step": {
-              "type": "integer",
-              "minimum": 1
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
             },
             "maxStepMultiplier": {
-              "type": "integer",
-              "minimum": 1
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
             },
             "max_step_multiplier": {
-              "type": "integer",
-              "minimum": 1
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
             },
             "stepPercent": {
-              "type": [
-                "integer",
-                "number"
-              ],
-              "exclusiveMinimum": 0
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
             },
             "step_percent": {
-              "type": [
-                "integer",
-                "number"
-              ],
-              "exclusiveMinimum": 0
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
             }
           }
         },
@@ -18587,27 +18705,91 @@
           ]
         },
         "controlMin": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         },
         "control_min": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         },
         "controlMax": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         },
         "control_max": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         },
         "minConcurrency": {
@@ -18683,28 +18865,76 @@
           "x-jinja2-supported": true
         },
         "window": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         },
         "assessmentPeriod": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         },
         "assessment_period": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         },
         "minCompletedRequests": {
           "oneOf": [
             {
               "type": "integer",
-              "minimum": 0
+              "minimum": 1
             },
             {
               "type": "string",
@@ -18716,14 +18946,13 @@
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
-          ],
-          "x-jinja2-supported": true
+          ]
         },
         "min_completed_requests": {
           "oneOf": [
             {
               "type": "integer",
-              "minimum": 0
+              "minimum": 1
             },
             {
               "type": "string",
@@ -18735,19 +18964,50 @@
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
-          ],
-          "x-jinja2-supported": true
+          ]
         },
         "sustainDuration": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         },
         "sustain_duration": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         }
       }
@@ -18773,15 +19033,47 @@
               ]
             },
             "min": {
-              "type": [
-                "integer",
-                "number"
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
               ]
             },
             "max": {
-              "type": [
-                "integer",
-                "number"
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
               ]
             }
           }
@@ -18811,34 +19103,120 @@
               ]
             },
             "baseStep": {
-              "type": "integer",
-              "minimum": 1
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
             },
             "base_step": {
-              "type": "integer",
-              "minimum": 1
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
             },
             "maxStepMultiplier": {
-              "type": "integer",
-              "minimum": 1
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
             },
             "max_step_multiplier": {
-              "type": "integer",
-              "minimum": 1
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
             },
             "stepPercent": {
-              "type": [
-                "integer",
-                "number"
-              ],
-              "exclusiveMinimum": 0
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
             },
             "step_percent": {
-              "type": [
-                "integer",
-                "number"
-              ],
-              "exclusiveMinimum": 0
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
             }
           }
         },
@@ -18887,27 +19265,91 @@
           ]
         },
         "controlMin": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         },
         "control_min": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         },
         "controlMax": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         },
         "control_max": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         },
         "minConcurrency": {
@@ -18983,28 +19425,76 @@
           "x-jinja2-supported": true
         },
         "window": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         },
         "assessmentPeriod": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         },
         "assessment_period": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         },
         "minCompletedRequests": {
           "oneOf": [
             {
               "type": "integer",
-              "minimum": 0
+              "minimum": 1
             },
             {
               "type": "string",
@@ -19016,14 +19506,13 @@
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
-          ],
-          "x-jinja2-supported": true
+          ]
         },
         "min_completed_requests": {
           "oneOf": [
             {
               "type": "integer",
-              "minimum": 0
+              "minimum": 1
             },
             {
               "type": "string",
@@ -19035,19 +19524,50 @@
               "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
-          ],
-          "x-jinja2-supported": true
+          ]
         },
         "sustainDuration": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         },
         "sustain_duration": {
-          "type": [
-            "integer",
-            "number"
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
           ]
         }
       },

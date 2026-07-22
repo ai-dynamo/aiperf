@@ -134,6 +134,18 @@ JINJA2_TEMPLATE_PATTERN = r".*\{\{.*\}\}.*"
 # Examples: "${CONCURRENCY}", "${RATE:100}", "${ISL:512}"
 ENV_VAR_PATTERN = r".*\$\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\}.*"
 
+COMPACT_ADAPTIVE_SLA_SCHEMA = {
+    "type": "object",
+    "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {"type": ["number", "string"]},
+        },
+    },
+    "description": "Compact SLA mapping: metric -> stat -> operator -> threshold.",
+}
+
 # Fields to EXCLUDE from Jinja2 template support
 # These are fields where Jinja2 doesn't make sense (e.g., discriminator fields, enums)
 JINJA2_EXCLUDED_FIELDS: set[str] = {
@@ -749,17 +761,6 @@ class ConfigSchemaGenerator(Generator):
                 p95:
                   le: 30000
         """
-        compact_sla_schema = {
-            "type": "object",
-            "additionalProperties": {
-                "type": "object",
-                "additionalProperties": {
-                    "type": "object",
-                    "additionalProperties": {"type": ["number", "string"]},
-                },
-            },
-            "description": "Compact SLA mapping: metric -> stat -> operator -> threshold.",
-        }
         enhanced_count = 0
 
         def is_sla_filter_array(field_schema: dict) -> bool:
@@ -784,7 +785,10 @@ class ConfigSchemaGenerator(Generator):
                                 + " Accepts the canonical list form or compact metric/stat/op mapping."
                             ).strip(),
                             "title": original.get("title", "Sla"),
-                            "anyOf": [original, copy.deepcopy(compact_sla_schema)],
+                            "anyOf": [
+                                original,
+                                copy.deepcopy(COMPACT_ADAPTIVE_SLA_SCHEMA),
+                            ],
                         }
                         enhanced_count += 1
                 for value in obj.values():
@@ -799,17 +803,41 @@ class ConfigSchemaGenerator(Generator):
     def _add_adaptive_scale_nested_form(self, schema: dict) -> int:
         """Allow documented nested adaptiveScale/adaptive_scale phase blocks."""
         defs = schema.setdefault("$defs", {})
-        compact_sla_schema = {
-            "type": "object",
-            "additionalProperties": {
-                "type": "object",
-                "additionalProperties": {
-                    "type": "object",
-                    "additionalProperties": {"type": ["number", "string"]},
-                },
+
+        template_variants = [
+            {
+                "type": "string",
+                "pattern": JINJA2_TEMPLATE_PATTERN,
+                "description": "Jinja2 template (e.g., '{{ variable }}').",
             },
-            "description": "Compact SLA mapping: metric -> stat -> operator -> threshold.",
-        }
+            {
+                "type": "string",
+                "pattern": ENV_VAR_PATTERN,
+                "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}').",
+            },
+        ]
+
+        def numeric_schema(
+            *, minimum: float | None = None, exclusive_minimum: float | None = None
+        ) -> dict:
+            variants = [{"type": "integer"}, {"type": "number"}]
+            for variant in variants:
+                if minimum is not None:
+                    variant["minimum"] = minimum
+                if exclusive_minimum is not None:
+                    variant["exclusiveMinimum"] = exclusive_minimum
+            return {"anyOf": [*variants, *copy.deepcopy(template_variants)]}
+
+        def integer_schema(*, minimum: int | None = None) -> dict:
+            schema = {"type": "integer"}
+            if minimum is not None:
+                schema["minimum"] = minimum
+            return {"oneOf": [schema, *copy.deepcopy(template_variants)]}
+
+        positive_numeric = numeric_schema(exclusive_minimum=0)
+        ge_one_numeric = numeric_schema(minimum=1)
+        ge_one_integer = integer_schema(minimum=1)
+
         control_variable_schema = {
             "type": "string",
             "enum": [
@@ -829,8 +857,8 @@ class ConfigSchemaGenerator(Generator):
                     "additionalProperties": False,
                     "properties": {
                         "variable": copy.deepcopy(control_variable_schema),
-                        "min": {"type": ["integer", "number"]},
-                        "max": {"type": ["integer", "number"]},
+                        "min": copy.deepcopy(positive_numeric),
+                        "max": copy.deepcopy(positive_numeric),
                     },
                 },
                 "strategy": {
@@ -846,18 +874,12 @@ class ConfigSchemaGenerator(Generator):
                             "type": "string",
                             "enum": ["sla_margin", "fixed_percent_step"],
                         },
-                        "baseStep": {"type": "integer", "minimum": 1},
-                        "base_step": {"type": "integer", "minimum": 1},
-                        "maxStepMultiplier": {"type": "integer", "minimum": 1},
-                        "max_step_multiplier": {"type": "integer", "minimum": 1},
-                        "stepPercent": {
-                            "type": ["integer", "number"],
-                            "exclusiveMinimum": 0,
-                        },
-                        "step_percent": {
-                            "type": ["integer", "number"],
-                            "exclusiveMinimum": 0,
-                        },
+                        "baseStep": copy.deepcopy(ge_one_integer),
+                        "base_step": copy.deepcopy(ge_one_integer),
+                        "maxStepMultiplier": copy.deepcopy(ge_one_integer),
+                        "max_step_multiplier": copy.deepcopy(ge_one_integer),
+                        "stepPercent": copy.deepcopy(positive_numeric),
+                        "step_percent": copy.deepcopy(positive_numeric),
                     },
                 },
                 "sla": {
@@ -866,26 +888,26 @@ class ConfigSchemaGenerator(Generator):
                             "type": "array",
                             "items": {"$ref": "#/$defs/SLAFilter"},
                         },
-                        compact_sla_schema,
+                        copy.deepcopy(COMPACT_ADAPTIVE_SLA_SCHEMA),
                     ],
                 },
                 "controlVariable": copy.deepcopy(control_variable_schema),
                 "control_variable": copy.deepcopy(control_variable_schema),
-                "controlMin": {"type": ["integer", "number"]},
-                "control_min": {"type": ["integer", "number"]},
-                "controlMax": {"type": ["integer", "number"]},
-                "control_max": {"type": ["integer", "number"]},
+                "controlMin": copy.deepcopy(positive_numeric),
+                "control_min": copy.deepcopy(positive_numeric),
+                "controlMax": copy.deepcopy(positive_numeric),
+                "control_max": copy.deepcopy(positive_numeric),
                 "minConcurrency": {"type": "integer"},
                 "min_concurrency": {"type": "integer"},
                 "maxConcurrency": {"type": "integer"},
                 "max_concurrency": {"type": "integer"},
-                "window": {"type": ["integer", "number"]},
-                "assessmentPeriod": {"type": ["integer", "number"]},
-                "assessment_period": {"type": ["integer", "number"]},
-                "minCompletedRequests": {"type": "integer", "minimum": 0},
-                "min_completed_requests": {"type": "integer", "minimum": 0},
-                "sustainDuration": {"type": ["integer", "number"]},
-                "sustain_duration": {"type": ["integer", "number"]},
+                "window": copy.deepcopy(ge_one_numeric),
+                "assessmentPeriod": copy.deepcopy(ge_one_numeric),
+                "assessment_period": copy.deepcopy(ge_one_numeric),
+                "minCompletedRequests": copy.deepcopy(ge_one_integer),
+                "min_completed_requests": copy.deepcopy(ge_one_integer),
+                "sustainDuration": copy.deepcopy(positive_numeric),
+                "sustain_duration": copy.deepcopy(positive_numeric),
             },
         }
         disabled_adaptive_scale_object_schema = copy.deepcopy(
