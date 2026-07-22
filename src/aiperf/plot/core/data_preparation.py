@@ -319,26 +319,70 @@ def prepare_timeslice_metrics(
     return plot_df, unit
 
 
-def aggregate_gpu_telemetry(run: RunData) -> pd.DataFrame:
+# GPU "activity" columns the dual-axis utilization plot can render, in fallback
+# priority order. NVIDIA SM-occupancy utilization is preferred; AMD GFX activity
+# is the AMD counterpart (different semantics — see resolve_gpu_activity_column);
+# the legacy unprefixed name is the pre-namespacing fallback.
+GPU_ACTIVITY_COLUMN_PRIORITY: tuple[str, ...] = (
+    "nvidia_gpu_utilization",
+    "amd_gfx_activity",
+    "gpu_utilization",
+)
+
+
+def resolve_gpu_activity_column(gpu_df: pd.DataFrame) -> str | None:
+    """Return the GPU-activity column to plot, by vendor fallback priority.
+
+    Picks the first of `GPU_ACTIVITY_COLUMN_PRIORITY` present in `gpu_df`
+    (NVIDIA utilization, then AMD GFX activity, then the legacy name). Returns
+    `None` when none is present. NVIDIA utilization and AMD GFX activity are
+    distinct physical signals and are not comparable across vendors; callers
+    should label the result by the resolved column name.
+    """
+    for col in GPU_ACTIVITY_COLUMN_PRIORITY:
+        if col in gpu_df.columns:
+            return col
+    return None
+
+
+def aggregate_gpu_telemetry(
+    run: RunData, output_col: str = "nvidia_gpu_utilization"
+) -> pd.DataFrame:
     """
     Aggregate GPU telemetry data by averaging across GPUs at each timestamp.
 
     Args:
         run: RunData object with gpu_telemetry DataFrame
+        output_col: Column name to use in the returned DataFrame. Plot specs that
+            still reference the legacy ``gpu_utilization`` name pass that through
+            so downstream lookups (``df[y2_metric]``) keyed on the spec name match.
 
     Returns:
-        DataFrame with timestamp_s and averaged gpu_utilization
+        DataFrame with timestamp_s and averaged GPU activity under ``output_col``
     """
     if run.gpu_telemetry is None or run.gpu_telemetry.empty:
         return pd.DataFrame()
 
     gpu_df = run.gpu_telemetry.copy()
 
+    utilization_col = resolve_gpu_activity_column(gpu_df)
+    if utilization_col is None:
+        return pd.DataFrame()
+
     # If gpu_index column exists, group by timestamp and average
     if "gpu_index" in gpu_df.columns:
         gpu_df = (
-            gpu_df.groupby("timestamp_s").agg({"gpu_utilization": "mean"}).reset_index()
+            gpu_df.groupby("timestamp_s").agg({utilization_col: "mean"}).reset_index()
         )
+
+    if output_col != utilization_col:
+        # Drop any stale column already occupying output_col (e.g. a legacy
+        # gpu_utilization alongside the preferred nvidia_gpu_utilization) so the
+        # rename can't produce a duplicate label that turns df[output_col] into a
+        # DataFrame and breaks downstream df[y2_metric] lookups.
+        if output_col in gpu_df.columns:
+            gpu_df = gpu_df.drop(columns=[output_col])
+        gpu_df = gpu_df.rename(columns={utilization_col: output_col})
 
     return gpu_df
 

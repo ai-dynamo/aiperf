@@ -407,7 +407,11 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             raise ValueError(
                 f"User not found for x_correlation_id: {credit.x_correlation_id}"
             )
-        turn = TurnToSend.from_previous_credit(credit)
+        # Pass next-turn metadata so has_forks rides onto the continuation turn
+        # (the sticky router defers parent-entry eviction until DAG children
+        # drain); dropping it premature-evicts a fork-bearing parent's turns.
+        meta = self._conversation_source.get_next_turn_metadata(credit)
+        turn = TurnToSend.from_previous_credit(credit, meta)
 
         # If the next turn time already passed, the max() will
         # re-align their schedule to account for the delay.

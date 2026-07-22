@@ -2222,10 +2222,14 @@ class TestDualAxisHandler:
     def test_metric_prep_registry(self, dual_axis_handler):
         """Test that the metric preparation registry contains expected functions."""
         assert "throughput_tokens_per_sec" in dual_axis_handler.METRIC_PREP_FUNCTIONS
+        assert "nvidia_gpu_utilization" in dual_axis_handler.METRIC_PREP_FUNCTIONS
         assert "gpu_utilization" in dual_axis_handler.METRIC_PREP_FUNCTIONS
 
         assert callable(
             dual_axis_handler.METRIC_PREP_FUNCTIONS["throughput_tokens_per_sec"]
+        )
+        assert callable(
+            dual_axis_handler.METRIC_PREP_FUNCTIONS["nvidia_gpu_utilization"]
         )
         assert callable(dual_axis_handler.METRIC_PREP_FUNCTIONS["gpu_utilization"])
 
