@@ -1012,3 +1012,26 @@ class TestGPUTelemetryJSONLWriterErrorHandling:
                         await processor.process_telemetry_record(record)
 
         assert call_count == 3
+
+
+class TestStreamExporterProtocolAliases:
+    """``StreamExporterProtocol``-compatible aliases delegate correctly."""
+
+    @pytest.mark.asyncio
+    async def test_process_record_alias_and_finalize_flush(
+        self,
+        run_telemetry_export,
+        sample_telemetry_record,
+    ):
+        writer = GPUTelemetryJSONLWriter(
+            service_id="records-manager",
+            run=run_telemetry_export,
+        )
+        async with aiperf_lifecycle(writer):
+            await writer.process_record(sample_telemetry_record)
+            await writer.finalize()
+
+        lines = writer.output_file.read_text().strip().splitlines()
+        assert len(lines) == 1
+        payload = orjson.loads(lines[0])
+        assert payload["timestamp_ns"] == sample_telemetry_record.timestamp_ns
