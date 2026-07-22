@@ -779,6 +779,7 @@ class TestPayloadBytesFastPath:
 
         assert handled is True
         assert sample_credit_context.error == error_record.error
+        assert sample_credit_context.record_emitted is True
         mock_worker._send_inference_result_message.assert_awaited_once_with(
             error_record
         )
@@ -786,6 +787,36 @@ class TestPayloadBytesFastPath:
         assert sent_request_info.payload_bytes == b'{"p": 1}'
         # The fast path handled the credit; the session path never ran.
         mock_worker._process_credit_with_session.assert_not_awaited()
+
+    async def test_successful_fast_path_sets_record_emitted(
+        self, mock_worker, sample_credit_context
+    ):
+        """Lockstep guard must not emit a duplicate failure record after success."""
+        mock_worker._is_payload_bytes = True
+        mock_worker._dataset_client = AsyncMock()
+        mock_worker._dataset_client.get_payload_bytes.return_value = b'{"p": 1}'
+
+        success_record = RequestRecord(
+            timestamp_ns=1,
+            start_perf_ns=1,
+            end_perf_ns=2,
+        )
+        mock_worker.inference_client.send_request = AsyncMock(
+            return_value=success_record
+        )
+        mock_worker._send_inference_result_message = AsyncMock()
+
+        assert sample_credit_context.record_emitted is False
+        handled = await mock_worker._try_payload_bytes_fast_path(
+            sample_credit_context, "x-req-5", None
+        )
+
+        assert handled is True
+        assert sample_credit_context.record_emitted is True
+        assert sample_credit_context.error is None
+        mock_worker._send_inference_result_message.assert_awaited_once_with(
+            success_record
+        )
 
 
 # --- First Token Callback Factory Tests ---

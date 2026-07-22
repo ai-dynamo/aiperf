@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import CreditPhase
+from aiperf.common.scenario.context_overflow import is_context_overflow_response
 from aiperf.timing.concurrency import PhaseRuntimeKey
 
 if TYPE_CHECKING:
@@ -100,11 +101,12 @@ class CreditCallbackHandler:
                 children / queuing a join turn).
             session_tree_registry: Optional per-tree session-slot ledger (agentic
                 replay only). When engaged (PROFILING), the depth-0 root session
-                slot is NOT released on the root's final turn -- it is held until
-                the whole tree drains. The release is deferred to
+                slot is NOT released on the root's terminal return -- it is held
+                until the whole tree drains. The release is deferred to
                 ``registry.on_root_terminal`` (after intercept, so final-turn
-                spawns are counted first); the per-phase teardown releases any
-                still-open trees via the runner's ``release_all``.
+                spawns are counted first); terminal means the authored final
+                turn or a context-overflow early abort. The per-phase teardown
+                releases any still-open trees via the runner's ``release_all``.
             on_warmup_abort: Optional async callback fired ONCE on the first
                 terminal WARMUP failure. Used by agentic replay to abort the run
                 early (broadcast ProfileCancelCommand) instead of letting warmup
@@ -460,16 +462,24 @@ class CreditCallbackHandler:
                 self._signal_all_credits_returned_if_ready(handler)
                 return
 
-        # Per-tree slot release: a root's final-turn return marks its tree's
-        # root token complete. Run AFTER intercept so any children spawned on the
-        # final turn are already registered with the registry (else the tree
-        # could drain a beat too early). The registry releases the session slot
-        # and recycles the freed lane only once every descendant has also
-        # drained -- which may be now (no outstanding descendants) or later (when
-        # the last background subagent finishes). A root that suspends on a gate
-        # (intercepted) is never final, so it never reaches this point.
+        # Per-tree slot release: a root's terminal return marks its tree's root
+        # token complete. Terminal means either the authored final turn OR a
+        # context-overflow early abort (non-final turn whose error body matches
+        # the AgentX allowlist -- agentic_replay treats that as trajectory
+        # death and must not leave root_pending stuck True). Run AFTER intercept
+        # so any children spawned on the final turn are already registered with
+        # the registry (else the tree could drain a beat too early). The
+        # registry releases the session slot and recycles the freed lane only
+        # once every descendant has also drained -- which may be now (no
+        # outstanding descendants) or later (when the last background subagent
+        # finishes). A root that suspends on a gate (intercepted) is never
+        # terminal, so it never reaches this point.
+        root_terminal = credit.is_final_turn or (
+            credit_return.error is not None
+            and is_context_overflow_response(body=credit_return.error)
+        )
         if (
-            credit.is_final_turn
+            root_terminal
             and credit.agent_depth == 0
             and self._tree_registry_engaged(credit)
         ):

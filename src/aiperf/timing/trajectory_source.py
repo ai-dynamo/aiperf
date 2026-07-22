@@ -52,6 +52,11 @@ class ConversationState:
     waiting_on_children: bool = False
     join_target_turn_index: int | None = None
     branch_id: str | None = None
+    # Multi-consumer fan-in: every (branch_id, gated_turn_index) this child
+    # feeds. When non-empty, seed_snapshot registers all gates; ``branch_id`` /
+    # ``join_target_turn_index`` remain the first membership for single-gate
+    # callers.
+    join_gate_memberships: tuple[tuple[str, int], ...] = ()
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
 
     @property
@@ -724,6 +729,14 @@ class TrajectorySource(ConversationSource):
                         waiting_on_children=False,
                         join_target_turn_index=runtime.join_turn_index,
                         branch_id=runtime.branch_id,
+                        join_gate_memberships=(
+                            ((runtime.branch_id, runtime.join_turn_index),)
+                            if (
+                                runtime.branch_id is not None
+                                and runtime.join_turn_index is not None
+                            )
+                            else ()
+                        ),
                         branch_mode=runtime.mode,
                     )
                 )

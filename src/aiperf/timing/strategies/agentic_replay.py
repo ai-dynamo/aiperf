@@ -354,6 +354,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             self.branch_orchestrator.close_replay_root(root_corr)
         lane = self._correlation_to_lane.pop(root_corr, None)
         self._session_marker.pop(root_corr, None)
+        self._root_to_lane.pop(root_corr, None)
         if lane is None:
             self.warning(
                 lambda: (
@@ -788,17 +789,33 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
     def _handoff_annotations(
         self,
-    ) -> tuple[dict[str, int], dict[str, tuple[str | None, int | None]]]:
+    ) -> tuple[dict[str, int], dict[str, list[tuple[str | None, int | None]]]]:
         if self.branch_orchestrator is None:
             return {}, {}
         return self.branch_orchestrator.snapshot_annotations()
+
+    @staticmethod
+    def _child_join_from_annotations(
+        child_annotations: dict[str, list[tuple[str | None, int | None]]],
+        correlation_id: str,
+    ) -> tuple[str | None, int | None, tuple[tuple[str, int], ...]]:
+        """Unpack primary join fields plus full multi-gate memberships."""
+        memberships = [
+            (branch_id, gated_idx)
+            for branch_id, gated_idx in child_annotations.get(correlation_id, [])
+            if branch_id is not None and gated_idx is not None
+        ]
+        if not memberships:
+            return None, None, ()
+        branch_id, join_target = memberships[0]
+        return branch_id, join_target, tuple(memberships)
 
     def _add_returned_handoff_states(
         self,
         states_by_lane: dict[int, list[ConversationState]],
         *,
         blocked: dict[str, int],
-        child_annotations: dict[str, tuple[str | None, int | None]],
+        child_annotations: dict[str, list[tuple[str | None, int | None]]],
         finalized_at_ns: int,
     ) -> set[tuple[str, str, int]]:
         seen_states: set[tuple[str, str, int]] = set()
@@ -823,14 +840,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         credit: Credit,
         *,
         blocked: dict[str, int],
-        child_annotations: dict[str, tuple[str | None, int | None]],
+        child_annotations: dict[str, list[tuple[str | None, int | None]]],
         finalized_at_ns: int,
     ) -> tuple[int, ConversationState] | None:
         lane = self._root_to_lane.get(credit.effective_root_correlation_id)
         if lane is None or credit.turn_index + 1 >= credit.num_turns:
             return None
-        branch_id, join_target = child_annotations.get(
-            credit.x_correlation_id, (None, None)
+        branch_id, join_target, memberships = self._child_join_from_annotations(
+            child_annotations, credit.x_correlation_id
         )
         return lane, ConversationState(
             conversation_id=credit.conversation_id,
@@ -845,6 +862,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             waiting_on_children=credit.x_correlation_id in blocked,
             join_target_turn_index=blocked.get(credit.x_correlation_id, join_target),
             branch_id=branch_id,
+            join_gate_memberships=memberships,
             branch_mode=credit.branch_mode,
         )
 
@@ -853,7 +871,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         states_by_lane: dict[int, list[ConversationState]],
         seen_states: set[tuple[str, str, int]],
         *,
-        child_annotations: dict[str, tuple[str | None, int | None]],
+        child_annotations: dict[str, list[tuple[str | None, int | None]]],
     ) -> None:
         for root_correlation_id, turns in self._pending_handoff_turns_by_root().items():
             for turn in turns:
@@ -894,7 +912,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         turn: TurnToSend,
         seen_states: set[tuple[str, str, int]],
         *,
-        child_annotations: dict[str, tuple[str | None, int | None]],
+        child_annotations: dict[str, list[tuple[str | None, int | None]]],
     ) -> tuple[int, tuple[str, str, int], ConversationState] | None:
         lane = self._handoff_lane_for_turn(root_correlation_id, turn)
         state_key = (turn.conversation_id, turn.x_correlation_id, turn.turn_index)
@@ -905,8 +923,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         ):
             return None
         self._root_to_lane[turn.effective_root_correlation_id] = lane
-        branch_id, join_target = child_annotations.get(
-            turn.x_correlation_id, (None, None)
+        branch_id, join_target, memberships = self._child_join_from_annotations(
+            child_annotations, turn.x_correlation_id
         )
         state = ConversationState(
             conversation_id=turn.conversation_id,
@@ -919,6 +937,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             waiting_on_children=False,
             join_target_turn_index=join_target,
             branch_id=branch_id,
+            join_gate_memberships=memberships,
             branch_mode=turn.branch_mode,
         )
         return lane, state_key, state
@@ -1341,6 +1360,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         # Prune so every early-return path leaves dicts clean.
         self._session_marker.pop(finished_correlation_id, None)
+        self._root_to_lane.pop(finished_correlation_id, None)
         lane = self._release_lane_for(finished_correlation_id, finished_trace_id)
         await self._dispatch_recycled_on_lane(lane)
 

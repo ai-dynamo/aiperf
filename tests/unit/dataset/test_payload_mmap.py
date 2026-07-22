@@ -236,3 +236,39 @@ async def test_adopt_existing_files_requires_files_on_disk(tmp_path, monkeypatch
 
     with pytest.raises(FileNotFoundError, match="requires both files"):
         store.adopt_existing_files(session_ids=["s1"], total_size_bytes=4)
+
+
+@pytest.mark.asyncio
+async def test_adopt_existing_files_compress_only_uses_zst_paths(tmp_path, monkeypatch):
+    """Cache HIT restore writes .zst only; adopt must not require uncompressed paths."""
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+
+    store = MemoryMapDatasetBackingStore(
+        benchmark_id="test_adopt_zst", compress_only=True
+    )
+    store._compressed_data_path.parent.mkdir(parents=True, exist_ok=True)
+    store._compressed_data_path.write_bytes(b"ZDATA")
+    store._compressed_index_path.write_bytes(b"ZIDX")
+    assert not store._data_path.exists()
+    assert not store._index_path.exists()
+
+    store.adopt_existing_files(
+        session_ids=["s1"], total_size_bytes=100, compressed_size_bytes=5
+    )
+    assert store._finalized is True
+    assert store._compressed_size == 5
+
+    await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_adopt_existing_files_compress_only_missing_zst_raises(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+
+    store = MemoryMapDatasetBackingStore(
+        benchmark_id="test_adopt_zst_missing", compress_only=True
+    )
+    with pytest.raises(FileNotFoundError, match=r"dataset\.dat\.zst"):
+        store.adopt_existing_files(session_ids=["s1"], total_size_bytes=4)

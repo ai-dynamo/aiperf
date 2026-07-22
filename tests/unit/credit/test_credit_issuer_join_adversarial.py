@@ -29,15 +29,17 @@ def _make_issuer() -> CreditIssuer:
     """Build a bare CreditIssuer with mocks sufficient for dispatch_join_turn.
 
     Only attributes actually read by ``dispatch_join_turn`` and the
-    ``try_issue_credit`` path are filled in; extra attributes can be added
-    per-test if a specific test exercises more of the issuer.
+    ``issue_credit`` / ``_issue_credit_ready`` path are filled in; extra
+    attributes can be added per-test if a specific test exercises more of
+    the issuer.
     """
     issuer = CreditIssuer.__new__(CreditIssuer)
     issuer._phase = CreditPhase.PROFILING
     issuer._phase_index = 0
+    issuer._issuing_stopped = False
     issuer._concurrency_manager = MagicMock()
-    issuer._concurrency_manager.try_acquire_session_slot = MagicMock(return_value=True)
-    issuer._concurrency_manager.try_acquire_prefill_slot = MagicMock(return_value=True)
+    issuer._concurrency_manager.acquire_session_slot = AsyncMock(return_value=True)
+    issuer._concurrency_manager.acquire_prefill_slot = AsyncMock(return_value=True)
     issuer._concurrency_manager.release_session_slot = MagicMock()
     issuer._stop_checker = MagicMock()
     issuer._stop_checker.can_send_any_turn.return_value = True
@@ -62,10 +64,10 @@ async def test_dispatch_join_turn_asserts_gated_turn_index_not_none():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_join_turn_returns_false_when_try_issue_credit_returns_false():
-    """If try_issue_credit returns False (suppressed), dispatch_join_turn returns False."""
+async def test_dispatch_join_turn_returns_false_when_issue_credit_returns_false():
+    """If issue_credit returns False (suppressed), dispatch_join_turn returns False."""
     issuer = _make_issuer()
-    issuer.try_issue_credit = AsyncMock(return_value=False)
+    issuer.issue_credit = AsyncMock(return_value=False)
     pending = PendingBranchJoin(
         parent_x_correlation_id="corr-parent",
         parent_conversation_id="conv-parent",
@@ -77,16 +79,16 @@ async def test_dispatch_join_turn_returns_false_when_try_issue_credit_returns_fa
 
 
 @pytest.mark.asyncio
-async def test_dispatch_join_turn_returns_true_when_try_issue_credit_returns_true_and_builds_correct_turn():
+async def test_dispatch_join_turn_returns_true_when_issue_credit_returns_true_and_builds_correct_turn():
     """Happy path: True propagates and TurnToSend carries all PendingBranchJoin fields."""
     issuer = _make_issuer()
     captured: dict[str, TurnToSend] = {}
 
-    async def fake_try_issue_credit(turn: TurnToSend):
+    async def fake_issue_credit(turn: TurnToSend):
         captured["turn"] = turn
         return True
 
-    issuer.try_issue_credit = fake_try_issue_credit
+    issuer.issue_credit = fake_issue_credit
     pending = PendingBranchJoin(
         parent_x_correlation_id="corr-parent",
         parent_conversation_id="conv-parent",
@@ -122,11 +124,11 @@ async def test_dispatch_join_turn_hardcodes_branch_mode_fork_even_for_spawn_pare
     issuer = _make_issuer()
     captured: dict[str, TurnToSend] = {}
 
-    async def fake_try_issue_credit(turn: TurnToSend):
+    async def fake_issue_credit(turn: TurnToSend):
         captured["turn"] = turn
         return True
 
-    issuer.try_issue_credit = fake_try_issue_credit
+    issuer.issue_credit = fake_issue_credit
     pending = PendingBranchJoin(
         parent_x_correlation_id="corr-spawn-parent",
         parent_conversation_id="conv-spawn-parent",
@@ -149,11 +151,11 @@ async def test_dispatch_join_turn_with_gated_turn_index_zero_edge_behavior():
     issuer = _make_issuer()
     captured: dict[str, TurnToSend] = {}
 
-    async def fake_try_issue_credit(turn: TurnToSend):
+    async def fake_issue_credit(turn: TurnToSend):
         captured["turn"] = turn
         return True
 
-    issuer.try_issue_credit = fake_try_issue_credit
+    issuer.issue_credit = fake_issue_credit
     pending = PendingBranchJoin(
         parent_x_correlation_id="corr-parent",
         parent_conversation_id="conv-parent",
@@ -172,11 +174,11 @@ async def test_multiple_parents_dispatch_join_turn_isolated_state():
     issuer = _make_issuer()
     captured: list[TurnToSend] = []
 
-    async def fake_try_issue_credit(turn: TurnToSend):
+    async def fake_issue_credit(turn: TurnToSend):
         captured.append(turn)
         return True
 
-    issuer.try_issue_credit = fake_try_issue_credit
+    issuer.issue_credit = fake_issue_credit
 
     pending_a = PendingBranchJoin(
         parent_x_correlation_id="corr-A",
@@ -217,7 +219,7 @@ async def test_multiple_parents_dispatch_join_turn_isolated_state():
 
 @pytest.mark.asyncio
 async def test_dispatch_join_turn_graceful_when_issuer_stopped():
-    """When stop_checker rejects, try_issue_credit returns False and dispatch returns False.
+    """When stop_checker rejects, issue_credit returns False and dispatch returns False.
 
     The issuer has no standalone lifecycle; "stopped" manifests as
     ``can_send_any_turn`` returning False. dispatch_join_turn must not
@@ -225,8 +227,8 @@ async def test_dispatch_join_turn_graceful_when_issuer_stopped():
     """
     issuer = _make_issuer()
     issuer._stop_checker.can_send_any_turn.return_value = False
-    # try_issue_credit is the real method — its internal can_send_any_turn
-    # short-circuit returns False before any slot work happens.
+    # acquire_prefill_slot returns False when can_proceed_fn is False while waiting.
+    issuer._concurrency_manager.acquire_prefill_slot = AsyncMock(return_value=False)
     pending = PendingBranchJoin(
         parent_x_correlation_id="corr-parent",
         parent_conversation_id="conv-parent",
@@ -290,7 +292,7 @@ def test_dispatch_join_turn_does_not_own_joins_suppressed_counter():
 
 @pytest.mark.asyncio
 async def test_dispatch_join_turn_does_not_acquire_session_slot():
-    """With turn_index > 0, the session-slot path in try_issue_credit is skipped."""
+    """With turn_index > 0, the session-slot path in issue_credit is skipped."""
     issuer = _make_issuer()
     pending = PendingBranchJoin(
         parent_x_correlation_id="corr-parent",
@@ -301,13 +303,13 @@ async def test_dispatch_join_turn_does_not_acquire_session_slot():
     )
     result = await issuer.dispatch_join_turn(pending)
     assert result is True
-    issuer._concurrency_manager.try_acquire_session_slot.assert_not_called()
-    issuer._concurrency_manager.try_acquire_prefill_slot.assert_called_once()
+    issuer._concurrency_manager.acquire_session_slot.assert_not_called()
+    issuer._concurrency_manager.acquire_prefill_slot.assert_called_once()
 
     # Structural confirmation: the turn built by dispatch_join_turn uses
-    # gated_turn_index directly, so turn_index > 0 drives is_first_turn=False.
+    # gated_turn_index directly, so turn_index > 0 drives is_session_start=False.
     sent: TurnToSend = issuer._issue_credit_internal.call_args.args[0]
-    assert sent.turn_index == 2  # => is_first_turn is False in try_issue_credit
+    assert sent.turn_index == 2  # => is_session_start is False in issue_credit
 
 
 @pytest.mark.asyncio
@@ -316,11 +318,11 @@ async def test_dispatch_join_turn_has_forks_false():
     issuer = _make_issuer()
     captured: dict[str, TurnToSend] = {}
 
-    async def fake_try_issue_credit(turn: TurnToSend):
+    async def fake_issue_credit(turn: TurnToSend):
         captured["turn"] = turn
         return True
 
-    issuer.try_issue_credit = fake_try_issue_credit
+    issuer.issue_credit = fake_issue_credit
     pending = PendingBranchJoin(
         parent_x_correlation_id="corr-parent",
         parent_conversation_id="conv-parent",
@@ -329,3 +331,21 @@ async def test_dispatch_join_turn_has_forks_false():
     )
     await issuer.dispatch_join_turn(pending)
     assert captured["turn"].has_forks is False
+
+
+@pytest.mark.asyncio
+async def test_dispatch_join_turn_uses_blocking_issue_credit_not_try():
+    """Finding 5: joins must not route through non-blocking try_issue_credit."""
+    issuer = _make_issuer()
+    issuer.try_issue_credit = AsyncMock(return_value=None)
+    issuer.issue_credit = AsyncMock(return_value=True)
+    pending = PendingBranchJoin(
+        parent_x_correlation_id="corr-parent",
+        parent_conversation_id="conv-parent",
+        parent_num_turns=3,
+        gated_turn_index=2,
+    )
+    result = await issuer.dispatch_join_turn(pending)
+    assert result is True
+    issuer.issue_credit.assert_awaited_once()
+    issuer.try_issue_credit.assert_not_called()

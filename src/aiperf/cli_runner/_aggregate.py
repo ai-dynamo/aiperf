@@ -90,9 +90,13 @@ async def aggregate_and_export(
 def _sum_runtime_response_counts(results: list) -> tuple[int, int]:
     """Sum (total_responses, context_overflow_count) across successful runs.
 
-    Reads per-run averaged summary metrics: total responses is
-    ``request_count + error_request_count + context_overflow_count`` and the
-    context-overflow count is its own metric. Missing metrics contribute 0.
+    Reads per-run averaged summary metrics. Total responses is
+    ``request_count + error_request_count + skipped_context_overflow_count``:
+    metric-path overflows are already inside ``error_request_count``
+    (``ContextOverflowCountMetric`` is ERROR_ONLY), while AGENTIC_REPLAY
+    skip-path overflows are only in the ``skipped_context_overflow_count``
+    side channel. The overflow numerator is the (possibly merged)
+    ``context_overflow_count`` metric. Missing metrics contribute 0.
     """
 
     def _avg(run, tag: str) -> int:
@@ -107,9 +111,10 @@ def _sum_runtime_response_counts(results: list) -> tuple[int, int]:
         if not run.success:
             continue
         overflow = _avg(run, "context_overflow_count")
+        skipped = _avg(run, "skipped_context_overflow_count")
         context_overflow_count += overflow
         total_responses += (
-            _avg(run, "request_count") + _avg(run, "error_request_count") + overflow
+            _avg(run, "request_count") + _avg(run, "error_request_count") + skipped
         )
     return total_responses, context_overflow_count
 

@@ -734,11 +734,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         if (
             phase in self._complete_credit_phases
-            and self._records_tracker.check_and_set_all_records_received_for_phase(
-                phase
+            and (
+                phase != CreditPhase.PROFILING
+                or not self._has_multiple_profiling_phases()
+                or self._credits_complete_received
             )
+            and self._check_all_records_received(phase)
         ):
-            await self._handle_all_records_received(phase)
+            await self._handle_all_records_received_once(phase)
 
     async def _handle_context_overflow_skip(
         self, message: RecordsMessage, phase: CreditPhase

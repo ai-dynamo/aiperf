@@ -206,3 +206,32 @@ class TestWekaHfFailFast:
 
         d = PublicDataset(type="public", name="m", dataset=_WEKA_HF)
         assert d.hf_weka_dataset is None  # registry-defined repo, no flag needed
+
+
+class TestHfWekaDatasetConverterRouting:
+    """``--hf-weka-dataset`` must be copied by ``build_dataset`` and, when set
+    alone, auto-select ``--public-dataset weka_hf`` (docs + PublicDataset
+    validator require the pairing)."""
+
+    def test_weka_hf_with_repo_routes_hf_weka_dataset(self) -> None:
+        out = build_dataset(
+            CLIConfig(
+                model_names=["m"],
+                public_dataset=PublicDatasetType.WEKA_HF,
+                hf_weka_dataset="semianalysisai/cc-traces-weka-061526",
+            )
+        )
+        assert out["type"] == "public"
+        assert out["dataset"] == PublicDatasetType.WEKA_HF
+        assert out["hf_weka_dataset"] == "semianalysisai/cc-traces-weka-061526"
+
+    def test_hf_weka_dataset_alone_auto_selects_weka_hf(self) -> None:
+        out = build_dataset(
+            CLIConfig(
+                model_names=["m"],
+                hf_weka_dataset="semianalysisai/cc-traces-weka-061526",
+            )
+        )
+        assert out["type"] == "public"
+        assert out["dataset"] == PublicDatasetType.WEKA_HF
+        assert out["hf_weka_dataset"] == "semianalysisai/cc-traces-weka-061526"

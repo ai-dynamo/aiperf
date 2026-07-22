@@ -281,6 +281,48 @@ async def test_overlap_branch_dispatches_from_parent_start_not_return() -> None:
 
 
 @pytest.mark.asyncio
+async def test_overlap_dispatch_skips_fork_branches() -> None:
+    """FORK branches must not dispatch at credit-issue even when their
+    start_timestamp overlaps the parent turn; they sticky-clone parent
+    context that is only complete after the declaring turn returns.
+    """
+    branch = ConversationBranchInfo(
+        branch_id="root:fork-overlap",
+        child_conversation_ids=["child"],
+        mode=ConversationBranchMode.FORK,
+        start_timestamp_ms=0.0,
+    )
+    root = _mk_conv(
+        "root",
+        [
+            TurnMetadata(
+                timestamp_ms=0.0,
+                api_time_ms=5000.0,
+                branch_ids=[branch.branch_id],
+            ),
+            TurnMetadata(),
+        ],
+        [branch],
+    )
+    root.replay_scope_id = "root"
+    child = _mk_conv("child", [TurnMetadata(timestamp_ms=0.0)], [])
+    cs = _mk_source([root, child])
+    cs.start_branch_child = MagicMock()
+    issuer = MagicMock()
+    issuer.dispatch_first_turn = AsyncMock(return_value=True)
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+    credit = _mk_credit("root", "corr-root", 0)
+    credit.phase = CreditPhase.PROFILING
+    credit.effective_root_correlation_id = "corr-root"
+
+    await orch.on_credit_issued(credit)
+
+    cs.start_branch_child.assert_not_called()
+    issuer.dispatch_first_turn.assert_not_awaited()
+    assert orch._overlap_dispatched_branches == set()
+
+
+@pytest.mark.asyncio
 async def test_delayed_join_stop_condition_fires_during_gap_suppresses_join():
     """If the issuer reports ``dispatch_join_turn`` returned False (stop
     fired), the orchestrator increments ``joins_suppressed`` instead of

@@ -93,6 +93,7 @@ import math
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import Any
 
 from aiperf.common.enums import (
     CacheBustTarget,
@@ -351,22 +352,27 @@ class BranchOrchestrator:
 
     def snapshot_annotations(
         self,
-    ) -> tuple[dict[str, int], dict[str, tuple[str | None, int | None]]]:
-        """Return blocked-parent and child-join metadata for phase handoff."""
+    ) -> tuple[dict[str, int], dict[str, list[tuple[str | None, int | None]]]]:
+        """Return blocked-parent and child-join metadata for phase handoff.
+
+        Child annotations preserve *every* gated membership for multi-consumer
+        fan-in (one branch feeding multiple parent gates). Ungated tracked
+        children serialize as ``[(None, None)]``.
+        """
         self._handoff_snapshot_taken = True
         blocked = {
             correlation_id: pending.gated_turn_index
             for correlation_id, pending in self._active_joins.items()
             if pending.gated_turn_index is not None
         }
-        children: dict[str, tuple[str | None, int | None]] = {}
+        children: dict[str, list[tuple[str | None, int | None]]] = {}
         for correlation_id, entries in self._child_to_join.items():
-            entry = next((item for item in entries if item.prereq_key), None)
-            if entry is None:
-                children[correlation_id] = (None, None)
-                continue
-            branch_id = entry.prereq_key.split(":", 1)[1]
-            children[correlation_id] = (branch_id, entry.gated_turn_index)
+            gated = [
+                (item.prereq_key.split(":", 1)[1], item.gated_turn_index)
+                for item in entries
+                if item.prereq_key
+            ]
+            children[correlation_id] = gated if gated else [(None, None)]
         return blocked, children
 
     def _build_prereq_index(self) -> None:
@@ -433,10 +439,14 @@ class BranchOrchestrator:
             return
         parent_end_ms = parent_start_ms + parent_api_ms
         branches_by_id = {branch.branch_id: branch for branch in parent_meta.branches}
+        # Overlap-at-issue is SPAWN-only: FORK children sticky-clone the parent
+        # turn_list and must wait until the declaring turn returns (response
+        # stored). Dispatching FORK here would hand the child incomplete context.
         overlapping = [
             branch_id
             for branch_id in turn_meta.branch_ids
             if (branch := branches_by_id.get(branch_id)) is not None
+            and branch.mode == ConversationBranchMode.SPAWN
             and (branch_start := self._branch_start_timestamp_ms(branch)) is not None
             and branch_start < parent_end_ms
         ]
@@ -590,6 +600,55 @@ class BranchOrchestrator:
         if mode == ConversationBranchMode.FORK and self._sticky_router is not None:
             self._sticky_router.register_child_routing(parent_corr)
 
+    def _seeded_join_entries(
+        self,
+        *,
+        parent_corr: str,
+        parent_state: Any,
+        parent_meta: Any,
+        child_state: Any,
+        cache_bust_markers: dict[str, str | None] | None,
+    ) -> list[ChildJoinEntry]:
+        memberships = list(child_state.join_gate_memberships)
+        if (
+            not memberships
+            and child_state.join_target_turn_index is not None
+            and child_state.branch_id is not None
+        ):
+            memberships = [(child_state.branch_id, child_state.join_target_turn_index)]
+        if parent_state is None or parent_meta is None or not memberships:
+            return [
+                ChildJoinEntry(
+                    parent_correlation_id=parent_corr,
+                    gated_turn_index=None,
+                    prereq_key=None,
+                )
+            ]
+
+        cache_bust_marker = (cache_bust_markers or {}).get(
+            parent_state.root_correlation_id or parent_state.x_correlation_id
+        )
+        entries: list[ChildJoinEntry] = []
+        for branch_id, gated_idx in memberships:
+            prereq_key = f"SPAWN_JOIN:{branch_id}"
+            pending = self._ensure_seeded_join(
+                parent_state=parent_state,
+                parent_meta=parent_meta,
+                gated_idx=gated_idx,
+                cache_bust_marker=cache_bust_marker,
+            )
+            prereq_state = pending.outstanding.setdefault(prereq_key, PrereqState())
+            prereq_state.expected += 1
+            prereq_state.registered = True
+            entries.append(
+                ChildJoinEntry(
+                    parent_correlation_id=parent_corr,
+                    gated_turn_index=gated_idx,
+                    prereq_key=prereq_key,
+                )
+            )
+        return entries
+
     def seed_snapshot(
         self,
         states,
@@ -624,43 +683,13 @@ class BranchOrchestrator:
                     child_state.branch_mode
                 )
                 self._register_fork_routing(parent_corr, child_state.branch_mode)
-                entries: list[ChildJoinEntry] = []
-                if (
-                    parent_state is not None
-                    and parent_meta is not None
-                    and child_state.join_target_turn_index is not None
-                    and child_state.branch_id is not None
-                ):
-                    prereq_key = f"SPAWN_JOIN:{child_state.branch_id}"
-                    pending = self._ensure_seeded_join(
-                        parent_state=parent_state,
-                        parent_meta=parent_meta,
-                        gated_idx=child_state.join_target_turn_index,
-                        cache_bust_marker=(cache_bust_markers or {}).get(
-                            parent_state.root_correlation_id
-                            or parent_state.x_correlation_id
-                        ),
-                    )
-                    prereq_state = pending.outstanding.setdefault(
-                        prereq_key, PrereqState()
-                    )
-                    prereq_state.expected += 1
-                    prereq_state.registered = True
-                    entries.append(
-                        ChildJoinEntry(
-                            parent_correlation_id=parent_corr,
-                            gated_turn_index=child_state.join_target_turn_index,
-                            prereq_key=prereq_key,
-                        )
-                    )
-                else:
-                    entries.append(
-                        ChildJoinEntry(
-                            parent_correlation_id=parent_corr,
-                            gated_turn_index=None,
-                            prereq_key=None,
-                        )
-                    )
+                entries = self._seeded_join_entries(
+                    parent_corr=parent_corr,
+                    parent_state=parent_state,
+                    parent_meta=parent_meta,
+                    child_state=child_state,
+                    cache_bust_markers=cache_bust_markers,
+                )
 
                 self._child_to_join[child_state.x_correlation_id] = entries
                 self._child_root[child_state.x_correlation_id] = (
@@ -669,13 +698,17 @@ class BranchOrchestrator:
                 tracked_children += 1
 
             if tracked_children:
+                # Per-parent drain accounting stays keyed on the direct parent
+                # (``has_pending_branch_work`` / intercept drain). Session-tree
+                # accounting keys on the depth-0 root — same as live spawn.
                 self._descendant_counts[parent_corr] = (
                     self._descendant_counts.get(parent_corr, 0) + tracked_children
                 )
-                # All seeded children of one snapshot lane share the lane's tree
-                # root (the snapshot's synthetic parent_corr), which is also the
-                # id the lane credit opened the tree under.
-                self._register_tree_descendants(parent_corr, tracked_children)
+                roots: dict[str, int] = defaultdict(int)
+                for child_state in child_states:
+                    roots[self._child_root[child_state.x_correlation_id]] += 1
+                for tree_root, n in roots.items():
+                    self._register_tree_descendants(tree_root, n)
                 self.stats.children_spawned += tracked_children
 
     def _ensure_seeded_join(

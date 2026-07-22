@@ -510,6 +510,26 @@ class TestLookupAndPopulate:
         # Same key requested as compressed -> MISS.
         assert mmap_cache.lookup("uncomp", compressed=True) is None
 
+    def test_invalidate_removes_entry_so_populate_can_heal(
+        self, tmp_path: Path
+    ) -> None:
+        cache_root = mmap_cache.cache_dir()
+        entry_dir = _populate_entry(cache_root, cache_key="poison")
+        assert entry_dir.exists()
+        assert mmap_cache.lookup("poison", compressed=False) is not None
+
+        assert mmap_cache.invalidate("poison") is True
+        assert not entry_dir.exists()
+        assert mmap_cache.lookup("poison", compressed=False) is None
+        assert mmap_cache.invalidate("poison") is False  # already gone
+
+        # populate can rewrite the key after invalidation
+        healed = _populate_entry(cache_root, cache_key="poison", data_bytes=b"HEALED")
+        hit = mmap_cache.lookup("poison", compressed=False)
+        assert hit is not None
+        assert hit.entry_dir == healed
+        assert hit.data_path.read_bytes() == b"HEALED"
+
     def test_restore_hardlinks_to_run_dir(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:

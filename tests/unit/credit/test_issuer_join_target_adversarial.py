@@ -8,11 +8,11 @@ sent counts + fire ``all_credits_sent_event``). Reactive DAG work is spawned
 *after* the root plan is sampled, so it must NOT count toward the phase target.
 
 ``CreditIssuer.dispatch_child_turn`` correctly strips the flag
-(issuer.py:313-314). But ``dispatch_join_turn`` builds its ``TurnToSend`` with
-no ``counts_toward_phase_target`` argument (issuer.py:344-355) -> it defaults
-to True -> and routes through ``try_issue_credit``, which never strips it. For
-a *nested* parent (``parent_agent_depth > 0``) the join turn is itself reactive
-DAG work, yet it reaches the counter as a target-eligible credit.
+(issuer.py). ``dispatch_join_turn`` builds its ``TurnToSend`` with
+``counts_toward_phase_target=pending.parent_agent_depth == 0`` and
+routes through blocking ``issue_credit``. For a *nested* parent
+(``parent_agent_depth > 0``) the join turn is itself reactive DAG work
+and must not count toward the phase target.
 """
 
 from __future__ import annotations

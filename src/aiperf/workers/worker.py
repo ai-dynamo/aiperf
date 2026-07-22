@@ -1075,6 +1075,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
         self._populate_response_metrics(credit_context, record)
         await self._send_inference_result_message(record)
+        credit_context.record_emitted = True
         if record.error is not None:
             credit_context.error = record.error
         return True

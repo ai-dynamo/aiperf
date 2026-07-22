@@ -599,7 +599,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         Conversations that already carry raw_payload on ALL turns are skipped.
         If ANY conversation cannot be preformatted, the entire batch is skipped
-        to avoid mixed raw_payload state (which the mmap format check rejects).
+        to avoid mixed raw_payload state (which forces the CONVERSATION mmap path).
         """
         from aiperf.dataset.payload_formatting import format_conversation_payloads
 
@@ -704,34 +704,49 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         (raw_payload / inputs_json / mooncake_trace with a payload field) would
         otherwise silently bypass cache-bust marker injection. Refuse here with
         a clear, actionable error rather than at worker runtime.
+
+        PAYLOAD_BYTES requires every turn across the dataset to carry
+        ``raw_payload``. Mixes *across* conversations fall back to CONVERSATION
+        (``_generate_input_payloads`` already enforces all-or-none *within* a
+        conversation). A single conversation with mixed turns is rejected here
+        for an early, actionable error.
         """
-        has_payload_bytes = any(
+        for conv in conversations:
+            raw_flags = [turn.raw_payload is not None for turn in conv.turns]
+            if any(raw_flags) and not all(raw_flags):
+                raw_indexes = [i for i, r in enumerate(raw_flags) if r]
+                missing_indexes = [i for i, r in enumerate(raw_flags) if not r]
+                raise ValueError(
+                    f"conversation '{conv.session_id}' has mixed raw_payload "
+                    f"state: turns {raw_indexes} have raw_payload, turns "
+                    f"{missing_indexes} do not; raw_payload must be all-or-none "
+                    f"per conversation"
+                )
+
+        has_any_raw = any(
             turn.raw_payload is not None
             for conv in conversations
             for turn in conv.turns
         )
-        if has_payload_bytes and not all(
+        all_have_raw = has_any_raw and all(
             turn.raw_payload is not None
             for conv in conversations
             for turn in conv.turns
-        ):
-            raise ValueError(
-                "Mixed raw_payload state: all turns must have raw_payload "
-                "when any turn does (PAYLOAD_BYTES format requires uniformity)"
-            )
+        )
+        if not all_have_raw:
+            # None have raw_payload, or some conversations do and others don't:
+            # CONVERSATION can serialize both shapes. PAYLOAD_BYTES cannot.
+            return MemoryMapFormat.CONVERSATION
+
         feature = self._body_mutating_feature()
-        if has_payload_bytes and feature is not None:
+        if feature is not None:
             raise ValueError(
                 f"{feature} must mutate request bodies and is incompatible with the "
                 "verbatim PAYLOAD_BYTES mmap fast path. Choose a headers-based "
                 "routing mode / disable cache-bust, or use a dataset type that "
                 "produces structured turns (e.g. single_turn / multi_turn / dag_jsonl)."
             )
-        return (
-            MemoryMapFormat.PAYLOAD_BYTES
-            if has_payload_bytes
-            else MemoryMapFormat.CONVERSATION
-        )
+        return MemoryMapFormat.PAYLOAD_BYTES
 
     def _run_mmap_paths(self) -> tuple[Path, Path]:
         """Return the (data, index) paths the backing store writes to.
@@ -797,6 +812,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             with contextlib.suppress(OSError):
                 run_data_path.unlink(missing_ok=True)
                 run_index_path.unlink(missing_ok=True)
+            # Drop the poisoned cache entry so post-run populate can heal it.
+            # Without this, populate() sees an existing manifest and skips forever.
+            if self._cache_key_for_run is not None:
+                with contextlib.suppress(Exception):
+                    mmap_cache.invalidate(self._cache_key_for_run)
             return
 
         self._default_context_mode = self.dataset_metadata.default_context_mode

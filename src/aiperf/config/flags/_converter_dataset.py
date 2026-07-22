@@ -254,6 +254,7 @@ _VERBATIM_DATASET_FIELDS = (
     ("input_file", "path", True),
     ("public_dataset", "dataset", True),
     ("hf_dataset_subset", "hf_subset", False),
+    ("hf_weka_dataset", "hf_weka_dataset", False),
     ("custom_dataset_type", "format", False),
     ("dataset_sampling_strategy", "sampling", False),
     ("conversation_num_dataset_entries", "entries", True),
@@ -267,6 +268,17 @@ _VERBATIM_DATASET_FIELDS = (
 )
 
 
+def _implies_public_dataset(cli: CLIConfig) -> bool:
+    """True when the CLI selects a public dataset (explicit or via --hf-weka-dataset).
+
+    ``--hf-weka-dataset`` alone auto-selects ``weka_hf``; reject/type paths that
+    key off ``cli.public_dataset`` must treat that as public too.
+    """
+    if cli.public_dataset:
+        return True
+    return _set(cli, "hf_weka_dataset") and cli.hf_weka_dataset is not None
+
+
 def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
     """Top-level fields that move through verbatim."""
     out: dict[str, Any] = {}
@@ -276,6 +288,12 @@ def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
             out[key] = value
     if _set(cli, "dataset_filters"):
         out["filters"] = _parse_dataset_filters(cli.dataset_filters)
+    # --hf-weka-dataset alone auto-selects --public-dataset weka_hf (docs +
+    # PublicDataset._validate_weka_hf expect the pairing).
+    if "hf_weka_dataset" in out and "dataset" not in out:
+        from aiperf.plugin.enums import PublicDatasetType
+
+        out["dataset"] = PublicDatasetType.WEKA_HF
     return out
 
 
@@ -346,7 +364,7 @@ def _apply_dataset_type(d: dict[str, Any], cli: CLIConfig, needs_text: bool) -> 
     # converter writes ``entries`` from a fallback it pins the
     # ``_entries_explicit`` sentinel to the true intent.
     entries_explicit = "conversation_num_dataset_entries" in cli.model_fields_set
-    if cli.public_dataset:
+    if _implies_public_dataset(cli) or d.get("dataset") is not None:
         d["type"] = DatasetType.PUBLIC
         if entries is not None:
             d["entries"] = entries
@@ -560,7 +578,7 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
     ``FileDataset.osl`` / ``PublicDataset.osl`` by ``_apply_file_osl`` as a
     per-record fallback.
     """
-    if not cli.input_file and not cli.public_dataset:
+    if not cli.input_file and not _implies_public_dataset(cli):
         return
     s = cli.model_fields_set
     violations = [
@@ -616,7 +634,7 @@ def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
     if not set_flags:
         return
     msg = f"{', '.join(set_flags)} is only supported by the baseten_trace loader"
-    if cli.public_dataset or not cli.input_file:
+    if _implies_public_dataset(cli) or not cli.input_file:
         raise ValueError(
             f"{msg}; provide --input-file and --custom-dataset-type baseten_trace."
         )
@@ -957,7 +975,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     _reject_baseten_only_trace_flags(cli)
     _reject_baseten_trace_unsupported_synthesis(cli)
     _reject_baseten_trace_extra_input_collisions(cli)
-    if cli.dataset_filters and not cli.public_dataset:
+    if cli.dataset_filters and not _implies_public_dataset(cli):
         raise ValueError("--dataset-filter requires --public-dataset")
 
     d = _flat_dataset_fields(cli)
@@ -968,7 +986,9 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     _apply_synthesis(d, cli)
     _apply_implicit_media_batch(d, cli)
     _apply_file_osl(d, cli)
-    _apply_file_block_size(d, cli)
+    # block_size for FILE hash-id traces is owned by _apply_block_size (which
+    # also rejects weka / non-hash-id formats). Do not also call
+    # _apply_file_block_size — that helper is broader and redundant here.
     _apply_inter_turn_delay_cap(d, cli)
     _apply_max_context_length(d, cli)
     _apply_block_size(d, cli)

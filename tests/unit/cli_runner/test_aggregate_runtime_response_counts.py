@@ -5,10 +5,13 @@
 Pins the runtime-totals accounting that feeds the aggregate JSON's
 ``submission_valid`` carrier keys (``_total_responses`` /
 ``_context_overflow_count`` stamped by ``_stamp_scenario_submission_metadata``).
-``total_responses`` must be ``request_count + error_request_count +
-context_overflow_count`` so context-overflow rows are not dropped from the
-denominator, summed across successful runs, with failed runs skipped and
-missing metrics contributing 0.
+
+``total_responses`` is ``request_count + error_request_count +
+skipped_context_overflow_count``. Metric-path overflows are already inside
+``error_request_count`` (``ContextOverflowCountMetric`` is ERROR_ONLY); only
+AGENTIC_REPLAY skip-path overflows (side-channel) are added again. The
+overflow numerator remains ``context_overflow_count`` (merged). Failed runs
+are skipped and missing metrics contribute 0.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ def _run(
     request_count: float | None = None,
     error_request_count: float | None = None,
     context_overflow_count: float | None = None,
+    skipped_context_overflow_count: float | None = None,
     label: str = "run",
 ) -> RunResult:
     summary: dict[str, JsonMetricResult] = {}
@@ -37,20 +41,40 @@ def _run(
         summary["error_request_count"] = _metric(error_request_count)
     if context_overflow_count is not None:
         summary["context_overflow_count"] = _metric(context_overflow_count)
+    if skipped_context_overflow_count is not None:
+        summary["skipped_context_overflow_count"] = _metric(
+            skipped_context_overflow_count
+        )
     return RunResult(label=label, success=success, summary_metrics=summary)
 
 
-def test_sum_includes_overflow_in_denominator() -> None:
-    """total_responses = request_count + error_request_count + overflow.
+def test_sum_does_not_double_count_metric_path_overflow() -> None:
+    """Metric-path overflows already live in error_request_count.
 
-    Regression: dropping the ``+ overflow`` term would understate the
-    denominator and inflate ``submission_valid`` ratios.
+    Adding ``context_overflow_count`` again would inflate the denominator and
+    can incorrectly keep ``submission_valid=True`` near the 1% boundary.
     """
     run = _run(
         success=True,
         request_count=100,
         error_request_count=5,
         context_overflow_count=3,
+    )
+
+    total_responses, overflow = _sum_runtime_response_counts([run])
+
+    assert total_responses == 105
+    assert overflow == 3
+
+
+def test_sum_adds_skip_path_overflow_side_channel() -> None:
+    """AGENTIC_REPLAY skip-path overflows are not in error_request_count."""
+    run = _run(
+        success=True,
+        request_count=100,
+        error_request_count=5,
+        context_overflow_count=3,
+        skipped_context_overflow_count=3,
     )
 
     total_responses, overflow = _sum_runtime_response_counts([run])
@@ -68,6 +92,7 @@ def test_sum_across_multiple_successful_runs() -> None:
             request_count=20,
             error_request_count=2,
             context_overflow_count=4,
+            skipped_context_overflow_count=4,
             label="b",
         ),
     ]
@@ -88,6 +113,7 @@ def test_failed_runs_are_skipped() -> None:
             request_count=999,
             error_request_count=999,
             context_overflow_count=999,
+            skipped_context_overflow_count=999,
             label="failed",
         ),
     ]
@@ -132,6 +158,7 @@ def test_avg_truncated_to_int() -> None:
         request_count=10.9,
         error_request_count=0.0,
         context_overflow_count=2.7,
+        skipped_context_overflow_count=2.7,
     )
 
     total_responses, overflow = _sum_runtime_response_counts([run])

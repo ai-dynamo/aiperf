@@ -500,6 +500,32 @@ def _restore_file(src: Path, dst: Path) -> str:
     return method
 
 
+def invalidate(cache_key: str) -> bool:
+    """Delete a cache entry so a later ``populate`` can heal a poisoned key.
+
+    Used when a HIT's manifest is readable but its side-data (e.g.
+    ``dataset_metadata_json``) fails validation: run-dir restore files are
+    unlinked and the entry itself must also go, otherwise ``populate`` sees
+    an existing ``manifest.json`` and permanently skips rewriting the key.
+
+    Args:
+        cache_key: Content+settings hash returned by ``compute_cache_key``.
+
+    Returns:
+        True when an entry directory existed and was removed; False otherwise.
+    """
+    entry_dir = cache_dir() / cache_key
+    if not entry_dir.exists():
+        return False
+    shutil.rmtree(entry_dir, ignore_errors=True)
+    removed = not entry_dir.exists()
+    if removed:
+        _logger.info(f"Invalidated mmap cache entry {cache_key}")
+    else:
+        _logger.warning(f"Failed to fully remove mmap cache entry {cache_key}")
+    return removed
+
+
 def restore_to_run_dir(
     hit: CacheHit, run_data_path: Path, run_index_path: Path
 ) -> None:

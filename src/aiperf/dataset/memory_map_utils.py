@@ -331,10 +331,20 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             raise RuntimeError(
                 "adopt_existing_files called on an already-finalized store."
             )
-        if not self._data_path.exists() or not self._index_path.exists():
+        # compress_only (Kubernetes) cache HIT restores only .dat.zst files;
+        # uncompressed dataset.dat / index.dat are never written.
+        if self._compress_only:
+            data_ok = self._compressed_data_path.exists()
+            index_ok = self._compressed_index_path.exists()
+            missing = (self._compressed_data_path, self._compressed_index_path)
+        else:
+            data_ok = self._data_path.exists()
+            index_ok = self._index_path.exists()
+            missing = (self._data_path, self._index_path)
+        if not data_ok or not index_ok:
             raise FileNotFoundError(
                 f"adopt_existing_files requires both files on disk: "
-                f"{self._data_path}, {self._index_path}"
+                f"{missing[0]}, {missing[1]}"
             )
         self._session_ids = list(session_ids)
         self._current_offset = total_size_bytes

@@ -155,3 +155,104 @@ async def test_root_with_no_descendants_releases_slot_immediately_on_terminal():
     assert registry.on_root_terminal("root-corr") is True
     assert _held(cm) == 0
     assert drained == ["root-corr"]
+
+
+@pytest.mark.asyncio
+async def test_seed_snapshot_registers_grandchildren_under_tree_root():
+    """Depth≥2 snapshot children must register against the depth-0 root,
+    matching live spawn / ``_tree_descendant_done`` decrement keying.
+    """
+    from aiperf.timing.trajectory_source import ConversationState
+
+    cm = ConcurrencyManager()
+    cm.configure_for_phase(PROFILING, concurrency=1, prefill_concurrency=None)
+    registry = SessionTreeRegistry(cm)
+    drained: list[str] = []
+    registry.set_drain_callback(lambda root, phase: drained.append(root))
+
+    root_meta = ConversationMetadata(
+        conversation_id="root",
+        turns=[TurnMetadata()],
+        branches=[],
+    )
+    mid_meta = ConversationMetadata(
+        conversation_id="mid",
+        turns=[TurnMetadata()],
+        branches=[],
+        is_root=False,
+        agent_depth=1,
+        parent_conversation_id="root",
+    )
+    leaf_meta = ConversationMetadata(
+        conversation_id="leaf",
+        turns=[TurnMetadata()],
+        branches=[],
+        is_root=False,
+        agent_depth=2,
+        parent_conversation_id="mid",
+    )
+    cs = MagicMock()
+    cs.dataset_metadata = DatasetMetadata(
+        conversations=[root_meta, mid_meta, leaf_meta],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    cs.get_metadata.side_effect = lambda cid: {
+        "root": root_meta,
+        "mid": mid_meta,
+        "leaf": leaf_meta,
+    }[cid]
+    issuer = MagicMock()
+    issuer.dispatch_first_turn = AsyncMock(return_value=True)
+    orch = BranchOrchestrator(
+        conversation_source=cs,
+        credit_issuer=issuer,
+        session_tree_registry=registry,
+    )
+
+    assert await cm.acquire_session_slot(PROFILING, lambda: True) is True
+    registry.open_tree("root-corr", PROFILING, root_pending=True)
+
+    orch.seed_snapshot(
+        (
+            ConversationState(
+                conversation_id="root",
+                x_correlation_id="root-corr",
+                next_turn_index=0,
+                root_correlation_id="root-corr",
+            ),
+            ConversationState(
+                conversation_id="mid",
+                x_correlation_id="mid-corr",
+                next_turn_index=0,
+                agent_depth=1,
+                parent_correlation_id="root-corr",
+                root_correlation_id="root-corr",
+                branch_mode=ConversationBranchMode.SPAWN,
+            ),
+            ConversationState(
+                conversation_id="leaf",
+                x_correlation_id="leaf-corr",
+                next_turn_index=0,
+                agent_depth=2,
+                parent_correlation_id="mid-corr",
+                root_correlation_id="root-corr",
+                branch_mode=ConversationBranchMode.SPAWN,
+            ),
+        )
+    )
+
+    # Both descendants keyed under the depth-0 root, not mid-corr.
+    assert registry._trees["root-corr"].outstanding == 2
+    assert "mid-corr" not in registry._trees
+    assert orch._child_root["leaf-corr"] == "root-corr"
+    assert orch._descendant_counts["mid-corr"] == 1  # per-parent drain key
+    assert orch._descendant_counts["root-corr"] == 1
+
+    await orch.on_child_leaf_reached("leaf-corr")
+    assert registry._trees["root-corr"].outstanding == 1
+    assert _held(cm) == 1
+
+    await orch.on_child_leaf_reached("mid-corr")
+    registry.on_root_terminal("root-corr")
+    assert _held(cm) == 0
+    assert drained == ["root-corr"]

@@ -549,9 +549,13 @@ class CreditIssuer:
         """Dispatch a parent's gated turn after all its children complete.
 
         The parent already holds a session slot (acquired at turn_index=0);
-        the gated turn has turn_index > 0, so try_issue_credit's session-slot
-        acquisition is naturally skipped (is_first_turn is False). Only a
-        prefill slot is acquired here.
+        the gated turn has turn_index > 0, so ``issue_credit``'s session-slot
+        acquisition is naturally skipped. Only a prefill slot is acquired
+        here — via the blocking ``acquire_prefill_slot`` path inside
+        ``issue_credit``, matching ``dispatch_child_turn``. Prefill
+        saturation is backpressure, not a reason to permanently drop the
+        join (the old non-replay ``try_issue_credit`` path treated ``None``
+        as failure and suppressed the join with no retry).
 
         Cache-bust propagation:
             The TurnToSend constructed here re-applies the parent's
@@ -562,7 +566,7 @@ class CreditIssuer:
             multi-turn parents under DAG joins.
 
         Stop-condition interaction: when ``can_send_any_turn()`` returns
-        False, try_issue_credit returns False without issuing and the
+        False, ``issue_credit`` returns False without issuing and the
         orchestrator increments ``BranchStats.joins_suppressed``.
 
         Returns:
@@ -590,10 +594,6 @@ class CreditIssuer:
             cache_bust_marker=pending.parent_cache_bust_marker,
             cache_bust_target=pending.parent_cache_bust_target,
         )
-        replay_gate = getattr(self, "replay_gate", None)
-        if replay_gate is None or not replay_gate.enabled:
-            result = await self.try_issue_credit(turn)
-            return result is True
         return await self.issue_credit(turn)
 
     async def abort_session(self, x_correlation_id: str) -> None:

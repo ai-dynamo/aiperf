@@ -448,6 +448,74 @@ async def test_warmup_open_tree_uses_registry_terminal_path(
 
 
 @pytest.mark.asyncio
+async def test_root_context_overflow_calls_registry_on_root_terminal(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+):
+    """Non-final root context-overflow must clear root_pending via registry.
+
+    Agentic replay early-returns under the tree registry expecting the
+    callback handler to have already called ``on_root_terminal``; gating that
+    call on ``is_final_turn`` alone leaks the session slot forever.
+    """
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    handler = CreditCallbackHandler(mock_concurrency, session_tree_registry=registry)
+    handler.register_phase(
+        phase=CreditPhase.PROFILING,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+    credit = make_credit(turn_index=1, num_turns=5)  # non-final
+    await handler.on_credit_return(
+        "worker-1",
+        make_credit_return(
+            credit,
+            error="This model's maximum context length is 131072 tokens",
+        ),
+    )
+
+    registry.on_root_terminal.assert_called_once_with(
+        credit.effective_root_correlation_id
+    )
+    mock_strategy.handle_credit_return.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_root_non_overflow_error_skips_registry_on_root_terminal(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+):
+    """Generic mid-trajectory errors must not mark the root terminal."""
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    handler = CreditCallbackHandler(mock_concurrency, session_tree_registry=registry)
+    handler.register_phase(
+        phase=CreditPhase.PROFILING,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+    credit = make_credit(turn_index=1, num_turns=5)
+    await handler.on_credit_return(
+        "worker-1",
+        make_credit_return(credit, error="Internal server error: pool exhausted"),
+    )
+
+    registry.on_root_terminal.assert_not_called()
+    mock_strategy.handle_credit_return.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_cache_warmup_handoff_allows_paused_dag_work(
     callback_handler,
     mock_progress,

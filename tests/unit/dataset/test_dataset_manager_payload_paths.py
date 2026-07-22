@@ -9,7 +9,8 @@ Covers:
   MemoryMapSerializationError).
 - ``_preformat_payloads`` gating (opt-in env, self-contained-only, endpoint
   NotImplementedError skip).
-- ``_select_mmap_format`` uniformity check.
+- ``_select_mmap_format`` (PAYLOAD_BYTES only when all turns have raw_payload;
+  global mix falls back to CONVERSATION; per-conversation mix raises).
 - ``_generate_input_payloads`` verbatim export for raw-payload datasets.
 - ``_run_mmap_paths`` compressed (Kubernetes) variants.
 """
@@ -332,12 +333,27 @@ class TestSelectMmapFormat:
             == MemoryMapFormat.CONVERSATION
         )
 
-    def test_mixed_raw_state_raises(self) -> None:
+    def test_mixed_across_conversations_selects_conversation(self) -> None:
+        """Global mix is allowed: fall back to CONVERSATION rather than hard-fail."""
         dm = self._manager()
-        with pytest.raises(ValueError, match="Mixed raw_payload state"):
+        assert (
             dm._select_mmap_format(
                 [_raw_conversation("r1"), _single_turn_conversation("s1")]
             )
+            == MemoryMapFormat.CONVERSATION
+        )
+
+    def test_mixed_within_conversation_raises(self) -> None:
+        dm = self._manager()
+        mixed = Conversation(
+            session_id="mixed",
+            turns=[
+                Turn(role="user", raw_payload={"p": 0}),
+                Turn(role="user", texts=[Text(contents=["no payload"])]),
+            ],
+        )
+        with pytest.raises(ValueError, match="mixed[\\s\\S]*raw_payload"):
+            dm._select_mmap_format([mixed])
 
 
 class TestGenerateInputPayloadsVerbatim:

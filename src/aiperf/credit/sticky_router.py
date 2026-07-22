@@ -22,7 +22,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from aiperf.common.enums import CommAddress, ConversationBranchMode
+from aiperf.common.enums import CommAddress
 from aiperf.common.mixins import CommunicationMixin
 from aiperf.common.protocols import (
     StreamingPullClientProtocol,
@@ -405,20 +405,18 @@ class StickyCreditRouter(CommunicationMixin):
             # it when the final turn declares DAG spawns so the orchestrator's
             # register_child_routing can find it.
             #
-            # SPAWN branch-children (parent_correlation_id set, branch_mode
-            # SPAWN) route freely and never pin to a worker. When their parent's
-            # sticky entry was already evicted, ``sticky_entry`` is None and the
-            # auto-create branch below would mint a fresh entry keyed by the
+            # DAG branch-children (parent_correlation_id set — FORK or SPAWN)
+            # must not auto-create when the parent's sticky entry is already
+            # gone. The auto-create path would mint a fresh entry keyed by the
             # parent's id, bumping ``active_sessions`` with no path to evict it
-            # (final-turn eviction is gated on parent_correlation_id is None and
-            # release_child_routing is FORK-only). That leaks active_sessions and
-            # biases load balancing, so skip auto-create for SPAWN children.
-            is_spawn_child = (
-                credit.parent_correlation_id is not None
-                and credit.branch_mode == ConversationBranchMode.SPAWN
-            )
+            # (final-turn eviction is gated on parent_correlation_id is None;
+            # release_child_routing only decrements an existing entry). That
+            # leaks active_sessions and biases load balancing. When the parent
+            # entry still exists, FORK children co-locate via the sticky hit
+            # above; SPAWN children route freely either way.
+            is_dag_child = credit.parent_correlation_id is not None
             if not credit.is_final_turn or credit.has_forks:
-                if sticky_entry is None and not is_spawn_child:
+                if sticky_entry is None and not is_dag_child:
                     sticky_entry = _StickyEntry(worker_id=worker_id)
                     self._sticky_sessions[routing_key] = sticky_entry
                     load = self._workers[worker_id]

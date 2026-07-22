@@ -148,6 +148,7 @@ async def test_mid_trajectory_context_overflow_recycles_trace():
     # setup_phase. The finishing trace is discarded from _active_traces at
     # the top of _spawn_from_recycle_or_id before the pop loop runs.
     strategy._correlation_to_lane["xcorr"] = 0
+    strategy._root_to_lane["xcorr"] = 0
 
     # Mid-trajectory turn (index 2 of 5) errors with context-overflow.
     mid = _make_credit(conversation_id="trace_0", turn_index=2, num_turns=5)
@@ -168,6 +169,38 @@ async def test_mid_trajectory_context_overflow_recycles_trace():
     assert ("trace_0", 0) in issued, (
         f"recycle should have spawned a fresh session at turn 0; got issued={issued}"
     )
+    # Finished root mapping pruned; recycled session may re-seed under a new id.
+    assert "xcorr" not in strategy._root_to_lane
+
+
+@pytest.mark.asyncio
+async def test_tree_drained_prunes_root_to_lane():
+    """Registry drain callback must pop the finished root from ``_root_to_lane``."""
+    trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    ds = _make_dataset(num_traces=2, turns_per_trace=3)
+    issuer = AsyncMock()
+    issuer.issue_credit = AsyncMock(return_value=True)
+    issuer.replay_gate = MagicMock()
+    strategy, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectory,
+        dataset=ds,
+        issuer=issuer,
+    )
+    # Engage registry path so setup_phase wires the drain callback.
+    strategy._session_tree_registry = MagicMock()
+    await strategy.setup_phase()
+    strategy._correlation_to_lane["root-corr"] = 0
+    strategy._root_to_lane["root-corr"] = 0
+    strategy._session_marker["root-corr"] = "marker"
+
+    strategy._on_tree_drained("root-corr", CreditPhase.PROFILING)
+
+    assert "root-corr" not in strategy._root_to_lane
+    assert "root-corr" not in strategy._correlation_to_lane
+    assert "root-corr" not in strategy._session_marker
+    issuer.replay_gate.close_root.assert_called_once_with("root-corr")
+    strategy.scheduler.schedule_later.assert_called_once()
 
 
 @pytest.mark.asyncio

@@ -92,17 +92,20 @@ class MetricsJsonExporter(MetricsBaseExporter):
         if dataset is not None:
             run_metadata["dataset"] = dataset
 
-        context_overflow_count = int(
+        # ProfileResults.context_overflow_count is the AGENTIC_REPLAY skip-path
+        # side channel only (not in error_request_count / ContextOverflowCountMetric).
+        # Metric-path overflows are already in error_request_count (ERROR_ONLY).
+        skipped_context_overflow_count = int(
             getattr(self._results, "context_overflow_count", 0) or 0
         )
-        if context_overflow_count:
+        if skipped_context_overflow_count:
             existing_context_overflow = prepared_json_metrics.get(
                 "context_overflow_count"
             )
             if existing_context_overflow is None:
                 prepared_json_metrics["context_overflow_count"] = JsonMetricResult(
                     unit="requests",
-                    avg=float(context_overflow_count),
+                    avg=float(skipped_context_overflow_count),
                 )
             else:
                 prepared_json_metrics["context_overflow_count"] = (
@@ -110,11 +113,17 @@ class MetricsJsonExporter(MetricsBaseExporter):
                         update={
                             "avg": float(
                                 (existing_context_overflow.avg or 0)
-                                + context_overflow_count
+                                + skipped_context_overflow_count
                             )
                         }
                     )
                 )
+            # Persist the skip-only count so aggregate re-summation can add it to
+            # the denominator without double-counting metric-path overflows.
+            prepared_json_metrics["skipped_context_overflow_count"] = JsonMetricResult(
+                unit="requests",
+                avg=float(skipped_context_overflow_count),
+            )
 
         # Add all prepared metrics dynamically
         for metric_tag, json_result in prepared_json_metrics.items():
@@ -152,11 +161,16 @@ class MetricsJsonExporter(MetricsBaseExporter):
                     return 0
                 return int(m.avg)
 
+            # Numerator: all overflows (metric-path + skip-path, after merge above).
+            # Denominator: successes + errors + skip-path-only overflows.
+            # Metric-path overflows are already inside error_request_count
+            # (ContextOverflowCountMetric is ERROR_ONLY); adding the merged
+            # context_overflow_count again would double-count them.
             context_overflow_count = _metric_avg("context_overflow_count")
             total_responses = (
                 _metric_avg("request_count")
                 + _metric_avg("error_request_count")
-                + context_overflow_count
+                + skipped_context_overflow_count
             )
 
             submission_valid, submission_invalid_reasons = compute_submission_outcome(

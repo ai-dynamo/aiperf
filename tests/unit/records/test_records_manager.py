@@ -813,6 +813,8 @@ def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager.trace = MagicMock()
     manager.is_enabled_for = MagicMock(return_value=False)
     manager._handle_all_records_received = AsyncMock()
+    manager._credits_complete_received = False
+    manager._all_records_received_phases = set()
     manager._warned_missing_cache_reporting = False
     manager._failed_request_threshold = None
     manager._failed_request_abort_triggered = False
@@ -1143,6 +1145,32 @@ class TestRecordsManagerTimingDispatch:
         await manager._on_records(_metric_records_message())
 
         manager._records_tracker.update_from_request.assert_called_once()
+        manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        manager._handle_all_records_received.assert_awaited_once_with(
+            CreditPhase.PROFILING
+        )
+
+    @pytest.mark.asyncio
+    async def test_on_records_defers_finalization_for_multi_profiling_until_credits_complete(
+        self,
+    ) -> None:
+        """Multi-profiling runs must not finalize PROFILING before CREDITS_COMPLETE."""
+        manager = _create_manager_for_timing_dispatch()
+        manager._complete_credit_phases = {CreditPhase.PROFILING}
+        manager._has_multiple_profiling_phases = MagicMock(return_value=True)
+        manager._credits_complete_received = False
+        manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = True
+
+        await manager._on_records(_metric_records_message())
+
+        manager._records_tracker.check_and_set_all_records_received_for_phase.assert_not_called()
+        manager._handle_all_records_received.assert_not_awaited()
+
+        manager._credits_complete_received = True
+        await manager._on_records(_metric_records_message())
+
         manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_once_with(
             CreditPhase.PROFILING
         )

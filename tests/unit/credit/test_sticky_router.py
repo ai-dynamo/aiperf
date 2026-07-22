@@ -1115,15 +1115,14 @@ class TestStickyCreditRouterDAGChildren:
     async def test_spawn_child_does_not_create_parent_entry_or_leak_sessions(
         self, benchmark_run
     ) -> None:
-        """Bug #6: a SPAWN child (parent_correlation_id set, branch_mode SPAWN,
-        has_forks=False) whose parent's sticky entry was already evicted must
-        NOT auto-create a parent-keyed entry.
+        """Finding 6 (SPAWN): a SPAWN child whose parent's sticky entry was
+        already evicted must NOT auto-create a parent-keyed entry.
 
         The auto-create path keyed by ``parent_correlation_id`` would mint a
         fresh _StickyEntry and bump ``active_sessions`` with no eviction path
-        (final-turn eviction is gated on parent_correlation_id is None and
-        release_child_routing is FORK-only), permanently leaking active_sessions
-        and biasing load balancing. SPAWN children route freely instead."""
+        (final-turn eviction is gated on parent_correlation_id is None),
+        permanently leaking active_sessions and biasing load balancing.
+        SPAWN children route freely instead."""
         router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
         router._register_worker("worker-A")
@@ -1149,15 +1148,22 @@ class TestStickyCreditRouterDAGChildren:
         # Routed least-loaded to the only worker.
         assert router._router_client.send_to.call_args[0][0] == "worker-A"
 
-    async def test_fork_child_still_creates_parent_entry_when_absent(
+    async def test_fork_child_does_not_create_parent_entry_when_absent(
         self, benchmark_run
     ) -> None:
-        """Contrast guard for bug #6: a FORK child (branch_mode FORK) whose
-        parent entry is absent keeps the prior auto-create behavior so FORK
-        refcount/co-location semantics are unchanged."""
+        """Finding 6: a FORK child whose parent sticky entry was already
+        evicted must NOT auto-create a parent-keyed entry (same leak as SPAWN).
+
+        Auto-create keyed by ``parent_correlation_id`` would mint a fresh
+        ``_StickyEntry`` and bump ``active_sessions`` with no eviction path
+        (final-turn eviction requires ``parent_correlation_id is None``).
+        When the parent entry still exists, FORK children co-locate via the
+        sticky hit path and never reach auto-create.
+        """
         router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
         router._register_worker("worker-A")
+        assert router._workers["worker-A"].active_sessions == 0
 
         fork_child = Credit(
             id=999,
@@ -1172,5 +1178,44 @@ class TestStickyCreditRouterDAGChildren:
         )
         await router.send_credit(fork_child)
 
-        assert "root" in router._sticky_sessions
-        assert router._workers["worker-A"].active_sessions == 1
+        assert "root" not in router._sticky_sessions
+        assert router._workers["worker-A"].active_sessions == 0
+        assert router._router_client.send_to.call_args[0][0] == "worker-A"
+
+    async def test_fork_child_colocates_when_parent_entry_exists(
+        self, benchmark_run
+    ) -> None:
+        """Normal FORK sticky: parent entry present → child pins to parent worker."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-A")
+        router._register_worker("worker-B")
+
+        parent_credit = make_credit(
+            id=1,
+            conv_id="parent-conv",
+            turn=0,
+            corr_id="root",
+            num_turns=2,
+            has_forks=True,
+        )
+        await router.send_credit(parent_credit)
+        assert router._sticky_sessions["root"].worker_id == "worker-A"
+        parent_sessions = router._workers["worker-A"].active_sessions
+
+        fork_child = Credit(
+            id=2,
+            phase=CreditPhase.PROFILING,
+            conversation_id="child-conv",
+            x_correlation_id="child1",
+            turn_index=0,
+            num_turns=2,
+            issued_at_ns=0,
+            parent_correlation_id="root",
+            branch_mode=ConversationBranchMode.FORK,
+        )
+        await router.send_credit(fork_child)
+
+        assert router._sticky_sessions["root"].worker_id == "worker-A"
+        assert router._workers["worker-A"].active_sessions == parent_sessions
+        assert router._router_client.send_to.call_args[0][0] == "worker-A"
