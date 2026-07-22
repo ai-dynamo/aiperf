@@ -205,10 +205,29 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
         return (observed - sla.threshold) / threshold
 
     def _resolve_artifact_path(self, filename: str) -> Path | None:
-        return self._artifacts.resolve_path(self._config.artifact_dir, filename)
+        return self._artifacts.phase_scoped_path(
+            self._config.artifact_dir, self._config.phase_name, filename
+        )
+
+    def _write_adaptive_manifest_entry(self) -> None:
+        if self._config.artifact_dir is None or self._config.phase_name is None:
+            return
+        phase_root = f"phases/{self._config.phase_name}"
+        self._artifacts.write_manifest_entry(
+            self._config.artifact_dir,
+            {
+                "phase_index": self._config.phase_index,
+                "profiling_index": self._config.profiling_index,
+                "phase_name": self._config.phase_name,
+                "phase_kind": self._config.phase_kind,
+                "events_path": f"{phase_root}/{self.EVENT_FILE}",
+                "summary_path": f"{phase_root}/{self.SUMMARY_FILE}",
+            },
+        )
 
     async def setup_phase(self) -> None:
         await self._artifacts.start()
+        self._write_adaptive_manifest_entry()
         setup_complete = False
         try:
             self._set_control(self._control.minimum)

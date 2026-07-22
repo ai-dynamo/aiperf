@@ -12,6 +12,7 @@ from aiperf.common.mixins.base_metrics_collector_mixin import (
     TRecordCallback,
 )
 from aiperf.common.mixins.base_mixin import BaseMixin
+from aiperf.common.mixins.baseline_collector_mixin import BaselineCollectorMixin
 from aiperf.common.mixins.buffered_jsonl_writer_mixin import BufferedJSONLWriterMixin
 from aiperf.common.mixins.command_handler_mixin import CommandHandlerMixin
 from aiperf.common.mixins.communication_mixin import CommunicationMixin
@@ -40,6 +41,7 @@ from aiperf.common.mixins.worker_tracker_mixin import WorkerTrackerMixin
 __all__ = [
     "AIPerfLifecycleMixin",
     "AIPerfLoggerMixin",
+    "BaselineCollectorMixin",
     "BaseMetricsCollectorMixin",
     "BaseMixin",
     "BufferedJSONLWriterMixin",

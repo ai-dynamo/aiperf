@@ -93,10 +93,11 @@ def test_extract_summary_metrics_honors_artifacts_prefix(tmp_path):
     (tmp_path / "my_run.json").write_bytes(orjson.dumps(metrics_payload))
 
     executor = LocalSubprocessExecutor(base_dir=tmp_path)
-    metrics = executor._extract_summary_metrics(run)
+    metrics, was_cancelled = executor._extract_summary_metrics(run)
 
     assert "request_count" in metrics
     assert metrics["request_count"].avg == 100.0
+    assert was_cancelled is False
 
 
 def test_extract_summary_metrics_default_prefix(tmp_path):
@@ -115,9 +116,122 @@ def test_extract_summary_metrics_default_prefix(tmp_path):
     )
 
     executor = LocalSubprocessExecutor(base_dir=tmp_path)
-    metrics = executor._extract_summary_metrics(run)
+    metrics, was_cancelled = executor._extract_summary_metrics(run)
 
     assert metrics["request_count"].avg == 5.0
+    assert was_cancelled is False
+
+
+def test_extract_summary_metrics_carries_was_cancelled(tmp_path):
+    """A graceful Ctrl+C writes a partial export with ``was_cancelled: true``;
+    the executor must surface that flag onto the RunResult so scenario
+    submissions can be invalidated (parity with v1 ``_extract_was_cancelled``)."""
+    import orjson
+
+    cfg = _benchmark_config()
+    run = BenchmarkRun(
+        benchmark_id="test-id",
+        cfg=cfg,
+        artifact_dir=tmp_path,
+        label="cancelled",
+    )
+    (tmp_path / "profile_export_aiperf.json").write_bytes(
+        orjson.dumps(
+            {
+                "was_cancelled": True,
+                "request_count": {"unit": "requests", "avg": 3.0},
+            }
+        )
+    )
+
+    executor = LocalSubprocessExecutor(base_dir=tmp_path)
+    metrics, was_cancelled = executor._extract_summary_metrics(run)
+
+    assert metrics["request_count"].avg == 3.0
+    assert was_cancelled is True
+
+
+def test_extract_summary_metrics_unparsable_file_returns_empty(tmp_path):
+    """A corrupt/unparsable export file must degrade to ``({}, False)`` —
+    never crash the orchestrator or mark the run cancelled."""
+    cfg = _benchmark_config()
+    run = BenchmarkRun(
+        benchmark_id="test-id",
+        cfg=cfg,
+        artifact_dir=tmp_path,
+        label="corrupt",
+    )
+    (tmp_path / "profile_export_aiperf.json").write_bytes(b"{not valid json")
+
+    executor = LocalSubprocessExecutor(base_dir=tmp_path)
+    metrics, was_cancelled = executor._extract_summary_metrics(run)
+
+    assert metrics == {}
+    assert was_cancelled is False
+
+
+def test_build_result_from_metrics_propagates_was_cancelled(tmp_path):
+    """The success-path RunResult carries the ``was_cancelled`` flag through."""
+    from aiperf.common.models.export_models import JsonMetricResult
+
+    summary = {"request_count": JsonMetricResult(unit="requests", avg=10.0)}
+    result = LocalSubprocessExecutor._build_result_from_metrics(
+        summary, "cancelled-run", tmp_path, was_cancelled=True
+    )
+
+    assert result.success is True
+    assert result.was_cancelled is True
+
+
+def test_build_result_from_metrics_empty_metrics_propagates_was_cancelled(tmp_path):
+    """The empty-summary failure branch must carry ``was_cancelled`` through.
+
+    A run cancelled before any metrics were written classifies as a failure,
+    but the ``was_cancelled`` flag must still reach the RunResult so scenario
+    submissions treat it as invalid rather than a genuine failure.
+    """
+    result = LocalSubprocessExecutor._build_result_from_metrics(
+        {}, "cancelled-empty", tmp_path, was_cancelled=True
+    )
+
+    assert result.success is False
+    assert result.was_cancelled is True
+
+
+def test_build_result_from_metrics_empty_metrics_not_cancelled(tmp_path):
+    """The empty-summary failure branch must not spuriously set ``was_cancelled``."""
+    result = LocalSubprocessExecutor._build_result_from_metrics(
+        {}, "failed-empty", tmp_path
+    )
+
+    assert result.success is False
+    assert result.was_cancelled is False
+
+
+def test_build_result_from_metrics_zero_requests_propagates_was_cancelled(tmp_path):
+    """The zero-request-count failure branch must carry ``was_cancelled`` through."""
+    from aiperf.common.models.export_models import JsonMetricResult
+
+    summary = {"request_count": JsonMetricResult(unit="requests", avg=0.0)}
+    result = LocalSubprocessExecutor._build_result_from_metrics(
+        summary, "cancelled-zero", tmp_path, was_cancelled=True
+    )
+
+    assert result.success is False
+    assert result.was_cancelled is True
+
+
+def test_build_result_from_metrics_zero_requests_not_cancelled(tmp_path):
+    """The zero-request-count failure branch must not spuriously set ``was_cancelled``."""
+    from aiperf.common.models.export_models import JsonMetricResult
+
+    summary = {"request_count": JsonMetricResult(unit="requests", avg=0.0)}
+    result = LocalSubprocessExecutor._build_result_from_metrics(
+        summary, "failed-zero", tmp_path
+    )
+
+    assert result.success is False
+    assert result.was_cancelled is False
 
 
 @pytest.mark.asyncio

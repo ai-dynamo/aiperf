@@ -393,3 +393,26 @@ class TestSearchPlannerSettings:
         env = _Environment()
         assert hasattr(env, "SEARCH_PLANNER")
         assert isinstance(env.SEARCH_PLANNER, _SearchPlannerSettings)
+
+
+class TestUISettingsRealtimeMetricsInterval:
+    """Resolver behavior for the realtime metrics tick interval."""
+
+    @pytest.mark.parametrize(
+        "configured,ui_type,expected",
+        [
+            param(7.5, "DASHBOARD", 7.5, id="explicit_value_wins_dashboard"),
+            param(7.5, "SIMPLE", 7.5, id="explicit_value_wins_non_dashboard"),
+            param(0.0, "DASHBOARD", 0.0, id="zero_disables"),
+            param(None, "DASHBOARD", 5.0, id="none_defaults_dashboard_5s"),
+            param(None, "SIMPLE", 30.0, id="none_defaults_non_dashboard_30s"),
+        ],
+    )  # fmt: skip
+    def test_realtime_metrics_interval_resolution(
+        self, configured: float | None, ui_type: str, expected: float
+    ):
+        from aiperf.common.environment import _UISettings
+        from aiperf.plugin.enums import UIType
+
+        settings = _UISettings(REALTIME_METRICS_INTERVAL=configured)
+        assert settings.realtime_metrics_interval(UIType(ui_type.lower())) == expected

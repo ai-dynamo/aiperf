@@ -236,13 +236,8 @@
     ],
     [
       "C901",
-      "src/aiperf/analysis/swim_lane.py",
-      "plot_swim_lane"
-    ],
-    [
-      "C901",
-      "src/aiperf/analysis/swim_lane.py",
-      "write_swim_lane_html"
+      "src/aiperf/analysis/turn_messages.py",
+      "build_payload"
     ],
     [
       "C901",

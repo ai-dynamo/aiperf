@@ -2,17 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Adversarial tests for ``ServerMetricsAccumulator.realtime_snapshot``.
 
-The realtime ``srv`` row reads Prometheus counter pairs via ``_counter_delta``
-and ``_counter_rate`` (accumulator.py:606-716). Neither helper clamps negative
-deltas, unlike the final-export path which explicitly does
-``max(raw_delta, 0.0)`` on counter resets (export_stats.py:354). A server
-restart mid-run (counters reset to ~0) therefore makes the realtime row emit:
-
-* a NEGATIVE ``prefix_cache_hit_rate``,
-* NEGATIVE ``input_token_throughput_srv`` / ``output_token_throughput_srv``,
-
-and a query counter that lags a batched hits update can make the hit rate
-exceed 100%. None of these are physically valid percentages/rates.
+``_counter_delta`` / ``_counter_rate`` clamp restart-induced negative deltas to
+0 (mirroring ``export_stats``), so a mid-run counter reset must not emit a
+negative ``prefix_cache_hit_rate`` or negative token-throughput rates. A query
+counter that lags a batched hits update can still push the hit rate above 100%;
+these tests pin the clamp and the ``<= 100`` guard.
 """
 
 from __future__ import annotations
