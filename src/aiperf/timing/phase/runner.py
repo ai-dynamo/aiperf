@@ -513,7 +513,7 @@ class PhaseRunner(TaskManagerMixin):
         """
         if self._session_tree_registry is None:
             return
-        released = self._session_tree_registry.release_all(self._config.phase)
+        released = self._session_tree_registry.release_all(self._phase_key)
         self.info(
             lambda: f"Session-tree slots for phase {self._config.phase}: "
             f"peak_open={self._session_tree_registry.peak_open} "

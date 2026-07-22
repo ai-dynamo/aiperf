@@ -338,7 +338,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 root_correlation_id, boundaries
             )
 
-    def _on_tree_drained(self, root_corr: str, phase: CreditPhase) -> None:
+    def _on_tree_drained(self, root_corr: str, phase: CreditPhase | int) -> None:
         """Registry drain callback: a session tree fully drained and freed its
         slot, so recycle its lane into a fresh root.
 

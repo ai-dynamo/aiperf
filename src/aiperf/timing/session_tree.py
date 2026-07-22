@@ -45,7 +45,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.enums import CreditPhase
+from aiperf.common.phase import PhaseRuntimeKey
 
 _logger = AIPerfLogger(__name__)
 
@@ -54,8 +54,8 @@ _logger = AIPerfLogger(__name__)
 class _TreeState:
     """Liveness of one session tree."""
 
-    phase: CreditPhase
-    """Phase the tree's slot was acquired under; release targets the same phase."""
+    phase: PhaseRuntimeKey
+    """Runtime key the tree's slot was acquired under; release targets the same key."""
     root_pending: bool
     """True until the root's terminal turn returns. Always False for a rootless
     lane (no root credit will ever run -- it drains on descendants alone)."""
@@ -85,7 +85,7 @@ class SessionTreeRegistry:
         """
         self._concurrency_manager = concurrency_manager
         self._trees: dict[str, _TreeState] = {}
-        self._on_drain: Callable[[str, CreditPhase], None] | None = None
+        self._on_drain: Callable[[str, PhaseRuntimeKey], None] | None = None
         # Descendants registered before their tree is opened (the agentic-replay
         # snapshot path seeds a lane's pre-t* subagents BEFORE acquiring the
         # lane/root slot). Buffered here and folded into ``outstanding`` at
@@ -104,7 +104,7 @@ class SessionTreeRegistry:
         self._late_events: int = 0
 
     def set_drain_callback(
-        self, callback: Callable[[str, CreditPhase], None] | None
+        self, callback: Callable[[str, PhaseRuntimeKey], None] | None
     ) -> None:
         """Register the callback fired (with ``root_corr, phase``) when a tree
         drains and its slot is released during normal operation.
@@ -115,14 +115,15 @@ class SessionTreeRegistry:
         self._on_drain = callback
 
     def open_tree(
-        self, root_corr: str, phase: CreditPhase, *, root_pending: bool
+        self, root_corr: str, phase: PhaseRuntimeKey, *, root_pending: bool
     ) -> None:
         """Record a newly admitted tree after its session slot was acquired.
 
         Args:
             root_corr: the tree's ``root_correlation_id`` (depth-0 root's
                 x_correlation_id, or a rootless lane's synthetic root id).
-            phase: phase the slot was acquired under.
+            phase: runtime key the slot was acquired under (phase index when
+                set, otherwise the CreditPhase enum).
             root_pending: True when a root credit is in flight that will reach a
                 terminal turn; False for a rootless lane that holds only a bare
                 lane credit and drains on descendant completion alone.
@@ -267,7 +268,7 @@ class SessionTreeRegistry:
             self._on_drain(root_corr, state.phase)
         return True
 
-    def release_all(self, phase: CreditPhase) -> int:
+    def release_all(self, phase: PhaseRuntimeKey) -> int:
         """Release every still-open tree's slot for ``phase`` at teardown.
 
         Replaces the callback handler's ``in_flight_sessions`` release loop when
@@ -287,7 +288,7 @@ class SessionTreeRegistry:
             self._concurrency_manager.release_session_slot(phase)
         return len(to_release)
 
-    def open_count(self, phase: CreditPhase | None = None) -> int:
+    def open_count(self, phase: PhaseRuntimeKey | None = None) -> int:
         """Number of trees currently holding a slot (optionally for one phase)."""
         if phase is None:
             return len(self._trees)

@@ -208,13 +208,13 @@ class CreditIssuer:
             allowed it, False otherwise.
         """
         acquired = await self._concurrency_manager.acquire_session_slot(
-            self._phase, self._stop_checker.can_start_new_session
+            self._phase_key, self._stop_checker.can_start_new_session
         )
         if not acquired:
             return False
         if self._session_tree_registry is not None and root_correlation_id is not None:
             self._session_tree_registry.open_tree(
-                root_correlation_id, self._phase, root_pending=root_pending
+                root_correlation_id, self._phase_key, root_pending=root_pending
             )
         # Count the gated parent's session AFTER acquiring its slot (so it does
         # not gate its own admission via can_start_new_session). A rootless lane
@@ -233,7 +233,7 @@ class CreditIssuer:
         """
         if self._session_tree_registry is not None:
             self._session_tree_registry.open_tree(
-                turn.effective_root_correlation_id, self._phase, root_pending=True
+                turn.effective_root_correlation_id, self._phase_key, root_pending=True
             )
 
     def _finality_for_issue(self, turn: TurnToSend) -> tuple[bool | None, bool]:
@@ -267,7 +267,7 @@ class CreditIssuer:
         registry the lane credit's slot is released by the registry when the
         tree drains, so this is not called on that path.
         """
-        self._concurrency_manager.release_session_slot(self._phase)
+        self._concurrency_manager.release_session_slot(self._phase_key)
 
     def signal_sending_complete(self) -> None:
         """Mark the phase done sending and set the all-credits-sent event.
@@ -361,7 +361,7 @@ class CreditIssuer:
         if not acquired:
             # CRITICAL: Release session slot if we acquired it to maintain symmetry
             if needs_session_slot:
-                self._concurrency_manager.release_session_slot(self._phase)
+                self._concurrency_manager.release_session_slot(self._phase_key)
             return False
 
         # Slots acquired - proceed with credit issuance
@@ -413,7 +413,7 @@ class CreditIssuer:
         if not acquired:
             # CRITICAL: Release session slot if we acquired it to maintain symmetry
             if needs_session_slot:
-                self._concurrency_manager.release_session_slot(self._phase)
+                self._concurrency_manager.release_session_slot(self._phase_key)
             return None  # No slot - credit not issued
 
         return await self._issue_credit_internal(turn)
@@ -534,7 +534,7 @@ class CreditIssuer:
         # Children inherit the parent's session slot; wait for prefill
         # capacity so temporary saturation does not delete sibling branches.
         if not await self._concurrency_manager.acquire_prefill_slot(
-            self._phase, can_proceed_fn
+            self._phase_key, can_proceed_fn
         ):
             return False
         if turn.counts_toward_phase_target:

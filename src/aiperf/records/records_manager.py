@@ -605,6 +605,23 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     many records before finalizing results.
     """
 
+    def _has_multiple_phase_instances(self, phase: CreditPhase) -> bool:
+        """Return whether this run has more than one concrete phase of a kind."""
+        try:
+            phases = self.run.cfg.phases
+        except AttributeError:
+            return False
+        phase_kind = "warmup" if phase == CreditPhase.WARMUP else "profiling"
+        return sum(1 for cfg_phase in phases if cfg_phase.kind == phase_kind) > 1
+
+    def _has_multiple_profiling_phases(self) -> bool:
+        """Return whether this run has more than one profiling-kind phase."""
+        return self._has_multiple_phase_instances(CreditPhase.PROFILING)
+
+    def _check_all_records_received(self, phase: CreditPhase) -> bool:
+        """Check record completion for a phase kind."""
+        return self._records_tracker.check_and_set_all_records_received_for_phase(phase)
+
     def __init__(
         self,
         run: BenchmarkRun,
