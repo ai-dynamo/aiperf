@@ -773,6 +773,46 @@ class TestParseTraceErrorPaths:
         with pytest.raises(DatasetLoaderError, match="captureData.endpointInput"):
             loader._parse_trace(record)
 
+    def test_parse_trace_invalid_base64_input_raises_dataset_loader_error(
+        self, tmp_path: Path
+    ) -> None:
+        """Bad base64 in the input payload is attributed per-record, not raw binascii.Error."""
+        loader = self._make_loader(tmp_path)
+        record = {
+            "captureData": {
+                "endpointInput": {
+                    "data": "not-valid-base64!!!",
+                    "encoding": "BASE64",
+                },
+            },
+            "eventMetadata": {
+                "eventId": "bad-b64",
+                "inferenceTime": "2026-04-29T00:00:00Z",
+            },
+        }
+        with pytest.raises(DatasetLoaderError, match="bad-b64 payload decode failed"):
+            loader._parse_trace(record)
+
+    def test_parse_trace_invalid_inner_json_raises_dataset_loader_error(
+        self, tmp_path: Path
+    ) -> None:
+        """Bad inner JSON in the input payload is attributed per-record, not raw JSONDecodeError."""
+        loader = self._make_loader(tmp_path)
+        record = {
+            "captureData": {
+                "endpointInput": {
+                    "data": "not valid json {{{",
+                    "encoding": "JSON",
+                },
+            },
+            "eventMetadata": {
+                "eventId": "bad-json",
+                "inferenceTime": "2026-04-29T00:00:00Z",
+            },
+        }
+        with pytest.raises(DatasetLoaderError, match="bad-json payload decode failed"):
+            loader._parse_trace(record)
+
     def test_load_dataset_empty_file_returns_empty(self, tmp_path: Path) -> None:
         f = tmp_path / "empty.jsonl"
         f.write_text("")
@@ -789,3 +829,37 @@ class TestParseTraceErrorPaths:
 # a directory) and is invoked by AIPerfConfig validation, not as a public
 # CLIConfig method. There's no v2 path that mirrors the original "count
 # JSONL entries across a SageMaker date-partitioned directory tree" call.
+
+
+class TestMaxOslCapApplied:
+    """--synthesis-max-osl must cap output_length for SageMaker too. This loader
+    overrides load_dataset and must call _cap_grouped_traces_max_osl explicitly
+    (the base-loader refactor moved the cap into that grouped pass; the override
+    once returned uncapped output lengths)."""
+
+    def _loader_for(self, tmp_path: Path, line: str) -> SageMakerDataCaptureLoader:
+        path = tmp_path / "capture.jsonl"
+        path.write_text(line + "\n")
+        return SageMakerDataCaptureLoader(
+            filename=str(path),
+            run=make_run_from_cli(CLIConfig(model_names=["test-model"])),
+            prompt_generator=MagicMock(),
+        )
+
+    def test_output_length_capped_after_load(self, tmp_path: Path) -> None:
+        line = _make_capture_record(max_tokens=200, completion_tokens=200)
+        loader = self._loader_for(tmp_path, line)
+        loader._max_osl = 50
+        data = loader.load_dataset()
+        osls = [t.output_length for traces in data.values() for t in traces]
+        assert osls and all(o == 50 for o in osls)
+        assert loader._capped_max_osl == 1
+
+    def test_under_cap_unchanged(self, tmp_path: Path) -> None:
+        line = _make_capture_record(max_tokens=30, completion_tokens=30)
+        loader = self._loader_for(tmp_path, line)
+        loader._max_osl = 50
+        data = loader.load_dataset()
+        osls = [t.output_length for traces in data.values() for t in traces]
+        assert osls == [30]
+        assert loader._capped_max_osl == 0
