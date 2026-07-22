@@ -1064,6 +1064,16 @@ accumulator:
     metadata:
       record_types: [metric_records]
 
+  theoretical_prefix_cache:
+    class: aiperf.metrics.theoretical_prefix_cache:TheoreticalPrefixCacheAccumulator
+    description: |
+      Lightweight accumulator for trace loaders that stamp per-turn
+      theoretical prefix-cache block counts. It emits cumulative infinite-cache
+      prefix hit rate during profiling without carrying hash_ids through the
+      request path.
+    metadata:
+      record_types: [metric_records]
+
   server_metrics:
     class: aiperf.server_metrics.accumulator:ServerMetricsAccumulator
     description: |
