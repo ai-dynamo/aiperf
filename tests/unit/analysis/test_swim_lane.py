@@ -19,6 +19,7 @@ import pytest
 
 from aiperf.analysis.swim_lane import (
     PROFILE_JSON,
+    VIEWER_TEMPLATE,
     SwimLaneError,
     _group_into_sessions,
     _layout_groups,
@@ -29,6 +30,19 @@ from aiperf.analysis.swim_lane import (
     write_swim_lane_html,
 )
 from aiperf.cli_commands.swim_lane import swim_lane as swim_lane_cli
+
+
+def _viewer_esc(s: str) -> str:
+    """Mirror ``esc()`` in ``swim_lane_viewer.html`` — keep these in sync."""
+    return (
+        str(s)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
+    )
+
 
 matplotlib.use("Agg", force=True)
 
@@ -369,6 +383,43 @@ class TestRenderers:
         assert payload["tMax"] == pytest.approx(1.0)
         assert max(payload["prefillTput"]["t"] or [0.0]) <= payload["tMax"] + 1e-9
 
+    def test_viewer_escapes_crafted_conversation_id(self, tmp_path: Path):
+        """Crafted conversation_id must not survive as live HTML at render sinks.
+
+        The JSON payload intentionally carries the raw string; the viewer must
+        escape it before ``innerHTML`` insertion (detail panel + tooltip).
+        """
+        xss = 'conv"><img src=x onerror="document.body.dataset.aiperfXss=\'1\'">'
+        rec = _rec("a", 0, 0.0, 1.0)
+        rec["metadata"]["conversation_id"] = xss
+        (tmp_path / "profile_export.jsonl").write_bytes(orjson.dumps(rec))
+        html_path = write_swim_lane_html(tmp_path)
+        payload = _extract_payload(html_path)
+        assert payload["sessions"][0]["conv"] == xss
+
+        template = VIEWER_TEMPLATE.read_text()
+        assert re.search(r"const esc\s*=\s*\(s\)\s*=>", template)
+        for sink in (
+            "esc(s.id)",
+            "esc(s.conv)",
+            "esc(s.root)",
+            "esc(s.id.slice",
+            "esc(s.conv.slice",
+            "esc(s.root.slice",
+        ):
+            assert sink in template, f"missing escape at sink: {sink}"
+
+        # Simulate the detail-panel / tooltip insertion of profile-derived fields.
+        rendered = (
+            f"session {_viewer_esc('a')}<br>conv {_viewer_esc(xss)}"
+            f"<br>parent {_viewer_esc(xss)}"
+        )
+        assert "<img" not in rendered
+        assert '">' not in rendered
+        assert "&lt;img" in rendered
+        assert "&quot;" in rendered
+        assert "&gt;" in rendered
+
 
 class TestRecordArraysGenerationStart:
     def test_missing_ttft_falls_back_to_end(self):
@@ -411,6 +462,21 @@ class TestSwimLaneCli:
         monkeypatch.setattr("matplotlib.pyplot.savefig", boom)
         with pytest.raises(SwimLaneError, match="failed to write"):
             plot_swim_lane(agentic_run_dir, out=out)
+
+    def test_html_write_failure_surfaces_as_swim_lane_error(
+        self, agentic_run_dir: Path, tmp_path: Path, monkeypatch
+    ):
+        out = tmp_path / "out.html"
+        original = Path.write_text
+
+        def boom(self: Path, data: str, *args, **kwargs):
+            if self == out:
+                raise OSError("disk full")
+            return original(self, data, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "write_text", boom)
+        with pytest.raises(SwimLaneError, match="failed to write"):
+            write_swim_lane_html(agentic_run_dir, out=out)
 
 
 class TestLoadBenchConfigRamp:

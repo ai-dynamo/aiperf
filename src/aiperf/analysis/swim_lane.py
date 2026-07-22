@@ -442,13 +442,13 @@ def _new_isl_curve(
     """Sweep-line of "new" input tokens being prefilled, summed across requests.
 
     Each turn's ``new_isl`` (see ``_session_new_isls``) is in flight only during
-    prefill -- the window ``[start_ns, generation_start_ns)`` where
-    ``generation_start_ns = start_ns + TTFT`` -- after which generation begins
-    and the prompt is no longer "new". This curve sums those weights at every
-    event boundary, the token-weighted prefill analogue of the concurrency
-    curve. Returns (timestamps, values) in seconds-from-t0. Zero-weight turns
-    are dropped since they add no events; turns missing TTFT fall back to the
-    request end.
+    prefill -- the window ``[start_ns, generation_start_ns)`` from
+    ``_generation_start_ns`` (TTFT when present, else request end, clamped to
+    the request lifetime) -- after which generation begins and the prompt is no
+    longer "new". This curve sums those weights at every event boundary, the
+    token-weighted prefill analogue of the concurrency curve. Returns
+    (timestamps, values) in seconds-from-t0. Zero-weight turns are dropped
+    since they add no events.
     """
     starts: list[float] = []
     ends: list[float] = []
