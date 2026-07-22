@@ -57,19 +57,15 @@ class TestCodingCorpusInjection:
     def test_explicit_prompt_corpus_overrides_loader_default(
         self, weka_run, mock_tokenizer
     ):
-        """An explicit FileDataset.prompt_corpus=sonnet overrides the loader's
-        coding default. The composer reads via ``run.cfg.get_prompt_corpus()``."""
-        # Set the file dataset's prompt_corpus directly: the CLI converter only
-        # routes --prompt-corpus into the synthetic ``prompts`` sub-config today
-        # (PORT-TODO: route it to FileDataset.prompt_corpus for trace datasets),
-        # but the composer reader honors the resolved field for either shape.
-        weka_run.cfg.get_default_dataset().prompt_corpus = PromptCorpus.SONNET
-        assert weka_run.cfg.get_prompt_corpus() == PromptCorpus.SONNET
+        """An explicit prompts.corpus=sonnet overrides the loader's coding default."""
+        from aiperf.config.dataset.content import PromptSelectionConfig
 
+        weka_run.cfg.get_default_dataset().prompts = PromptSelectionConfig(
+            corpus=PromptCorpus.SONNET
+        )
+        assert weka_run.cfg.get_prompt_corpus() == PromptCorpus.SONNET
         composer = CustomDatasetComposer(run=weka_run, tokenizer=mock_tokenizer)
         composer.create_dataset()
-
         loader_gen = composer.loader.prompt_generator
-        # Explicit SONNET wins: the default sonnet PromptGenerator is used.
         assert isinstance(loader_gen, PromptGenerator)
         assert not isinstance(loader_gen, CodingContentGenerator)

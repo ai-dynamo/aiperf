@@ -275,20 +275,15 @@ class CustomDatasetComposer(BaseDatasetComposer):
         plain ``str`` on the plugin metadata (to avoid an enum import cycle), so
         an explicit ``None`` corpus falls back to it by value comparison.
         """
-        from aiperf.common.enums import PromptCorpus
+        from aiperf.dataset.generator.corpus import resolve_prompt_generator
 
-        corpus = (
-            self.run.cfg.get_prompt_corpus() or loader_metadata.default_prompt_corpus
+        return resolve_prompt_generator(
+            corpus=self.run.cfg.get_prompt_corpus(),
+            default_corpus=loader_metadata.default_prompt_corpus,
+            tokenizer=self.prompt_generator.tokenizer,
+            prompts=self._synthetic_prompts,
+            prefix_prompts=None,
         )
-        if corpus == PromptCorpus.CODING:
-            from aiperf.config.dataset.content import PromptConfig
-            from aiperf.dataset.generator.coding_content import CodingContentGenerator
-
-            return CodingContentGenerator(
-                config=self._synthetic_prompts or PromptConfig(),
-                tokenizer=self.prompt_generator.tokenizer,
-            )
-        return self.prompt_generator
 
     def _create_loader_instance(self, dataset_type: CustomDatasetType) -> None:
         """Initializes the dataset loader based on the custom dataset type.

@@ -149,7 +149,7 @@ class PublicDatasetComposer(BaseDatasetComposer):
         real tool-use content; using the wrong corpus produces different request
         bytes / ISL token counts. ``--prompt-corpus`` overrides the default.
         """
-        from aiperf.common.enums import PromptCorpus
+        from aiperf.dataset.generator.corpus import resolve_prompt_generator
 
         if self.prompt_generator is None:
             raise ValueError(
@@ -157,19 +157,13 @@ class PublicDatasetComposer(BaseDatasetComposer):
                 "Ensure the endpoint supports tokenization or provide a --tokenizer."
             )
 
-        corpus = (
-            self.run.cfg.get_prompt_corpus() or loader_metadata.default_prompt_corpus
+        kwargs["prompt_generator"] = resolve_prompt_generator(
+            corpus=self.run.cfg.get_prompt_corpus(),
+            default_corpus=loader_metadata.default_prompt_corpus,
+            tokenizer=self.prompt_generator.tokenizer,
+            prompts=self._synthetic_prompts,
+            prefix_prompts=None,
         )
-        if corpus == PromptCorpus.CODING:
-            from aiperf.config.dataset.content import PromptConfig
-            from aiperf.dataset.generator.coding_content import CodingContentGenerator
-
-            kwargs["prompt_generator"] = CodingContentGenerator(
-                config=self._synthetic_prompts or PromptConfig(),
-                tokenizer=self.prompt_generator.tokenizer,
-            )
-        else:
-            kwargs["prompt_generator"] = self.prompt_generator
 
         if loader_metadata.default_block_size is not None:
             kwargs["default_block_size"] = loader_metadata.default_block_size
