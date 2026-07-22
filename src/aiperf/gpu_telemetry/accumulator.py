@@ -115,7 +115,12 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         await self.process_telemetry_record(record)
 
     def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
-        """Return a boolean mask where True marks records in [start_ns, end_ns)."""
+        """Return a boolean mask where True marks records in ``[start_ns, end_ns)``.
+
+        Half-open by design to match ``AccumulatorProtocol.query_time_range``
+        and the metrics accumulator. Distinct from server-metrics per-series
+        filters, which use inclusive ``[start_ns, end_ns]``.
+        """
         if len(self._timestamps_ns) == 0:
             return np.array([], dtype=bool)
         ts = self._timestamps_ns.data

@@ -132,7 +132,13 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         await self.process_server_metrics_record(record)
 
     def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
-        """Return a boolean mask where True marks records in [start_ns, end_ns)."""
+        """Return a boolean mask where True marks records in ``[start_ns, end_ns)``.
+
+        Half-open by design to match ``AccumulatorProtocol.query_time_range``
+        and the metrics accumulator. Distinct from per-series
+        ``get_time_mask`` / ``get_indices_for_filter``, which use inclusive
+        ``[start_ns, end_ns]`` for Prometheus sample windows.
+        """
         if len(self._timestamps_ns) == 0:
             return np.array([], dtype=bool)
         ts = self._timestamps_ns.data
@@ -857,7 +863,16 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
     @staticmethod
     def _to_pct(fraction: float) -> float:
-        """Normalize a 0-1 gauge fraction to a 0-100 percentage."""
+        """Normalize a Prometheus ratio gauge to a 0-100 percentage.
+
+        Values in ``[0, 1]`` are treated as ratios (e.g. SGLang
+        ``sglang:cache_hit_rate``, ``sglang:token_usage``) and scaled by 100.
+        Values ``> 1`` are treated as already-percent (some vLLM ``*_perc``
+        series emit 0-100). A server that encoded a sub-1% reading as an
+        already-percent value in ``(0, 1]`` (e.g. ``0.8`` meaning 0.8%) cannot
+        be distinguished from an 80% ratio and will be scaled — prefer
+        counter-pair sources when available.
+        """
         return fraction * 100.0 if fraction <= 1.0 else fraction
 
     @staticmethod
