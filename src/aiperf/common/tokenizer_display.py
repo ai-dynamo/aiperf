@@ -236,7 +236,7 @@ def _detect_error(
                 "Check [cyan]huggingface.co/<model>/tree/main[/cyan] for a tokenizer_config.json",
             ],
             fixes=[
-                "Pass a compatible text tokenizer: [green]--tokenizer gpt2[/green]",
+                "Pass a compatible text tokenizer: [green]--tokenizer builtin[/green]",
                 "Pass the tokenizer subdirectory: [green]--tokenizer ./model/tokenizer[/green]",
             ],
         )

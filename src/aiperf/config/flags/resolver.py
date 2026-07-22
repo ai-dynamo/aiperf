@@ -19,8 +19,10 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.enums import DatasetType
-from aiperf.config.flags._resolver_adaptive import (
-    apply_basic_adaptive_scale_overrides,
+from aiperf.common.phase import infer_legacy_phase_kind
+from aiperf.config.flags._resolver_gpu_telemetry import (
+    build_gpu_telemetry_override,
+    normalize_gpu_telemetry_base_for_override,
 )
 from aiperf.config.flags._resolver_helpers import promote_benchmark_magic_lists
 from aiperf.config.flags._resolver_server_metrics import (
@@ -34,6 +36,7 @@ from aiperf.config.flags._section_fields import (
     OUTPUT_FIELDS,
     SWEEPING_FIELDS,
 )
+from aiperf.plugin.enums import ArrivalPattern, PhaseType
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -81,6 +84,7 @@ def resolve_config(
     from aiperf.config.loader import load_config_dict
 
     yaml_dict = load_config_dict(config_file)
+    _normalize_loaded_benchmark_shorthands(yaml_dict)
     # Build the recipe's view of BenchmarkConfig from YAML + the
     # endpoint/input CLI overrides ONLY: the recipe inspects fields like
     # ``endpoint.streaming`` (via ``require_streaming``) before emitting
@@ -102,6 +106,7 @@ def resolve_config(
 
     overrides = build_cli_overrides(cli_config, benchmark_config=base_config.benchmark)
     overrides = _wrap_under_envelope(overrides) if overrides else overrides
+    yaml_dict = normalize_gpu_telemetry_base_for_override(yaml_dict, overrides)
     yaml_dict = normalize_server_metrics_base_for_override(yaml_dict, overrides)
     merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
     _apply_dataset_filter_overrides(merged, cli_config)
@@ -114,6 +119,22 @@ def resolve_config(
         retarget_dataset_magic_lists=_retarget_dataset_magic_lists,
     )
     return AIPerfConfig.model_validate(merged)
+
+
+def _normalize_loaded_benchmark_shorthands(yaml_dict: dict[str, Any]) -> None:
+    """Normalize YAML benchmark shorthands before raw-dict CLI overlays.
+
+    ``AIPerfConfig.model_validate`` already accepts conveniences such as
+    ``model:``, ``dataset:``, and single-dict ``phases: {type: ...}``, but
+    resolver overlay helpers inspect the loaded YAML dict before final
+    validation. Normalizing once here gives those helpers the same canonical
+    shape while preserving CLI-over-YAML precedence.
+    """
+    from aiperf.config.loader.normalizers import normalize_benchmark_input
+
+    benchmark = yaml_dict.get("benchmark")
+    if isinstance(benchmark, dict):
+        yaml_dict["benchmark"] = normalize_benchmark_input(benchmark)
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -160,6 +181,7 @@ def build_cli_overrides(
     _apply_input_overrides(out, cli)
     _apply_recipe_and_multirun(out, cli, benchmark_config=benchmark_config)
     _apply_artifacts_overrides(out, cli)
+    _apply_optional_section(out, "gpu_telemetry", build_gpu_telemetry_override(cli))
     _apply_optional_section(out, "server_metrics", build_server_metrics_override(cli))
     _apply_optional_section(out, "tokenizer", build_tokenizer(cli))
     _apply_optional_section(out, "accuracy", build_accuracy(cli))
@@ -391,11 +413,6 @@ _LOADGEN_PHASE_FIELD_MAP: tuple[tuple[str, str], ...] = (
     ("request_rate", "rate"),
     ("user_centric_rate", "rate"),
     ("num_users", "users"),
-    ("adaptive_sustain_duration", "adaptive_sustain_duration"),
-    ("adaptive_assessment_period", "adaptive_assessment_period"),
-    ("adaptive_control_variable", "adaptive_control_variable"),
-    ("adaptive_control_min", "adaptive_control_min"),
-    ("adaptive_control_max", "adaptive_control_max"),
 )
 
 
@@ -406,9 +423,9 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
     YAML configs land ``phases`` as a list under ``benchmark.phases``;
     ``deep_merge`` replaces lists wholesale, so the CLI flags otherwise
     silently no-op when the YAML already sets ``phases[*].requests``. This
-    walks the merged envelope, finds the phase named ``profiling`` (or the
-    sole phase entry if there's only one), and writes each user-set
-    loadgen field onto it. Other phases (warmup) are left untouched so a
+    walks the merged envelope, finds the unique profiling-kind phase, and
+    writes each user-set loadgen field onto it. Other phases (warmup) are
+    left untouched so a
     user passing ``--request-count 10`` with ``warmup_profiling.yaml``
     doesn't clobber the warmup ramp.
     """
@@ -428,7 +445,19 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
         return
 
     _reject_loadgen_target_collisions(fields_set)
-    apply_basic_adaptive_scale_overrides(target, cli)
+
+    if "request_rate_series" in fields_set and cli.request_rate_series is not None:
+        from aiperf.config.rate_series import RateSeriesConfig
+
+        series = RateSeriesConfig(path=str(cli.request_rate_series))
+        target["rate_series"] = series.model_dump(exclude_none=True, exclude={"path"})
+        target.pop("rate", None)
+        if "arrival_pattern" in fields_set:
+            target["type"] = {
+                ArrivalPattern.POISSON: PhaseType.POISSON,
+                ArrivalPattern.GAMMA: PhaseType.GAMMA,
+                ArrivalPattern.CONSTANT: PhaseType.CONSTANT,
+            }.get(cli.arrival_pattern, PhaseType.POISSON)
 
     for attr, key in _LOADGEN_PHASE_FIELD_MAP:
         if attr not in fields_set:
@@ -451,6 +480,8 @@ def _reject_loadgen_target_collisions(fields_set: set[str]) -> None:
     for attr, key in _LOADGEN_PHASE_FIELD_MAP:
         if attr in fields_set:
             collisions.setdefault(key, []).append(attr)
+    if "request_rate_series" in fields_set:
+        collisions.setdefault("rate", []).append("request_rate_series")
     duplicates = {k: v for k, v in collisions.items() if len(v) > 1}
     if not duplicates:
         return
@@ -466,26 +497,30 @@ def _reject_loadgen_target_collisions(fields_set: set[str]) -> None:
 
 
 def _find_profiling_phase(phases: list[Any]) -> dict[str, Any] | None:
-    """Return the phase entry whose CLI loadgen flags should overlay onto.
+    """Return the unique profiling-kind phase for CLI loadgen overlays.
 
-    Prefers the phase named ``profiling``. If no phase has that name (e.g.
-    a single-entry list authored without ``name``), returns the sole entry
-    when there's exactly one. Otherwise returns ``None`` and the override
-    silently no-ops -- matching the convention that ambiguous YAML wins.
+    Legacy YAML may omit ``kind`` on canonical names, so infer it for this
+    pre-validation merge pass. Ambiguous multi-profiling configs must express
+    values directly in YAML for v1.
     """
-    profiling: dict[str, Any] | None = None
-    non_warmup: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
     for entry in phases:
         if not isinstance(entry, dict):
             continue
-        name = entry.get("name")
-        if name == "profiling":
-            profiling = entry
-            break
-        if name != "warmup":
-            non_warmup.append(entry)
-    if profiling is not None:
-        return profiling
-    if len(non_warmup) == 1:
-        return non_warmup[0]
+        kind = infer_legacy_phase_kind(entry.get("name"), entry.get("kind"))
+        if kind is not None:
+            entry["kind"] = kind
+        if kind == "profiling":
+            candidates.append(entry)
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        from aiperf.config.loader.errors import ConfigurationError
+
+        names = [str(entry.get("name")) for entry in candidates]
+        raise ConfigurationError(
+            "CLI loadgen flags target the profiling phase, but this config has "
+            f"{len(candidates)} profiling phases: {', '.join(names)}. Set the "
+            "value in YAML or use an explicit phase path."
+        )
     return None

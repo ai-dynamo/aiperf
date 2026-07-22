@@ -67,13 +67,13 @@ def sample_telemetry_record() -> TelemetryRecord:
         pci_bus_id="00000000:02:00.0",
         device="nvidia0",
         hostname="node1",
-        gpu_power_usage=75.5,
-        energy_consumption=1000.0,
-        gpu_utilization=85.0,
-        gpu_memory_used=15.26,
-        gpu_temperature=70.0,
-        xid_errors=0.0,
-        power_violation=120.0,
+        nvidia_power_usage=75.5,
+        nvidia_energy_consumption=1000.0,
+        nvidia_gpu_utilization=85.0,
+        nvidia_memory_used=15.26,
+        nvidia_temperature=70.0,
+        nvidia_xid_errors=0.0,
+        nvidia_power_violation=120.0,
     )
 
 
@@ -160,10 +160,10 @@ class TestGPUTelemetryAccumulator:
                 gpu_index=sample_telemetry_record.gpu_index,
                 gpu_uuid=sample_telemetry_record.gpu_uuid,
                 gpu_model_name=sample_telemetry_record.gpu_model_name,
-                gpu_power_usage=75.0 + i,
-                energy_consumption=1000.0 + i * 10,
-                gpu_utilization=80.0 + i,
-                gpu_memory_used=15.0 + i * 0.1,
+                nvidia_power_usage=75.0 + i,
+                nvidia_energy_consumption=1000.0 + i * 10,
+                nvidia_gpu_utilization=80.0 + i,
+                nvidia_memory_used=15.0 + i * 0.1,
             )
             await processor.process_telemetry_record(record)
 
@@ -175,8 +175,8 @@ class TestGPUTelemetryAccumulator:
 
         # Check that metrics are properly tagged
         result_tags = [r.tag for r in results]
-        assert any("gpu_power_usage" in tag for tag in result_tags)
-        assert any("energy_consumption" in tag for tag in result_tags)
+        assert any("nvidia_power_usage" in tag for tag in result_tags)
+        assert any("nvidia_energy_consumption" in tag for tag in result_tags)
 
     @pytest.mark.asyncio
     async def test_summarize_handles_no_metric_value(
@@ -335,18 +335,18 @@ class TestGPUTelemetryAccumulator:
                 timestamp_ns=1000000000 + i * 1000000,
                 gpu_uuid="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",
                 gpu_model_name="NVIDIA RTX 6000",
-                gpu_power_usage=75.0 + i,
+                nvidia_power_usage=75.0 + i,
             )
             await processor.process_telemetry_record(record)
 
         results = await processor.summarize()
 
         # Check tag format: metric_name_dcgm_TAG_gpuINDEX_UUID
-        power_results = [r for r in results if "gpu_power_usage" in r.tag]
+        power_results = [r for r in results if "nvidia_power_usage" in r.tag]
         assert len(power_results) > 0
 
         tag = power_results[0].tag
-        assert "gpu_power_usage" in tag
+        assert "nvidia_power_usage" in tag
         assert "dcgm_http" in tag  # URL gets sanitized
         assert "node1" in tag
         assert "gpu0" in tag
@@ -371,7 +371,7 @@ class TestGPUTelemetryAccumulator:
                     gpu_index=gpu_index,
                     gpu_uuid=f"GPU-0000000{gpu_index}-0000-0000-0000-000000000000",
                     gpu_model_name="NVIDIA RTX 6000",
-                    gpu_power_usage=75.0 + gpu_index * 10 + i,
+                    nvidia_power_usage=75.0 + gpu_index * 10 + i,
                 )
                 await processor.process_telemetry_record(record)
 

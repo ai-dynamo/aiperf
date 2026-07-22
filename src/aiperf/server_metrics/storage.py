@@ -76,7 +76,9 @@ class ServerMetricsTimeSeries:
         self.first_fetch_ns: int = 0
         self.last_fetch_ns: int = 0
         self._total_fetch_count: int = 0
+        self._fetch_timestamps_ns: list[int] = []
         self._fetch_latencies_ns: list[int] = []
+        self._fetch_latency_records_ns: list[tuple[int, int]] = []
 
     @property
     def _update_intervals_ns(self) -> list[int]:
@@ -133,8 +135,12 @@ class ServerMetricsTimeSeries:
         if timestamp_ns > self.last_fetch_ns:
             self.last_fetch_ns = timestamp_ns
         self._total_fetch_count += 1
+        self._fetch_timestamps_ns.append(timestamp_ns)
         if record.endpoint_latency_ns is not None:
             self._fetch_latencies_ns.append(record.endpoint_latency_ns)
+            self._fetch_latency_records_ns.append(
+                (timestamp_ns, record.endpoint_latency_ns)
+            )
 
         # Track unique updates (only for non-duplicates) for metadata/statistics
         # But store ALL samples (including duplicates) for consistent timeslice boundaries

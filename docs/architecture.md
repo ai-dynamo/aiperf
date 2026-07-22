@@ -151,12 +151,23 @@ flowchart TD
 The GPU Telemetry Manager collects GPU metrics during benchmarking runs via pluggable collectors.
 
 **Key Responsibilities:**
-- Collecting GPU metrics (power, utilization, memory, temperature, errors) via two collector backends:
-  - **DCGM**: Scrapes DCGM Exporter HTTP endpoints (Prometheus format)
-  - **PyNVML**: Queries NVIDIA GPUs directly via the pynvml Python library (no external endpoint required)
+- Collecting GPU metrics (power, utilization, memory, temperature, errors) via pluggable collector backends:
+  - **DCGM**: Scrapes DCGM Exporter HTTP endpoints (Prometheus format) — NVIDIA GPUs; exposes `nvidia_power_usage` and `nvidia_energy_consumption`
+  - **PyNVML**: Queries NVIDIA GPUs directly via the pynvml Python library (no external endpoint required) — exposes `nvidia_power_usage`
+  - **amdsmi**: Queries AMD GPUs via the amdsmi Python library — exposes `amd_power` and `amd_energy_consumption`
 - Auto-discovering DCGM endpoints
 - Supporting custom endpoints via `--gpu-telemetry` flag
 - Exporting GPU telemetry alongside benchmark results
+
+### GPU Power Efficiency Analysis
+
+At the end of each profiling phase, `EnergyEfficiencyAnalyzer` — an `analyzer` plugin — joins GPU telemetry energy/power data with inference token and throughput totals to produce the GPU power-efficiency metric family.
+
+`EnergyEfficiencyAnalyzer.analyze()` is called by the `SummaryContext` at summarize time. It calls `GPUTelemetryAccumulator.available_platforms()` to discover which vendors reported data, then fans out per vendor: querying windowed energy and power totals, computing the 12 derived metrics (total power, total energy, tokens/joule, energy/token, energy/request, energy/user, energy-delay product, performance/watt, output TPS/watt, goodput/watt, average power), and returning them as injected `MetricResult` objects. Each vendor's metrics render in their own console section (`GPU_POWER_EFFICIENCY_NVIDIA`, `GPU_POWER_EFFICIENCY_AMD`); a section is omitted entirely when no GPU of that vendor reported.
+
+![GPU Power Efficiency Data Flow](diagrams/gpu-power-efficiency-flow.svg)
+
+See [`docs/dev/patterns.md` — Externally-Injected Derived Metric Pattern](dev/patterns.md#externally-injected-derived-metric-pattern) for the metric class contract and instructions for adding a new vendor.
 
 ### Server Metrics Manager
 
