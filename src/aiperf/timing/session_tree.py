@@ -178,10 +178,18 @@ class SessionTreeRegistry:
         *,
         is_final_turn: bool,
         is_root_credit: bool,
-        has_forks: bool,
+        has_branches: bool,
     ) -> bool:
-        """Conservative: True only when this credit is provably the tree's last request."""
-        if not is_final_turn or has_forks:
+        """Conservative: True only when this credit is provably the tree's last request.
+
+        ``has_branches`` means "this turn declares ANY branch (FORK or SPAWN)
+        and will therefore spawn descendants on its return". It must NOT be the
+        FORK-only ``has_forks`` flag: SPAWN children register with this registry
+        only at return-intercept, AFTER the issuer stamped finality, so a
+        spawning final turn would otherwise read as last while its children are
+        pending (wrong-True, violating the conservative contract).
+        """
+        if not is_final_turn or has_branches:
             return False
         state = self._trees.get(root_correlation_id)
         if state is None:

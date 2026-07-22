@@ -100,6 +100,9 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
                         x_correlation_id=str(uuid.uuid4()),
                         turn_index=0,
                         num_turns=len(conv.turns),
+                        # Finality stamping must see a spawning turn as
+                        # non-final (any-mode branch flag).
+                        has_branches=bool(conv.turns[0].branch_ids),
                     ),
                 )
             )

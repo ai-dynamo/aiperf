@@ -465,6 +465,71 @@ class TestCreateRequestInfo:
         assert request_info.is_parent_final is True
         assert request_info.is_tree_final is True
 
+    async def test_create_request_info_plumbs_phase_fields_from_credit(
+        self, mock_worker
+    ):
+        credit_context = CreditContext(
+            credit=Credit(
+                id=1,
+                phase=CreditPhase.PROFILING,
+                phase_index=2,
+                profiling_index=1,
+                phase_name="second-profiling",
+                phase_kind="profiling",
+                conversation_id="test-conv",
+                x_correlation_id="test-correlation",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+            ),
+            drop_perf_ns=0,
+        )
+
+        request_info = mock_worker._create_request_info(
+            x_request_id="request-id",
+            credit_context=credit_context,
+            turns=[Turn()],
+        )
+
+        assert request_info.phase_index == 2
+        assert request_info.profiling_index == 1
+        assert request_info.phase_name == "second-profiling"
+        assert request_info.phase_kind == "profiling"
+
+
+@pytest.mark.asyncio
+class TestEmitCreditFailureRecord:
+    async def test_emit_credit_failure_record_plumbs_phase_fields(
+        self,
+        mock_worker,
+    ):
+        credit_context = CreditContext(
+            credit=Credit(
+                id=1,
+                phase=CreditPhase.PROFILING,
+                phase_index=2,
+                profiling_index=1,
+                phase_name="second-profiling",
+                phase_kind="profiling",
+                conversation_id="test-conv",
+                x_correlation_id="test-correlation",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+            ),
+            drop_perf_ns=0,
+            error=ErrorDetails(message="boom", type="CreditProcessingError", code=500),
+        )
+        mock_worker._send_inference_result_message = AsyncMock()
+
+        await mock_worker._emit_credit_failure_record(credit_context)
+
+        record = mock_worker._send_inference_result_message.call_args.args[0]
+        assert record.request_info.phase_index == 2
+        assert record.request_info.profiling_index == 1
+        assert record.request_info.phase_name == "second-profiling"
+        assert record.request_info.phase_kind == "profiling"
+
 
 # --- Fixture for CreditContext ---
 
@@ -476,6 +541,7 @@ def sample_credit_context() -> CreditContext:
         credit=Credit(
             id=1,
             phase=CreditPhase.PROFILING,
+            phase_index=2,
             conversation_id="test-conv-123",
             x_correlation_id="test-correlation-id",
             turn_index=0,
@@ -811,4 +877,5 @@ class TestMakeFirstTokenCallback:
         assert sample_credit_context.first_token_sent is True
         sent = mock_worker.credit_return_push_client.send.call_args.args[0]
         assert sent.credit_id == sample_credit_context.credit.id
+        assert sent.phase_index == sample_credit_context.credit.phase_index
         assert sent.ttft_ns == 50_000_000

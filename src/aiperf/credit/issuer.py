@@ -256,7 +256,10 @@ class CreditIssuer:
             root_id,
             is_final_turn=turn.is_final_turn,
             is_root_credit=is_root,
-            has_forks=turn.has_forks,
+            # Any-mode branch flag, NOT the FORK-only has_forks: a final turn
+            # declaring SPAWN branches spawns descendants at return-intercept,
+            # after this stamp, so it must never read as tree-final.
+            has_branches=turn.has_branches,
         )
         return is_parent_final, is_tree_final
 
@@ -582,6 +585,7 @@ class CreditIssuer:
             # the sampled root plan and counts.
             counts_toward_phase_target=pending.parent_agent_depth == 0,
             has_forks=pending.parent_has_forks_on_gated_turn,
+            has_branches=pending.parent_has_branches_on_gated_turn,
             branch_mode=pending.parent_branch_mode,
             cache_bust_marker=pending.parent_cache_bust_marker,
             cache_bust_target=pending.parent_cache_bust_target,

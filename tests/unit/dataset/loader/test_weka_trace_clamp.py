@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.dataset.loader.weka_trace import _clamp_delay_ms
+from aiperf.dataset.loader.weka_trace import _clamp_delay_ms, _trace_peak_context_length
+from aiperf.dataset.loader.weka_trace_models import WekaNormalRequest, WekaTrace
 
 
 def test_clamp_under_cap_passes_through():
@@ -32,3 +33,24 @@ def test_clamp_zero_cap_clamps_everything():
 
 def test_clamp_inf_clamps():
     assert _clamp_delay_ms(float("inf"), cap_seconds=60.0) == 60_000.0
+
+
+def test_peak_context_zero_output_counts_as_one_for_filter():
+    """Recorded output_length=0 is emitted as max_tokens=1; peak must match."""
+    trace = WekaTrace(
+        id="t1",
+        models=["m"],
+        block_size=16,
+        hash_id_scope="local",
+        requests=[
+            WekaNormalRequest(
+                t=0.0,
+                type="n",
+                model="m",
+                input_length=8192,
+                output_length=0,
+                hash_ids=[1],
+            )
+        ],
+    )
+    assert _trace_peak_context_length(trace) == 8193

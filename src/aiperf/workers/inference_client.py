@@ -78,6 +78,7 @@ class InferenceClient(AIPerfLifecycleMixin):
         # per worker, invoked at the request-serialization chokepoint to stamp
         # per-session identity (headers and/or body). None when routing is off.
         self._routing: SessionRoutingBase | None = None
+        self._routing_mode: str | None = None
         endpoint_info = model_endpoint.endpoint
         if endpoint_info.session_routing is not None:
             routing_cls = plugins.get_class(
@@ -86,6 +87,7 @@ class InferenceClient(AIPerfLifecycleMixin):
             self._routing = routing_cls(
                 routing_cls.Options(**endpoint_info.session_routing_opts)
             )
+            self._routing_mode = endpoint_info.session_routing
 
         # Detect and set transport type if not explicitly set
         if not model_endpoint.transport:
@@ -111,9 +113,20 @@ class InferenceClient(AIPerfLifecycleMixin):
         (final turn, cancellation, terminal context overflow, cancel-before-
         start). Idempotency is the plugin's responsibility -- this hook does not
         dedupe. No-op when session routing is unset.
+
+        A plugin exception is logged (naming the plugin and session) and
+        swallowed: this cleanup hook must never break the worker's core
+        session-eviction lifecycle.
         """
-        if self._routing is not None:
+        if self._routing is None:
+            return
+        try:
             self._routing.on_session_end(x_correlation_id)
+        except Exception as e:
+            self.warning(
+                f"session-routing plugin {self._routing_mode!r} on_session_end "
+                f"failed for session {x_correlation_id!r}; continuing eviction: {e!r}"
+            )
 
     async def _send_request_to_transport(
         self,
@@ -152,7 +165,16 @@ class InferenceClient(AIPerfLifecycleMixin):
                 is_parent_final=request_info.is_parent_final,
                 is_tree_final=request_info.is_tree_final,
             )
-            request_info.endpoint_headers.update(self._routing.headers(routing_ctx))
+            # Attribute a plugin fault to the routing plugin (not the server):
+            # this raise is caught by _send_request_internal and becomes an error
+            # record whose message names the plugin instead of the endpoint.
+            try:
+                routing_headers = self._routing.headers(routing_ctx)
+            except Exception as e:
+                raise RuntimeError(
+                    f"session-routing plugin {self._routing_mode!r} failed in headers(): {e!r}"
+                ) from e
+            request_info.endpoint_headers.update(routing_headers)
 
         if request_info.payload_bytes is not None:
             # PAYLOAD_BYTES fast path: bytes were validated at dataset-load time
@@ -180,9 +202,14 @@ class InferenceClient(AIPerfLifecycleMixin):
             # so it is endpoint-agnostic and never mutates a cached Turn
             # (transform_body returns a copy).
             if routing_ctx is not None and isinstance(formatted_payload, dict):
-                formatted_payload = self._routing.transform_body(
-                    formatted_payload, routing_ctx
-                )
+                try:
+                    formatted_payload = self._routing.transform_body(
+                        formatted_payload, routing_ctx
+                    )
+                except Exception as e:
+                    raise RuntimeError(
+                        f"session-routing plugin {self._routing_mode!r} failed in transform_body(): {e!r}"
+                    ) from e
         # Canonicalise to bytes and stash on request_info. Two wins: (1) the
         # transport skips its own orjson.dumps on the dict path, (2) the
         # record processor can read the exact wire payload for raw-export.

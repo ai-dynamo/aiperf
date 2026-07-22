@@ -746,3 +746,60 @@ class TestInferenceClientSessionRouting:
         client = self._build_client(mock_http_transport_entry, session_routing=None)
         # No routing plugin: the hook is a safe no-op (never raises).
         client.notify_session_end("corr-1")
+
+    def test_notify_session_end_swallows_plugin_error_and_warns(
+        self, mock_http_transport_entry
+    ):
+        """A raising on_session_end must NOT propagate (core eviction must
+        proceed); the failure is logged with the plugin + session named."""
+        client = self._build_client(
+            mock_http_transport_entry, session_routing="dynamo_headers"
+        )
+        client._routing.on_session_end = MagicMock(side_effect=RuntimeError("boom"))
+
+        with patch.object(client, "warning") as warn:
+            client.notify_session_end("corr-err")
+
+        client._routing.on_session_end.assert_called_once_with("corr-err")
+        warn.assert_called_once()
+        msg = warn.call_args.args[0]
+        assert "dynamo_headers" in msg and "corr-err" in msg
+
+    @pytest.mark.asyncio
+    async def test_raising_headers_produces_plugin_attributed_error_record(
+        self, mock_http_transport_entry
+    ):
+        """A plugin exception in headers() surfaces as an error record naming the plugin."""
+        client = self._build_client(
+            mock_http_transport_entry, session_routing="dynamo_headers"
+        )
+        client._routing.headers = MagicMock(
+            side_effect=RuntimeError("bad header build")
+        )
+        request_info = self._request_info(client)
+
+        record = await client._send_request_internal(request_info)
+
+        assert record.error is not None
+        assert "dynamo_headers" in record.error.message
+        assert "headers()" in record.error.message
+        client.transport.send_request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_raising_transform_body_produces_plugin_attributed_error_record(
+        self, mock_http_transport_entry
+    ):
+        """A plugin exception in transform_body() is attributed to the plugin."""
+        client = self._build_client(
+            mock_http_transport_entry, session_routing="dynamo_nvext"
+        )
+        client._routing.transform_body = MagicMock(
+            side_effect=RuntimeError("bad body transform")
+        )
+        request_info = self._request_info(client)
+
+        record = await client._send_request_internal(request_info)
+
+        assert record.error is not None
+        assert "dynamo_nvext" in record.error.message
+        assert "transform_body()" in record.error.message

@@ -878,6 +878,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     turn_index=credit.turn_index,
                     credit_num=credit.id,
                     credit_phase=credit.phase,
+                    phase_index=credit.phase_index,
+                    profiling_index=credit.profiling_index,
+                    phase_name=credit.phase_name,
+                    phase_kind=credit.phase_kind,
                     x_request_id=str(uuid.uuid4()),
                     x_correlation_id=credit.x_correlation_id,
                     agent_depth=credit.agent_depth,
@@ -961,6 +965,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 FirstToken(
                     credit_id=credit.id,
                     phase=credit.phase,
+                    phase_index=credit.phase_index,
                     ttft_ns=ttft_ns,
                 )
             )
@@ -1368,6 +1373,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             model_endpoint=self.model_endpoint,
             credit_num=credit.id,
             credit_phase=credit.phase,
+            phase_index=credit.phase_index,
+            profiling_index=credit.profiling_index,
+            phase_name=credit.phase_name,
+            phase_kind=credit.phase_kind,
             cancel_after_ns=credit.cancel_after_ns,
             x_request_id=x_request_id,
             x_correlation_id=session.x_correlation_id

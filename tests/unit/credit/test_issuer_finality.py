@@ -169,6 +169,70 @@ def test_finality_no_registry_is_conservative_none_false():
     assert issuer._finality_for_issue(_root_turn()) == (None, False)
 
 
+def test_finality_spawning_final_turn_never_tree_final():
+    """Scenario 5 (regression): a final turn declaring ANY branch is never
+    tree-final, even with nothing outstanding in the registry.
+
+    SPAWN children register only at return-intercept, AFTER this issue-time
+    stamp, so ``has_branches`` (any-mode) must gate the query -- the FORK-only
+    ``has_forks`` flag stays False for a SPAWN-declaring turn and previously
+    produced a wrong ``is_tree_final=True``.
+    """
+    registry = _make_registry()
+    registry.open_tree("root-1", CreditPhase.PROFILING, root_pending=True)
+    issuer, _ = _make_issuer(registry)
+
+    spawning_root_final = TurnToSend(
+        conversation_id="conv-1",
+        x_correlation_id="root-1",
+        turn_index=0,
+        num_turns=1,
+        has_forks=False,
+        has_branches=True,
+    )
+    is_parent_final, is_tree_final = issuer._finality_for_issue(spawning_root_final)
+
+    assert is_parent_final is None
+    assert is_tree_final is False
+
+
+def test_build_first_turn_stamps_has_branches_and_gates_finality():
+    """End-to-end seam guard: a root whose turn-0 declares a SPAWN branch must
+    build a ``TurnToSend`` with ``has_branches=True`` / ``has_forks=False``
+    and stamp ``is_tree_final=False`` through the real issuer."""
+    from aiperf.common.enums import ConversationBranchMode
+    from aiperf.common.models import (
+        ConversationBranchInfo,
+        ConversationMetadata,
+        TurnMetadata,
+    )
+    from aiperf.timing.conversation_source import SampledSession
+
+    meta = ConversationMetadata(
+        conversation_id="conv-1",
+        turns=[TurnMetadata(timestamp_ms=0.0, branch_ids=["conv-1:0"])],
+        branches=[
+            ConversationBranchInfo(
+                branch_id="conv-1:0",
+                child_conversation_ids=["child-conv"],
+                mode=ConversationBranchMode.SPAWN,
+            )
+        ],
+    )
+    session = SampledSession(
+        conversation_id="conv-1", metadata=meta, x_correlation_id="root-1"
+    )
+    turn = session.build_first_turn()
+    assert turn.has_branches is True
+    assert turn.has_forks is False
+
+    registry = _make_registry()
+    registry.open_tree("root-1", CreditPhase.PROFILING, root_pending=True)
+    issuer, _ = _make_issuer(registry)
+
+    assert issuer._finality_for_issue(turn) == (None, False)
+
+
 # =============================================================================
 # GUARD: the Credit(...) construction site must pass the helper's results through
 # =============================================================================

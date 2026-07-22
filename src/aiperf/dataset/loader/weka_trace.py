@@ -191,6 +191,19 @@ def _sa_end_seconds(entry: WekaSubagentEntry) -> float:
     return entry.t
 
 
+def _peak_output_tokens(output_length: int, *, max_osl: int | None) -> int:
+    """Output tokens counted toward peak context for keep/drop filtering.
+
+    Mirrors emission: parent/flat turns honor ``--synthesis-max-osl`` and a
+    recorded ``output_length`` of 0 is upgraded to 1 (``Turn.max_tokens`` is
+    ``ge=1``).
+    """
+    capped = output_length
+    if max_osl is not None and capped > max_osl:
+        capped = max_osl
+    return capped if capped >= 1 else 1
+
+
 def _trace_peak_context_length(trace: WekaTrace, max_osl: int | None = None) -> int:
     """Peak requested context length across parent and subagent requests.
 
@@ -200,17 +213,16 @@ def _trace_peak_context_length(trace: WekaTrace, max_osl: int | None = None) -> 
     server's max model length.
     """
 
-    def capped_output(req: _NormalRequestT) -> int:
-        if max_osl is not None and req.output_length > max_osl:
-            return max_osl
-        return req.output_length
-
     peak = 0
     for req in trace.requests:
         if isinstance(req, WekaNormalRequest | WekaStreamingRequest):
             # Parent (and flat-chain) turns honor --synthesis-max-osl via _cap_output, so
             # the keep/drop decision uses the capped output they will send.
-            peak = max(peak, req.input_length + capped_output(req))
+            peak = max(
+                peak,
+                req.input_length
+                + _peak_output_tokens(req.output_length, max_osl=max_osl),
+            )
         elif isinstance(req, WekaSubagentEntry):
             for child_req in req.requests:
                 # Subagent child turns emit the RECORDED output_length (they are
@@ -218,8 +230,13 @@ def _trace_peak_context_length(trace: WekaTrace, max_osl: int | None = None) -> 
                 # in _reconstruct_serial / the parallel worker child loop). The
                 # keep/drop decision must use that same uncapped output, or a
                 # trace that fits only under the cap would be kept and then 4xx
-                # mid-run on the uncapped subagent request.
-                peak = max(peak, child_req.input_length + child_req.output_length)
+                # mid-run on the uncapped subagent request. Zero still upgrades to
+                # 1 at emission, so peak must match the wire max_tokens.
+                peak = max(
+                    peak,
+                    child_req.input_length
+                    + _peak_output_tokens(child_req.output_length, max_osl=None),
+                )
     return peak
 
 

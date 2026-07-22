@@ -208,7 +208,11 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         )
 
         # Export Parquet file directly from accumulator if format is enabled.
-        await self._export_parquet_widened(start_ns, end_ns)
+        # The Parquet is a single whole-run artifact: skip phase-scoped exports
+        # (phase_index set) so per-phase windows don't overwrite it in a
+        # multi-phase run. Mirrors the multi-phase guard from main (#1150).
+        if ctx.phase_index is None:
+            await self._export_parquet_widened(start_ns, end_ns)
 
         return results
 

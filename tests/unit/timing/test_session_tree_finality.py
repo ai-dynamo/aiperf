@@ -48,21 +48,35 @@ def test_root_terminal_false_while_pending_true_after():
 def test_last_tree_request_root_with_no_descendants():
     registry = _registry_with_tree()
     assert registry.is_last_tree_request(
-        "root-1", is_final_turn=True, is_root_credit=True, has_forks=False
+        "root-1", is_final_turn=True, is_root_credit=True, has_branches=False
     )
 
 
-def test_not_last_when_descendants_outstanding_or_forks_pending():
+def test_not_last_when_descendants_outstanding_or_branches_pending():
     registry = _registry_with_tree(descendants=1)
     assert not registry.is_last_tree_request(
-        "root-1", is_final_turn=True, is_root_credit=True, has_forks=False
+        "root-1", is_final_turn=True, is_root_credit=True, has_branches=False
     )
     registry_no_desc = _registry_with_tree(root="root-2")
     assert not registry_no_desc.is_last_tree_request(
-        "root-2", is_final_turn=True, is_root_credit=True, has_forks=True
+        "root-2", is_final_turn=True, is_root_credit=True, has_branches=True
     )
     assert not registry_no_desc.is_last_tree_request(
-        "root-2", is_final_turn=False, is_root_credit=True, has_forks=False
+        "root-2", is_final_turn=False, is_root_credit=True, has_branches=False
+    )
+
+
+def test_spawn_declaring_final_turn_gated_by_has_branches():
+    """Same registry state that yields True with ``has_branches=False`` must
+    yield False when the turn declares ANY branch: a SPAWN-declaring final turn
+    (``has_forks`` stays False) registers its children only at return-intercept,
+    AFTER this stamp, so it can never be provably-last."""
+    registry = _registry_with_tree(root="root-3")
+    assert registry.is_last_tree_request(
+        "root-3", is_final_turn=True, is_root_credit=True, has_branches=False
+    )
+    assert not registry.is_last_tree_request(
+        "root-3", is_final_turn=True, is_root_credit=True, has_branches=True
     )
 
 
@@ -70,13 +84,13 @@ def test_last_tree_request_final_child_after_root_done():
     registry = _registry_with_tree(descendants=1)
     registry.on_root_terminal("root-1")
     assert registry.is_last_tree_request(
-        "root-1", is_final_turn=True, is_root_credit=False, has_forks=False
+        "root-1", is_final_turn=True, is_root_credit=False, has_branches=False
     )
 
 
 def test_unknown_tree_is_conservative_false():
     assert not _make_registry().is_last_tree_request(
-        "nope", is_final_turn=True, is_root_credit=True, has_forks=False
+        "nope", is_final_turn=True, is_root_credit=True, has_branches=False
     )
 
 
