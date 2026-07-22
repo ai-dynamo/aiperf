@@ -43,6 +43,7 @@ forces a real re-port of the suite mapped above.
 
 from __future__ import annotations
 
+from aiperf.cli_runner import _strategy
 from aiperf.orchestrator.orchestrator import MultiRunOrchestrator
 
 
@@ -73,6 +74,4 @@ def test_v1_orchestrator_execution_methods_are_gone() -> None:
     assert hasattr(MultiRunOrchestrator, "execute")
 
     # Strategy resolution re-homed onto the cli_runner strategy builder.
-    from aiperf.cli_runner import _strategy
-
     assert hasattr(_strategy, "build_strategy")

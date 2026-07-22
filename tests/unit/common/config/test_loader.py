@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import importlib
 
+import pytest
+
 
 def test_v1_config_loader_api_is_gone() -> None:
     """The v1 ``aiperf.common.config.loader`` module must not exist on v2.
@@ -47,7 +49,7 @@ def test_v1_config_loader_api_is_gone() -> None:
         importlib.import_module("aiperf.common.config.loader")
     except ModuleNotFoundError:
         return
-    raise AssertionError(
+    pytest.fail(
         "aiperf.common.config.loader was re-introduced -- re-port the v1 "
         "loader test suite (see tests/unit/config/test_loader_edge_cases.py / "
         "test_loader_adversarial.py for the current v2 coverage)."
