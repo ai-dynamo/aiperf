@@ -9,6 +9,7 @@ from aiperf.common.messages.base_messages import (
     Message,
     RequiresRequestNSMixin,
 )
+from aiperf.common.messages.baseline_messages import PhaseBaselineRequestMessage
 from aiperf.common.messages.command_messages import (
     CommandAcknowledgedResponse,
     CommandErrorResponse,
@@ -103,6 +104,7 @@ __all__ = [
     "Message",
     "MetricRecordsData",
     "NetworkLatencyRecordMessage",
+    "PhaseBaselineRequestMessage",
     "ProcessRecordsCommand",
     "ProcessRecordsResponse",
     "ProcessAllResultsMessage",

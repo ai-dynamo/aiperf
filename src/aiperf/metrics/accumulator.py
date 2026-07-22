@@ -209,6 +209,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 "worker_id": meta.worker_id,
                 "record_processor_id": meta.record_processor_id,
                 "benchmark_phase": str(meta.benchmark_phase),
+                "phase_index": str(meta.phase_index)
+                if meta.phase_index is not None
+                else None,
                 "x_correlation_id": meta.x_correlation_id,
                 "conversation_id": meta.conversation_id,
             },
@@ -260,6 +263,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
             mask &= self._column_store.mask_for_categorical(
                 "benchmark_phase", phase_value
             )
+            if ctx.phase_index is not None:
+                mask &= self._column_store.mask_for_categorical(
+                    "phase_index", str(ctx.phase_index)
+                )
             return mask
         if ctx.start_ns is not None:
             mask &= self._column_store.start_ns[:n] >= ctx.start_ns
@@ -541,6 +548,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 start_ns=ctx.start_ns or None,
                 end_ns=ctx.end_ns or None,
                 phase=ctx.phase,
+                phase_index=ctx.phase_index,
             )
         return self._summarize_for_export_context(export_ctx)
 

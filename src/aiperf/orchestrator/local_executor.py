@@ -53,9 +53,9 @@ class LocalSubprocessExecutor(RunExecutor):
             if result.returncode != 0:
                 return self._failure_from_subprocess(result, run.label, artifacts_path)
 
-            summary_metrics = self._extract_summary_metrics(run)
+            summary_metrics, was_cancelled = self._extract_summary_metrics(run)
             return self._build_result_from_metrics(
-                summary_metrics, run.label, artifacts_path
+                summary_metrics, run.label, artifacts_path, was_cancelled
             )
         except Exception as e:
             logger.exception(f"Error executing run {run.label}")
@@ -179,6 +179,7 @@ class LocalSubprocessExecutor(RunExecutor):
         summary_metrics: dict[str, JsonMetricResult],
         label: str,
         artifacts_path: Path,
+        was_cancelled: bool = False,
     ) -> RunResult:
         """Classify success/failure from extracted summary metrics."""
         if not summary_metrics:
@@ -191,6 +192,7 @@ class LocalSubprocessExecutor(RunExecutor):
                 success=False,
                 error=error_msg,
                 artifacts_path=artifacts_path,
+                was_cancelled=was_cancelled,
             )
 
         request_count_metric = summary_metrics.get("request_count")
@@ -207,6 +209,7 @@ class LocalSubprocessExecutor(RunExecutor):
                 success=False,
                 error=error_msg,
                 artifacts_path=artifacts_path,
+                was_cancelled=was_cancelled,
             )
 
         return RunResult(
@@ -214,19 +217,25 @@ class LocalSubprocessExecutor(RunExecutor):
             success=True,
             summary_metrics=summary_metrics,
             artifacts_path=artifacts_path,
+            was_cancelled=was_cancelled,
         )
 
     def _extract_summary_metrics(
         self, run: BenchmarkRun
-    ) -> dict[str, JsonMetricResult]:
-        """Extract run-level summary statistics from artifacts.
+    ) -> tuple[dict[str, JsonMetricResult], bool]:
+        """Extract run-level summary metrics + the ``was_cancelled`` flag.
 
         Reads the summary JSON file (or its ``.zst`` variant) at the path
         computed by :attr:`ArtifactsConfig.profile_export_json_file`, which
         honors ``--profile-export-prefix`` and falls back to the historical
         ``profile_export_aiperf.json`` default when no prefix is set.
 
-        Returns empty dict if the file is missing or unparsable.
+        A run that exits 0 after a graceful Ctrl+C still writes its export file
+        (with partial metrics) and marks it ``was_cancelled: true``; scenario
+        submissions must treat such runs as invalid, so the top-level flag is
+        surfaced alongside the metrics from the same parse.
+
+        Returns ``({}, False)`` if the file is missing or unparsable.
         """
         from aiperf.common.models.export_models import JsonMetricResult
 
@@ -239,7 +248,7 @@ class LocalSubprocessExecutor(RunExecutor):
             json_file = zst_file
         elif not json_file.exists():
             logger.warning(f"Profile export file not found: {json_file}")
-            return {}
+            return {}, False
 
         try:
             raw = json_file.read_bytes()
@@ -254,8 +263,8 @@ class LocalSubprocessExecutor(RunExecutor):
             for field_name, field_value in data.items():
                 if isinstance(field_value, dict) and "unit" in field_value:
                     metrics[field_name] = JsonMetricResult(**field_value)
-            return metrics
+            return metrics, bool(data.get("was_cancelled", False))
 
         except (OSError, ValueError, orjson.JSONDecodeError) as e:
             logger.warning(f"Error extracting metrics from {json_file}: {e}")
-            return {}
+            return {}, False

@@ -165,7 +165,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             start_ns,
             end_ns,
             self._slice_duration,
-            include_final_collection=True,
+            include_final_collection=not ctx.is_phase_scoped,
         )
         warmup_endpoint_summaries = None
         if (
@@ -209,7 +209,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         # None result (records_manager _publish_server_metrics_results), losing
         # ALL server metrics. Mirrors the guards at the per-endpoint / warmup /
         # json_exporter sites.
-        if start_ns < export_end_ns:
+        if ctx.phase_index is None and start_ns < export_end_ns:
             await self._export_parquet_if_enabled(
                 TimeRangeFilter(start_ns=start_ns, end_ns=export_end_ns)
             )
@@ -307,58 +307,80 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                         series=[series_stats],
                     )
 
-            # Unique update statistics
-            unique_count = time_series._unique_update_count
-            duration_seconds = (
-                (time_series.last_update_ns - time_series.first_update_ns)
-                / NANOS_PER_SECOND
-                if unique_count > 0
-                else 0.0
-            )
-            avg_update_interval_ms = (
-                (duration_seconds * MILLIS_PER_SECOND) / (unique_count - 1)
-                if unique_count > 1
-                else 0.0
-            )
-            # Compute median from actual intervals (more robust to outliers)
-            median_update_interval_ms: float | None = None
-            if time_series._update_intervals_ns:
-                intervals_ns = np.array(
-                    time_series._update_intervals_ns, dtype=np.int64
-                )
-                median_update_interval_ms = (
-                    float(np.median(intervals_ns)) / NANOS_PER_MILLIS
-                )
-
-            # Fetch statistics (all fetches including duplicates)
-            avg_fetch_latency_ms = (
-                sum(time_series._fetch_latencies_ns)
-                / len(time_series._fetch_latencies_ns)
-                / NANOS_PER_MILLIS
-                if time_series._fetch_latencies_ns
-                else 0.0
-            )
-
+            info_filter = None if include_final_collection else time_filter
             summaries[endpoint_display] = ServerMetricsEndpointSummary(
                 endpoint_url=endpoint_url,
-                info=ServerMetricsEndpointInfo(
-                    # Fetch statistics
-                    total_fetches=time_series._total_fetch_count,
-                    first_fetch_ns=time_series.first_fetch_ns,
-                    last_fetch_ns=time_series.last_fetch_ns,
-                    avg_fetch_latency_ms=avg_fetch_latency_ms,
-                    # Unique update statistics
-                    unique_updates=unique_count,
-                    first_update_ns=time_series.first_update_ns,
-                    last_update_ns=time_series.last_update_ns,
-                    duration_seconds=duration_seconds,
-                    avg_update_interval_ms=avg_update_interval_ms,
-                    median_update_interval_ms=median_update_interval_ms,
-                ),
+                info=self._compute_endpoint_info(time_series, info_filter),
                 metrics=metrics,
             )
 
         return summaries
+
+    @staticmethod
+    def _compute_endpoint_info(
+        time_series: ServerMetricsTimeSeries,
+        time_filter: TimeRangeFilter | None,
+    ) -> ServerMetricsEndpointInfo:
+        if time_filter is None:
+            fetch_timestamps = list(time_series._fetch_timestamps_ns)
+            fetch_latencies_ns = list(time_series._fetch_latencies_ns)
+            update_timestamps = sorted(time_series._unique_update_timestamps)
+        else:
+            fetch_timestamps = [
+                timestamp_ns
+                for timestamp_ns in time_series._fetch_timestamps_ns
+                if time_filter.includes(timestamp_ns)
+            ]
+            fetch_latencies_ns = [
+                latency_ns
+                for timestamp_ns, latency_ns in time_series._fetch_latency_records_ns
+                if time_filter.includes(timestamp_ns)
+            ]
+            update_timestamps = sorted(
+                timestamp_ns
+                for timestamp_ns in time_series._unique_update_timestamps
+                if time_filter.includes(timestamp_ns)
+            )
+
+        unique_count = len(update_timestamps)
+        first_update_ns = update_timestamps[0] if update_timestamps else 0
+        last_update_ns = update_timestamps[-1] if update_timestamps else 0
+        duration_seconds = (
+            (last_update_ns - first_update_ns) / NANOS_PER_SECOND
+            if unique_count > 0
+            else 0.0
+        )
+        avg_update_interval_ms = (
+            (duration_seconds * MILLIS_PER_SECOND) / (unique_count - 1)
+            if unique_count > 1
+            else 0.0
+        )
+
+        median_update_interval_ms: float | None = None
+        if unique_count > 1:
+            intervals_ns = np.diff(np.array(update_timestamps, dtype=np.int64))
+            median_update_interval_ms = (
+                float(np.median(intervals_ns)) / NANOS_PER_MILLIS
+            )
+
+        avg_fetch_latency_ms = (
+            sum(fetch_latencies_ns) / len(fetch_latencies_ns) / NANOS_PER_MILLIS
+            if fetch_latencies_ns
+            else 0.0
+        )
+
+        return ServerMetricsEndpointInfo(
+            total_fetches=len(fetch_timestamps),
+            first_fetch_ns=min(fetch_timestamps) if fetch_timestamps else 0,
+            last_fetch_ns=max(fetch_timestamps) if fetch_timestamps else 0,
+            avg_fetch_latency_ms=avg_fetch_latency_ms,
+            unique_updates=unique_count,
+            first_update_ns=first_update_ns,
+            last_update_ns=last_update_ns,
+            duration_seconds=duration_seconds,
+            avg_update_interval_ms=avg_update_interval_ms,
+            median_update_interval_ms=median_update_interval_ms,
+        )
 
     async def _export_parquet_if_enabled(self, time_filter: TimeRangeFilter) -> None:
         """Export server metrics to Parquet format if enabled.

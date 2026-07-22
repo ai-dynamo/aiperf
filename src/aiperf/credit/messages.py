@@ -148,6 +148,7 @@ class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):
     credit_id: int
     phase: CreditPhase
     ttft_ns: int
+    phase_index: int | None = None
 
 
 # Union type for decoding worker -> router messages

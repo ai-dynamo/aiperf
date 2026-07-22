@@ -60,6 +60,31 @@ def _write_adaptive_sweep(tmp_path: Path) -> Path:
     return path
 
 
+def _write_named_phase_legacy_sweep(tmp_path: Path) -> Path:
+    yaml_str = textwrap.dedent("""\
+        sweep:
+          type: grid
+          parameters:
+            phases.profiling.concurrency: [4]
+        benchmark:
+          models: [llama]
+          endpoint:
+            urls: ["http://x:8000/v1/chat/completions"]
+          datasets:
+            - name: main
+              type: synthetic
+          phases:
+            - name: storm
+              kind: profiling
+              type: concurrency
+              requests: 10
+              concurrency: 1
+        """)
+    path = tmp_path / "named_phase_legacy_sweep.yaml"
+    path.write_text(yaml_str, encoding="utf-8")
+    return path
+
+
 class TestConfigInit:
     """End-to-end behavior of `aiperf config init`."""
 
@@ -233,6 +258,19 @@ class TestConfigExpand:
         assert "adaptive_search" in err
         assert "dynamically" in err
 
+    def test_legacy_profiling_path_targets_unique_profiling_kind(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = _write_named_phase_legacy_sweep(tmp_path)
+
+        expand(path, full=True, fmt="json")
+
+        payload = json.loads(capsys.readouterr().out)
+        phase = payload["variations"][0]["benchmark"]["phases"][0]
+        assert phase["name"] == "storm"
+        assert phase["kind"] == "profiling"
+        assert phase["concurrency"] == 4
+
 
 class TestConfigValidate:
     """End-to-end behavior of `aiperf config validate`."""
@@ -247,6 +285,72 @@ class TestConfigValidate:
         assert "Configuration valid" in captured.out
         assert "warning" not in captured.out
         assert captured.err == ""
+
+    def test_single_dict_phase_shorthand_reports_valid(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        yaml_str = textwrap.dedent("""\
+            benchmark:
+              models: [llama]
+              endpoint:
+                urls: ["http://x:8000/v1/chat/completions"]
+              datasets:
+                - name: main
+                  type: synthetic
+              phases:
+                type: concurrency
+                requests: 4
+                concurrency: 1
+            """)
+        path = tmp_path / "single_phase_shorthand.yaml"
+        path.write_text(yaml_str, encoding="utf-8")
+
+        validate(path)
+
+        captured = capsys.readouterr()
+        assert "Configuration valid" in captured.out
+        assert captured.err == ""
+
+    def test_ambiguous_legacy_profiling_sweep_path_reports_actionable_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        yaml_str = textwrap.dedent("""\
+            sweep:
+              type: grid
+              parameters:
+                phases.profiling.concurrency: [4]
+            benchmark:
+              models: [llama]
+              endpoint:
+                urls: ["http://x:8000/v1/chat/completions"]
+              datasets:
+                - name: main
+                  type: synthetic
+              phases:
+                - name: low
+                  kind: profiling
+                  type: concurrency
+                  requests: 10
+                  concurrency: 1
+                - name: storm
+                  kind: profiling
+                  type: concurrency
+                  requests: 10
+                  concurrency: 1
+            """)
+        path = tmp_path / "ambiguous_legacy_profiling_sweep.yaml"
+        path.write_text(yaml_str, encoding="utf-8")
+
+        with pytest.raises(SystemExit) as exc:
+            validate(path)
+
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "phases.profiling.concurrency" in err
+        assert "ambiguous" in err
+        assert "2 profiling phases exist" in err
+        assert "phases.low.concurrency" in err
+        assert "phases.0.concurrency" in err
 
     def test_warnings_print_to_stderr_but_exit_zero(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
