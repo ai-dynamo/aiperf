@@ -20,11 +20,13 @@ as a single string literal, and inflated client-side by an inlined pure-JS zstd
 decoder (``fzstd.umd.js``) -- no network, no WASM, no ``DecompressionStream``.
 
 Because every turn re-sends the full accumulated history, identical message
-items repeat constantly, so each unique ``(role, content)`` is interned ONCE
-into a ``msgs`` lookup table and every turn references it by integer id. That is
-a lossless dedup of the byte-identical repeats; the leftover redundancy is
-*near*-duplicate large bodies scattered across the payload, which zstd's 64 MB
-window catches but gzip's 32 KB window cannot.
+items repeat constantly, so each unique ``(role, body)`` is interned ONCE
+into a ``msgs`` lookup table and every turn references it by integer id. Plain
+string-content messages keep a readable body; multimodal parts, ``tool_calls``,
+and other sibling fields are serialized as JSON so the viewer shows what was
+actually sent. That is a lossless dedup of the byte-identical repeats; the
+leftover redundancy is *near*-duplicate large bodies scattered across the
+payload, which zstd's 64 MB window catches but gzip's 32 KB window cannot.
 
 The DOM is built LAZILY: a conversation's turns materialise only when its
 ``<details>`` is first opened, and a turn's messages only when that turn is
@@ -63,21 +65,34 @@ class TurnMessagesError(Exception):
     """Raised when a run directory has no usable raw records to render."""
 
 
-def _text_of(content: Any) -> str:
-    """OpenAI message content is a str or a list of typed parts."""
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        out = []
-        for p in content:
-            if isinstance(p, dict):
-                out.append(p.get("text") or f"<{p.get('type', 'part')}>")
-            else:
-                out.append(str(p))
-        return "\n".join(out)
-    return str(content)
+def _display_message(m: Any) -> tuple[str, str]:
+    """Return ``(role, body)`` for interning and viewer display.
+
+    Plain ``{"role", "content": str}`` messages keep the string body for
+    readability. Structured content (multimodal parts) and sibling wire fields
+    (``tool_calls``, ``name``, ``tool_call_id``, …) are serialized as JSON so
+    the viewer shows what was actually sent. Non-dict items fall back to a
+    string/JSON rendering under role ``"?"``.
+    """
+    if not isinstance(m, dict):
+        if m is None:
+            return "?", ""
+        if isinstance(m, str):
+            return "?", m
+        if isinstance(m, (list, bool, int, float)):
+            return "?", orjson.dumps(m).decode()
+        return "?", str(m)
+
+    role_raw = m.get("role", "?")
+    role = role_raw if isinstance(role_raw, str) else str(role_raw)
+    rest = {k: v for k, v in m.items() if k != "role"}
+    content = rest.get("content")
+    # Readable fast path: role + plain string/empty content only.
+    if set(rest) <= {"content"} and (
+        not rest or content is None or isinstance(content, str)
+    ):
+        return role, content or ""
+    return role, orjson.dumps(rest).decode()
 
 
 def _short(s: str | None, n: int = 14) -> str:
@@ -218,7 +233,7 @@ def build_payload(
         for m in r["messages"]
     )
 
-    # Intern unique messages: every (role, content) stored once in `table`; each
+    # Intern unique messages: every (role, body) stored once in `table`; each
     # turn references them by integer id. Lossless dedup of the repeated history.
     intern: dict[tuple[str, str], int] = {}
     table: list[dict] = []
@@ -247,23 +262,18 @@ def build_payload(
         for r in turns:
             ids: list[int] = []
             for m in r["messages"]:
-                if isinstance(m, dict):
-                    role = m.get("role", "?")
-                    content = _text_of(m.get("content"))
-                else:
-                    role = "?"
-                    content = _text_of(m)
-                key = (role, content)
+                role, body = _display_message(m)
+                key = (role, body)
                 mid = intern.get(key)
                 if mid is None:
                     mid = len(table)
                     intern[key] = mid
-                    clen = len(content)
+                    clen = len(body)
                     table.append(
                         {
                             "role": role,
                             "len": clen,
-                            "body": content[:cap],
+                            "body": body[:cap],
                             "trunc": max(0, clen - cap),
                         }
                     )
