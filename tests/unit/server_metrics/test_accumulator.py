@@ -5,7 +5,7 @@
 import pytest
 
 from aiperf.common.accumulator_protocols import ExportContext
-from aiperf.common.enums import PrometheusMetricType
+from aiperf.common.enums import CreditPhase, PrometheusMetricType
 from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.common.models.server_metrics_models import (
     MetricFamily,
@@ -256,6 +256,127 @@ class TestServerMetricsAccumulator:
         warmup_avg = warmup_summary.metrics["cache_usage"].series[0].stats.avg
         assert profiling_avg == pytest.approx(0.8)
         assert warmup_avg == pytest.approx(0.15)
+
+    async def test_export_results_warmup_includes_final_warmup_scrape(
+        self,
+        mock_cfg: BenchmarkRun,
+    ) -> None:
+        """Warmup counter deltas include the end-of-warmup scrape taken after warmup_end_ns."""
+        processor = ServerMetricsAccumulator(mock_cfg)
+
+        # The 2.2s scrape is the dedicated end-of-warmup capture: WARMUP-tagged
+        # but timestamped after warmup_end_ns (2.0s) and before profiling
+        # start (3.0s).
+        for timestamp_ns, value, phase in (
+            (1_000_000_000, 100.0, CreditPhase.WARMUP),
+            (1_500_000_000, 150.0, CreditPhase.WARMUP),
+            (2_200_000_000, 200.0, CreditPhase.WARMUP),
+            (3_500_000_000, 300.0, CreditPhase.PROFILING),
+        ):
+            counter = MetricFamily(
+                type=PrometheusMetricType.COUNTER,
+                description="Total requests",
+                samples=[MetricSample(labels=None, value=value)],
+            )
+            record = ServerMetricsRecord(
+                endpoint_url="http://node1:8081/metrics",
+                timestamp_ns=timestamp_ns,
+                endpoint_latency_ns=5_000_000,
+                metrics={"requests": counter},
+                benchmark_phase=phase,
+            )
+            await processor.process_server_metrics_record(record)
+
+        result = await processor.export_results(
+            ExportContext(
+                start_ns=3_000_000_000,
+                end_ns=4_000_000_000,
+                warmup_start_ns=1_000_000_000,
+                warmup_end_ns=2_000_000_000,
+            )
+        )
+
+        assert result is not None
+        assert result.warmup_endpoint_summaries is not None
+        endpoint_key = next(iter(result.warmup_endpoint_summaries))
+        warmup_total = (
+            result.warmup_endpoint_summaries[endpoint_key]
+            .metrics["requests"]
+            .series[0]
+            .stats.total
+        )
+        # 100 -> 200 including the final warmup scrape; a window ending
+        # strictly at warmup_end_ns would stop at 150 (delta 50).
+        assert warmup_total == pytest.approx(100.0)
+        # Profiling delta is unaffected: baseline 200 (last pre-start
+        # sample) -> 300.
+        profiling_total = (
+            result.endpoint_summaries[endpoint_key]
+            .metrics["requests"]
+            .series[0]
+            .stats.total
+        )
+        assert profiling_total == pytest.approx(100.0)
+
+    async def test_export_results_warmup_zero_gap_keeps_final_warmup_scrape(
+        self,
+        mock_cfg: BenchmarkRun,
+    ) -> None:
+        """The last WARMUP-tagged scrape must survive even when profiling starts immediately.
+
+        Warmup completion can trigger a final warmup scrape whose timestamp lands
+        after ``warmup_end_ns`` and even after ``start_ns`` when the next phase
+        begins immediately. The warmup summary must still include that scrape
+        because its phase tag is authoritative.
+        """
+        processor = ServerMetricsAccumulator(mock_cfg)
+
+        for timestamp_ns, value, phase in (
+            (1_000_000_000, 100.0, CreditPhase.WARMUP),
+            (1_500_000_000, 150.0, CreditPhase.WARMUP),
+            (2_200_000_000, 200.0, CreditPhase.WARMUP),
+            (2_800_000_000, 300.0, CreditPhase.PROFILING),
+        ):
+            counter = MetricFamily(
+                type=PrometheusMetricType.COUNTER,
+                description="Total requests",
+                samples=[MetricSample(labels=None, value=value)],
+            )
+            record = ServerMetricsRecord(
+                endpoint_url="http://node1:8081/metrics",
+                timestamp_ns=timestamp_ns,
+                endpoint_latency_ns=5_000_000,
+                metrics={"requests": counter},
+                benchmark_phase=phase,
+            )
+            await processor.process_server_metrics_record(record)
+
+        result = await processor.export_results(
+            ExportContext(
+                start_ns=2_000_000_000,
+                end_ns=3_000_000_000,
+                warmup_start_ns=1_000_000_000,
+                warmup_end_ns=2_000_000_000,
+            )
+        )
+
+        assert result is not None
+        assert result.warmup_endpoint_summaries is not None
+        endpoint_key = next(iter(result.warmup_endpoint_summaries))
+        warmup_total = (
+            result.warmup_endpoint_summaries[endpoint_key]
+            .metrics["requests"]
+            .series[0]
+            .stats.total
+        )
+        profiling_total = (
+            result.endpoint_summaries[endpoint_key]
+            .metrics["requests"]
+            .series[0]
+            .stats.total
+        )
+        assert warmup_total == pytest.approx(100.0)
+        assert profiling_total == pytest.approx(100.0)
 
     async def test_export_results_degenerate_warmup_window_preserves_profiling(
         self,
