@@ -79,6 +79,13 @@ class MockServerConfig(BaseSettings):
                     self.workers,
                 )
                 self.workers = 1
+        if self.accuracy_dataset is not None and self.workers != 1:
+            logger.warning(
+                "--accuracy-dataset forces --workers=1 (was %d): the live "
+                "/accuracy tally and Prometheus series are process-local",
+                self.workers,
+            )
+            self.workers = 1
         return self
 
     port: Annotated[
@@ -509,6 +516,84 @@ class MockServerConfig(BaseSettings):
         ),
         Parameter(name="--record-requests"),
     ] = None
+
+    # Accuracy-dataset mode (grader-compatible ground-truth responses)
+    accuracy_dataset: Annotated[
+        str | None,
+        Field(
+            description="Path to a JSONL accuracy dataset. When set, matched "
+            "requests return grader-formatted ground-truth answers (seeded "
+            "fraction correct); unmatched fall through to normal corpus "
+            "generation. Forces --workers=1 so GET /accuracy tallies are "
+            "process-local. --fast does not disable accuracy."
+        ),
+        Parameter(name="--accuracy-dataset"),
+    ] = None
+
+    accuracy_format: Annotated[
+        Literal["passthrough", "mmlu", "mmlu_pro", "gsm8k", "math", "exact_match"],
+        Field(
+            description="Default grader answer wrap; per-row 'format' overrides. "
+            "Values: passthrough, mmlu, mmlu_pro, gsm8k, math, exact_match."
+        ),
+        Parameter(name="--accuracy-format"),
+    ] = "passthrough"
+
+    accuracy_match: Annotated[
+        Literal["exact", "exact_ci", "substring", "substring_ci"],
+        Field(
+            description="How request user text matches a dataset row. All modes "
+            "whitespace-normalize; *_ci case-folds; substring* also matches "
+            "when a row key is contained in the request."
+        ),
+        Parameter(name="--accuracy-match"),
+    ] = "substring"
+
+    accuracy_correct_rate: Annotated[
+        float,
+        Field(
+            description="Seeded fraction of matched requests answered correctly "
+            "(0.0-1.0). Deterministic in (random_seed, prompt key).",
+            ge=0.0,
+            le=1.0,
+        ),
+        Parameter(name="--accuracy-correct-rate"),
+    ] = 1.0
+
+    accuracy_cot_rate: Annotated[
+        float,
+        Field(
+            description="Seeded fraction of matched responses rendered as "
+            "chain-of-thought (0.0-1.0).",
+            ge=0.0,
+            le=1.0,
+        ),
+        Parameter(name="--accuracy-cot-rate"),
+    ] = 0.0
+
+    accuracy_adversarial_rate: Annotated[
+        float,
+        Field(
+            description="Seeded fraction of matched responses rendered as "
+            "adversarial parser-choke shapes (0.0-1.0).",
+            ge=0.0,
+            le=1.0,
+        ),
+        Parameter(name="--accuracy-adversarial-rate"),
+    ] = 0.0
+
+    accuracy_reasoning_field: Annotated[
+        bool,
+        Field(
+            description="When CoT is rendered: put reasoning in a separate "
+            "reasoning_content field (true) vs inline before the answer "
+            "(false). Exact-match / passthrough never inline-prefix content."
+        ),
+        Parameter(
+            name="--accuracy-reasoning-field",
+            negative="--no-accuracy-reasoning-field",
+        ),
+    ] = True
 
     # /v1/models Options (used by readiness-probe tests)
     default_model: Annotated[

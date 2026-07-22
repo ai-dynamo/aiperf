@@ -34,6 +34,7 @@ def reset_config(monkeypatch):
     Sets config directly without env propagation to avoid polluting config tests.
     """
     from aiperf_mock_server import config as config_module
+    from aiperf_mock_server.accuracy import set_accuracy_state
 
     # Clear all MOCK_SERVER_* env vars before test
     for key in list(os.environ.keys()):
@@ -43,8 +44,10 @@ def reset_config(monkeypatch):
     # Set config directly without propagating to env
     config = MockServerConfig(error_rate=0.0, random_seed=42, fast=True)
     config_module.server_config = config
+    set_accuracy_state(None, None)
     yield
     # Reset to default after test
+    set_accuracy_state(None, None)
     config_module.server_config = MockServerConfig()
 
 

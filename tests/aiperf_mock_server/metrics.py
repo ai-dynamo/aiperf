@@ -206,6 +206,91 @@ RESPONSE_BYTES_TOTAL = Counter(
     registry=AIPERF_MOCK_REGISTRY,
 )
 
+# Accuracy-dataset live oracle (absolute gauges, synced from AccuracyLive on scrape)
+ACCURACY_MATCHED_TOTAL = Gauge(
+    "aiperf_mock_accuracy_matched_total",
+    "Matched accuracy-dataset requests answered",
+    registry=AIPERF_MOCK_REGISTRY,
+)
+ACCURACY_CORRECT_TOTAL = Gauge(
+    "aiperf_mock_accuracy_correct_total",
+    "Matched accuracy-dataset requests answered correctly",
+    registry=AIPERF_MOCK_REGISTRY,
+)
+ACCURACY_INCORRECT_TOTAL = Gauge(
+    "aiperf_mock_accuracy_incorrect_total",
+    "Matched accuracy-dataset requests answered incorrectly",
+    registry=AIPERF_MOCK_REGISTRY,
+)
+ACCURACY_UNMATCHED_TOTAL = Gauge(
+    "aiperf_mock_accuracy_unmatched_total",
+    "Accuracy-enabled requests whose prompt matched no dataset row",
+    registry=AIPERF_MOCK_REGISTRY,
+)
+ACCURACY_ADVERSARIAL_TOTAL = Gauge(
+    "aiperf_mock_accuracy_adversarial_total",
+    "Matched responses that used an adversarial parser-choke shape",
+    registry=AIPERF_MOCK_REGISTRY,
+)
+ACCURACY_COT_TOTAL = Gauge(
+    "aiperf_mock_accuracy_cot_total",
+    "Matched responses rendered as chain-of-thought",
+    registry=AIPERF_MOCK_REGISTRY,
+)
+ACCURACY_RATIO = Gauge(
+    "aiperf_mock_accuracy_ratio",
+    "correct / matched for accuracy-dataset mode (0 when nothing matched)",
+    registry=AIPERF_MOCK_REGISTRY,
+)
+ACCURACY_TASK_MATCHED_TOTAL = Gauge(
+    "aiperf_mock_accuracy_task_matched_total",
+    "Per-task matched accuracy-dataset requests",
+    ["task"],
+    registry=AIPERF_MOCK_REGISTRY,
+)
+ACCURACY_TASK_CORRECT_TOTAL = Gauge(
+    "aiperf_mock_accuracy_task_correct_total",
+    "Per-task correctly answered accuracy-dataset requests",
+    ["task"],
+    registry=AIPERF_MOCK_REGISTRY,
+)
+ACCURACY_TASK_RATIO = Gauge(
+    "aiperf_mock_accuracy_task_ratio",
+    "Per-task correct / matched ratio",
+    ["task"],
+    registry=AIPERF_MOCK_REGISTRY,
+)
+
+
+def sync_accuracy_prometheus(snapshot: object | None) -> None:
+    """Publish AccuracyLiveSnapshot values onto the Prometheus gauges.
+
+    ``snapshot`` is ``None`` when accuracy mode is disabled — zeros the scalars.
+    """
+    from aiperf_mock_server.accuracy import AccuracyLiveSnapshot
+
+    if snapshot is None or not isinstance(snapshot, AccuracyLiveSnapshot):
+        ACCURACY_MATCHED_TOTAL.set(0)
+        ACCURACY_CORRECT_TOTAL.set(0)
+        ACCURACY_INCORRECT_TOTAL.set(0)
+        ACCURACY_UNMATCHED_TOTAL.set(0)
+        ACCURACY_ADVERSARIAL_TOTAL.set(0)
+        ACCURACY_COT_TOTAL.set(0)
+        ACCURACY_RATIO.set(0.0)
+        return
+    ACCURACY_MATCHED_TOTAL.set(snapshot.matched)
+    ACCURACY_CORRECT_TOTAL.set(snapshot.correct)
+    ACCURACY_INCORRECT_TOTAL.set(snapshot.incorrect)
+    ACCURACY_UNMATCHED_TOTAL.set(snapshot.unmatched)
+    ACCURACY_ADVERSARIAL_TOTAL.set(snapshot.adversarial)
+    ACCURACY_COT_TOTAL.set(snapshot.cot)
+    ACCURACY_RATIO.set(snapshot.accuracy)
+    for task_name, task in snapshot.tasks.items():
+        ACCURACY_TASK_MATCHED_TOTAL.labels(task=task_name).set(task.matched)
+        ACCURACY_TASK_CORRECT_TOTAL.labels(task=task_name).set(task.correct)
+        ACCURACY_TASK_RATIO.labels(task=task_name).set(task.accuracy)
+
+
 # ============================================================================
 # vLLM-style Metrics (VLLM_REGISTRY)
 # Buckets match real vLLM server exports

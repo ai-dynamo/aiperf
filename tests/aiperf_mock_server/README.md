@@ -67,6 +67,7 @@ A mock server for integration testing and performance benchmarking of LLM applic
 | Endpoint | Description |
 |----------|-------------|
 | [`/health`](#health--info) | Health check with config |
+| [`/accuracy`](#accuracy-dataset-mode) | Live accuracy tally (oracle) when `--accuracy-dataset` is set |
 | [`/`](#health--info) | Server info and version |
 
 ## Installation
@@ -165,6 +166,129 @@ Configuration via CLI arguments or environment variables (`MOCK_SERVER_` prefix)
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--record-requests` | `None` | Path to a JSONL file for per-request ISL + requested OSL capture. Presence of this flag enables recording mode, forces `--workers=1`, and requires a real tokenizer (incompatible with `--no-tokenizer`). |
+
+### Accuracy Dataset Mode
+
+By default the mock returns arbitrary corpus text. Point it at an **accuracy dataset** and it returns the *correct answer* — formatted for the real AIPerf grader — for a seeded fraction of requests, the rest deliberately wrong. This drives the accuracy pipeline deterministically and offline, and gives you an oracle for what the run *should* score.
+
+Ground truth never crosses the wire in AIPerf (it lives only in the accuracy worker), so the mock loads the dataset itself and keys on the request prompt. `--fast` does **not** disable accuracy (only latency). `--accuracy-dataset` forces `--workers=1` so `GET /accuracy` and Prometheus tallies stay process-local.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--accuracy-dataset` | `None` | Path to JSONL ground-truth dataset |
+| `--accuracy-format` | `passthrough` | Default grader wrap (`passthrough` / `mmlu` / `mmlu_pro` / `gsm8k` / `math` / `exact_match`); per-row `format` overrides |
+| `--accuracy-match` | `substring` | Prompt matching (`exact` / `exact_ci` / `substring` / `substring_ci`) |
+| `--accuracy-correct-rate` | `1.0` | Seeded fraction answered correctly |
+| `--accuracy-cot-rate` | `0.0` | Fraction rendered as chain-of-thought |
+| `--accuracy-reasoning-field` / `--no-accuracy-reasoning-field` | `true` | CoT in separate `reasoning_content` vs inline before the answer |
+| `--accuracy-adversarial-rate` | `0.0` | Fraction rendered as a parser-choke shape |
+
+**Dataset JSONL** (one object per row):
+
+- **prompt** (first present): `prompt` | `question` | `input` | `text`
+- **gold** (first present): `ground_truth` | `answer` | `gold` | `target`
+- optional: `task` / `subject` / `category`, `format` / `benchmark`, `choices`, `match_key` / `match` / `key` / `id`
+
+**Answer formats** (must match `src/aiperf/accuracy/graders/`):
+
+| format | correct emission |
+|--------|------------------|
+| `mmlu` / `mmlu_pro` | `The answer is (B)` |
+| `gsm8k` | `#### 42` |
+| `math` (alias `aime`) | `\boxed{42}` |
+| `exact_match` (aliases `exact` / `hellaswag` / `bigbench`) | gold verbatim |
+| `passthrough` | gold verbatim |
+
+**Matching:** all modes whitespace-normalize. `substring` (default) falls back to the longest row key contained in the request (few-shot / system-prompt wrapping). Per-row `match_key` matches a stable fragment. Verdicts are deterministic in `(--random-seed, key_norm)`.
+
+**Adversarial shapes** (`--accuracy-adversarial-rate`): leading whitespace, trailing prose, wrong case, reasoning-only content, `\boxed{}` wrap, multiple conflicting answers, unicode suffix, and a streaming `"object": null` SSE frame before `[DONE]`.
+
+**Live oracle:**
+
+```bash
+curl -s http://127.0.0.1:8000/accuracy | python3 -m json.tool
+# {"enabled": true, "matched": 12, "correct": 6, "accuracy": 0.5, ...}
+```
+
+The same tally is published on `GET /metrics` as `aiperf_mock_accuracy_*` (`matched_total`, `correct_total`, `incorrect_total`, `unmatched_total`, `adversarial_total`, `cot_total`, `ratio`, plus per-task series).
+
+```bash
+# dataset.jsonl — one object per line: prompt + gold answer.
+aiperf-mock-server --fast --no-tokenizer \
+  --accuracy-dataset dataset.jsonl \
+  --accuracy-format mmlu \
+  --accuracy-correct-rate 0.5 \
+  --random-seed 7
+```
+
+Drive it with the **same file** as an AIPerf `single_turn` input so the prompts line up:
+
+```bash
+aiperf profile --url http://127.0.0.1:8000 --model gpt-4 \
+  --endpoint-type chat --streaming \
+  --input-file dataset.jsonl --custom-dataset-type single_turn \
+  --request-count 12 --export-level raw --random-seed 7 --ui simple
+```
+
+#### Pairing with `--accuracy-benchmark`
+
+The mock does **not** take `--accuracy-benchmark`. When the client loads a real benchmark (`bigbench`, `mmlu`, …), dump that benchmark’s prompts and gold answers into the mock JSONL so prompt text matches on the wire. Use the same task / n-shots / CoT settings the profile run will use (prompt text must match what AIPerf sends).
+
+```python
+# dump_oracle_dataset.py — requires the accuracy extra (deepeval, etc.)
+import asyncio
+import json
+
+from aiperf.accuracy.benchmarks.bigbench import BigBenchBenchmark
+
+
+class _UnusedRun:
+    pass
+
+
+async def main() -> None:
+    problems = await BigBenchBenchmark(run=_UnusedRun()).load_problems(
+        ["boolean_expressions"],
+        n_shots=0,
+        enable_cot=True,
+    )
+    with open("dataset.jsonl", "w") as f:
+        for p in problems[:6]:
+            f.write(
+                json.dumps(
+                    {
+                        "text": p.prompt,
+                        "ground_truth": p.ground_truth,
+                        "task": p.task,
+                        "format": "exact_match",
+                    }
+                )
+                + "\n"
+            )
+
+
+asyncio.run(main())
+```
+
+```bash
+aiperf-mock-server --fast --no-tokenizer \
+  --accuracy-dataset dataset.jsonl \
+  --accuracy-format exact_match \
+  --accuracy-correct-rate 1.0 \
+  --accuracy-cot-rate 1.0 \
+  --accuracy-reasoning-field \
+  --random-seed 7
+
+aiperf profile --url http://127.0.0.1:8000 --model gpt-oss-mock \
+  --endpoint-type chat \
+  --accuracy-benchmark bigbench \
+  --accuracy-grader exact_match \
+  --accuracy-tasks boolean_expressions \
+  --accuracy-n-shots 0 \
+  --num-conversations 6 --concurrency 1 --random-seed 42
+```
+
+Swap the benchmark class / `format` for other suites (`mmlu` → `format: "mmlu"`, etc.). Cross-check the run with `GET /accuracy` — matched/correct should agree with AIPerf’s accuracy table when `correct-rate=1.0`.
 
 **Auto-Scaling GPU Metrics**
 
@@ -369,6 +493,7 @@ curl -X POST http://localhost:8000/v1/custom-multimodal \
 | Endpoint | Description |
 |----------|-------------|
 | `GET /health` | Health check with config |
+| `GET /accuracy` | Live accuracy tally when `--accuracy-dataset` is set; `{"enabled": false}` otherwise |
 | `GET /` | Server info and version |
 
 ### GPU Telemetry

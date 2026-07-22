@@ -30,6 +30,7 @@ from aiperf_mock_server.metrics import (
     STREAMING_REQUESTS_TOTAL,
     TRTLLM_REGISTRY,
     VLLM_REGISTRY,
+    sync_accuracy_prometheus,
 )
 from aiperf_mock_server.metrics_utils import (
     async_track_llm_request,
@@ -118,6 +119,24 @@ async def lifespan(_: FastAPI):
         from aiperf_mock_server.tokens import _load_corpus
 
         _load_corpus()
+
+    from aiperf_mock_server.accuracy import (
+        AccuracyDataset,
+        set_accuracy_state,
+        settings_from_config,
+    )
+
+    if server_config.accuracy_dataset is not None:
+        settings = settings_from_config(server_config)
+        dataset = AccuracyDataset.load(server_config.accuracy_dataset, settings)
+        set_accuracy_state(dataset, settings)
+        logger.info(
+            "Accuracy dataset loaded: %d rows from %s",
+            len(dataset),
+            server_config.accuracy_dataset,
+        )
+    else:
+        set_accuracy_state(None, None)
 
     dcgm_fakers.append(_create_dcgm_faker(server_config.dcgm_seed))
     dcgm_fakers.append(
@@ -1428,6 +1447,49 @@ async def health():
     return {"status": "healthy", "config": public_config_dump(server_config)}
 
 
+@app.get("/accuracy")
+async def accuracy_status() -> dict[str, Any]:
+    """Live accuracy tally for the current run (oracle vs AIPerf grader)."""
+    from aiperf_mock_server.accuracy import (
+        get_accuracy_dataset,
+        get_accuracy_live,
+        get_accuracy_settings,
+    )
+
+    dataset = get_accuracy_dataset()
+    if dataset is None:
+        return {"enabled": False}
+
+    settings = get_accuracy_settings()
+    snap = get_accuracy_live().snapshot()
+    return {
+        "enabled": True,
+        "config": {
+            "format": settings.default_format.value if settings else None,
+            "correct_rate": settings.correct_rate if settings else None,
+            "cot_rate": settings.cot_rate if settings else None,
+            "adversarial_rate": settings.adversarial_rate if settings else None,
+            "reasoning_field": settings.reasoning_field if settings else None,
+            "dataset_rows": len(dataset),
+        },
+        "matched": snap.matched,
+        "correct": snap.correct,
+        "incorrect": snap.incorrect,
+        "accuracy": snap.accuracy,
+        "unmatched": snap.unmatched,
+        "adversarial": snap.adversarial,
+        "cot": snap.cot,
+        "tasks": {
+            name: {
+                "matched": task.matched,
+                "correct": task.correct,
+                "accuracy": task.accuracy,
+            }
+            for name, task in snap.tasks.items()
+        },
+    }
+
+
 @app.get("/v1/models")
 async def list_models() -> dict[str, Any]:
     """OpenAI-compatible models list. Respects models_ready_delay_seconds and
@@ -1489,6 +1551,12 @@ async def prometheus_metrics() -> Response:
     # Update uptime on each scrape
     if server_start_time > 0:
         SERVER_UPTIME_SECONDS.set(time.time() - server_start_time)
+    from aiperf_mock_server.accuracy import get_accuracy_dataset, get_accuracy_live
+
+    if get_accuracy_dataset() is not None:
+        sync_accuracy_prometheus(get_accuracy_live().snapshot())
+    else:
+        sync_accuracy_prometheus(None)
     return metrics_response(AIPERF_MOCK_REGISTRY)
 
 

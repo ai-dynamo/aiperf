@@ -43,6 +43,7 @@ from aiperf_mock_server.request_recorder import get_global_recorder
 from aiperf_mock_server.tokens import (
     TokenizedText,
     _extract_osl_fingerprint,
+    tokenize,
     tokenize_request,
 )
 from fastapi import HTTPException
@@ -370,6 +371,9 @@ class RequestCtx:
     latency_sim: LatencySimulator
     """Latency simulator for TTFT and ITL timing."""
 
+    null_object_chunk: bool = False
+    """When true, chat streaming emits an adversarial ``object: null`` SSE frame."""
+
     @property
     def tokens(self) -> list[str]:
         return self.tokenized.tokens
@@ -409,6 +413,7 @@ def make_ctx(
     tokenized = tokenize_request(request)
     request_id = _create_request_id(request)
     _maybe_record_request(request, endpoint, request_id, model)
+    null_object_chunk = _maybe_apply_accuracy(tokenized)
 
     return RequestCtx(
         request_id=request_id,
@@ -423,7 +428,36 @@ def make_ctx(
             isl=tokenized.prompt_token_count,
             osl=len(tokenized.tokens),
         ),
+        null_object_chunk=null_object_chunk,
     )
+
+
+def _maybe_apply_accuracy(tokenized: TokenizedText) -> bool:
+    """Override output tokens from the accuracy dataset when enabled.
+
+    Returns whether the streaming path should emit a null-object SSE frame.
+    """
+    from aiperf_mock_server.accuracy import get_accuracy_dataset, get_accuracy_live
+
+    dataset = get_accuracy_dataset()
+    if dataset is None:
+        return False
+    live = get_accuracy_live()
+    entry = dataset.lookup(tokenized.text)
+    if entry is None:
+        live.record_unmatched()
+        return False
+    decision = dataset.decide(entry)
+    live.record(decision, entry.task)
+    tokenized.tokens = list(tokenize(decision.content))
+    if decision.reasoning_content:
+        tokenized.reasoning_content_tokens = list(tokenize(decision.reasoning_content))
+        tokenized.reasoning_tokens = len(tokenized.reasoning_content_tokens)
+    else:
+        tokenized.reasoning_content_tokens = []
+        tokenized.reasoning_tokens = 0
+    tokenized.finish_reason = "stop"
+    return decision.null_object_chunk
 
 
 def _maybe_record_request(
@@ -554,6 +588,12 @@ async def stream_chat_completion(
             )
 
         ctx.latency_sim.mark_finished()
+        if ctx.null_object_chunk:
+            # Standalone object:null frame must precede [DONE].
+            yield (
+                b'data: {"id":"adversarial-null","object":null,'
+                b'"created":0,"choices":[]}\n\n'
+            )
         yield _SSE_DONE
     finally:
         ctx.latency_sim.cancel()
