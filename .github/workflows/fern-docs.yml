@@ -101,10 +101,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
         with:
           python-version: "3.12"
 
@@ -137,13 +137,13 @@ jobs:
           fi
 
       - name: Checkout source branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
         with:
           path: source-checkout
           fetch-depth: 1
 
       - name: Checkout docs-website branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
         with:
           ref: docs-website
           path: docs-checkout
@@ -221,7 +221,7 @@ jobs:
           cat docs.yml
 
       - name: Setup Node.js for Fern validation
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5
         with:
           node-version: '22'
 
@@ -361,13 +361,13 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout source branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
         with:
           path: source-checkout
           fetch-depth: 1
 
       - name: Checkout docs-website branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
         with:
           ref: docs-website
           path: docs-checkout
@@ -423,7 +423,7 @@ jobs:
           yq -i '.products[0] = load("/tmp/preserved_product.yml")' docs.yml
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5
         with:
           node-version: '22'
 
@@ -473,7 +473,7 @@ jobs:
         # synced runs. Early-step failures (sync/checkout) are covered by
         # validate-and-publish-docs being red, so no comment needed there either.
         if: always() && steps.preview.outputs.status != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
         env:
           PR_NUMBER: ${{ needs.preview-context.outputs.pr_number }}
           PREVIEW_URL: ${{ steps.preview.outputs.url }}
@@ -549,7 +549,7 @@ jobs:
           echo "Processing version: $VERSION (tag: $TAG)"
 
       - name: Checkout source at tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
         with:
           # Explicit tag ref so workflow_dispatch (which runs on a branch)
           # resolves the tag rather than the dispatch ref. Provides the tagged
@@ -559,7 +559,7 @@ jobs:
           fetch-depth: 1
 
       - name: Checkout docs-website branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
         with:
           ref: docs-website
           path: docs-checkout
@@ -702,7 +702,7 @@ jobs:
           yq '.products[0].versions' "$DOCS_FILE"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5
         with:
           node-version: '22'
 

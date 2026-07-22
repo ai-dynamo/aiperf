@@ -36,7 +36,7 @@ jobs:
     steps:
     - uses: actions/checkout@v6
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
       with:
         python-version: ${{ matrix.python-version }}
     - name: Set up uv with cache
@@ -134,7 +134,7 @@ jobs:
         uv run pytest tests/component_integration -n auto --tb=short -v -m 'not performance and not stress and not slow'
     - name: Upload results to Codecov
       if: matrix.os == 'linux' && matrix.python-version == '3.12'
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac  # v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         slug: ai-dynamo/aiperf
