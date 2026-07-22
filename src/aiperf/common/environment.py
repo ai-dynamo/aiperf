@@ -1163,6 +1163,17 @@ class _UISettings(BaseSettings):
         env_prefix="AIPERF_UI_",
     )
 
+    CONSOLE_EXPORT_WIDTH: int = Field(
+        ge=40,
+        le=10000,
+        default=140,
+        description=(
+            "Fixed column width used to render the post-run console exporter "
+            "tables. Applied both to the recording console that produces "
+            "profile_export_console.txt and to the live console when stdout "
+            "is not a tty (so non-tty CI logs match the saved artifact)."
+        ),
+    )
     LOG_REFRESH_INTERVAL: float = Field(
         ge=0.01,
         le=100000.0,
