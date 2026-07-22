@@ -84,6 +84,15 @@ _DatasetName = Annotated[
 ]
 
 
+def _reject_flat_prompt_corpus(data: Any) -> Any:
+    """Hard-cut legacy top-level ``prompt_corpus``; redirect authors to ``prompts.corpus``."""
+    if isinstance(data, dict) and "prompt_corpus" in data:
+        raise ValueError(
+            "prompt_corpus is not supported; author prompts.corpus instead"
+        )
+    return data
+
+
 # Dataset type variants using discriminated unions
 class SyntheticDataset(BaseConfig):
     """
@@ -606,6 +615,11 @@ class FileDataset(BaseConfig):
     _use_think_time_only_explicitly_set: bool = False
     _use_end_to_start_delays_explicitly_set: bool = False
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_flat_prompt_corpus_key(cls, data: Any) -> Any:
+        return _reject_flat_prompt_corpus(data)
+
     @model_validator(mode="after")
     def _validate_trace_delay_exclusivity(self) -> FileDataset:
         """Reject the mutually-exclusive trace-delay flags and snapshot intent."""
@@ -928,6 +942,11 @@ class PublicDataset(BaseConfig):
             ),
         ),
     ]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_flat_prompt_corpus_key(cls, data: Any) -> Any:
+        return _reject_flat_prompt_corpus(data)
 
     @model_validator(mode="after")
     def _resolve_entries_explicit(self) -> PublicDataset:

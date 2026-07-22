@@ -270,10 +270,9 @@ class CustomDatasetComposer(BaseDatasetComposer):
         default Shakespeare sonnets. Using the wrong corpus produces different
         request bytes, ISL token counts, and prefix-cache-hit metrics.
 
-        ``--prompt-corpus`` (read via ``run.cfg.get_prompt_corpus()``) overrides
-        the loader's registered default. ``default_prompt_corpus`` is typed as a
-        plain ``str`` on the plugin metadata (to avoid an enum import cycle), so
-        an explicit ``None`` corpus falls back to it by value comparison.
+        Resolution goes through ``resolve_prompt_generator``: ``--prompt-corpus``
+        (via ``run.cfg.get_prompt_corpus()`` / ``prompts.corpus``) overrides the
+        loader's registered ``default_prompt_corpus`` string from plugin metadata.
         """
         from aiperf.dataset.generator.corpus import resolve_prompt_generator
 

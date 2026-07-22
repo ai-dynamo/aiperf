@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from aiperf.common.enums import PromptCorpus
-from aiperf.config.dataset import FileDataset
+from aiperf.config.dataset import FileDataset, PublicDataset
 from aiperf.config.dataset.content import PromptConfig, PromptSelectionConfig
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import CustomDatasetType
@@ -33,9 +33,24 @@ def test_file_dataset_rejects_flat_prompt_corpus():
                 "prompt_corpus": "coding",
             }
         )
-    assert (
-        "prompt_corpus" in str(exc.value).lower() or "extra" in str(exc.value).lower()
-    )
+    msg = str(exc.value).lower()
+    assert "prompt_corpus" in msg
+    assert "prompts.corpus" in msg
+
+
+def test_public_dataset_rejects_flat_prompt_corpus():
+    with pytest.raises(Exception) as exc:
+        PublicDataset.model_validate(
+            {
+                "name": "default",
+                "type": "public",
+                "dataset": "sharegpt",
+                "prompt_corpus": "coding",
+            }
+        )
+    msg = str(exc.value).lower()
+    assert "prompt_corpus" in msg
+    assert "prompts.corpus" in msg
 
 
 def test_file_dataset_accepts_prompts_corpus():
