@@ -483,9 +483,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         for record in records:
             try:
                 scrape_phase = _SERVER_METRICS_SCRAPE_PHASE.get()
-                record = record.model_copy(
-                    update={"benchmark_phase": scrape_phase or self._active_phase}
-                )
+                record.benchmark_phase = scrape_phase or self._active_phase
                 message = ServerMetricsRecordMessage(
                     service_id=self.service_id,
                     collector_id=collector_id,

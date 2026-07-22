@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
 from aiperf.common.models.telemetry_models import (
@@ -381,3 +383,102 @@ class TestGPUTelemetryAccumulator:
 
         assert len(gpu0_results) > 0
         assert len(gpu1_results) > 0
+
+
+class TestAccumulatorProtocolSupport:
+    """``AccumulatorProtocol`` alias and analyzer time-range query support."""
+
+    @pytest.mark.asyncio
+    async def test_process_record_alias_and_query_time_range(
+        self, mock_run, mock_pub_client
+    ):
+        import numpy as np
+
+        accumulator = GPUTelemetryAccumulator(
+            run=mock_run,
+            pub_client=mock_pub_client,
+        )
+
+        empty = accumulator.query_time_range(0, 10_000_000_000)
+        assert empty.dtype == bool
+        assert len(empty) == 0
+
+        for ts in (1_000_000_000, 2_000_000_000, 3_000_000_000):
+            await accumulator.process_record(make_telemetry_record(timestamp_ns=ts))
+
+        mask = accumulator.query_time_range(2_000_000_000, 3_000_000_000)
+        assert mask.tolist() == [False, True, False]
+        assert np.count_nonzero(accumulator.query_time_range(0, 4_000_000_000)) == 3
+
+
+class TestRealtimeTelemetryTask:
+    """Realtime telemetry background task interval gating."""
+
+    @pytest.mark.asyncio
+    async def test_zero_interval_dashboard_task_waits_for_enable_and_reports(
+        self, mock_run, mock_pub_client, monkeypatch
+    ) -> None:
+        """Dashboard telemetry still polls when stats_interval=0.
+
+        The task must stay alive until ``START_REALTIME_TELEMETRY`` toggles the
+        panel on, then report once at the dashboard fallback cadence instead of
+        exiting before the enable event can wake it.
+        """
+        from aiperf.common.enums import GPUTelemetryMode
+        from aiperf.plugin.enums import UIType
+
+        mock_run.cfg.runtime.ui = UIType.DASHBOARD
+        mock_run.cfg.gpu_telemetry_mode = GPUTelemetryMode.SUMMARY
+        accumulator = GPUTelemetryAccumulator(
+            run=mock_run,
+            pub_client=mock_pub_client,
+        )
+
+        async def report_once_then_stop() -> None:
+            accumulator.stop_requested = True
+
+        accumulator._report_realtime_metrics = AsyncMock(
+            side_effect=report_once_then_stop
+        )
+        monkeypatch.setattr(Environment.UI, "REALTIME_METRICS_INTERVAL", 0.0)
+
+        with patch(
+            "aiperf.gpu_telemetry.accumulator.asyncio.sleep",
+            new=AsyncMock(),
+        ):
+            task = asyncio.create_task(
+                accumulator._report_realtime_telemetry_metrics_task()
+            )
+            await asyncio.sleep(0)
+            assert not task.done()
+
+            accumulator.start_realtime_telemetry()
+            await task
+
+        accumulator._report_realtime_metrics.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_dashboard_realtime_mode_reports_each_tick(
+        self, mock_run, mock_pub_client
+    ):
+        """In dashboard realtime mode the loop reports then sleeps per tick."""
+        from aiperf.common.enums import GPUTelemetryMode
+        from aiperf.plugin.enums import UIType
+
+        mock_run.cfg.runtime.ui = UIType.DASHBOARD
+        mock_run.cfg.gpu_telemetry_mode = GPUTelemetryMode.REALTIME_DASHBOARD
+        accumulator = GPUTelemetryAccumulator(
+            run=mock_run,
+            pub_client=mock_pub_client,
+        )
+
+        async def report_once_then_stop() -> None:
+            accumulator.stop_requested = True
+
+        accumulator._report_realtime_metrics = AsyncMock(
+            side_effect=report_once_then_stop
+        )
+
+        await accumulator._report_realtime_telemetry_metrics_task()
+
+        accumulator._report_realtime_metrics.assert_awaited_once()
