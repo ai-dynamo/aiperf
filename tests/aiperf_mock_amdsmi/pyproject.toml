@@ -16,7 +16,9 @@ readme = "README.md"
 requires-python = ">=3.11,<3.14"
 
 # Exposes the top-level import name `amdsmi`, shadowing the real ROCm bindings
-# in any venv where this package is installed AND AIPERF_MOCK_AMDSMI is set.
+# in any venv where this package is installed. AIPERF_MOCK_AMDSMI controls
+# whether the fake is dormant (raises OSError) or active — not whether shadowing
+# occurs. Do not install on real AMD hardware.
 [tool.setuptools]
 packages = ["amdsmi"]
 
