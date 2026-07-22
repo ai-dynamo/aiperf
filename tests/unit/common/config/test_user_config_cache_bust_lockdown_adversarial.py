@@ -126,8 +126,8 @@ def test_cache_bust_rejected_with_every_non_agentic_timing_mode(
 ) -> None:
     """Every non-agentic TimingMode + non-NONE cache_bust SHOULD raise.
 
-    Parametrized over the FULL enum so any new TimingMode is exercised. v2 does
-    not raise, so this is a strict xfail until the lockdown is re-ported.
+    Parametrized over the FULL enum so any new TimingMode is exercised. The
+    validation is not implemented yet, so this remains a strict xfail.
     """
     with pytest.raises(ValueError, match="agentic_replay"):
         _build(
@@ -138,7 +138,7 @@ def test_cache_bust_rejected_with_every_non_agentic_timing_mode(
 
 
 # =============================================================================
-# Rejection: non-chat/responses endpoint types  (REAL PORT GAP -> strict xfail)
+# Rejection: non-chat/responses endpoint types (strict xfail)
 # =============================================================================
 
 
@@ -149,9 +149,8 @@ def test_cache_bust_rejected_with_every_non_chat_endpoint_type(
 ) -> None:
     """Every non-chat/responses endpoint + non-NONE cache_bust SHOULD raise.
 
-    v2 does not raise, so this is a strict xfail until the lockdown is
-    re-ported. Endpoint type drives whether the system-message marker slot
-    exists at all.
+    The validation is not implemented yet, so this remains a strict xfail.
+    Endpoint type drives whether the system-message marker slot exists at all.
     """
     with pytest.raises(ValueError, match="chat or responses"):
         _build(

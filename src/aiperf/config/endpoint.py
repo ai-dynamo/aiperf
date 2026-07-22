@@ -30,7 +30,6 @@ from aiperf.config.base import BaseConfig
 from aiperf.config.loader.parsing import normalize_http_urls
 from aiperf.plugin.enums import (
     EndpointType,
-    SessionRoutingType,
     TransportType,
     URLSelectionStrategy,
 )
@@ -320,20 +319,6 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
-    session_routing: Annotated[
-        SessionRoutingType | None,
-        Field(
-            default=None,
-            description=(
-                "Session-routing transform stamping per-session identity on "
-                "every request so an external router (SGLang Model Gateway, Dynamo, "
-                "generic session-affinity LBs) can pin a session's turns to "
-                "one replica. One mode per run; parameterize with "
-                "--session-routing-opt key=value."
-            ),
-        ),
-    ]
-
     uuid_and_strip: Annotated[
         bool,
         Field(
@@ -347,20 +332,6 @@ class EndpointConfig(BaseConfig):
                 "session_id-grouped rows; multi_turn is rejected. The server cache must "
                 "cover the working set, and requests in a session must reach a replica "
                 "that retains earlier UUIDs."
-            ),
-        ),
-    ]
-
-    session_routing_opts: Annotated[
-        dict[str, Any],
-        Field(
-            default_factory=dict,
-            description=(
-                "Mode-specific options for --session-routing, validated "
-                "against the selected plugin's Options model (unknown keys and "
-                "invalid values are rejected at startup). Values are "
-                "canonicalized/coerced to the plugin's Options model types at "
-                "validation, so downstream consumers see typed values."
             ),
         ),
     ]
@@ -592,30 +563,4 @@ class EndpointConfig(BaseConfig):
                 f"endpoint types that accept form-data (e.g. image_edit, "
                 f"video_generation); endpoint type {self.type} does not."
             )
-        return self
-
-    @model_validator(mode="after")
-    def validate_session_routing(self) -> Self:
-        """Fail fast: opts require a mode; opts must satisfy the plugin's Options.
-
-        Canonicalizes the opts to the plugin's Options model types so downstream
-        consumers (including the pickled BenchmarkRun that reaches workers) carry
-        coerced values (e.g. ``{"timeout_seconds": 600}``, not ``"600"``).
-        """
-        if self.session_routing is None:
-            if self.session_routing_opts:
-                raise ValueError(
-                    "--session-routing-opt requires --session-routing to select a mode."
-                )
-            return self
-        from aiperf.plugin import plugins
-        from aiperf.plugin.enums import PluginType
-
-        routing_cls = plugins.get_class(
-            PluginType.SESSION_ROUTING, str(self.session_routing)
-        )
-        options = routing_cls.Options(**self.session_routing_opts)
-        canonical = options.model_dump(mode="json", exclude_unset=True)
-        if canonical != self.session_routing_opts:
-            self.session_routing_opts = canonical
         return self

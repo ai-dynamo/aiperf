@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """CLI-surface end-to-end tests for the ``agentic_replay`` timing mode.
 
-Ported from the agentx branch onto the v2 config refactor. Complements
 ``test_agentic_replay_e2e.py``, which stops at the strategy/exporter boundary
 and constructs ``TrajectorySource`` / ``AgenticReplayStrategy`` directly from
 Python. This file drives the *full* ``aiperf profile --scenario
@@ -10,26 +9,17 @@ inferencex-agentx-mvp --unsafe-override`` flow through cyclopts via the
 in-process ``app(args)`` runner used by every other component-integration
 test, then inspects the JSON export and captured logs.
 
-V2 PORT NOTES:
+Implementation notes:
 
-* agentx ran the scenario lock from ``UserConfig.model_post_init`` ->
-  ``_run_scenario_validator`` -> ``validate_scenario``. In v2 the lock is a
-  config-resolver step: ``ConfigResolver`` runs a ``ScenarioResolver`` that
-  calls ``aiperf.common.scenario.apply_scenario(run)`` (see
-  ``config/resolution/resolvers.py:333`` and ``common/scenario/validator.py``).
+* ``ConfigResolver`` runs a ``ScenarioResolver`` that calls
+  ``aiperf.common.scenario.apply_scenario(run)``.
   Because the component-integration harness runs ``app(args)`` *in-process*,
   ``caplog`` (attached to logger ``aiperf.common.scenario.validator``) still
   captures the resolver's auto-set logs.
-* Log-string assertions re-pointed to the v2 message text:
-    - agentx ``"setting timing_mode"`` -> v2
-      ``"Scenario 'inferencex-agentx-mvp': setting profiling-phase timing_mode="``
-      (the scenario now sets a *per-phase* ``timing_mode`` override; v2 has no
-      top-level ``timing_mode``).
-    - ``"auto-set --trace-idle-gap-cap-seconds=10.0"`` follows the spec
-      (the spec locks ``trace_idle_gap_cap_seconds=10.0``).
-* The orchestrator's AGENTIC_REPLAY detection -> ``TrajectorySource``
-  construction moved to ``timing/phase_orchestrator.py:144`` (``is_agentic_replay
-  = any(pc.timing_mode == AGENTIC_REPLAY for pc in config.phase_configs)``).
+* The scenario sets a per-phase ``timing_mode`` override and locks
+  ``trace_idle_gap_cap_seconds=10.0``.
+* AGENTIC_REPLAY detection constructs ``TrajectorySource`` when any phase
+  config selects that timing mode.
   The scenario lock writes that per-phase override, so this CLI flow drives the
   genuine TrajectorySource + AgenticReplayStrategy engine end-to-end.
 * ``--benchmark-duration 30`` is below the spec's

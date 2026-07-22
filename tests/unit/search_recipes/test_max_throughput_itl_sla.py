@@ -3,10 +3,9 @@
 
 """Tests for the MaxThroughputUnderITLSLA built-in recipe.
 
-Mirrors the TTFT-SLA twin against the post-merge ``AdaptiveSearchSweep`` shape
-with nested ``Objective``. Adapted to this branch's
-``SearchRecipeContext.benchmark_config`` shape via the ``make_ctx`` helper in
-``conftest.py``.
+Mirrors the TTFT-SLA twin against the ``AdaptiveSearchSweep`` shape with nested
+``Objective``. The ``make_ctx`` helper in ``conftest.py`` provides the
+``SearchRecipeContext.benchmark_config``.
 """
 
 from __future__ import annotations

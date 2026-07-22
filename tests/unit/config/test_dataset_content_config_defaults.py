@@ -1,32 +1,22 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Default-value contract for the v2 dataset content configs.
+"""Default-value contract for dataset content configs.
 
 Pins the explicit default field values of the synthetic-dataset content
 configs (Image / Audio / Video / VideoAudio / Prompt / PrefixPrompt /
 CacheBust / Rankings) and the conversation/turn shape carried by
-``SyntheticDataset``.
-
-V2 PORT NOTE: ported from the v1 ``tests/unit/common/config/test_*_config.py``
-suite (test_image_config / test_audio_config / test_video_config /
-test_prompt_config / test_sessions_config). The v2 config model restructured
-these classes:
+``SyntheticDataset``. The config model structures these classes as follows:
 
   * They live under ``aiperf.config.dataset.content`` and
-    ``aiperf.config.dataset.video`` (v1: ``aiperf.common.config``).
+    ``aiperf.config.dataset.video``.
   * Image/Audio width/height/length are now ``SamplingDistribution`` fields
     (``FixedDistribution`` by default) rather than mean/stddev sub-configs, so
     the default is asserted via ``.expected_value``.
-  * Several defaults changed from v1 (e.g. Image batch_size 1->0, Image format
-    PNG->JPEG, Audio batch_size 1->0, Video duration 5.0->1.0, VideoAudio
-    sample_rate 44100->44.1). The stale ``aiperf.config.dataset.defaults``
-    ``*Defaults`` dataclasses do NOT match these v2 field defaults, so this
-    test asserts the ACTUAL v2 field default values (read from the live config
-    classes), per the auditor's "assert the v2 value if a default changed"
-    directive.
-  * v1 ``ConversationConfig`` / ``TurnConfig`` no longer exist; the v2
-    equivalent of the conversation/turn contract is the ``turns`` /
-    ``turn_delay`` / ``turn_delay_ratio`` fields on ``SyntheticDataset``.
+  * The stale ``aiperf.config.dataset.defaults`` ``*Defaults`` dataclasses do
+    not match these field defaults, so this test asserts the values read from
+    the live config classes.
+  * The conversation/turn contract uses the ``turns`` / ``turn_delay`` /
+    ``turn_delay_ratio`` fields on ``SyntheticDataset``.
 """
 
 from __future__ import annotations

@@ -21,6 +21,7 @@ Covers former bugs in ``aiperf.config.flags._converter_profiling``:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -318,77 +319,20 @@ class TestAgenticWarmupGracePeriodRouting:
         assert prof["agentic_warmup_grace_period"] == 0.0
 
 
-class TestAdaptiveScaleRoutes:
-    def test_adaptive_scale_cli_fields_route_to_profiling_phase(
-        self: TestAdaptiveScaleRoutes,
-    ) -> None:
-        loadgen = CLIConfig(
-            adaptive_scale=True,
-            adaptive_sustain_duration=120.0,
-            adaptive_assessment_period=30.0,
-            adaptive_scale_sla=["request_latency:p95:le:30000"],
-            benchmark_duration=600.0,
-            concurrency=200,
-        )
-        user = _make_user(loadgen=loadgen)
-        prof = build_profiling(user)
-
-        assert prof["type"] == PhaseType.CONCURRENCY
-        assert prof["adaptive_scale"] is True
-        assert prof["adaptive_sustain_duration"] == 120.0
-        assert prof["adaptive_assessment_period"] == 30.0
-        assert prof["sla"] == [
-            {
-                "metric_tag": "request_latency",
-                "stat": "p95",
-                "op": "le",
-                "threshold": 30000.0,
-            }
-        ]
-
-    def test_adaptive_scale_compact_control_routes_to_profiling_phase(
-        self: TestAdaptiveScaleRoutes,
-    ) -> None:
-        loadgen = CLIConfig(
-            adaptive_scale=True,
-            adaptive_scale_control="request_rate:1,200:float",
-            adaptive_sustain_duration=120.0,
-            adaptive_scale_sla=["request_latency:p95:le:30000"],
-            benchmark_duration=600.0,
-            request_rate=200.0,
-        )
-        user = _make_user(loadgen=loadgen)
-        prof = build_profiling(user)
-
-        assert prof["adaptive_control_variable"] == "request_rate"
-        assert prof["adaptive_control_min"] == 1.0
-        assert prof["adaptive_control_max"] == 200.0
-        assert "adaptive_scale_control" not in prof
-
-    @pytest.mark.parametrize(
-        ("control", "match"),
-        [
-            pytest.param("concurrency:1", "variable:min,max:type", id="missing-type"),
-            pytest.param(
-                ":1,10:int", "requires a control variable", id="blank-variable"
-            ),
-            pytest.param(
-                "concurrency:1.5,10:int",
-                "min bound must be an integer",
-                id="bad-int-min",
-            ),
-            pytest.param(
-                "request_rate:one,10:float",
-                "min bound must be a number",
-                id="bad-float-min",
-            ),
-            pytest.param(
-                "concurrency:1,10:string",
-                "type must be 'int' or 'float'",
-                id="bad-type",
-            ),
-        ],
+class TestAdaptiveScaleCliRemoval:
+    REMOVED_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "adaptive_scale",
+            "adaptive_sustain_duration",
+            "adaptive_assessment_period",
+            "adaptive_scale_control",
+            "adaptive_control_variable",
+            "adaptive_control_min",
+            "adaptive_control_max",
+            "adaptive_scale_sla",
+        }
     )
+
     def test_removed_adaptive_scale_cli_fields_are_not_on_cli_config(self) -> None:
         assert self.REMOVED_FIELDS.isdisjoint(CLIConfig.model_fields)
 
@@ -442,7 +386,7 @@ class TestAdaptiveScaleValidation:
             )
 
     def test_nested_adaptive_scale_yaml_lowers_to_flat_phase_fields(
-        self: TestAdaptiveScaleRoutes,
+        self: TestAdaptiveScaleValidation,
     ) -> None:
         from aiperf.config.phases import ConcurrencyPhase
 
@@ -612,7 +556,7 @@ class TestAdaptiveScaleValidation:
         ],
     )
     def test_adaptive_scale_validation_errors(
-        self: TestAdaptiveScaleRoutes, phase_data: dict, match: str
+        self: TestAdaptiveScaleValidation, phase_data: dict, match: str
     ) -> None:
         from aiperf.config.phases import ConcurrencyPhase
 
@@ -635,7 +579,7 @@ class TestAdaptiveScaleValidation:
         ],
     )
     def test_nested_adaptive_scale_rejects_invalid_blocks(
-        self: TestAdaptiveScaleRoutes, block: dict, match: str
+        self: TestAdaptiveScaleValidation, block: dict, match: str
     ) -> None:
         from aiperf.config.phases import ConcurrencyPhase
 
@@ -660,7 +604,7 @@ class TestAdaptiveScaleValidation:
             )
 
     def test_nested_adaptive_scale_string_false_disables_phase(
-        self: TestAdaptiveScaleRoutes,
+        self: TestAdaptiveScaleValidation,
     ) -> None:
         from aiperf.config.phases import ConcurrencyPhase
 

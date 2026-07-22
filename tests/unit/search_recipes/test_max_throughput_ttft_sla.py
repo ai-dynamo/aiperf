@@ -3,12 +3,8 @@
 
 """Tests for the MaxThroughputUnderTTFTSLA built-in recipe.
 
-Targets the post-merge shape: recipes emit ``AdaptiveSearchSweep`` with a
-nested ``Objective`` (replacing the deleted v1 ``AdaptiveSearchConfig``
-flat-objective fields).
-
-This branch's recipes consume a ``SearchRecipeContext`` carrying a validated
-``BenchmarkConfig`` (not the ajc/k8s structural ``RecipeCLIConfigView``); the
+Recipes emit ``AdaptiveSearchSweep`` with a nested ``Objective`` and consume a
+``SearchRecipeContext`` carrying a validated ``BenchmarkConfig``. The
 ``make_ctx`` helper in ``conftest.py`` builds one.
 """
 

@@ -604,7 +604,7 @@ class CreditIssuer:
         the orchestrator's ``hasattr(self._issuer, "abort_session")`` guard
         resolves; under ``AIPERF_DAG_FAIL_FAST=true`` the orchestrator calls
         this when a child errors and the parent / orphan siblings must be torn
-        down (origin/main #891 FAIL_FAST path).
+        down.
 
         If implemented in the future, the contract is:
 

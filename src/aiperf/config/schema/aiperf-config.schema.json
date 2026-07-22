@@ -12045,29 +12045,11 @@
           "description": "HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header. Useful when the inference server expects a custom session-affinity header (e.g. `--session-header X-Session-ID`).",
           "title": "Sessionheader"
         },
-        "sessionRouting": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SessionRoutingType"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Session-routing transform stamping per-session identity on every request so an external router (SGLang Model Gateway, Dynamo, generic session-affinity LBs) can pin a session's turns to one replica. One mode per run; parameterize with --session-routing-opt key=value."
-        },
         "uuidAndStrip": {
           "default": false,
           "description": "Enable AIPerf-managed image stripping for vLLM's multimodal processor cache. Dataset-authored image UUIDs, including UUID-only cache references, always pass through on the chat endpoint; this flag only strips repeated content after AIPerf observes it in the same session. Automatic stripping supports only single_turn datasets with session_id-grouped rows; multi_turn is rejected. The server cache must cover the working set, and requests in a session must reach a replica that retains earlier UUIDs.",
           "title": "Uuidandstrip",
           "type": "boolean"
-        },
-        "sessionRoutingOpts": {
-          "additionalProperties": true,
-          "description": "Mode-specific options for --session-routing, validated against the selected plugin's Options model (unknown keys and invalid values are rejected at startup). Values are canonicalized/coerced to the plugin's Options model types at validation, so downstream consumers see typed values.",
-          "title": "Sessionroutingopts",
-          "type": "object"
         },
         "waitForModelTimeout": {
           "default": 0.0,
@@ -18561,16 +18543,6 @@
         "multiprocessing"
       ],
       "title": "ServiceRunType",
-      "type": "string"
-    },
-    "SessionRoutingType": {
-      "enum": [
-        "dynamo_headers",
-        "dynamo_nvext",
-        "smg_routing_key",
-        "session_id_header"
-      ],
-      "title": "SessionRoutingType",
       "type": "string"
     },
     "SobolSweep": {

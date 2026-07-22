@@ -609,25 +609,25 @@ class TestRetrieveConversation:
         mock_fallback.assert_called_once_with("test-conv-123", sample_credit_context)
 
 
-# --- Terminal Eviction / Session-Routing Hook Tests ---
+# --- Terminal Eviction Tests ---
 
 
 @pytest.mark.asyncio
 class TestReleaseAndEvictForTerminal:
     """Test suite for Worker's _release_and_evict_for_terminal method."""
 
-    async def test_release_and_evict_for_terminal_notifies_session_end(
+    async def test_release_and_evict_for_terminal_evicts_session(
         self, mock_worker, sample_credit_context
     ):
-        """A terminal eviction fires the routing plugin's post-session hook
-        (``InferenceClient.notify_session_end``) so stateful plugins release the
-        session even when abandoned before its final turn (e.g. cancellation)."""
+        """A terminal eviction removes the (non-fork) session from the session
+        manager."""
         credit = sample_credit_context.credit
-        mock_worker.inference_client.notify_session_end = Mock()
+        mock_worker.session_manager = MagicMock()
+        mock_worker.session_manager.get.return_value = None
 
         mock_worker._release_and_evict_for_terminal(credit, credit.x_correlation_id)
 
-        mock_worker.inference_client.notify_session_end.assert_called_once_with(
+        mock_worker.session_manager.evict.assert_called_once_with(
             credit.x_correlation_id
         )
 
@@ -657,81 +657,41 @@ class TestTerminalContextOverflowClassifier:
         assert _is_terminal_context_overflow(credit, ctx) is expected
 
 
-class TestSessionRoutingTerminalHooks:
-    """Every terminal disposition reaches ``InferenceClient.notify_session_end``
-    so routing plugins get their idempotent post-session hook on ALL four
-    terminal paths: final turn, cancellation, terminal context overflow, and the
-    done-callback cancel-before-start branch (which the finally block never sees).
-    """
+class TestTerminalDisposition:
+    """Every terminal disposition (final turn, cancellation, terminal context
+    overflow) routes to ``_release_and_evict_for_terminal`` so the session is
+    evicted; a non-final plain error does not."""
 
     def _dispatch_terminal(
         self, *, is_final: bool, cancelled: bool, error
     ) -> MagicMock:
-        """Drive the real terminal-disposition gate on a mock worker.
-
-        Both ``_handle_terminal_disposition`` and ``_release_and_evict_for_terminal``
-        are bound as real methods so the final/cancelled path actually reaches
-        ``notify_session_end``; everything else (session_manager) stays mocked.
-        """
+        """Drive the real terminal-disposition gate on a mock worker."""
         worker = MagicMock()
-        worker.inference_client = MagicMock()
-        worker._release_and_evict_for_terminal = (
-            Worker._release_and_evict_for_terminal.__get__(worker)
-        )
+        worker._release_and_evict_for_terminal = Mock()
         credit = MagicMock(is_final_turn=is_final)
         ctx = MagicMock(cancelled=cancelled, error=error)
         Worker._handle_terminal_disposition.__get__(worker)(credit, ctx, "conv-X")
         return worker
 
-    def test_final_turn_notifies_session_end(self) -> None:
+    def test_final_turn_evicts(self) -> None:
         worker = self._dispatch_terminal(is_final=True, cancelled=False, error=None)
-        worker.inference_client.notify_session_end.assert_called_once_with("conv-X")
+        worker._release_and_evict_for_terminal.assert_called_once()
 
-    def test_cancelled_notifies_session_end(self) -> None:
+    def test_cancelled_evicts(self) -> None:
         worker = self._dispatch_terminal(is_final=False, cancelled=True, error=None)
-        worker.inference_client.notify_session_end.assert_called_once_with("conv-X")
+        worker._release_and_evict_for_terminal.assert_called_once()
 
-    def test_terminal_context_overflow_notifies_session_end(self) -> None:
+    def test_terminal_context_overflow_evicts(self) -> None:
         worker = self._dispatch_terminal(
             is_final=False, cancelled=False, error=_OVERFLOW_BODY
         )
-        worker.inference_client.notify_session_end.assert_called_once_with("conv-X")
+        worker._release_and_evict_for_terminal.assert_called_once()
 
-    def test_nonfinal_plain_error_does_not_notify(self) -> None:
+    def test_nonfinal_plain_error_does_not_evict(self) -> None:
         worker = self._dispatch_terminal(
             is_final=False, cancelled=False, error="connection reset by peer"
         )
-        worker.inference_client.notify_session_end.assert_not_called()
-
-    def _done_callback(self, *, returned: bool) -> MagicMock:
-        """Drive the real done-callback on a mock worker with a not-yet-returned
-        (or already-returned) credit context."""
-        worker = MagicMock()
-        worker.inference_client = MagicMock()
-        worker.service_id = "worker-1"
-        credit = MagicMock()
-        credit.id = 7
-        credit.x_correlation_id = "conv-done"
-        ctx = MagicMock()
-        ctx.returned = returned
-        ctx.credit = credit
-        task = MagicMock()
-        task.cancelled.return_value = True
-        Worker._on_credit_drop_message_task_done.__get__(worker)(task, ctx)
-        return worker
-
-    def test_done_callback_not_returned_branch_notifies_session_end(self) -> None:
-        """The cancel-before-start path (task done, credit never returned) is a
-        terminal disposition the finally block never sees, so the done-callback
-        must fire the hook too."""
-        worker = self._done_callback(returned=False)
-        worker.inference_client.notify_session_end.assert_called_once_with("conv-done")
-
-    def test_done_callback_already_returned_does_not_double_notify(self) -> None:
-        """When the credit already returned, the finally block already notified;
-        the done-callback short-circuits without a second hook call."""
-        worker = self._done_callback(returned=True)
-        worker.inference_client.notify_session_end.assert_not_called()
+        worker._release_and_evict_for_terminal.assert_not_called()
 
 
 # --- Payload Bytes Fast Path Tests ---

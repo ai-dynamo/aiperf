@@ -963,7 +963,7 @@ class TestAccuracyModeSamplingGuards:
 
 
 # ============================================================================
-# PAYLOAD_BYTES body-mutating feature gates (session-routing + cache-bust)
+# PAYLOAD_BYTES body-mutating feature gates (cache-bust)
 # ============================================================================
 
 
@@ -1015,36 +1015,15 @@ class TestPayloadBytesBodyMutatingGates:
     """
 
     @pytest.mark.asyncio
-    async def test_select_format_rejects_payload_bytes_with_mutating_routing(
+    async def test_select_format_allows_payload_bytes_when_clean(
         self, initialized_dataset_manager
     ) -> None:
         dm = initialized_dataset_manager
-        dm.run.cfg.endpoint.session_routing = "dynamo_nvext"
-
-        with pytest.raises(ValueError, match="dynamo_nvext"):
-            dm._select_mmap_format(_raw_payload_conversations())
-
-    @pytest.mark.asyncio
-    async def test_select_format_allows_payload_bytes_with_header_routing(
-        self, initialized_dataset_manager
-    ) -> None:
-        dm = initialized_dataset_manager
-        dm.run.cfg.endpoint.session_routing = "dynamo_headers"
 
         assert (
             dm._select_mmap_format(_raw_payload_conversations())
             == MemoryMapFormat.PAYLOAD_BYTES
         )
-
-    @pytest.mark.asyncio
-    async def test_cache_hit_rejects_payload_bytes_with_mutating_routing(
-        self, initialized_dataset_manager, tmp_path
-    ) -> None:
-        dm = initialized_dataset_manager
-        dm.run.cfg.endpoint.session_routing = "dynamo_nvext"
-
-        with pytest.raises(ValueError, match="dynamo_nvext"):
-            await dm._configure_from_cache_hit(_payload_bytes_cache_hit(tmp_path))
 
     @pytest.mark.asyncio
     async def test_cache_hit_rejects_payload_bytes_with_cache_bust(
@@ -1064,8 +1043,7 @@ class TestPayloadBytesBodyMutatingGates:
         self, initialized_dataset_manager
     ) -> None:
         dm = initialized_dataset_manager
-        # No routing, no cache-bust: the pre-check must pass (no raise).
-        assert dm.run.cfg.endpoint.session_routing is None
+        # No cache-bust: the pre-check must pass (no raise).
         assert dm.run.cfg.get_cache_bust_target() == CacheBustTarget.NONE
 
         dm._reject_body_mutators_for_payload_bytes(MemoryMapFormat.PAYLOAD_BYTES)

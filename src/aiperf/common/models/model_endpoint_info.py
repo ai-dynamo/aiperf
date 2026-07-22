@@ -122,14 +122,6 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.USE_SERVER_TOKEN_COUNT,
         description="Use server-reported token counts from API usage fields instead of client-side tokenization.",
     )
-    session_routing: str | None = Field(
-        default=None,
-        description="Selected session-routing plugin name (None = off).",
-    )
-    session_routing_opts: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Raw opts for the routing plugin's Options model.",
-    )
     connection_reuse_strategy: ConnectionReuseStrategy = Field(
         default=EndpointDefaults.CONNECTION_REUSE_STRATEGY,
         description="Transport connection reuse strategy.",
@@ -220,10 +212,6 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 api_key=ep.api_key,
                 use_legacy_max_tokens=ep.use_legacy_max_tokens,
                 use_server_token_count=ep.use_server_token_count,
-                session_routing=(
-                    str(ep.session_routing) if ep.session_routing is not None else None
-                ),
-                session_routing_opts=dict(ep.session_routing_opts),
                 connection_reuse_strategy=ep.connection_reuse,
                 download_video_content=ep.download_video_content,
                 request_content_type=ep.request_content_type,

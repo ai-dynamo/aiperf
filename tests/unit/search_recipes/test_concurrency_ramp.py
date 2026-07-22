@@ -7,7 +7,6 @@ Pins the recipe's default-grid endpoints, post-process spec, and override
 behavior so the user-facing contract (default ramp 1->1000, 20% threshold,
 post-process emits ``degradation_knee.json``) cannot drift silently.
 
-Ported from ``ajc/k8s`` to the BenchmarkConfig-based ``SearchRecipeContext``.
 Recipe sweep keys are envelope-prefixed (``phases.profiling.<...>``).
 """
 

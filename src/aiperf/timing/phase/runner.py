@@ -240,15 +240,15 @@ class PhaseRunner(TaskManagerMixin):
         - AGENTIC_REPLAY: always build (the trajectory source spawns subagents
           reactively; its metadata may declare no static branches, so the
           ``_is_dag_dataset`` heuristic would miss it).
-        - Other timing modes (REQUEST_RATE / USER_CENTRIC / FIXED_SCHEDULE,
-          i.e. main's #891 dag_jsonl path): lazy-build only for DAG-shaped
+        - Other timing modes (REQUEST_RATE / USER_CENTRIC / FIXED_SCHEDULE):
+          lazy-build only for DAG-shaped
           datasets (metadata declares branches OR has ``agent_depth > 0``
           conversations). Non-DAG runs leave ``self._branch_orchestrator``
           None and the callback / strategy paths skip orchestrator hooks.
 
-        Extra agentx ctor kwargs (benchmark_id / cache_bust_target /
+        Additional constructor inputs (benchmark_id / cache_bust_target /
         session_tree_registry / cache_bust_ledger) are threaded in for all
-        builds; they default to inert values on the dag_jsonl path
+        builds; they default to inert values for dag_jsonl
         (cache_bust_target NONE, registry None).
         """
         if self._branch_orchestrator is not None:

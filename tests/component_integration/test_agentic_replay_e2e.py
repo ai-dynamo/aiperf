@@ -1,26 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Agentic_replay end-to-end happy-path component-integration tests.
+"""Agentic-replay end-to-end component-integration tests.
 
-Ported from the agentx branch onto the v2 config refactor. The v2 reshape:
-
-- ``WekaTraceLoader`` takes ``run: BenchmarkRun`` (not ``user_config``); the
-  loader reads all config off ``run.cfg.*``. The MagicMock ``_mk_user_config``
-  is replaced by the real ``make_weka_run`` BenchmarkRun helper (shared with the
-  loader unit tests), with ``default_block_size`` forwarded explicitly because
-  FileDataset carries no block_size in v2.
-- ``AgenticReplayStrategy(... run=run)`` -- the strategy now reads
-  ``run.cfg.get_cache_bust_target()`` / ``run.benchmark_id``. These boundary
-  tests don't need a cache-bust target, so ``run=None`` is passed (the strategy
-  defaults to ``CacheBustTarget.NONE`` + ``benchmark_id="unknown"``), keeping the
-  warmup/profiling/recycle/metrics-window engine fully exercised.
-- The cli_runner carrier-key -> JSON-exporter wire is unchanged in v2
-  (``cli_runner/_aggregate.py`` stamps ``_scenario_name`` etc.; the confidence
-  JSON exporter pops them via ``compute_submission_outcome`` /
-  ``_build_run_metadata_dict``), so the aggregate/export assertions port
-  verbatim.
-
-Three tests:
+Three paths are covered:
 
 1. ``test_agentic_replay_e2e_clean_run_under_scenario`` -- exercise the full
    agentic_replay pipeline against the small synthetic weka fixture: load
@@ -36,8 +18,8 @@ Three tests:
    agentic_replay timing mode (no ``--scenario``): aggregate JSON omits the
    ``submission_valid`` field; the rest of the run still succeeds.
 
-This file pins the genuine loader -> trajectory -> strategy -> aggregate ->
-exporter chain end-to-end at the integration boundary above the
+This file pins the loader -> trajectory -> strategy -> aggregate -> exporter
+chain end-to-end at the integration boundary above the
 orchestrator-construction seam. The full ``aiperf profile --scenario`` CLI
 surface (which drives the orchestrator's TrajectorySource construction) is
 covered by ``test_agentic_replay_cli_e2e.py``.
@@ -113,12 +95,10 @@ class _SequentialSampler:
 
 
 def _make_weka_run():
-    """Build a real v2 ``BenchmarkRun`` adequate for WekaTraceLoader.
+    """Build a real ``BenchmarkRun`` adequate for WekaTraceLoader.
 
-    V2 PORT: replaces the agentx ``_mk_user_config()`` MagicMock. The loader
-    reads config off ``run.cfg.*`` in v2, so a MagicMock no longer satisfies its
-    reads -- the shared ``make_weka_run`` helper builds a genuine BenchmarkRun
-    with the trace-replay knobs (tokenizer, models, no fixed-schedule window).
+    The shared ``make_weka_run`` helper supplies the trace-replay knobs
+    (tokenizer, models, and no fixed-schedule window).
     """
     from tests.unit.dataset.loader.conftest import make_weka_run
 
@@ -370,7 +350,6 @@ def _build_phase_strategy(
         stop_checker=stop_checker if stop_checker is not None else _make_stop_checker(),
         credit_issuer=issuer,
         lifecycle=MagicMock(),
-        # V2 PORT: strategy reads run.cfg.get_cache_bust_target() / run.benchmark_id.
         # These boundary tests don't drive cache-bust; run=None defaults to
         # CacheBustTarget.NONE + benchmark_id="unknown" while still exercising
         # the full warmup/profiling/recycle/metrics-window engine.

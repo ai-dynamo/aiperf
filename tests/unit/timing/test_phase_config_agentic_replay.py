@@ -2,10 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """AGENTIC_REPLAY warmup/profiling CreditPhaseConfig construction.
 
-V2 PORT NOTE: agentx had a single ``_build_warmup_config(user_config)`` that
-special-cased AGENTIC_REPLAY and sized the warmup burst to
-``loadgen.concurrency``. The v2 config split this:
-
 - ``_build_warmup_config(phase: PhaseConfig)`` builds a *user-declared* warmup
   phase (REQUEST_RATE; ``total_expected_requests = phase.requests``).
 - ``_build_agentic_warmup_config(phase: PhaseConfig)`` builds the AGENTIC_REPLAY
@@ -13,9 +9,8 @@ special-cased AGENTIC_REPLAY and sized the warmup burst to
   ``total_expected_requests = phase.concurrency`` (one credit per concurrency
   lane, dispatched as a single CONCURRENCY_BURST).
 
-Both take a v2 ``PhaseConfig`` (the profiling phase), so the test builds a real
-profiling phase with ``timing_mode=AGENTIC_REPLAY`` rather than the old
-``user_config.loadgen`` stand-in.
+Both take a ``PhaseConfig``, so the test builds a real profiling phase with
+``timing_mode=AGENTIC_REPLAY``.
 """
 
 import pydantic
@@ -27,6 +22,7 @@ from aiperf.timing.config import (
     _build_agentic_warmup_config,
     _build_profiling_config,
 )
+from aiperf.timing.request_cancellation import RequestCancellationConfig
 
 _PHASE_ADAPTER = pydantic.TypeAdapter(PhaseConfig)
 
@@ -59,7 +55,12 @@ def test_warmup_config_uses_agentic_replay_when_top_level_is_agentic_replay() ->
 
 def test_profiling_config_propagates_cap() -> None:
     phase = _ar_profiling_phase()
-    profiling = _build_profiling_config(phase)
+    profiling = _build_profiling_config(
+        phase,
+        default_cancellation=RequestCancellationConfig(),
+        phase_index=0,
+        profiling_index=0,
+    )
     assert profiling.timing_mode == TimingMode.AGENTIC_REPLAY
     assert profiling.phase == CreditPhase.PROFILING
 

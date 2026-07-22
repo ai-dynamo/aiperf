@@ -24,8 +24,6 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "model_selection_strategy",
         "request_content_type",
         "session_header",
-        "session_routing",
-        "session_routing_opt",
         "streaming",
         "timeout_seconds",
         "transport",

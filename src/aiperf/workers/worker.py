@@ -759,14 +759,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.execute_async(self.credit_return_push_client.send(credit_return))
         credit_context.returned = True
 
-        # Post-session hook for routing plugins: this cancel-before-start path is a
-        # terminal disposition the finally block never sees (worker.py gap noted in
-        # the method docstring), so notify here too. Idempotent by contract.
-        if credit_context.credit is not None:
-            self.inference_client.notify_session_end(
-                credit_context.credit.x_correlation_id
-            )
-
         # Explicitly clear references to help refcounting (GC is disabled on workers)
         credit_context.credit = None
         credit_context.error = None
@@ -1235,15 +1227,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     def _handle_terminal_disposition(
         self, credit: Credit, credit_context: CreditContext, x_correlation_id: str
     ) -> None:
-        """Fire the routing plugin's post-session hook on ANY terminal
-        disposition of a session: a successful final turn, a cancellation, or a
-        mid-stream context overflow that ends the conversation (the latter sends
-        no final/cancel credit, so it is handled explicitly here).
+        """Evict on final turn, cancellation, or terminal context overflow.
+
+        Context overflow on a non-final, non-cancelled turn is terminal for
+        agentic_replay (lane recycled, no final/cancel credit follows), so it
+        must take the same eviction path.
         """
-        if credit.is_final_turn or credit_context.cancelled:
+        if (
+            credit.is_final_turn
+            or credit_context.cancelled
+            or _is_terminal_context_overflow(credit, credit_context)
+        ):
             self._release_and_evict_for_terminal(credit, x_correlation_id)
-        elif _is_terminal_context_overflow(credit, credit_context):
-            self.inference_client.notify_session_end(x_correlation_id)
 
     def _release_and_evict_for_terminal(
         self, credit: Credit, x_correlation_id: str
@@ -1259,11 +1254,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         Non-FORK and non-parent sessions evict immediately.
         """
-        # Fire the routing plugin's post-session hook on ANY terminal outcome
-        # (final turn or cancel), not just a successful final turn, so stateful
-        # plugins release sessions abandoned mid-conversation. Idempotent by
-        # contract; no-op when session routing is unset.
-        self.inference_client.notify_session_end(x_correlation_id)
         if (
             credit.parent_correlation_id is not None
             and credit.branch_mode == ConversationBranchMode.FORK

@@ -351,7 +351,7 @@ async def _run_weka_profile(
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
             process.communicate(), timeout=timeout
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         process.kill()
         await process.communicate()
         raise AssertionError(

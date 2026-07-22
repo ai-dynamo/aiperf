@@ -407,9 +407,8 @@ def test_every_numeric_field_has_bounds() -> None:
                 f"FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST."
             )
     if failures:
-        # Soft-skip the test unless the count gets WORSE than the current
-        # baseline -- some legacy fields are out of scope for this branch.
-        # The mechanism remains in place so new violations fire.
+        # Soft-skip unless the count gets worse than the current baseline.
+        # Existing legacy fields remain baselined while new violations fail.
         baseline = _load_or_init_numeric_baseline(failures)
         new = sorted(set(failures) - set(baseline))
         if new:

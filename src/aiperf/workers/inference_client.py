@@ -21,7 +21,6 @@ from aiperf.common.models import (
 from aiperf.common.redact import redact_headers
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TransportType
-from aiperf.workers.session_routing import RoutingContext, SessionRoutingBase
 
 if TYPE_CHECKING:
     from aiperf.transports.base_transports import FirstTokenCallback
@@ -74,21 +73,6 @@ class InferenceClient(AIPerfLifecycleMixin):
         # Resolved by the worker via record payload-retention auto-detection.
         self.strip_record_payload_bytes = strip_record_payload_bytes
 
-        # Session-routing plugin (selected via --session-routing): one instance
-        # per worker, invoked at the request-serialization chokepoint to stamp
-        # per-session identity (headers and/or body). None when routing is off.
-        self._routing: SessionRoutingBase | None = None
-        self._routing_mode: str | None = None
-        endpoint_info = model_endpoint.endpoint
-        if endpoint_info.session_routing is not None:
-            routing_cls = plugins.get_class(
-                PluginType.SESSION_ROUTING, endpoint_info.session_routing
-            )
-            self._routing = routing_cls(
-                routing_cls.Options(**endpoint_info.session_routing_opts)
-            )
-            self._routing_mode = endpoint_info.session_routing
-
         # Detect and set transport type if not explicitly set
         if not model_endpoint.transport:
             model_endpoint.transport = TransportType(
@@ -105,28 +89,6 @@ class InferenceClient(AIPerfLifecycleMixin):
         )
         self.transport = TransportClass(model_endpoint=self.model_endpoint)
         self.attach_child_lifecycle(self.transport)
-
-    def notify_session_end(self, x_correlation_id: str) -> None:
-        """Post-session pass-through to the routing plugin (idempotent hook).
-
-        Called by the worker terminal-eviction path on ANY terminal outcome
-        (final turn, cancellation, terminal context overflow, cancel-before-
-        start). Idempotency is the plugin's responsibility -- this hook does not
-        dedupe. No-op when session routing is unset.
-
-        A plugin exception is logged (naming the plugin and session) and
-        swallowed: this cleanup hook must never break the worker's core
-        session-eviction lifecycle.
-        """
-        if self._routing is None:
-            return
-        try:
-            self._routing.on_session_end(x_correlation_id)
-        except Exception as e:
-            self.warning(
-                f"session-routing plugin {self._routing_mode!r} on_session_end "
-                f"failed for session {x_correlation_id!r}; continuing eviction: {e!r}"
-            )
 
     async def _send_request_to_transport(
         self,
@@ -152,44 +114,7 @@ class InferenceClient(AIPerfLifecycleMixin):
         """
         request_info.endpoint_headers = self.endpoint.get_endpoint_headers(request_info)
         request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
-        # Session-routing chokepoint: build the per-request routing context once
-        # and let the plugin stamp its headers now (merged onto the endpoint
-        # headers). The same context feeds the structured body transform below.
-        routing_ctx: RoutingContext | None = None
-        if self._routing is not None:
-            routing_ctx = RoutingContext(
-                x_correlation_id=request_info.x_correlation_id,
-                parent_correlation_id=request_info.parent_correlation_id,
-                root_correlation_id=request_info.root_correlation_id,
-                is_final_turn=request_info.is_final_turn,
-                is_parent_final=request_info.is_parent_final,
-                is_tree_final=request_info.is_tree_final,
-            )
-            # Attribute a plugin fault to the routing plugin (not the server):
-            # this raise is caught by _send_request_internal and becomes an error
-            # record whose message names the plugin instead of the endpoint.
-            try:
-                routing_headers = self._routing.headers(routing_ctx)
-            except Exception as e:
-                raise RuntimeError(
-                    f"session-routing plugin {self._routing_mode!r} failed in headers(): {e!r}"
-                ) from e
-            request_info.endpoint_headers.update(routing_headers)
-
         if request_info.payload_bytes is not None:
-            # PAYLOAD_BYTES fast path: bytes were validated at dataset-load time
-            # by the mmap loader / DatasetManager. A body-mutating routing plugin
-            # cannot rewrite opaque bytes without a reparse/redump that defeats
-            # the fast path, so it is refused here (the raise is converted to an
-            # error record by _send_request_internal). Header-based routing is
-            # compatible and was already applied above.
-            if self._routing is not None and self._routing.mutates_body:
-                raise ValueError(
-                    f"session-routing mode "
-                    f"{self.model_endpoint.endpoint.session_routing!r} mutates "
-                    "request bodies and is incompatible with the verbatim PAYLOAD_BYTES "
-                    "fast path; choose a headers-based mode or a structured-turn dataset."
-                )
             formatted_payload: dict[str, Any] | bytes = request_info.payload_bytes
         else:
             current_turn = request_info.turns[-1] if request_info.turns else None
@@ -197,19 +122,6 @@ class InferenceClient(AIPerfLifecycleMixin):
                 formatted_payload = current_turn.raw_payload
             else:
                 formatted_payload = self.endpoint.format_payload(request_info)
-            # Body-based session routing (e.g. Dynamo nvext.session_control):
-            # overlay onto the structured body after the endpoint built the dict,
-            # so it is endpoint-agnostic and never mutates a cached Turn
-            # (transform_body returns a copy).
-            if routing_ctx is not None and isinstance(formatted_payload, dict):
-                try:
-                    formatted_payload = self._routing.transform_body(
-                        formatted_payload, routing_ctx
-                    )
-                except Exception as e:
-                    raise RuntimeError(
-                        f"session-routing plugin {self._routing_mode!r} failed in transform_body(): {e!r}"
-                    ) from e
         # Canonicalise to bytes and stash on request_info. Two wins: (1) the
         # transport skips its own orjson.dumps on the dict path, (2) the
         # record processor can read the exact wire payload for raw-export.

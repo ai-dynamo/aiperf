@@ -7,7 +7,6 @@ Pins the ISL-sweep grid defaults ([256, 32768]), the concurrency=1 isolation
 rule, the ``ttft_curve_fit`` post-process spec, and the streaming-required
 guard so the user-facing contract cannot drift.
 
-Ported from ``ajc/k8s`` to the BenchmarkConfig-based ``SearchRecipeContext``.
 Sweep keys are body-rooted (``datasets.main.prompts.isl``,
 ``phases.profiling.concurrency``).
 """

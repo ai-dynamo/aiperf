@@ -308,8 +308,7 @@ class BranchOrchestrator:
         # siblings. The phase-side handler cancels every active phase lifecycle
         # so the strategy loop stops issuing new wire credits, honoring the
         # docs' "abort the whole run on first DAG child error" contract.
-        # origin/main #891 FAIL_FAST path; agentx dropped it, so it is re-added
-        # here. Wired by CreditCallbackHandler.set_branch_orchestrator.
+        # Wired by CreditCallbackHandler.set_branch_orchestrator.
         self._abort_observer = None
         self.stats = BranchStats()
         # Pre-built index: (conv_id, spawning_turn_idx) -> list of
@@ -765,12 +764,9 @@ class BranchOrchestrator:
         if credit.phase == CreditPhase.WARMUP and not self._accelerated_warmup_started:
             return False
 
-        # NOTE(port-deviation): agentx short-circuited intercept for any
-        # ``agent_depth > 0`` credit. origin/main's #891 dag_jsonl supports
-        # NESTED DAGs -- a FORK/SPAWN child at depth>0 can itself declare
-        # branches on its turns, and those grandchildren are spawned here on the
-        # child's credit return. Dropping the guard restores nested-DAG
-        # dispatch; agentic-replay depth>0 children that declare no branches
+        # Nested DAGs allow a FORK/SPAWN child at depth > 0 to declare branches
+        # on its own turns. Those grandchildren are spawned here on the child's
+        # credit return. Agentic-replay descendants that declare no branches
         # simply find ``branch_ids`` empty and fall through to
         # ``_maybe_suspend_parent`` (which returns False for them), so the
         # agentic tree-descendant path is unaffected.
@@ -1562,11 +1558,9 @@ class BranchOrchestrator:
         self._descendant_counts.pop(parent, None)
         self._parent_locks.pop(parent, None)
         self._notify_drain()
-        # origin/main #891 FAIL_FAST: after the parent + orphans are torn down,
-        # fire the abort observer so the phase side cancels every active phase
-        # lifecycle and the whole run stops (rather than draining the remaining
-        # planned wires). agentx dropped this; re-added so AIPERF_DAG_FAIL_FAST
-        # actually aborts the run on the first DAG child error.
+        # After the parent + orphans are torn down, fire the abort observer so
+        # the phase side cancels every active phase lifecycle and the whole run
+        # stops rather than draining the remaining planned wires.
         self._notify_abort()
 
     def _release_slot(self, parent_x_correlation_id: str) -> None:
@@ -1585,9 +1579,8 @@ class BranchOrchestrator:
     def set_abort_observer(self, observer) -> None:
         """Register/detach the sync abort observer (fired on FAIL_FAST).
 
-        origin/main #891 FAIL_FAST path. Wired by
-        ``CreditCallbackHandler.set_branch_orchestrator``; the registered
-        observer cancels active phase lifecycles and signals
+        Wired by ``CreditCallbackHandler.set_branch_orchestrator``; the
+        registered observer cancels active phase lifecycles and signals
         all-credits-returned so the run stops on the first DAG child error.
         """
         self._abort_observer = observer
@@ -1625,7 +1618,7 @@ class BranchOrchestrator:
         return False
 
     def snapshot_branch_stats(self) -> BranchStats:
-        """Return a deep copy of the current branch stats (origin/main API).
+        """Return a deep copy of the current branch stats.
 
         ``PhaseRunner._snapshot_branch_stats`` calls this to capture stats at
         phase-complete without aliasing the live counters.

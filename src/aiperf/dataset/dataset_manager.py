@@ -111,8 +111,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # In Kubernetes mode, use compress_only to stream directly to compressed files.
         # This avoids creating large uncompressed files on the control plane.
         # WorkerPodManagers will download compressed files and decompress locally.
-        # KUBERNETES is intentionally absent from this branch's plugins.yaml,
-        # so probe via getattr.
+        # KUBERNETES is an optional service-run plugin, so probe via getattr.
         self._compress_only = self._is_kubernetes_run()
 
         # The backing store is created in _configure_dataset once the mmap
@@ -135,7 +134,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._cache_hit_used: bool = False
 
     def _is_kubernetes_run(self) -> bool:
-        """KUBERNETES isn't always registered in this branch's plugins.yaml."""
+        """Return whether the optional KUBERNETES service-run plugin is active."""
         kubernetes_run_type = getattr(ServiceRunType, "KUBERNETES", None)
         return (
             kubernetes_run_type is not None
@@ -667,15 +666,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         Both PAYLOAD_BYTES gates (build-path format selection and cache-hit
         adoption) key off this: the mmap cache key deliberately excludes
-        cache-bust and routing settings, so the cache-hit gate cannot be
-        skipped (a feature-free run's PAYLOAD_BYTES entry is a valid hit for
-        a feature-enabled run).
+        cache-bust settings, so the cache-hit gate cannot be skipped (a
+        feature-free run's PAYLOAD_BYTES entry is a valid hit for a
+        feature-enabled run).
         """
-        mode = self.run.cfg.endpoint.session_routing
-        if mode is not None:
-            routing_cls = plugins.get_class(PluginType.SESSION_ROUTING, str(mode))
-            if routing_cls.mutates_body:
-                return f"session-routing mode {str(mode)!r}"
         if self.run.cfg.get_cache_bust_target() != CacheBustTarget.NONE:
             return "cache-bust"
         return None
@@ -685,9 +679,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     ) -> None:
         """Refuse a cached PAYLOAD_BYTES dataset when a body-mutator is active.
 
-        The mmap cache key excludes routing / cache-bust settings, so a
-        PAYLOAD_BYTES entry built by a feature-free run is a valid HIT for a
-        feature-enabled run. Guard cache-hit adoption at both call sites.
+        The mmap cache key excludes cache-bust settings, so a PAYLOAD_BYTES
+        entry built by a feature-free run is a valid hit for a feature-enabled
+        run. Guard cache-hit adoption at both call sites.
         """
         if MemoryMapFormat(mmap_format) != MemoryMapFormat.PAYLOAD_BYTES:
             return
@@ -695,9 +689,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         if feature is not None:
             raise ValueError(
                 f"{feature} is incompatible with this cached PAYLOAD_BYTES "
-                "dataset (the cache key excludes routing/cache-bust settings, "
+                "dataset (the cache key excludes cache-bust settings, "
                 "so this entry was built by a feature-free run). Clear the "
-                "dataset cache dir or switch to a headers-based mode."
+                "dataset cache directory."
             )
 
     def _select_mmap_format(self, conversations: list[Conversation]) -> MemoryMapFormat:
@@ -706,11 +700,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         This is the earliest authoritative point in the loader where the run's
         ``MemoryMapFormat`` is finalized. PAYLOAD_BYTES is the mmap fast path:
         workers stream pre-encoded bytes verbatim and skip the per-credit
-        dispatch. Loaders that natively populate ``Turn.raw_payload`` (raw_payload
-        / inputs_json / mooncake_trace with a payload field) would otherwise
-        silently bypass cache-bust marker injection or a body-mutating routing
-        mode (e.g. Dynamo nvext.session_control). Refuse here with a clear,
-        actionable error rather than at worker runtime.
+        dispatch. Loaders that natively populate ``Turn.raw_payload``
+        (raw_payload / inputs_json / mooncake_trace with a payload field) would
+        otherwise silently bypass cache-bust marker injection. Refuse here with
+        a clear, actionable error rather than at worker runtime.
         """
         has_payload_bytes = any(
             turn.raw_payload is not None

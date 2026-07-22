@@ -14,6 +14,7 @@ from aiperf.timing.branch_orchestrator import PendingBranchJoin
 async def test_dispatch_join_turn_reuses_session_slot():
     issuer = CreditIssuer.__new__(CreditIssuer)
     issuer._phase = CreditPhase.PROFILING
+    issuer._phase_index = 0
     issuer._concurrency_manager = MagicMock()
     issuer._stop_checker = MagicMock()
     issuer._stop_checker.can_send_any_turn.return_value = True

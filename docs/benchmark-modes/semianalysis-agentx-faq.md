@@ -1063,55 +1063,48 @@ itself:
   publishes KV events (vLLM requires prefix caching enabled for that); without events it falls back
   to an approximate mode that predicts cache contents from its own routing decisions.
 
-**Explicit sticky sessions — pin each conversation to one replica by ID.** Select a mechanism with
-`--session-routing <mode>` and parameterize it with `--session-routing-opt key=value` (one mode per
-run):
+**Explicit sticky sessions — pin each conversation to one replica by ID.** AIPerf already stamps the
+stable per-conversation correlation ID on every turn; enable one of the additive session-affinity
+headers with an environment variable so an external router can pin every turn of a session (and its
+subagent children) to the replica holding its KV prefix:
 
-- **SGLang Model Gateway `manual` policy** (`--session-routing smg_routing_key`): run the gateway
-  with `--policy manual` and AIPerf emits the gateway's routing-key header (`X-SMG-Routing-Key`, set
-  to the correlation ID):
+- **SGLang Model Gateway `manual` policy** (`AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID=1`):
+  run the gateway with `--policy manual` and AIPerf emits the gateway's routing-key header
+  (`X-SMG-Routing-Key`, set to the correlation ID):
 
   ```bash
-  aiperf profile ... --session-routing smg_routing_key
+  AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID=1 aiperf profile ...
   ```
 
   `manual` pins each key to one worker regardless of load or prompt text — the strongest affinity,
   at the cost of no load-based rebalancing.
 
-- **Dynamo session affinity** (`--session-routing dynamo_headers`): enable the frontend's sticky
-  layer and AIPerf stamps `X-Dynamo-Session-ID` (plus `X-Dynamo-Parent-Session-ID` on subagent
-  children, so the router can keep a subagent near its parent):
+- **Dynamo session affinity** (`AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID=1`): enable the
+  frontend's sticky layer and AIPerf stamps `X-Dynamo-Session-ID` (plus `X-Dynamo-Parent-Session-ID`
+  on subagent children, so the router can keep a subagent near its parent):
 
   ```bash
-  python -m dynamo.frontend --router-mode kv --router-session-affinity-ttl-secs 600 ...  # server
-  aiperf profile ... --session-routing dynamo_headers                                    # client
+  python -m dynamo.frontend --router-mode kv --router-session-affinity-ttl-secs 600 ...        # server
+  AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID=1 aiperf profile ...                      # client
   ```
 
-- **Dynamo `nvext.session_control`** (`--session-routing dynamo_nvext`): emits a bind/close session
-  lifecycle in the request body instead of a header (bind on every non-final turn, close on the
-  final turn). Use it only for Dynamo builds that implement `session_control` — current upstream
-  Dynamo main does not, so use `dynamo_headers` there. `--session-routing-opt timeout_seconds=600`
-  tunes the inactivity TTL carried on each bind (default 300).
-
-- **Any other router** (`--session-routing session_id_header`): sends an additive session-affinity
-  header (default `X-Session-ID`, renamed with `--session-routing-opt header_name=<Name>`).
-  Independently, `--session-header <Name>` renames the base per-conversation affinity header
-  (default `X-Correlation-ID`), and `--connection-reuse-strategy sticky-user-sessions` holds one TCP
-  connection open per conversation (closed on its final turn) for load balancers that hash on
-  connections.
+- **Any other router** (`AIPERF_HTTP_X_SESSION_ID_FROM_CORRELATION_ID=1`): sends an additive
+  `X-Session-ID` header carrying the correlation ID. Independently, `--session-header <Name>` renames
+  the base per-conversation affinity header (default `X-Correlation-ID`), and
+  `--connection-reuse-strategy sticky-user-sessions` holds one TCP connection open per conversation
+  (closed on its final turn) for load balancers that hash on connections.
 
 None of these knobs are scenario-locked — they change where requests land, not what is sent — so use
 whichever matches your deployment, and A/B against `--router-mode round-robin` (Dynamo) or
 `--policy round_robin` (SGLang) to quantify what conversation-aware routing buys you.
 
-### Client-side routing flags (reference)
+### Client-side affinity settings (reference)
 
 | Setting | What it does |
 |---|---|
-| `--session-routing dynamo_headers` | Stamp `X-Dynamo-Session-ID` (plus `X-Dynamo-Parent-Session-ID` on subagent children) for Dynamo session affinity. |
-| `--session-routing dynamo_nvext` | Emit Dynamo `nvext.session_control` (bind/close) in request bodies; only for Dynamo builds that implement it. `--session-routing-opt timeout_seconds=N` tunes the TTL (default 300). |
-| `--session-routing smg_routing_key` | Send `X-SMG-Routing-Key` for the SGLang Model Gateway `manual` routing policy. |
-| `--session-routing session_id_header` | Send an additive session header (default `X-Session-ID`; `--session-routing-opt header_name=NAME` to rename) for routers that expect one. |
+| `AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID=1` | Stamp `X-Dynamo-Session-ID` (plus `X-Dynamo-Parent-Session-ID` on subagent children) for Dynamo session affinity. |
+| `AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID=1` | Send `X-SMG-Routing-Key` for the SGLang Model Gateway `manual` routing policy. |
+| `AIPERF_HTTP_X_SESSION_ID_FROM_CORRELATION_ID=1` | Send an additive `X-Session-ID` header for routers that expect one. |
 | `--session-header NAME` | Renames the base per-conversation affinity header (default `X-Correlation-ID`). |
 | `--connection-reuse-strategy sticky-user-sessions` | One TCP connection per conversation (closed on final turn) for connection-hashing load balancers. |
 

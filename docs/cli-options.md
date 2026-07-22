@@ -447,15 +447,6 @@ HTTP header name used to carry the per-session affinity identifier. When set, re
 Enable AIPerf-managed image stripping for vLLM's multimodal processor cache. Dataset-authored image UUIDs, including UUID-only cache references, always pass through on the chat endpoint; this flag only strips repeated content after AIPerf observes it in the same session. Automatic stripping supports only single_turn datasets with session_id-grouped rows; multi_turn is rejected. The server cache must cover the working set, and requests in a session must reach a replica that retains earlier UUIDs.
 <br/>_Flag (no value required)_
 
-#### `--session-routing` `<str>`
-
-Session-aware routing mode: stamps per-session identity on every request for router affinity. Built-ins: dynamo_headers (X-Dynamo-Session-ID + parent header), dynamo_nvext (nvext.session_control bind/close request-body metadata), smg_routing_key (X-SMG-Routing-Key for the SGLang Model Gateway manual policy), session_id_header (custom additive header). Parameterize with --session-routing-opt.
-<br/>_Choices: [`dynamo_headers`, `dynamo_nvext`, `smg_routing_key`, `session_id_header`]_
-
-#### `--session-routing-opt` `<list>`
-
-Repeatable key=value option for the selected --session-routing mode (e.g. --session-routing-opt timeout_seconds=600), validated against the plugin's Options model.
-
 ### Tokenizer
 
 #### `--tokenizer` `<str>`
@@ -1108,11 +1099,6 @@ AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches in
 
 Hard ceiling (seconds) for idle gaps within each individual trace. For Weka trace replay, AIPerf looks at all parent and subagent request submission timestamps within one root trace, compresses long gaps between consecutive request submissions, and derives turn delays from the compressed per-trace timeline. Original request api_time values are not used to decide these idle gaps. When set for Weka, this takes precedence over `--inter-turn-delay-cap-seconds` so individual parent/subagent-line delays are not separately capped. Defaults to None (no per-trace idle-gap compression).
 <br/>_Constraints: ≥ 0.0_
-
-#### `--request-rate-series`
-
-JSON file containing request-rate points for piecewise-linear request-rate control.
-<br/>_Flag (no value required)_
 
 ### Scenario
 
@@ -1819,7 +1805,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_observer`, `record_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `service`, `service_manager`, `session_routing`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_observer`, `record_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -1985,15 +1971,6 @@ HTTP header name used to carry the per-session affinity identifier. When set, re
 
 Enable AIPerf-managed image stripping for vLLM's multimodal processor cache. Dataset-authored image UUIDs, including UUID-only cache references, always pass through on the chat endpoint; this flag only strips repeated content after AIPerf observes it in the same session. Automatic stripping supports only single_turn datasets with session_id-grouped rows; multi_turn is rejected. The server cache must cover the working set, and requests in a session must reach a replica that retains earlier UUIDs.
 <br/>_Flag (no value required)_
-
-#### `--session-routing` `<str>`
-
-Session-aware routing mode: stamps per-session identity on every request for router affinity. Built-ins: dynamo_headers (X-Dynamo-Session-ID + parent header), dynamo_nvext (nvext.session_control bind/close request-body metadata), smg_routing_key (X-SMG-Routing-Key for the SGLang Model Gateway manual policy), session_id_header (custom additive header). Parameterize with --session-routing-opt.
-<br/>_Choices: [`dynamo_headers`, `dynamo_nvext`, `smg_routing_key`, `session_id_header`]_
-
-#### `--session-routing-opt` `<list>`
-
-Repeatable key=value option for the selected --session-routing mode (e.g. --session-routing-opt timeout_seconds=600), validated against the plugin's Options model.
 
 ### Tokenizer
 
@@ -2647,11 +2624,6 @@ AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches in
 
 Hard ceiling (seconds) for idle gaps within each individual trace. For Weka trace replay, AIPerf looks at all parent and subagent request submission timestamps within one root trace, compresses long gaps between consecutive request submissions, and derives turn delays from the compressed per-trace timeline. Original request api_time values are not used to decide these idle gaps. When set for Weka, this takes precedence over `--inter-turn-delay-cap-seconds` so individual parent/subagent-line delays are not separately capped. Defaults to None (no per-trace idle-gap compression).
 <br/>_Constraints: ≥ 0.0_
-
-#### `--request-rate-series`
-
-JSON file containing request-rate points for piecewise-linear request-rate control.
-<br/>_Flag (no value required)_
 
 ### Scenario
 

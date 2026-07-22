@@ -34,6 +34,7 @@ def _make_issuer() -> CreditIssuer:
     """
     issuer = CreditIssuer.__new__(CreditIssuer)
     issuer._phase = CreditPhase.PROFILING
+    issuer._phase_index = 0
     issuer._concurrency_manager = MagicMock()
     issuer._concurrency_manager.try_acquire_session_slot = MagicMock(return_value=True)
     issuer._concurrency_manager.try_acquire_prefill_slot = MagicMock(return_value=True)

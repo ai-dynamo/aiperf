@@ -100,14 +100,10 @@ class ConversationBranchInfo(AIPerfBaseModel):
             )
         return v
 
-    # NOTE(port-deviation): agentx's _validate_background rejected
-    # is_background=True for FORK mode (its is_background was SPAWN-only). Main's
-    # dag_jsonl loader (#891) legitimately sets is_background=True on FORK
-    # branches (background-fork = parent keeps running). The merged field unifies
-    # both semantics, so that FORK-reject validator is intentionally NOT ported
-    # (it would break dag_jsonl background forks). The subagent_type validator
-    # below preserves the SPAWN-only-classification check, which dag_jsonl never
-    # trips (it never sets subagent_type).
+    # ``is_background=True`` is valid for FORK branches: the parent keeps
+    # running while the child executes. ``subagent_type`` remains SPAWN-only,
+    # which preserves the classification boundary without rejecting background
+    # forks.
     @field_validator("subagent_type")
     @classmethod
     def _validate_subagent_type(

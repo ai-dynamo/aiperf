@@ -1,46 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Supersession marker for the v1 ``MultiRunOrchestrator`` tests.
-
-The v1 orchestrator (agentx ``aiperf.orchestrator.orchestrator``) was a
-single-config, multi-trial driver constructed as
-``MultiRunOrchestrator(base_dir, service_config)`` and driven via
-``execute(user_config, strategy)`` / ``execute_and_export(config, strategy=...)``.
-It owned subprocess execution (``_execute_single_run``), metric/cancel
-extraction off ``profile_export_aiperf.json`` (``_extract_summary_metrics`` /
-``_extract_was_cancelled``), run_config.json creation, inter-run cooldown via
-``time.sleep``, strategy auto-detection (``_resolve_strategy`` /
-``_create_sweep_strategy`` / ``_create_confidence_strategy``), and a generic
-``_execute`` / ``_execute_loop``.
-
-main's #1035 replaced that class WHOLESALE. The v2 ``MultiRunOrchestrator``
-(``src/aiperf/orchestrator/orchestrator.py``) is a variations x trials sweep
-driver: ``MultiRunOrchestrator(base_dir, *, cell_callback=None)``, driven via
-``async execute(plan, executor, ...)`` over a ``BenchmarkPlan`` and an injected
-``RunExecutor``, producing per-cell Pareto results. It relies on
-``aiperf.common.config.{ServiceConfig,UserConfig}`` -- which DO NOT EXIST on v2
--- and exposes NONE of the v1 methods above. There is no v1 analog to faithfully
-port, and the v2 orchestrator mechanics are already comprehensively covered:
-
-| v1 test concern                                   | v2 coverage |
-| ------------------------------------------------- | ----------- |
-| execute(...) iterates trials / handles failures   | tests/unit/orchestrator/test_multi_run_orchestrator.py (variations x trials, RunExecutor, derive_id, cancel, failure-threshold) |
-| inter-run / inter-variation cooldown              | test_multi_run_orchestrator.py (cooldown via plan.sweep) |
-| _resolve_strategy / _create_*_strategy factories  | tests/unit/orchestrator/test_strategies.py + _strategy build path |
-| _execute / _execute_loop generic loop             | test_multi_run_orchestrator.py (_execute_repeated / _execute_independent) |
-| execute_and_export aggregate/export delegation    | test_orchestrator_aggregation.py (this dir) -> cli_runner._aggregate |
-| _extract_summary_metrics / _extract_was_cancelled | n/a -- subprocess metric extraction moved into the RunExecutor + RunResult contract; covered by executor/cli_runner tests |
-| _execute_single_run subprocess + run_config.json  | n/a -- no in-orchestrator subprocess on v2 (LocalSubprocessExecutor) |
-
-The ONE genuinely-ported behavior from the v1 suite -- scenario-submission
-stamping (v1 ``MultiRunOrchestrator._stamp_scenario_submission_metadata``) --
-was re-homed (P8) onto ``aiperf.cli_runner._aggregate._stamp_scenario_submission_metadata``
-and is verified for real (against a REAL ``BenchmarkPlan``) below.
-
-This module keeps a single guard so the supersession decision is
-self-verifying: if anyone re-introduces the v1 orchestrator API, the guard
-fails and forces a real re-port of the suite mapped above.
-"""
+"""MultiRunOrchestrator API and scenario-submission metadata tests."""
 
 from __future__ import annotations
 
@@ -59,36 +19,24 @@ _WEKA_LOADER = "semianalysis_cc_traces_weka_with_subagents"
 
 
 # ---------------------------------------------------------------------------
-# Supersession guard
+# API surface guard
 # ---------------------------------------------------------------------------
 
 
-def test_v1_multi_run_orchestrator_api_is_gone() -> None:
-    """The v1 ``MultiRunOrchestrator`` constructor + methods must not exist on v2.
-
-    Guards the supersession documented in this module's docstring. The v1 class
-    took ``(base_dir, service_config)`` positionally and accepted a
-    ``strategy=`` driver; the v2 class takes only ``(base_dir, *, cell_callback)``.
-    The v1-only methods are absent. If any of these re-appear, the v1 orchestrator
-    was re-introduced and its test suite must be properly re-ported (see the table
-    in this module's docstring) rather than left as this stub.
-    """
+def test_obsolete_multi_run_orchestrator_api_is_absent() -> None:
+    """The orchestrator accepts a plan/executor and exposes no legacy driver API."""
     sig = inspect.signature(MultiRunOrchestrator.__init__)
     params = sig.parameters
 
-    # v2 keeps a single keyword-only knob; the v1 positional service_config and
-    # the v1 strategy driver are gone.
     assert "service_config" not in params
     assert "strategy" not in params
     assert "cell_callback" in params
     assert params["cell_callback"].kind is inspect.Parameter.KEYWORD_ONLY
 
-    # The v1 two-positional construction (base_dir, service_config) must fail.
     with pytest.raises(TypeError):
         MultiRunOrchestrator(object(), object())  # type: ignore[call-arg]
 
-    # v1-only methods replaced wholesale by #1035.
-    for v1_method in (
+    for obsolete_method in (
         "_execute_single_run",
         "_extract_summary_metrics",
         "_extract_was_cancelled",
@@ -99,14 +47,13 @@ def test_v1_multi_run_orchestrator_api_is_gone() -> None:
         "_create_sweep_strategy",
         "_create_confidence_strategy",
     ):
-        assert not hasattr(MultiRunOrchestrator, v1_method), (
-            f"v1 orchestrator method {v1_method!r} re-appeared on v2 "
-            "MultiRunOrchestrator -- re-port the v1 suite (see module docstring)."
+        assert not hasattr(MultiRunOrchestrator, obsolete_method), (
+            f"obsolete orchestrator method {obsolete_method!r} unexpectedly exists"
         )
 
 
 # ---------------------------------------------------------------------------
-# Ported behavior: scenario-submission stamping (now in cli_runner._aggregate)
+# Scenario-submission stamping
 # ---------------------------------------------------------------------------
 
 
@@ -173,10 +120,8 @@ def _make_aggregate() -> AggregateResult:
 def test_stamp_scenario_submission_metadata_clean_weka_marks_valid() -> None:
     """A clean weka scenario stamps name + submission_valid True + empty reasons.
 
-    Ported from the v1 ``_stamp_scenario_submission_metadata`` behavior; now
-    re-homed on ``cli_runner._aggregate``. Builds a REAL BenchmarkPlan (no
-    MagicMock) so ``apply_scenario`` re-resolution runs against the actual
-    scenario spec.
+    Builds a real BenchmarkPlan so ``apply_scenario`` re-resolution runs
+    against the actual scenario spec.
     """
     from aiperf.cli_runner._aggregate import _stamp_scenario_submission_metadata
 
@@ -302,7 +247,6 @@ def test_stamp_scenario_submission_metadata_carries_was_cancelled(
 ) -> None:
     """Any cancelled run in the batch flips the ``_was_cancelled`` carrier key.
 
-    Ported from the v1 ``test_stamp_scenario_submission_metadata_carries_was_cancelled``.
     The per-run flag rides on ``RunResult.was_cancelled`` (populated by
     LocalSubprocessExecutor from the run's profile export); the aggregate stamp
     is ``any(r.was_cancelled for r in results)`` and is consumed by

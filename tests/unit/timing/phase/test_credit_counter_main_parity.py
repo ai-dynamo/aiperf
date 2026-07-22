@@ -1,17 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Parity + regression tests porting origin/main's CreditCounter fixes.
-
-This branch (``cjq/agentx-v0.3``) forked before origin/main's
-``ca590eec feat(dag): conversation DAG benchmarks (dag_jsonl)`` and
-re-implemented DAG support its own way. In doing so it lost two fixes that
-landed in main and should also hold here:
+"""Regression tests for CreditCounter DAG accounting.
 
 1. Error accounting: ``increment_returned(..., errored=True)`` bumps
    ``request_errors`` (the timing-layer counter the phase-complete
-   ``errors=`` log reads). The branch had dropped the ``errored`` parameter,
-   so fault-injected runs always logged ``errors=0`` while the aggregate JSON
-   recorded the failures.
+   ``errors=`` log reads).
 
 2. Root-only session-completion predicate: ``_root_requests_sent`` is used in
    the ``expected_num_sessions`` branch of ``is_final_credit`` instead of the
@@ -20,10 +13,8 @@ landed in main and should also hold here:
    ``sent >= total_session_turns`` and exit the strategy loop before a
    multi-turn parent finishes dispatching.
 
-The final test is the child-triggered version of the session-count invariant
-that origin/main violates (1 root + 1 child -> completed=2, sent=1). It passes
-HERE because this branch added the ``is_child`` guard to ``increment_returned``
--- so it locks that guard in against regression toward main's behavior.
+The final tests lock in the child-triggered session-count invariant: DAG child
+returns must not increment root-session completion or cancellation counters.
 """
 
 from __future__ import annotations
@@ -68,8 +59,8 @@ def turn(
     )
 
 
-class TestErrorAccountingPortedFromMain:
-    """Ported from origin/main test_credit_counter.py (added in ca590eec)."""
+class TestErrorAccounting:
+    """Error returns update request-level accounting."""
 
     def test_increment_returned_errored_bumps_request_errors(self) -> None:
         c = CreditCounter(cfg())
@@ -120,7 +111,7 @@ class TestErrorAccountingPortedFromMain:
 
 class TestRootOnlySessionPredicate:
     """``_root_requests_sent`` keeps DAG children from prematurely flipping
-    ``is_final_credit`` on the ``expected_num_sessions`` path (origin/main fix)."""
+    ``is_final_credit`` on the ``expected_num_sessions`` path."""
 
     def test_child_wire_does_not_prematurely_satisfy_session_predicate(self) -> None:
         # One session expected, a 3-turn root. Children fire between root turns.
@@ -173,14 +164,7 @@ class TestRootOnlySessionPredicate:
 
 
 class TestChildSessionCountInvariantRegression:
-    """Regression guard for the bug origin/main still has (this branch fixed).
-
-    origin/main's ``increment_returned`` lacks the ``is_child`` guard, so a DAG
-    child's final turn bumps ``completed_sessions`` without a matching
-    ``sent_sessions`` -> ``completed_sessions > sent_sessions`` and
-    ``in_flight_sessions < 0``. This branch's ``is_child`` guard prevents it;
-    this test fails if that guard is ever removed (regressing toward main).
-    """
+    """DAG child returns do not affect root-session counters."""
 
     def test_dag_children_do_not_inflate_completed_sessions(self) -> None:
         c = CreditCounter(cfg())

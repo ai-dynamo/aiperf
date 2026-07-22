@@ -754,21 +754,23 @@ class _HTTPSettings(BaseSettings):
     X_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
         default=False,
         description="Also send X-Session-ID with the stable X-Correlation-ID value. "
-        "Use this when an external router requires a session-affinity header. This is "
-        "ADDITIVE (both headers are sent); --session-header only RENAMES the single "
-        "correlation header.",
+        "This transport setting is the supported way to enable generic HTTP session "
+        "affinity. It is ADDITIVE (both headers are sent); --session-header only "
+        "RENAMES the single correlation header.",
     )
     X_SMG_ROUTING_KEY_FROM_CORRELATION_ID: bool = Field(
         default=False,
         description="Also send X-SMG-Routing-Key with the stable X-Correlation-ID value. "
-        "Use this with the SGLang Model Gateway manual routing policy.",
+        "This transport setting is the supported affinity path for the SGLang Model "
+        "Gateway manual routing policy.",
     )
     X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
         default=False,
         description="Also send X-Dynamo-Session-ID with the stable X-Correlation-ID value, "
-        "plus X-Dynamo-Parent-Session-ID on subagent children. Use this with a Dynamo "
-        "frontend running --router-session-affinity-ttl-secs to pin every turn of a "
-        "session to the replica holding its KV prefix.",
+        "plus X-Dynamo-Parent-Session-ID on subagent children. This transport setting "
+        "is the supported affinity path for a Dynamo frontend running "
+        "--router-session-affinity-ttl-secs, pinning every turn of a session to the "
+        "replica holding its KV prefix.",
     )
     VIDEO_POLL_INTERVAL: float = Field(
         ge=0.001,

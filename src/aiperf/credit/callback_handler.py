@@ -169,17 +169,16 @@ class CreditCallbackHandler:
             orchestrator.set_abort_observer(self._on_orchestrator_abort)
 
     def _on_orchestrator_abort(self) -> None:
-        """Cancel every active phase on FAIL_FAST (origin/main #891).
+        """Cancel every active phase on FAIL_FAST.
 
         Fired by ``BranchOrchestrator._handle_child_errored_fail_fast``
         after parent + orphan-sibling tear-down under
         ``AIPERF_DAG_FAIL_FAST=true``. Cancels each phase's lifecycle so the
         strategy loop's next ``can_send_any_turn`` check returns False and no
         further wire credits are issued, then sets all_credits_returned so the
-        runner unblocks; in-flight credits drain naturally. Without this hook
-        only the parent of the errored child was aborted while unrelated roots
-        kept firing -- the run drained as if FAIL_FAST were disabled. agentx
-        dropped this; re-added so FAIL_FAST stops the whole run.
+        runner unblocks; in-flight credits drain naturally. Without this hook,
+        only the parent of the errored child is aborted while unrelated roots
+        keep firing, effectively disabling FAIL_FAST for the overall run.
         """
         for handler in self._phase_handlers.values():
             if handler.lifecycle.is_complete:

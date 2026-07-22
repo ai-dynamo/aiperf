@@ -414,8 +414,7 @@ def test_request_rate_infinity_passes_validation_but_yields_zero_period() -> Non
 
 @pytest.mark.asyncio
 @pytest.mark.skip(
-    reason="Depends on dispatch_child_turn API on CreditIssuer not yet ported "
-    "(future task; see plan P2T18 follow-ups)."
+    reason="Depends on a dispatch_child_turn API that CreditIssuer does not implement."
 )
 async def test_request_rate_dag_child_continuation_bypasses_continuation_queue() -> (
     None
@@ -424,9 +423,8 @@ async def test_request_rate_dag_child_continuation_bypasses_continuation_queue()
     must bypass the rate-limited ``_continuation_turns`` queue and dispatch
     via the credit issuer directly (immediate dispatch).
 
-    Source semantics (request_rate.py:232-239): children dispatch directly
-    rather than queueing because the main rate loop may have already exited
-    by the time their continuation turns arrive."""
+    Children dispatch directly rather than queueing because the main rate loop
+    may have already exited by the time their continuation turns arrive."""
     turns = [TurnMetadata(), TurnMetadata()]
     conv = ConversationMetadata(conversation_id="child", turns=turns)
     ds = DatasetMetadata(
