@@ -4265,17 +4265,17 @@
                   "$ref": "#/$defs/CacheBustConfig",
                   "description": "Per-conversation cache-bust marker injection for trace replay (mirror of the synthetic dataset's prompts.cache_bust). The engine reads the active dataset's target via ``BenchmarkConfig.get_cache_bust_target()``; 'none' (default) disables it."
                 },
-                "promptCorpus": {
+                "prompts": {
                   "anyOf": [
                     {
-                      "$ref": "#/$defs/PromptCorpus"
+                      "$ref": "#/$defs/PromptSelectionConfig"
                     },
                     {
                       "type": "null"
                     }
                   ],
                   "default": null,
-                  "description": "Source corpus for any synthetic text this trace loader needs to generate (e.g. weka cache-bust markers / wrap-fill). When None the loader's registered ``default_prompt_corpus`` applies."
+                  "description": "Prompt synthesis selection for this dataset. Author ``prompts.corpus`` to choose sonnet vs coding when content is synthesized (trace hash_id reconstruction). Verbatim formats ignore it."
                 }
               },
               "required": [
@@ -4434,17 +4434,17 @@
                   "$ref": "#/$defs/CacheBustConfig",
                   "description": "Per-conversation cache-bust marker injection for HF-backed Weka trace replay (mirror of ``FileDataset.cache_bust``). 'none' (default) disables it."
                 },
-                "promptCorpus": {
+                "prompts": {
                   "anyOf": [
                     {
-                      "$ref": "#/$defs/PromptCorpus"
+                      "$ref": "#/$defs/PromptSelectionConfig"
                     },
                     {
                       "type": "null"
                     }
                   ],
                   "default": null,
-                  "description": "Source corpus for any synthetic text the HF-backed Weka loader needs to generate (mirror of ``FileDataset.prompt_corpus``). When None the loader's registered ``default_prompt_corpus`` applies."
+                  "description": "Prompt synthesis selection for this dataset. Author ``prompts.corpus`` to choose sonnet vs coding when content is synthesized (trace hash_id reconstruction). Verbatim formats ignore it."
                 },
                 "synthesis": {
                   "anyOf": [
@@ -12554,17 +12554,17 @@
           "$ref": "#/$defs/CacheBustConfig",
           "description": "Per-conversation cache-bust marker injection for trace replay (mirror of the synthetic dataset's prompts.cache_bust). The engine reads the active dataset's target via ``BenchmarkConfig.get_cache_bust_target()``; 'none' (default) disables it."
         },
-        "promptCorpus": {
+        "prompts": {
           "anyOf": [
             {
-              "$ref": "#/$defs/PromptCorpus"
+              "$ref": "#/$defs/PromptSelectionConfig"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Source corpus for any synthetic text this trace loader needs to generate (e.g. weka cache-bust markers / wrap-fill). When None the loader's registered ``default_prompt_corpus`` applies."
+          "description": "Prompt synthesis selection for this dataset. Author ``prompts.corpus`` to choose sonnet vs coding when content is synthesized (trace hash_id reconstruction). Verbatim formats ignore it."
         }
       },
       "required": [
@@ -16958,7 +16958,7 @@
           "$ref": "#/$defs/CacheBustConfig",
           "description": "Per-conversation cache-bust marker configuration. Injects a deterministic marker into prompts to defeat KV-cache prefix matching. Disabled by default (target='none')."
         },
-        "promptCorpus": {
+        "corpus": {
           "anyOf": [
             {
               "$ref": "#/$defs/PromptCorpus"
@@ -16968,7 +16968,7 @@
             }
           ],
           "default": null,
-          "description": "Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare sonnets. 'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; agentic-coding loaders such as weka_trace default to 'coding')."
+          "description": "Source corpus for synthetic prompt text generation (``prompts.corpus``). 'sonnet' uses Shakespeare sonnets. 'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; agentic-coding loaders such as weka_trace default to 'coding')."
         },
         "sequenceDistribution": {
           "anyOf": [
@@ -16998,6 +16998,26 @@
       ],
       "title": "PromptCorpus",
       "type": "string"
+    },
+    "PromptSelectionConfig": {
+      "additionalProperties": false,
+      "description": "Slim prompts block for file/public datasets (corpus selection only).",
+      "properties": {
+        "corpus": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PromptCorpus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source corpus for synthesized prompt text. 'sonnet' uses Shakespeare sonnets. 'coding' uses realistic coding content. When unset, the active dataset loader's default applies. Honored only where content is synthesized (synthetic + hash/trace replay); verbatim loaders ignore it."
+        }
+      },
+      "title": "PromptSelectionConfig",
+      "type": "object"
     },
     "PublicDataset": {
       "additionalProperties": false,
@@ -17204,17 +17224,17 @@
           "$ref": "#/$defs/CacheBustConfig",
           "description": "Per-conversation cache-bust marker injection for HF-backed Weka trace replay (mirror of ``FileDataset.cache_bust``). 'none' (default) disables it."
         },
-        "promptCorpus": {
+        "prompts": {
           "anyOf": [
             {
-              "$ref": "#/$defs/PromptCorpus"
+              "$ref": "#/$defs/PromptSelectionConfig"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Source corpus for any synthetic text the HF-backed Weka loader needs to generate (mirror of ``FileDataset.prompt_corpus``). When None the loader's registered ``default_prompt_corpus`` applies."
+          "description": "Prompt synthesis selection for this dataset. Author ``prompts.corpus`` to choose sonnet vs coding when content is synthesized (trace hash_id reconstruction). Verbatim formats ignore it."
         },
         "synthesis": {
           "anyOf": [

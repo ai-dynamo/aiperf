@@ -168,11 +168,12 @@ class PromptConfig(BaseConfig):
         ),
     ]
 
-    prompt_corpus: Annotated[
+    corpus: Annotated[
         PromptCorpus | None,
         Field(
             default=None,
-            description="Source corpus for synthetic prompt text generation. "
+            description="Source corpus for synthetic prompt text generation "
+            "(``prompts.corpus``). "
             "'sonnet' uses Shakespeare sonnets. "
             "'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). "
             "When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; "
@@ -199,6 +200,25 @@ class PromptConfig(BaseConfig):
         if v is not None:
             validate_probability_distribution(v)
         return v
+
+
+class PromptSelectionConfig(BaseConfig):
+    """Slim prompts block for file/public datasets (corpus selection only)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    corpus: Annotated[
+        PromptCorpus | None,
+        Field(
+            default=None,
+            description="Source corpus for synthesized prompt text. "
+            "'sonnet' uses Shakespeare sonnets. "
+            "'coding' uses realistic coding content. "
+            "When unset, the active dataset loader's default applies. "
+            "Honored only where content is synthesized (synthetic + hash/trace "
+            "replay); verbatim loaders ignore it.",
+        ),
+    ]
 
 
 class PrefixPromptConfig(BaseConfig):

@@ -36,7 +36,7 @@ from aiperf.config.dataset.content import (
     ImageConfig,
     PrefixPromptConfig,
     PromptConfig,
-    PromptCorpus,
+    PromptSelectionConfig,
     RankingsConfig,
 )
 from aiperf.config.dataset.trace import (
@@ -62,6 +62,7 @@ __all__ = [
     "ImageConfig",
     "PrefixPromptConfig",
     "PromptConfig",
+    "PromptSelectionConfig",
     "PublicDataset",
     "RankingsConfig",
     "SynthesisConfig",
@@ -592,13 +593,13 @@ class FileDataset(BaseConfig):
         ),
     ]
 
-    prompt_corpus: Annotated[
-        PromptCorpus | None,
+    prompts: Annotated[
+        PromptSelectionConfig | None,
         Field(
             default=None,
-            description="Source corpus for any synthetic text this trace loader "
-            "needs to generate (e.g. weka cache-bust markers / wrap-fill). When "
-            "None the loader's registered ``default_prompt_corpus`` applies.",
+            description="Prompt synthesis selection for this dataset. "
+            "Author ``prompts.corpus`` to choose sonnet vs coding when content "
+            "is synthesized (trace hash_id reconstruction). Verbatim formats ignore it.",
         ),
     ]
 
@@ -875,14 +876,13 @@ class PublicDataset(BaseConfig):
         ),
     ]
 
-    prompt_corpus: Annotated[
-        PromptCorpus | None,
+    prompts: Annotated[
+        PromptSelectionConfig | None,
         Field(
             default=None,
-            description="Source corpus for any synthetic text the HF-backed "
-            "Weka loader needs to generate (mirror of "
-            "``FileDataset.prompt_corpus``). When None the loader's registered "
-            "``default_prompt_corpus`` applies.",
+            description="Prompt synthesis selection for this dataset. "
+            "Author ``prompts.corpus`` to choose sonnet vs coding when content "
+            "is synthesized (trace hash_id reconstruction). Verbatim formats ignore it.",
         ),
     ]
 

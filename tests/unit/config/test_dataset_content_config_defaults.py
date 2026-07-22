@@ -248,7 +248,7 @@ def test_prompt_config_defaults():
     assert config.osl is None
     assert config.block_size is None
     assert config.batch_size == 1
-    assert config.prompt_corpus is None
+    assert config.corpus is None
     assert config.sequence_distribution is None
 
 

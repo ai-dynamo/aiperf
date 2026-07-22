@@ -102,20 +102,12 @@ class BenchmarkHelpersMixin:
         return CacheBustTarget.NONE
 
     def get_prompt_corpus(self) -> PromptCorpus | None:
-        """Resolve the active dataset's prompt corpus (synthetic text source).
-
-        Mirrors :meth:`get_cache_bust_target`: synthetic reads
-        ``prompts.prompt_corpus``, file reads ``cache_bust``-sibling
-        ``prompt_corpus``; otherwise None (loader default applies). Used by the
-        agentic/weka path for cache-bust marker / wrap-fill text.
-        """
+        """Resolve the active dataset's authored ``prompts.corpus``."""
         dataset = self.get_default_dataset()
         prompts = getattr(dataset, "prompts", None)
-        if prompts is not None:
-            corpus = getattr(prompts, "prompt_corpus", None)
-            if corpus is not None:
-                return corpus
-        return getattr(dataset, "prompt_corpus", None)
+        if prompts is None:
+            return None
+        return getattr(prompts, "corpus", None)
 
     # ==========================================================================
     # CONVENIENCE PROPERTIES
