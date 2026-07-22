@@ -49,8 +49,6 @@ datasets:
       corpus: coding
 ```
 
-Do not author a top-level ``prompt_corpus`` field; use ``prompts.corpus``.
-
 ## Prefix prompts
 
 ``coding`` uses the same synthetic prefix / shared-system / user-context

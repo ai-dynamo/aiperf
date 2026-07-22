@@ -3,54 +3,17 @@
 
 from __future__ import annotations
 
-import pytest
-
 from aiperf.common.enums import PromptCorpus
-from aiperf.config.dataset import FileDataset, PublicDataset
+from aiperf.config.dataset import FileDataset
 from aiperf.config.dataset.content import PromptConfig, PromptSelectionConfig
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import CustomDatasetType
 from tests.unit.conftest import make_run_from_cli
 
 
-def test_prompt_config_uses_corpus_not_prompt_corpus():
+def test_prompt_config_accepts_corpus():
     cfg = PromptConfig(corpus=PromptCorpus.CODING)
     assert cfg.corpus == PromptCorpus.CODING
-    assert (
-        not hasattr(cfg, "prompt_corpus")
-        or "prompt_corpus" not in PromptConfig.model_fields
-    )
-
-
-def test_file_dataset_rejects_flat_prompt_corpus():
-    with pytest.raises(Exception) as exc:
-        FileDataset.model_validate(
-            {
-                "name": "default",
-                "type": "file",
-                "path": "x.jsonl",
-                "format": "weka_trace",
-                "prompt_corpus": "coding",
-            }
-        )
-    msg = str(exc.value).lower()
-    assert "prompt_corpus" in msg
-    assert "prompts.corpus" in msg
-
-
-def test_public_dataset_rejects_flat_prompt_corpus():
-    with pytest.raises(Exception) as exc:
-        PublicDataset.model_validate(
-            {
-                "name": "default",
-                "type": "public",
-                "dataset": "sharegpt",
-                "prompt_corpus": "coding",
-            }
-        )
-    msg = str(exc.value).lower()
-    assert "prompt_corpus" in msg
-    assert "prompts.corpus" in msg
 
 
 def test_file_dataset_accepts_prompts_corpus():
@@ -67,7 +30,7 @@ def test_file_dataset_accepts_prompts_corpus():
     assert ds.prompts.corpus == PromptCorpus.CODING
 
 
-def test_get_prompt_corpus_reads_prompts_corpus_only(tmp_path):
+def test_get_prompt_corpus_reads_prompts_corpus(tmp_path):
     p = tmp_path / "t.jsonl"
     p.touch()
     cli = CLIConfig.model_construct(
@@ -77,6 +40,5 @@ def test_get_prompt_corpus_reads_prompts_corpus_only(tmp_path):
     )
     run = make_run_from_cli(cli)
     ds = run.cfg.get_default_dataset()
-    # After Task 3 converter may set this; for this task set authored shape directly:
     ds.prompts = PromptSelectionConfig(corpus=PromptCorpus.SONNET)
     assert run.cfg.get_prompt_corpus() == PromptCorpus.SONNET

@@ -136,26 +136,41 @@ If you need different replay pacing, several flags are available (recent additio
 | `--use-think-time-only` | Inter-turn delay uses only the trace's recorded `think_time` (client-side wait before each request), not `t_curr - t_prev` (which would include the original server's response time). Useful when your server is faster or slower than the recording — you don't want it punished or rewarded for the *previous* server's latency. Mutually exclusive with `--ignore-trace-delays`. |
 | `--inter-turn-delay-cap-seconds <S>` | Clamp any single inter-turn delay to at most `S` seconds. Defaults to `None` (no clamp); pass `60` to cap "coffee-break" gaps in real coding traces. |
 
-`--fixed-schedule` and `--no-fixed-schedule` are mutually exclusive — passing both errors at startup.
+`--no-fixed-schedule` only opts out of auto-promotion of fixed schedule for
+trace datasets. If you also pass explicit `--fixed-schedule`, fixed schedule
+still wins (both flags can be set; there is no startup mutex error).
 
 ### `agentic_replay` Timing Mode
 
-For multi-turn steady-state benchmarking with FIFO trace recycle and trajectory-based warmup (the agent-load-generation pattern AgentX MVP requires), AIPerf has a dedicated timing mode: `agentic_replay`. It is **scenario-locked** — there is no direct CLI flag to select it. Pass `--scenario inferencex-agentx-mvp` (the only built-in scenario that pins this mode today) and AIPerf's scenario validator sets `timing_mode=agentic_replay` for you:
+For multi-turn steady-state benchmarking with sampler-driven recycle (honors
+`sampling_strategy`) and trajectory-based warmup (the agent-load-generation
+pattern AgentX MVP requires), AIPerf has a dedicated timing mode: `agentic_replay`. It is **scenario-locked** — there is no direct CLI flag to select it. Pass `--scenario inferencex-agentx-mvp` (the only built-in scenario that pins this mode today) and AIPerf's scenario validator sets `timing_mode=agentic_replay` for you:
 
 ```bash
 aiperf profile \
     --scenario inferencex-agentx-mvp \
     --input-file artifacts/kv-cache-tester/traces/ \
+    --custom-dataset-type weka_trace \
+    --unsafe-override \
     --concurrency 50 \
     --benchmark-duration 900 \
     ...
 ```
 
+Local `weka_trace` under the scenario always needs `--unsafe-override`
+(stamps `submission_valid: false`). For a valid submission, use a pinned
+`--public-dataset` with-subagents alias instead — see [InferenceX AgentX MVP](agentx-mvp.md).
+
 For the full mechanics (trajectory selection, recycle queue, warmup barrier) and the locked submission rules on top, see [InferenceX AgentX MVP](agentx-mvp.md).
 
 ### Cache-Bust Markers
 
-AIPerf can prepend a unique per-conversation marker to every prompt, so that recycled plays of the same trace produce different prompt bytes and don't progressively warm the server's KV-cache prefix as the run goes on. Pass `--cache-bust system_prefix` (or `system_suffix` / `first_turn_prefix` / `first_turn_suffix`) to enable it. The default is `none` (no marker injected).
+AIPerf can inject a unique per-play marker according to the `--cache-bust`
+target (`system_*` / `first_turn_*`), so recycled plays of the same trace
+produce different prompt bytes and don't progressively warm the server's
+KV-cache prefix as the run goes on. Pass `--cache-bust system_prefix` (or
+`system_suffix` / `first_turn_prefix` / `first_turn_suffix`) to enable it.
+The default is `none` (no marker injected).
 
 The marker looks like `[rid:8a3f2c1b9e7d]` and is derived deterministically within a run from the auto-generated benchmark ID, the trace's recycle count, the trajectory index, and the trace ID — same trace, same recycle pass, same marker for every turn in that play. Markers differ across runs (the benchmark ID is a fresh UUID each time).
 
@@ -165,7 +180,7 @@ A few details worth knowing if you're using `--cache-bust` outside the scenario:
 
 - **Compatibility is checked at startup.** `--cache-bust` requires the `agentic_replay` timing mode (set by `--scenario inferencex-agentx-mvp`) and a chat-shaped endpoint (`--endpoint-type chat` or `responses`). Other combinations error before the run starts with a message naming the offending flag, not silently mid-run.
 - **Multimodal turns are supported.** When a turn carries images or audio alongside text, the marker is added as a new `{type: "text", text: "<marker>"}` content part at the start (prefix) or end (suffix) of the parts list; existing text/image/audio parts pass through untouched.
-- **`system_*` falls back to the first user turn when there's no system message.** If a trace has no system role anywhere (neither a conversation-level system message nor a `raw_messages[0].role=='system'`), `--cache-bust system_prefix` and `system_suffix` route the marker to the first user turn (turn index 0) with the same orientation (prefix stays prefix, suffix stays suffix). Because the fallback only fires on turn 0, later turns of that session can't re-inject — the worker logs this once per worker process at WARN level so you can spot it in mixed corpora.
+- **`system_*` falls back to the first user turn when there's no system message.** If a trace has no system role anywhere (neither a conversation-level system message nor a `raw_messages[0].role=='system'`), `--cache-bust system_prefix` and `system_suffix` route the marker to the first user turn with the same orientation (prefix stays prefix, suffix stays suffix). Like `first_turn_*`, that injection runs on every credit and is idempotent (it will not stack the marker). A one-shot WARN is logged when the session has an empty `turn_list` and the marker cannot be placed at all.
 - **Incompatible with `payload_bytes` workloads.** AIPerf's pre-encoded mmap fast path bypasses the per-request rendering that injection needs. If your dataset would otherwise pick the `PAYLOAD_BYTES` format, AIPerf refuses the run with a clear error rather than silently dropping markers. Either drop `--cache-bust` or use a workload that goes through the normal compose path.
 
 If you're tracking how the marker contributes to the **wire-token total** the model actually sees, see [Input Sequence Length (ISL) Tokenization](../reference/isl-tokenization.md). With `--apply-chat-template`, AIPerf compensates the synthetic prompt budget for the marker's token cost so `--isl N` lands on `N` tokens at the wire after the chat template wraps it.
@@ -219,10 +234,10 @@ The loader detects these hidden agents from `hash_ids` longest-common-prefix (LC
 - **Spawn**: the request is a separate agent forked from the shared prefix and becomes a child conversation linked with SPAWN/SPAWN_JOIN like a proper subagent. Each spawned chain is then **classified** to choose its session-id marker:
   - `<trace_id>::fa:NNN` — a solo agent (the default).
   - `<trace_id>::wg:{group}_{member}` — a **parallel worker-group** member: a coordinated parallel fan-out requires BOTH a shared spawned context AND actual concurrency. Workers that forked from shared context (`fork.depth > 0`) are scoped by their fork point (`fork.parent_chain` + `fork.fork_outer_idx`), then within each scope split into connected components of **overlapping active `[t0, t1)` intervals**; a component with at least `AIPERF_DATASET_WEKA_WORKER_GROUP_MIN` (default 3) members is one group. `group` = the concurrent fan-out, `member` = index within it by start time. Both gates matter: the fork-point scope keeps unrelated fan-outs apart (pure interval overlap would bridge a busy trace into one blob), and the overlap split drops members that share the fork point but never actually run concurrently. Keying instead on the first context block would be wrong — block-0 is the shallow common root (~system prompt) shared by nearly every worker in a session.
-  - `<trace_id>::aux:NNN` — an **auxiliary sidecar**: a short one-shot (at most `WEKA_AUX_MAX_REQUESTS` requests) from a small fresh context, or on a different model than the main agent (e.g. a Haiku WebFetch summary under an Opus agent). A tool-issued call, not an agent.
-  - Reduction sidecars — same-model single large-input / short-output one-shots (context compaction, subagent-result summary, or tool-output digest) are emitted as ordinary `<trace_id>::aux:NNN` conversations; governed by `WEKA_AUX_REDUCTION_OSL_MAX` / `WEKA_AUX_REDUCTION_RATIO`.
+  - `<trace_id>::aux:NNN` — an **auxiliary sidecar**: a short one-shot (at most `AIPERF_DATASET_WEKA_AUX_MAX_REQUESTS` requests) from a small fresh context, or on a different model than the main agent (e.g. a Haiku WebFetch summary under an Opus agent). A tool-issued call, not an agent.
+  - Reduction sidecars — same-model single large-input / short-output one-shots (context compaction, subagent-result summary, or tool-output digest) are emitted as ordinary `<trace_id>::aux:NNN` conversations; governed by `AIPERF_DATASET_WEKA_AUX_REDUCTION_OSL_MAX` / `AIPERF_DATASET_WEKA_AUX_REDUCTION_RATIO`.
 
-  Precedence is auxiliary > reduction > worker-group > solo agent. Set `WEKA_AUX_MAX_REQUESTS=0`, `WEKA_AUX_REDUCTION_OSL_MAX=0`, or `WEKA_WORKER_GROUP_MIN=0` to disable each arm (matching chains fall back to `::fa:`).
+  Precedence is auxiliary > reduction > worker-group > solo agent. Set `AIPERF_DATASET_WEKA_AUX_MAX_REQUESTS=0`, `AIPERF_DATASET_WEKA_AUX_REDUCTION_OSL_MAX=0`, or `AIPERF_DATASET_WEKA_WORKER_GROUP_MIN=0` to disable each arm (matching chains fall back to `::fa:`).
 
 ### Nested Detection Inside Subagents
 

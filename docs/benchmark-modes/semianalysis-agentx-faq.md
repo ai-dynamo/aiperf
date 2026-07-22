@@ -593,10 +593,13 @@ reconstructed dataset.
 A session's subagents become **child sessions** of the parent session. AIPerf has two relationship
 modes for such children:
 
-- **Spawn**: the child starts with fresh context and routes independently. It may start after a recorded
-  delay relative to the parent turn that launched it.
-- **Fork**: the child inherits (continues) the parent's accumulated context, routed to the same worker
-  and starting from the parent's full prompt prefix.
+- **Spawn**: the child starts with fresh context and sticky-co-locates on the
+  parent's AIPerf worker while that sticky entry is live (no SPAWN refcount
+  bump; least-loaded after the parent entry is gone). It may start after a
+  recorded delay relative to the parent turn that launched it.
+- **Fork**: the child inherits (continues) the parent's accumulated context,
+  sticky-routed to the same worker and starting from the parent's full prompt
+  prefix.
 
 In the SemiAnalysis corpora **every subagent is a spawn** (a fresh-context child). Fork is a general
 AIPerf DAG capability that these traces do not exercise — so for this benchmark, "subagent" means a
@@ -1073,8 +1076,10 @@ itself:
 
 **Explicit sticky sessions — pin each conversation to one replica by ID.** AIPerf already stamps the
 stable per-conversation correlation ID on every turn; enable one of the additive session-affinity
-headers with an environment variable so an external router can pin every turn of a session (and its
-subagent children) to the replica holding its KV prefix:
+headers with an environment variable so an external router can pin every turn of a conversation by
+that ID. Subagents are separate conversations with their own correlation IDs (sticky within the
+child). Dynamo additionally stamps `X-Dynamo-Parent-Session-ID` on subagent children when enabled,
+so the router can keep them near the parent:
 
 - **SGLang Model Gateway `manual` policy** (`AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID=1`):
   run the gateway with `--policy manual` and AIPerf emits the gateway's routing-key header

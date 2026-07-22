@@ -31,7 +31,8 @@ Both keys can appear on the same turn — the scheduler treats them independentl
 
 ## A minimal example, walked through
 
-Below is the shipped example at `examples/dag_jsonl/example.dag.jsonl`. Each line is one conversation; the three conversations together describe one tree.
+Below is a minimal FORK example (same shape as `tests/fixtures/dag/small.dag.jsonl`).
+Each line is one conversation; the three conversations together describe one tree.
 
 ```jsonl
 {"session_id":"root","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"system","content":"You are a careful assistant."},{"role":"user","content":"Please summarize the attached document."}],"max_tokens":128,"forks":["branch-a","branch-b"]}]}
@@ -63,7 +64,7 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --input-file examples/dag_jsonl/example.dag.jsonl \
+    --input-file tests/fixtures/dag/small.dag.jsonl \
     --custom-dataset-type dag_jsonl \
     --concurrency 1
 ```
@@ -153,7 +154,7 @@ By default a bare-string `forks: ["c"]` entry is **terminal**: the parent has no
 
 The seed history a FORK child inherits is the parent's `messages` plus the captured assistant reply, with two intentional simplifications:
 
-- **`reasoning` is dropped from the captured assistant turn.** The endpoint's `build_assistant_turn` keeps `content` (and tool/function calls when present) but discards `reasoning_content`/`reasoning` because most chat templates do not round-trip reasoning back to the model on a follow-up. Only the `content` field of a `ReasoningResponseData` survives into the child's seed; if the parent emitted reasoning *only* (empty `content`), the reasoning text is used as a fallback so the child still sees something. For workloads where chain-of-thought continuity across turns matters, prefer SPAWN mode — its children start fresh with the same `system` prompt rather than inheriting an inevitably-stripped CoT.
+- **`reasoning` may be dropped from the captured assistant turn on chat/completions.** The base chat endpoint's `build_assistant_turn` keeps `content` (and tool/function calls when present) but discards `reasoning_content`/`reasoning` because most chat templates do not round-trip reasoning back to the model on a follow-up. Only the `content` field of a `ReasoningResponseData` survives into the child's seed; if the parent emitted reasoning *only* (empty `content`), the reasoning text is used as a fallback so the child still sees something. **Anthropic Messages** is different: it reassembles `thinking` (+ signature) → `text` → `tool_use` for FORK replay — see [Anthropic Messages endpoint](../tutorials/anthropic-messages-endpoint.md). For workloads where chain-of-thought continuity across turns matters on chat endpoints, prefer SPAWN mode — its children start fresh with the same `system` prompt rather than inheriting a stripped CoT.
 - **Responses-API output items that are server-built tool outputs are filtered.** When the parent runs against `endpoint=responses` and the model emitted `web_search_call`, `file_search_call`, `image_generation_call`, `code_interpreter_call`, `computer_call`, or `reasoning` items, those are stripped from the seed before splicing into the child's `input` array — the Responses API rejects them as input unless paired with the corresponding tool config, which the child does not redeclare. `message` and `function_call` items round-trip cleanly and remain.
 
 ### FORK mode with `background: true` (fork-and-continue)
@@ -260,7 +261,7 @@ This is what makes FORK mode useful for exercising prefix-cache and KV-aware rou
 Every credit and request record is tagged with two DAG-aware fields:
 
 - **`agent_depth`** (`int`) — `0` for root sessions, `1` for direct children, `2` for grandchildren, etc. Roots flowing through a non-DAG dataset all carry `agent_depth=0`, so post-hoc analysis can filter on this field to compare root-only vs full-tree throughput without re-running the benchmark.
-- **`parent_correlation_id`** (`str | None`) — the correlation id of the immediate parent session, or `None` for roots and pre-session SPAWN children (which start fresh with no parent gating). FORK and ordinary SPAWN children both carry the spawning parent's correlation id, distinguishing "this request belongs to a fork tree" from "this is an independent sub-agent dispatch".
+- **`parent_correlation_id`** (`str | None`) — the correlation id of the immediate parent session, or `None` for roots and pre-session SPAWN children. FORK and ordinary (post-turn) SPAWN children both carry the spawning parent's correlation id so the sticky router can co-locate them while that entry is live. Discriminate FORK vs SPAWN with `branch_mode`, not this field alone.
 
 ## Reference: concurrency (fanout exceeds session slots)
 
@@ -279,13 +280,7 @@ Children are dispatched reactively by `BranchOrchestrator` at credit-return time
 
 ### `--num-conversations` autodefault for `dag_jsonl`
 
-When neither `--request-count` nor `--num-conversations` is supplied for a `dag_jsonl` run, AIPerf auto-defaults `--num-conversations` to the **root count** of the file (sessions not referenced by any other conversation's `forks` list) rather than auto-defaulting `--request-count`. Auto-defaulting `--request-count` for a forking dataset would silently truncate the DAG mid-tree because the cap counts fork-spawned children. The CLI logs:
-
-```
-No request count or conversation count provided for forking dataset;
-defaulting --num-conversations to N (run each root in the file once).
-Use --request-count for a literal wire-request cap instead.
-```
+When neither `--request-count` nor `--num-conversations` is supplied for a `dag_jsonl` run, AIPerf auto-defaults `--num-conversations` to the **root count** of the file (sessions not referenced by any other conversation's `forks`, `spawns`, or `pre_session_spawns` lists) rather than auto-defaulting `--request-count`. Auto-defaulting `--request-count` for a forking dataset would silently truncate the DAG mid-tree because the cap counts fork-spawned children. The converter sets `sessions` to that root count silently (no special CLI log line).
 
 If you do want a wire-request cap, pass `--request-count` explicitly — but be aware of the cap-applies-to-children behavior described above.
 
@@ -336,6 +331,7 @@ Every DAG-shaped run publishes a `BranchStats` snapshot per credit phase, export
     "children_completed":                 11,  // children that reached their leaf turn
     "children_errored":                    0,  // children that terminated with an error
     "children_truncated":                  1,  // children stopped mid-tree by --request-count
+    "children_delayed":                    0,  // SPAWN children whose turn-0 dispatch was delayed
     "parents_suspended":                   3,  // parents that paused awaiting a join
     "parents_resumed":                     3,  // parents that resumed after all children drained
     "parents_failed_due_to_child_error":   0,  // parents aborted under AIPERF_DAG_FAIL_FAST=1
@@ -345,7 +341,7 @@ Every DAG-shaped run publishes a `BranchStats` snapshot per credit phase, export
 }
 ```
 
-Counters are mode-agnostic (the same shape applies to FORK-only, SPAWN-only, and mixed runs). Use `children_truncated` and `joins_suppressed` to detect when a `--request-count` cap interrupted the DAG mid-tree; they tally separately from `children_completed` so observability stays accurate. Linear (non-DAG) runs leave `branch_stats` unset on `ProfileResults`.
+Counters are mode-agnostic (the same shape applies to FORK-only, SPAWN-only, and mixed runs). Use `children_truncated` and `joins_suppressed` to detect when a `--request-count` cap interrupted the DAG mid-tree; they tally separately from `children_completed` so observability stays accurate. `children_delayed` counts SPAWN children whose turn-0 dispatch waited on a delay gate. Linear (non-DAG) runs leave `branch_stats` unset on `ProfileResults`.
 
 ## Reference: environment variables
 

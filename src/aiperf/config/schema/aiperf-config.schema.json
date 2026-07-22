@@ -4275,7 +4275,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Prompt synthesis selection for this dataset. Author ``prompts.corpus`` to choose sonnet vs coding when content is synthesized (trace hash_id reconstruction). Verbatim formats ignore it."
+                  "description": "Prompt synthesis selection for this dataset. Set ``corpus`` to choose sonnet vs coding when content is synthesized (trace hash_id reconstruction). Verbatim formats ignore it."
                 }
               },
               "required": [
@@ -4444,7 +4444,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Prompt synthesis selection for this dataset. Author ``prompts.corpus`` to choose sonnet vs coding when content is synthesized (trace hash_id reconstruction). Verbatim formats ignore it."
+                  "description": "Prompt synthesis selection for this dataset. Set ``corpus`` to choose sonnet vs coding when content is synthesized (trace hash_id reconstruction). Verbatim formats ignore it."
                 },
                 "synthesis": {
                   "anyOf": [
@@ -12564,7 +12564,7 @@
             }
           ],
           "default": null,
-          "description": "Prompt synthesis selection for this dataset. Author ``prompts.corpus`` to choose sonnet vs coding when content is synthesized (trace hash_id reconstruction). Verbatim formats ignore it."
+          "description": "Prompt synthesis selection for this dataset. Set ``corpus`` to choose sonnet vs coding when content is synthesized (trace hash_id reconstruction). Verbatim formats ignore it."
         }
       },
       "required": [
@@ -16968,7 +16968,7 @@
             }
           ],
           "default": null,
-          "description": "Source corpus for synthetic prompt text generation (``prompts.corpus``). 'sonnet' uses Shakespeare sonnets. 'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; agentic-coding loaders such as weka_trace default to 'coding')."
+          "description": "Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare sonnets. 'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; agentic-coding loaders such as weka_trace default to 'coding')."
         },
         "sequenceDistribution": {
           "anyOf": [
@@ -17234,7 +17234,7 @@
             }
           ],
           "default": null,
-          "description": "Prompt synthesis selection for this dataset. Author ``prompts.corpus`` to choose sonnet vs coding when content is synthesized (trace hash_id reconstruction). Verbatim formats ignore it."
+          "description": "Prompt synthesis selection for this dataset. Set ``corpus`` to choose sonnet vs coding when content is synthesized (trace hash_id reconstruction). Verbatim formats ignore it."
         },
         "synthesis": {
           "anyOf": [

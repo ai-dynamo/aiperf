@@ -1122,7 +1122,6 @@ class CLIConfig(BaseConfig):
         PromptCorpus | None,
         Field(
             description="Source corpus for synthetic prompt text generation. "
-            "Projects to prompts.corpus. "
             "'sonnet' uses Shakespeare sonnets. "
             "'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). "
             "Honored only for synthesized content (synthetic datasets and count/hash-id trace loaders); "

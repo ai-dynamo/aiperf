@@ -22,7 +22,7 @@ We split the total wire-token cost into three components, each compensated at a 
 | **(b) Chat-template wrapping** | Role headers, end-of-turn tokens, BOS, and the assistant-prompt suffix that the model server's tokenizer adds on top of the bare content. | Subtract from every user turn's bare prompt — first turn pays the per-request fixed cost + per-message wrap; later turns pay only the per-message wrap. |
 | **(c) System message length when marker lands on system** | When `--cache-bust system_*` lands the marker on the synthetic shared system prompt, the prompt's wire length grows by the marker token cost. | Reduce the synthetic shared system prompt length by the marker cost so the wire system message still matches `--shared-system-prompt-length`. |
 
-Component (a) only ever has a non-zero value when the user actually has cache-bust enabled, and `validate_cache_bust_compatibility` (in `src/aiperf/common/config/user_config.py`) refuses `--cache-bust` outside the `agentic_replay` timing mode (set today by `--scenario inferencex-agentx-mvp`) and refuses it outside `--endpoint-type chat` / `responses` — the two checks raise as separate `ValueError`s in sequence. That validator is what lets the composer assume the worker really will inject the marker — every other combination would silently no-op, and the composer would over-subtract by `marker_tokens`. Configurations that fail the validator never reach the composer, so component (a) compensation can be unconditional once `target != NONE` and the routing in "Marker placement routing" decides which slot it lands on.
+Component (a) only ever has a non-zero value when the user actually has cache-bust enabled. `BenchmarkConfig.validate_cache_bust_compatibility` (in `src/aiperf/config/config.py`) refuses `--cache-bust` when a profiling phase explicitly declares a non-`agentic_replay` `timing_mode`, and refuses it outside `--endpoint-type chat` / `responses` — those checks raise as separate `ValueError`s. It does **not** fire when a `scenario` is set (scenario locks apply post-construction) or when no phase has an explicit `timing_mode` yet (effective mode is resolved later). That validator is what lets the composer assume the worker really will inject the marker once a config has passed — incompatible combinations that would silently no-op are refused when knowable at construction time, and the composer would otherwise over-subtract by `marker_tokens`. Configurations that fail the validator never reach the composer, so component (a) compensation can be unconditional once `target != NONE` and the routing in "Marker placement routing" decides which slot it lands on.
 
 This page focuses on **(b)**, which is the most subtle of the three.
 
@@ -169,7 +169,7 @@ When the marker lands on the synthetic shared system prompt (i.e., `--cache-bust
 | Approach | Used? | Reason |
 | --- | --- | --- |
 | **`model_copy` the prompt config before passing to `PromptGenerator`** | Yes | Localized, no wasted work, doesn't touch user-facing config. |
-| Mutate `config.input.prompt.prefix_prompt.shared_system_prompt_length` in place | No | Other consumers of `UserConfig` (metrics, exporters, downstream services) would silently read the compensated value; user-typed value would no longer match what code reports. Hidden side effect. |
+| Mutate `config.input.prompt.prefix_prompt.shared_system_prompt_length` in place | No | Other consumers of `BenchmarkConfig` (metrics, exporters, downstream services) would silently read the compensated value; user-typed value would no longer match what code reports. Hidden side effect. |
 | Generate the system prompt at user-configured length, then call a public setter to regenerate it shorter | No | Wastes tokenizer work generating then discarding a system prompt. Requires a new public method on `PromptGenerator` whose only caller is this single edge case. Crosses layering boundaries. |
 | Add a `shared_system_prompt_length_override` kwarg to `PromptGenerator.__init__` | No | Pollutes a public API with a parameter that is internal to one upstream caller. The `model_copy` approach achieves the same thing without changing `PromptGenerator`'s signature. |
 
@@ -246,7 +246,7 @@ Each alternative was considered during design and rejected. Recorded here so the
 
 3. **Subtract from first turn only, leave subsequent turns alone.** Single-turn benchmarks would be exactly right; multi-turn would drift by `K × per_msg_wrap` for request K. Rejected because per-turn correctness matters: the synthetic generator sizes each turn independently, so a per-turn drift is more visible than a per-request drift.
 
-4. **Mutate `UserConfig` in place to compensate the shared system prompt.** Simpler code, but means downstream consumers see different numbers than the user typed. Rejected as hidden side effect.
+4. **Mutate `BenchmarkConfig` in place to compensate the shared system prompt.** Simpler code, but means downstream consumers see different numbers than the user typed. Rejected as hidden side effect.
 
 5. **Add a public `regenerate_shared_system_prompt(length)` setter on `PromptGenerator`.** Would let the composer compensate after the fact. Rejected because it wastes tokenizer work generating the original prompt and crosses a layering boundary; `model_copy` of the prompt config achieves the same thing without those costs.
 

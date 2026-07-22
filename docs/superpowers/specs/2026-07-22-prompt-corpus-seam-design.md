@@ -8,11 +8,10 @@ SPDX-License-Identifier: Apache-2.0
 ## Purpose
 
 Unify `--prompt-corpus` / `prompts.corpus` into one clean seam for `sonnet`
-and `coding` only. Today the flag is accepted and routed, but synthetic
-generation always uses Shakespeare, file/public author a flat `prompt_corpus`
-field, and each composer selects the generator independently. The goal is one
-authored field, one resolver, and real effect everywhere prompt content is
-synthesized.
+and `coding` only. Synthetic generation always used Shakespeare, file/public
+authored corpus on a separate field, and each composer selected the generator
+independently. The goal is one authored field, one resolver, and real effect
+everywhere prompt content is synthesized.
 
 ## Decisions (locked)
 
@@ -22,14 +21,12 @@ synthesized.
 | Authored shape | Always `prompts.corpus` |
 | Defaults when omitted | Keep loader `default_prompt_corpus` from `plugins.yaml` |
 | Selector location | Shared factory module (not only a base-composer method) |
-| Old flat field | Hard cut — no top-level `prompt_corpus` alias |
 
 ## Authored surface
 
 ### Field rename
 
-- `PromptConfig.prompt_corpus` → `PromptConfig.corpus`
-- Remove `FileDataset.prompt_corpus` and `PublicDataset.prompt_corpus`
+- `PromptConfig` corpus field is `corpus` under `prompts`
 - File and Public datasets author a slim `prompts` object whose only required
   seam field for this work is `corpus`
 
@@ -68,11 +65,6 @@ datasets:
 
 `BenchmarkConfig.get_prompt_corpus()` resolves only
 `dataset.prompts.corpus` (one path for all dataset types).
-
-### Hard cut
-
-YAML with top-level `prompt_corpus` fails validation. Error text should point
-authors to `prompts.corpus`. No dual-write / silent alias.
 
 ## Runtime selector
 
@@ -148,7 +140,6 @@ flowchart LR
 
 - Invalid corpus enum value → existing Pydantic / CLI choice validation
 - Trace dataset without tokenizer → keep current clear error
-- Top-level `prompt_corpus` in YAML → validation failure naming `prompts.corpus`
 
 ## Tests
 
@@ -157,14 +148,12 @@ flowchart LR
 - Synthetic composer: coding corpus yields `CodingContentGenerator`
 - Trace composer: weka default coding; explicit sonnet overrides (update
   `test_coding_corpus_injection.py`)
-- Config hard cut: flat `prompt_corpus` rejected
 
 ## Docs
 
 - Regenerate CLI docs (`make generate-cli-docs`)
 - Add a short user-facing note under `docs/reference/prompt-corpus.md`
   (honored only where content is synthesized; values; defaults)
-- Update agentx / weka tutorials only if they mention the old flat field
 - Register the reference doc in `docs/index.yml`
 
 ## Out of scope

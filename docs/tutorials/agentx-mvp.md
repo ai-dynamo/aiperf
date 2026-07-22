@@ -361,9 +361,11 @@ server's KV cache. This isn't the generic AIPerf warmup — it's a
 trajectory-based warmup specific to the agentic-replay scheduler.
 
 Here's the picture. You set `--concurrency 100`. The scheduler builds 100
-active trajectory lanes, drawing traces from the dataset sampler; when the
-usable pool is smaller than the requested concurrency, the sampler wraps and
-the same trace backs multiple lanes, each with a deterministic per-lane start
+active trajectory lanes, drawing traces from the dataset sampler. Filling more
+lanes than distinct loaded roots requires `--allow-dataset-wrap` (cache-bust
+alone does not enable wrapping); without it, an undersized pool is capped with
+a warning rather than silently wrap-filled. When wrapping is enabled, the same
+trace can back multiple lanes, each with a deterministic per-lane start
 position. For each lane, it samples a random starting instant `t*` somewhere
 between 0% and 100% of that trace's recorded duration (the
 `--trajectory-start-min-ratio` / `--trajectory-start-max-ratio` window the
@@ -393,9 +395,10 @@ so AIPerf cancels in-flight warmup immediately, logs the failing trace at
 `submission_valid: false` (reason `run_cancelled`). A *subagent* stream's
 warmup failure does not trigger the abort — only root (depth-0)
 conversations gate it. Slow-but-healthy warmups are also *not* aborted: the
-warmup grace period (`--warmup-grace-period`, see the
-[Warmup Phase tutorial](warmup.md)) has no limit by default, so a warmup
-that is merely slow runs to completion.
+warmup grace period (`--agentic-warmup-grace-period`; under `--scenario`,
+`--warmup-grace-period` aliases onto it when the dedicated flag is unset —
+see the [Warmup Phase tutorial](warmup.md)) has no limit by default, so a
+warmup that is merely slow runs to completion.
 
 #### Optional cache-pressure warmup
 
@@ -460,11 +463,13 @@ A few wrinkles worth knowing:
   warmup turn `k_i` and its first profiling turn `k_i+1` carry the *same*
   `[rid:…]` — that's how the KV-cache prefix work done during warmup
   transfers into measurement instead of being thrown away.
-- **Concurrency can exceed the number of usable traces.** Traces too short
-  to split into a warmup + profiling turn are skipped, and the sampler wraps
-  when the pool runs out, so one source trace can back several lanes — each
-  keeping its own deterministic start position and recycle behavior. An
-  undersized pool is fine; only an *empty* pool is an error.
+- **Concurrency may exceed the number of usable traces only with wrap enabled.**
+  Traces too short to split into a warmup + profiling turn are skipped (the
+  pool is capped with a warning when it cannot fill after skips). Filling
+  more lanes than distinct loaded roots requires `--allow-dataset-wrap` —
+  cache-bust alone does not enable wrapping. With wrap on, one source trace
+  can back several lanes (each keeping its own start position and recycle
+  behavior). An *empty* pool after filtering is still an error.
 - **Profiling ends** when `--benchmark-duration` elapses. Anything in flight
   finishes during a grace-period drain and is included in the metrics; nothing
   *new* starts after the duration ends.

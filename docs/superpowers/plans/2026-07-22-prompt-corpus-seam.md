@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Goal:** Unify the `prompts.corpus` / `--prompt-corpus` seam so `sonnet` and `coding` are selected by one shared factory and actually drive synthetic + trace synthesis.
 
-**Architecture:** Rename authored field to `prompts.corpus` on all dataset types; add `resolve_prompt_generator()` in `dataset/generator/corpus.py`; wire Base/Custom/Public composers through it; hard-cut flat `prompt_corpus`.
+**Architecture:** Authored field is `prompts.corpus` on all dataset types; add `resolve_prompt_generator()` in `dataset/generator/corpus.py`; wire Base/Custom/Public composers through it.
 
 **Tech Stack:** Python 3.11+, Pydantic config (`BaseConfig`), pytest, existing `PromptGenerator` / `CodingContentGenerator`.
 
@@ -20,7 +20,6 @@ SPDX-License-Identifier: Apache-2.0
 - Corpus values: `sonnet` | `coding` only (no `random`)
 - Authored shape: always `prompts.corpus` (CLI flag remains `--prompt-corpus`)
 - Defaults: keep loader `default_prompt_corpus` from `plugins.yaml`
-- Hard cut: no top-level `prompt_corpus` alias
 - `Field(description=...)` on every new Pydantic field; `X | Y` not `Optional`
 - Dependencies via `uv`; tests via `uv run pytest`
 - DCO sign-off on commits: `git commit -s`
@@ -35,7 +34,7 @@ SPDX-License-Identifier: Apache-2.0
 | `src/aiperf/dataset/generator/corpus.py` | **Create** — `resolve_prompt_generator()` |
 | `tests/unit/dataset/generator/test_corpus_resolver.py` | **Create** — factory unit tests |
 | `src/aiperf/config/dataset/content.py` | Rename `PromptConfig.prompt_corpus` → `corpus`; add `PromptSelectionConfig` |
-| `src/aiperf/config/dataset/config.py` | File/Public: remove flat `prompt_corpus`, add `prompts: PromptSelectionConfig \| None` |
+| `src/aiperf/config/dataset/config.py` | File/Public: add `prompts: PromptSelectionConfig \| None` |
 | `src/aiperf/config/loader/helpers.py` | `get_prompt_corpus()` reads only `prompts.corpus` |
 | `src/aiperf/config/flags/_converter_dataset.py` | Project CLI into `prompts.corpus` for all types |
 | `src/aiperf/dataset/composer/base.py` | Build `prompt_generator` via factory |
@@ -171,11 +170,11 @@ EOF
 
 **Files:**
 - Modify: `src/aiperf/config/dataset/content.py` — rename field; add `PromptSelectionConfig`
-- Modify: `src/aiperf/config/dataset/config.py` — File/Public `prompts`; drop flat `prompt_corpus`
+- Modify: `src/aiperf/config/dataset/config.py` — File/Public `prompts`
 - Modify: `src/aiperf/config/dataset/__init__.py` (export `PromptSelectionConfig` if re-exported)
 - Modify: `src/aiperf/config/loader/helpers.py` — simplify `get_prompt_corpus`
 - Modify: `tests/unit/config/test_dataset_content_config_defaults.py`
-- Create/modify: `tests/unit/config/test_prompt_corpus_authored_shape.py` (hard-cut + nested read)
+- Create/modify: `tests/unit/config/test_prompt_corpus_authored_shape.py` (nested `prompts.corpus` read)
 
 **Interfaces:**
 - Consumes: none from Task 1
@@ -191,39 +190,23 @@ Add to a new file `tests/unit/config/test_prompt_corpus_authored_shape.py`:
 
 from __future__ import annotations
 
-import pytest
-
 from aiperf.common.enums import PromptCorpus
-from aiperf.config.dataset import FileDataset, PublicDataset, SyntheticDataset
+from aiperf.config.dataset import FileDataset
 from aiperf.config.dataset.content import PromptConfig, PromptSelectionConfig
 from aiperf.config.flags.cli_config import CLIConfig
-from aiperf.config.flags.converter import convert_cli_to_aiperf
-from aiperf.plugin.enums import CustomDatasetType, PublicDatasetType
+from aiperf.plugin.enums import CustomDatasetType
 from tests.unit.conftest import make_run_from_cli
 
 
-def test_prompt_config_uses_corpus_not_prompt_corpus():
+def test_prompt_config_accepts_corpus():
     cfg = PromptConfig(corpus=PromptCorpus.CODING)
     assert cfg.corpus == PromptCorpus.CODING
-    assert not hasattr(cfg, "prompt_corpus") or "prompt_corpus" not in PromptConfig.model_fields
-
-
-def test_file_dataset_rejects_flat_prompt_corpus():
-    with pytest.raises(Exception) as exc:
-        FileDataset.model_validate(
-            {
-                "type": "file",
-                "path": "x.jsonl",
-                "format": "weka_trace",
-                "prompt_corpus": "coding",
-            }
-        )
-    assert "prompt_corpus" in str(exc.value).lower() or "extra" in str(exc.value).lower()
 
 
 def test_file_dataset_accepts_prompts_corpus():
     ds = FileDataset.model_validate(
         {
+            "name": "default",
             "type": "file",
             "path": "x.jsonl",
             "format": "weka_trace",
@@ -234,7 +217,7 @@ def test_file_dataset_accepts_prompts_corpus():
     assert ds.prompts.corpus == PromptCorpus.CODING
 
 
-def test_get_prompt_corpus_reads_prompts_corpus_only(tmp_path):
+def test_get_prompt_corpus_reads_prompts_corpus(tmp_path):
     p = tmp_path / "t.jsonl"
     p.touch()
     cli = CLIConfig.model_construct(
@@ -244,7 +227,6 @@ def test_get_prompt_corpus_reads_prompts_corpus_only(tmp_path):
     )
     run = make_run_from_cli(cli)
     ds = run.cfg.get_default_dataset()
-    # After Task 3 converter may set this; for this task set authored shape directly:
     ds.prompts = PromptSelectionConfig(corpus=PromptCorpus.SONNET)
     assert run.cfg.get_prompt_corpus() == PromptCorpus.SONNET
 ```
@@ -261,13 +243,13 @@ assert config.corpus is None
 
 Run: `uv run pytest tests/unit/config/test_prompt_corpus_authored_shape.py tests/unit/config/test_dataset_content_config_defaults.py::test_prompt_config_defaults -v`
 
-Expected: FAIL on missing `corpus` / still having `prompt_corpus`
+Expected: FAIL on missing `corpus`
 
 - [ ] **Step 3: Implement config changes**
 
 In `content.py`:
 
-1. Rename `PromptConfig.prompt_corpus` → `corpus` (keep same description, mention `prompts.corpus`).
+1. Rename `PromptConfig.prompt_corpus` → `corpus`.
 2. Add:
 
 ```python
@@ -292,7 +274,6 @@ class PromptSelectionConfig(BaseConfig):
 
 In `config.py` `FileDataset` and `PublicDataset`:
 
-- Delete `prompt_corpus` fields.
 - Add:
 
 ```python
@@ -301,7 +282,7 @@ prompts: Annotated[
     Field(
         default=None,
         description="Prompt synthesis selection for this dataset. "
-        "Author ``prompts.corpus`` to choose sonnet vs coding when content "
+        "Set ``corpus`` to choose sonnet vs coding when content "
         "is synthesized (trace hash_id reconstruction). Verbatim formats ignore it.",
     ),
 ]
@@ -334,7 +315,7 @@ git add src/aiperf/config/dataset/content.py src/aiperf/config/dataset/config.py
 git commit -s -m "$(cat <<'EOF'
 refactor(config): author prompt corpus as prompts.corpus
 
-Align file/public/synthetic datasets on one nested field and drop the flat prompt_corpus.
+Align file/public/synthetic datasets on one nested field.
 EOF
 )"
 ```
@@ -716,9 +697,6 @@ datasets:
       corpus: coding
 ```
 
-Do not author a top-level ``prompt_corpus`` field; use ``prompts.corpus``.
-```
-
 - [ ] **Step 2: Register in `docs/index.yml`**
 
 Under the Reference section, add:
@@ -732,7 +710,7 @@ Under the Reference section, add:
 
 - [ ] **Step 3: Tighten CLI Field description**
 
-In `cli_config.py` `prompt_corpus` Field description, append that it projects to `prompts.corpus` and is honored only for synthesized content.
+In `cli_config.py` `prompt_corpus` Field description, note it is honored only for synthesized content.
 
 - [ ] **Step 4: Regenerate CLI docs + validate index**
 
@@ -792,7 +770,6 @@ Confirm each spec requirement has a task deliverable:
 | Shared factory | 1 |
 | Synthetic honors coding | 4 |
 | Trace honors + defaults | 4 |
-| Hard cut flat field | 2 |
 | mmap key | 5 |
 | Docs | 6 |
 | No `random` | — out of scope |

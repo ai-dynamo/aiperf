@@ -172,8 +172,7 @@ class PromptConfig(BaseConfig):
         PromptCorpus | None,
         Field(
             default=None,
-            description="Source corpus for synthetic prompt text generation "
-            "(``prompts.corpus``). "
+            description="Source corpus for synthetic prompt text generation. "
             "'sonnet' uses Shakespeare sonnets. "
             "'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). "
             "When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; "
