@@ -104,10 +104,11 @@ MANIFEST_VERSION = (
     # structure baked into the mmap -- omitting them served stale bytes when
     # they changed.
     # v20: cache key now includes random_seed / dataset_random_seed /
-    # prompt_corpus / osl_fallback. These bake into the decoded mmap (base seed
-    # drives per-block hash_id token derivation; corpus + OSL fallback select
-    # the reconstructed tokens), so omitting them let two runs differing only in
-    # those serve each other's stale bytes. Invalidates pre-v20 entries.
+    # corpus (prompts.corpus) / osl_fallback. These bake into the decoded mmap
+    # (base seed drives per-block hash_id token derivation; corpus + OSL
+    # fallback select the reconstructed tokens), so omitting them let two runs
+    # differing only in those serve each other's stale bytes. Invalidates
+    # pre-v20 entries.
     # v19: worker-group grouping now requires BOTH a shared fork point AND
     # temporal overlap (the corpus research + graph adapter prescription:
     # overlapping intervals AND a shared prefix). Workers are scoped by fork
@@ -742,12 +743,12 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         "public_dataset_source": _public_dataset_source_from_run(run),
         # The base seed feeds per-block hash_id token derivation for trace/weka
         # datasets (HashIdRandomGenerator.reseed_for_hash_id mixes it into every
-        # decoded block), and the per-record OSL fallback + prompt corpus select
+        # decoded block), and the per-record OSL fallback + prompts.corpus select
         # which tokens are reconstructed -- all bake into the cached mmap, so two
         # runs differing only in these must NOT share a cache entry.
         "random_seed": getattr(run, "random_seed", None),
         "dataset_random_seed": getattr(dataset, "random_seed", None),
-        "prompt_corpus": getattr(dataset, "prompt_corpus", None),
+        "corpus": getattr(prompts, "corpus", None),
         "osl_fallback": osl_dump,
         # Pre-encode single-turn conversations to PAYLOAD_BYTES at build time:
         # flips the stored mmap FORMAT (CONVERSATION vs PAYLOAD_BYTES) and the

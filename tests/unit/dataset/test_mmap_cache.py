@@ -243,7 +243,9 @@ class TestComputeCacheKey:
 
     def test_settings_payload_includes_seed_corpus_osl(self, tmp_path: Path) -> None:
         # Regression guard for the wrong-cache-hit findings: random_seed,
-        # prompt_corpus, and the per-record OSL fallback must enter the key.
+        # prompts.corpus, and the per-record OSL fallback must enter the key.
+        from aiperf.common.enums import PromptCorpus
+        from aiperf.config.dataset import PromptSelectionConfig
         from aiperf.plugin.enums import CustomDatasetType
 
         trace = _write_input_file(
@@ -259,9 +261,12 @@ class TestComputeCacheKey:
                 random_seed=123,
             )
         )
+        dataset = run.cfg.get_default_dataset()
+        dataset.prompts = PromptSelectionConfig(corpus=PromptCorpus.CODING)
         payload = mmap_cache._settings_payload_from_run(run)
         assert payload["random_seed"] == 123
-        assert "prompt_corpus" in payload
+        assert "corpus" in payload
+        assert payload["corpus"] == "coding"
         assert "osl_fallback" in payload
 
     def test_key_is_deterministic_for_identical_inputs(self, tmp_path: Path) -> None:
