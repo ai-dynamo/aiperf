@@ -25,6 +25,7 @@ from aiperf.common.models.server_metrics_models import (
     CounterMetricData,
     GaugeMetricData,
     HistogramMetricData,
+    MetricSample,
     ServerMetricsEndpointInfo,
     ServerMetricsEndpointSummary,
     ServerMetricsRecord,
@@ -37,6 +38,8 @@ from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 from aiperf.server_metrics.export_stats import compute_stats
 from aiperf.server_metrics.parquet_exporter import ServerMetricsParquetExporter
 from aiperf.server_metrics.storage import (
+    HistogramTimeSeries,
+    ScalarTimeSeries,
     ServerMetricsHierarchy,
     ServerMetricsTimeSeries,
 )
@@ -103,11 +106,6 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         self._slice_duration: float | None = self.run.cfg.artifacts.slice_duration
         # Lightweight timestamp storage for query_time_range() (analyzer support)
         self._timestamps_ns = GrowableArray(initial_capacity=1024, dtype=np.int64)
-        # Latest WARMUP-tagged scrape timestamp. The end-of-warmup scrape is
-        # captured after the warmup CREDIT_PHASE_COMPLETE message, so it lands
-        # strictly after warmup_end_ns and would otherwise be excluded from
-        # warmup aggregation.
-        self._last_warmup_record_ns: int | None = None
 
     def get_hierarchy_for_export(self) -> ServerMetricsHierarchy:
         """Get server metrics hierarchy for export purposes.
@@ -127,10 +125,6 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             record: ServerMetricsRecord containing Prometheus metrics and metadata
         """
         self._timestamps_ns.append(record.timestamp_ns)
-        if record.benchmark_phase == CreditPhase.WARMUP:
-            self._last_warmup_record_ns = max(
-                self._last_warmup_record_ns or 0, record.timestamp_ns
-            )
         self._server_metrics_hierarchy.add_record(record)
 
     async def process_record(self, record: ServerMetricsRecord) -> None:
@@ -174,33 +168,34 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         if not self._server_metrics_hierarchy.endpoints:
             return None
 
-        endpoint_summaries = self._compute_endpoint_summaries(
-            start_ns,
-            end_ns,
+        endpoint_summaries = self._compute_phase_endpoint_summaries(
+            CreditPhase.PROFILING,
             self._slice_duration,
-            include_final_collection=True,
         )
+        if not endpoint_summaries:
+            endpoint_summaries = self._compute_endpoint_summaries(
+                start_ns,
+                end_ns,
+                self._slice_duration,
+                include_final_collection=True,
+            )
         warmup_endpoint_summaries = None
         if (
             warmup_start_ns is not None
             and warmup_end_ns is not None
             and warmup_start_ns < warmup_end_ns
         ):
-            # Extend the warmup window to include the dedicated end-of-warmup
-            # scrape (WARMUP-tagged, captured after CREDIT_PHASE_COMPLETE so
-            # its timestamp is strictly past warmup_end_ns). Cap at just
-            # before profiling start so profiling samples are never admitted.
-            warmup_summary_end_ns = warmup_end_ns
-            if self._last_warmup_record_ns is not None:
-                warmup_summary_end_ns = max(
-                    warmup_end_ns, min(self._last_warmup_record_ns, start_ns - 1)
-                )
-            warmup_endpoint_summaries = self._compute_endpoint_summaries(
-                warmup_start_ns,
-                warmup_summary_end_ns,
+            warmup_endpoint_summaries = self._compute_phase_endpoint_summaries(
+                CreditPhase.WARMUP,
                 self._slice_duration,
-                include_final_collection=False,
             )
+            if not warmup_endpoint_summaries:
+                warmup_endpoint_summaries = self._compute_endpoint_summaries(
+                    warmup_start_ns,
+                    warmup_end_ns,
+                    self._slice_duration,
+                    include_final_collection=False,
+                )
 
         endpoint_list = list(self._server_metrics_hierarchy.endpoints.keys())
         results = ServerMetricsResults(
@@ -237,6 +232,50 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             )
 
         return results
+
+    def _build_endpoint_info(
+        self, time_series: ServerMetricsTimeSeries
+    ) -> ServerMetricsEndpointInfo:
+        """Build endpoint fetch/update metadata from the full time series."""
+        unique_count = time_series._unique_update_count
+        duration_seconds = (
+            (time_series.last_update_ns - time_series.first_update_ns)
+            / NANOS_PER_SECOND
+            if unique_count > 0
+            else 0.0
+        )
+        avg_update_interval_ms = (
+            (duration_seconds * MILLIS_PER_SECOND) / (unique_count - 1)
+            if unique_count > 1
+            else 0.0
+        )
+        median_update_interval_ms: float | None = None
+        if time_series._update_intervals_ns:
+            intervals_ns = np.array(time_series._update_intervals_ns, dtype=np.int64)
+            median_update_interval_ms = (
+                float(np.median(intervals_ns)) / NANOS_PER_MILLIS
+            )
+
+        avg_fetch_latency_ms = (
+            sum(time_series._fetch_latencies_ns)
+            / len(time_series._fetch_latencies_ns)
+            / NANOS_PER_MILLIS
+            if time_series._fetch_latencies_ns
+            else 0.0
+        )
+
+        return ServerMetricsEndpointInfo(
+            total_fetches=time_series._total_fetch_count,
+            first_fetch_ns=time_series.first_fetch_ns,
+            last_fetch_ns=time_series.last_fetch_ns,
+            avg_fetch_latency_ms=avg_fetch_latency_ms,
+            unique_updates=unique_count,
+            first_update_ns=time_series.first_update_ns,
+            last_update_ns=time_series.last_update_ns,
+            duration_seconds=duration_seconds,
+            avg_update_interval_ms=avg_update_interval_ms,
+            median_update_interval_ms=median_update_interval_ms,
+        )
 
     def _compute_endpoint_summaries(
         self,
@@ -329,54 +368,146 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                         series=[series_stats],
                     )
 
-            # Unique update statistics
-            unique_count = time_series._unique_update_count
-            duration_seconds = (
-                (time_series.last_update_ns - time_series.first_update_ns)
-                / NANOS_PER_SECOND
-                if unique_count > 0
-                else 0.0
+            summaries[endpoint_display] = ServerMetricsEndpointSummary(
+                endpoint_url=endpoint_url,
+                info=self._build_endpoint_info(time_series),
+                metrics=metrics,
             )
-            avg_update_interval_ms = (
-                (duration_seconds * MILLIS_PER_SECOND) / (unique_count - 1)
-                if unique_count > 1
-                else 0.0
-            )
-            # Compute median from actual intervals (more robust to outliers)
-            median_update_interval_ms: float | None = None
-            if time_series._update_intervals_ns:
-                intervals_ns = np.array(
-                    time_series._update_intervals_ns, dtype=np.int64
-                )
-                median_update_interval_ms = (
-                    float(np.median(intervals_ns)) / NANOS_PER_MILLIS
-                )
 
-            # Fetch statistics (all fetches including duplicates)
-            avg_fetch_latency_ms = (
-                sum(time_series._fetch_latencies_ns)
-                / len(time_series._fetch_latencies_ns)
-                / NANOS_PER_MILLIS
-                if time_series._fetch_latencies_ns
-                else 0.0
+        return summaries
+
+    def _build_phase_filtered_scalar_series(
+        self,
+        data: ScalarTimeSeries,
+        phase: CreditPhase,
+    ) -> tuple[ScalarTimeSeries, int, int] | None:
+        phase_indices = np.flatnonzero(data.get_phase_mask(phase))
+        if len(phase_indices) == 0:
+            return None
+
+        filtered = ScalarTimeSeries()
+        first_idx = int(phase_indices[0])
+        if first_idx > 0:
+            filtered.append(
+                int(data.timestamps[first_idx - 1]),
+                MetricSample(value=float(data.values[first_idx - 1])),
             )
+        for idx in phase_indices:
+            filtered.append(
+                int(data.timestamps[idx]),
+                MetricSample(value=float(data.values[idx])),
+            )
+        return (
+            filtered,
+            int(data.timestamps[first_idx]),
+            int(data.timestamps[phase_indices[-1]]),
+        )
+
+    def _build_phase_filtered_histogram_series(
+        self,
+        data: HistogramTimeSeries,
+        phase: CreditPhase,
+    ) -> tuple[HistogramTimeSeries, int, int] | None:
+        phase_indices = np.flatnonzero(data.get_phase_mask(phase))
+        if len(phase_indices) == 0:
+            return None
+
+        filtered = HistogramTimeSeries()
+        first_idx = int(phase_indices[0])
+
+        def _append(idx: int) -> None:
+            filtered.append(
+                int(data.timestamps[idx]),
+                MetricSample(
+                    buckets={k: float(v) for k, v in data.get_bucket_dict(idx).items()},
+                    sum=float(data.sums[idx]),
+                    count=float(data.counts[idx]),
+                ),
+            )
+
+        if first_idx > 0:
+            _append(first_idx - 1)
+        for idx in phase_indices:
+            _append(int(idx))
+        return (
+            filtered,
+            int(data.timestamps[first_idx]),
+            int(data.timestamps[phase_indices[-1]]),
+        )
+
+    def _compute_phase_endpoint_summaries(
+        self,
+        phase: CreditPhase,
+        slice_duration: float | None = None,
+    ) -> dict[str, ServerMetricsEndpointSummary]:
+        """Compute per-endpoint summaries from samples whose record phase matches ``phase``."""
+        summaries: dict[str, ServerMetricsEndpointSummary] = {}
+
+        for (
+            endpoint_url,
+            time_series,
+        ) in self._server_metrics_hierarchy.endpoints.items():
+            endpoint_display = normalize_endpoint_display(endpoint_url)
+            metrics: dict[
+                str,
+                GaugeMetricData
+                | CounterMetricData
+                | HistogramMetricData
+                | UnknownMetricData,
+            ] = {}
+
+            for metric_key, metric_entry in time_series.metrics.items():
+                filtered_series: (
+                    tuple[ScalarTimeSeries, int, int]
+                    | tuple[HistogramTimeSeries, int, int]
+                    | None
+                )
+                if isinstance(metric_entry.data, ScalarTimeSeries):
+                    filtered_series = self._build_phase_filtered_scalar_series(
+                        metric_entry.data,
+                        phase,
+                    )
+                else:
+                    filtered_series = self._build_phase_filtered_histogram_series(
+                        metric_entry.data,
+                        phase,
+                    )
+                if filtered_series is None:
+                    continue
+
+                series_data, start_ns, end_ns = filtered_series
+                time_filter = TimeRangeFilter(
+                    start_ns=start_ns,
+                    end_ns=end_ns if end_ns > start_ns else start_ns + 1,
+                )
+                series_stats = compute_stats(
+                    metric_entry.metric_type,
+                    series_data,
+                    time_filter,
+                    labels=metric_key.labels_dict,
+                    slice_duration=slice_duration,
+                )
+                if series_stats is None:
+                    continue
+
+                base_name = metric_key.name
+                if base_name in metrics:
+                    metrics[base_name].series.append(series_stats)
+                    continue
+
+                DataClass = _METRIC_DATA_CLASSES.get(metric_entry.metric_type)
+                if DataClass is not None:
+                    metrics[base_name] = DataClass(
+                        description=metric_entry.description,
+                        series=[series_stats],
+                    )
+
+            if not metrics:
+                continue
 
             summaries[endpoint_display] = ServerMetricsEndpointSummary(
                 endpoint_url=endpoint_url,
-                info=ServerMetricsEndpointInfo(
-                    # Fetch statistics
-                    total_fetches=time_series._total_fetch_count,
-                    first_fetch_ns=time_series.first_fetch_ns,
-                    last_fetch_ns=time_series.last_fetch_ns,
-                    avg_fetch_latency_ms=avg_fetch_latency_ms,
-                    # Unique update statistics
-                    unique_updates=unique_count,
-                    first_update_ns=time_series.first_update_ns,
-                    last_update_ns=time_series.last_update_ns,
-                    duration_seconds=duration_seconds,
-                    avg_update_interval_ms=avg_update_interval_ms,
-                    median_update_interval_ms=median_update_interval_ms,
-                ),
+                info=self._build_endpoint_info(time_series),
                 metrics=metrics,
             )
 

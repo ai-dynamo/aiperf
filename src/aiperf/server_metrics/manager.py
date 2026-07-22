@@ -418,9 +418,7 @@ class ServerMetricsManager(BaseComponentService):
 
         for record in records:
             try:
-                record = record.model_copy(
-                    update={"benchmark_phase": self._active_phase}
-                )
+                record.benchmark_phase = self._active_phase
                 message = ServerMetricsRecordMessage(
                     service_id=self.service_id,
                     collector_id=collector_id,

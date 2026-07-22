@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -414,20 +415,47 @@ class TestRealtimeTelemetryTask:
     """Realtime telemetry background task interval gating."""
 
     @pytest.mark.asyncio
-    async def test_zero_interval_disables_realtime_reporting(
+    async def test_zero_interval_dashboard_task_waits_for_enable_and_reports(
         self, mock_run, mock_pub_client, monkeypatch
-    ):
-        """Interval 0 short-circuits before the loop (no report, no spin)."""
+    ) -> None:
+        """Dashboard telemetry still polls when stats_interval=0.
+
+        The task must stay alive until ``START_REALTIME_TELEMETRY`` toggles the
+        panel on, then report once at the dashboard fallback cadence instead of
+        exiting before the enable event can wake it.
+        """
+        from aiperf.common.enums import GPUTelemetryMode
+        from aiperf.plugin.enums import UIType
+
+        mock_run.cfg.runtime.ui = UIType.DASHBOARD
+        mock_run.cfg.gpu_telemetry_mode = GPUTelemetryMode.SUMMARY
         accumulator = GPUTelemetryAccumulator(
             run=mock_run,
             pub_client=mock_pub_client,
         )
-        accumulator._report_realtime_metrics = AsyncMock()
+
+        async def report_once_then_stop() -> None:
+            accumulator.stop_requested = True
+
+        accumulator._report_realtime_metrics = AsyncMock(
+            side_effect=report_once_then_stop
+        )
         monkeypatch.setattr(Environment.UI, "REALTIME_METRICS_INTERVAL", 0.0)
 
-        await accumulator._report_realtime_telemetry_metrics_task()
+        with patch(
+            "aiperf.gpu_telemetry.accumulator.asyncio.sleep",
+            new=AsyncMock(),
+        ):
+            task = asyncio.create_task(
+                accumulator._report_realtime_telemetry_metrics_task()
+            )
+            await asyncio.sleep(0)
+            assert not task.done()
 
-        accumulator._report_realtime_metrics.assert_not_awaited()
+            accumulator.start_realtime_telemetry()
+            await task
+
+        accumulator._report_realtime_metrics.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_dashboard_realtime_mode_reports_each_tick(
