@@ -67,8 +67,11 @@ class RealtimeMetricsTable(Widget):
 
         INTERNAL and EXPERIMENTAL metrics are already filtered upstream by
         summarize(), so only ERROR_ONLY and console_group=NONE need filtering here.
+        Unregistered tags (sweep-line / plugin / external metrics) are shown.
         """
-        metric_class = MetricRegistry.get_class(metric.tag)
+        metric_class = MetricRegistry.get_class_or_none(metric.tag)
+        if metric_class is None:
+            return False
         if metric_class.has_flags(MetricFlags.ERROR_ONLY):
             return True
         return (
@@ -98,7 +101,9 @@ class RealtimeMetricsTable(Widget):
             metric
             for metric in sorted(
                 metrics,
-                key=lambda m: MetricRegistry.get_class(m.tag).display_order
+                key=lambda m: getattr(
+                    MetricRegistry.get_class_or_none(m.tag), "display_order", None
+                )
                 or sys.maxsize,
             )
             if not self._should_skip(metric)
@@ -138,10 +143,15 @@ class RealtimeMetricsTable(Widget):
         Note: Metrics are pre-converted to display units by summarize(),
         so values can be used directly without conversion.
         """
-        metric_class = MetricRegistry.get_class(metric.tag)
-        short_header = metric_class.short_header or metric_class.header
+        metric_class = MetricRegistry.get_class_or_none(metric.tag)
+        if metric_class is not None:
+            short_header = metric_class.short_header or metric_class.header
+            hide_unit = metric_class.short_header_hide_unit
+        else:
+            short_header = metric.header
+            hide_unit = False
         # Use the metric's unit directly (already converted to display unit)
-        if not metric_class.short_header_hide_unit and metric.unit:
+        if not hide_unit and metric.unit:
             short_header = f"{short_header} ({metric.unit})"
         return [
             Text(
