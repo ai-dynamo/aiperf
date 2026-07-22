@@ -12,6 +12,7 @@ from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.config.config import BenchmarkConfig
+from aiperf.gpu_telemetry.constants import UNKNOWN_GPU_TELEMETRY_PLATFORM
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
@@ -94,6 +95,10 @@ class GpuSummary(AIPerfBaseModel):
     gpu_index: int
     gpu_name: str
     gpu_uuid: str
+    platform: str = Field(
+        default=UNKNOWN_GPU_TELEMETRY_PLATFORM,
+        description="GPU telemetry platform namespace, e.g. 'nvidia', 'amd', or 'unknown'",
+    )
     hostname: str | None
     namespace: str | None = None
     pod_name: str | None = None

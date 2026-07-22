@@ -32,6 +32,7 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "urls",
         "use_legacy_max_tokens",
         "use_server_token_count",
+        "uuid_and_strip",
         "wait_for_model_interval",
         "wait_for_model_mode",
         "wait_for_model_timeout",
@@ -147,14 +148,6 @@ TOKENIZER_FIELDS: frozenset[str] = frozenset(
 
 LOADGEN_FIELDS: frozenset[str] = frozenset(
     {
-        "adaptive_assessment_period",
-        "adaptive_control_max",
-        "adaptive_control_min",
-        "adaptive_control_variable",
-        "adaptive_scale",
-        "adaptive_scale_control",
-        "adaptive_scale_sla",
-        "adaptive_sustain_duration",
         "arrival_pattern",
         "arrival_smoothness",
         "benchmark_duration",
@@ -169,6 +162,7 @@ LOADGEN_FIELDS: frozenset[str] = frozenset(
         "request_count",
         "request_rate",
         "request_rate_ramp_duration",
+        "request_rate_series",
         "user_centric_rate",
         "warmup_arrival_pattern",
         "warmup_concurrency",

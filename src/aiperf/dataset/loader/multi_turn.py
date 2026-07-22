@@ -178,6 +178,14 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
             self._hoist_leading_system_message
             and self._endpoint_consumes_system_message()
         )
+        if self.run.cfg.endpoint.uuid_and_strip:
+            raise NotImplementedError(
+                "--uuid-and-strip is not supported with "
+                "--custom-dataset-type multi_turn. Load-time dedup of "
+                "repeated images is only implemented for the single_turn "
+                "loader. Use --custom-dataset-type single_turn (with "
+                "session_id-grouped rows) for cache-reuse benchmarks."
+            )
 
         conversations = []
         hoisted_count = 0

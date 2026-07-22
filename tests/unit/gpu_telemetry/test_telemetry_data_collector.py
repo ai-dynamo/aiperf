@@ -89,10 +89,10 @@ class TestPrometheusMetricParsing:
         assert record.hostname == "ed7e7a5e585f"
 
         # Verify telemetry data has reasonable values from DCGMFaker
-        assert record.telemetry_data.gpu_power_usage is not None
-        assert 0 < record.telemetry_data.gpu_power_usage < 400
-        assert record.telemetry_data.energy_consumption is not None
-        assert record.telemetry_data.gpu_memory_used is not None
+        assert record.telemetry_data.nvidia_power_usage is not None
+        assert 0 < record.telemetry_data.nvidia_power_usage < 400
+        assert record.telemetry_data.nvidia_energy_consumption is not None
+        assert record.telemetry_data.nvidia_memory_used is not None
 
     def test_complete_parsing_multi_gpu(self, multi_gpu_dcgm_data):
         """Test parsing complete DCGM response for multiple GPUs.
@@ -463,17 +463,19 @@ class TestDataProcessingEdgeCases:
         collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         test_metrics = {
-            "gpu_power_usage": 100.0,  # Should remain unchanged (W)
-            "energy_consumption": 1000.0,  # mJ -> MJ (divide by 1e9)
-            "gpu_memory_used": 1024.0,  # MiB -> GB (divide by 953.674...)
+            "nvidia_power_usage": 100.0,  # Should remain unchanged (W)
+            "nvidia_energy_consumption": 1000.0,  # mJ -> MJ (divide by 1e9)
+            "nvidia_memory_used": 1024.0,  # MiB -> GB (divide by 953.674...)
         }
 
         scaled = collector._apply_scaling_factors(test_metrics)
 
-        assert scaled["gpu_power_usage"] == 100.0
-        assert abs(scaled["energy_consumption"] - 1e-6) < 1e-10  # 1000mJ = 1e-6 MJ
+        assert scaled["nvidia_power_usage"] == 100.0
         assert (
-            abs(scaled["gpu_memory_used"] - 1.073741824) < 1e-6
+            abs(scaled["nvidia_energy_consumption"] - 1e-6) < 1e-10
+        )  # 1000mJ = 1e-6 MJ
+        assert (
+            abs(scaled["nvidia_memory_used"] - 1.073741824) < 1e-6
         )  # 1024 MiB ≈ 1.073 GB
 
     def test_temporal_consistency_in_batches(self, sample_dcgm_data):
@@ -545,11 +547,11 @@ class TestDataProcessingEdgeCases:
         # Should only include the valid metric
         assert len(records) == 1
         # NaN, Inf, -Inf should be filtered out
-        assert records[0].telemetry_data.gpu_power_usage is None
-        assert records[0].telemetry_data.gpu_utilization is None
-        assert records[0].telemetry_data.gpu_temperature is None
+        assert records[0].telemetry_data.nvidia_power_usage is None
+        assert records[0].telemetry_data.nvidia_gpu_utilization is None
+        assert records[0].telemetry_data.nvidia_temperature is None
         # Valid value should be present
-        assert records[0].telemetry_data.gpu_memory_used is not None
+        assert records[0].telemetry_data.nvidia_memory_used is not None
 
     def test_invalid_gpu_index_handling(self):
         """Test handling of non-numeric GPU index values."""
@@ -639,25 +641,25 @@ class TestDataProcessingEdgeCases:
         collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         metrics_with_none = {
-            "gpu_power_usage": None,
-            "energy_consumption": 1000.0,
-            "gpu_memory_used": None,
+            "nvidia_power_usage": None,
+            "nvidia_energy_consumption": 1000.0,
+            "nvidia_memory_used": None,
         }
 
         scaled = collector._apply_scaling_factors(metrics_with_none)
 
         # None values should remain None
-        assert scaled["gpu_power_usage"] is None
-        assert scaled["gpu_memory_used"] is None
+        assert scaled["nvidia_power_usage"] is None
+        assert scaled["nvidia_memory_used"] is None
         # Non-None values should be scaled
-        assert abs(scaled["energy_consumption"] - 1e-6) < 1e-10
+        assert abs(scaled["nvidia_energy_consumption"] - 1e-6) < 1e-10
 
     def test_scaling_factors_preserves_unscaled_metrics(self):
         """Test that metrics without scaling factors are preserved as-is."""
         collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         metrics = {
-            "gpu_power_usage": 100.0,
+            "nvidia_power_usage": 100.0,
             "unscaled_metric": 999.0,
         }
 
@@ -666,4 +668,4 @@ class TestDataProcessingEdgeCases:
         # Unscaled metric should remain unchanged
         assert scaled["unscaled_metric"] == 999.0
         # Scaled metric should remain unchanged (power has factor 1.0)
-        assert scaled["gpu_power_usage"] == 100.0
+        assert scaled["nvidia_power_usage"] == 100.0
