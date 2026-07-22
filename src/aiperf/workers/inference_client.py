@@ -206,10 +206,12 @@ class InferenceClient(AIPerfLifecycleMixin):
         the record before the ZMQ hop to the record processor.
 
         The full ``RequestInfo`` carries transport-only extras
-        (``model_endpoint``, ``turns``, ``endpoint_headers``,
-        ``endpoint_params``, ``drop_perf_ns``, ``cancel_after_ns``, ...) that
-        the record-processor pipeline never reads; downcasting saves
-        ~500-900 bytes per record at high throughput.
+        (``model_endpoint``, ``turns``, ``system_message``,
+        ``user_context_message``, ``endpoint_headers``, ``endpoint_params``,
+        ``drop_perf_ns``, ``cancel_after_ns``, ...) that the record-processor
+        pipeline never reads; downcasting saves ~500-900 bytes per record at
+        high throughput. The full ``turns`` list never travels — live records
+        drive off the canonical ``payload_bytes``.
         """
         ctx_field_names = set(RecordContext.model_fields.keys())
         ri_dump = request_info.model_dump(include=ctx_field_names)
@@ -227,14 +229,19 @@ class InferenceClient(AIPerfLifecycleMixin):
             request_info.turns[-1].model or self.model_endpoint.primary_model_name
         )
         # Hoist per-turn scalars onto the RecordContext so the record
-        # processor's metrics (requested_osl, audio_duration) can read them
-        # without walking turns: max_tokens from the dispatch turn,
+        # processor's metrics (requested_osl, audio_duration,
+        # replay_send_schedule_offset) can read them without walking turns:
+        # max_tokens / scheduled_send_ms from the dispatch turn,
         # audio_duration_seconds from the first turn (ASR requests are
         # single-turn; mirrors the pre-hoist turns[0] read).
-        request_info.max_tokens = request_info.turns[-1].max_tokens
+        last_turn = request_info.turns[-1]
+        request_info.max_tokens = last_turn.max_tokens
         request_info.audio_duration_seconds = request_info.turns[
             0
         ].audio_duration_seconds
+        request_info.scheduled_send_ms = (
+            float(last_turn.timestamp) if last_turn.timestamp is not None else None
+        )
         self._enrich_request_record(record, request_info)
 
         # When stripping is enabled (large-prompt memory optimization,
@@ -243,23 +250,6 @@ class InferenceClient(AIPerfLifecycleMixin):
         # after dispatch.
         if self.strip_record_payload_bytes and record.request_info is not None:
             record.request_info.payload_bytes = None
-
-        # Copy turns with stripped multimodal data to avoid mutating original session
-        # and reduce memory usage (placeholders instead of large image/audio/video data)
-        record.turns = [turn.copy_with_stripped_media() for turn in request_info.turns]
-
-        # Redact per-turn headers on every turn copy that crosses ZMQ; trace
-        # rows can carry sensitive values (e.g., `Authorization`) that otherwise
-        # bypass the `request_headers` redaction path and end up serialised in
-        # ZMQ records. Two independent copies leave the worker: `record.turns`
-        # (stripped above) and `record.request_info.turns` (re-materialised by
-        # `_enrich_request_record`'s downcast `model_dump`). Both are fresh
-        # objects, so scrubbing them never touches the caller-owned
-        # `request_info.turns` nor the in-memory `session.turn_list`.
-        for turn in record.turns:
-            turn.headers = redact_headers(turn.headers)
-        for turn in record.request_info.turns:
-            turn.headers = redact_headers(turn.headers)
 
         # If this is the first turn, calculate the credit drop latency
         if request_info.turn_index == 0 and request_info.drop_perf_ns is not None:

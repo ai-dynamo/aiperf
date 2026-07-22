@@ -382,15 +382,16 @@ class TestInferenceClient:
         assert result.model_name == "standalone-model"
 
     def test_finalize_request_record_hoists_per_turn_scalars(self, inference_client):
-        """max_tokens / audio_duration_seconds must be hoisted from the turns
-        onto the RecordContext so record metrics (requested_osl,
-        audio_duration) can read them off the record after the downcast.
+        """max_tokens / audio_duration_seconds / scheduled_send_ms must be
+        hoisted from the turns onto the RecordContext so record metrics can
+        read them off the record after the downcast strips ``turns``.
         """
         turn = Turn(
             texts=[Text(contents=["hoisted turn"])],
             role="user",
             max_tokens=128,
             audio_duration_seconds=12.5,
+            timestamp=42.5,
         )
         request_info = RequestInfo(
             model_endpoint=inference_client.model_endpoint,
@@ -415,6 +416,8 @@ class TestInferenceClient:
 
         assert result.request_info.max_tokens == 128
         assert result.request_info.audio_duration_seconds == 12.5
+        assert result.request_info.scheduled_send_ms == 42.5
+        assert "turns" not in result.request_info.model_dump()
 
     @pytest.mark.parametrize(
         "strip,expected_payload_bytes",
