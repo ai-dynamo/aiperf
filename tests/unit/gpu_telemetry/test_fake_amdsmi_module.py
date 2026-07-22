@@ -226,9 +226,7 @@ class TestCollectorConsumesFake:
         assert len(records) == 2
         record = records[0]
         assert record.gpu_model_name == "AMD Instinct MI355X OAM"
-        # ``platform`` is only present once the vendor-namespacing work lands.
-        if hasattr(record, "platform"):
-            assert record.platform == "amd"
+        assert record.platform == "amd"
         telemetry = record.telemetry_data
         assert telemetry.amd_power == 1100.0
         assert telemetry.amd_temperature == 85.0
