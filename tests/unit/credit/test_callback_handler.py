@@ -104,12 +104,14 @@ def make_credit(
     turn_index: int = 0,
     num_turns: int = 1,
     phase: CreditPhase = CreditPhase.PROFILING,
+    phase_index: int | None = None,
     agent_depth: int = 0,
 ) -> Credit:
     """Create a Credit for testing."""
     return Credit(
         id=credit_id,
         phase=phase,
+        phase_index=phase_index,
         conversation_id=conversation_id,
         x_correlation_id=f"corr-{conversation_id}",
         turn_index=turn_index,
@@ -140,10 +142,10 @@ def make_credit_return(
 
 
 class TestPhaseRegistration:
-    """Tests for phase registration and unregistration."""
+    """Tests for phase registration."""
 
-    def test_register_and_unregister_phase(self, callback_handler):
-        """Register and unregister phase correctly updates handlers."""
+    def test_register_phase_updates_handlers(self, callback_handler):
+        """Register phase correctly updates handlers."""
         progress = MagicMock()
         progress.all_credits_returned_event = asyncio.Event()
 
@@ -157,8 +159,57 @@ class TestPhaseRegistration:
 
         assert CreditPhase.PROFILING in callback_handler._phase_handlers
 
-        callback_handler.unregister_phase(CreditPhase.PROFILING)
-        assert CreditPhase.PROFILING not in callback_handler._phase_handlers
+    async def test_register_phase_same_kind_phases_uses_runtime_index(
+        self,
+        callback_handler,
+        mock_concurrency,
+        mock_lifecycle,
+        mock_stop_checker,
+        mock_strategy,
+    ):
+        """Two profiling phases must not overwrite each other's callbacks."""
+        progress_0 = MagicMock()
+        progress_0.all_credits_returned_event = asyncio.Event()
+        progress_0.increment_returned.return_value = False
+        progress_1 = MagicMock()
+        progress_1.all_credits_returned_event = asyncio.Event()
+        progress_1.increment_returned.return_value = False
+
+        callback_handler.register_phase(
+            phase=CreditPhase.PROFILING,
+            phase_index=0,
+            progress=progress_0,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=mock_strategy,
+        )
+        callback_handler.register_phase(
+            phase=CreditPhase.PROFILING,
+            phase_index=1,
+            progress=progress_1,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=mock_strategy,
+        )
+
+        await callback_handler.on_credit_return(
+            "worker-1", make_credit_return(make_credit(phase_index=1))
+        )
+        await callback_handler.on_first_token(
+            FirstToken(
+                credit_id=1,
+                phase=CreditPhase.PROFILING,
+                phase_index=1,
+                ttft_ns=1000000,
+            )
+        )
+
+        progress_0.increment_returned.assert_not_called()
+        progress_0.increment_prefill_released.assert_not_called()
+        progress_1.increment_returned.assert_called_once()
+        progress_1.increment_prefill_released.assert_called_once()
+        mock_concurrency.release_session_slot.assert_called_once_with(1)
+        mock_concurrency.release_prefill_slot.assert_called_once_with(1)
 
 
 # =============================================================================
@@ -200,13 +251,13 @@ class TestCreditReturnBasicFlow:
         )
 
     async def test_on_credit_return_notifies_result_aware_strategy(
-        self,
-        callback_handler,
-        mock_progress,
-        mock_lifecycle,
-        mock_stop_checker,
-        mock_strategy,
-    ):
+        self: "TestCreditReturnBasicFlow",
+        callback_handler: CreditCallbackHandler,
+        mock_progress: MagicMock,
+        mock_lifecycle: MagicMock,
+        mock_stop_checker: MagicMock,
+        mock_strategy: MagicMock,
+    ) -> None:
         """Strategies with a result hook should receive full return status."""
         mock_strategy.handle_credit_result = AsyncMock()
         callback_handler.register_phase(
@@ -226,8 +277,10 @@ class TestCreditReturnBasicFlow:
         mock_strategy.handle_credit_result.assert_awaited_once_with(credit_return)
 
     async def test_result_hook_is_cached_at_phase_registration(
-        self, registered_handler, mock_strategy
-    ):
+        self: "TestCreditReturnBasicFlow",
+        registered_handler: CreditCallbackHandler,
+        mock_strategy: MagicMock,
+    ) -> None:
         """Credit returns should not rediscover optional hooks on the hot path."""
         late_hook = AsyncMock()
         mock_strategy.handle_credit_result = late_hook
@@ -413,6 +466,33 @@ class TestFirstTokenHandling:
         mock_concurrency.release_prefill_slot.assert_called_once_with(
             CreditPhase.PROFILING
         )
+
+    async def test_first_token_notifies_strategy_hook(
+        self,
+        callback_handler,
+        mock_progress,
+        mock_lifecycle,
+        mock_stop_checker,
+        mock_strategy,
+    ):
+        """Strategies with a first-token hook should receive TTFT observations."""
+        mock_strategy.handle_first_token = AsyncMock()
+        callback_handler.register_phase(
+            phase=CreditPhase.PROFILING,
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=mock_strategy,
+        )
+        first_token = FirstToken(
+            credit_id=1,
+            phase=CreditPhase.PROFILING,
+            ttft_ns=1000000,
+        )
+
+        await callback_handler.on_first_token(first_token)
+
+        mock_strategy.handle_first_token.assert_awaited_once_with(first_token)
 
 
 # =============================================================================

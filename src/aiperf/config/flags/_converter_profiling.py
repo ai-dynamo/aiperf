@@ -1,20 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""CLIConfig -> profiling phase dict.
-
-Reads load-generator fields, dataset/schedule fields, and session-turn count
-directly off the flat ``CLIConfig``.
-
-Each entry in ``_PROF_FIELD_ROUTES`` declares ``(output_key, attr_name)``
-where ``attr_name`` is a top-level field on ``CLIConfig``.
-"""
+"""CLIConfig -> profiling phase dict."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-
-from aiperf.orchestrator.search_planner.parsing import parse_sla_filter
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -22,8 +13,6 @@ if TYPE_CHECKING:
     from aiperf.config.flags import CLIConfig
 
 
-# (output_key, attr_name) — attr_name is the top-level field on CLIConfig
-# whose user-set status we test via ``cli.model_fields_set``.
 _PROF_FIELD_ROUTES: tuple[tuple[str, str], ...] = (
     ("duration", "benchmark_duration"),
     ("grace_period", "benchmark_grace_period"),
@@ -34,23 +23,14 @@ _PROF_FIELD_ROUTES: tuple[tuple[str, str], ...] = (
     ("users", "num_users"),
     ("rate", "request_rate"),
     ("rate", "user_centric_rate"),
-    ("adaptive_scale", "adaptive_scale"),
-    ("adaptive_sustain_duration", "adaptive_sustain_duration"),
-    ("adaptive_assessment_period", "adaptive_assessment_period"),
 )
 
 
-# Routes whose output keys only exist on GammaPhase. Routed here only when the
-# resolved phase type is GAMMA; otherwise the user-supplied value is rejected
-# with a clear error rather than crashing PhaseConfig with extra_forbidden.
 _GAMMA_ONLY_ROUTES: tuple[tuple[str, str], ...] = (
     ("smoothness", "arrival_smoothness"),
 )
 
 
-# Routes whose output keys only exist on FixedSchedulePhase. Routed here only
-# when the resolved phase type is FIXED_SCHEDULE; otherwise we fail loud
-# instead of silently dropping the offsets the user passed.
 _FIXED_SCHEDULE_ONLY_ROUTES: tuple[tuple[str, str], ...] = (
     ("auto_offset", "fixed_schedule_auto_offset"),
     ("start_offset", "fixed_schedule_start_offset"),
@@ -69,13 +49,11 @@ def _profiling_phase_type(cli: CLIConfig) -> Any:
     from aiperf.config.phases import PhaseType
     from aiperf.plugin.enums import ArrivalPattern
 
-    if cli.adaptive_scale:
-        return PhaseType.CONCURRENCY
     if cli.fixed_schedule:
         return PhaseType.FIXED_SCHEDULE
     if cli.user_centric_rate is not None:
         return PhaseType.USER_CENTRIC
-    if cli.request_rate is not None:
+    if cli.request_rate is not None or cli.request_rate_series is not None:
         match cli.arrival_pattern:
             case ArrivalPattern.GAMMA:
                 return PhaseType.GAMMA
@@ -93,16 +71,21 @@ def _apply_profiling_ramps(prof: dict[str, Any], cli: CLIConfig) -> None:
             prof[key] = {"duration": getattr(cli, field)}
 
 
-def _apply_adaptive_scale_sla(prof: dict[str, Any], cli: CLIConfig) -> None:
-    if not prof.get("adaptive_scale"):
+def _apply_profiling_rate_series(prof: dict[str, Any], cli: CLIConfig) -> None:
+    if "request_rate_series" not in cli.model_fields_set:
         return
-    if "adaptive_scale_sla" not in cli.model_fields_set or not cli.adaptive_scale_sla:
-        return
+    if "request_rate" in cli.model_fields_set:
+        raise ValueError(
+            "--request-rate and --request-rate-series are mutually exclusive."
+        )
+    if cli.user_centric_rate is not None:
+        raise ValueError(
+            "--request-rate-series is not supported with --user-centric-rate."
+        )
+    from aiperf.config.rate_series import RateSeriesConfig
 
-    prof["sla"] = [
-        parse_sla_filter(value).model_dump(mode="json")
-        for value in cli.adaptive_scale_sla
-    ]
+    series = RateSeriesConfig(path=str(cli.request_rate_series))
+    prof["rate_series"] = series.model_dump(exclude_none=True, exclude={"path"})
 
 
 def _reject_orphan_load_generator_flags(prof: dict[str, Any], cli: CLIConfig) -> None:
@@ -117,23 +100,6 @@ def _reject_orphan_load_generator_flags(prof: dict[str, Any], cli: CLIConfig) ->
 
     fields_set = cli.model_fields_set
     phase_type = prof["type"]
-
-    # --num-users only makes sense with --user-centric-rate. Without
-    # user-centric mode the resolved phase has no ``users`` field, so
-    # routing it through would crash PhaseConfig with extra_forbidden.
-    if prof.get("adaptive_scale") and phase_type != PhaseType.CONCURRENCY:
-        raise ValueError("--adaptive-scale requires concurrency timing mode")
-    if prof.get("adaptive_scale") and "concurrency" not in prof:
-        raise ValueError("--adaptive-scale requires --concurrency")
-    if (
-        prof.get("adaptive_scale")
-        and "search_sla" in fields_set
-        and "adaptive_scale_sla" not in fields_set
-    ):
-        raise ValueError(
-            "--adaptive-scale uses --adaptive-scale-sla; --search-sla is reserved "
-            "for adaptive-search/grid runs"
-        )
 
     if "num_users" in fields_set and phase_type != PhaseType.USER_CENTRIC:
         raise ValueError(
@@ -153,6 +119,15 @@ def _reject_orphan_load_generator_flags(prof: dict[str, Any], cli: CLIConfig) ->
             "--request-rate-ramp-duration can only be used with rate-controlled "
             "scheduling (--request-rate or --user-centric-rate). Pass one of "
             "those to enable rate ramping, or drop --request-rate-ramp-duration."
+        )
+
+    if "rate_series" in prof and phase_type not in (
+        PhaseType.POISSON,
+        PhaseType.GAMMA,
+        PhaseType.CONSTANT,
+    ):
+        raise ValueError(
+            "--request-rate-series can only be used with rate-controlled scheduling."
         )
 
 
@@ -335,26 +310,7 @@ def _maybe_set_dag_root_sessions(
 
 
 def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> None:
-    """CLI-only port of the v1 dataset-aware autodefaults.
-
-    Three behaviors, all conditional on the user's CLI invocation supplying
-    a dataset file (no behavior change for YAML-only configs, which are
-    expected to be complete):
-
-    1. Trace auto-promotion: a trace ``--custom-dataset-type`` whose first
-       record carries a ``timestamp`` field flips the phase to
-       fixed_schedule unless the user passed ``--no-fixed-schedule``.
-    2. fixed_schedule autodefault: when a fixed_schedule phase has no
-       stop condition, fill ``requests`` from the dataset record count
-       (single-pass).
-    3. Forking-dataset autodefault: when the dataset is ``dag_jsonl`` and
-       no stop condition is set, fill ``sessions`` from the DAG root
-       count so the run executes each root once instead of truncating
-       mid-tree.
-
-    Bare-string ``--custom-dataset-type`` (no ``--input-file``) is a no-op
-    for I/O-dependent steps.
-    """
+    """Apply dataset-sensitive CLI defaults for trace/fixed/dag datasets."""
 
     from aiperf.config.phases import PhaseType
 
@@ -376,7 +332,7 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
 
 
 def _first_record_has_timestamp(file_path: object) -> bool:
-    """Return True when the first non-empty JSONL record carries a timestamp."""
+    """Return True when a trace file carries timestamp data."""
     from pathlib import Path
 
     from aiperf.common.utils import load_json_str
@@ -384,14 +340,27 @@ def _first_record_has_timestamp(file_path: object) -> bool:
     path = Path(file_path)
     if not path.is_file():
         return False
+    if path.suffix.lower() == ".parquet":
+        try:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+        except ImportError:
+            return False
+
+        try:
+            return "timestamp_start_unix_ms" in set(pq.read_schema(path).names)
+        except (OSError, pa.ArrowException):
+            return False
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 if not (stripped := line.strip()):
                     continue
                 try:
                     data = load_json_str(stripped)
                 except (ValueError, TypeError):
+                    return False
+                if not isinstance(data, dict):
                     return False
                 return data.get("timestamp") is not None
     except OSError:
@@ -400,7 +369,7 @@ def _first_record_has_timestamp(file_path: object) -> bool:
 
 
 def _count_dataset_records(file_path: object) -> int:
-    """Count non-empty lines across a JSONL file or directory of JSONLs."""
+    """Count records across a JSONL file/directory or Parquet trace file."""
     from pathlib import Path
 
     path = Path(file_path)
@@ -408,31 +377,30 @@ def _count_dataset_records(file_path: object) -> int:
         if path.is_dir():
             total = 0
             for jsonl in path.rglob("*.jsonl"):
-                with open(jsonl) as f:
+                with open(jsonl, encoding="utf-8") as f:
                     total += sum(1 for line in f if line.strip())
             return total
+        if path.suffix.lower() == ".parquet" and path.is_file():
+            try:
+                import pyarrow as pa
+                import pyarrow.parquet as pq
+            except ImportError:
+                return 0
+
+            try:
+                return pq.ParquetFile(path).metadata.num_rows
+            except (OSError, pa.ArrowException):
+                return 0
         if path.is_file():
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 return sum(1 for line in f if line.strip())
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return 0
     return 0
 
 
 def build_profiling(cli: CLIConfig) -> dict[str, Any]:
-    """Produce the canonical profiling-phase dict from ``cli``.
-
-    Reads load-generator settings (concurrency, rate, ramps, cancellation),
-    schedule/replay flags, and session-turn count directly from ``cli``
-    (all fields are top-level post-Task-13). Returns a dict whose ``type``
-    is one of ``PhaseType.{CONCURRENCY, POISSON, GAMMA, CONSTANT,
-    USER_CENTRIC, FIXED_SCHEDULE}`` plus the keys mapped by
-    ``_PROF_FIELD_ROUTES`` and any ramp/cancellation sub-dicts.
-
-    Raises:
-        ValueError: when USER_CENTRIC mode is selected but
-            ``conversation_turn_mean`` is < 2.
-    """
+    """Produce the canonical profiling-phase dict from ``cli``."""
     from aiperf.config.phases import PhaseType
 
     fields_set = cli.model_fields_set
@@ -442,12 +410,10 @@ def build_profiling(cli: CLIConfig) -> dict[str, Any]:
             prof[output_key] = getattr(cli, attr_name)
 
     _apply_profiling_ramps(prof, cli)
+    _apply_profiling_rate_series(prof, cli)
 
     prof["type"] = _profiling_phase_type(cli)
-    _apply_adaptive_scale_sla(prof, cli)
-
     _reject_orphan_load_generator_flags(prof, cli)
-
     _apply_phase_specific_routes(prof, cli)
 
     if prof["type"] == PhaseType.FIXED_SCHEDULE and "start_offset" in prof:

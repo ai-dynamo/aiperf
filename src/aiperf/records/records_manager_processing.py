@@ -12,20 +12,14 @@ categories.
 from __future__ import annotations
 
 import asyncio
-import time
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from aiperf.common.accumulator_protocols import SummaryContext
 from aiperf.common.enums import CreditPhase, MetricConsoleGroup, MetricFlags
 from aiperf.common.exceptions import PluginDisabled, PostProcessorDisabled
 from aiperf.common.logging import AIPerfLogger
-from aiperf.common.models import (
-    ErrorDetails,
-    MetricResult,
-    ProcessRecordsResult,
-    ProfileResults,
-    TimesliceResult,
-)
+from aiperf.common.models import MetricResult
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     AccumulatorType,
@@ -36,15 +30,35 @@ from aiperf.plugin.enums import (
 if TYPE_CHECKING:
     from aiperf.common.accumulator_protocols import (
         AccumulatorProtocol,
+        AnalyzerProtocol,
         StreamExporterProtocol,
     )
-    from aiperf.common.models.branch_stats import BranchStats
     from aiperf.config.resolution.plan import BenchmarkRun
-    from aiperf.records.error_tracker import ErrorTracker
-    from aiperf.records.records_tracker import RecordsTracker
 
 
 _logger = AIPerfLogger(__name__)
+
+
+@dataclass(slots=True)
+class LoadedAnalyzer:
+    """An analyzer plugin instance plus its declared dependencies by kind.
+
+    ``required_accumulators`` names accumulators whose live instance the analyzer
+    queries (``SummaryContext.get_accumulator``); ``required_summaries`` names
+    accumulators whose summary output it reads (``SummaryContext.get_output``).
+    RecordsManager runs the analyzer only when both are satisfied.
+    """
+
+    analyzer: AnalyzerProtocol
+    """The instantiated analyzer plugin."""
+
+    required_accumulators: list[str] = field(default_factory=list)
+    """AccumulatorType names whose LIVE instance the analyzer queries via
+    ``SummaryContext.get_accumulator``."""
+
+    required_summaries: list[str] = field(default_factory=list)
+    """AccumulatorType names whose SUMMARY output the analyzer reads via
+    ``SummaryContext.get_output``."""
 
 
 class _LoaderHost(Protocol):
@@ -133,42 +147,65 @@ def load_stream_exporters(
     return exporters
 
 
-def accumulators_for_record_type(
-    accumulators: dict[AccumulatorType, AccumulatorProtocol],
-    record_type: str,
-) -> list[AccumulatorProtocol]:
-    """Return accumulators whose plugin metadata declares ``record_type``."""
-    matched: list[AccumulatorProtocol] = []
-    for entry in plugins.iter_entries(PluginType.ACCUMULATOR):
-        record_types = entry.metadata.get("record_types", []) if entry.metadata else []
-        if record_type not in record_types:
-            continue
-        acc_type = AccumulatorType(entry.name)
-        if acc_type in accumulators:
-            matched.append(accumulators[acc_type])
-    return matched
+def load_analyzers(host: _LoaderHost) -> list[LoadedAnalyzer]:
+    """Instantiate all enabled ``ANALYZER`` plugins for ``host``.
 
-
-def stream_exporters_for_record_type(
-    exporters: dict[StreamExporterType, StreamExporterProtocol],
-    record_type: str,
-) -> list[StreamExporterProtocol]:
-    """Return stream exporters whose plugin metadata declares ``record_type``."""
-    matched: list[StreamExporterProtocol] = []
-    for entry in plugins.iter_entries(PluginType.STREAM_EXPORTER):
-        record_types = entry.metadata.get("record_types", []) if entry.metadata else []
-        if record_type not in record_types:
-            continue
-        exp_type = StreamExporterType(entry.name)
-        if exp_type in exporters:
-            matched.append(exporters[exp_type])
-    return matched
+    Analyzers are stateless summarize-time components (no lifecycle, no record
+    ingestion) that read peer accumulators via the SummaryContext. Each entry is
+    returned as a :class:`LoadedAnalyzer` carrying its declared dependencies by
+    kind — ``required_accumulators`` (live instance) and ``required_summaries``
+    (summary output) — so the caller can skip an analyzer whose dependencies are
+    unavailable. Same disable/error policy as :func:`load_accumulators`.
+    """
+    analyzers: list[LoadedAnalyzer] = []
+    for entry in plugins.iter_entries(PluginType.ANALYZER):
+        try:
+            AnalyzerClass = plugins.get_class(PluginType.ANALYZER, entry.name)
+            analyzer = AnalyzerClass(
+                service_id=host.service_id,
+                run=host.run,
+                pub_client=host.pub_client,
+            )
+            loaded = LoadedAnalyzer(
+                analyzer=analyzer,
+                required_accumulators=list(
+                    entry.metadata.get("required_accumulators", [])
+                ),
+                required_summaries=list(entry.metadata.get("required_summaries", [])),
+            )
+            # Catch metadata typos loudly: a required name that is not a known
+            # AccumulatorType would otherwise silently disable the analyzer at
+            # every run (its dependency never "resolves").
+            known = {str(t) for t in AccumulatorType}
+            unknown = [
+                r
+                for r in (*loaded.required_accumulators, *loaded.required_summaries)
+                if r not in known
+            ]
+            if unknown:
+                host.error(
+                    f"Analyzer {entry.name} declares unknown accumulator dependencies "
+                    f"{unknown} (valid: {sorted(known)}); it will never run. Fix the "
+                    "required_accumulators/required_summaries in plugins.yaml."
+                )
+            analyzers.append(loaded)
+            host.debug(
+                f"Created analyzer: {entry.name}: {analyzer.__class__.__name__} "
+                f"(accumulators={loaded.required_accumulators}, "
+                f"summaries={loaded.required_summaries})"
+            )
+        except (PluginDisabled, PostProcessorDisabled):
+            host.debug(f"Analyzer {entry.name} is disabled and will not be used")
+        except Exception as e:  # noqa: BLE001 - one bad analyzer must not abort the records manager
+            host.error(f"Failed to create analyzer {entry.name}: {e}")
+    return analyzers
 
 
 async def generate_realtime_metrics(
     accumulators: list[AccumulatorProtocol],
     timeout: float = 30.0,
     phase: CreditPhase = CreditPhase.PROFILING,
+    phase_index: int | None = None,
 ) -> list[MetricResult]:
     """Generate the real-time metrics for the profile run.
 
@@ -182,7 +219,7 @@ async def generate_realtime_metrics(
     records never dilute the live counts/throughput; the final export path
     applies the same phase mask.
     """
-    ctx = SummaryContext(phase=phase)
+    ctx = SummaryContext(phase=phase, phase_index=phase_index)
     results = await asyncio.gather(
         *[
             asyncio.wait_for(acc.summarize(ctx), timeout=timeout)
@@ -236,39 +273,3 @@ def filter_display_metrics(raw_metrics: list[MetricResult]) -> list[MetricResult
             pass
         display_metrics.append(m)
     return display_metrics
-
-
-def build_process_records_result(
-    *,
-    records_results: list[MetricResult],
-    warmup_records_results: list[MetricResult] | None = None,
-    timeslices: list[TimesliceResult],
-    error_results: list[ErrorDetails],
-    tracker: RecordsTracker,
-    error_tracker: ErrorTracker,
-    cancelled: bool,
-    branch_stats: BranchStats | None = None,
-) -> ProcessRecordsResult:
-    """Assemble the final ``ProcessRecordsResult`` from accumulator output.
-
-    Single-phase ``CreditPhase.PROFILING`` model — ``RecordsTracker`` does
-    not expose a multi-phase ``get_results_phases`` /
-    ``get_results_time_window`` API.
-    """
-    phase_stats = tracker.create_stats_for_phase(CreditPhase.PROFILING)
-    return ProcessRecordsResult(
-        results=ProfileResults(
-            records=records_results,
-            warmup_records=warmup_records_results or None,
-            timeslices=timeslices or None,
-            completed=len(records_results),
-            start_ns=phase_stats.start_ns or time.time_ns(),
-            end_ns=phase_stats.requests_end_ns or time.time_ns(),
-            error_summary=error_tracker.get_error_summary_for_phase(
-                CreditPhase.PROFILING
-            ),
-            was_cancelled=cancelled,
-            branch_stats=branch_stats,
-        ),
-        errors=error_results,
-    )

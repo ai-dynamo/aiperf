@@ -42,17 +42,22 @@ from aiperf.common.models import (
     Conversation,
     ErrorDetails,
     ModelEndpointInfo,
+    ParsedResponse,
     ProcessHealth,
     RequestInfo,
     RequestRecord,
     SSEMessage,
     WorkerTaskStats,
 )
+from aiperf.common.models.record_models import find_last_non_empty_usage
 from aiperf.common.protocols import (
     PushClientProtocol,
     RequestClientProtocol,
     StreamingDealerClientProtocol,
     StreamingPushClientProtocol,
+)
+from aiperf.config.adaptive_scale_phase import (
+    sla_filters_require_first_token_observation,
 )
 from aiperf.credit.messages import (
     CancelCredits,
@@ -72,6 +77,15 @@ from aiperf.workers.session_manager import UserSession, UserSessionManager
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+
+
+def _phase_needs_first_token_callback(phase) -> bool:
+    if phase.prefill_concurrency is not None:
+        return True
+    return bool(
+        getattr(phase, "adaptive_scale", False)
+        and sla_filters_require_first_token_observation(phase.sla)
+    )
 
 
 class Worker(BaseComponentService, ProcessHealthMixin):
@@ -213,16 +227,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
 
-        # Only send FirstToken messages when prefill concurrency limiting is active.
-        # Detecting first token requires parsing each SSE chunk, so skip this overhead
-        # when the orchestrator doesn't need TTFT events for slot management.
-        # ``prefill_concurrency`` lives per-phase (warmup phases produce
-        # results-excluded entries alongside profiling ones), so probe every
-        # phase to decide whether prefill-concurrency limiting is active
-        # anywhere in the run.
-        self._prefill_concurrency_enabled: bool = any(
-            getattr(phase, "prefill_concurrency", None) is not None
-            for phase in self.run.cfg.phases
+        # Detecting first token requires parsing each SSE chunk, so only enable
+        # FirstToken messages when a downstream consumer needs them.
+        self._first_token_observation_enabled: bool = any(
+            _phase_needs_first_token_callback(phase) for phase in self.run.cfg.phases
         )
 
         # Only used as a fallback when dataset client is not initialized
@@ -367,6 +375,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             first_token_sent=credit_context.first_token_sent,
             error=str(credit_context.error) if credit_context.error else None,
             request_latency_ns=credit_context.request_latency_ns,
+            inter_token_latency_ns=credit_context.inter_token_latency_ns,
+            output_sequence_length=credit_context.output_sequence_length,
             worker_id=self.service_id,
         )
         self.execute_async(self.credit_return_push_client.send(credit_return))
@@ -424,6 +434,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 first_token_sent=credit_context.first_token_sent,
                 error=str(credit_context.error) if credit_context.error else None,
                 request_latency_ns=credit_context.request_latency_ns,
+                inter_token_latency_ns=credit_context.inter_token_latency_ns,
+                output_sequence_length=credit_context.output_sequence_length,
                 worker_id=self.service_id,
             )
             await self.credit_return_push_client.send(credit_return)
@@ -456,29 +468,24 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         x_correlation_id = credit_context.credit.x_correlation_id
         credit = credit_context.credit
 
-        # First token callback - only needed when prefill concurrency is enabled
-        # Sends FirstToken to router for prefill concurrency slot release
-        # Returns True when meaningful content is found to stop looking for first token
         first_token_callback = None
-        if self._prefill_concurrency_enabled:
+        if self._first_token_observation_enabled:
 
             async def first_token_callback(ttft_ns: int, message: SSEMessage) -> bool:
-                # Use endpoint to check if message has meaningful content
                 parsed = self.inference_client.endpoint.parse_response(message)
                 if parsed is None or parsed.data is None:
-                    return False  # Keep looking for meaningful content
+                    return False
 
-                # Meaningful content found - send FirstToken to router
                 await self.credit_return_push_client.send(
                     FirstToken(
                         credit_id=credit.id,
                         phase=credit.phase,
+                        phase_index=credit.phase_index,
                         ttft_ns=ttft_ns,
                     )
                 )
-                # Track that FirstToken was sent so CreditReturn can report it
                 credit_context.first_token_sent = True
-                return True  # Stop looking, first token found
+                return True
 
         try:
             session = self.session_manager.get(x_correlation_id)
@@ -513,9 +520,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             record: RequestRecord = await self.inference_client.send_request(
                 request_info, first_token_callback=first_token_callback
             )
-            credit_context.request_latency_ns = self._request_latency_ns_for_record(
-                record
-            )
             await self._send_inference_result_message(record)
 
             # Copy request-level errors to credit context for CreditReturn tracking
@@ -526,6 +530,25 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 resp_turn := self.inference_client.endpoint.build_assistant_turn(record)
             ):
                 session.store_response(resp_turn)
+
+            parsed_responses = self._parsed_responses_for_record(record)
+            content_perf_ns = self._content_response_perf_ns_for_record(
+                record, parsed_responses
+            )
+            credit_context.request_latency_ns = self._request_latency_ns_for_record(
+                record, content_perf_ns
+            )
+            credit_context.output_sequence_length = (
+                self._output_sequence_length_for_responses(parsed_responses)
+            )
+            credit_context.inter_token_latency_ns = (
+                self._inter_token_latency_ns_for_record(
+                    record,
+                    content_perf_ns,
+                    parsed_responses,
+                    credit_context.output_sequence_length,
+                )
+            )
 
         except asyncio.CancelledError:
             # Mark cancelled before re-raising so finally can evict session
@@ -539,18 +562,74 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             if credit_context.credit.is_final_turn or credit_context.cancelled:
                 self._release_and_evict_for_terminal(credit, x_correlation_id)
 
-    def _request_latency_ns_for_record(self, record: RequestRecord) -> int | None:
-        """Return the same latency sample used by RequestLatencyMetric."""
-        final_response_perf_ns = None
+    def _parsed_responses_for_record(
+        self, record: RequestRecord
+    ) -> list[ParsedResponse]:
+        parsed_responses: list[ParsedResponse] = []
         for response in record.responses:
             parsed = self.inference_client.endpoint.parse_response(response)
-            if parsed is not None and parsed.data:
-                final_response_perf_ns = parsed.perf_ns
-        if final_response_perf_ns is None:
+            if parsed is not None:
+                parsed_responses.append(parsed)
+        return parsed_responses
+
+    def _content_response_perf_ns_for_record(
+        self,
+        record: RequestRecord,
+        parsed_responses: list[ParsedResponse] | None = None,
+    ) -> list[int]:
+        """Return perf timestamps for parsed responses with meaningful content."""
+        if parsed_responses is None:
+            parsed_responses = self._parsed_responses_for_record(record)
+        return [parsed.perf_ns for parsed in parsed_responses if parsed.data]
+
+    def _request_latency_ns_for_record(
+        self, record: RequestRecord, content_perf_ns: list[int] | None = None
+    ) -> int | None:
+        """Return the same latency sample used by RequestLatencyMetric."""
+        if content_perf_ns is None:
+            content_perf_ns = self._content_response_perf_ns_for_record(record)
+        if not content_perf_ns:
             return None
+        final_response_perf_ns = content_perf_ns[-1]
         if final_response_perf_ns < record.start_perf_ns:
             return None
         return final_response_perf_ns - record.start_perf_ns
+
+    def _output_sequence_length_for_responses(
+        self, parsed_responses: list[ParsedResponse]
+    ) -> int | None:
+        usage = find_last_non_empty_usage(parsed_responses)
+        if usage is None or usage.completion_tokens is None:
+            return None
+        return usage.completion_tokens
+
+    def _inter_token_latency_ns_for_record(
+        self,
+        record: RequestRecord,
+        content_perf_ns: list[int] | None = None,
+        parsed_responses: list[ParsedResponse] | None = None,
+        output_sequence_length: int | None = None,
+    ) -> float | None:
+        """Return ITL using the records-pipeline output sequence formula."""
+        if parsed_responses is None:
+            parsed_responses = self._parsed_responses_for_record(record)
+        if content_perf_ns is None:
+            content_perf_ns = self._content_response_perf_ns_for_record(
+                record, parsed_responses
+            )
+        if output_sequence_length is None:
+            output_sequence_length = self._output_sequence_length_for_responses(
+                parsed_responses
+            )
+        if len(content_perf_ns) < 2 or output_sequence_length is None:
+            return None
+        if output_sequence_length < 2:
+            return None
+        request_latency_ns = content_perf_ns[-1] - record.start_perf_ns
+        ttft_ns = content_perf_ns[0] - record.start_perf_ns
+        if request_latency_ns < 0 or ttft_ns < 0:
+            return None
+        return (request_latency_ns - ttft_ns) / (output_sequence_length - 1)
 
     def _pin_parent_if_fork_child(self, credit: Credit, x_correlation_id: str) -> None:
         """FORK child seed: pin the parent so its session stays resident in
@@ -653,6 +732,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             model_endpoint=self.model_endpoint,
             credit_num=credit.id,
             credit_phase=credit.phase,
+            phase_index=credit.phase_index,
+            profiling_index=credit.profiling_index,
+            phase_name=credit.phase_name,
+            phase_kind=credit.phase_kind,
             cancel_after_ns=credit.cancel_after_ns,
             x_request_id=x_request_id,
             x_correlation_id=session.x_correlation_id,
@@ -739,6 +822,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                         turns=[],
                         credit_num=credit_context.credit.id,
                         credit_phase=credit_context.credit.phase,
+                        phase_index=credit_context.credit.phase_index,
+                        profiling_index=credit_context.credit.profiling_index,
+                        phase_name=credit_context.credit.phase_name,
+                        phase_kind=credit_context.credit.phase_kind,
                         x_request_id=str(uuid.uuid4()),
                         x_correlation_id=credit_context.credit.x_correlation_id,
                         drop_perf_ns=credit_context.drop_perf_ns,

@@ -1,15 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import ClassVar
+
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import ConfigDict, Field
+from pydantic import AliasChoices, ConfigDict, Field
 
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.record_models import MetricResult
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
+from aiperf.gpu_telemetry.constants import UNKNOWN_GPU_TELEMETRY_PLATFORM
 
 
 class TelemetryMetrics(AIPerfBaseModel):
@@ -23,47 +26,73 @@ class TelemetryMetrics(AIPerfBaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    gpu_power_usage: float | None = Field(
-        default=None, description="Current GPU power usage in W"
-    )
-    energy_consumption: float | None = Field(
-        default=None, description="Cumulative energy consumption in MJ"
-    )
-    gpu_utilization: float | None = Field(
+    nvidia_power_usage: float | None = Field(
         default=None,
-        description="GPU utilization percentage (0-100). "
+        validation_alias=AliasChoices("nvidia_power_usage", "gpu_power_usage"),
+        description="Current NVIDIA GPU power usage in W",
+    )
+    nvidia_energy_consumption: float | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "nvidia_energy_consumption", "energy_consumption"
+        ),
+        description="NVIDIA GPU cumulative energy consumption in MJ",
+    )
+    nvidia_gpu_utilization: float | None = Field(
+        default=None,
+        validation_alias=AliasChoices("nvidia_gpu_utilization", "gpu_utilization"),
+        description="NVIDIA GPU utilization percentage (0-100). "
         "Percent of time over the past sample period during which one or more kernels was executing on the GPU.",
     )
-    gpu_memory_used: float | None = Field(
-        default=None, description="GPU memory used in GB"
-    )
-    gpu_temperature: float | None = Field(
-        default=None, description="GPU temperature in °C"
-    )
-    mem_utilization: float | None = Field(
+    nvidia_memory_utilization: float | None = Field(
         default=None,
-        description="Memory bandwidth utilization percentage (0-100). "
+        validation_alias=AliasChoices("nvidia_memory_utilization", "mem_utilization"),
+        description="NVIDIA memory bandwidth utilization percentage (0-100). "
         "Percent of time over the past sample period during which global (device) memory was being read or written.",
     )
-    sm_utilization: float | None = Field(
+    nvidia_memory_used: float | None = Field(
         default=None,
-        description="Streaming multiprocessor utilization percentage (0-100)",
+        validation_alias=AliasChoices("nvidia_memory_used", "gpu_memory_used"),
+        description="NVIDIA GPU memory used in GB",
     )
-    decoder_utilization: float | None = Field(
-        default=None, description="Video decoder (NVDEC) utilization percentage (0-100)"
-    )
-    encoder_utilization: float | None = Field(
-        default=None, description="Video encoder (NVENC) utilization percentage (0-100)"
-    )
-    jpg_utilization: float | None = Field(
-        default=None, description="JPEG decoder utilization percentage (0-100)"
-    )
-    xid_errors: float | None = Field(
-        default=None, description="Value of the last XID error encountered"
-    )
-    power_violation: float | None = Field(
+    nvidia_temperature: float | None = Field(
         default=None,
-        description="Throttling duration due to power constraints in microseconds",
+        validation_alias=AliasChoices("nvidia_temperature", "gpu_temperature"),
+        description="NVIDIA GPU temperature in °C",
+    )
+    nvidia_sm_utilization: float | None = Field(
+        default=None,
+        validation_alias=AliasChoices("nvidia_sm_utilization", "sm_utilization"),
+        description="NVIDIA streaming multiprocessor utilization percentage (0-100)",
+    )
+    nvidia_decoder_utilization: float | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "nvidia_decoder_utilization", "decoder_utilization"
+        ),
+        description="NVIDIA video decoder (NVDEC) utilization percentage (0-100)",
+    )
+    nvidia_encoder_utilization: float | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "nvidia_encoder_utilization", "encoder_utilization"
+        ),
+        description="NVIDIA video encoder (NVENC) utilization percentage (0-100)",
+    )
+    nvidia_jpg_utilization: float | None = Field(
+        default=None,
+        validation_alias=AliasChoices("nvidia_jpg_utilization", "jpg_utilization"),
+        description="NVIDIA JPEG decoder utilization percentage (0-100)",
+    )
+    nvidia_xid_errors: float | None = Field(
+        default=None,
+        validation_alias=AliasChoices("nvidia_xid_errors", "xid_errors"),
+        description="Value of the last NVIDIA XID error encountered",
+    )
+    nvidia_power_violation: float | None = Field(
+        default=None,
+        validation_alias=AliasChoices("nvidia_power_violation", "power_violation"),
+        description="NVIDIA throttling duration due to power constraints in microseconds",
     )
 
     # AMD ROCm telemetry (collected by AMDSMITelemetryCollector). These mirror
@@ -141,6 +170,10 @@ class GpuMetadata(AIPerfBaseModel):
     pod_name: str | None = Field(
         default=None, description="Pod name where the GPU is located (kubernetes only)"
     )
+    platform: str = Field(
+        default=UNKNOWN_GPU_TELEMETRY_PLATFORM,
+        description="GPU telemetry platform namespace, e.g. 'nvidia', 'amd', or 'unknown'",
+    )
 
 
 class TelemetryRecord(GpuMetadata):
@@ -152,6 +185,8 @@ class TelemetryRecord(GpuMetadata):
 
     Inherits from GpuMetadata to avoid duplicating metadata fields.
     """
+
+    record_type: ClassVar[str] = "gpu_telemetry"
 
     timestamp_ns: int = Field(
         description="Nanosecond wall-clock timestamp when telemetry was collected (time_ns)"
@@ -649,6 +684,7 @@ class TelemetryHierarchy(AIPerfBaseModel):
                     hostname=record.hostname,
                     namespace=record.namespace,
                     pod_name=record.pod_name,
+                    platform=record.platform,
                 ),
             )
 

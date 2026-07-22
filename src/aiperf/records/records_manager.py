@@ -6,12 +6,14 @@ import asyncio
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from aiperf.accuracy.models import AccuracySummary, ProcessAccuracyResult
 from aiperf.common.accumulator_protocols import (
     AccumulatorProtocol,
     ExportContext,
     StreamExporterProtocol,
+    SummaryContext,
 )
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -20,16 +22,15 @@ from aiperf.common.enums import (
     CommandType,
     CreditPhase,
     MessageType,
+    make_result_producer_capability,
 )
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.hooks import background_task, on_command, on_message, on_pull_message
 from aiperf.common.messages import (
     AllRecordsReceivedMessage,
     DatasetConfiguredNotification,
-    MetricRecordsData,
-    MetricRecordsMessage,
     NetworkLatencyRecordMessage,
+    ProcessAccuracyResultMessage,
     ProcessAllResultsMessage,
     ProcessRecordsCommand,
     ProcessRecordsResultMessage,
@@ -39,6 +40,7 @@ from aiperf.common.messages import (
     ProfileCompleteCommand,
     RealtimeMetricsCommand,
     RealtimeMetricsMessage,
+    RecordsMessage,
     RecordsProcessingStatsMessage,
     ServerMetricsRecordMessage,
     StartRealtimeTelemetryCommand,
@@ -47,22 +49,19 @@ from aiperf.common.messages import (
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
     BranchStats,
-    CreditPhaseStats,
     ErrorDetails,
     ErrorDetailsCount,
     MetricResult,
-    NetworkLatencySample,
+    PhaseProfileResults,
     PhaseRecordsStats,
     ProcessRecordsResult,
     ProcessServerMetricsResult,
     ProcessTelemetryResult,
     ProfileResults,
-    ServerMetricsRecord,
-    TelemetryRecord,
     TimesliceResult,
     WorkerProcessingStats,
 )
-from aiperf.common.models.server_metrics_models import TimeRangeFilter
+from aiperf.common.types import MetricTagT
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.config.comm import ZMQDualBindConfig
 from aiperf.credit.messages import (
@@ -72,51 +71,32 @@ from aiperf.credit.messages import (
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
 )
-from aiperf.gpu_telemetry.protocols import (
-    GPUTelemetryAccumulatorProtocol,
-    GPUTelemetryProcessorProtocol,
-)
+from aiperf.gpu_telemetry.protocols import GPUTelemetryAccumulatorProtocol
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
-from aiperf.metrics.cache_reporting_hint import (
-    CACHE_REPORTING_HINT,
-    usage_without_cache_in_record,
-)
 from aiperf.network_latency.accumulator import NetworkLatencyAccumulator
-from aiperf.network_latency.protocols import NetworkLatencyProcessorProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     AccumulatorType,
     PluginType,
-    ResultsProcessorType,
     StreamExporterType,
     UIType,
-)
-from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
-from aiperf.post_processors.protocols import (
-    IS_BEST_EFFORT_ATTR,
-    FlushableResultsProcessorProtocol,
-    ResultsProcessorProtocol,
 )
 from aiperf.records import records_manager_processing
 from aiperf.records.dataset_gate import await_dataset_configured
 from aiperf.records.error_tracker import ErrorTracker
 from aiperf.records.records_manager_processing import (
-    accumulators_for_record_type,
+    LoadedAnalyzer,
     generate_realtime_metrics,
     load_accumulators,
+    load_analyzers,
     load_stream_exporters,
-    stream_exporters_for_record_type,
 )
 from aiperf.records.records_tracker import RecordsTracker
-from aiperf.server_metrics.protocols import (
-    ServerMetricsAccumulatorProtocol,
-    ServerMetricsProcessorProtocol,
-)
+from aiperf.server_metrics.protocols import ServerMetricsAccumulatorProtocol
 
 if TYPE_CHECKING:
     from aiperf.config.config import BenchmarkConfig
     from aiperf.config.resolution.plan import BenchmarkRun
-    from aiperf.plugin.types import PluginEntry
 
 
 _LATENCY_LINE_LABELS: tuple[tuple[str, str], ...] = (
@@ -146,6 +126,18 @@ _REALTIME_ROW_INDENT = 2
 # labels, so the column can hold p95 on one row and p90 on the next.
 _LATENCY_PERCENTILES: tuple[str, ...] = ("p50", "p75", "p95", "p99")
 _TOKEN_PERCENTILES: tuple[str, ...] = ("p50", "p75", "p90", "p99")
+_SERVER_SNAPSHOT_METRIC_DISPLAY: dict[str, tuple[str, str]] = {
+    "prefix_cache_hit_rate": ("Prefix Cache Hit Rate", "%"),
+    "external_prefix_cache_hit_rate": ("External Prefix Cache Hit Rate", "%"),
+    "kv_cache_usage_pct": ("KV Cache Usage", "%"),
+    "cpu_kv_cache_usage_pct": ("CPU KV Cache Usage", "%"),
+    "num_running": ("Server Running Requests", "req"),
+    "num_waiting": ("Server Waiting Requests", "req"),
+    "num_preemptions": ("Server Preemptions", "req"),
+    "input_token_throughput_srv": ("Server Input Throughput", "tokens/s"),
+    "output_token_throughput_srv": ("Server Output Throughput", "tokens/s"),
+    "unique_input_tokens_srv": ("Unique Input Tokens", "tokens"),
+}
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -170,6 +162,28 @@ def _format_int(value: float | None) -> str:
     if value is None:
         return "-"
     return f"{int(round(value)):,}"
+
+
+def _server_snapshot_to_metric_results(
+    server_snapshot: dict[str, float],
+) -> list[MetricResult]:
+    """Convert live server snapshot scalars into realtime MetricResult rows."""
+    metrics: list[MetricResult] = []
+    for tag, value in server_snapshot.items():
+        header, unit = _SERVER_SNAPSHOT_METRIC_DISPLAY.get(
+            tag,
+            (tag.replace("_", " ").title(), ""),
+        )
+        metrics.append(
+            MetricResult(
+                tag=tag,
+                header=header,
+                unit=unit,
+                avg=value,
+                current=value,
+            )
+        )
+    return metrics
 
 
 def _render_realtime_block(
@@ -376,9 +390,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     many records before finalizing results.
     """
 
-    # The "enable cache reporting" server-knob hint fires at most once per run.
-    _warned_missing_cache_reporting: bool = False
-
     def __init__(
         self,
         run: BenchmarkRun,
@@ -405,6 +416,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             **kwargs,
         )
 
+        # Advertise the result domains this manager produces so the controller's
+        # ResultJoinCoordinator waits for them on shutdown. Accuracy is a separate
+        # domain, joined only when accuracy mode is enabled for this run.
+        self.extra_capabilities = (make_result_producer_capability("profile"),)
+        if run.cfg.accuracy is not None and run.cfg.accuracy.enabled:
+            self.extra_capabilities += (make_result_producer_capability("accuracy"),)
+
         self._records_tracker = RecordsTracker()
         self._error_tracker = ErrorTracker()
 
@@ -423,6 +441,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # (completed_records, elapsed_seconds) from the prior realtime tick, used
         # to render the instantaneous (delta) RPS in the realtime stats block.
         self._prev_realtime_snapshot: tuple[int, float] | None = None
+        self._prev_realtime_phase_index: int | None = None
 
         # Latest BranchStats snapshot received via CreditPhaseCompleteMessage
         # for the PROFILING phase. None for non-DAG runs (TimingManager
@@ -437,22 +456,18 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # warmup vs profiling separation.
         self._phase_branch_stats: dict[CreditPhase, BranchStats] = {}
         self._complete_credit_phases: set[CreditPhase] = set()
+        self._credits_complete_received = False
+        self._all_records_received_phases: set[CreditPhase] = set()
 
         self._telemetry_state = ErrorTrackingState()
         self._server_metrics_state = ErrorTrackingState()
-        self._metric_state = ErrorTrackingState()
 
-        self._metric_results_processors: list[ResultsProcessorProtocol] = []  # fmt: skip
-        self._timing_results_processors: list[ResultsProcessorProtocol] = []  # fmt: skip
-        self._gpu_telemetry_processors: list[GPUTelemetryProcessorProtocol] = []  # fmt: skip
-        self._server_metrics_processors: list[ServerMetricsProcessorProtocol] = []  # fmt: skip
-        self._gpu_telemetry_accumulator: GPUTelemetryAccumulatorProtocol | None = None  # fmt: skip
-        self._server_metrics_accumulator: ServerMetricsAccumulatorProtocol | None = None  # fmt: skip
-        self._network_latency_processors: list[NetworkLatencyProcessorProtocol] = []  # fmt: skip
+        self._gpu_telemetry_accumulator: GPUTelemetryAccumulatorProtocol | None = None
+        self._server_metrics_accumulator: ServerMetricsAccumulatorProtocol | None = None
 
         # In-process accumulator for RTT probe samples. Computes the run-level
-        # mean RTT delivered to each MetricResultsProcessor via set_network_rtt_ns
-        # before summarize(). None unless network latency probing is active.
+        # mean RTT delivered to MetricsAccumulator before summarize(). None unless
+        # network latency probing is active.
         self._network_latency_accumulator: NetworkLatencyAccumulator | None = (
             NetworkLatencyAccumulator(benchmark_id=self.run.benchmark_id)
             if self.run.cfg.network_latency.should_probe
@@ -460,266 +475,247 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         self._network_latency_state = ErrorTrackingState()
 
-        for entry in plugins.iter_entries(PluginType.RESULTS_PROCESSOR):
-            try:
-                ProcessorClass = plugins.get_class(
-                    PluginType.RESULTS_PROCESSOR, entry.name
-                )
-                results_processor = ProcessorClass(
-                    service_id=self.service_id,
-                    run=self.run,
-                    pub_client=self.pub_client,
-                )
-                self.attach_child_lifecycle(results_processor)
-
-                self._classify_results_processor(results_processor, entry)
-
-                self.debug(
-                    f"Created results processor: {entry.name}: {results_processor.__class__.__name__}"
-                )
-            except PostProcessorDisabled as e:
-                if entry.name == ResultsProcessorType.OTEL_METRICS_STREAMER:
-                    self.info(
-                        f"OTel metrics streamer is disabled and will not be used: {e}"
-                    )
-                else:
-                    self.debug(
-                        f"Results processor {entry.name} is disabled and will not be used"
-                    )
-            except Exception as e:
-                self.error(f"Failed to create results processor {entry.name}: {e}")
-
-        # --- agentx accumulator pipeline (the byte-exact summary engine) -------
-        # The MetricsAccumulator (accumulator:metric_results) is the SOLE summary
-        # producer for the records pipeline — the final ProfileResults come only
-        # from summarizing it. The legacy results_processor:metric_results
-        # (MetricResultsProcessor) is never summarized (no summarize() is ever
-        # called on the _metric_results_processors list), so it is a dead
-        # per-record dispatch once the accumulator is present and there is NO
-        # fallback summary path if the accumulator is missing. Telemetry /
-        # server-metrics keep flowing through main's gpu_telemetry_processor /
-        # server_metrics_processor side-channels for #803 efficiency metrics —
-        # the accumulator drive here is metric_records-only.
         self._accumulators: dict[AccumulatorType, AccumulatorProtocol] = (
             load_accumulators(self)
         )
         self._stream_exporters: dict[StreamExporterType, StreamExporterProtocol] = (
             load_stream_exporters(self)
         )
+        # Summarize-time cross-accumulator analyzers (e.g. energy efficiency),
+        # each carrying its live-instance and summary dependencies.
+        self._analyzers: list[LoadedAnalyzer] = load_analyzers(self)
+        self._routing_table = self._build_routing_table()
+        self._warned_unrouted_record_types: set[str] = set()
+        self._log_routing_table()
 
-        # Pre-resolve the metric_records dispatch lists once (per-record hot path).
-        self._metric_record_accumulators = accumulators_for_record_type(
-            self._accumulators, "metric_records"
-        )
-        self._metric_record_stream_exporters = stream_exporters_for_record_type(
-            self._stream_exporters, "metric_records"
-        )
-        # GPU-telemetry / server-metrics JSONL writers are stream_exporters fed by
-        # record-type routing (mirrors agentx). The accumulators stay in the
-        # gpu_telemetry_processor / server_metrics_processor side-channels; only
-        # the per-record JSONL writers live here.
-        self._gpu_telemetry_stream_exporters = stream_exporters_for_record_type(
-            self._stream_exporters, "gpu_telemetry"
-        )
-        self._server_metrics_stream_exporters = stream_exporters_for_record_type(
-            self._stream_exporters, "server_metrics"
-        )
+        # Single-flight guard for _process_results: the background finalize task,
+        # the PROCESS_RECORDS command, and PROFILE_CANCEL can all reach it and
+        # would otherwise double-publish and double-finalize stream exporters.
+        self._process_results_lock = asyncio.Lock()
+        self._processed_results: dict[CreditPhase, ProcessRecordsResult] = {}
 
-        # The accumulator is the sole summary producer, and the legacy
-        # MetricResultsProcessor is never summarized — so gating it off simply
-        # removes a dead per-record dispatch (it is not a fallback and does not
-        # otherwise contribute to the results).
-        if AccumulatorType.METRIC_RESULTS in self._accumulators:
-            # Exact-type check, deliberately NOT isinstance: subclasses like
-            # TimesliceMetricResultsProcessor (results_processor:timeslice)
-            # produce non-summary outputs and must stay active.
-            self._metric_results_processors = [
-                p
-                for p in self._metric_results_processors
-                if type(p) is not MetricResultsProcessor
-            ]
-            self.debug(
-                "MetricsAccumulator active; legacy MetricResultsProcessor gated off"
+        self._metric_record_accumulators = [
+            accumulator
+            for accumulator in self._accumulators.values()
+            if accumulator in self._routing_table.get("metric_records", [])
+        ]
+        self._gpu_telemetry_accumulator = self._accumulators.get(
+            AccumulatorType.GPU_TELEMETRY
+        )
+        self._server_metrics_accumulator = self._accumulators.get(
+            AccumulatorType.SERVER_METRICS
+        )
+        self._accuracy_accumulator = self._accumulators.get(AccumulatorType.ACCURACY)
+
+    def _build_routing_table(self) -> dict[str, list[Any]]:
+        """Build record_type string -> handler mapping from plugin metadata."""
+        table: dict[str, list[Any]] = {}
+        for entry in plugins.iter_entries(PluginType.ACCUMULATOR):
+            handler = self._accumulators.get(AccumulatorType(entry.name))
+            if handler is None:
+                continue
+            record_types = (
+                entry.metadata.get("record_types", []) if entry.metadata else []
             )
+            for record_type in record_types:
+                table.setdefault(record_type, []).append(handler)
 
-    def _classify_results_processor(
-        self,
-        results_processor: ResultsProcessorProtocol,
-        entry: PluginEntry,
-    ) -> None:
-        """Route a constructed results processor into its subsystem bucket.
+        for entry in plugins.iter_entries(PluginType.STREAM_EXPORTER):
+            handler = self._stream_exporters.get(StreamExporterType(entry.name))
+            if handler is None:
+                continue
+            record_types = (
+                entry.metadata.get("record_types", []) if entry.metadata else []
+            )
+            for record_type in record_types:
+                table.setdefault(record_type, []).append(handler)
+        return table
 
-        Sorts by protocol into GPU telemetry, server metrics, network latency,
-        or the generic metric processors list, and captures the GPU/server
-        accumulator singletons and any timing-capable processor.
+    async def _dispatch_record(
+        self, record: Any, *, warn_if_unrouted: bool = True
+    ) -> list[BaseException]:
+        """Dispatch one typed record to all handlers registered for its record_type.
+
+        ``warn_if_unrouted`` gates the "no handlers" warning: leave it True for
+        data-plane records (which would be silently lost), but set it False for
+        control-plane records that are already consumed elsewhere and only
+        OPTIONALLY streamed (e.g. ``credit_phase_stats``, whose stats are applied
+        via ``update_phase_info`` before dispatch and only routed to the
+        default-absent OTel streamer) -- otherwise every non-OTel run warns falsely.
         """
-        if isinstance(results_processor, GPUTelemetryProcessorProtocol):
-            self._gpu_telemetry_processors.append(results_processor)
-            if entry.name == ResultsProcessorType.GPU_TELEMETRY_ACCUMULATOR:
-                self._gpu_telemetry_accumulator = results_processor
+        record_type = getattr(record, "record_type", None)
+        if record_type is None:
+            error = TypeError(f"Record {type(record).__name__} has no record_type")
+            self.error(str(error))
+            return [error]
 
-        elif isinstance(results_processor, ServerMetricsProcessorProtocol):
-            self._server_metrics_processors.append(results_processor)
-            if entry.name == ResultsProcessorType.SERVER_METRICS_ACCUMULATOR:
-                self._server_metrics_accumulator = results_processor
-
-        elif isinstance(results_processor, NetworkLatencyProcessorProtocol):
-            self._network_latency_processors.append(results_processor)
-
-        else:
-            self._metric_results_processors.append(results_processor)
+        handlers = self._routing_table.get(record_type, [])
+        if not handlers:
+            # Warn once per unrouted type: records silently vanish here while the
+            # request still counts as a success, so this must not stay debug-only.
             if (
-                entry.name == ResultsProcessorType.OTEL_METRICS_STREAMER
-                and self.run.cfg.otel.stream_timing_enabled
+                warn_if_unrouted
+                and record_type not in self._warned_unrouted_record_types
             ):
-                self._timing_results_processors.append(results_processor)
+                self._warned_unrouted_record_types.add(record_type)
+                self.warning(
+                    f"No handlers registered for record type {record_type!r}; "
+                    "records of this type are being dropped. Check that a producer's "
+                    "record_type matches an accumulator/stream_exporter record_types "
+                    "entry in plugins.yaml."
+                )
+            return []
 
-    @on_pull_message(MessageType.METRIC_RECORDS)
-    async def _on_metric_records(self, message: MetricRecordsMessage) -> None:
-        """Handle a metric records message."""
+        results = await asyncio.gather(
+            *[handler.process_record(record) for handler in handlers],
+            return_exceptions=True,
+        )
+        errors: list[BaseException] = []
+        for handler, result in zip(handlers, results, strict=True):
+            # A handler-level CancelledError (captured by return_exceptions) means
+            # one handler's coroutine was cancelled, NOT this task -- genuine task
+            # cancellation makes the gather itself raise and never reaches here. We
+            # must count it like any other handler failure rather than re-raising,
+            # or the caller skips the tracker update + (timeout-less) completion
+            # barrier and the phase never converges.
+            if isinstance(result, BaseException):
+                self.error(
+                    f"Handler {handler.__class__.__name__} failed for "
+                    f"{record_type}: {result!r}"
+                )
+                # Best-effort handlers (streaming telemetry like OTel/MLflow) must
+                # never pollute the benchmark's phase error count -- a downed
+                # collector is not an inference failure. Log and drop, honoring the
+                # handler's ``is_best_effort`` marker.
+                if getattr(handler, "is_best_effort", False):
+                    continue
+                errors.append(result)
+        return errors
+
+    def _log_routing_table(self) -> None:
+        """Log the metadata-derived record routing table."""
+        self.debug(
+            lambda: (
+                f"Routing table: {len(self._accumulators)} accumulators, "
+                f"{len(self._stream_exporters)} stream exporters, "
+                f"{len(self._routing_table)} record types"
+            )
+        )
+        for record_type, handlers in self._routing_table.items():
+            handler_names = [handler.__class__.__name__ for handler in handlers]
+            self.debug(lambda rt=record_type, hn=handler_names: f"  {rt} -> {hn}")
+
+    def _has_multiple_phase_instances(self, phase: CreditPhase) -> bool:
+        """Return whether this run has more than one concrete phase of a kind."""
+        try:
+            phases = self.run.cfg.phases
+        except AttributeError:
+            return False
+        phase_kind = "warmup" if phase == CreditPhase.WARMUP else "profiling"
+        return sum(1 for cfg_phase in phases if cfg_phase.kind == phase_kind) > 1
+
+    def _has_multiple_profiling_phases(self) -> bool:
+        """Return whether this run has more than one profiling-kind phase."""
+        return self._has_multiple_phase_instances(CreditPhase.PROFILING)
+
+    def _check_all_records_received(self, phase: CreditPhase) -> bool:
+        """Check record completion for a phase kind."""
+        return self._records_tracker.check_and_set_all_records_received_for_phase(phase)
+
+    @on_pull_message(MessageType.RECORDS)
+    async def _on_records(self, message: RecordsMessage) -> None:
+        """Handle a per-request records envelope generically.
+
+        One ``RecordsMessage`` == one inference request. Each contained record
+        self-identifies via its serialized ``record_type`` field and is dispatched
+        to its registered handlers; the per-request lockstep keys off the message
+        envelope (``message.metadata`` / ``message.error``), never off sniffing a
+        record type.
+        """
         if not await await_dataset_configured(self, self._dataset_configured_event):
             return
         if self.is_trace_enabled:
-            self.trace(f"Received metric records: {message}")
+            self.trace(f"Received records: {message}")
 
-        record_data = message.to_data()
+        dispatch_errors: list[BaseException] = []
+        for record in message.records:
+            dispatch_errors.extend(await self._dispatch_record(record))
 
-        self._maybe_hint_missing_cache_reporting(record_data)
+        phase = message.metadata.benchmark_phase
+        self._records_tracker.update_from_request(message.metadata, message.error)
+        if message.error:
+            self._error_tracker.increment_error_count_for_phase(
+                phase, message.error, phase_index=message.metadata.phase_index
+            )
+        # A metric accumulator/exporter that failed to ingest this record yields
+        # incomplete metrics; surface it in the phase error summary rather than
+        # marking the record cleanly processed and silently dropping the failure.
+        for error in dispatch_errors:
+            self._error_tracker.increment_error_count_for_phase(
+                phase,
+                ErrorDetails.from_exception(error),
+                phase_index=message.metadata.phase_index,
+            )
 
-        # Drive the accumulator engine (primary summary path) AND any legacy
-        # results_processors that survived the accumulator gate (e.g. otel
-        # streaming, which is best-effort and does not touch summary numbers).
-        await self._send_record_to_accumulators(record_data)
-        # A non-best-effort results processor that raises must NOT skip the
-        # tracker update + completion-barrier check, or the phase never
-        # converges and the (timeout-less) barrier hangs. Run those in a
-        # finally, then let the original exception re-propagate (already logged
-        # inside _send_results_to_results_processors).
-        try:
-            await self._send_results_to_results_processors(record_data)
-        finally:
-            self._records_tracker.update_from_record_data(record_data)
-            if record_data.error:
-                self._error_tracker.increment_error_count_for_phase(
-                    record_data.metadata.benchmark_phase, record_data.error
-                )
-
-            phase = record_data.metadata.benchmark_phase
-            if (
-                phase in self._complete_credit_phases
-                and self._records_tracker.check_and_set_all_records_received_for_phase(
-                    phase
-                )
-            ):
-                await self._handle_all_records_received(phase)
-
-    async def _send_record_to_accumulators(
-        self, record_data: MetricRecordsData
-    ) -> None:
-        """Dispatch a metric record to all metric_records accumulators + stream exporters.
-
-        Per-handler exceptions are caught so one bad accumulator does not abort
-        the others. GPU telemetry / server metrics records are routed via their
-        own ``@on_pull_message`` handlers (and main's side-channel processors)
-        and do not flow through here.
-        """
-        targets: list[object] = [
-            *self._metric_record_accumulators,
-            *self._metric_record_stream_exporters,
-        ]
-        if not targets:
-            return
-        results = await asyncio.gather(
-            *[t.process_record(record_data) for t in targets],
-            return_exceptions=True,
-        )
-        for target, result in zip(targets, results, strict=True):
-            if isinstance(result, BaseException):
-                self.error(
-                    f"Accumulator {target.__class__.__name__} failed for "
-                    f"metric_records: {result!r}"
-                )
+        if (
+            phase in self._complete_credit_phases
+            and (
+                phase != CreditPhase.PROFILING
+                or not self._has_multiple_profiling_phases()
+                or self._credits_complete_received
+            )
+            and self._check_all_records_received(phase)
+        ):
+            await self._handle_all_records_received_once(phase)
 
     @on_pull_message(MessageType.TELEMETRY_RECORDS)
     async def _on_telemetry_records(self, message: TelemetryRecordsMessage) -> None:
-        """Handle telemetry records message from Telemetry Manager.
-        The RecordsManager acts as the central hub for all record processing,
-        whether inference metrics or GPU telemetry.
-
-        Args:
-            message: Batch of telemetry records from a DCGM collector
-        """
+        """Handle telemetry records message from Telemetry Manager."""
         if message.valid:
-            try:
-                await self._send_telemetry_to_results_processors(message.records)
-            except Exception as e:
-                error_details = ErrorDetails(
-                    message=f"Telemetry processor error: {str(e)}"
-                )
-                self._telemetry_state.error_counts[error_details] += 1
-                self.debug(f"Failed to process telemetry batch: {e}")
-        else:
-            if message.error:
-                self._telemetry_state.error_counts[message.error] += 1
+            for record in message.records:
+                for error in await self._dispatch_record(record):
+                    self._telemetry_state.error_counts[
+                        ErrorDetails.from_exception(error)
+                    ] += 1
+        elif message.error:
+            self._telemetry_state.error_counts[message.error] += 1
 
     @on_pull_message(MessageType.SERVER_METRICS_RECORD)
     async def _on_server_metrics_records(
         self, message: ServerMetricsRecordMessage
     ) -> None:
-        """Handle server metrics record message from Server Metrics Manager.
-
-        Forwards full record to results processors.
-
-        Args:
-            message: Server metrics record from a Prometheus collector
-        """
+        """Handle server metrics record message from Server Metrics Manager."""
         if message.valid:
-            # Forward full records to results processors
-            await self._send_server_metrics_to_results_processors(message.record)
-        else:
-            if message.error:
-                self._server_metrics_state.error_counts[message.error] += 1
+            for error in await self._dispatch_record(message.record):
+                self._server_metrics_state.error_counts[
+                    ErrorDetails.from_exception(error)
+                ] += 1
+        elif message.error:
+            self._server_metrics_state.error_counts[message.error] += 1
 
     @on_pull_message(MessageType.NETWORK_LATENCY_RECORD)
     async def _on_network_latency_records(
         self, message: NetworkLatencyRecordMessage
     ) -> None:
-        """Handle a network latency RTT probe sample from the NetworkLatencyManager.
-
-        Accumulates the sample for the run-level mean RTT (delivered to the
-        metric processors before summarize) and forwards it to the JSONL writer.
-        A transport-level delivery error is tracked separately.
-
-        Args:
-            message: Network latency probe sample from a probe collector
-        """
+        """Handle a network latency RTT probe sample from the NetworkLatencyManager."""
         if message.valid:
             if self._network_latency_accumulator is not None:
                 self._network_latency_accumulator.add_sample(message.sample)
-            await self._send_network_latency_to_results_processors(message.sample)
-        else:
-            if message.error:
-                self._network_latency_state.error_counts[message.error] += 1
-
-    async def _send_network_latency_to_results_processors(
-        self, sample: NetworkLatencySample
-    ) -> None:
-        """Forward a probe sample to the network latency results processors."""
-        if not self._network_latency_processors:
-            return
-        errors = await asyncio.gather(
-            *[
-                processor.process_network_latency_sample(sample)
-                for processor in self._network_latency_processors
-            ],
-            return_exceptions=True,
-        )
-        for error in errors:
-            if isinstance(error, BaseException):
-                self.exception(f"Failed to process network latency sample: {error!r}")
+            for error in await self._dispatch_record(message.sample):
                 self._network_latency_state.error_counts[
                     ErrorDetails.from_exception(error)
                 ] += 1
+        elif message.error:
+            self._network_latency_state.error_counts[message.error] += 1
+
+    async def _handle_all_records_received_once(self, phase: CreditPhase) -> None:
+        """Idempotently trigger all-records finalization for one phase kind."""
+        handled = getattr(self, "_all_records_received_phases", set())
+        if phase in handled:
+            return
+        handled.add(phase)
+        self._all_records_received_phases = handled
+        await self._handle_all_records_received(phase)
 
     async def _handle_all_records_received(self, phase: CreditPhase) -> None:
         """Handle the case where all records have been received."""
@@ -727,7 +723,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             self.debug(lambda: f"Skipping non-profiling phase: {phase}")
             return
 
-        phase_stats = self._records_tracker.create_stats_for_phase(phase)
+        phase_stats = (
+            self._records_tracker.create_aggregate_stats_for_phase(phase)
+            if phase == CreditPhase.PROFILING
+            else self._records_tracker.create_stats_for_phase(phase)
+        )
         self.info(
             lambda: (
                 f"Processed {phase_stats.success_records} valid requests and {phase_stats.error_records} errors ({phase_stats.total_records} total)."
@@ -750,7 +750,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         This runs as a background task to avoid blocking the message pump.
         """
-        phase_stats = self._records_tracker.create_stats_for_phase(phase)
+        phase_stats = (
+            self._records_tracker.create_aggregate_stats_for_phase(phase)
+            if phase == CreditPhase.PROFILING
+            else self._records_tracker.create_stats_for_phase(phase)
+        )
 
         # Send a message to the event bus to signal that we received all the records
         await self.publish(
@@ -776,7 +780,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # Wait for server metrics flush period to allow final metrics to be collected
         # This ensures metrics that are still being processed by the server are captured
         flush_period = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
-        phase_stats = self._records_tracker.create_stats_for_phase(
+        phase_stats = self._records_tracker.create_aggregate_stats_for_phase(
             CreditPhase.PROFILING
         )
         flush_end_ns = (phase_stats.requests_end_ns or time.time_ns()) + (
@@ -793,178 +797,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         await self._process_results(phase=phase, cancelled=cancelled)
         self.info("_finalize_and_process_results completed")
 
-    async def _send_results_to_results_processors(
-        self, record_data: MetricRecordsData
-    ) -> None:
-        """Send the results to each of the metric results processors.
-
-        Telemetry-only processors (FlushableResultsProcessorProtocol, e.g. OTel
-        streaming) are best-effort: their exceptions are logged but do not fail
-        the run. All other processors propagate exceptions so data-pipeline
-        failures surface immediately.
-        """
-        if not self._metric_results_processors:
-            return
-
-        for results_processor in self._metric_results_processors:
-            try:
-                await results_processor.process_result(record_data)
-            # telemetry processor failure must not crash the run
-            except Exception as exc:
-                self.exception(
-                    "Failed to process metric record in "
-                    f"{results_processor.__class__.__name__}: {exc!r}"
-                )
-                # Processors with is_best_effort=True (streaming telemetry like
-                # OTel) swallow exceptions; all others re-raise to surface bugs.
-                # See ``post_processors.protocols.BestEffortMarker``.
-                if not getattr(results_processor, IS_BEST_EFFORT_ATTR, False):
-                    raise
-
-    async def _flush_metric_results_processors(self, force: bool = False) -> None:
-        """Flush any results processors that provide explicit flush support.
-
-        Mirrors the best-effort contract from ``_send_results_to_results_processors``:
-        flush failures on processors marked ``is_best_effort=True`` (e.g. OTel
-        streaming) are logged and swallowed; non-best-effort processors re-raise
-        so data-pipeline bugs surface. Today every ``FlushableResultsProcessorProtocol``
-        implementer is best-effort telemetry, but the explicit check keeps the
-        contract consistent with the per-record path if a future flushable
-        processor (e.g. a Parquet writer) is added.
-        """
-        flushable_processors = [
-            results_processor
-            for results_processor in self._metric_results_processors
-            if isinstance(results_processor, FlushableResultsProcessorProtocol)
-        ]
-        if not flushable_processors:
-            return
-
-        self.debug(
-            lambda: f"Flushing {len(flushable_processors)} metric results processors"
-        )
-        results = await asyncio.gather(
-            *[processor.flush(force=force) for processor in flushable_processors],
-            return_exceptions=True,
-        )
-        for processor, result in zip(flushable_processors, results, strict=True):
-            if not isinstance(result, BaseException):
-                continue
-            self.exception(
-                f"Failed to flush metric results processor "
-                f"{processor.__class__.__name__}: {result!r}"
-            )
-            if not getattr(processor, IS_BEST_EFFORT_ATTR, False):
-                raise result
-
-    async def _send_timing_to_results_processors(
-        self, phase_stats: CreditPhaseStats
-    ) -> None:
-        """Send timing snapshots to timing-capable results processors.
-
-        Mirrors the best-effort contract from ``_send_results_to_results_processors``:
-        failures on processors marked ``is_best_effort=True`` are logged and
-        swallowed; non-best-effort failures re-raise. All timing processors
-        today are OTel streaming telemetry (best-effort), but the explicit
-        check keeps the behaviour predictable if a non-telemetry timing
-        processor is added later.
-        """
-        if not self._timing_results_processors:
-            return
-
-        results = await asyncio.gather(
-            *[
-                results_processor.process_result(phase_stats)
-                for results_processor in self._timing_results_processors
-            ],
-            return_exceptions=True,
-        )
-        for results_processor, result in zip(
-            self._timing_results_processors, results, strict=True
-        ):
-            if not isinstance(result, BaseException):
-                continue
-            self.exception(
-                "Failed to process timing snapshot in "
-                f"{results_processor.__class__.__name__}: {result!r}"
-            )
-            if not getattr(results_processor, IS_BEST_EFFORT_ATTR, False):
-                raise result
-
-    async def _send_telemetry_to_results_processors(
-        self, telemetry_records: list[TelemetryRecord]
-    ) -> None:
-        """Send individual telemetry records to telemetry results processors only.
-
-        Args:
-            telemetry_records: Batch of records from single collection cycle
-        """
-        errors = await asyncio.gather(
-            *[
-                processor.process_telemetry_record(record)
-                for processor in self._gpu_telemetry_processors
-                for record in telemetry_records  # Process each record individually
-            ],
-            return_exceptions=True,
-        )
-        for error in errors:
-            if isinstance(error, BaseException):
-                self.exception(f"Failed to process telemetry record: {error!r}")
-                self._telemetry_state.error_counts[
-                    ErrorDetails.from_exception(error)
-                ] += 1
-        for exporter in self._gpu_telemetry_stream_exporters:
-            for record in telemetry_records:
-                try:
-                    await exporter.process_record(record)
-                except Exception as exc:
-                    self.error(
-                        f"Stream exporter {exporter.__class__.__name__} failed for "
-                        f"gpu_telemetry record: {exc!r}"
-                    )
-
-    async def _send_server_metrics_to_results_processors(
-        self, record: ServerMetricsRecord
-    ) -> None:
-        """Send individual server metrics records to server metrics results processors only.
-
-        Args:
-            record: ServerMetricsRecord from single collection cycle
-        """
-        errors = await asyncio.gather(
-            *[
-                processor.process_server_metrics_record(record)
-                for processor in self._server_metrics_processors
-            ],
-            return_exceptions=True,
-        )
-        for error in errors:
-            if isinstance(error, BaseException):
-                self.exception(f"Failed to process server metrics record: {error!r}")
-                self._server_metrics_state.error_counts[
-                    ErrorDetails.from_exception(error)
-                ] += 1
-        for exporter in self._server_metrics_stream_exporters:
-            try:
-                await exporter.process_record(record)
-            except Exception as exc:
-                self.error(
-                    f"Stream exporter {exporter.__class__.__name__} failed for "
-                    f"server_metrics record: {exc!r}"
-                )
-
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(
         self, message: DatasetConfiguredNotification
     ) -> None:
-        for processor in self._metric_results_processors:
-            if hasattr(processor, "on_dataset_configured"):
-                processor.on_dataset_configured(message.metadata)
-        # Accumulators that consume loader-stamped per-turn metadata
-        # (e.g. TheoreticalPrefixCacheAccumulator) need the dataset config too.
-        for accumulator in self._accumulators.values():
-            if hasattr(accumulator, "on_dataset_configured"):
-                accumulator.on_dataset_configured(message.metadata)
+        for handler in (*self._accumulators.values(), *self._stream_exporters.values()):
+            if hasattr(handler, "on_dataset_configured"):
+                handler.on_dataset_configured(message.metadata)
         self._dataset_configured_event.set()
 
     @on_message(MessageType.CREDIT_PHASE_START)
@@ -973,7 +812,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     ) -> None:
         """Handle a credit phase start message in order to track the total number of expected requests."""
         self._records_tracker.update_phase_info(phase_start_msg.stats)
-        await self._send_timing_to_results_processors(phase_start_msg.stats)
+        await self._dispatch_record(phase_start_msg.stats, warn_if_unrouted=False)
         self.info(f"Credit phase start: {phase_start_msg.config.phase}")
 
     @on_message(MessageType.CREDIT_PHASE_PROGRESS)
@@ -982,7 +821,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     ) -> None:
         """Handle a credit phase progress message to track and stream live timing snapshots."""
         self._records_tracker.update_phase_info(message.stats)
-        await self._send_timing_to_results_processors(message.stats)
+        await self._dispatch_record(message.stats, warn_if_unrouted=False)
 
     @on_message(MessageType.CREDIT_PHASE_SENDING_COMPLETE)
     async def _on_credit_phase_sending_complete(
@@ -994,7 +833,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 f"Sent {message.stats.final_requests_sent:,} requests. Waiting for all to complete..."
             )
         self._records_tracker.update_phase_info(message.stats)
-        await self._send_timing_to_results_processors(message.stats)
+        await self._dispatch_record(message.stats, warn_if_unrouted=False)
 
     @on_message(MessageType.CREDIT_PHASE_COMPLETE)
     async def _on_credit_phase_complete(
@@ -1002,7 +841,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     ) -> None:
         """Handle a credit phase complete message in order to track the end time, and check if all records have been received."""
         self._records_tracker.update_phase_info(message.stats)
-        await self._send_timing_to_results_processors(message.stats)
+        await self._dispatch_record(message.stats, warn_if_unrouted=False)
         self._complete_credit_phases.add(message.stats.phase)
         # Capture per-phase BranchStats for any phase that publishes them.
         if message.branch_stats is not None:
@@ -1021,17 +860,25 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     f"Received CREDIT_PHASE_COMPLETE message, Phase complete: {phase_stats!r}"
                 )
             )
-            self.notice(
-                f"All requests have completed, please wait for the results to be processed "
-                f"(currently {phase_stats.total_records:,} of {phase_stats.final_requests_completed:,} records processed)..."
-            )
+            if phase_stats.final_requests_completed is None:
+                self.notice(
+                    "Phase completion observed before final request count was available; "
+                    f"waiting for final phase stats (currently {phase_stats.total_records:,} records processed)..."
+                )
+            else:
+                self.notice(
+                    "All requests have completed, please wait for the results to be processed "
+                    f"(currently {phase_stats.total_records:,} of {phase_stats.final_requests_completed:,} records processed)..."
+                )
 
         # This check is to prevent a race condition where the records manager processes
         # all records before the timing manager has sent the final completed count.
-        if self._records_tracker.check_and_set_all_records_received_for_phase(
-            message.stats.phase
-        ):
-            await self._handle_all_records_received(message.stats.phase)
+        if (
+            message.stats.phase != CreditPhase.PROFILING
+            or not self._has_multiple_profiling_phases()
+            or self._credits_complete_received
+        ) and self._check_all_records_received(message.stats.phase):
+            await self._handle_all_records_received_once(message.stats.phase)
 
     def _snapshot_branch_stats(self, phase: CreditPhase) -> BranchStats | None:
         """Return the orchestrator-published BranchStats for ``phase``.
@@ -1048,13 +895,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.info(
             "All credits complete, please wait for the results to be processed..."
         )
+        self._credits_complete_received = True
         if (
             CreditPhase.PROFILING in self._complete_credit_phases
             and self._records_tracker.check_and_set_all_records_received_for_phase(
                 CreditPhase.PROFILING
             )
         ):
-            await self._handle_all_records_received(CreditPhase.PROFILING)
+            await self._handle_all_records_received_once(CreditPhase.PROFILING)
 
     @background_task(
         interval=Environment.RECORD.PROGRESS_REPORT_INTERVAL, immediate=False
@@ -1256,13 +1104,27 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         (set when ``--stats-interval 0`` disables the log block) suppresses the
         log line while still publishing the message for dashboards.
         """
+        phase_stats = self._records_tracker.create_stats_for_phase(
+            CreditPhase.PROFILING
+        )
         # Realtime metrics only need the metric_records accumulators —
         # GPU telemetry / server metrics live on separate fan-outs.
-        raw_metrics = await generate_realtime_metrics(self._metric_record_accumulators)
-        if not raw_metrics:
-            return
+        raw_metrics = await generate_realtime_metrics(
+            self._metric_record_accumulators,
+            phase_index=phase_stats.phase_index,
+        )
+        if server_snapshot is None:
+            server_snapshot = self._collect_realtime_server_snapshot(
+                start_ns=phase_stats.start_ns
+            )
 
-        display_metrics = records_manager_processing.filter_display_metrics(raw_metrics)
+        publish_metrics = [
+            *raw_metrics,
+            *_server_snapshot_to_metric_results(server_snapshot),
+        ]
+        display_metrics = records_manager_processing.filter_display_metrics(
+            publish_metrics
+        )
         if not display_metrics:
             return
         await self.publish(
@@ -1272,22 +1134,20 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
         )
 
-        phase_stats = self._records_tracker.create_stats_for_phase(
-            CreditPhase.PROFILING
-        )
         # Realtime block uses the *raw* (unfiltered) metric set so per-user
         # throughput rows can show ``prefill_throughput_per_user`` etc. —
         # those have ``console_group=NONE`` (hidden from the dashboard table)
         # and ``filter_display_metrics`` strips them, leaving the row blank.
-        if server_snapshot is None:
-            server_snapshot = self._collect_realtime_server_snapshot(
-                start_ns=phase_stats.start_ns
-            )
-
+        prev_realtime_phase_index = getattr(self, "_prev_realtime_phase_index", None)
+        prev_realtime_snapshot = (
+            self._prev_realtime_snapshot
+            if prev_realtime_phase_index == phase_stats.phase_index
+            else None
+        )
         rendered = _render_realtime_block(
             raw_metrics,
             phase_stats,
-            self._prev_realtime_snapshot,
+            prev_realtime_snapshot,
             server_snapshot=server_snapshot,
         )
         if rendered:
@@ -1295,68 +1155,49 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 phase_stats.total_records,
                 phase_stats.records_elapsed_time,
             )
+            self._prev_realtime_phase_index = phase_stats.phase_index
             if emit_log_block and self.run.cfg.ui_type != UIType.DASHBOARD:
                 # One record per line: multi-line records interleave with
                 # other services' writes on the shared console stream.
                 for line in rendered.splitlines():
                     self.info(line)
 
-    async def _generate_realtime_metrics(self) -> list[MetricResult]:
-        """Generate the real-time metrics for the profile run.
+    async def _run_analyzers(self, ctx: SummaryContext) -> list[MetricResult]:
+        """Run summarize-time analyzer plugins that join across accumulators.
 
-        Sources from the metric_records accumulators (the active summary
-        engine). Tolerates both AccumulatorMetricsSummary (.results dict) and
-        plain list[MetricResult] shapes via the shared helper.
+        An analyzer is skipped unless every accumulator it needs a LIVE instance
+        of (``required_accumulators``) is loaded AND every accumulator whose
+        SUMMARY it reads (``required_summaries``) was produced — e.g. the
+        energy-efficiency analyzer queries the live GPU accumulator and reads the
+        metrics summary. One analyzer's failure is logged and does not abort the
+        rest. Returns the flattened MetricResults to merge into the summary.
         """
-        return await generate_realtime_metrics(self._metric_record_accumulators)
-
-    def _maybe_hint_missing_cache_reporting(
-        self, record_data: MetricRecordsData
-    ) -> None:
-        """Warn once, mid-run, when the server reports token usage but no prompt-cache
-        reads — the signature of a cache-capable server that hasn't been told to
-        report ``cached_tokens``. Fires on the first qualifying record so a long run
-        can be aborted and re-launched with the flag set; the end-of-run console
-        exporter emits the same hint for anyone who only reads the final summary.
-        """
-        if self._warned_missing_cache_reporting:
-            return
-        if usage_without_cache_in_record(record_data.metrics):
-            self._warned_missing_cache_reporting = True
-            self.warning(CACHE_REPORTING_HINT)
-
-    def _apply_gpu_efficiency_metrics(
-        self,
-        records_results: list[MetricResult],
-        phase_stats: PhaseRecordsStats,
-        phase: CreditPhase,
-    ) -> None:
-        """Append GPU efficiency metrics to records_results when the phase has a real window.
-
-        No-op if no accumulator is configured. Skips with a warning when the
-        phase has no records (either bound is None) — a two-call time.time_ns()
-        fallback would otherwise yield a zero-width window and power (gauge)
-        would either emit a misleading 0.0W or be silently dropped depending
-        on sample jitter.
-        """
-        if self._gpu_telemetry_accumulator is None:
-            return
-        if phase_stats.start_ns is None or phase_stats.requests_end_ns is None:
-            self.warning(
-                f"Skipping efficiency metrics for phase {phase}: "
-                f"start_ns={phase_stats.start_ns}, "
-                f"requests_end_ns={phase_stats.requests_end_ns}"
-            )
-            return
-        time_filter = TimeRangeFilter(
-            start_ns=phase_stats.start_ns,
-            end_ns=phase_stats.requests_end_ns,
-        )
-        efficiency_metrics = self._gpu_telemetry_accumulator.compute_efficiency_metrics(
-            metric_results=records_results,
-            time_filter=time_filter,
-        )
-        records_results.extend(efficiency_metrics)
+        if not self._analyzers:
+            return []
+        loaded = {str(acc_type) for acc_type in self._accumulators}
+        summarized = {str(acc_type) for acc_type in ctx.accumulator_outputs}
+        results: list[MetricResult] = []
+        for loaded_analyzer in self._analyzers:
+            analyzer = loaded_analyzer.analyzer
+            name = analyzer.__class__.__name__
+            missing_acc = [
+                r for r in loaded_analyzer.required_accumulators if r not in loaded
+            ]
+            missing_sum = [
+                r for r in loaded_analyzer.required_summaries if r not in summarized
+            ]
+            if missing_acc or missing_sum:
+                self.debug(
+                    lambda n=name, a=missing_acc, s=missing_sum: (
+                        f"Skipping analyzer {n}: missing accumulators {a}, summaries {s}"
+                    )
+                )
+                continue
+            try:
+                results.extend(await analyzer.analyze(ctx))
+            except Exception as e:  # noqa: BLE001 - one analyzer must not abort the summary
+                self.error(f"Analyzer {name} failed: {e!r}")
+        return results
 
     async def _summarize_one_accumulator(
         self,
@@ -1368,18 +1209,19 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         Returns the result (or exception object) so a single bad accumulator
         cannot abort the rest. Accumulators that support phase/window-scoped
-        export (MetricsAccumulator, TheoreticalPrefixCacheAccumulator) get
-        ``export_results(ctx)`` so warmup records are excluded from profiling
-        summaries; otherwise prefers ``summarize()`` and falls back to
-        ``export_results(ctx)``.
+        export (marked with ``supports_phase_scoped_export`` — MetricsAccumulator)
+        get ``export_results(ctx)`` so warmup
+        records are excluded from profiling summaries; otherwise prefers
+        ``summarize()`` and falls back to ``export_results(ctx)``.
         """
         name = accumulator.__class__.__name__
         self.debug(f"Starting summarize for accumulator {acc_type}: {name}")
         try:
-            if accumulator.__class__.__name__ in {
-                "MetricsAccumulator",
-                "TheoreticalPrefixCacheAccumulator",
-            } and hasattr(accumulator, "export_results"):
+            # ``is True`` (not truthiness) so a MagicMock's auto-created attribute
+            # does not spuriously route mock accumulators through export_results.
+            if getattr(accumulator, "supports_phase_scoped_export", False) is True and (
+                hasattr(accumulator, "export_results")
+            ):
                 res = await asyncio.wait_for(
                     accumulator.export_results(ctx),
                     timeout=Environment.RECORD.PROCESS_RECORDS_TIMEOUT,
@@ -1429,16 +1271,32 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     async def _summarize_metric_record_accumulators(
         self, phase: CreditPhase, cancelled: bool
-    ) -> tuple[list[MetricResult], list[TimesliceResult], list[ErrorDetails]]:
+    ) -> tuple[
+        list[MetricResult], list[TimesliceResult], list[ErrorDetails], SummaryContext
+    ]:
         """Summarize the metric_records accumulators (the byte-exact engine).
 
         Telemetry / server-metrics accumulators are summarized separately via
         the dedicated ``_publish_telemetry_results`` / ``_publish_server_metrics_results``
         side-channels so they are not double-processed here.
+
+        Also returns a populated ``SummaryContext`` — every loaded accumulator
+        instance plus the metric_records summaries keyed by ``AccumulatorType`` —
+        so summarize-time ``analyzer`` plugins can join across accumulators
+        (e.g. energy efficiency joins GPU telemetry to inference tokens).
         """
         records_results: list[MetricResult] = []
         timeslices: list[TimesliceResult] = []
         error_results: list[ErrorDetails] = []
+
+        phase_stats = RecordsManager._create_result_stats_for_phase(self, phase)
+        summary_ctx = SummaryContext(
+            accumulators=dict(self._accumulators),
+            start_ns=phase_stats.start_ns or 0,
+            end_ns=phase_stats.requests_end_ns or 0,
+            phase=phase,
+            cancelled=cancelled,
+        )
 
         # Only the metric_records-typed accumulators feed the summary records.
         acc_items = [
@@ -1447,9 +1305,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             if acc in self._metric_record_accumulators
         ]
         if not acc_items:
-            return records_results, timeslices, error_results
+            return records_results, timeslices, error_results, summary_ctx
 
-        phase_stats = self._records_tracker.create_stats_for_phase(phase)
         ctx = ExportContext(
             start_ns=phase_stats.start_ns,
             end_ns=phase_stats.requests_end_ns,
@@ -1465,21 +1322,305 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return_exceptions=False,
         )
         for acc_type, summary in summaries:
+            # Expose each accumulator's summary for cross-accumulator analyzers.
+            summary_ctx.accumulator_outputs[acc_type] = summary
             ts = self._bucket_accumulator_summary(
                 acc_type, summary, records_results, error_results
             )
             if ts:
                 timeslices = ts
-        return records_results, timeslices, error_results
+        self._adjust_multi_phase_aggregate_rates(phase, records_results)
+        return records_results, timeslices, error_results, summary_ctx
+
+    def _adjust_multi_phase_aggregate_rates(
+        self, phase: CreditPhase, records_results: list[MetricResult]
+    ) -> None:
+        if not self._has_multiple_phase_instances(phase):
+            return
+        duration_ns = self._phase_active_duration_ns(phase)
+        if not duration_ns:
+            return
+        by_tag = {result.tag: result for result in records_results}
+        duration_sec = duration_ns / NANOS_PER_SECOND
+        self._set_metric_avg(by_tag, "benchmark_duration", duration_sec)
+        self._set_rate_metric(
+            by_tag, "request_throughput", "request_count", duration_sec
+        )
+        self._set_rate_metric(
+            by_tag, "input_token_throughput", "total_isl", duration_sec
+        )
+        self._set_rate_metric(
+            by_tag, "output_token_throughput", "total_osl", duration_sec
+        )
+        self._set_rate_metric(by_tag, "goodput", "good_request_count", duration_sec)
+
+        total_isl = self._metric_avg(by_tag, "total_isl")
+        total_osl = self._metric_avg(by_tag, "total_osl")
+        if total_isl is not None and total_osl is not None:
+            self._set_metric_avg(
+                by_tag, "total_token_throughput", (total_isl + total_osl) / duration_sec
+            )
+
+    def _phase_active_duration_ns(self, phase: CreditPhase) -> int | None:
+        total = 0
+        for stats in self._iter_concrete_phase_stats(phase):
+            if stats.start_ns is None or stats.requests_end_ns is None:
+                continue
+            duration = stats.requests_end_ns - stats.start_ns
+            if duration > 0:
+                total += duration
+        return total or None
+
+    @staticmethod
+    def _metric_avg(
+        by_tag: dict[MetricTagT, MetricResult], tag: MetricTagT
+    ) -> float | None:
+        result = by_tag.get(tag)
+        value = getattr(result, "avg", None)
+        return float(value) if value is not None else None
+
+    @classmethod
+    def _set_rate_metric(
+        cls,
+        by_tag: dict[MetricTagT, MetricResult],
+        rate_tag: MetricTagT,
+        numerator_tag: MetricTagT,
+        duration_sec: float,
+    ) -> None:
+        numerator = cls._metric_avg(by_tag, numerator_tag)
+        if numerator is None:
+            return
+        cls._set_metric_avg(by_tag, rate_tag, numerator / duration_sec)
+
+    @staticmethod
+    def _set_metric_avg(
+        by_tag: dict[MetricTagT, MetricResult], tag: MetricTagT, value: float
+    ) -> None:
+        result = by_tag.get(tag)
+        if result is not None:
+            result.avg = value
+
+    def _create_result_stats_for_phase(self, phase: CreditPhase) -> PhaseRecordsStats:
+        if self._has_multiple_phase_instances(phase):
+            return self._records_tracker.create_aggregate_stats_for_phase(phase)
+        return self._records_tracker.create_stats_for_phase(phase)
+
+    def _iter_concrete_phase_stats(
+        self, phase: CreditPhase | None = None
+    ) -> list[PhaseRecordsStats]:
+        phase_trackers = getattr(self._records_tracker, "_phase_trackers", {})
+        if not isinstance(phase_trackers, dict):
+            return []
+        stats = [
+            tracker.create_stats()
+            for (tracker_phase, phase_index), tracker in phase_trackers.items()
+            if (phase is None or tracker_phase == phase) and phase_index is not None
+        ]
+        return sorted(
+            stats,
+            key=lambda item: (
+                item.phase_index if item.phase_index is not None else 10**9
+            ),
+        )
+
+    async def _build_phase_profile_results(
+        self, phase: CreditPhase, cancelled: bool
+    ) -> list[PhaseProfileResults] | None:
+        concrete_phase_stats = self._iter_concrete_phase_stats()
+        if len(concrete_phase_stats) <= 1:
+            return None
+
+        acc_items = [
+            (acc_type, acc)
+            for acc_type, acc in self._accumulators.items()
+            if acc in self._metric_record_accumulators
+        ]
+        cfg = getattr(getattr(self, "run", None), "cfg", None)
+        telemetry_errors = self._phase_error_counts(self._telemetry_state.error_counts)
+        server_metrics_errors = self._phase_error_counts(
+            self._server_metrics_state.error_counts
+        )
+
+        phase_results: list[PhaseProfileResults] = []
+        for stats in concrete_phase_stats:
+            if stats.phase_index is None:
+                continue
+            ctx = self._phase_metric_export_context(stats, cancelled)
+            records_results, error_results = await self._phase_metric_results(
+                acc_items, ctx
+            )
+            telemetry_results, telemetry_warnings = await self._phase_telemetry_results(
+                stats,
+                telemetry_errors,
+                bool(getattr(cfg, "gpu_telemetry_disabled", False)),
+            )
+            (
+                server_metrics_results,
+                server_metrics_warnings,
+            ) = await self._phase_server_metrics_results(
+                stats,
+                server_metrics_errors,
+                bool(getattr(cfg, "server_metrics_disabled", False)),
+            )
+            phase_results.append(
+                self._create_phase_profile_result(
+                    stats=stats,
+                    cancelled=cancelled,
+                    records_results=records_results,
+                    error_results=error_results,
+                    telemetry_results=telemetry_results,
+                    server_metrics_results=server_metrics_results,
+                    telemetry_warnings=telemetry_warnings,
+                    server_metrics_warnings=server_metrics_warnings,
+                )
+            )
+        return phase_results or None
+
+    @staticmethod
+    def _phase_error_counts(
+        error_counts: dict[ErrorDetails, int],
+    ) -> list[ErrorDetailsCount]:
+        return [
+            ErrorDetailsCount(error_details=error_details, count=count)
+            for error_details, count in error_counts.items()
+        ]
+
+    def _phase_metric_export_context(
+        self, stats: PhaseRecordsStats, cancelled: bool
+    ) -> ExportContext:
+        return ExportContext(
+            start_ns=stats.start_ns,
+            end_ns=stats.requests_end_ns,
+            phase=stats.phase,
+            phase_index=stats.phase_index,
+            phase_name=stats.phase_name,
+            phase_kind=stats.phase_kind or stats.phase.value,
+            is_phase_scoped=True,
+            error_summary=self._error_tracker.get_error_summary_for_phase(
+                stats.phase, phase_index=stats.phase_index
+            ),
+            cancelled=cancelled,
+        )
+
+    @staticmethod
+    def _phase_baseline_export_context(
+        stats: PhaseRecordsStats, error_summary: list[ErrorDetailsCount]
+    ) -> ExportContext:
+        return ExportContext(
+            start_ns=stats.baseline_start_ns or stats.start_ns,
+            end_ns=stats.baseline_end_ns or stats.requests_end_ns,
+            phase=stats.phase,
+            phase_index=stats.phase_index,
+            phase_name=stats.phase_name,
+            phase_kind=stats.phase_kind or stats.phase.value,
+            is_phase_scoped=True,
+            error_summary=error_summary,
+        )
+
+    async def _phase_metric_results(
+        self,
+        acc_items: list[tuple[AccumulatorType, AccumulatorProtocol]],
+        ctx: ExportContext,
+    ) -> tuple[list[MetricResult], list[ErrorDetails]]:
+        records_results: list[MetricResult] = []
+        error_results: list[ErrorDetails] = []
+        if not acc_items:
+            return records_results, error_results
+
+        summaries = await asyncio.gather(
+            *[
+                self._summarize_one_accumulator(acc_type, acc, ctx)
+                for acc_type, acc in acc_items
+            ],
+            return_exceptions=False,
+        )
+        for acc_type, summary in summaries:
+            self._bucket_accumulator_summary(
+                acc_type, summary, records_results, error_results
+            )
+        return records_results, error_results
+
+    async def _phase_telemetry_results(
+        self,
+        stats: PhaseRecordsStats,
+        telemetry_errors: list[ErrorDetailsCount],
+        disabled: bool,
+    ) -> tuple[Any | None, list[str]]:
+        if self._gpu_telemetry_accumulator is None or disabled:
+            return None, []
+        try:
+            results = await self._gpu_telemetry_accumulator.export_results(
+                self._phase_baseline_export_context(stats, telemetry_errors)
+            )
+        except Exception as e:  # noqa: BLE001 - phase artifact remains best-effort
+            return None, [f"GPU telemetry phase export failed: {type(e).__name__}: {e}"]
+        if results is None or not getattr(results, "endpoints", None):
+            return None, []
+        return results, []
+
+    async def _phase_server_metrics_results(
+        self,
+        stats: PhaseRecordsStats,
+        server_metrics_errors: list[ErrorDetailsCount],
+        disabled: bool,
+    ) -> tuple[Any | None, list[str]]:
+        if self._server_metrics_accumulator is None or disabled:
+            return None, []
+        try:
+            results = await self._server_metrics_accumulator.export_results(
+                self._phase_baseline_export_context(stats, server_metrics_errors)
+            )
+        except Exception as e:  # noqa: BLE001 - phase artifact remains best-effort
+            return None, [
+                f"Server metrics phase export failed: {type(e).__name__}: {e}"
+            ]
+        if results is None or not getattr(results, "endpoint_summaries", None):
+            return None, []
+        return results, []
+
+    def _create_phase_profile_result(
+        self,
+        *,
+        stats: PhaseRecordsStats,
+        cancelled: bool,
+        records_results: list[MetricResult],
+        error_results: list[ErrorDetails],
+        telemetry_results: Any | None,
+        server_metrics_results: Any | None,
+        telemetry_warnings: list[str],
+        server_metrics_warnings: list[str],
+    ) -> PhaseProfileResults:
+        return PhaseProfileResults(
+            phase_index=stats.phase_index,
+            profiling_index=stats.profiling_index,
+            phase_name=stats.phase_name or f"{stats.phase.value}_{stats.phase_index}",
+            phase_kind=stats.phase_kind or stats.phase.value,
+            records=records_results,
+            start_ns=stats.start_ns,
+            end_ns=stats.requests_end_ns,
+            baseline_start_ns=stats.baseline_start_ns,
+            baseline_end_ns=stats.baseline_end_ns,
+            was_cancelled=stats.was_cancelled or cancelled,
+            successful_request_count=stats.success_records,
+            error_request_count=stats.error_records,
+            error_summary=self._error_tracker.get_error_summary_for_phase(
+                stats.phase, phase_index=stats.phase_index
+            ),
+            telemetry_results=telemetry_results,
+            server_metrics_results=server_metrics_results,
+            telemetry_warnings=telemetry_warnings,
+            server_metrics_warnings=server_metrics_warnings,
+        )
 
     def _has_records_for_phase(self, phase: CreditPhase) -> bool:
         phase_trackers = getattr(self._records_tracker, "_phase_trackers", {})
         if not isinstance(phase_trackers, dict):
             return False
-        tracker = phase_trackers.get(phase)
-        if tracker is None:
-            return False
-        return tracker.total_records > 0
+        return any(
+            tracker.total_records > 0
+            for (tracker_phase, _), tracker in phase_trackers.items()
+            if tracker_phase == phase
+        )
 
     async def _summarize_warmup_metric_records(self) -> list[MetricResult] | None:
         """Return warmup-only inference metrics, or None when no warmup records exist."""
@@ -1490,6 +1631,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             records_results,
             _,
             error_results,
+            _summary_ctx,
         ) = await self._summarize_metric_record_accumulators(
             CreditPhase.WARMUP,
             self._records_tracker.was_phase_cancelled(CreditPhase.WARMUP),
@@ -1534,10 +1676,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         except Exception as e:  # noqa: BLE001 - publish failure must not abort the per-record result path
             self.error(f"Failed to publish ProcessAllResultsMessage: {e!r}")
 
-    def _deliver_network_rtt_to_processors(self) -> None:
-        """Set the run-level mean network RTT (ns) on each metric results processor.
+    def _deliver_network_rtt_to_accumulators(self) -> None:
+        """Set the run-level mean network RTT (ns) on each metric-record accumulator.
 
-        Two cases, resolved here just before MetricResultsProcessor.summarize():
+        Two cases, resolved here just before MetricsAccumulator.summarize():
 
         1. Manual mean (``--network-latency-mean``): if ``network_latency.mean_ms``
            is set, the NetworkLatencyManager service is never spawned; convert the
@@ -1586,13 +1728,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 "from latency metrics (network_adjusted_* metrics)."
             )
 
-        # Deliver to the legacy results processors (if any survive) AND the
-        # primary MetricsAccumulator engine, which injects network_adjusted_*
-        # in its own summarize() from the columnar latency arrays.
-        for target in (
-            *self._metric_results_processors,
-            *self._metric_record_accumulators,
-        ):
+        # Deliver to the primary MetricsAccumulator engine, which injects
+        # network_adjusted_* in its own summarize() from the columnar latency arrays.
+        for target in self._metric_record_accumulators:
             set_rtt = getattr(target, "set_network_rtt_ns", None)
             if callable(set_rtt):
                 set_rtt(rtt_ns)
@@ -1600,40 +1738,60 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     async def _process_results(
         self, phase: CreditPhase, cancelled: bool
     ) -> ProcessRecordsResult:
-        """Process the results.
+        """Process the accumulated records into final benchmark results.
 
-        The MetricsAccumulator engine is the primary (byte-exact) summary
-        source. Any surviving best-effort results_processors (e.g. otel
-        streaming) are flushed so their side-channel export completes, but
-        they do not contribute to the summary records.
+        Single-flight: the natural finalize task and the PROCESS_RECORDS /
+        PROFILE_CANCEL commands can race. The lock serializes them and the
+        per-phase cache makes every call after the first return the same result
+        instead of re-publishing and re-finalizing the stream exporters.
         """
+        async with self._process_results_lock:
+            cached = self._processed_results.get(phase)
+            if cached is not None:
+                self.debug(
+                    lambda: (
+                        f"Results for phase {phase} already processed; "
+                        "returning cached result"
+                    )
+                )
+                return cached
+            result = await self._process_results_impl(phase, cancelled)
+            self._processed_results[phase] = result
+            return result
+
+    async def _process_results_impl(
+        self, phase: CreditPhase, cancelled: bool
+    ) -> ProcessRecordsResult:
+        """Process the accumulated records into final benchmark results."""
         self.debug(lambda: f"Processing records (cancelled: {cancelled})")
         self.info("Processing records results...")
 
-        # Flush legacy best-effort processors (otel streaming) so their export
-        # completes; they do not feed the summary numbers.
-        await self._flush_metric_results_processors(force=True)
-
-        # Deliver the run-level mean network RTT to each surviving metric results
-        # processor BEFORE summarize() so network_adjusted_* metrics can be injected.
-        self._deliver_network_rtt_to_processors()
+        # Deliver the run-level mean network RTT before summarize() so
+        # network_adjusted_* metrics can be injected.
+        self._deliver_network_rtt_to_accumulators()
 
         (
             records_results,
             timeslices,
             error_results,
+            summary_ctx,
         ) = await self._summarize_metric_record_accumulators(phase, cancelled)
 
         warmup_records_results = await self._summarize_warmup_metric_records()
 
         await self._finalize_stream_exporters()
 
-        phase_stats = self._records_tracker.create_stats_for_phase(phase)
-        # Snapshot count BEFORE extending with efficiency metrics — `completed`
-        # reports the number of request-derived records, not derived aggregates.
+        phase_stats = RecordsManager._create_result_stats_for_phase(self, phase)
+        phase_records = await RecordsManager._build_phase_profile_results(
+            self, phase, cancelled
+        )
+        # Snapshot count BEFORE extending with derived aggregates (efficiency,
+        # analyzers) — `completed` reports request-derived records only.
         records_completed = len(records_results)
 
-        self._apply_gpu_efficiency_metrics(records_results, phase_stats, phase)
+        # Cross-accumulator analyzer plugins (e.g. energy efficiency) run after
+        # all accumulators have summarized, reading peers via the SummaryContext.
+        records_results.extend(await self._run_analyzers(summary_ctx))
 
         result = ProcessRecordsResult(
             results=ProfileResults(
@@ -1650,6 +1808,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 branch_stats=self._latest_branch_stats
                 if phase == CreditPhase.PROFILING
                 else None,
+                phase_records=phase_records,
             ),
             errors=error_results,
         )
@@ -1683,6 +1842,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             except Exception as e:
                 self.exception(f"Failed to publish server metrics results: {e!r}")
 
+        accuracy_enabled = (
+            self.run.cfg.accuracy is not None and self.run.cfg.accuracy.enabled
+        )
+        if accuracy_enabled and phase == CreditPhase.PROFILING:
+            try:
+                await self._publish_accuracy_results(phase)
+            except Exception as e:
+                self.exception(f"Failed to publish accuracy results: {e!r}")
+        else:
+            self.debug("Accuracy publish skipped (disabled or non-profiling phase)")
+
         # Publish the unified ProcessAllResultsMessage over the populated
         # accumulators. The per-stream result messages above remain the
         # shutdown trigger; this is supplementary.
@@ -1691,7 +1861,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.debug("_process_results completed, returning result")
         return result
 
-    def _process_telemetry_results(self) -> ProcessTelemetryResult:
+    async def _process_telemetry_results(self) -> ProcessTelemetryResult:
         """Process telemetry results by exporting the accumulated telemetry data.
 
         Returns:
@@ -1712,16 +1882,24 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 results=None,
             )
 
-        # Get timing from profiling phase stats
-        # Note: end_ns is not passed to include the final telemetry scrape that
-        # occurs after PROFILE_COMPLETE but before export_results is called.
-        # If start_ns is None (no profiling phase), include all data.
-        phase_stats = self._records_tracker.create_stats_for_phase(
+        # Get timing from profiling phase stats. Bound the aggregate window while
+        # preserving the trailing scrape that often closes GPU counter deltas.
+        # If start_ns/end_ns is None (no profiling phase), include all data.
+        phase_stats = self._records_tracker.create_aggregate_stats_for_phase(
             CreditPhase.PROFILING
         )
-        telemetry_export_data = self._gpu_telemetry_accumulator.export_results(
-            start_ns=phase_stats.start_ns,
-            error_summary=error_summary,
+        profiling_end_ns = (
+            phase_stats.requests_end_ns + Environment.GPU.FINAL_SCRAPE_GRACE_NS
+            if phase_stats.requests_end_ns is not None
+            else None
+        )
+        telemetry_export_data = await self._gpu_telemetry_accumulator.export_results(
+            ExportContext(
+                start_ns=phase_stats.start_ns,
+                end_ns=profiling_end_ns,
+                phase=CreditPhase.PROFILING,
+                error_summary=error_summary,
+            )
         )
 
         return ProcessTelemetryResult(
@@ -1735,13 +1913,55 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         Called at the end of _process_results to keep telemetry separate from
         inference metrics in the results pipeline.
         """
-        telemetry_result = self._process_telemetry_results()
+        telemetry_result = await self._process_telemetry_results()
         await self.publish(
             ProcessTelemetryResultMessage(
                 service_id=self.service_id,
                 telemetry_result=telemetry_result,
             )
         )
+
+    async def _publish_accuracy_results(self, phase: CreditPhase) -> None:
+        """Publish phase-scoped accuracy results on the dedicated accuracy channel.
+
+        Mirrors ``_publish_telemetry_results``: exports the phase-scoped accuracy
+        summary from the AccuracyAccumulator and publishes it independently from
+        inference results.
+
+        Exactly-once contract: this method only runs when accuracy is enabled and
+        the phase is PROFILING. It attempts to publish exactly one
+        ``ProcessAccuracyResultMessage``; the SystemController clears
+        ``_should_wait_for_accuracy`` only on receipt of that message. A summary
+        that fails to export still publishes a terminal ``results=None`` message so
+        the gate is released. The publish itself is the only unrecoverable point:
+        if the message bus raises here the gate cannot be released from this side.
+        We log it at error level and return rather than re-raising -- propagating
+        would skip the subsequent ``ProcessAllResultsMessage`` publish, and the
+        caller already logs it. (Note: only the CANCEL path has a bounded wait on
+        this gate; on normal completion an unreleased gate stalls shutdown, so this
+        error log is the primary diagnostic for that case.)
+        """
+        summary: AccuracySummary | None = None
+        if self._accuracy_accumulator is not None:
+            try:
+                summary = await self._accuracy_accumulator.export_results(
+                    ExportContext(phase=phase)
+                )
+            except Exception as e:  # noqa: BLE001 - must still publish a terminal message
+                self.exception(f"Accuracy summary export failed: {e!r}")
+                summary = None
+        try:
+            await self.publish(
+                ProcessAccuracyResultMessage(
+                    service_id=self.service_id,
+                    accuracy_result=ProcessAccuracyResult(results=summary),
+                )
+            )
+        except Exception as e:  # noqa: BLE001
+            self.error(
+                "Failed to publish ProcessAccuracyResultMessage; the controller's "
+                f"accuracy shutdown gate may not release: {e!r}"
+            )
 
     async def _process_server_metrics_results(self) -> ProcessServerMetricsResult:
         """Process server metrics results by exporting the accumulated server metrics data.
@@ -1764,22 +1984,24 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         # Get timing from profiling phase stats (warmup is automatically excluded)
         # TimeFilter will be constructed per-endpoint in accumulator with per-endpoint end times
-        phase_stats = self._records_tracker.create_stats_for_phase(
-            CreditPhase.PROFILING
+        phase_stats = RecordsManager._create_result_stats_for_phase(
+            self, CreditPhase.PROFILING
         )
         profiling_start_ns = phase_stats.start_ns or time.time_ns()
         profiling_end_ns = phase_stats.requests_end_ns or time.time_ns()
-        warmup_phase_stats = self._records_tracker.create_stats_for_phase(
-            CreditPhase.WARMUP
+        warmup_phase_stats = RecordsManager._create_result_stats_for_phase(
+            self, CreditPhase.WARMUP
         )
 
         server_metrics_export_data = (
             await self._server_metrics_accumulator.export_results(
-                start_ns=profiling_start_ns,
-                end_ns=profiling_end_ns,
-                error_summary=error_summary,
-                warmup_start_ns=warmup_phase_stats.start_ns,
-                warmup_end_ns=warmup_phase_stats.requests_end_ns,
+                ExportContext(
+                    start_ns=profiling_start_ns,
+                    end_ns=profiling_end_ns,
+                    error_summary=error_summary,
+                    warmup_start_ns=warmup_phase_stats.start_ns,
+                    warmup_end_ns=warmup_phase_stats.requests_end_ns,
+                )
             )
         )
 

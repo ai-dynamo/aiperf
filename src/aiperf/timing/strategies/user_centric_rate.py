@@ -159,9 +159,13 @@ class UserCentricStrategy(AIPerfLoggerMixin):
 
         # Computed in setup_phase
         self._turn_gap: float = 0.0
+        self._target_num_users = self._num_users
+        self._adaptive_target_enabled = False
         self._session_to_user: dict[str, User] = {}
         self._initial_users: list[User] = []
+        self._spawn_queue: list[float] | None = None
         self._next_user_id: int = 1
+        self._retired_user_cancellations = 0
 
     def _generate_next_user(
         self,
@@ -198,13 +202,11 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         realistic cache pressure from the first second.
         """
         num_users = self._num_users
-        qps = self._request_rate
         # We allow varying turn counts per conversation, so we use the average across the whole dataset.
         session_turns = round(
             self._conversation_source.dataset_metadata.average_turn_count
         )
-        # num_users firing once per turn_gap gives: qps = num_users / turn_gap
-        self._turn_gap = num_users / qps  # Time between each user's consecutive turns
+        self._recompute_turn_gap(num_users)
 
         # Session lifetime = time from first to last turn, measured in gaps between turns.
         # Floor at 1 ensures spacing even for single-turn sessions.
@@ -256,6 +258,63 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         # first user that is "virtually done" (all turns completed).
         self._initial_users.append(self._generate_next_user(order=0))
 
+    def _recompute_turn_gap(self, num_users: int) -> None:
+        # num_users firing once per turn_gap gives: qps = num_users / turn_gap.
+        self._turn_gap = num_users / self._request_rate
+
+    @property
+    def target_users(self) -> int:
+        return self._target_num_users
+
+    def set_target_users(self, value: int) -> None:
+        if value <= 0:
+            raise ValueError("target users must be positive")
+        old_target = self._target_num_users
+        self._adaptive_target_enabled = True
+        self._target_num_users = value
+        self._num_users = value
+        self._recompute_turn_gap(value)
+        if self._spawn_queue is None or value <= old_target:
+            return
+        now = time.perf_counter()
+        for slot in range(value - old_target):
+            heapq.heappush(self._spawn_queue, now + (slot * self._stagger))
+
+    def user_control_snapshot(self) -> dict[str, int]:
+        active = len(self._session_to_user)
+        retiring = max(0, active - self._target_num_users)
+        return {
+            "target_value": self._target_num_users,
+            "actual_value": active,
+            "active_users": active,
+            "retiring_users": retiring,
+            "cancelled": self._retired_user_cancellations,
+        }
+
+    def _active_user_count(self) -> int:
+        return len(self._session_to_user)
+
+    def _should_spawn_user(self) -> bool:
+        if not self._adaptive_target_enabled:
+            return True
+        return self._active_user_count() < self._target_num_users
+
+    def _defer_next_spawn(self, spawn_queue: list[float]) -> None:
+        heapq.heappush(spawn_queue, time.perf_counter() + self._stagger)
+
+    def _schedule_replacement_user(
+        self, spawn_queue: list[float], spawn_sec: float, user: User
+    ) -> None:
+        if not self._should_spawn_replacement():
+            return
+        next_spawn_sec = spawn_sec + (user.max_turns * self._turn_gap)
+        heapq.heappush(spawn_queue, next_spawn_sec)
+
+    def _should_spawn_replacement(self) -> bool:
+        if not self._adaptive_target_enabled:
+            return True
+        return self._active_user_count() <= self._target_num_users
+
     async def execute_phase(self) -> None:
         """Execute the user-centric rate phase.
 
@@ -287,6 +346,7 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         # spawn user will spawn at the specified time regardless of whether the previous
         # spawn user completed on time. The only exception is if `--concurrency` is set.
         spawn_queue: list[float] = []
+        self._spawn_queue = spawn_queue
 
         # Schedule initial users and derive the initial spawn times.
         # This is what creates the initial "steady-state" of the benchmark.
@@ -305,8 +365,16 @@ class UserCentricStrategy(AIPerfLoggerMixin):
 
         # Continuously spawn new users at discrete intervals to maintain the target QPS.
         while True:
+            if not spawn_queue:
+                await asyncio.sleep(0.1)
+                continue
+
             spawn_sec = heapq.heappop(spawn_queue)
-            await asyncio.sleep(spawn_sec - time.perf_counter())
+            await asyncio.sleep(max(0.0, spawn_sec - time.perf_counter()))
+
+            if not self._should_spawn_user():
+                self._defer_next_spawn(spawn_queue)
+                continue
 
             user = self._generate_next_user(spawn_sec)
             turn = user.build_first_turn()
@@ -314,10 +382,9 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             if not should_continue:
                 return
 
-            # Derive next spawn time based on estimated time to completion
-            # This maintains the target QPS.
-            next_spawn_sec = spawn_sec + (user.max_turns * self._turn_gap)
-            heapq.heappush(spawn_queue, next_spawn_sec)
+            # Derive next spawn time based on estimated time to completion.
+            # Adaptive scale-down drains excess users by suppressing replacements.
+            self._schedule_replacement_user(spawn_queue, spawn_sec, user)
 
     async def handle_credit_return(
         self,
@@ -340,7 +407,11 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             raise ValueError(
                 f"User not found for x_correlation_id: {credit.x_correlation_id}"
             )
-        turn = TurnToSend.from_previous_credit(credit)
+        # Pass next-turn metadata so has_forks rides onto the continuation turn
+        # (the sticky router defers parent-entry eviction until DAG children
+        # drain); dropping it premature-evicts a fork-bearing parent's turns.
+        meta = self._conversation_source.get_next_turn_metadata(credit)
+        turn = TurnToSend.from_previous_credit(credit, meta)
 
         # If the next turn time already passed, the max() will
         # re-align their schedule to account for the delay.

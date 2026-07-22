@@ -38,6 +38,23 @@ _WARMUP_NEEDS_PROFILING_MSG = (
 )
 
 
+def _infer_phase_kind(phase: Any) -> Any:
+    if not isinstance(phase, dict):
+        return phase
+    name = phase.get("name")
+    if phase.get("kind") is None and name in {"warmup", "profiling"}:
+        phase["kind"] = name
+    return phase
+
+
+def _infer_phase_kinds(data: dict[str, Any]) -> None:
+    phases = data.get("phases")
+    if isinstance(phases, list):
+        data["phases"] = [_infer_phase_kind(phase) for phase in phases]
+    elif isinstance(phases, dict):
+        data["phases"] = _infer_phase_kind(phases)
+
+
 def _check_mutual_exclusivity(data: dict[str, Any]) -> None:
     has_warmup = "warmup" in data
     has_profiling = "profiling" in data
@@ -65,12 +82,12 @@ def _normalize_warmup_profiling_to_phases(data: dict[str, Any]) -> None:
     if has_warmup:
         warmup = data.pop("warmup")
         if isinstance(warmup, dict):
-            warmup = {"name": "warmup", **warmup}
+            warmup = {"name": "warmup", "kind": "warmup", **warmup}
         phases.append(warmup)
     if has_profiling:
         prof = data.pop("profiling")
         if isinstance(prof, dict):
-            prof = {"name": "profiling", **prof}
+            prof = {"name": "profiling", "kind": "profiling", **prof}
         phases.append(prof)
     data["phases"] = phases
 
@@ -100,7 +117,7 @@ def _normalize_dataset_and_phases(data: dict[str, Any]) -> None:
         phases = data["phases"]
         # Single flat-dict shorthand: phases: {type: concurrency, ...}
         if isinstance(phases, dict) and "type" in phases:
-            data["phases"] = [{"name": "profiling", **phases}]
+            data["phases"] = [{"name": "profiling", "kind": "profiling", **phases}]
 
 
 def normalize_benchmark_input(data: Any) -> Any:
@@ -120,6 +137,7 @@ def normalize_benchmark_input(data: Any) -> Any:
     _normalize_warmup_profiling_to_phases(data)
     _normalize_models(data)
     _normalize_dataset_and_phases(data)
+    _infer_phase_kinds(data)
     return data
 
 

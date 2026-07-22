@@ -236,6 +236,11 @@
     ],
     [
       "C901",
+      "src/aiperf/analysis/turn_messages.py",
+      "build_payload"
+    ],
+    [
+      "C901",
       "src/aiperf/common/bootstrap.py",
       "bootstrap_and_run_service"
     ],

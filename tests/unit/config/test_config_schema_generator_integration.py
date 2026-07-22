@@ -4,6 +4,7 @@
 
 import copy
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ import pytest
 import yaml
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.config import AIPerfConfig, load_config_from_string
 from tools.generate_config_schema import ConfigSchemaGenerator
@@ -59,6 +61,45 @@ def _minimal_benchmark_config(**benchmark_overrides: Any) -> dict[str, Any]:
 
 def _assert_schema_accepts(schema: dict[str, Any], config: dict[str, Any]) -> None:
     assert _schema_error_messages(schema, config) == []
+
+
+def _iter_discriminators(obj: Any) -> Iterator[dict[str, Any]]:
+    if isinstance(obj, dict):
+        discriminator = obj.get("discriminator")
+        if isinstance(discriminator, dict):
+            yield discriminator
+        for value in obj.values():
+            yield from _iter_discriminators(value)
+    elif isinstance(obj, list):
+        for item in obj:
+            yield from _iter_discriminators(item)
+
+
+def test_generated_schema_phase_discriminators_use_phase_type() -> None:
+    schema = _generated_schema()
+    discriminators = list(_iter_discriminators(schema))
+
+    assert all(
+        discriminator.get("propertyName") != "adaptiveScaleStrategyType"
+        for discriminator in discriminators
+    )
+    phase_discriminators = [
+        discriminator
+        for discriminator in discriminators
+        if discriminator.get("mapping", {}).get("concurrency")
+        == "#/$defs/ConcurrencyPhase"
+    ]
+    assert phase_discriminators
+    for discriminator in phase_discriminators:
+        assert discriminator["propertyName"] == "type"
+        assert discriminator["mapping"] == {
+            "concurrency": "#/$defs/ConcurrencyPhase",
+            "poisson": "#/$defs/PoissonPhase",
+            "gamma": "#/$defs/GammaPhase",
+            "constant": "#/$defs/ConstantPhase",
+            "user_centric": "#/$defs/UserCentricPhase",
+            "fixed_schedule": "#/$defs/FixedSchedulePhase",
+        }
 
 
 def test_config_schema_generator_is_integrated_with_dev_workflow() -> None:
@@ -174,10 +215,93 @@ def test_generated_schema_accepts_runtime_single_dict_phases_shorthand() -> None
     _assert_schema_accepts(schema, config)
 
 
+def test_generated_schema_rejects_rate_phase_without_rate_source() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[{"name": "profiling", "type": "poisson", "requests": 1}]
+    )
+
+    with pytest.raises(ValidationError):
+        AIPerfConfig.model_validate(copy.deepcopy(config))
+
+    assert _schema_error_messages(schema, config) != []
+
+
+def test_generated_schema_rejects_rate_phase_with_both_rate_sources() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "poisson",
+                "requests": 1,
+                "rate": 100,
+                "rateSeries": {
+                    "points": [
+                        {"timeS": 0, "qps": 5},
+                        {"timeS": 10, "qps": 15},
+                    ]
+                },
+            }
+        ]
+    )
+
+    with pytest.raises(ValidationError):
+        AIPerfConfig.model_validate(copy.deepcopy(config))
+
+    assert _schema_error_messages(schema, config) != []
+
+
+@pytest.mark.parametrize("rate_series", [{}, {"points": []}])
+def test_generated_schema_rejects_empty_rate_series(rate_series: dict) -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "poisson",
+                "requests": 1,
+                "rateSeries": rate_series,
+            }
+        ]
+    )
+
+    with pytest.raises(ValidationError):
+        AIPerfConfig.model_validate(copy.deepcopy(config))
+
+    assert _schema_error_messages(schema, config) != []
+
+
+def test_generated_schema_rejects_user_centric_rate_series() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "user_centric",
+                "requests": 2,
+                "rate": 10,
+                "users": 2,
+                "rateSeries": {
+                    "points": [
+                        {"timeS": 0, "qps": 5},
+                        {"timeS": 10, "qps": 15},
+                    ]
+                },
+            }
+        ]
+    )
+
+    with pytest.raises(ValidationError):
+        AIPerfConfig.model_validate(copy.deepcopy(config))
+
+    assert _schema_error_messages(schema, config) != []
+
+
 @pytest.mark.parametrize(
     "config",
     [
-        pytest.param(
+        param(
             _minimal_benchmark_config(
                 dataset={
                     "type": "synthetic",
@@ -188,7 +312,7 @@ def test_generated_schema_accepts_runtime_single_dict_phases_shorthand() -> None
             ),
             id="singular-dataset-injects-name",
         ),
-        pytest.param(
+        param(
             _minimal_benchmark_config(
                 datasets=[
                     {
@@ -202,7 +326,7 @@ def test_generated_schema_accepts_runtime_single_dict_phases_shorthand() -> None
             ),
             id="synthetic-dataset-top-level-isl-osl",
         ),
-        pytest.param(
+        param(
             _minimal_benchmark_config(
                 phases=None,
                 warmup={"type": "concurrency", "requests": 1, "concurrency": 1},
@@ -210,7 +334,7 @@ def test_generated_schema_accepts_runtime_single_dict_phases_shorthand() -> None
             ),
             id="warmup-profiling-shorthand",
         ),
-        pytest.param(
+        param(
             _minimal_benchmark_config(
                 datasets=[
                     {
@@ -226,7 +350,7 @@ def test_generated_schema_accepts_runtime_single_dict_phases_shorthand() -> None
             ),
             id="explicit-distribution-type-keys",
         ),
-        pytest.param(
+        param(
             _minimal_benchmark_config(
                 datasets=[
                     {
@@ -247,7 +371,7 @@ def test_generated_schema_accepts_runtime_single_dict_phases_shorthand() -> None
             ),
             id="multimodal-inline-peak-distributions",
         ),
-        pytest.param(
+        param(
             _minimal_benchmark_config(
                 mlflow={
                     "trackingUri": "http://mlflow:5000",
@@ -256,13 +380,13 @@ def test_generated_schema_accepts_runtime_single_dict_phases_shorthand() -> None
             ),
             id="mlflow-tags-string",
         ),
-        pytest.param(
+        param(
             _minimal_benchmark_config(
                 accuracy={"benchmark": "mmlu", "tasks": "abstract_algebra,anatomy"}
             ),
             id="accuracy-tasks-string",
         ),
-        pytest.param(
+        param(
             _minimal_benchmark_config(
                 datasets=[
                     {
@@ -276,7 +400,7 @@ def test_generated_schema_accepts_runtime_single_dict_phases_shorthand() -> None
             ),
             id="video-audio-depth-string",
         ),
-        pytest.param(
+        param(
             _minimal_benchmark_config(
                 phases=[
                     {
@@ -290,7 +414,7 @@ def test_generated_schema_accepts_runtime_single_dict_phases_shorthand() -> None
             ),
             id="duration-uppercase-unit",
         ),
-        pytest.param(
+        param(
             _minimal_benchmark_config(
                 phases=[
                     {
@@ -325,19 +449,19 @@ def test_generated_schema_accepts_runtime_normalization_special_cases(
 @pytest.mark.parametrize(
     ("env", "config"),
     [
-        pytest.param(
+        param(
             {"AIPERF_TEST_URL": "http://localhost:8000/v1/chat/completions"},
             _minimal_benchmark_config(endpoint={"urls": ["${AIPERF_TEST_URL}"]}),
             id="env-var-string-field",
         ),
-        pytest.param(
+        param(
             {},
             _minimal_benchmark_config(
                 endpoint={"urls": ["${AIPERF_TEST_URL:http://localhost:8000/v1/chat/completions}"]}
             ),
             id="env-var-default-string-field",
         ),
-        pytest.param(
+        param(
             {"AIPERF_TEST_CONCURRENCY": "4"},
             _minimal_benchmark_config(
                 phases=[
@@ -351,7 +475,7 @@ def test_generated_schema_accepts_runtime_normalization_special_cases(
             ),
             id="env-var-numeric-field",
         ),
-        pytest.param(
+        param(
             {"AIPERF_TEST_ISL": "512"},
             _minimal_benchmark_config(
                 datasets=[
@@ -365,7 +489,7 @@ def test_generated_schema_accepts_runtime_normalization_special_cases(
             ),
             id="env-var-distribution-scalar-field",
         ),
-        pytest.param(
+        param(
             {},
             {
                 **_minimal_benchmark_config(
@@ -382,7 +506,7 @@ def test_generated_schema_accepts_runtime_normalization_special_cases(
             },
             id="jinja-numeric-fields",
         ),
-        pytest.param(
+        param(
             {},
             {
                 **_minimal_benchmark_config(

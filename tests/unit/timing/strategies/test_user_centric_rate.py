@@ -5,10 +5,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from aiperf.common.enums import CreditPhase
-from aiperf.plugin.enums import TimingMode
+from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
+from aiperf.credit.structs import Credit
+from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
+from aiperf.timing.conversation_source import ConversationSource
 from aiperf.timing.strategies.user_centric_rate import User, UserCentricStrategy
-from tests.unit.timing.conftest import OrchestratorHarness
+from tests.unit.timing.conftest import OrchestratorHarness, make_sampler
 
 TWO_TURN = [("c1", 2), ("c2", 2), ("c3", 2), ("c4", 2), ("c5", 2)]
 MULTI_TURN = [("c1", 3), ("c2", 3), ("c3", 3), ("c4", 3)]
@@ -143,6 +146,75 @@ class TestStopConditions:
         assert len([c for c in h.sent_credits if c.turn_index == 0]) == 10
 
 
+def make_strategy(num_turns: int = 2) -> UserCentricStrategy:
+    """Build a UserCentricStrategy over a real ConversationSource with one
+    num_turns-turn conversation and mocked scheduler/issuer/lifecycle."""
+    scheduler = MagicMock()
+    stop_checker = MagicMock()
+    issuer = MagicMock()
+    issuer.issue_credit = lambda *a, **k: True
+    lifecycle = MagicMock()
+    ds = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="c1",
+                turns=[TurnMetadata(delay_ms=None) for _ in range(num_turns)],
+            )
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    sampler = make_sampler(["c1"], DatasetSamplingStrategy.SEQUENTIAL)
+    src = ConversationSource(ds, sampler)
+    cfg = CreditPhaseConfig(
+        phase=CreditPhase.PROFILING,
+        timing_mode=TimingMode.USER_CENTRIC_RATE,
+        request_rate=10.0,
+        num_users=1,
+        total_expected_requests=num_turns,
+    )
+    return UserCentricStrategy(
+        config=cfg,
+        conversation_source=src,
+        scheduler=scheduler,
+        stop_checker=stop_checker,
+        credit_issuer=issuer,
+        lifecycle=lifecycle,
+    )
+
+
+@pytest.mark.asyncio
+class TestUserCentricCreditReturn:
+    async def test_continuation_turn_carries_has_forks(self) -> None:
+        """has_forks from the NEXT turn's metadata must ride onto the
+        continuation turn (the sticky router defers parent-entry eviction until
+        DAG children drain). Regression: from_previous_credit(credit) was called
+        without next-turn metadata, so every continuation turn got
+        has_forks=False."""
+        strategy = make_strategy()
+        await strategy.setup_phase()
+        # Mark the next turn (index 1) as fork-bearing.
+        meta = strategy._conversation_source._metadata_lookup["c1"]
+        meta.turns[1].has_forks = True
+
+        captured: list = []
+        strategy._credit_issuer.issue_credit = (
+            lambda turn: captured.append(turn) or True
+        )
+        # setup_phase registered the t=0 replacement user; use its session id.
+        x_correlation_id = next(iter(strategy._session_to_user))
+        credit = Credit(
+            id=1,
+            phase=CreditPhase.PROFILING,
+            conversation_id="c1",
+            x_correlation_id=x_correlation_id,
+            turn_index=0,
+            num_turns=2,
+            issued_at_ns=1000,
+        )
+        await strategy.handle_credit_return(credit)
+        assert captured and captured[0].has_forks is True
+
+
 @pytest.mark.asyncio
 class TestRealisticScenarios:
     async def test_chat_benchmark(self, create_orchestrator_harness) -> None:
@@ -167,6 +239,69 @@ class TestRealisticScenarios:
         )
         await h.run_with_auto_return()
         assert len(h.sent_credits) >= 100
+
+
+class TestAdaptiveTargetUsers:
+    def _strategy(self) -> UserCentricStrategy:
+        cfg = CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.USER_CENTRIC_RATE,
+            request_rate=10.0,
+            num_users=4,
+            total_expected_requests=10,
+        )
+        return UserCentricStrategy(
+            config=cfg,
+            conversation_source=MagicMock(),
+            scheduler=MagicMock(),
+            stop_checker=MagicMock(),
+            credit_issuer=MagicMock(),
+            lifecycle=MagicMock(),
+        )
+
+    def test_set_target_users_recomputes_gap_and_staggers_scale_up(self) -> None:
+        strategy = self._strategy()
+        strategy._spawn_queue = []
+        strategy._session_to_user = {"1": MagicMock(), "2": MagicMock()}
+
+        strategy.set_target_users(6)
+
+        assert strategy.target_users == 6
+        assert strategy._adaptive_target_enabled is True
+        assert strategy._turn_gap == pytest.approx(0.6)
+        assert len(strategy._spawn_queue) == 2
+        snapshot = strategy.user_control_snapshot()
+        assert snapshot["target_value"] == 6
+        assert snapshot["actual_value"] == 2
+        assert snapshot["retiring_users"] == 0
+
+    def test_set_target_users_rejects_non_positive_and_reports_retiring(self) -> None:
+        strategy = self._strategy()
+        strategy._session_to_user = {str(i): MagicMock() for i in range(6)}
+
+        with pytest.raises(ValueError, match="target users must be positive"):
+            strategy.set_target_users(0)
+
+        strategy.set_target_users(3)
+
+        snapshot = strategy.user_control_snapshot()
+        assert snapshot["target_value"] == 3
+        assert snapshot["actual_value"] == 6
+        assert snapshot["retiring_users"] == 3
+        assert snapshot["cancelled"] == 0
+
+    def test_scale_down_suppresses_new_and_replacement_users(self) -> None:
+        strategy = self._strategy()
+        strategy._session_to_user = {str(i): MagicMock() for i in range(6)}
+
+        strategy.set_target_users(3)
+
+        assert not strategy._should_spawn_user()
+        spawn_queue: list[float] = []
+        strategy._schedule_replacement_user(
+            spawn_queue, spawn_sec=10.0, user=MagicMock(max_turns=2)
+        )
+        assert spawn_queue == []
 
 
 class TestUserClass:

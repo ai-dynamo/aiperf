@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import aiohttp
 import pytest
 
+from aiperf.common.models import TelemetryRecord
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.gpu_telemetry.accumulator import GPUTelemetryAccumulator
 from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
@@ -219,9 +220,13 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
             assert len(metric_results) > 0
 
-            power_metrics = [r for r in metric_results if "gpu_power_usage" in r.tag]
-            util_metrics = [r for r in metric_results if "gpu_utilization" in r.tag]
-            memory_metrics = [r for r in metric_results if "gpu_memory_used" in r.tag]
+            power_metrics = [r for r in metric_results if "nvidia_power_usage" in r.tag]
+            util_metrics = [
+                r for r in metric_results if "nvidia_gpu_utilization" in r.tag
+            ]
+            memory_metrics = [
+                r for r in metric_results if "nvidia_memory_used" in r.tag
+            ]
 
             assert len(power_metrics) > 0
             assert len(util_metrics) > 0
@@ -269,12 +274,12 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
         # Mock the process_telemetry_record method to raise an exception
         original_process = faulty_processor.process_telemetry_record
 
-        async def failing_process_result(record):
+        async def failing_process_telemetry_record(record: TelemetryRecord) -> None:
             if record.gpu_index == 0:  # Fail on first GPU only
                 raise ValueError("Simulated processing error")
             return await original_process(record)
 
-        faulty_processor.process_telemetry_record = failing_process_result
+        faulty_processor.process_telemetry_record = failing_process_telemetry_record
 
         async def failing_record_callback(records, collector_id):
             """Async callback that processes records and may encounter errors."""
@@ -424,9 +429,11 @@ DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-test-1234",device="nvidia
                 await processor.process_telemetry_record(record)
             metric_results = await processor.summarize()
 
-            memory_metrics = [r for r in metric_results if "gpu_memory_used" in r.tag]
+            memory_metrics = [
+                r for r in metric_results if "nvidia_memory_used" in r.tag
+            ]
             energy_metrics = [
-                r for r in metric_results if "energy_consumption" in r.tag
+                r for r in metric_results if "nvidia_energy_consumption" in r.tag
             ]
 
             assert len(memory_metrics) > 0

@@ -6,8 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import CommandType, CreditPhase
-from aiperf.common.messages import ProfileConfigureCommand, ProfileStartCommand
+from aiperf.common.enums import BaselineKind, CommandType, CreditPhase
+from aiperf.common.messages import (
+    PhaseBaselineRequestMessage,
+    ProfileConfigureCommand,
+    ProfileStartCommand,
+)
 from aiperf.common.messages.server_metrics_messages import ServerMetricsRecordMessage
 from aiperf.common.models import CreditPhaseStats, ErrorDetails
 from aiperf.common.models.server_metrics_models import ServerMetricsRecord
@@ -384,6 +388,74 @@ class TestManagerCallbackFunctionality:
         assert call_args.record.benchmark_phase == CreditPhase.WARMUP
 
     @pytest.mark.asyncio
+    async def test_scoped_collect_tags_records_with_captured_phase(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        manager._active_phase = CreditPhase.PROFILING
+        manager.records_push_client.push = AsyncMock()
+
+        test_record = ServerMetricsRecord(
+            endpoint_url="http://localhost:8081/metrics",
+            timestamp_ns=1_000_000_000,
+            endpoint_latency_ns=5_000_000,
+            metrics={},
+        )
+
+        class _Collector:
+            async def collect_and_process_metrics(self):
+                await manager._on_server_metrics_records(
+                    [test_record], "test_collector"
+                )
+
+        await manager._collect_and_process_metrics_for_phase(
+            _Collector(), CreditPhase.WARMUP
+        )
+
+        call_args = manager.records_push_client.push.call_args[0][0]
+        assert call_args.record is not None
+        assert call_args.record.benchmark_phase == CreditPhase.WARMUP
+        assert manager._active_phase == CreditPhase.PROFILING
+
+    @pytest.mark.asyncio
+    async def test_collect_snapshot_tags_records_with_start_phase_after_phase_flip(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        manager._active_phase = CreditPhase.WARMUP
+        manager.records_push_client.push = AsyncMock()
+
+        test_record = ServerMetricsRecord(
+            endpoint_url="http://localhost:8081/metrics",
+            timestamp_ns=1_000_000_000,
+            endpoint_latency_ns=5_000_000,
+            metrics={},
+        )
+
+        class _Collector:
+            async def collect_and_process_metrics(self):
+                manager._active_phase = CreditPhase.PROFILING
+                await manager._on_server_metrics_records(
+                    [test_record], "test_collector"
+                )
+
+        collector = _Collector()
+        manager._attach_phase_scoped_collection(collector)
+
+        await collector.collect_and_process_metrics()
+
+        call_args = manager.records_push_client.push.call_args[0][0]
+        assert call_args.record is not None
+        assert call_args.record.benchmark_phase == CreditPhase.WARMUP
+        assert manager._active_phase == CreditPhase.PROFILING
+
+    @pytest.mark.asyncio
     async def test_error_callback_logs_error(
         self,
         cli_config: CLIConfig,
@@ -495,6 +567,105 @@ class TestPhaseTransitionRace:
         )
 
         assert manager._active_phase is None
+
+    @pytest.mark.asyncio
+    async def test_profiling_start_during_start_baseline_scrape_survives(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+
+        scrape_started = asyncio.Event()
+        release_scrape = asyncio.Event()
+
+        async def slow_scrape():
+            scrape_started.set()
+            await release_scrape.wait()
+
+        mock_collector = MagicMock()
+        mock_collector.collect_and_process_metrics = AsyncMock(side_effect=slow_scrape)
+        manager._collectors = {"http://localhost:8000/metrics": mock_collector}
+
+        baseline_task = asyncio.create_task(
+            manager.collect_baseline(
+                PhaseBaselineRequestMessage(
+                    service_id="timing-manager",
+                    phase_id="phase-0",
+                    phase_index=0,
+                    profiling_index=0,
+                    phase_name="first",
+                    phase_kind="profiling",
+                    kind=BaselineKind.START,
+                )
+            )
+        )
+        await scrape_started.wait()
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.PROFILING),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.PROFILING,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                ),
+            )
+        )
+        release_scrape.set()
+        await baseline_task
+
+        assert manager._active_phase == CreditPhase.PROFILING
+
+    @pytest.mark.asyncio
+    async def test_warmup_start_during_start_baseline_scrape_survives_kind_change(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        manager._active_phase = CreditPhase.PROFILING
+
+        scrape_started = asyncio.Event()
+        release_scrape = asyncio.Event()
+
+        async def slow_scrape():
+            scrape_started.set()
+            await release_scrape.wait()
+
+        mock_collector = MagicMock()
+        mock_collector.collect_and_process_metrics = AsyncMock(side_effect=slow_scrape)
+        manager._collectors = {"http://localhost:8000/metrics": mock_collector}
+
+        baseline_task = asyncio.create_task(
+            manager.collect_baseline(
+                PhaseBaselineRequestMessage(
+                    service_id="timing-manager",
+                    phase_id="phase-1",
+                    phase_index=1,
+                    profiling_index=None,
+                    phase_name="gap",
+                    phase_kind="warmup",
+                    kind=BaselineKind.START,
+                )
+            )
+        )
+        await scrape_started.wait()
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.WARMUP),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.WARMUP,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                ),
+            )
+        )
+        release_scrape.set()
+        await baseline_task
+
+        assert manager._active_phase == CreditPhase.WARMUP
 
 
 class TestDisabledServerMetrics:
@@ -911,3 +1082,128 @@ class TestCallbackEdgeCases:
             endpoints_configured=[],
             endpoints_reachable=[],
         )
+
+
+class TestWarmupPhaseCompleteScrape:
+    """End-of-warmup scrape behavior on CREDIT_PHASE_COMPLETE."""
+
+    def _make_manager(self, cfg_with_endpoint: CLIConfig) -> ServerMetricsManager:
+        return ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+
+    def _phase_complete(self, phase: CreditPhase) -> CreditPhaseCompleteMessage:
+        return CreditPhaseCompleteMessage(
+            service_id="timing-manager",
+            stats=CreditPhaseStats(phase=phase, start_ns=1_000_000_000),
+        )
+
+    @pytest.mark.asyncio
+    async def test_warmup_complete_scrapes_all_collectors(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        """Warmup completion triggers a final scrape of every collector."""
+        manager = self._make_manager(cfg_with_endpoint)
+        collector_a = MagicMock()
+        collector_a.collect_and_process_metrics = AsyncMock()
+        collector_b = MagicMock()
+        collector_b.collect_and_process_metrics = AsyncMock()
+        manager._collectors = {
+            "http://a:8081/metrics": collector_a,
+            "http://b:8081/metrics": collector_b,
+        }
+        manager._active_phase = CreditPhase.WARMUP
+
+        await manager._on_credit_phase_complete(
+            self._phase_complete(CreditPhase.WARMUP)
+        )
+
+        collector_a.collect_and_process_metrics.assert_awaited_once()
+        collector_b.collect_and_process_metrics.assert_awaited_once()
+        # WARMUP is a non-profiling phase, so the active phase is retired.
+        assert manager._active_phase is None
+
+    @pytest.mark.asyncio
+    async def test_warmup_complete_one_endpoint_failure_does_not_skip_rest(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        """A failing endpoint scrape must not prevent the remaining scrapes."""
+        manager = self._make_manager(cfg_with_endpoint)
+        failing = MagicMock()
+        failing.collect_and_process_metrics = AsyncMock(
+            side_effect=ConnectionError("scrape failed")
+        )
+        healthy = MagicMock()
+        healthy.collect_and_process_metrics = AsyncMock()
+        manager._collectors = {
+            "http://bad:8081/metrics": failing,
+            "http://good:8081/metrics": healthy,
+        }
+
+        await manager._on_credit_phase_complete(
+            self._phase_complete(CreditPhase.WARMUP)
+        )
+
+        failing.collect_and_process_metrics.assert_awaited_once()
+        healthy.collect_and_process_metrics.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_warmup_complete_without_collectors_skips_scrape(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        """No collectors -> no scrape attempt, phase still retired."""
+        manager = self._make_manager(cfg_with_endpoint)
+        manager._collectors = {}
+        manager._active_phase = CreditPhase.WARMUP
+
+        await manager._on_credit_phase_complete(
+            self._phase_complete(CreditPhase.WARMUP)
+        )
+
+        assert manager._active_phase is None
+
+    @pytest.mark.asyncio
+    async def test_profiling_complete_preserves_active_phase(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        """PROFILE_COMPLETE owns the final profiling scrape; phase is kept."""
+        manager = self._make_manager(cfg_with_endpoint)
+        manager._collectors = {}
+        manager._active_phase = CreditPhase.PROFILING
+
+        await manager._on_credit_phase_complete(
+            self._phase_complete(CreditPhase.PROFILING)
+        )
+
+        assert manager._active_phase is CreditPhase.PROFILING
+
+    @pytest.mark.asyncio
+    async def test_phase_start_tracks_active_phase(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        """CREDIT_PHASE_START updates the phase used to tag scrapes."""
+        manager = self._make_manager(cfg_with_endpoint)
+        assert manager._active_phase is None
+
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(
+                    phase=CreditPhase.PROFILING, start_ns=1_000_000_000
+                ),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.PROFILING,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                ),
+            )
+        )
+
+        assert manager._active_phase is CreditPhase.PROFILING

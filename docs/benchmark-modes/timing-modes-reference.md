@@ -27,6 +27,7 @@ When multiple options are specified, AIPerf uses this priority:
 3. `--request-rate` → Rate-based scheduling with arrival patterns
 4. `--concurrency` only → Burst mode (as fast as possible within limits)
 
+
 ---
 
 ## Compatibility Matrix

@@ -47,8 +47,3 @@ class MaxResponseTimestampMetric(BaseAggregateMetric[int]):
         request_latency: int = record_metrics.get_or_raise(RequestLatencyMetric)  # type: ignore
         final_response_ts = record.timestamp_ns + request_latency
         return final_response_ts
-
-    def _aggregate_value(self, value: int) -> None:
-        """Aggregate the metric value. For this metric, we just take the max of the values from the different processes."""
-        if value > self._value:
-            self._value = value

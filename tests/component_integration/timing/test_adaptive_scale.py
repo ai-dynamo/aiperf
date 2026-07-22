@@ -25,20 +25,54 @@ def _load_jsonl(path: Path) -> list[dict]:
 
 
 @pytest.mark.component_integration
-def test_adaptive_scale_profile_writes_controller_artifacts(cli: AIPerfCLI) -> None:
-    """Exercise CLI -> config -> TimingConfig -> AdaptiveScaleStrategy wiring."""
+def test_adaptive_scale_profile_writes_controller_artifacts(
+    cli: AIPerfCLI, tmp_path: Path
+) -> None:
+    """Exercise YAML config -> TimingConfig -> AdaptiveScaleStrategy wiring."""
+    config_path = tmp_path / "adaptive_scale_smoke.yaml"
+    config_path.write_text(
+        f"""
+schemaVersion: "2.0"
+
+benchmark:
+  model: {defaults.model}
+  endpoint:
+    url: http://localhost:8000
+    type: chat
+    streaming: true
+  dataset:
+    type: synthetic
+    entries: 1000
+    prompts:
+      isl: 550
+      osl: 8
+  phases:
+    - name: profiling
+      kind: profiling
+      type: concurrency
+      concurrency: 4
+      duration: 2.5
+      adaptive_scale:
+        enabled: true
+        control:
+          variable: concurrency
+          min: 1
+          max: 4
+        assessment_period: 1.0
+        min_completed_requests: 1
+        sustain_duration: 1.0
+      sla:
+        request_latency:
+          p95:
+            le: 10000
+""".lstrip(),
+        encoding="utf-8",
+    )
+
     result = cli.run_sync(
         f"""
         aiperf profile \
-            --model {defaults.model} \
-            --streaming \
-            --concurrency 4 \
-            --benchmark-duration 2.5 \
-            --adaptive-scale \
-            --adaptive-sustain-duration 1.0 \
-            --adaptive-assessment-period 1.0 \
-            --adaptive-scale-sla request_latency:p95:le:10000 \
-            --osl 8 \
+            --config "{config_path}" \
             --extra-inputs ignore_eos:true \
             --ui {defaults.ui}
         """,
@@ -49,8 +83,9 @@ def test_adaptive_scale_profile_writes_controller_artifacts(cli: AIPerfCLI) -> N
     assert result.request_count > 0
     assert result.json.was_cancelled is False
 
-    event_path = result.artifacts_dir / "adaptive_scale_events.jsonl"
-    summary_path = result.artifacts_dir / "adaptive_scale_summary.json"
+    phase_dir = result.artifacts_dir / "phases" / "profiling"
+    event_path = phase_dir / "adaptive_scale_events.jsonl"
+    summary_path = phase_dir / "adaptive_scale_summary.json"
     assert event_path.exists()
     assert summary_path.exists()
 
@@ -67,7 +102,7 @@ def test_adaptive_scale_profile_writes_controller_artifacts(cli: AIPerfCLI) -> N
 
     decisions = [event for event in events if event["event"] == "adaptive_decision"]
     assert decisions
-    assert any(event["concurrency_after"] > 1 for event in decisions)
+    assert any(event["control_value_after"] > 1 for event in decisions)
 
     summary = orjson.loads(summary_path.read_bytes())
     assert summary["control_variable"] == "concurrency"
@@ -84,7 +119,7 @@ def test_adaptive_scale_profile_discovers_sla_boundary(
     ) -> dict[str, float]:
         del stats
         key = self._sla_key(self._primary_sla)
-        value = 20.0 if self._current_concurrency <= 11 else 120.0
+        value = 20.0 if self._control.current <= 11 else 120.0
         return {key: value}
 
     def deterministic_passes_sla(
@@ -133,6 +168,9 @@ benchmark:
         request_latency:
           p95:
             le: 80
+        goodput:
+          avg:
+            ge: 0.1
 """.lstrip(),
         encoding="utf-8",
     )
@@ -159,7 +197,9 @@ benchmark:
     assert result.request_count > 0
     assert result.json.was_cancelled is False
 
-    events = _load_jsonl(result.artifacts_dir / "adaptive_scale_events.jsonl")
+    events = _load_jsonl(
+        result.artifacts_dir / "phases" / "profiling" / "adaptive_scale_events.jsonl"
+    )
     boundary_events = [
         event for event in events if event["event"] == "boundary_discovered"
     ]
@@ -170,7 +210,7 @@ benchmark:
         for event in events
         if event["event"] == "adaptive_window" and event["phase"] == "discover"
     ]
-    discover_values = [event["active_concurrency"] for event in discover_windows]
+    discover_values = [event["control_value"] for event in discover_windows]
     assert len(discover_values) >= 2
     assert discover_values[0] == 1
 
@@ -179,7 +219,7 @@ benchmark:
         for event in events
         if event["event"] == "adaptive_decision" and event["phase"] == "discover"
     ]
-    scaled_values = [event["concurrency_after"] for event in discover_decisions]
+    scaled_values = [event["control_value_after"] for event in discover_decisions]
     step_sizes = [event["step_size"] for event in discover_decisions]
     assert scaled_values
     assert scaled_values[0] > discover_values[0]
@@ -187,15 +227,20 @@ benchmark:
     assert scaled_values == sorted(scaled_values)
 
     boundary = boundary_events[-1]
-    assert boundary["last_passing_value"] == boundary["boundary_concurrency"]
-    assert boundary["first_failing_value"] > boundary["boundary_concurrency"]
+    assert boundary["last_passing_value"] == boundary["boundary_value"]
+    assert boundary["first_failing_value"] > boundary["boundary_value"]
     assert boundary["sla_value"] > boundary["sla_bound"]
 
     summary = orjson.loads(
-        (result.artifacts_dir / "adaptive_scale_summary.json").read_bytes()
+        (
+            result.artifacts_dir
+            / "phases"
+            / "profiling"
+            / "adaptive_scale_summary.json"
+        ).read_bytes()
     )
-    assert summary["boundary_concurrency"] == boundary["boundary_concurrency"]
+    assert summary["boundary_value"] == boundary["boundary_value"]
     assert summary["first_failing_value"] == boundary["first_failing_value"]
-    assert summary["control_value"] <= boundary["boundary_concurrency"]
+    assert summary["control_value"] <= boundary["boundary_value"]
     assert summary["completed_reason"] == "sustain_duration_completed"
     assert summary["sustain_windows"] > 0

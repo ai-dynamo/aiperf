@@ -10,7 +10,9 @@ from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.types import PhaseKind
 from aiperf.config.dataset.defaults import InputDefaults
+from aiperf.config.rate_series import RateSeriesConfig
 from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.plugin.enums import (
     ArrivalPattern,
@@ -20,6 +22,7 @@ from aiperf.plugin.enums import (
 )
 from aiperf.timing.adaptive_config import (
     ADAPTIVE_TIMING_FIELDS,
+    AdaptiveControlVariable,
     AdaptiveTimingConfig,
 )
 from aiperf.timing.request_cancellation import RequestCancellationConfig
@@ -86,34 +89,44 @@ class TimingConfig(AIPerfBaseModel):
     def from_run(cls, run: BenchmarkRun) -> TimingConfig:
         """Build ordered list of credit-phase configs from a ``BenchmarkRun``.
 
-        Iterates ``run.cfg.get_warmup_phases()`` first (each becomes a WARMUP
-        CreditPhaseConfig) followed by ``run.cfg.get_profiling_phases()``
-        (each becomes a PROFILING CreditPhaseConfig). The cancellation policy
-        is sourced from the first profiling phase that declares one; URLs and
-        url-selection strategy come from the endpoint section.
+        Preserves the ordered ``cfg.phases`` list. Each executable phase gets
+        stable identity metadata: absolute ``phase_index``, profiling-only
+        ``profiling_index``, ``phase_name``, and ``phase_kind``. A phase-local
+        cancellation config is attached to each timing phase; omitted per-phase
+        cancellation inherits the run default.
         """
         cfg = run.cfg
 
         artifact_dir = cfg.artifacts.dir
 
-        configs: list[CreditPhaseConfig] = []
-        for phase in cfg.get_warmup_phases():
-            configs.append(_build_warmup_config(phase, artifact_dir=artifact_dir))
-        for phase in cfg.get_profiling_phases():
-            configs.append(_build_profiling_config(phase, artifact_dir=artifact_dir))
+        profiling_default_cancellation = _default_cancellation_config(cfg.phases)
+        warmup_default_cancellation = RequestCancellationConfig()
 
-        cancellation_config: RequestCancellationConfig = RequestCancellationConfig()
-        for phase in cfg.get_profiling_phases():
-            if getattr(phase, "cancellation", None) is not None:
-                cancellation_config = RequestCancellationConfig(
-                    rate=phase.cancellation.rate,
-                    delay=phase.cancellation.delay,
+        configs: list[CreditPhaseConfig] = []
+        profiling_index = 0
+        for phase_index, phase in enumerate(cfg.phases):
+            current_profiling_index = None
+            if phase.kind == "profiling":
+                current_profiling_index = profiling_index
+                profiling_index += 1
+            default_cancellation = (
+                profiling_default_cancellation
+                if phase.kind == "profiling"
+                else warmup_default_cancellation
+            )
+            configs.append(
+                _build_phase_config(
+                    phase,
+                    artifact_dir=artifact_dir,
+                    default_cancellation=default_cancellation,
+                    phase_index=phase_index,
+                    profiling_index=current_profiling_index,
                 )
-                break
+            )
 
         return cls(
             phase_configs=configs,
-            request_cancellation=cancellation_config,
+            request_cancellation=profiling_default_cancellation,
             urls=list(cfg.endpoint.urls),
             url_selection_strategy=cfg.endpoint.url_strategy,
         )
@@ -131,6 +144,24 @@ class CreditPhaseConfig(AIPerfBaseModel):
     model_config = ConfigDict(frozen=True)
 
     phase: CreditPhase = Field(..., description="The phase of the credit phase.")
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index in the ordered phases list."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index among profiling-kind phases; None for warmup.",
+    )
+    phase_name: str | None = Field(
+        default=None, description="User-provided unique phase name."
+    )
+    phase_kind: PhaseKind | None = Field(
+        default=None, description="Phase semantic kind: warmup or profiling."
+    )
+    request_cancellation: RequestCancellationConfig = Field(
+        default_factory=RequestCancellationConfig,
+        description="Phase-local request cancellation policy.",
+    )
     timing_mode: TimingMode = Field(
         ...,
         description="The timing mode of the credit phase. Used to determine "
@@ -216,6 +247,10 @@ class CreditPhaseConfig(AIPerfBaseModel):
         description="Duration in seconds to ramp request rate from 1 QPS to target. "
         "If None, request rate starts at target immediately.",
     )
+    request_rate_series: RateSeriesConfig | None = Field(
+        default=None,
+        description="Piecewise-linear request-rate schedule, if enabled.",
+    )
     auto_offset_timestamps: bool = Field(
         default=InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET,
         description="The auto offset timestamps of the timing manager.",
@@ -269,7 +304,9 @@ class CreditPhaseConfig(AIPerfBaseModel):
             if field in ADAPTIVE_TIMING_FIELDS
         }
         if adaptive_update:
-            folded["adaptive"] = self.adaptive.model_copy(update=adaptive_update)
+            adaptive_payload = self.adaptive.model_dump(mode="python")
+            adaptive_payload.update(adaptive_update)
+            folded["adaptive"] = AdaptiveTimingConfig.model_validate(adaptive_payload)
         return folded
 
     @property
@@ -281,12 +318,16 @@ class CreditPhaseConfig(AIPerfBaseModel):
         return self.adaptive.adaptive_assessment_period_sec
 
     @property
-    def adaptive_control_variable(self) -> Literal["concurrency"]:
+    def adaptive_control_variable(self) -> AdaptiveControlVariable:
         return self.adaptive.adaptive_control_variable
 
     @property
-    def adaptive_scale_min_concurrency(self) -> int:
-        return self.adaptive.adaptive_scale_min_concurrency
+    def adaptive_control_min(self) -> float:
+        return self.adaptive.adaptive_control_min
+
+    @property
+    def adaptive_control_max(self) -> float | None:
+        return self.adaptive.adaptive_control_max
 
     @property
     def adaptive_scale_strategy_type(self) -> Literal["ramp_until_fail"]:
@@ -337,8 +378,61 @@ def _phase_arrival_pattern(phase: PhaseConfig) -> ArrivalPattern:
     return _PHASE_TYPE_TO_ARRIVAL_PATTERN.get(phase.type, ArrivalPattern.POISSON)
 
 
+def _default_cancellation_config(
+    phases: list[PhaseConfig],
+) -> RequestCancellationConfig:
+    for phase in phases:
+        if getattr(phase, "kind", None) != "profiling":
+            continue
+        cancellation = getattr(phase, "cancellation", None)
+        if cancellation is not None:
+            return RequestCancellationConfig(
+                rate=cancellation.rate, delay=cancellation.delay
+            )
+    return RequestCancellationConfig()
+
+
+def _phase_cancellation_config(
+    phase: PhaseConfig, default_cancellation: RequestCancellationConfig
+) -> RequestCancellationConfig:
+    cancellation = getattr(phase, "cancellation", None)
+    if cancellation is None:
+        return default_cancellation
+    return RequestCancellationConfig(rate=cancellation.rate, delay=cancellation.delay)
+
+
+def _build_phase_config(
+    phase: PhaseConfig,
+    *,
+    artifact_dir: Path | None = None,
+    default_cancellation: RequestCancellationConfig,
+    phase_index: int,
+    profiling_index: int | None,
+) -> CreditPhaseConfig:
+    if phase.kind == "warmup":
+        return _build_warmup_config(
+            phase,
+            artifact_dir=artifact_dir,
+            default_cancellation=default_cancellation,
+            phase_index=phase_index,
+            profiling_index=profiling_index,
+        )
+    return _build_profiling_config(
+        phase,
+        artifact_dir=artifact_dir,
+        default_cancellation=default_cancellation,
+        phase_index=phase_index,
+        profiling_index=profiling_index,
+    )
+
+
 def _build_warmup_config(
-    phase: PhaseConfig, *, artifact_dir: Path | None = None
+    phase: PhaseConfig,
+    *,
+    artifact_dir: Path | None = None,
+    default_cancellation: RequestCancellationConfig,
+    phase_index: int,
+    profiling_index: int | None,
 ) -> CreditPhaseConfig:
     """Build a warmup CreditPhaseConfig from a warmup PhaseConfig.
 
@@ -356,6 +450,11 @@ def _build_warmup_config(
 
     return CreditPhaseConfig(
         phase=CreditPhase.WARMUP,
+        phase_index=phase_index,
+        profiling_index=profiling_index,
+        phase_name=phase.name,
+        phase_kind=phase.kind,
+        request_cancellation=_phase_cancellation_config(phase, default_cancellation),
         # Warmup phase is always request rate timing mode
         timing_mode=TimingMode.REQUEST_RATE,
         total_expected_requests=phase.requests,
@@ -374,11 +473,17 @@ def _build_warmup_config(
             getattr(phase, "rate_ramp", None)
         ),
         artifact_dir=artifact_dir,
+        request_rate_series=getattr(phase, "rate_series", None),
     )
 
 
 def _build_profiling_config(
-    phase: PhaseConfig, *, artifact_dir: Path | None = None
+    phase: PhaseConfig,
+    *,
+    artifact_dir: Path | None = None,
+    default_cancellation: RequestCancellationConfig,
+    phase_index: int,
+    profiling_index: int | None,
 ) -> CreditPhaseConfig:
     """Build a profiling CreditPhaseConfig from a profiling PhaseConfig.
 
@@ -388,6 +493,11 @@ def _build_profiling_config(
     """
     return CreditPhaseConfig(
         phase=CreditPhase.PROFILING,
+        phase_index=phase_index,
+        profiling_index=profiling_index,
+        phase_name=phase.name,
+        phase_kind=phase.kind,
+        request_cancellation=_phase_cancellation_config(phase, default_cancellation),
         timing_mode=_phase_timing_mode(phase),
         expected_duration_sec=phase.duration,
         total_expected_requests=phase.requests,
@@ -405,6 +515,7 @@ def _build_profiling_config(
         request_rate_ramp_duration_sec=_ramp_duration(
             getattr(phase, "rate_ramp", None)
         ),
+        request_rate_series=getattr(phase, "rate_series", None),
         # Fixed schedule config
         auto_offset_timestamps=getattr(
             phase, "auto_offset", InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET
@@ -420,9 +531,8 @@ def _build_profiling_config(
         adaptive_control_variable=getattr(
             phase, "adaptive_control_variable", "concurrency"
         ),
-        adaptive_scale_min_concurrency=getattr(
-            phase, "adaptive_scale_min_concurrency", 1
-        ),
+        adaptive_control_min=getattr(phase, "adaptive_control_min", 1),
+        adaptive_control_max=getattr(phase, "adaptive_control_max", None),
         adaptive_scale_strategy_type=getattr(
             phase, "adaptive_scale_strategy_type", "ramp_until_fail"
         ),

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -85,6 +86,9 @@ benchmark:
         request_latency:
           p95:
             le: 100
+        goodput:
+          avg:
+            ge: 0.1
 """.lstrip(),
             encoding="utf-8",
         )
@@ -106,12 +110,35 @@ benchmark:
     assert result.json is not None
     assert result.json.was_cancelled is False
 
-    event_path = result.artifacts_dir / "adaptive_scale_events.jsonl"
-    summary_path = result.artifacts_dir / "adaptive_scale_summary.json"
-    assert event_path.exists()
-    assert summary_path.exists()
+    manifest_path = result.artifacts_dir / "adaptive_scale_manifest.json"
+    assert await asyncio.to_thread(manifest_path.exists)
+    manifest_bytes = await asyncio.to_thread(manifest_path.read_bytes)
+    manifest = orjson.loads(manifest_bytes)
+    assert manifest["schema_version"] == 2
+    [adaptive_phase] = manifest["adaptive_phases"]
+    assert adaptive_phase["phase_name"] == "profiling"
+    assert adaptive_phase["phase_kind"] == "profiling"
+    assert adaptive_phase["phase_index"] == 0
+    assert adaptive_phase["profiling_index"] == 0
 
-    events = _load_jsonl(event_path)
+    assert adaptive_phase["events_path"] == (
+        "phases/profiling/adaptive_scale_events.jsonl"
+    )
+    assert adaptive_phase["summary_path"] == (
+        "phases/profiling/adaptive_scale_summary.json"
+    )
+    event_path = result.artifacts_dir / adaptive_phase["events_path"]
+    summary_path = result.artifacts_dir / adaptive_phase["summary_path"]
+    assert await asyncio.to_thread(event_path.exists)
+    assert await asyncio.to_thread(summary_path.exists)
+    assert not await asyncio.to_thread(
+        (result.artifacts_dir / "adaptive_scale_events.jsonl").exists
+    )
+    assert not await asyncio.to_thread(
+        (result.artifacts_dir / "adaptive_scale_summary.json").exists
+    )
+
+    events = await asyncio.to_thread(_load_jsonl, event_path)
     assert events
     event_names = {event["event"] for event in events}
     assert "adaptive_phase_started" in event_names
@@ -127,8 +154,9 @@ benchmark:
         if event["event"] == "adaptive_window" and event["phase"] == "discover"
     ]
     assert len(discover_windows) >= 2
-    assert discover_windows[0]["active_concurrency"] == 1
-    assert discover_windows[0]["schema_version"] == 1
+    assert discover_windows[0]["control_variable"] == "concurrency"
+    assert discover_windows[0]["control_value"] == 1
+    assert discover_windows[0]["schema_version"] == 2
     assert discover_windows[0]["timestamp_ns"] == discover_windows[0]["timestamp"]
     assert re.fullmatch(
         r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z",
@@ -141,7 +169,7 @@ benchmark:
         if event["event"] == "adaptive_decision" and event["phase"] == "discover"
     ]
     assert discover_decisions
-    assert discover_decisions[0]["concurrency_after"] > 1
+    assert discover_decisions[0]["control_value_after"] > 1
     assert all(event["step_size"] >= 1 for event in discover_decisions)
 
     boundary_events = [
@@ -149,8 +177,8 @@ benchmark:
     ]
     boundary = boundary_events[-1]
     assert boundary["control_variable"] == "concurrency"
-    assert boundary["last_passing_value"] == boundary["boundary_concurrency"]
-    assert boundary["first_failing_value"] > boundary["boundary_concurrency"]
+    assert boundary["last_passing_value"] == boundary["boundary_value"]
+    assert boundary["first_failing_value"] > boundary["boundary_value"]
     assert boundary["sla_metric"] == "request_latency"
     assert boundary["sla_stat"] == "p95"
     assert boundary["sla_op"] == "le"
@@ -164,12 +192,12 @@ benchmark:
     ]
     assert sustain_windows
     assert all(
-        event["active_concurrency"] <= boundary["boundary_concurrency"]
+        event["control_value"] <= boundary["boundary_value"]
         for event in sustain_windows
     )
 
     summary = orjson.loads(summary_path.read_bytes())
-    assert summary["schema_version"] == 1
+    assert summary["schema_version"] == 2
     assert summary["status"] == "completed"
     assert summary["control_variable"] == "concurrency"
     assert summary["sla"] == {
@@ -178,15 +206,15 @@ benchmark:
         "op": "le",
         "bound": 100,
     }
-    assert summary["boundary_concurrency"] == boundary["boundary_concurrency"]
+    assert summary["boundary_value"] == boundary["boundary_value"]
     assert summary["first_failing_value"] == boundary["first_failing_value"]
-    assert summary["control_value"] <= boundary["boundary_concurrency"]
+    assert summary["control_value"] <= boundary["boundary_value"]
     assert summary["completed_reason"] == "sustain_duration_completed"
     assert summary["result"]["last_passing_value"] == summary["last_passing_value"]
     assert summary["result"]["first_failing_value"] == boundary["first_failing_value"]
-    assert summary["result"]["boundary_value"] == boundary["boundary_concurrency"]
+    assert summary["result"]["boundary_value"] == boundary["boundary_value"]
     assert summary["totals"]["sent"] >= summary["totals"]["completed"]
-    assert summary["totals"]["cancelled"] is None
+    assert summary["totals"]["cancelled"] == 0
     assert summary["sustain_windows"] > 0
     assert summary["strategy_type"] == "ramp_until_fail"
     assert summary["step_policy"] == "sla_margin"

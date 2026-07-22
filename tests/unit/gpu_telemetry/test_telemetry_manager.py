@@ -349,7 +349,7 @@ class TestStatusMessaging:
         # Mock publish method
         manager.publish = AsyncMock()
 
-        reason = "no DCGM endpoints reachable"
+        reason = "no telemetry sources reachable"
         endpoints_tested = ["http://node1:9401/metrics"]
 
         await manager._send_telemetry_status(
@@ -666,7 +666,7 @@ class TestProfileConfigureCommand:
         manager.publish.assert_called_once()
         call_args = manager.publish.call_args[0][0]
         assert call_args.enabled is False
-        assert "no DCGM endpoints reachable" in call_args.reason
+        assert "no telemetry sources reachable" in call_args.reason
 
         # Should NOT have collectors
         assert len(manager._collectors) == 0

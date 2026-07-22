@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Self
 from msgspec import Struct
 
 from aiperf.common.enums import ConversationBranchMode, CreditPhase
+from aiperf.common.types import PhaseKind
 
 if TYPE_CHECKING:
     from aiperf.common.models.dataset_models import TurnMetadata
@@ -54,6 +55,10 @@ class Credit(
 
     id: int
     phase: CreditPhase
+    phase_index: int | None = None
+    profiling_index: int | None = None
+    phase_name: str | None = None
+    phase_kind: PhaseKind | None = None
     conversation_id: str
     x_correlation_id: str
     turn_index: int
@@ -88,6 +93,10 @@ class CreditContext(
         error: The error message if the request failed (None on success).
         request_latency_ns: Request latency in nanoseconds using records-pipeline
             semantics.
+        inter_token_latency_ns: Inter-token latency in nanoseconds using
+            adaptive records-pipeline semantics.
+        output_sequence_length: Output sequence length in tokens from usage
+            data, when available.
     """
 
     credit: Credit
@@ -97,6 +106,8 @@ class CreditContext(
     first_token_sent: bool = False
     error: str | None = None
     request_latency_ns: int | None = None
+    inter_token_latency_ns: float | None = None
+    output_sequence_length: int | None = None
 
 
 # =============================================================================

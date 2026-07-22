@@ -91,7 +91,7 @@ class OSLMismatchDiffMetric(BaseRecordMetric[float]):
     short_header = "OSL Diff"
     short_header_hide_unit = True
     unit = GenericMetricUnit.PERCENT
-    flags = MetricFlags.PRODUCES_TOKENS_ONLY
+    flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.DISABLE_ON_ACCURACY
     console_group = MetricConsoleGroup.NONE
     required_metrics: ClassVar[set[str]] = {
         RequestedOSLMetric.tag,
@@ -155,7 +155,11 @@ class OSLMismatchCountMetric(BaseAggregateCounterMetric[int]):
     short_header = "OSL Mismatches"
     short_header_hide_unit = True
     unit = GenericMetricUnit.REQUESTS
-    flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.NO_INDIVIDUAL_RECORDS
+    flags = (
+        MetricFlags.PRODUCES_TOKENS_ONLY
+        | MetricFlags.NO_INDIVIDUAL_RECORDS
+        | MetricFlags.DISABLE_ON_ACCURACY
+    )
     console_group = MetricConsoleGroup.NONE
     required_metrics: ClassVar[set[str]] = {
         OSLMismatchDiffMetric.tag,

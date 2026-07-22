@@ -11,7 +11,6 @@ from numpy.typing import NDArray
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
     EnergyMetricUnit,
-    GenericMetricUnit,
     GPUTelemetryMode,
     PowerMetricUnit,
 )
@@ -22,7 +21,6 @@ from aiperf.common.hooks import background_task
 from aiperf.common.messages import RealtimeTelemetryMetricsMessage
 from aiperf.common.models import (
     EndpointData,
-    ErrorDetailsCount,
     GpuSummary,
     MetricResult,
     TelemetryExportData,
@@ -33,19 +31,32 @@ from aiperf.common.models.telemetry_models import TelemetryHierarchy, TelemetryR
 from aiperf.common.protocols import PubClientProtocol
 from aiperf.exporters.utils import normalize_endpoint_display
 from aiperf.gpu_telemetry.constants import (
+    AMD_ENERGY_CONSUMPTION_FIELD,
+    AMD_GPU_TELEMETRY_PLATFORM,
+    AMD_POWER_FIELD,
     GPU_TELEMETRY_COUNTER_METRICS,
+    NVIDIA_ENERGY_CONSUMPTION_FIELD,
+    NVIDIA_GPU_TELEMETRY_PLATFORM,
+    NVIDIA_POWER_USAGE_FIELD,
     get_gpu_telemetry_metrics_config,
 )
 from aiperf.plugin.enums import UIType
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 if TYPE_CHECKING:
+    from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
-def _gpu_count_suffix(n: int) -> str:
-    """Render a "(N GPUs)" header suffix; partial-cohort runs differ from full."""
-    return f"({n} GPU{'s' if n != 1 else ''})"
+_PLATFORM_POWER_FIELDS: dict[str, str] = {
+    NVIDIA_GPU_TELEMETRY_PLATFORM: NVIDIA_POWER_USAGE_FIELD,
+    AMD_GPU_TELEMETRY_PLATFORM: AMD_POWER_FIELD,
+}
+
+_PLATFORM_ENERGY_FIELDS: dict[str, str] = {
+    NVIDIA_GPU_TELEMETRY_PLATFORM: NVIDIA_ENERGY_CONSUMPTION_FIELD,
+    AMD_GPU_TELEMETRY_PLATFORM: AMD_ENERGY_CONSUMPTION_FIELD,
+}
 
 
 class GPUTelemetryAccumulator(BaseMetricsProcessor):
@@ -104,11 +115,31 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         await self.process_telemetry_record(record)
 
     def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
-        """Return a boolean mask where True marks records in [start_ns, end_ns)."""
+        """Return a boolean mask where True marks records in ``[start_ns, end_ns)``.
+
+        Half-open by design to match ``AccumulatorProtocol.query_time_range``
+        and the metrics accumulator. Distinct from server-metrics per-series
+        filters, which use inclusive ``[start_ns, end_ns]``.
+        """
         if len(self._timestamps_ns) == 0:
             return np.array([], dtype=bool)
         ts = self._timestamps_ns.data
         return (ts >= start_ns) & (ts < end_ns)
+
+    def scrape_span_ns(self) -> tuple[int, int] | None:
+        """Return ``(first_ns, last_ns)`` of collected scrapes, or None if empty.
+
+        Analyzer support: lets a caller recover the actual observed telemetry
+        window when it holds an unbounded (full-range) summary window and needs a
+        real duration (e.g. to derive average power without a bounded phase).
+        """
+        if len(self._timestamps_ns) == 0:
+            return None
+        ts = self._timestamps_ns.data
+        # min/max rather than [0]/[-1]: scrapes are appended in collection order,
+        # which is normally monotonic but not guaranteed (retries/out-of-order
+        # arrival), so don't assume the ends are the extremes.
+        return int(ts.min()), int(ts.max())
 
     def start_realtime_telemetry(self) -> None:
         """Start the realtime telemetry background task.
@@ -134,15 +165,20 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         wake the task via ``START_REALTIME_TELEMETRY`` (sent by the dashboard
         when the telemetry pane is toggled on).
 
-        ``--stats-interval 0`` disables realtime reporting by short-circuiting
-        here before the loop, mirroring the records-manager task; otherwise the
-        ``asyncio.sleep(0)`` tail would busy-spin re-summarizing every tick.
+        ``--stats-interval 0`` disables only the per-tick log-block cadence on
+        the records side; the dashboard must still be able to wake this task and
+        receive telemetry updates. Mirror the records-manager fallback by using
+        the per-UI default cadence when the configured interval is 0, avoiding
+        an ``asyncio.sleep(0)`` busy-spin while keeping the task wakeable.
         """
-        interval = self.run.cfg.runtime.realtime_metrics_interval(
+        configured_interval = self.run.cfg.runtime.realtime_metrics_interval(
             self.run.cfg.runtime.ui
         )
-        if interval == 0:
-            return
+        interval = (
+            configured_interval
+            if configured_interval != 0
+            else self._default_realtime_interval()
+        )
         while not self.stop_requested:
             if (
                 self.run.cfg.ui_type != UIType.DASHBOARD
@@ -157,6 +193,10 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
 
             await self._report_realtime_metrics()
             await asyncio.sleep(interval)
+
+    def _default_realtime_interval(self) -> float:
+        """Resolve the per-UI default cadence for interval-0 dashboard polling."""
+        return 5.0 if self.run.cfg.ui_type == UIType.DASHBOARD else 30.0
 
     async def _report_realtime_metrics(self) -> None:
         """Report real-time GPU telemetry metrics."""
@@ -182,7 +222,9 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                 )
                 self._last_metric_values = new_values
 
-    async def summarize(self) -> list[MetricResult]:
+    async def summarize(
+        self, ctx: "SummaryContext | None" = None
+    ) -> list[MetricResult]:
         """Generate per-GPU MetricResult list for real-time display and final export.
 
         This method is called by RecordsManager for:
@@ -191,9 +233,9 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
 
         Async and runs periodically under the dashboard cadence
         (`RuntimeConfig.realtime_metrics_interval`). Emits one MetricResult per GPU per
-        signal. Contrast with `compute_efficiency_metrics` below, which is
-        sync, runs once per profiling phase, and aggregates across GPUs
-        into cross-GPU totals.
+        signal. Cross-GPU energy/power totals for the final summary are derived
+        separately via `total_power_watts` / `total_energy_joules` (consumed by
+        `EnergyEfficiencyAnalyzer`).
 
         Returns:
             List of MetricResult objects, one per GPU per metric type.
@@ -240,11 +282,8 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
 
         return results
 
-    def export_results(
-        self,
-        start_ns: int | None = None,
-        end_ns: int | None = None,
-        error_summary: list[ErrorDetailsCount] | None = None,
+    async def export_results(
+        self, ctx: "ExportContext"
     ) -> "TelemetryExportData | None":
         """Export accumulated telemetry data as a TelemetryExportData object.
 
@@ -256,15 +295,16 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         - Counter metrics (energy, errors): Delta computed from baseline before start_ns
 
         Args:
-            start_ns: Start time of profiling phase in nanoseconds (excludes warmup).
-                     If None, includes all data from beginning.
-            end_ns: End time of profiling phase in nanoseconds. If None, includes all
-                   data after start_ns (including final scrape after profiling completes).
-            error_summary: Optional list of error counts
+            ctx: ExportContext with ``start_ns`` (profiling start, excludes warmup;
+                None = from beginning), ``end_ns`` (None = through the final scrape),
+                and ``error_summary``.
 
         Returns:
             TelemetryExportData object with pre-computed metrics for each GPU
         """
+        start_ns = ctx.start_ns
+        end_ns = ctx.end_ns
+        error_summary = ctx.error_summary
         # Create time filter for warmup exclusion
         # Note: end_ns is typically None to include the final telemetry scrape
         # that occurs after PROFILE_COMPLETE but before export
@@ -331,6 +371,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                         gpu_index=gpu_data.metadata.gpu_index,
                         gpu_name=gpu_data.metadata.gpu_model_name,
                         gpu_uuid=gpu_uuid,
+                        platform=gpu_data.metadata.platform,
                         hostname=gpu_data.metadata.hostname,
                         namespace=gpu_data.metadata.namespace,
                         pod_name=gpu_data.metadata.pod_name,
@@ -345,8 +386,17 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
             summary=summary, endpoints=endpoints, error_summary=error_summary
         )
 
-    def _sum_gpu_power_watts(self, time_filter: TimeRangeFilter) -> tuple[float, int]:
-        """Sum avg(gpu_power_usage) across all GPUs in the time range.
+    def _iter_gpus_for_platform(self, platform: str):
+        """Yield (gpu_uuid, gpu_data) for GPUs whose metadata.platform matches."""
+        for gpu_data_dict in self._hierarchy.dcgm_endpoints.values():
+            for gpu_uuid, gpu_data in gpu_data_dict.items():
+                if gpu_data.metadata.platform == platform:
+                    yield gpu_uuid, gpu_data
+
+    def _sum_gpu_power_watts(
+        self, time_filter: TimeRangeFilter, platform: str, power_field: str
+    ) -> tuple[float, int]:
+        """Sum avg(`power_field`) across all GPUs of `platform` in the time range.
 
         Returns:
             Tuple of (total_power_watts, gpu_count). GPUs missing power data
@@ -354,37 +404,36 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         """
         total_power_w = 0.0
         gpu_count = 0
-        for gpu_data_dict in self._hierarchy.dcgm_endpoints.values():
-            for gpu_uuid, gpu_data in gpu_data_dict.items():
-                try:
-                    result = gpu_data.get_metric_result(
-                        "gpu_power_usage",
-                        "gpu_power_usage",
-                        "GPU Power Usage",
-                        str(PowerMetricUnit.WATT),
-                        time_filter=time_filter,
-                    )
-                except NoMetricValue:
-                    self.debug(
-                        lambda uuid=gpu_uuid: f"No power data for GPU {uuid[:12]}"
-                    )
-                    continue
-                if result.avg is None:
-                    self.debug(
-                        lambda uuid=gpu_uuid: f"GPU {uuid[:12]} power result has no avg"
-                    )
-                    continue
-                self.debug(
-                    lambda uuid=gpu_uuid, avg=result.avg: (
-                        f"GPU {uuid[:12]} power avg={avg:.2f}W"
-                    )
+        for gpu_uuid, gpu_data in self._iter_gpus_for_platform(platform):
+            try:
+                result = gpu_data.get_metric_result(
+                    power_field,
+                    power_field,
+                    "GPU Power Usage",
+                    str(PowerMetricUnit.WATT),
+                    time_filter=time_filter,
                 )
-                total_power_w += result.avg
-                gpu_count += 1
+            except NoMetricValue:
+                self.debug(lambda uuid=gpu_uuid: f"No power data for GPU {uuid[:12]}")
+                continue
+            if result.avg is None:
+                self.debug(
+                    lambda uuid=gpu_uuid: f"GPU {uuid[:12]} power result has no avg"
+                )
+                continue
+            self.debug(
+                lambda uuid=gpu_uuid, avg=result.avg: (
+                    f"GPU {uuid[:12]} power avg={avg:.2f}W"
+                )
+            )
+            total_power_w += result.avg
+            gpu_count += 1
         return total_power_w, gpu_count
 
-    def _sum_gpu_energy_joules(self, time_filter: TimeRangeFilter) -> tuple[float, int]:
-        """Sum energy_consumption deltas (converted to joules) across all GPUs.
+    def _sum_gpu_energy_joules(
+        self, time_filter: TimeRangeFilter, platform: str, energy_field: str
+    ) -> tuple[float, int]:
+        """Sum `energy_field` deltas (converted to joules) across GPUs of `platform`.
 
         Energy is a monotonic counter scraped on COLLECTION_INTERVAL cadence;
         the trailing scrape that closes the phase often lands a few hundred
@@ -402,139 +451,95 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         """
         total_energy_j = 0.0
         gpu_count = 0
-        for gpu_data_dict in self._hierarchy.dcgm_endpoints.values():
-            for gpu_uuid, gpu_data in gpu_data_dict.items():
-                try:
-                    result = gpu_data.get_metric_result(
-                        "energy_consumption",
-                        "energy_consumption",
-                        "Energy Consumption",
-                        str(EnergyMetricUnit.MEGAJOULE),
-                        time_filter=time_filter,
-                        is_counter=True,
-                    )
-                except NoMetricValue:
-                    self.debug(
-                        lambda uuid=gpu_uuid: f"No energy data for GPU {uuid[:12]}"
-                    )
-                    continue
-                if result.avg is None:
-                    self.debug(
-                        lambda uuid=gpu_uuid: (
-                            f"GPU {uuid[:12]} energy result has no avg"
-                        )
-                    )
-                    continue
-                energy_j = result.avg * EnergyMetricUnit.MEGAJOULE.joules
-                self.debug(
-                    lambda uuid=gpu_uuid, ej=energy_j: (
-                        f"GPU {uuid[:12]} energy delta={ej:.2f}J"
-                    )
+        for gpu_uuid, gpu_data in self._iter_gpus_for_platform(platform):
+            try:
+                result = gpu_data.get_metric_result(
+                    energy_field,
+                    energy_field,
+                    "Energy Consumption",
+                    str(EnergyMetricUnit.MEGAJOULE),
+                    time_filter=time_filter,
+                    is_counter=True,
                 )
-                total_energy_j += energy_j
-                gpu_count += 1
+            except NoMetricValue:
+                self.debug(lambda uuid=gpu_uuid: f"No energy data for GPU {uuid[:12]}")
+                continue
+            if result.avg is None:
+                self.debug(
+                    lambda uuid=gpu_uuid: (f"GPU {uuid[:12]} energy result has no avg")
+                )
+                continue
+            energy_j = result.avg * EnergyMetricUnit.MEGAJOULE.joules
+            self.debug(
+                lambda uuid=gpu_uuid, ej=energy_j: (
+                    f"GPU {uuid[:12]} energy delta={ej:.2f}J"
+                )
+            )
+            total_energy_j += energy_j
+            gpu_count += 1
         return total_energy_j, gpu_count
 
-    def compute_efficiency_metrics(
-        self,
-        metric_results: list[MetricResult],
-        time_filter: TimeRangeFilter,
-    ) -> list[MetricResult]:
-        """Compute cross-boundary power efficiency totals for one profiling phase.
+    def available_platforms(self) -> set[str]:
+        """Return the set of GPU platforms (e.g. ``"nvidia"``, ``"amd"``) that
+        have contributed at least one telemetry record.
 
-        Aggregates avg(gpu_power_usage) and energy_consumption deltas across
-        all GPUs into 0-4 cross-GPU totals (W, J, tokens/J, J/user). Sync;
-        called once per phase from `RecordsManager._summarize_with_logging`.
-        Sibling `summarize()` above is async, periodic for the dashboard, and
-        emits one MetricResult per GPU per signal instead.
-
-        Args:
-            metric_results: Read-only; scanned only for the `total_output_tokens`
-                            tag to compute tokens/J.
-            time_filter: Profiling-phase window (warmup excluded). For energy,
-                         `end_ns` is widened by `Environment.GPU.FINAL_SCRAPE_GRACE_NS`
-                         to capture the trailing scrape without leaking idle
-                         or subsequent-phase samples.
-
-        Returns:
-            Up to 4 MetricResults: `total_gpu_power`, `total_gpu_energy`,
-            `output_tokens_per_joule`, `energy_per_user`. Each is independently
-            omitted when its underlying signal is missing.
-
-        Example:
-            >>> accumulator.compute_efficiency_metrics(
-            ...     records, TimeRangeFilter(start_ns=t0, end_ns=t1))
+        Query surface for ``EnergyEfficiencyAnalyzer`` so it can fan out
+        per-vendor without hard-coding which platforms are present.
         """
-        tokens_result = next(
-            (r for r in metric_results if r.tag == "total_output_tokens"), None
-        )
-        total_output_tokens = tokens_result.avg if tokens_result is not None else None
-        total_power_w, power_count = self._sum_gpu_power_watts(time_filter)
-        bounded_end_ns = time_filter.end_ns + Environment.GPU.FINAL_SCRAPE_GRACE_NS
-        energy_filter = TimeRangeFilter(start_ns=time_filter.start_ns, end_ns=bounded_end_ns)  # fmt: skip
-        total_energy_j, energy_count = self._sum_gpu_energy_joules(energy_filter)
-        profiling_phases = self.run.cfg.get_profiling_phases()
-        raw_concurrency = profiling_phases[0].concurrency if profiling_phases else None
-        concurrency = (
-            raw_concurrency
-            if isinstance(raw_concurrency, int)
-            and not isinstance(raw_concurrency, bool)
-            and raw_concurrency > 0
+        platforms: set[str] = set()
+        for gpu_data_dict in self._hierarchy.dcgm_endpoints.values():
+            for gpu_data in gpu_data_dict.values():
+                if gpu_data.metadata.platform:
+                    platforms.add(gpu_data.metadata.platform)
+        return platforms
+
+    def total_power_watts(
+        self, start_ns: int | None, end_ns: int | None, platform: str | None = None
+    ) -> tuple[float, int]:
+        """Per-vendor total of avg(power) over ``[start_ns, end_ns)``.
+
+        Query surface for cross-accumulator analyzers (e.g. energy efficiency).
+        ``platform`` selects the vendor (``"nvidia"`` or ``"amd"``); when
+        ``None``, only NVIDIA GPUs are summed using ``nvidia_power_usage``
+        (backward compat for single-vendor callers — AMD and unknown-platform
+        GPUs are excluded). Returns ``(total_power_watts, gpu_count)``;
+        ``gpu_count == 0`` means no power signal was available.
+        """
+        tf = TimeRangeFilter(start_ns=start_ns, end_ns=end_ns)
+        if platform is None:
+            return self._sum_gpu_power_watts(
+                tf, NVIDIA_GPU_TELEMETRY_PLATFORM, NVIDIA_POWER_USAGE_FIELD
+            )
+        field = _PLATFORM_POWER_FIELDS.get(platform)
+        if field is None:
+            return 0.0, 0
+        return self._sum_gpu_power_watts(tf, platform, field)
+
+    def total_energy_joules(
+        self, start_ns: int | None, end_ns: int | None, platform: str | None = None
+    ) -> tuple[float, int]:
+        """Per-vendor total energy (J) over ``[start_ns, end_ns)``.
+
+        Query surface for cross-accumulator analyzers. ``platform`` selects the
+        vendor (``"nvidia"`` or ``"amd"``); when ``None``, only NVIDIA GPUs are
+        summed using ``nvidia_energy_consumption`` (backward compat for
+        single-vendor callers — AMD and unknown-platform GPUs are excluded).
+        ``end_ns`` is widened by ``Environment.GPU.FINAL_SCRAPE_GRACE_NS`` so
+        the trailing scrape that closes the phase is captured (see
+        ``_sum_gpu_energy_joules``). Returns ``(total_energy_joules,
+        gpu_count)``.
+        """
+        bounded_end_ns = (
+            end_ns + Environment.GPU.FINAL_SCRAPE_GRACE_NS
+            if end_ns is not None
             else None
         )
-        self.debug(
-            lambda: (
-                f"compute_efficiency_metrics totals: "
-                f"power={total_power_w:.2f}W ({power_count} GPUs), "
-                f"energy={total_energy_j:.2f}J ({energy_count} GPUs), "
-                f"total_output_tokens={total_output_tokens}, "
-                f"concurrency={concurrency}"
+        tf = TimeRangeFilter(start_ns=start_ns, end_ns=bounded_end_ns)
+        if platform is None:
+            return self._sum_gpu_energy_joules(
+                tf, NVIDIA_GPU_TELEMETRY_PLATFORM, NVIDIA_ENERGY_CONSUMPTION_FIELD
             )
-        )
-
-        results: list[MetricResult] = []
-        if power_count > 0:
-            results.append(MetricResult(
-                tag="total_gpu_power", header=f"Total GPU Power {_gpu_count_suffix(power_count)}",
-                unit=str(PowerMetricUnit.WATT), avg=total_power_w, count=None,
-            ))  # fmt: skip
-        else:
-            self.debug("No GPU power data available")
-
-        if energy_count > 0:
-            results.append(MetricResult(
-                tag="total_gpu_energy", header=f"Total GPU Energy {_gpu_count_suffix(energy_count)}",
-                unit=str(EnergyMetricUnit.JOULE), avg=total_energy_j, count=None,
-            ))  # fmt: skip
-        else:
-            self.debug("No GPU energy data available, skipping total_gpu_energy")
-
-        if total_output_tokens is not None and total_energy_j > 0:
-            results.append(MetricResult(
-                tag="output_tokens_per_joule", header=f"Output Tokens per Joule {_gpu_count_suffix(energy_count)}",
-                unit=str(GenericMetricUnit.TOKENS_PER_JOULE),
-                avg=total_output_tokens / total_energy_j, count=None,
-            ))  # fmt: skip
-        else:
-            self.debug(
-                lambda: (
-                    f"Skipping output_tokens_per_joule: "
-                    f"total_output_tokens={total_output_tokens}, "
-                    f"total_energy_j={total_energy_j:.2f}"
-                )
-            )
-
-        if concurrency is not None and energy_count > 0:
-            results.append(MetricResult(
-                tag="energy_per_user", header=f"Energy per User {_gpu_count_suffix(energy_count)}",
-                unit=str(GenericMetricUnit.JOULES_PER_USER),
-                avg=total_energy_j / concurrency, count=None,
-            ))  # fmt: skip
-        else:
-            self.debug(
-                lambda: (
-                    f"Skipping energy_per_user: "
-                    f"concurrency={concurrency}, energy_count={energy_count}"
-                )
-            )
-        return results
+        field = _PLATFORM_ENERGY_FIELDS.get(platform)
+        if field is None:
+            return 0.0, 0
+        return self._sum_gpu_energy_joules(tf, platform, field)

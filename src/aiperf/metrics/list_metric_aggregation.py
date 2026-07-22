@@ -68,7 +68,7 @@ class TDigestListMetricAggregator:
     def sum(self) -> float:
         """Exact running sum of all samples — for the
         :class:`MetricSeriesProtocol` so derived-sum metrics can compute
-        uniformly across this and :class:`MetricArray`."""
+        uniformly across every MetricAggregator implementation."""
         return self._sum
 
     def __len__(self) -> int:
@@ -131,7 +131,7 @@ class TDigestListMetricAggregator:
 
     def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult:
         """Return a :class:`MetricResult` with the same field set as
-        ``MetricArray.to_result``. Percentiles come from the t-digest;
+        the exact numpy-percentile reference. Percentiles come from the t-digest;
         every other stat is exact."""
         if self._count == 0:
             return MetricResult(tag=tag, header=header, unit=unit, count=0)

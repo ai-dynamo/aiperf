@@ -14,9 +14,11 @@ from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
     AggregationKind,
+    MetricFlags,
     MetricType,
     MetricValueTypeT,
 )
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.messages import MetricRecordsData
 from aiperf.common.models import MetricResult, TimesliceResult
@@ -24,6 +26,10 @@ from aiperf.common.types import MetricTagT
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
 from aiperf.metrics.accumulator_sweeps import compute_sweep_curves
 from aiperf.metrics.base_metric import BaseMetric
+from aiperf.metrics.cache_reporting_hint import (
+    CACHE_REPORTING_HINT,
+    usage_without_cache_in_record,
+)
 from aiperf.metrics.column_store import ColumnStore
 from aiperf.metrics.derived_latency import (
     inject_adjusted_latency_metrics,
@@ -32,7 +38,14 @@ from aiperf.metrics.derived_latency import (
 from aiperf.metrics.display_units import to_display_unit
 from aiperf.metrics.metric_dicts import MetricResultsDict, metric_result_from_array
 from aiperf.metrics.metric_registry import MetricRegistry
-from aiperf.metrics.network_adjusted_analyzer import inject_network_adjusted_metrics
+from aiperf.metrics.network_adjusted_analyzer import (
+    compute_network_adjusted_arrays,
+    inject_network_adjusted_from_arrays,
+)
+from aiperf.metrics.replay_sched_lag_analyzer import inject_replay_sched_lag_metrics
+from aiperf.metrics.types.replay_sched_lag_metrics import (
+    REPLAY_SCHED_DEGRADED_THRESHOLD_MS,
+)
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 if TYPE_CHECKING:
@@ -51,6 +64,17 @@ _AGGREGATE_FUNCS: dict[AggregationKind, Callable[[np.ndarray], float]] = {
 }
 
 
+class _MetricClassLookup:
+    def __init__(self, metric_classes: dict[MetricTagT, Any]) -> None:
+        self._metric_classes = metric_classes
+
+    def get_class(self, tag: MetricTagT) -> Any:
+        metric_class = self._metric_classes.get(tag)
+        if metric_class is None:
+            raise KeyError(tag)
+        return metric_class
+
+
 class MetricsAccumulator(BaseMetricsProcessor):
     """Numpy-backed accumulator for inference metrics.
 
@@ -58,6 +82,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
     per-value stats, AGGREGATE metrics one scalar via :class:`AggregationKind`,
     DERIVED metrics computed from those at summarize time.
     """
+
+    # RecordsManager routes phase-scoped-export accumulators through
+    # export_results(ctx) so warmup records are excluded from profiling summaries.
+    supports_phase_scoped_export = True
 
     def __init__(
         self,
@@ -76,16 +104,33 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # summarize() when network latency calibration is active. None = no-op.
         self._network_rtt_ns: float | None = None
 
+        # One-shot latch for the run-level "replay schedule degraded" warning
+        # emitted by inject_replay_sched_lag_metrics (fires at most once per run).
+        self._replay_degraded_warned: bool = False
+
+        # One-shot latch for the mid-run "enable cache reporting" server-knob hint.
+        self._warned_missing_cache_reporting: bool = False
+
         # Derive functions for DERIVED metrics
         # _setup_metrics includes transitive dependencies (RECORD/AGGREGATE),
         # so filter to only metrics that actually have derive_value.
+        # Bind derive_value off fresh per-run instances (not MetricRegistry
+        # singletons) so any metric instance state (e.g. warn-once latches) is
+        # scoped to this run rather than shared process-wide.
         self._derive_funcs: dict[
             MetricTagT, Callable[[MetricResultsDict], MetricValueTypeT]
-        ] = {
-            metric.tag: metric.derive_value  # type: ignore
-            for metric in self._setup_metrics(MetricType.DERIVED)
-            if metric.type == MetricType.DERIVED
-        }
+        ] = {}
+        # Derived tags anchored to a run-global reference (``timeslice_derivable
+        # = False``, e.g. the replay send-lag family): re-deriving them per
+        # timeslice would re-anchor each slice at its own reference and erase the
+        # run-wide signal, so the per-slice derivation skips them.
+        self._non_timeslice_derived_tags: set[MetricTagT] = set()
+        for metric in self._setup_metrics(MetricType.DERIVED):
+            if metric.type != MetricType.DERIVED:
+                continue
+            self._derive_funcs[metric.tag] = type(metric)().derive_value  # type: ignore
+            if not getattr(metric, "timeslice_derivable", True):
+                self._non_timeslice_derived_tags.add(metric.tag)
 
         _all_metric_classes: list[type[BaseMetric]] = MetricRegistry.all_classes()
         self._tags_to_types: dict[MetricTagT, MetricType] = {
@@ -123,6 +168,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     async def process_record(self, record: MetricRecordsData) -> None:
         """Ingest a single ``MetricRecordsData`` into columnar storage."""
+        self._maybe_hint_missing_cache_reporting(record)
         idx = self._next_record_idx
         self._next_record_idx += 1
         meta = record.metadata
@@ -163,10 +209,26 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 "worker_id": meta.worker_id,
                 "record_processor_id": meta.record_processor_id,
                 "benchmark_phase": str(meta.benchmark_phase),
+                "phase_index": str(meta.phase_index)
+                if meta.phase_index is not None
+                else None,
                 "x_correlation_id": meta.x_correlation_id,
                 "conversation_id": meta.conversation_id,
             },
         )
+
+    def _maybe_hint_missing_cache_reporting(self, record: MetricRecordsData) -> None:
+        """Warn once, mid-run, when the server reports token usage but no prompt-cache
+        reads — the signature of a cache-capable server that hasn't been told to
+        report ``cached_tokens``. Fires on the first qualifying record so a long run
+        can be aborted and re-launched with the flag set; the end-of-run console
+        exporter emits the same hint for anyone who only reads the final summary.
+        """
+        if self._warned_missing_cache_reporting:
+            return
+        if usage_without_cache_in_record(record.metrics):
+            self._warned_missing_cache_reporting = True
+            self.warning(CACHE_REPORTING_HINT)
 
     def query_time_range(self, start_ns: int, end_ns: int) -> BoolArray:
         """Return a boolean mask where True marks records in [start_ns, end_ns)."""
@@ -201,6 +263,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
             mask &= self._column_store.mask_for_categorical(
                 "benchmark_phase", phase_value
             )
+            if ctx.phase_index is not None:
+                mask &= self._column_store.mask_for_categorical(
+                    "phase_index", str(ctx.phase_index)
+                )
             return mask
         if ctx.start_ns is not None:
             mask &= self._column_store.start_ns[:n] >= ctx.start_ns
@@ -219,12 +285,16 @@ class MetricsAccumulator(BaseMetricsProcessor):
         *,
         window_start_ns: int | None = None,
         window_end_ns: int | None = None,
+        is_timeslice: bool = False,
     ) -> dict[MetricTagT, MetricResult]:
         """Phases: collect scalars/arrays, resolve derived, build MetricResults.
 
         For metrics flagged ``PERCENTILE_INCLUDES_FAILED_REQUESTS`` (issue #688),
         appends a separate ``adj_<tag>`` MetricResult with the failure-inflated
         distribution after the regular build pass.
+
+        ``is_timeslice`` skips derived metrics anchored to a run-global reference
+        (``timeslice_derivable = False``); see ``_non_timeslice_derived_tags``.
         """
         scalar_dict: MetricResultsDict = MetricResultsDict()
         scalar_dict.window_start_ns = window_start_ns
@@ -235,7 +305,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         self._collect_scalars_and_arrays(
             mask, scalar_dict, record_arrays, sketch_results
         )
-        self._resolve_derived_metrics(scalar_dict)
+        self._resolve_derived_metrics(scalar_dict, is_timeslice=is_timeslice)
 
         output = self._build_metric_results(scalar_dict, record_arrays, sketch_results)
 
@@ -364,9 +434,31 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # uniformly via the scalar_dict.
         scalar_dict[tag] = float(backend.sum)
 
-    def _resolve_derived_metrics(self, scalar_dict: MetricResultsDict) -> None:
-        """Run derive functions over the scalar dict, logging failures."""
+    def _warn_replay_degraded(self, p50: float, p90: float, p99: float) -> None:
+        """Emit the run-level replay-schedule-degraded warning at most once."""
+        if self._replay_degraded_warned:
+            return
+        self._replay_degraded_warned = True
+        self.warning(
+            f"Replay schedule degraded: anchored send lag p50={p50:.0f} ms, "
+            f"p90={p90:.0f} ms, p99={p99:.0f} ms exceeds "
+            f"{REPLAY_SCHED_DEGRADED_THRESHOLD_MS:.0f} ms. Request timing no longer "
+            f"tracks the recorded schedule; consider lowering replay_speedup or the "
+            f"offered load."
+        )
+
+    def _resolve_derived_metrics(
+        self, scalar_dict: MetricResultsDict, *, is_timeslice: bool = False
+    ) -> None:
+        """Run derive functions over the scalar dict, logging failures.
+
+        When ``is_timeslice`` is True, derived metrics anchored to a run-global
+        reference (``_non_timeslice_derived_tags``) are skipped so each slice is
+        not re-anchored at its own reference.
+        """
         for tag, derive_func in self._derive_funcs.items():
+            if is_timeslice and tag in self._non_timeslice_derived_tags:
+                continue
             try:
                 scalar_dict[tag] = derive_func(scalar_dict)
             except NoMetricValue as e:
@@ -392,14 +484,42 @@ class MetricsAccumulator(BaseMetricsProcessor):
         )
         return self._convert_display_units(raw)
 
-    @staticmethod
     def _convert_display_units(
+        self,
         results: dict[MetricTagT, MetricResult],
     ) -> dict[MetricTagT, MetricResult]:
         """Convert all metric results from native units to display units."""
+        registry = _MetricClassLookup(self._metric_classes)
         return {
-            tag: to_display_unit(result, MetricRegistry)
+            tag: to_display_unit(result, registry) for tag, result in results.items()
+        }
+
+    def _should_include_in_summary(self, tag: MetricTagT) -> bool:
+        """Return False for hidden internal/experimental metrics."""
+        metric_class = self._metric_classes.get(tag)
+        if metric_class is None:
+            return True
+        has_flags = getattr(metric_class, "has_flags", None)
+        if not callable(has_flags):
+            return True
+        if (
+            has_flags(MetricFlags.INTERNAL)
+            and not Environment.DEV.SHOW_INTERNAL_METRICS
+        ):
+            return False
+        return not (
+            has_flags(MetricFlags.EXPERIMENTAL)
+            and not Environment.DEV.SHOW_EXPERIMENTAL_METRICS
+        )
+
+    def _filter_hidden_metrics(
+        self, results: dict[MetricTagT, MetricResult]
+    ) -> dict[MetricTagT, MetricResult]:
+        """Drop computed metrics that should not appear in summary exports."""
+        return {
+            tag: result
             for tag, result in results.items()
+            if self._should_include_in_summary(tag)
         }
 
     def set_network_rtt_ns(self, rtt_ns: float | None) -> None:
@@ -428,6 +548,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 start_ns=ctx.start_ns or None,
                 end_ns=ctx.end_ns or None,
                 phase=ctx.phase,
+                phase_index=ctx.phase_index,
             )
         return self._summarize_for_export_context(export_ctx)
 
@@ -445,6 +566,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         )
 
         timeslices: list[TimesliceResult] | None = None
+        adjusted_arrays: dict[str, FloatArray] | None = None
 
         has_records = self._column_store.count > 0 and (
             mask is None or bool(mask.any())
@@ -458,8 +580,18 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 window_start_ns=window_start_ns,
                 window_end_ns=window_end_ns,
             )
+            # Network-RTT-adjusted latency: the per-record subtraction is
+            # window-independent, so compute the clamped arrays ONCE here and let
+            # the overall summary and every timeslice aggregate masked views. No-op
+            # unless the RecordsManager delivered a (truthy) RTT via set_network_rtt_ns.
+            if self._network_rtt_ns:
+                adjusted_arrays = compute_network_adjusted_arrays(
+                    self._column_store, self._network_rtt_ns
+                )
             if self._slice_duration_ns is not None:
-                timeslices = self._compute_timeslices(sweeps, mask=mask)
+                timeslices = self._compute_timeslices(
+                    sweeps, mask=mask, adjusted_arrays=adjusted_arrays
+                )
 
         overall_results = self._convert_display_units(overall_results)
 
@@ -469,17 +601,24 @@ class MetricsAccumulator(BaseMetricsProcessor):
             inject_derived_latency_metrics(
                 self._column_store, overall_results, mask=mask
             )
-            # Network-RTT-adjusted latency metrics — subtract the run-level mean
-            # RTT from the request-start-anchored latency arrays. No-op unless the
-            # RecordsManager delivered a (truthy) RTT via set_network_rtt_ns.
-            if self._network_rtt_ns:
-                inject_network_adjusted_metrics(
-                    self._column_store,
+            if adjusted_arrays is not None:
+                inject_network_adjusted_from_arrays(
+                    adjusted_arrays,
                     overall_results,
                     self._network_rtt_ns,
                     mask=mask,
                 )
+            # Run-scoped replay send-lag family (fixed-schedule only): anchored at
+            # the run-global least-late request, so computed once over the masked
+            # offset column, never per timeslice.
+            inject_replay_sched_lag_metrics(
+                self._column_store,
+                overall_results,
+                mask=mask,
+                warn_degraded=self._warn_replay_degraded,
+            )
 
+        overall_results = self._filter_hidden_metrics(overall_results)
         self.debug(lambda: f"Summarized {len(overall_results)} metric results")
         return AccumulatorMetricsSummary(
             results=overall_results,
@@ -521,6 +660,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         self,
         sweeps: Any,
         mask: BoolArray | None = None,
+        adjusted_arrays: dict[str, FloatArray] | None = None,
     ) -> list[TimesliceResult]:
         """Compute per-timeslice results by partitioning the time range.
 
@@ -597,11 +737,23 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 full_mask,
                 window_start_ns=int(window_start),
                 window_end_ns=int(window_end),
+                is_timeslice=True,
             )
             if len(results) == 0:
                 continue
             results.update(sweeps.compute_metrics(window_start, window_end))
             results = self._convert_display_units(results)
+            # Network-RTT-adjusted latency metrics per window, aggregated from the
+            # arrays precomputed once in summarize() — this window just slices its
+            # records out via full_mask. None unless a run-level RTT was delivered.
+            if adjusted_arrays is not None:
+                inject_network_adjusted_from_arrays(
+                    adjusted_arrays,
+                    results,
+                    self._network_rtt_ns,
+                    mask=full_mask,
+                )
+            results = self._filter_hidden_metrics(results)
             timeslices.append(
                 TimesliceResult(
                     start_ns=int(window_start),
@@ -612,7 +764,3 @@ class MetricsAccumulator(BaseMetricsProcessor):
             )
 
         return timeslices
-
-    async def full_metrics(self) -> dict[MetricTagT, MetricResult]:
-        """Returns the full metrics results, including derived metrics."""
-        return self._compute_results()

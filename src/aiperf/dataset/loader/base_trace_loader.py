@@ -111,10 +111,12 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         )
 
         # Precedence: per-dataset block_size > plugin metadata default > hardcoded fallback.
-        # Only synthetic-style datasets carry prompts.block_size; FileDataset has no
-        # equivalent field, so fall through to the plugin/default chain.
-        prompts = getattr(dataset, "prompts", None)
-        user_block_size = getattr(prompts, "block_size", None) if prompts else None
+        # File datasets carry block_size directly; synthetic-style datasets carry it on
+        # prompts.block_size.
+        user_block_size = getattr(dataset, "block_size", None)
+        if user_block_size is None:
+            prompts = getattr(dataset, "prompts", None)
+            user_block_size = getattr(prompts, "block_size", None) if prompts else None
         if user_block_size is not None:
             self._block_size = user_block_size
         elif default_block_size is not None:
@@ -286,12 +288,19 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         Default implementation extracts `timestamp`, `delay`, `output_length`,
         and `extra` via getattr, which works for both Mooncake and Bailian traces.
         """
+        # extra="allow" surfaces stray row keys as attributes; only a DECLARED
+        # request_body field (e.g. BasetenTrace) may override the row's extra.
+        request_body = (
+            getattr(trace, "request_body", None)
+            if "request_body" in type(trace).model_fields
+            else None
+        )
         return Turn(
             timestamp=getattr(trace, "timestamp", None),
             delay=getattr(trace, "delay", None),
             texts=[Text(name="text", contents=[prompt])],
             max_tokens=getattr(trace, "output_length", None),
-            extra_body=getattr(trace, "extra", None),
+            extra_body=request_body or getattr(trace, "extra", None),
         )
 
     def convert_to_conversations(

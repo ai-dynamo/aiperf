@@ -112,6 +112,11 @@ class CreditReturn(
         request_latency_ns: Request latency in nanoseconds using the same
             start/end semantics as the records-pipeline request_latency metric.
             None when the request did not produce a valid content response.
+        inter_token_latency_ns: Inter-token latency in nanoseconds for adaptive SLA evaluation.
+            None when the request does not have valid content timing and
+            output sequence length.
+        output_sequence_length: Output sequence length in tokens from usage
+            data, when available.
         worker_id: Returning worker's id. Only stamped on the PUSH/PULL return
             channel (CommAddress.CREDIT_RETURN), where there is no ZMQ envelope
             identity; None on the ROUTER/DEALER path (identity comes from the
@@ -123,6 +128,8 @@ class CreditReturn(
     first_token_sent: bool = False
     error: str | None = None
     request_latency_ns: int | None = None
+    inter_token_latency_ns: float | None = None
+    output_sequence_length: int | None = None
     worker_id: str | None = None
 
 
@@ -141,6 +148,7 @@ class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):
     credit_id: int
     phase: CreditPhase
     ttft_ns: int
+    phase_index: int | None = None
 
 
 # Union type for decoding worker -> router messages

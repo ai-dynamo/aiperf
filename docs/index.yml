@@ -27,6 +27,8 @@ navigation:
       path: tutorials/openai-text-endpoints.md
     - page: Profile the OpenAI Responses API with AIPerf
       path: tutorials/openai-responses.md
+    - page: Profile the Anthropic Messages API with AIPerf
+      path: tutorials/anthropic-messages-endpoint.md
     - page: Profile Hugging Face TGI Models with AIPerf
       path: tutorials/huggingface-tgi.md
     - page: Profile Vision Language Models with AIPerf
@@ -113,6 +115,10 @@ navigation:
       path: tutorials/request-rate-concurrency.md
     - page: "Prefill Concurrency: Fine-Grained Benchmarking Control"
       path: tutorials/prefill-concurrency.md
+    - page: Adaptive Scale
+      path: tutorials/adaptive-scale.md
+    - page: Multi-Phase Workflows
+      path: tutorials/multi-phase-workflows.md
     - page: Time-Based Benchmarking
       path: tutorials/time-based-benchmarking.md
     - page: Multi-URL Load Balancing
@@ -132,6 +138,8 @@ navigation:
       path: tutorials/sweeps.md
     - page: Adaptive Search
       path: tutorials/adaptive-search.md
+    - page: Adaptive Scale
+      path: tutorials/adaptive-scale.md
     - page: Time Slicing for Performance Analysis
       path: tutorials/timeslices.md
     - page: HTTP Trace Metrics Guide
@@ -181,6 +189,8 @@ navigation:
     path: benchmark-modes/timing-modes-reference.md
   - page: Trace Replay with Mooncake Traces
     path: benchmark-modes/trace-replay.md
+  - page: Baseten Trace Replay
+    path: tutorials/baseten-trace.md
   - page: Conversation DAG Benchmarks
     path: benchmark-modes/dag.md
 
@@ -199,6 +209,8 @@ navigation:
     path: environment-variables.md
   - page: AIPerf Metrics Reference
     path: metrics-reference.md
+  - page: GPU Telemetry & Power-Efficiency Dataflow
+    path: reference/gpu-telemetry-metrics-dataflow.md
   - page: Benchmark Datasets
     path: benchmark-datasets.md
   - page: Pre-Flight Tokenizer Auto Detection
