@@ -45,6 +45,8 @@ from aiperf.common.types import JsonObject, MetricTagT, PhaseKind
 from aiperf.common.utils import load_json_str
 
 _logger = AIPerfLogger(__name__)
+_SSE_DATA_FIELD_NAME = str(SSEFieldType.DATA)
+_SSE_DATA_PREFIX = f"{SSEFieldType.DATA}:"
 
 
 class MetricResult(JsonMetricResult):
@@ -619,6 +621,21 @@ class SSEMessage:
         if isinstance(raw_message, bytes):
             raw_message = raw_message.decode("utf-8")
 
+        if (
+            "\n" not in raw_message
+            and "\r" not in raw_message
+            and raw_message.startswith(_SSE_DATA_PREFIX)
+        ):
+            return cls(
+                perf_ns=perf_ns,
+                packets=[
+                    SSEField(
+                        name=_SSE_DATA_FIELD_NAME,
+                        value=raw_message[len(_SSE_DATA_PREFIX) :].strip(),
+                    )
+                ],
+            )
+
         message = cls(perf_ns=perf_ns)
         for line in raw_message.splitlines():
             if not (line := line.strip()):
@@ -670,6 +687,9 @@ class SSEMessage:
         Returns:
             str: The combined data contents of the SSE message, joined by newlines.
         """
+        if len(self.packets) == 1 and self.packets[0].name == _SSE_DATA_FIELD_NAME:
+            return self.packets[0].value or ""
+
         return "\n".join(
             packet.value
             for packet in self.packets
@@ -690,7 +710,10 @@ class SSEMessage:
         """Get the JSON representation of the response."""
         data_content = None
         try:
-            data_content = self.get_text()
+            if len(self.packets) == 1 and self.packets[0].name == _SSE_DATA_FIELD_NAME:
+                data_content = self.packets[0].value
+            else:
+                data_content = self.get_text()
             if data_content in ("", None, "[DONE]"):
                 return None
             return load_json_str(data_content)

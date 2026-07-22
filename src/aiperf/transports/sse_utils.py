@@ -11,6 +11,7 @@ from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.models import SSEMessage
 
 _logger = AIPerfLogger(__name__)
+_SSE_DATA_FIELD_NAME = str(SSEFieldType.DATA)
 
 
 class AsyncSSEStreamReader:
@@ -84,6 +85,12 @@ class AsyncSSEStreamReader:
         If so, look for any comment field and raise an SSEResponseError
         with that comment as the error message, otherwise use the full message.
         """
+        if (
+            len(message.packets) == 1
+            and message.packets[0].name == _SSE_DATA_FIELD_NAME
+        ):
+            return
+
         has_error_event = any(
             packet.name == SSEFieldType.EVENT and packet.value == SSEEventType.ERROR
             for packet in message.packets
