@@ -335,7 +335,7 @@ async def test_dispatch_join_turn_has_forks_false():
 
 @pytest.mark.asyncio
 async def test_dispatch_join_turn_uses_blocking_issue_credit_not_try():
-    """Finding 5: joins must not route through non-blocking try_issue_credit."""
+    """Joins must not route through non-blocking try_issue_credit."""
     issuer = _make_issuer()
     issuer.try_issue_credit = AsyncMock(return_value=None)
     issuer.issue_credit = AsyncMock(return_value=True)

@@ -34,13 +34,7 @@ def test_tracker_no_cap_passthrough():
     tracker = DelayCapTracker(cap_seconds=None)
     assert tracker.clamp(5_000.0) == 5_000.0
     assert tracker.capped_count == 0
-    # (b) LEGITIMATE v2 BEHAVIOR CHANGE: v1 src/aiperf/dataset/loader/_delay_cap.py:47-48
-    # returned delay_ms immediately when cap_seconds is None, never touching
-    # max_observed_ms (so it stayed 0.0). v2 src/aiperf/dataset/loader/_delay_cap.py:78-83
-    # records max_observed_ms BEFORE the no-cap check so log_summary can warn on
-    # absurd uncapped delays (UNCAPPED_DELAY_WARN_MS feature, added in v2). The
-    # value passes through unclamped but max_observed_ms now tracks it. Intent
-    # (no-cap = no clamping) preserved; the observed-max assertion follows v2.
+    # Uncapped delays still update max_observed_ms for log_summary warnings.
     assert tracker.max_observed_ms == 5_000.0
 
 

@@ -36,8 +36,9 @@ from the parent session with no cross-process plumbing. The orchestrator
 bumps the parent's sticky refcount via
 ``StickyCreditRouter.register_child_routing`` before dispatching FORK-mode
 children and releases it via ``release_child_routing`` when each child
-terminates. SPAWN-mode children do not pin to the parent's worker and
-therefore do not touch sticky refcounts.
+terminates. SPAWN-mode children still carry ``parent_correlation_id`` so
+they co-locate on the parent's worker while that sticky entry is live,
+but they do not bump sticky refcounts (no ``register_child_routing``).
 
 Credit return flow
 ------------------
@@ -595,7 +596,8 @@ class BranchOrchestrator:
 
         FORK children sticky-route to the parent's worker; the refcount is
         balanced by ``_handle_child_done``'s ``release_child_routing`` on leaf.
-        SPAWN children route freely and register no refcount.
+        SPAWN children also sticky-hit via ``parent_correlation_id`` while the
+        parent entry is live, but register no refcount.
         """
         if mode == ConversationBranchMode.FORK and self._sticky_router is not None:
             self._sticky_router.register_child_routing(parent_corr)
@@ -785,7 +787,9 @@ class BranchOrchestrator:
         FORK-mode children are routed to the parent's worker via sticky routing
         (``parent_correlation_id`` keying); the worker seeds each child's
         ``UserSession.turn_list`` from the parent's local session.
-        SPAWN-mode children route freely (no sticky pin).
+        SPAWN-mode children also sticky-hit via ``parent_correlation_id`` while
+        the parent entry is live (no refcount bump); they route least-loaded
+        only after that entry is gone.
         """
         if self._cleaning_up:
             return False

@@ -75,9 +75,11 @@ class DagJsonlLoader(BaseFileLoader):
       context and sticky-route to the parent's worker. Bare-string entries
       terminate the parent; object entries with ``background=True`` keep
       the parent running its remaining turns.
-    - ``spawns``: SPAWN branches. Children start fresh and route freely;
-      bare-string auto-joins on the next turn, ``DagSpawn`` objects carry
-      an explicit ``join_at``.
+    - ``spawns``: SPAWN branches. Children start fresh; while the parent's
+      sticky entry is live they co-locate on that worker (no sticky
+      refcount bump), and route least-loaded once it is gone. Bare-string
+      auto-joins on the next turn, ``DagSpawn`` objects carry an explicit
+      ``join_at``.
 
     Both keywords may appear on the same turn; they desugar into separate
     ``ConversationBranchInfo`` entries with distinct ``branch_id``s.

@@ -75,10 +75,9 @@ async def test_dispatch_join_turn_suppresses_on_stop():
 async def test_dispatch_join_turn_blocks_on_prefill_saturation():
     """Prefill saturation must wait (blocking acquire), not drop the join.
 
-    Finding 5: the old non-replay path used ``try_issue_credit``, which
-    returns ``None`` when prefill slots are full; ``result is True`` then
-    permanently suppressed the join. Joins must use blocking
-    ``acquire_prefill_slot`` like ``dispatch_child_turn``.
+    Non-blocking ``try_issue_credit`` returns ``None`` when prefill slots are
+    full; treating that as success permanently suppressed the join. Joins must
+    use blocking ``acquire_prefill_slot`` like ``dispatch_child_turn``.
     """
     issuer = _make_issuer()
     pending = PendingBranchJoin(

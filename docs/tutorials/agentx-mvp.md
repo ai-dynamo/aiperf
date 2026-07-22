@@ -600,8 +600,10 @@ matching `_256k` corpus instead — e.g.
 for why that beats capping client-side. The number of requests that
 overflowed appears as the `context_overflow_count` metric (a raw count, not
 a rate), top-level in `profile_export_aiperf.json` and under `metrics` in
-the aggregate file — divide it by the run's total request count to see how
-close you were to the 1% threshold.
+the aggregate file — divide it by
+`request_count + error_request_count + skipped_context_overflow_count`
+(the same denominator the aggregate exporter uses for the 1% threshold)
+to see how close you were to the limit.
 
 **"scenario `'inferencex-agentx-mvp'` requires loader=any of …" / cannot verify corpus identity for a local weka_trace directory**
 The AgentX MVP scenario stamps `submission_valid: true` only for a pinned

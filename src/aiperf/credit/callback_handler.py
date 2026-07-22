@@ -472,10 +472,14 @@ class CreditCallbackHandler:
         #
         # Strategy dispatch (for regular multi-turn continuation) remains gated
         # behind ``can_send_any_turn`` as before. Normal gated suspend
-        # (intercept True, non-overflow) still early-returns.
+        # (intercept True, non-overflow) still early-returns past strategy
+        # dispatch, but WARMUP failure accounting must still run: accelerated
+        # cache-pressure warmup enables DAG intercept, and a non-overflow
+        # error on a gated root would otherwise skip ``record_warmup_failure``.
         if self._branch_orchestrator is not None and not overflow_terminal:
             intercepted = await self._branch_orchestrator.intercept(credit)
             if intercepted:
+                await self._handle_warmup_failure(credit, credit_return, handler, phase)
                 self._signal_all_credits_returned_if_ready(handler)
                 return
 

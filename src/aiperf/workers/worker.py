@@ -286,12 +286,16 @@ def _inject_marker_into_first_user_text(
     """
     if not marker:
         return
+    # Seed with the full marker (including ``\n\n``) so
+    # ``_content_has_marker_at_edge`` idempotency matches the string path.
+    # Multimodal list-of-parts injection still uses ``marker.strip()`` when
+    # comparing/inserting text parts.
     if not turn.texts:
-        turn.texts = [Text(contents=[marker.strip()])]
+        turn.texts = [Text(contents=[marker])]
         return
     first = turn.texts[0]
     if not first.contents:
-        first.contents = [marker.strip()]
+        first.contents = [marker]
         return
     existing = first.contents[0]
     if _content_has_marker_at_edge(existing, marker, is_prefix=is_prefix):

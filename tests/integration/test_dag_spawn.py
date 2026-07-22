@@ -3,13 +3,15 @@
 """End-to-end integration test for SPAWN-mode DAG branches.
 
 Unlike FORK mode (which inherits the parent's accumulated messages and pins
-the child to the parent's worker), SPAWN-mode children:
+the child to the parent's worker with a sticky refcount), SPAWN-mode children:
 
 - Start with an EMPTY accumulator (no parent context merged in).
-- Route freely (no sticky pin to the parent's worker).
+- Still carry ``parent_correlation_id`` (tree bookkeeping / sticky hit while
+  the parent entry is live) but do not bump sticky refcounts.
 
 This test drives the full aiperf subprocess over a minimal root+spawn-child
-fixture and asserts both invariants on the wire payloads and run stats.
+fixture and asserts the fresh-context invariant on the wire payloads and
+run stats.
 """
 
 from __future__ import annotations
@@ -54,7 +56,7 @@ def _roles_contents(messages: list[dict]) -> list[tuple[str, str | None]]:
 class TestDagSpawnEndToEnd:
     """End-to-end DAG benchmark exercising SPAWN-mode (fresh-context) branches."""
 
-    async def test_spawn_child_has_fresh_context_and_is_not_sticky_pinned(
+    async def test_spawn_child_has_fresh_context(
         self,
         cli: AIPerfCLI,
         aiperf_mock_server: AIPerfMockServer,
@@ -117,8 +119,8 @@ class TestDagSpawnEndToEnd:
         )
 
         # Parent linkage is still stamped on the child (via Credit.parent_
-        # correlation_id) — mode only changes context-inheritance and routing,
-        # not the tree-shape bookkeeping.
+        # correlation_id) — mode changes context-inheritance and sticky
+        # refcount behavior, not the tree-shape bookkeeping.
         assert root_rec.metadata.parent_correlation_id is None
         assert (
             child_rec.metadata.parent_correlation_id

@@ -25,7 +25,7 @@ DAG mode exposes one primitive with two flavors, selected by a shorthand key on 
 | Mode | Shorthand on parent turn | What the child sees | Routing | Parent fate |
 |---|---|---|---|---|
 | **FORK** | `"forks": [...]` | Inherits the parent's full conversation history, including the captured model response. | Pinned to the same worker as the parent (locality). | Bare-string entries terminate; `{"child": ..., "background": true}` keeps the parent running. |
-| **SPAWN** | `"spawns": [...]` | Starts from an empty history. Only the child's own messages go on the wire. | Free to land on any worker. | Continues; suspends only at an explicit `join_at` (or the next-turn auto-join). |
+| **SPAWN** | `"spawns": [...]` | Starts from an empty history. Only the child's own messages go on the wire. | Co-locates on the parent's client worker while that sticky entry is live (no sticky refcount bump); least-loaded once the parent entry is gone. | Continues; suspends only at an explicit `join_at` (or the next-turn auto-join). |
 
 Both keys can appear on the same turn — the scheduler treats them independently, so one turn can both fork continuations and spawn fresh sub-agents.
 
@@ -186,7 +186,7 @@ For agentic patterns where the parent eventually needs the child's result before
 `spawns: [session_id, ...]` desugars into SPAWN-mode branches. When the parent turn completes, each listed child session:
 
 - Starts with an **empty** accumulator — only its own `messages` go on the wire.
-- Routes freely (no sticky pin to the parent's worker).
+- Still carries `parent_correlation_id`, so the sticky router co-locates it on the parent's client worker while that sticky entry is live. Unlike FORK, the orchestrator does **not** bump sticky refcounts for SPAWN. Once the parent sticky entry is gone, SPAWN children route least-loaded.
 
 SPAWN targets may be referenced from multiple parents — the child conversation is effectively a fresh-context template. Use SPAWN when you're benchmarking agent-tree shapes where each sub-agent is semantically independent, not a continuation of the parent.
 
@@ -249,10 +249,11 @@ If you need each phase to wrap the previous response with a new "system-like" fr
 
 ## Reference: routing and `agent_depth`
 
-Every AIPerf session has its own `x_correlation_id` that pins it to a specific worker via sticky routing. In a DAG, FORK children inherit their parent's routing key: the router keys on the root session's correlation id, not each child's. That means:
+Every AIPerf session has its own `x_correlation_id` that pins it to a specific worker via sticky routing. In a DAG, FORK children inherit their parent's routing key: the router keys on the parent's correlation id, not each child's. Ordinary SPAWN children also carry `parent_correlation_id`, so they co-locate on the same client worker while the parent sticky entry is still live (without bumping sticky refcounts). That means:
 
 - All siblings in a fork hit the **same worker** as the parent.
-- Siblings send the same root prefix, so the worker (and its server) see a clean prefix-cache hit pattern across sibling pairs.
+- SPAWN children also land on the parent's worker while that sticky entry exists; after it is gone they fall back to least-loaded.
+- FORK siblings send the same root prefix, so the worker (and its server) see a clean prefix-cache hit pattern across sibling pairs.
 
 This is what makes FORK mode useful for exercising prefix-cache and KV-aware routing — without sticky routing across the fork, siblings would scatter across workers and the prefix-share benefit would be invisible on the server.
 

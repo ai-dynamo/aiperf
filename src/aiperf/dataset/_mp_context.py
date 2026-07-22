@@ -28,7 +28,8 @@ from __future__ import annotations
 import contextlib
 import multiprocessing
 import os
-import platform
+
+from aiperf.common.constants import IS_LINUX
 
 _LOADER_PRELOAD = [
     # Module imports happen once in the forkserver helper so workers don't
@@ -48,6 +49,19 @@ _ENV_PRELOAD_TRUST = "AIPERF_LOADER_PRELOAD_TRUST_REMOTE_CODE"
 _ENV_PRELOAD_REVISION = "AIPERF_LOADER_PRELOAD_REVISION"
 
 _loader_ctx: multiprocessing.context.BaseContext | None = None
+_loader_ctx_key: tuple[str, bool, str] | None = None
+
+
+def _preload_key(
+    preload_tokenizer: str | None,
+    *,
+    trust_remote_code: bool,
+    revision: str | None,
+) -> tuple[str, bool, str] | None:
+    """Stable identity for the tokenizer the forkserver helper should CoW-share."""
+    if not preload_tokenizer:
+        return None
+    return (preload_tokenizer, trust_remote_code, revision or "main")
 
 
 def get_loader_mp_context(
@@ -64,13 +78,27 @@ def get_loader_mp_context(
     macOS this is a ``spawn`` context (no helper; each worker is a fresh
     interpreter, and ``preload_tokenizer`` is a no-op).
 
-    The context is built once and cached; later calls with a different
-    ``preload_tokenizer`` reuse the original helper. Callers are expected
-    to share a single tokenizer per process lifetime (the typical AIPerf
-    flow). Workers receiving a different name fall back to on-demand load.
+    The context is built once and cached under the first non-``None``
+    tokenizer identity. Later calls with the same identity (or with no
+    preload request) reuse it. A later call with a *different* tokenizer /
+    trust / revision raises :class:`ValueError`: the forkserver helper is
+    process-global and cannot swap its CoW-preloaded tokenizer mid-process.
     """
-    global _loader_ctx
+    global _loader_ctx, _loader_ctx_key
+    key = _preload_key(
+        preload_tokenizer,
+        trust_remote_code=trust_remote_code,
+        revision=revision,
+    )
     if _loader_ctx is not None:
+        if key is not None and _loader_ctx_key is not None and key != _loader_ctx_key:
+            raise ValueError(
+                "loader mp context already preloaded for "
+                f"tokenizer={_loader_ctx_key[0]!r} trust_remote_code="
+                f"{_loader_ctx_key[1]!r} revision={_loader_ctx_key[2]!r}; "
+                f"cannot switch to tokenizer={key[0]!r} trust_remote_code="
+                f"{key[1]!r} revision={key[2]!r}. Use one tokenizer per process."
+            )
         return _loader_ctx
 
     # Env must be set BEFORE the forkserver helper is spawned: it reads
@@ -81,12 +109,13 @@ def get_loader_mp_context(
         os.environ[_ENV_PRELOAD_TRUST] = "true" if trust_remote_code else "false"
         os.environ[_ENV_PRELOAD_REVISION] = revision or "main"
 
-    method = "forkserver" if platform.system() == "Linux" else "spawn"
+    method = "forkserver" if IS_LINUX else "spawn"
     ctx = multiprocessing.get_context(method)
     if method == "forkserver":
         ctx.set_forkserver_preload(_LOADER_PRELOAD)
         _eagerly_start_forkserver()
     _loader_ctx = ctx
+    _loader_ctx_key = key
     return _loader_ctx
 
 

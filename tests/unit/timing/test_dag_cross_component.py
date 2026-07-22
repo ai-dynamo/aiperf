@@ -16,7 +16,7 @@ machinery:
 - :class:`ConversationSource` (start_branch_child / start_pre_session_child /
   get_metadata exception paths).
 - :class:`WorkerLoad` (active_sessions accounting under FORK fanout, sticky
-  pinning of FORK siblings vs SPAWN free-routing).
+  pinning of FORK siblings vs SPAWN sticky co-locate without refcount bump).
 
 These tests intentionally exercise documented invariants of the surrounding
 components, not just the orchestrator's internal state.
@@ -643,8 +643,8 @@ async def test_fork_siblings_pin_to_parents_worker_via_sticky_routing(benchmark_
 
 @pytest.mark.asyncio
 async def test_spawn_child_does_not_call_register_child_routing():
-    """SPAWN-mode children route freely; the orchestrator does NOT bump
-    sticky refcount for them."""
+    """SPAWN-mode children do not bump sticky refcount; the orchestrator
+    does NOT call ``register_child_routing`` for them."""
     branch = ConversationBranchInfo(
         branch_id="root:0",
         child_conversation_ids=["s0", "s1"],

@@ -217,9 +217,11 @@ class ConversationSource:
         parent via ``parent_correlation_id``; the credit router pins the child
         to the parent's worker, where ``UserSessionManager.create_and_store``
         seeds ``turn_list`` by cloning the parent's in-memory session.
-        SPAWN-mode children start with a fresh context, but the sticky pin to
-        the parent's correlation_id is preserved at this layer — routing
-        freedom is enforced upstream by the orchestrator/router.
+        SPAWN-mode children start with a fresh context, but still carry
+        ``parent_correlation_id`` so the sticky router co-locates them on the
+        parent's worker while that entry is live. The orchestrator skips
+        SPAWN sticky refcount bumps; least-loaded routing applies only once
+        the parent sticky entry is gone.
 
         ``root_correlation_id`` is the depth-0 root of the spawning parent's
         tree; the child inherits it so all descendants of one root share a

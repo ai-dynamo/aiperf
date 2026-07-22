@@ -1115,14 +1115,15 @@ class TestStickyCreditRouterDAGChildren:
     async def test_spawn_child_does_not_create_parent_entry_or_leak_sessions(
         self, benchmark_run
     ) -> None:
-        """Finding 6 (SPAWN): a SPAWN child whose parent's sticky entry was
-        already evicted must NOT auto-create a parent-keyed entry.
+        """A SPAWN child whose parent's sticky entry was already evicted must
+        NOT auto-create a parent-keyed entry.
 
         The auto-create path keyed by ``parent_correlation_id`` would mint a
         fresh _StickyEntry and bump ``active_sessions`` with no eviction path
         (final-turn eviction is gated on parent_correlation_id is None),
         permanently leaking active_sessions and biasing load balancing.
-        SPAWN children route freely instead."""
+        With the parent entry gone, SPAWN children route least-loaded
+        instead."""
         router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._router_client.send_to = AsyncMock()
         router._register_worker("worker-A")
@@ -1151,8 +1152,8 @@ class TestStickyCreditRouterDAGChildren:
     async def test_fork_child_does_not_create_parent_entry_when_absent(
         self, benchmark_run
     ) -> None:
-        """Finding 6: a FORK child whose parent sticky entry was already
-        evicted must NOT auto-create a parent-keyed entry (same leak as SPAWN).
+        """A FORK child whose parent sticky entry was already evicted must NOT
+        auto-create a parent-keyed entry (same leak as SPAWN).
 
         Auto-create keyed by ``parent_correlation_id`` would mint a fresh
         ``_StickyEntry`` and bump ``active_sessions`` with no eviction path

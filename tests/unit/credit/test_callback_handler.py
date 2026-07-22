@@ -609,6 +609,53 @@ async def test_overflow_with_intercept_true_still_records_warmup_failure(
 
 
 @pytest.mark.asyncio
+async def test_non_overflow_warmup_gated_intercept_still_records_warmup_failure(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_branch_orchestrator,
+):
+    """Non-overflow WARMUP + gated intercept must still record warmup failure.
+
+    Accelerated cache-pressure warmup enables DAG intercept during WARMUP.
+    A plain HTTP error on a gated root must not early-return past
+    ``record_warmup_failure`` / live abort (overflow already skips intercept).
+    """
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    mock_branch_orchestrator.intercept = AsyncMock(return_value=True)
+    mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+    strategy = MagicMock()
+    strategy.handle_credit_return = AsyncMock()
+    strategy.record_warmup_failure = MagicMock()
+    strategy.wants_returns_after_sending_complete = False
+    handler = CreditCallbackHandler(
+        mock_concurrency,
+        branch_orchestrator=mock_branch_orchestrator,
+        session_tree_registry=registry,
+    )
+    handler.register_phase(
+        phase=CreditPhase.WARMUP,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=strategy,
+    )
+    credit = make_credit(turn_index=0, num_turns=5, phase=CreditPhase.WARMUP)
+    assert not credit.is_final_turn
+
+    await handler.on_credit_return(
+        "worker-1",
+        make_credit_return(credit, error="Internal server error: pool exhausted"),
+    )
+
+    mock_branch_orchestrator.intercept.assert_awaited_once_with(credit)
+    strategy.record_warmup_failure.assert_called_once_with(credit.conversation_id)
+    strategy.handle_credit_return.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_non_overflow_gated_suspend_still_early_returns(
     mock_concurrency,
     mock_progress,

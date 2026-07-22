@@ -891,7 +891,9 @@ trace and its subagents across the corpus, in parallel worker processes). For th
 exceeds the default 300-second configuration timeout, so raise `AIPERF_DATASET_CONFIGURATION_TIMEOUT`
 (and `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT`, which must be ≥ it) to ~1800 seconds for a cold run.
 The tail is driven by a few very large traces; on Linux the tokenizer is loaded once in the forkserver
-helper and copy-on-write shared across workers (macOS spawn still loads it per worker). Reconstruction
+helper and copy-on-write shared across workers (macOS spawn still loads it per worker). That helper is
+process-global: a later reconstruct that requests a *different* tokenizer identity fails loudly rather
+than silently reusing the first preload. Reconstruction
 parallelism is tunable:
 `AIPERF_DATASET_WEKA_PARALLEL_WORKERS`
 (0 = auto, 1 = force serial) sets the worker-process count, and `AIPERF_DATASET_WEKA_PARALLEL_THRESHOLD`

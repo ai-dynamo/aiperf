@@ -412,8 +412,11 @@ class StickyCreditRouter(CommunicationMixin):
             # (final-turn eviction is gated on parent_correlation_id is None;
             # release_child_routing only decrements an existing entry). That
             # leaks active_sessions and biases load balancing. When the parent
-            # entry still exists, FORK children co-locate via the sticky hit
-            # above; SPAWN children route freely either way.
+            # entry still exists, both FORK and SPAWN children co-locate via
+            # the sticky hit above (routing_key = parent_correlation_id).
+            # SPAWN differs only in refcount: the orchestrator does not call
+            # register_child_routing for SPAWN. When the parent entry is gone,
+            # children fall through to least-loaded without minting a leak.
             is_dag_child = credit.parent_correlation_id is not None
             if not credit.is_final_turn or credit.has_forks:
                 if sticky_entry is None and not is_dag_child:

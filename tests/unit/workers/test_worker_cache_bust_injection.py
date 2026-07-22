@@ -346,13 +346,22 @@ def test_inject_first_user_text_empty_texts_creates_marker_text():
     turn = Turn(raw_messages=None, texts=[])
     _inject_marker_into_first_user_text(turn, _PREFIX_MARKER, is_prefix=True)
     assert len(turn.texts) == 1
-    assert turn.texts[0].contents == [_PREFIX_MARKER.strip()]
+    assert turn.texts[0].contents == [_PREFIX_MARKER]
 
 
 def test_inject_first_user_text_empty_contents_seeds_marker():
     turn = Turn(raw_messages=None, texts=[Text(contents=[])])
     _inject_marker_into_first_user_text(turn, _PREFIX_MARKER, is_prefix=True)
-    assert turn.texts[0].contents == [_PREFIX_MARKER.strip()]
+    assert turn.texts[0].contents == [_PREFIX_MARKER]
+
+
+def test_inject_first_user_text_empty_seed_is_idempotent():
+    """Empty-text seed must store the full marker so a second inject does not stack."""
+    turn = Turn(raw_messages=None, texts=[])
+    _inject_marker_into_first_user_text(turn, _PREFIX_MARKER, is_prefix=True)
+    _inject_marker_into_first_user_text(turn, _PREFIX_MARKER, is_prefix=True)
+    assert turn.texts[0].contents == [_PREFIX_MARKER]
+    assert turn.texts[0].contents[0].count("[rid:") == 1
 
 
 def test_inject_first_user_text_empty_marker_is_noop():
@@ -406,7 +415,7 @@ def test_first_turn_prefix_synthetic_turn_empty_texts_creates_marker_text():
     out = _apply_cache_bust(session, credit, system_message=None)
 
     assert out is None
-    assert session.turn_list[-1].texts == [Text(contents=[_PREFIX_MARKER.strip()])]
+    assert session.turn_list[-1].texts == [Text(contents=[_PREFIX_MARKER])]
 
 
 def test_system_prefix_fallback_to_synthetic_text_when_no_raw_and_no_system_message():
