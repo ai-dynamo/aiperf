@@ -546,6 +546,12 @@ class _MetricsSettings(BaseSettings):
         default=10000,
         description="Initial array capacity for metric storage dictionaries to minimize reallocation",
     )
+    EXPORT_FLUSH_INTERVAL: float = Field(
+        ge=0.05,
+        le=60.0,
+        default=1.0,
+        description="Periodic flush interval (seconds) for buffered JSONL stream exporters (raw record writer, record export, gpu/server-metrics JSONL writers). Bounds the worst-case freshness of low-throughput export files when the in-memory batch never reaches batch_size.",
+    )
     USAGE_PCT_DIFF_THRESHOLD: float = Field(
         ge=0.0,
         le=100.0,
@@ -572,12 +578,6 @@ class _MetricsSettings(BaseSettings):
     LIST_BACKEND: Literal["ragged", "tdigest"] = Field(
         default="ragged",
         description="Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (at most 0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint.",
-    )
-    EXPORT_FLUSH_INTERVAL: float = Field(
-        ge=0.05,
-        le=60.0,
-        default=1.0,
-        description="Periodic flush interval (seconds) for buffered JSONL stream exporters (raw record writer, record export, gpu/server-metrics JSONL writers). Bounds the worst-case freshness of low-throughput export files when the in-memory batch never reaches batch_size.",
     )
 
 
@@ -1163,6 +1163,17 @@ class _UISettings(BaseSettings):
         env_prefix="AIPERF_UI_",
     )
 
+    CONSOLE_EXPORT_WIDTH: int = Field(
+        ge=40,
+        le=10000,
+        default=140,
+        description=(
+            "Fixed column width used to render the post-run console exporter "
+            "tables. Applied both to the recording console that produces "
+            "profile_export_console.txt and to the live console when stdout "
+            "is not a tty (so non-tty CI logs match the saved artifact)."
+        ),
+    )
     LOG_REFRESH_INTERVAL: float = Field(
         ge=0.01,
         le=100000.0,
@@ -1182,7 +1193,7 @@ class _UISettings(BaseSettings):
         description=(
             "Interval in seconds between real-time metrics messages (and the "
             "per-tick stats log block). 0 disables the log block; dashboards "
-            "still poll. When None, ``realtime_metrics_interval(ui_type)`` "
+            "still poll. When None, `realtime_metrics_interval(ui_type)` "
             "auto-defaults to 5.0 under --ui dashboard, 30.0 otherwise."
         ),
     )

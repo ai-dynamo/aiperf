@@ -182,6 +182,36 @@ async def test_report_realtime_metrics_uses_precomputed_snapshot_without_rescrap
 
 
 @pytest.mark.asyncio
+async def test_report_realtime_metrics_publishes_server_snapshot_metrics() -> None:
+    rm = _make_manager(_phase_stats(completed=1903, sent=2031))
+    with (
+        patch.object(
+            rm_module,
+            "generate_realtime_metrics",
+            new=AsyncMock(return_value=_metrics()),
+        ),
+        patch.object(
+            rmp_module,
+            "filter_display_metrics",
+            side_effect=lambda m: m,
+        ),
+    ):
+        await rm_module.RecordsManager._report_realtime_metrics(
+            rm,
+            server_snapshot={
+                "prefix_cache_hit_rate": 42.0,
+                "num_running": 2.0,
+            },
+        )
+
+    published = rm.publish.await_args.args[0]
+    published_tags = {metric.tag for metric in published.metrics}
+    assert "request_throughput" in published_tags
+    assert "prefix_cache_hit_rate" in published_tags
+    assert "num_running" in published_tags
+
+
+@pytest.mark.asyncio
 async def test_zero_interval_still_publishes_but_suppresses_log_block() -> None:
     # Bug #11: --stats-interval 0 must keep publishing RealtimeMetricsMessage
     # for dashboards (the field docstring guarantees "dashboards still poll"),
