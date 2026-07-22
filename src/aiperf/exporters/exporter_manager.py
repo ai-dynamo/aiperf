@@ -337,9 +337,14 @@ class ExporterManager(AIPerfLoggerMixin):
             force_terminal=True,
         )
         await self._run_console_exporters(recording_console)
-        self._write_console_txt(recording_console)
+        await self._write_console_txt(recording_console)
 
-        if console.is_terminal:
+        styles_enabled = (
+            console.is_terminal
+            and not console.no_color
+            and console.color_system is not None
+        )
+        if console.is_terminal and styles_enabled:
             # Render a fresh copy at the live terminal's own width so interactive
             # tables aren't hard-wrapped to the fixed export width.
             live_width = getattr(console, "_width", None) or console.width
@@ -350,9 +355,18 @@ class ExporterManager(AIPerfLoggerMixin):
             )
             await self._run_console_exporters(live_console)
         else:
-            # Without a tty, replay the fixed-width recorded text so non-tty CI
-            # logs match the saved .txt artifact.
-            styled = recording_console.export_text(styles=True)
+            if console.is_terminal:
+                replay_console = Console(
+                    record=True,
+                    file=io.StringIO(),
+                    force_terminal=True,
+                    width=console.width,
+                )
+                await self._run_console_exporters(replay_console)
+            else:
+                replay_console = recording_console
+
+            styled = replay_console.export_text(styles=styles_enabled, clear=False)
             if styled.strip():
                 console.file.write(styled)
                 console.file.flush()
@@ -401,12 +415,12 @@ class ExporterManager(AIPerfLoggerMixin):
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
 
-    def _write_console_txt(self, recording_console: Console) -> None:
+    async def _write_console_txt(self, recording_console: Console) -> None:
         """Write the recorded console output to a plain-text file."""
         try:
             txt_path = self._run.cfg.artifacts.profile_export_console_txt_file
             plain_text = recording_console.export_text(styles=False, clear=False)
-            txt_path.write_text(plain_text, encoding="utf-8")
+            await asyncio.to_thread(txt_path.write_text, plain_text, encoding="utf-8")
             self.debug(f"Console export written to {txt_path}")
         except (OSError, ValueError) as e:
             self.warning(f"Failed to write console export file: {e}")
