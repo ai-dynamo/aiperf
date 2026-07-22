@@ -60,6 +60,42 @@ def processing_stats():
     return _create
 
 
+class TestBasePhaseStatsMetadata:
+    """Phase identity metadata should round-trip with stats payloads."""
+
+    def test_phase_identity_metadata_roundtrips(self) -> None:
+        stats = CreditPhaseStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=3,
+            profiling_index=2,
+            phase_name="storm_2",
+            phase_kind="profiling",
+        )
+
+        dumped = stats.model_dump()
+        assert dumped["phase_index"] == 3
+        assert dumped["profiling_index"] == 2
+        assert dumped["phase_name"] == "storm_2"
+        assert dumped["phase_kind"] == "profiling"
+
+        restored = CreditPhaseStats.model_validate(dumped)
+        assert restored.phase_index == 3
+        assert restored.profiling_index == 2
+        assert restored.phase_name == "storm_2"
+        assert restored.phase_kind == "profiling"
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            pytest.param("phase_index", id="phase-index"),
+            pytest.param("profiling_index", id="profiling-index"),
+        ],  # fmt: skip
+    )
+    def test_phase_indexes_must_be_non_negative(self, field: str) -> None:
+        with pytest.raises(ValueError, match="greater than or equal to 0"):
+            CreditPhaseStats(phase=CreditPhase.PROFILING, **{field: -1})
+
+
 class TestBasePhaseStatsProperties:
     """Test BasePhaseStats property methods."""
 

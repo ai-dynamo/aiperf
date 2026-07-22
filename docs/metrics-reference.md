@@ -19,6 +19,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Time to First Token (TTFT)](#time-to-first-token-ttft)
     - [Time to Second Token (TTST)](#time-to-second-token-ttst)
     - [Time to First Output Token (TTFO)](#time-to-first-output-token-ttfo)
+    - [Decode Duration](#decode-duration)
     - [Inter Token Latency (ITL)](#inter-token-latency-itl)
     - [Inter Chunk Latency (ICL)](#inter-chunk-latency-icl)
     - [Output Token Throughput Per User](#output-token-throughput-per-user)
@@ -267,6 +268,27 @@ ttfo_ms = ttfo_ns / 1e6
 
 ---
 
+### Decode Duration
+
+**Type:** [Record Metric](#record-metrics)
+
+Measures the client-observed wall-clock interval between the first and final non-empty streamed content responses. Unlike ITL, this metric is not normalized by the number of generated tokens.
+
+**Formula:**
+```python
+decode_duration_ns = request_latency_ns - time_to_first_token_ns
+
+decode_duration_ms = decode_duration_ns / 1e6
+```
+
+**Notes:**
+- This is an end-to-end client observation. It includes response delivery and client-observed gaps after TTFT; it does not isolate server kernel execution time.
+- Compare Decode Duration with Output Sequence Length when early stopping or a generation-length change is possible.
+- A run can have similar Decode Duration but a much higher ITL if it produces fewer output tokens.
+- Requires valid `time_to_first_token` and `request_latency` metrics.
+
+---
+
 ### Inter Token Latency (ITL)
 
 **Type:** [Record Metric](#record-metrics)
@@ -286,7 +308,10 @@ inter_token_latency_ms = inter_token_latency_ns / 1e6
 ```
 
 **Notes:**
-- Requires at least 2 non-empty response chunks and valid `time_to_first_token`, `request_latency`, and `output_sequence_length` metrics.
+- Requires an output sequence length of at least 2 tokens and valid `time_to_first_token`, `request_latency`, and `output_sequence_length` metrics.
+- ITL is generated-token-normalized decode duration. It is not the total wall-clock decode duration.
+- Compare runs at equivalent output lengths, or inspect Decode Duration and Output Sequence Length alongside ITL.
+- Streaming chunks can contain multiple tokens. ITL uses token count, while ICL uses chunk arrival timestamps.
 - Result is in seconds when used for throughput calculations (Output Token Throughput Per User).
 
 ---
@@ -522,15 +547,17 @@ total_token_throughput = (total_isl + total_osl) / benchmark_duration_seconds
 
 **Type:** [Record Metric](#record-metrics)
 
-The number of images in the request, summed across all turns. This is the foundation metric used by Image Throughput and Image Latency.
+The number of logical image references in the wire request. This is the foundation metric used by Image Throughput and Image Latency.
 
 **Formula:**
 ```python
-num_images = sum(len(image.contents) for turn in request.turns for image in turn.images)
+num_images = count_image_content_parts(wire_payload)
 ```
 
 **Notes:**
 - Requires at least one image in at least one turn.
+- Counts UUID cache-only references as logical images even when their URL is empty.
+- Does not measure uploaded image bytes or cache misses.
 - Not displayed in console output (`console_group = MetricConsoleGroup.NONE`).
 
 ---
@@ -1878,11 +1905,14 @@ http_req_chunks_received = trace.response_chunks_count
 ## GPU Power Efficiency Metrics
 
 > [!NOTE]
-> All metrics in this section require `--gpu-telemetry` to be enabled and the underlying collector (DCGM, pynvml, or amdsmi) to expose the relevant signal (`gpu_power_usage` and/or `energy_consumption`). They are computed once per profiling phase by the `EnergyEfficiencyAnalyzer` — an `analyzer` plugin that joins the GPU-telemetry accumulator (energy/power) to the metrics-accumulator summary (tokens/throughput/latency) via the `SummaryContext` — not by the standard derivation walk. See the [Externally-Injected Derived Metric pattern](dev/patterns.md#externally-injected-derived-metric-pattern) and the `analyzer` plugin category.
+> All metrics in this section require `--gpu-telemetry` to be enabled and the underlying collector to expose the relevant signal. They are computed **per vendor**, once per profiling phase, by the `EnergyEfficiencyAnalyzer` — an `analyzer` plugin that joins the GPU-telemetry accumulator (energy/power) to the metrics-accumulator summary (tokens/throughput/latency) via the `SummaryContext` — not by the standard derivation walk. See the [Externally-Injected Derived Metric pattern](dev/patterns.md#externally-injected-derived-metric-pattern) and the `analyzer` plugin category. Each metric exists in an NVIDIA variant (tag prefix `nvidia_`, from `nvidia_power_usage` / `nvidia_energy_consumption`, populated by the DCGM and pynvml collectors) and an AMD variant (tag prefix `amd_`, from `amd_power` / `amd_energy_consumption`, populated by the amdsmi collector). A mixed NVIDIA+AMD run reports both, each summing only its own vendor's GPUs.
 
-**Energy source.** Total GPU energy is taken from the DCGM `energy_consumption` counter delta when available (`source = dcgm_counter`), and the time-averaged fleet power is derived from it as `total_gpu_energy / profiling_duration_s`. When no energy counter is exposed (e.g. pynvml/amdsmi power-only collectors), the analyzer falls back to **power integration** (`source = power_integration`): `total_gpu_energy = total_gpu_power * profiling_duration_s`, and the average power is the fleet power gauge itself. If neither signal is present the family is skipped.
+> [!NOTE]
+> Each vendor's metrics render in their own console section — `GPU Power Efficiency (NVIDIA)` (`console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_NVIDIA`) and `GPU Power Efficiency (AMD)` (`MetricConsoleGroup.GPU_POWER_EFFICIENCY_AMD`) — separate from the main metrics table. A section is omitted entirely when no GPU of that vendor reported.
 
-The family is skipped entirely when GPU telemetry is not collected. Each tag is independently omitted when its underlying signal is unavailable (e.g. `energy_per_user` only appears for concurrency runs; `goodput_per_watt` only when goodput SLOs are configured). Tags: `energy_delay_product`, `performance_per_watt`, `output_tps_per_watt`, `goodput_per_watt`, `average_gpu_power`, `total_gpu_energy`, `total_gpu_power`, `energy_per_total_token`, `energy_per_output_token`, `energy_per_request`, `output_tokens_per_joule`, `energy_per_user`.
+**Energy source.** Per-vendor total GPU energy is taken from the vendor's energy counter delta when available (`source = dcgm_counter` for NVIDIA; `source = power_integration` fallback for amdsmi when only the power gauge is exposed), and the time-averaged fleet power is derived from it as `total_gpu_energy / profiling_duration_s`. If neither signal is present the family is skipped for that vendor.
+
+The family is skipped entirely when GPU telemetry is not collected. Each tag is independently omitted when its underlying signal is unavailable (e.g. `nvidia_energy_per_user` only appears for concurrency runs; `nvidia_goodput_per_watt` only when goodput SLOs are configured). NVIDIA tags: `nvidia_energy_delay_product`, `nvidia_performance_per_watt`, `nvidia_output_tps_per_watt`, `nvidia_goodput_per_watt`, `nvidia_average_gpu_power`, `nvidia_total_gpu_energy`, `nvidia_total_gpu_power`, `nvidia_energy_per_total_token`, `nvidia_energy_per_output_token`, `nvidia_energy_per_request`, `nvidia_output_tokens_per_joule`, `nvidia_energy_per_user`. AMD tags follow the same pattern with the `amd_` prefix.
 
 ### Total GPU Power
 
@@ -1892,10 +1922,14 @@ Sum of average GPU power across all reporting GPUs during the profiling phase, i
 
 **Formula:**
 ```python
-# Per GPU: average of gpu_power_usage gauge samples in the profiling window
+# Vendor source fields:
+#   NVIDIA: nvidia_power_usage   (pynvml / DCGM collectors)
+#   AMD:    amd_power             (amdsmi collector)
+#
+# Per GPU: average of the vendor power gauge samples in the profiling window
 # (warmup excluded). Summed across all GPUs that reported valid samples.
 total_gpu_power_w = sum(
-    avg(gpu_power_usage[start_ns:end_ns])
+    avg(vendor_power_field[start_ns:end_ns])
     for gpu in reporting_gpus
 )
 ```
@@ -1904,7 +1938,7 @@ total_gpu_power_w = sum(
 - Unit: watts (`W`).
 - Time-filtered to the profiling-phase window; warmup samples are excluded.
 - Power is a gauge, so the window stays bounded — post-bench idle samples don't drag the average down.
-- Omitted when no GPU reports `gpu_power_usage` in the window.
+- Omitted when no GPU reports `nvidia_power_usage` (NVIDIA) or `amd_power` (AMD) in the window.
 
 ---
 
@@ -1916,12 +1950,16 @@ Sum of energy consumed across all reporting GPUs during the profiling phase, in 
 
 **Formula:**
 ```python
-# Per GPU: delta of the energy_consumption monotonic counter over the
-# profiling window, widened on the end by FINAL_SCRAPE_GRACE_NS so the
-# trailing scrape that lands just after requests_end_ns is captured.
+# Vendor source fields:
+#   NVIDIA: nvidia_energy_consumption   (pynvml / DCGM collectors, in megajoules)
+#   AMD:    amd_energy_consumption       (amdsmi collector, in megajoules)
+#
+# Per GPU: delta of the vendor energy monotonic counter over the profiling
+# window, widened on the end by FINAL_SCRAPE_GRACE_NS so the trailing scrape
+# that lands just after requests_end_ns is captured.
 grace_ns = Environment.GPU.FINAL_SCRAPE_GRACE_NS  # default 666_000_000 (~666 ms)
 total_gpu_energy_j = sum(
-    delta(energy_consumption[start_ns : end_ns + grace_ns])
+    delta(vendor_energy_field[start_ns : end_ns + grace_ns])
     for gpu in reporting_gpus
 )
 # Negative deltas are clamped to 0 to handle counter resets (DCGM restart).
@@ -1931,7 +1969,7 @@ total_gpu_energy_j = sum(
 - Unit: joules (`J`). Source samples are reported in megajoules and converted via `EnergyMetricUnit.MEGAJOULE.joules`.
 - The end-of-window grace is bounded (not open-ended) so cooldown samples and any subsequent-phase samples cannot leak into the delta. Tune via `AIPERF_GPU_FINAL_SCRAPE_GRACE_NS` if you also tune `AIPERF_GPU_COLLECTION_INTERVAL` — keep grace at roughly `2x` the collection cadence.
 - Per-GPU deltas use the nearest non-NaN baseline and the nearest non-NaN final sample; arrays containing transient NaN sensor failures still yield a meaningful delta.
-- Omitted when no GPU reports `energy_consumption` in the window.
+- Omitted when no GPU reports `nvidia_energy_consumption` (NVIDIA) or `amd_energy_consumption` (AMD) in the window.
 
 ---
 
@@ -2175,6 +2213,8 @@ The `console_group` class attribute on a metric controls which console table the
 | <a id="group-prediction"></a>`MetricConsoleGroup.PREDICTION` | Speculative prediction token metrics (accepted/rejected). |
 | <a id="group-audio"></a>`MetricConsoleGroup.AUDIO` | Audio token metrics (prompt/completion). |
 | <a id="group-reasoning"></a>`MetricConsoleGroup.REASONING` | Reasoning token metrics. |
+| <a id="group-gpu-power-efficiency-nvidia"></a>`MetricConsoleGroup.GPU_POWER_EFFICIENCY_NVIDIA` | NVIDIA cross-GPU power efficiency totals (`nvidia_total_gpu_power`, `nvidia_total_gpu_energy`, `nvidia_output_tokens_per_joule`, `nvidia_energy_per_user`). Rendered in a dedicated `GPU Power Efficiency (NVIDIA)` section instead of the main table. |
+| <a id="group-gpu-power-efficiency-amd"></a>`MetricConsoleGroup.GPU_POWER_EFFICIENCY_AMD` | AMD cross-GPU power efficiency totals (`amd_total_gpu_power`, `amd_total_gpu_energy`, `amd_output_tokens_per_joule`, `amd_energy_per_user`). Rendered in a dedicated `GPU Power Efficiency (AMD)` section instead of the main table. |
 
 Set as a class attribute on a `BaseMetric` subclass:
 

@@ -3,8 +3,10 @@
 
 import asyncio
 import io
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
+import orjson
 from rich.console import Console
 
 from aiperf.common.environment import Environment
@@ -12,11 +14,14 @@ from aiperf.common.exceptions import (
     ConsoleExporterDisabled,
     DataExporterDisabled,
 )
+from aiperf.common.finite import scrub_non_finite
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import ProfileResults
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
+from aiperf.exporters.metrics_csv_exporter import MetricsCsvExporter
+from aiperf.exporters.metrics_json_exporter import MetricsJsonExporter
 from aiperf.exporters.protocols import ConsoleExporterProtocol, DataExporterProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import DataExporterType, PluginType
@@ -97,6 +102,11 @@ class ExporterManager(AIPerfLoggerMixin):
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
 
+        try:
+            await self._export_phase_metric_artifacts()
+        except (OSError, ValueError) as exc:
+            self.warning(f"Failed to export phase metric artifacts: {exc}")
+
         for exporter in deferred_exporters:
             self.debug(f"Running deferred exporter: {exporter.__class__.__name__}")
             task = asyncio.create_task(exporter.export())
@@ -106,6 +116,186 @@ class ExporterManager(AIPerfLoggerMixin):
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
         self.debug("Exporting all records completed")
+
+    async def _export_phase_metric_artifacts(self) -> None:
+        phase_records = getattr(self._results, "phase_records", None) or []
+        if not phase_records:
+            return
+        manifest_entries: list[dict[str, Any]] = []
+        for phase_result in phase_records:
+            phase_dir = self._run.cfg.artifacts.dir / "phases" / phase_result.phase_name
+            await asyncio.to_thread(phase_dir.mkdir, parents=True, exist_ok=True)
+            completed = (
+                phase_result.successful_request_count + phase_result.error_request_count
+            )
+            phase_profile = ProfileResults(
+                records=phase_result.records,
+                completed=completed,
+                start_ns=phase_result.start_ns or self._results.start_ns,
+                end_ns=phase_result.end_ns or self._results.end_ns,
+                was_cancelled=phase_result.was_cancelled,
+                successful_request_count=phase_result.successful_request_count,
+                error_request_count=phase_result.error_request_count,
+                error_summary=phase_result.error_summary,
+            )
+            entry: dict[str, Any] = {
+                "phase_index": phase_result.phase_index,
+                "profiling_index": phase_result.profiling_index,
+                "phase_name": phase_result.phase_name,
+                "phase_kind": phase_result.phase_kind,
+                "start_ns": phase_result.start_ns,
+                "end_ns": phase_result.end_ns,
+                "was_cancelled": phase_result.was_cancelled,
+                "successful_request_count": phase_result.successful_request_count,
+                "error_request_count": phase_result.error_request_count,
+                "total_request_count": completed,
+                "error_summary": [
+                    item.model_dump(mode="json") for item in phase_result.error_summary
+                ],
+            }
+            await self._write_phase_export(
+                exporter_cls=MetricsJsonExporter,
+                phase_profile=phase_profile,
+                file_path=phase_dir
+                / self._run.cfg.artifacts.profile_export_json_file.name,
+                manifest_entry=entry,
+                manifest_key="metrics_json",
+            )
+            await self._write_phase_export(
+                exporter_cls=MetricsCsvExporter,
+                phase_profile=phase_profile,
+                file_path=phase_dir
+                / self._run.cfg.artifacts.profile_export_csv_file.name,
+                manifest_entry=entry,
+                manifest_key="metrics_csv",
+            )
+            await self._write_phase_observability_export(
+                phase_result=phase_result,
+                phase_dir=phase_dir,
+                manifest_entry=entry,
+                attr="telemetry_results",
+                warnings_attr="telemetry_warnings",
+                file_name="gpu_telemetry.json",
+                manifest_key="gpu_telemetry_json",
+            )
+            await self._write_phase_observability_export(
+                phase_result=phase_result,
+                phase_dir=phase_dir,
+                manifest_entry=entry,
+                attr="server_metrics_results",
+                warnings_attr="server_metrics_warnings",
+                file_name="server_metrics.json",
+                manifest_key="server_metrics_json",
+            )
+            manifest_entries.append(entry)
+        try:
+            await asyncio.to_thread(self._write_phase_manifest, manifest_entries)
+        except (OSError, ValueError) as exc:
+            self.warning(f"Failed to write phase artifact manifest: {exc}")
+
+    async def _write_phase_observability_export(
+        self,
+        *,
+        phase_result,
+        phase_dir: Path,
+        manifest_entry: dict[str, Any],
+        attr: str,
+        warnings_attr: str,
+        file_name: str,
+        manifest_key: str,
+    ) -> None:
+        data = getattr(phase_result, attr, None)
+        warnings = list(getattr(phase_result, warnings_attr, []) or [])
+        if data is None and not warnings:
+            return
+        file_path = phase_dir / file_name
+        payload = {
+            "schema_version": 1,
+            "phase": {
+                "phase_index": phase_result.phase_index,
+                "profiling_index": phase_result.profiling_index,
+                "phase_name": phase_result.phase_name,
+                "phase_kind": phase_result.phase_kind,
+                "start_ns": phase_result.start_ns,
+                "end_ns": phase_result.end_ns,
+                "was_cancelled": phase_result.was_cancelled,
+            },
+            "data": data.model_dump(mode="json", exclude_none=True) if data else None,
+            "warnings": warnings,
+        }
+        try:
+            content = orjson.dumps(
+                scrub_non_finite(payload),
+                option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS,
+            ).decode("utf-8")
+            await asyncio.to_thread(
+                file_path.write_text, content + "\n", encoding="utf-8"
+            )
+        except Exception as exc:
+            self.error(
+                f"Failed to write phase observability export {file_path}: {exc!r}"
+            )
+            return
+        manifest_entry[manifest_key] = file_path.relative_to(
+            self._run.cfg.artifacts.dir
+        ).as_posix()
+
+    async def _write_phase_export(
+        self,
+        *,
+        exporter_cls: type[MetricsJsonExporter] | type[MetricsCsvExporter],
+        phase_profile: ProfileResults,
+        file_path: Path,
+        manifest_entry: dict[str, Any],
+        manifest_key: str,
+    ) -> None:
+        config = ExporterConfig(
+            results=phase_profile,
+            cfg=self._run.cfg,
+            telemetry_results=None,
+            server_metrics_results=None,
+            run=self._run,
+        )
+        try:
+            exporter = exporter_cls(exporter_config=config)
+        except DataExporterDisabled:
+            return
+        except Exception as exc:
+            self.error(
+                f"Error creating phase exporter {exporter_cls.__name__} "
+                f"for {manifest_entry.get('phase_name')}: {exc!r}"
+            )
+            return
+        try:
+            content = exporter._generate_content()
+            await asyncio.to_thread(file_path.write_text, content, encoding="utf-8")
+        except Exception as exc:
+            self.error(f"Failed to write phase export {file_path}: {exc!r}")
+            return
+        manifest_entry[manifest_key] = file_path.relative_to(
+            self._run.cfg.artifacts.dir
+        ).as_posix()
+
+    def _write_phase_manifest(self, entries: list[dict[str, Any]]) -> None:
+        manifest_path = self._run.cfg.artifacts.dir / "phase_manifest.json"
+        payload = {
+            "schema_version": 1,
+            "phases": sorted(
+                entries,
+                key=lambda item: (
+                    item.get("phase_index")
+                    if item.get("phase_index") is not None
+                    else 10**9
+                ),
+            ),
+        }
+        manifest_path.write_bytes(
+            orjson.dumps(
+                scrub_non_finite(payload),
+                option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS,
+            )
+            + b"\n"
+        )
 
     def get_exported_file_infos(self) -> list[FileExportInfo]:
         """Get the file infos for all exported files."""
@@ -140,11 +330,11 @@ class ExporterManager(AIPerfLoggerMixin):
         # The recording console stays pinned to the configured width so the saved
         # profile_export_console.txt artifact (and non-tty CI logs) match a fixed
         # layout regardless of the live terminal size.
-        recording_console = Console(
+        recording_console = self._fixed_width_console(
+            width=width,
             record=True,
             file=io.StringIO(),
             force_terminal=True,
-            width=width,
         )
         await self._run_console_exporters(recording_console)
         self._write_console_txt(recording_console)
@@ -152,7 +342,13 @@ class ExporterManager(AIPerfLoggerMixin):
         if console.is_terminal:
             # Render a fresh copy at the live terminal's own width so interactive
             # tables aren't hard-wrapped to the fixed export width.
-            await self._run_console_exporters(console)
+            live_width = getattr(console, "_width", None) or console.width
+            live_console = self._fixed_width_console(
+                width=live_width,
+                file=console.file,
+                force_terminal=True,
+            )
+            await self._run_console_exporters(live_console)
         else:
             # Without a tty, replay the fixed-width recorded text so non-tty CI
             # logs match the saved .txt artifact.
@@ -162,6 +358,22 @@ class ExporterManager(AIPerfLoggerMixin):
                 console.file.flush()
 
         self.debug("Exporting console data completed")
+
+    @staticmethod
+    def _fixed_width_console(
+        *,
+        width: int,
+        file: Any,
+        record: bool = False,
+        force_terminal: bool | None = None,
+    ) -> Console:
+        return Console(
+            record=record,
+            file=file,
+            force_terminal=force_terminal,
+            width=width,
+            _environ={"TERM": "xterm", "COLUMNS": str(width)},
+        )
 
     async def _run_console_exporters(self, console: Console) -> None:
         """Run every registered console exporter, rendering into `console`."""

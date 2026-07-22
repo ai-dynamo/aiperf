@@ -362,6 +362,7 @@ class MessageType(CaseInsensitiveStrEnum):
     HEARTBEAT = "heartbeat"
     INFERENCE_RESULTS = "inference_results"
     RECORDS = "records"
+    PHASE_BASELINE_REQUEST = "phase_baseline_request"
     PROCESSING_STATS = "processing_stats"
     PROCESS_RECORDS_RESULT = "process_records_result"
     PROCESS_TELEMETRY_RESULT = "process_telemetry_result"

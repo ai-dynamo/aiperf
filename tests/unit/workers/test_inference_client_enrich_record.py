@@ -19,6 +19,10 @@ def _make_request_info(**overrides) -> RequestInfo:
         turn_index=0,
         x_request_id="r",
         x_correlation_id="x",
+        phase_index=2,
+        profiling_index=1,
+        phase_name="recovery",
+        phase_kind="profiling",
         agent_depth=2,
         parent_correlation_id="root",
         model_endpoint=ModelEndpointInfo.model_construct(),
@@ -43,6 +47,20 @@ class TestEnrichRequestRecord:
         enriched = InferenceClient._enrich_request_record(record, ri)
         assert enriched.request_info.agent_depth == 3
         assert enriched.request_info.parent_correlation_id == "p"
+
+    def test_phase_identity_fields_propagate(self):
+        ri = _make_request_info(
+            phase_index=3,
+            profiling_index=2,
+            phase_name="storm",
+            phase_kind="profiling",
+        )
+        record = RequestRecord()
+        enriched = InferenceClient._enrich_request_record(record, ri)
+        assert enriched.request_info.phase_index == 3
+        assert enriched.request_info.profiling_index == 2
+        assert enriched.request_info.phase_name == "storm"
+        assert enriched.request_info.phase_kind == "profiling"
 
     def test_transport_extras_dropped(self):
         ri = _make_request_info()
