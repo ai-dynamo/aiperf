@@ -16,12 +16,14 @@ from aiperf.common.enums import (
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_init, on_stop
 from aiperf.common.messages import (
+    PhaseBaselineRequestMessage,
     ProfileCancelCommand,
     ProfileCompleteCommand,
     ProfileConfigureCommand,
     TelemetryRecordsMessage,
     TelemetryStatusMessage,
 )
+from aiperf.common.mixins import BaselineCollectorMixin
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 from aiperf.common.protocols import PushClientProtocol
 from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
@@ -41,7 +43,7 @@ class _CollectorCandidate:
     kwargs: dict[str, Any]
 
 
-class GPUTelemetryManager(BaseComponentService):
+class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
     """Coordinates multiple TelemetryDataCollector instances for GPU telemetry collection.
 
     The GPUTelemetryManager coordinates multiple TelemetryDataCollector instances
@@ -321,7 +323,7 @@ class GPUTelemetryManager(BaseComponentService):
             reason = failure_reason or (
                 f"{self._collector_type} not available or no GPUs found"
                 if is_local
-                else "no DCGM endpoints reachable"
+                else "no telemetry sources reachable"
             )
             await self._send_telemetry_status(
                 enabled=False,
@@ -337,6 +339,19 @@ class GPUTelemetryManager(BaseComponentService):
             endpoints_configured=endpoints_for_display,
             endpoints_reachable=reachable_endpoints,
         )
+
+    async def collect_baseline(self, message: PhaseBaselineRequestMessage) -> None:
+        """Capture a one-shot telemetry scrape for a phase boundary."""
+        if self._telemetry_disabled or not self._collectors:
+            return
+        errors: list[str] = []
+        for source_url, collector in list(self._collectors.items()):
+            try:
+                await collector.collect_and_process_metrics()
+            except Exception as exc:  # one failed endpoint should not skip others
+                errors.append(f"{source_url}: {type(exc).__name__}: {exc}")
+        if errors:
+            raise RuntimeError("; ".join(errors))
 
     @on_command(CommandType.PROFILE_START)
     async def _on_start_profiling(self, message) -> None:
@@ -394,7 +409,8 @@ class GPUTelemetryManager(BaseComponentService):
 
         Ensures GPU telemetry captures final state for accurate counter deltas.
         This final scrape provides the end-point values needed for metrics like
-        energy_consumption which are computed as (final - baseline).
+        nvidia_energy_consumption and amd_energy_consumption, which are computed
+        as (final - baseline).
 
         Args:
             message: Profile complete command from SystemController
@@ -527,9 +543,9 @@ class GPUTelemetryManager(BaseComponentService):
 
         Args:
             enabled: Whether telemetry collection is enabled/available
-            reason: Optional human-readable reason for status (e.g., "no DCGM endpoints reachable")
-            endpoints_configured: List of DCGM endpoint URLs in configured scope for display
-            endpoints_reachable: List of DCGM endpoint URLs that are accessible
+            reason: Optional human-readable reason for status
+            endpoints_configured: Telemetry source URLs in configured scope for display
+            endpoints_reachable: Telemetry source URLs that are accessible
         """
         try:
             status_message = TelemetryStatusMessage(

@@ -328,8 +328,8 @@ class TestMetricResultToJsonResult:
     def test_unknown_tag_keeps_count(self) -> None:
         """Tags from other registries (e.g. GPU telemetry) keep count as-is."""
         result = MetricResult(
-            tag="gpu_power_usage",
-            header="GPU Power Usage",
+            tag="nvidia_power_usage",
+            header="NVIDIA GPU Power Usage",
             unit="W",
             avg=250.0,
             count=42,

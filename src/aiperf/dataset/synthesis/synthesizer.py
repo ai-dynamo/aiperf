@@ -99,8 +99,12 @@ class Synthesizer(AIPerfLoggerMixin):
                 isl = self.params.max_isl
 
             # Only set input_length if the original trace used input_length
-            # (not text_input or messages) to avoid validation errors
-            if trace.get("text_input") is None and trace.get("messages") is None:
+            # (not text_input, messages, or payload) to avoid validation errors
+            if (
+                trace.get("text_input") is None
+                and trace.get("messages") is None
+                and trace.get("payload") is None
+            ):
                 synthetic_trace["input_length"] = isl
 
             # Apply timestamp scaling if present

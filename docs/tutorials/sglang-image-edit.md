@@ -76,7 +76,7 @@ The simplest path: AIPerf generates a synthetic reference image for every reques
 ```bash
 aiperf profile \
   --model black-forest-labs/FLUX.2-klein-4B \
-  --tokenizer gpt2 \
+  --tokenizer builtin \
   --url http://localhost:30000 \
   --endpoint-type image_edit \
   --image-batch-size 1 \
@@ -123,7 +123,7 @@ EOF
 ```bash
 aiperf profile \
   --model black-forest-labs/FLUX.2-klein-4B \
-  --tokenizer gpt2 \
+  --tokenizer builtin \
   --url http://localhost:30000 \
   --endpoint-type image_edit \
   --input-file edit_prompts.jsonl \
@@ -157,7 +157,7 @@ Use `--export-level raw` to capture the raw input/output payloads, which lets yo
 ```bash
 aiperf profile \
   --model black-forest-labs/FLUX.2-klein-4B \
-  --tokenizer gpt2 \
+  --tokenizer builtin \
   --url http://localhost:30000 \
   --endpoint-type image_edit \
   --input-file edit_prompts.jsonl \
