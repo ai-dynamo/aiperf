@@ -104,6 +104,20 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         )
         return parsed_responses, assistant_turn
 
+    @staticmethod
+    def extract_spec_decode_stats(json_obj: dict[str, Any]) -> dict[str, Any] | None:
+        """Capture the raw per-choice speculative-decoding payload, if any.
+
+        vLLM attaches ``speculative_decoding_stats`` to ``choices[0]`` on both
+        chat and completions responses (the finish-reason chunk in streaming).
+        Captured verbatim and uninterpreted so a ``SpecDecodeAdapterProtocol``
+        owns the engine-specific interpretation downstream; None when absent.
+        """
+        choices = json_obj.get("choices")
+        if not choices or not isinstance(choices[0], dict):
+            return None
+        return choices[0].get("speculative_decoding_stats")
+
     def build_assistant_turn(self, record: RequestRecord) -> Turn | None:
         """Build a Turn representing the assistant response for context replay.
 

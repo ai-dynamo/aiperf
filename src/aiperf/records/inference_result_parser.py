@@ -17,6 +17,7 @@ from aiperf.common.models import (
     ParsedResponse,
     ParsedResponseRecord,
     RequestRecord,
+    SpecDecodeAcceptanceRecord,
 )
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import (
@@ -305,7 +306,27 @@ class InferenceResultParser(CommunicationMixin):
             responses=resp,
             token_counts=token_counts,
             media_counts=media_counts or MediaCounts(),
+            spec_decode_acceptance=self._extract_spec_decode_acceptance(resp),
         )
+
+    @staticmethod
+    def _extract_spec_decode_acceptance(
+        responses: list[ParsedResponse],
+    ) -> SpecDecodeAcceptanceRecord | None:
+        """Build the engine-neutral acceptance record via adapter auto-detection.
+
+        Fast-paths out when no response carried a spec-decode payload (spec
+        decode off, or no verify steps) so the plugin walk only runs for records
+        that actually have stats. Otherwise walks registered adapters in
+        priority order and uses the first whose ``can_adapt`` recognizes the
+        payload -- mirroring custom-dataset-loader auto-detection.
+        """
+        if not any(r.spec_decode_stats for r in responses):
+            return None
+        for _entry, AdapterClass in plugins.iter_all(PluginType.SPEC_DECODE_ADAPTER):
+            if AdapterClass.can_adapt(responses):
+                return AdapterClass.adapt(responses)
+        return None
 
     async def compute_input_token_count(
         self,
@@ -420,8 +441,10 @@ class InferenceResultParser(CommunicationMixin):
             )
         except Exception as exc:  # noqa: BLE001 - best-effort; fall back to bare encode
             self.debug(
-                lambda exc=exc: f"Chat-template tokenization unavailable, "
-                f"falling back to bare-text encode: {exc!r}"
+                lambda exc=exc: (
+                    f"Chat-template tokenization unavailable, "
+                    f"falling back to bare-text encode: {exc!r}"
+                )
             )
             return None
         if not isinstance(tokens, list):
