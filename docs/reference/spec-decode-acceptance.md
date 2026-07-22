@@ -90,7 +90,8 @@ The wire object maps to the record one-to-one, except:
 - **Histogram keys are JSON strings** and are int-cast into the record.
 - **`completion_tokens`** comes from the response `usage`, not the payload. In
   streaming that usage rides the trailing `include_usage` chunk, which AIPerf
-  already auto-injects — so it is available without extra request wiring.
+  auto-injects only when `endpoint.use_server_token_count` is enabled; otherwise
+  (or whenever the server omits usage) `completion_tokens` stays `None`.
 - **`num_draft_tokens`** is vLLM's post-adjustment count: drafts invalidated by
   structured-output/grammar constraints are already subtracted server-side.
 - **`num_spec_tokens`** is always present (the configured `num_speculative_tokens`);

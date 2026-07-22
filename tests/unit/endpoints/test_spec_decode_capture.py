@@ -5,9 +5,11 @@
 
 ``parse_response`` must lift ``choices[0].speculative_decoding_stats`` onto the
 ``ParsedResponse`` uninterpreted, including on a streaming finish-reason chunk
-whose delta is empty (which otherwise carries no data and would be dropped).
+whose delta is empty (which otherwise carries no data and would be dropped), and
+must not choke on a malformed non-list ``choices``.
 """
 
+from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -20,6 +22,7 @@ from aiperf.common.models.model_endpoint_info import (
     ModelListInfo,
 )
 from aiperf.common.models.record_models import InferenceServerResponse
+from aiperf.endpoints.base_endpoint import BaseEndpoint
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from aiperf.plugin.enums import EndpointType
@@ -35,7 +38,9 @@ STATS = {
 }
 
 
-def _make_endpoint(endpoint_type, endpoint_cls):
+def _make_endpoint(
+    endpoint_type: EndpointType, endpoint_cls: type[BaseEndpoint]
+) -> BaseEndpoint:
     model_endpoint = ModelEndpointInfo(
         models=ModelListInfo(
             models=[ModelInfo(name="m")],
@@ -48,7 +53,7 @@ def _make_endpoint(endpoint_type, endpoint_cls):
         return endpoint_cls(model_endpoint=model_endpoint)
 
 
-def _mock_response(json_obj):
+def _mock_response(json_obj: dict[str, Any]) -> Mock:
     mock_response = Mock(spec=InferenceServerResponse)
     mock_response.perf_ns = 123
     mock_response.get_json.return_value = json_obj
@@ -56,17 +61,19 @@ def _mock_response(json_obj):
 
 
 @pytest.fixture
-def chat_endpoint():
+def chat_endpoint() -> ChatEndpoint:
     return _make_endpoint(EndpointType.CHAT, ChatEndpoint)
 
 
 @pytest.fixture
-def completions_endpoint():
+def completions_endpoint() -> CompletionsEndpoint:
     return _make_endpoint(EndpointType.COMPLETIONS, CompletionsEndpoint)
 
 
 class TestChatSpecDecodeCapture:
-    def test_non_streaming_captures_stats(self, chat_endpoint):
+    def test_parse_response_non_streaming_captures_stats(
+        self, chat_endpoint: ChatEndpoint
+    ) -> None:
         json_obj = {
             "object": "chat.completion",
             "choices": [
@@ -81,7 +88,9 @@ class TestChatSpecDecodeCapture:
         assert parsed is not None
         assert parsed.spec_decode_stats == STATS
 
-    def test_streaming_terminal_chunk_with_empty_delta_is_retained(self, chat_endpoint):
+    def test_parse_response_streaming_empty_delta_retains_stats(
+        self, chat_endpoint: ChatEndpoint
+    ) -> None:
         """The finish chunk has no content but must still surface the stats."""
         json_obj = {
             "object": "chat.completion.chunk",
@@ -98,7 +107,9 @@ class TestChatSpecDecodeCapture:
         assert parsed.data is None
         assert parsed.spec_decode_stats == STATS
 
-    def test_absent_stats_leaves_field_none(self, chat_endpoint):
+    def test_parse_response_absent_stats_returns_none(
+        self, chat_endpoint: ChatEndpoint
+    ) -> None:
         json_obj = {
             "object": "chat.completion",
             "choices": [{"message": {"role": "assistant", "content": "hi"}}],
@@ -107,9 +118,18 @@ class TestChatSpecDecodeCapture:
         assert parsed is not None
         assert parsed.spec_decode_stats is None
 
+    def test_parse_response_malformed_choices_returns_none(
+        self, chat_endpoint: ChatEndpoint
+    ) -> None:
+        """A non-list ``choices`` (e.g. an error envelope) must not raise."""
+        json_obj = {"object": "error", "choices": {"0": {"message": {}}}}
+        assert chat_endpoint.parse_response(_mock_response(json_obj)) is None
+
 
 class TestCompletionsSpecDecodeCapture:
-    def test_non_streaming_captures_stats(self, completions_endpoint):
+    def test_parse_response_non_streaming_captures_stats(
+        self, completions_endpoint: CompletionsEndpoint
+    ) -> None:
         json_obj = {
             "object": "text_completion",
             "choices": [{"text": "hi", "speculative_decoding_stats": STATS}],
@@ -118,9 +138,9 @@ class TestCompletionsSpecDecodeCapture:
         assert parsed is not None
         assert parsed.spec_decode_stats == STATS
 
-    def test_streaming_terminal_chunk_with_empty_text_is_retained(
-        self, completions_endpoint
-    ):
+    def test_parse_response_streaming_empty_text_retains_stats(
+        self, completions_endpoint: CompletionsEndpoint
+    ) -> None:
         json_obj = {
             "object": "text_completion",
             "choices": [
@@ -135,7 +155,9 @@ class TestCompletionsSpecDecodeCapture:
         assert parsed is not None
         assert parsed.spec_decode_stats == STATS
 
-    def test_absent_stats_leaves_field_none(self, completions_endpoint):
+    def test_parse_response_absent_stats_returns_none(
+        self, completions_endpoint: CompletionsEndpoint
+    ) -> None:
         json_obj = {"object": "text_completion", "choices": [{"text": "hi"}]}
         parsed = completions_endpoint.parse_response(_mock_response(json_obj))
         assert parsed is not None

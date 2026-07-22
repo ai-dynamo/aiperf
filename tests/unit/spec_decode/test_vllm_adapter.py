@@ -244,6 +244,25 @@ class TestVLLMSpecDecodeAdapter:
         assert VLLMSpecDecodeAdapter.can_adapt(responses) is True
         assert VLLMSpecDecodeAdapter.adapt(responses) is None
 
+    @pytest.mark.parametrize(
+        "bad_payload",
+        [
+            # All keys present, valid types, non-negative -- but the aggregates
+            # contradict each other, so the record's invariants reject them.
+            param({**SUMMARY_PAYLOAD, "num_spec_steps": 99}, id="histogram_sum_mismatch"),
+            param({**SUMMARY_PAYLOAD, "num_accepted_draft_tokens": 11}, id="weighted_sum_mismatch"),
+            param({**SUMMARY_PAYLOAD, "num_draft_tokens": 5}, id="accepted_exceeds_drafted"),
+        ],
+    )  # fmt: skip
+    def test_inconsistent_aggregate_payload_degrades_to_none(
+        self, bad_payload: dict[str, Any]
+    ) -> None:
+        """Contradictory (but non-negative) aggregates fail the record's integer
+        invariants; the adapter degrades to None rather than emit a bad record."""
+        responses = [_response(spec_decode_stats=bad_payload)]
+        assert VLLMSpecDecodeAdapter.can_adapt(responses) is True
+        assert VLLMSpecDecodeAdapter.adapt(responses) is None
+
 
 class TestRecordConstraints:
     """The record rejects negative counts (ge=0), including inside containers."""
@@ -271,3 +290,29 @@ class TestRecordConstraints:
     def test_rejects_negative_counts(self, override):
         with pytest.raises(ValidationError):
             SpecDecodeAcceptanceRecord(**{**self._valid_kwargs(), **override})
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            param(
+                {"num_spec_steps": 2},  # histogram {0:1} sums to 1, not 2
+                id="histogram_sum_mismatch",
+            ),
+            param(
+                {"acceptance_histogram": {1: 1}},  # weighted 1 != accepted 0
+                id="weighted_sum_mismatch",
+            ),
+            param(
+                # weighted 2 == accepted 2, sum 1 == steps 1, but accepted > draft
+                {
+                    "acceptance_histogram": {2: 1},
+                    "num_accepted_draft_tokens": 2,
+                    "num_draft_tokens": 1,
+                },
+                id="accepted_exceeds_drafted",
+            ),
+        ],
+    )  # fmt: skip
+    def test_rejects_inconsistent_aggregates(self, kwargs: dict[str, Any]) -> None:
+        with pytest.raises(ValidationError):
+            SpecDecodeAcceptanceRecord(**{**self._valid_kwargs(), **kwargs})

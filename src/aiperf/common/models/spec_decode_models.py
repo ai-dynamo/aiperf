@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from aiperf.common.finite import FiniteFloat
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -98,3 +98,35 @@ class SpecDecodeAcceptanceRecord(AIPerfBaseModel):
         "variable-length drafting without a schema change. Populated only when "
         "the engine reports per-step data; None otherwise.",
     )
+
+    @model_validator(mode="after")
+    def _check_aggregate_invariants(self) -> Self:
+        """Reject records whose aggregate counts contradict each other.
+
+        Only the exact integer identities are enforced -- the histogram is the
+        per-step accepted-draft tally, so its counts must sum to num_spec_steps
+        and its j-weighted sum must equal num_accepted_draft_tokens, and one
+        cannot accept more drafts than were proposed. These are definitional
+        (not accounting choices), so a violation means a corrupt payload, not
+        benign engine drift. Float relationships (mean/rate) are intentionally
+        not re-derived here to avoid rounding false-positives. The vLLM adapter
+        catches the resulting ValidationError and degrades to None.
+        """
+        step_count = sum(self.acceptance_histogram.values())
+        if step_count != self.num_spec_steps:
+            raise ValueError(
+                f"acceptance_histogram counts sum to {step_count}, but "
+                f"num_spec_steps is {self.num_spec_steps}"
+            )
+        accepted = sum(j * count for j, count in self.acceptance_histogram.items())
+        if accepted != self.num_accepted_draft_tokens:
+            raise ValueError(
+                f"acceptance_histogram j-weighted sum is {accepted}, but "
+                f"num_accepted_draft_tokens is {self.num_accepted_draft_tokens}"
+            )
+        if self.num_accepted_draft_tokens > self.num_draft_tokens:
+            raise ValueError(
+                f"num_accepted_draft_tokens ({self.num_accepted_draft_tokens}) "
+                f"exceeds num_draft_tokens ({self.num_draft_tokens})"
+            )
+        return self

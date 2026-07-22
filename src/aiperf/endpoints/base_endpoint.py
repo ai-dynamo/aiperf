@@ -114,7 +114,11 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         owns the engine-specific interpretation downstream; None when absent.
         """
         choices = json_obj.get("choices")
-        if not choices or not isinstance(choices[0], dict):
+        if (
+            not isinstance(choices, list)
+            or not choices
+            or not isinstance(choices[0], dict)
+        ):
             return None
         return choices[0].get("speculative_decoding_stats")
 
