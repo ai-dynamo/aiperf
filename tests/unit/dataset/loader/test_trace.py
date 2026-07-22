@@ -174,6 +174,82 @@ class TestMooncakeTraceDatasetLoader:
         assert traces[1][0].hash_ids == [789]
         assert traces[1][0].timestamp == 2000
 
+    def test_file_dataset_block_size_overrides_plugin_default(
+        self, create_jsonl_file, mock_prompt_generator
+    ):
+        """AIP-1016: --isl-block-size on a file dataset routes onto
+        FileDataset.block_size and overrides the loader's default_block_size
+        plugin metadata (needed for e.g. a Mooncake trace recorded at 16)."""
+        content = [
+            '{"input_length": 48, "output_length": 8, "hash_ids": [1, 2, 3], "timestamp": 1000}',
+        ]
+        filename = create_jsonl_file(content)
+        cli = CLIConfig(
+            model_names=["test-model"],
+            input_file=str(filename),
+            custom_dataset_type="mooncake_trace",
+            prompt_input_tokens_block_size=16,
+        )
+
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            run=make_run_from_cli(cli),
+            prompt_generator=mock_prompt_generator,
+            default_block_size=512,  # mooncake plugin metadata
+        )
+
+        assert loader._block_size == 16
+
+    def test_block_size_falls_back_to_plugin_default_when_unset(
+        self, create_jsonl_file, mock_prompt_generator
+    ):
+        """Without --isl-block-size, the loader keeps the default_block_size
+        plugin metadata (unchanged behavior)."""
+        content = [
+            '{"input_length": 48, "output_length": 8, "hash_ids": [1, 2, 3], "timestamp": 1000}',
+        ]
+        filename = create_jsonl_file(content)
+        cli = CLIConfig(
+            model_names=["test-model"],
+            input_file=str(filename),
+            custom_dataset_type="mooncake_trace",
+        )
+
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            run=make_run_from_cli(cli),
+            prompt_generator=mock_prompt_generator,
+            default_block_size=512,
+        )
+
+        assert loader._block_size == 512
+
+    def test_block_size_drives_reconstruction_and_default_raises(
+        self, mock_tokenizer_cls
+    ):
+        """AIP-1016: the block size the loader resolves is what partitions the
+        recorded input_length in hash-based reconstruction. input_length 48
+        over 3 hash blocks is consistent with block_size 16 (final block 16)
+        but not the mooncake default 512, which raises ConfigurationError.
+
+        This is the real reconstruction math the override fixes; that the
+        loader forwards the configured block size is covered separately by
+        test_file_dataset_block_size_overrides_plugin_default."""
+        from aiperf.common.exceptions import ConfigurationError
+        from aiperf.dataset.generator import PromptGenerator
+
+        generator = PromptGenerator(
+            prompts=None,
+            prefix_prompts=None,
+            tokenizer=mock_tokenizer_cls.from_pretrained("test-model"),
+        )
+
+        tokens = generator._build_token_sequence(48, [1, 2, 3], block_size=16)
+        assert len(tokens) == 48
+
+        with pytest.raises(ConfigurationError):
+            generator._build_token_sequence(48, [1, 2, 3], block_size=512)
+
     def test_load_dataset_with_text_input(
         self, create_jsonl_file, mock_prompt_generator, default_cfg
     ):

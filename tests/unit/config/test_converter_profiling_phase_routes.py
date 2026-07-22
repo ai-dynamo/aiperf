@@ -20,6 +20,8 @@ Covers former bugs in ``aiperf.config.flags._converter_profiling``:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from aiperf.config.flags._converter_profiling import build_profiling
@@ -75,7 +77,7 @@ class TestArrivalSmoothnessGating:
         with pytest.raises(ValueError, match="arrival-pattern gamma"):
             build_profiling(user)
 
-    def test_smoothness_with_constant_pattern_raises(self):
+    def test_smoothness_with_constant_pattern_raises(self) -> None:
         """--arrival-smoothness with --arrival-pattern constant must error."""
         loadgen = CLIConfig(
             request_rate=100.0,
@@ -87,7 +89,7 @@ class TestArrivalSmoothnessGating:
         with pytest.raises(ValueError, match="arrival-pattern gamma"):
             build_profiling(user)
 
-    def test_smoothness_without_request_rate_raises(self):
+    def test_smoothness_without_request_rate_raises(self) -> None:
         """Concurrency-mode (no rate) with --arrival-smoothness must error."""
         loadgen = CLIConfig(
             arrival_smoothness=1.5,
@@ -98,7 +100,7 @@ class TestArrivalSmoothnessGating:
         with pytest.raises(ValueError, match="--arrival-smoothness"):
             build_profiling(user)
 
-    def test_smoothness_with_gamma_succeeds(self):
+    def test_smoothness_with_gamma_succeeds(self) -> None:
         """Valid combination: --arrival-pattern gamma + --arrival-smoothness."""
         loadgen = CLIConfig(
             request_rate=100.0,
@@ -112,7 +114,7 @@ class TestArrivalSmoothnessGating:
         assert prof["smoothness"] == 1.5
         assert prof["rate"] == 100.0
 
-    def test_gamma_without_smoothness_succeeds(self):
+    def test_gamma_without_smoothness_succeeds(self) -> None:
         """--arrival-pattern gamma without --arrival-smoothness is allowed
         (smoothness is optional on GammaPhase)."""
         loadgen = CLIConfig(
@@ -132,28 +134,28 @@ class TestArrivalSmoothnessGating:
 
 
 class TestFixedScheduleOffsetGating:
-    def test_start_offset_without_fixed_schedule_raises(self):
+    def test_start_offset_without_fixed_schedule_raises(self) -> None:
         loadgen = CLIConfig(request_rate=100.0, request_count=10)
         input_cfg = CLIConfig(fixed_schedule_start_offset=1000)
         user = _make_user(loadgen=loadgen, input_cfg=input_cfg)
         with pytest.raises(ValueError, match="--fixed-schedule"):
             build_profiling(user)
 
-    def test_end_offset_without_fixed_schedule_raises(self):
+    def test_end_offset_without_fixed_schedule_raises(self) -> None:
         loadgen = CLIConfig(request_rate=100.0, request_count=10)
         input_cfg = CLIConfig(fixed_schedule_end_offset=2000)
         user = _make_user(loadgen=loadgen, input_cfg=input_cfg)
         with pytest.raises(ValueError, match="--fixed-schedule"):
             build_profiling(user)
 
-    def test_auto_offset_without_fixed_schedule_raises(self):
+    def test_auto_offset_without_fixed_schedule_raises(self) -> None:
         loadgen = CLIConfig(concurrency=4, request_count=10)
         input_cfg = CLIConfig(fixed_schedule_auto_offset=True)
         user = _make_user(loadgen=loadgen, input_cfg=input_cfg)
         with pytest.raises(ValueError, match="--fixed-schedule"):
             build_profiling(user)
 
-    def test_offsets_in_concurrency_mode_raises(self):
+    def test_offsets_in_concurrency_mode_raises(self) -> None:
         loadgen = CLIConfig(concurrency=2, request_count=10)
         input_cfg = CLIConfig(fixed_schedule_start_offset=500)
         user = _make_user(loadgen=loadgen, input_cfg=input_cfg)
@@ -162,7 +164,7 @@ class TestFixedScheduleOffsetGating:
         ):
             build_profiling(user)
 
-    def test_offsets_with_fixed_schedule_succeed(self):
+    def test_offsets_with_fixed_schedule_succeed(self) -> None:
         """Valid combination: --fixed-schedule + offsets all together."""
         loadgen = CLIConfig(concurrency=4)
         input_cfg = CLIConfig(
@@ -178,7 +180,7 @@ class TestFixedScheduleOffsetGating:
         # Existing convention: start_offset present => auto_offset defaults False.
         assert prof["auto_offset"] is False
 
-    def test_fixed_schedule_without_offsets_succeeds(self):
+    def test_fixed_schedule_without_offsets_succeeds(self) -> None:
         """--fixed-schedule alone (no offsets) is fine."""
         loadgen = CLIConfig(concurrency=4)
         input_cfg = CLIConfig(fixed_schedule=True)
@@ -195,7 +197,7 @@ class TestFixedScheduleOffsetGating:
 
 
 class TestGracePeriodRequiresDuration:
-    def test_grace_period_without_duration_raises(self):
+    def test_grace_period_without_duration_raises(self) -> None:
         loadgen = CLIConfig(benchmark_grace_period=30, request_count=10, concurrency=1)
         user = _make_user(loadgen=loadgen)
         with pytest.raises(
@@ -203,7 +205,7 @@ class TestGracePeriodRequiresDuration:
         ):
             build_profiling(user)
 
-    def test_grace_period_with_duration_succeeds(self):
+    def test_grace_period_with_duration_succeeds(self) -> None:
         loadgen = CLIConfig(
             benchmark_duration=60.0, benchmark_grace_period=30, concurrency=1
         )
@@ -219,7 +221,7 @@ class TestGracePeriodRequiresDuration:
 
 
 class TestNumUsersRequiresUserCentric:
-    def test_num_users_with_concurrency_mode_raises(self):
+    def test_num_users_with_concurrency_mode_raises(self) -> None:
         loadgen = CLIConfig(num_users=5, request_count=10, concurrency=1)
         user = _make_user(loadgen=loadgen)
         with pytest.raises(
@@ -227,7 +229,7 @@ class TestNumUsersRequiresUserCentric:
         ):
             build_profiling(user)
 
-    def test_num_users_with_request_rate_raises(self):
+    def test_num_users_with_request_rate_raises(self) -> None:
         loadgen = CLIConfig(num_users=5, request_rate=100.0, request_count=10)
         user = _make_user(loadgen=loadgen)
         with pytest.raises(
@@ -235,7 +237,7 @@ class TestNumUsersRequiresUserCentric:
         ):
             build_profiling(user)
 
-    def test_num_users_with_user_centric_succeeds(self):
+    def test_num_users_with_user_centric_succeeds(self) -> None:
         """``--user-centric-rate`` resolves to USER_CENTRIC; --num-users flows through."""
         loadgen = CLIConfig(
             user_centric_rate=10.0,
@@ -255,17 +257,17 @@ class TestNumUsersRequiresUserCentric:
 
 
 class TestRateRampRequiresRequestRate:
-    def test_rate_ramp_with_concurrency_mode_raises(self):
+    def test_rate_ramp_with_concurrency_mode_raises(self) -> None:
         loadgen = CLIConfig(
             request_rate_ramp_duration=30, request_count=10, concurrency=1
         )
         user = _make_user(loadgen=loadgen)
         with pytest.raises(
-            ValueError, match="--request-rate-ramp-duration.*rate-controlled"
+            ValueError, match=r"--request-rate-ramp-duration.*rate-controlled"
         ):
             build_profiling(user)
 
-    def test_rate_ramp_with_request_rate_succeeds(self):
+    def test_rate_ramp_with_request_rate_succeeds(self) -> None:
         loadgen = CLIConfig(
             request_rate=100.0, request_rate_ramp_duration=30, request_count=10
         )
@@ -387,127 +389,32 @@ class TestAdaptiveScaleRoutes:
             ),
         ],
     )
-    def test_adaptive_scale_rejects_invalid_compact_control(
-        self: TestAdaptiveScaleRoutes, control: str, match: str
-    ) -> None:
-        loadgen = CLIConfig(
-            adaptive_scale=True,
-            adaptive_scale_control=control,
-            adaptive_sustain_duration=120.0,
-            adaptive_scale_sla=["request_latency:p95:le:30000"],
-            benchmark_duration=600.0,
-            concurrency=100,
+    def test_removed_adaptive_scale_cli_fields_are_not_on_cli_config(self) -> None:
+        assert self.REMOVED_FIELDS.isdisjoint(CLIConfig.model_fields)
+
+    def test_removed_adaptive_scale_cli_fields_are_not_loadgen_routes(self) -> None:
+        from aiperf.config.flags._section_fields import LOADGEN_FIELDS
+
+        assert self.REMOVED_FIELDS.isdisjoint(LOADGEN_FIELDS)
+
+    def test_build_profiling_does_not_emit_adaptive_scale_from_cli(self) -> None:
+        user = _make_user(
+            loadgen=CLIConfig(
+                concurrency=8,
+                benchmark_duration=60,
+                request_count=100,
+            )
         )
-        user = _make_user(loadgen=loadgen)
 
-        with pytest.raises(ValueError, match=match):
-            build_profiling(user)
-
-    def test_adaptive_scale_rejects_mixed_compact_and_expanded_control(
-        self: TestAdaptiveScaleRoutes,
-    ) -> None:
-        loadgen = CLIConfig(
-            adaptive_scale=True,
-            adaptive_scale_control="concurrency:1,100:int",
-            adaptive_control_variable="concurrency",
-            adaptive_sustain_duration=120.0,
-            adaptive_scale_sla=["request_latency:p95:le:30000"],
-            benchmark_duration=600.0,
-            concurrency=100,
-        )
-        user = _make_user(loadgen=loadgen)
-
-        with pytest.raises(ValueError, match="Use either --adaptive-scale-control"):
-            build_profiling(user)
-
-    def test_adaptive_scale_requires_concurrency(
-        self: TestAdaptiveScaleRoutes,
-    ) -> None:
-        loadgen = CLIConfig(
-            adaptive_scale=True,
-            adaptive_sustain_duration=120.0,
-            benchmark_duration=600.0,
-            request_rate=10.0,
-        )
-        user = _make_user(loadgen=loadgen)
-
-        with pytest.raises(ValueError, match="--adaptive-scale requires --concurrency"):
-            build_profiling(user)
-
-    def test_adaptive_scale_rejects_search_sla(
-        self: TestAdaptiveScaleRoutes,
-    ) -> None:
-        loadgen = CLIConfig(
-            adaptive_scale=True,
-            adaptive_sustain_duration=120.0,
-            benchmark_duration=600.0,
-            concurrency=200,
-            search_sla=["request_latency:p95:le:30000"],
-        )
-        user = _make_user(loadgen=loadgen)
-
-        with pytest.raises(ValueError, match="--adaptive-scale-sla"):
-            build_profiling(user)
-
-    def test_adaptive_scale_sla_requires_adaptive_scale(
-        self: TestAdaptiveScaleRoutes,
-    ) -> None:
-        loadgen = CLIConfig(
-            benchmark_duration=600.0,
-            concurrency=200,
-            adaptive_scale_sla=["request_latency:p95:le:30000"],
-        )
-        user = _make_user(loadgen=loadgen)
-
-        with pytest.raises(ValueError, match="--adaptive-scale-sla requires"):
-            build_profiling(user)
-
-    def test_adaptive_scale_sla_still_reports_malformed_filter_without_adaptive_scale(
-        self: TestAdaptiveScaleRoutes,
-    ) -> None:
-        loadgen = CLIConfig(
-            benchmark_duration=600.0,
-            concurrency=200,
-            adaptive_scale_sla=["bad"],
-        )
-        user = _make_user(loadgen=loadgen)
-
-        with pytest.raises(TypeError, match="--adaptive-scale-sla"):
-            build_profiling(user)
-
-    def test_adaptive_scale_cli_accepts_itl_and_goodput_slas(
-        self: TestAdaptiveScaleRoutes,
-    ) -> None:
-        loadgen = CLIConfig(
-            adaptive_scale=True,
-            adaptive_sustain_duration=120.0,
-            benchmark_duration=600.0,
-            concurrency=200,
-            adaptive_scale_sla=[
-                "itl:p95:le:100",
-                "goodput:avg:ge:20",
-            ],
-        )
-        user = _make_user(loadgen=loadgen)
         prof = build_profiling(user)
 
-        assert prof["sla"] == [
-            {
-                "metric_tag": "itl",
-                "stat": "p95",
-                "op": "le",
-                "threshold": 100.0,
-            },
-            {
-                "metric_tag": "goodput",
-                "stat": "avg",
-                "op": "ge",
-                "threshold": 20.0,
-            },
-        ]
+        assert self.REMOVED_FIELDS.isdisjoint(prof)
+        assert "adaptive_scale" not in prof
 
+
+class TestAdaptiveScaleValidation:
     def test_adaptive_scale_rejects_concurrency_ramp(
-        self: TestAdaptiveScaleRoutes,
+        self: TestAdaptiveScaleValidation,
     ) -> None:
         from aiperf.config.phases import ConcurrencyPhase
 
@@ -768,3 +675,57 @@ class TestAdaptiveScaleRoutes:
         )
 
         assert phase.adaptive_scale is False
+
+
+class TestRateSeries:
+    def test_rate_series_without_request_rate_succeeds(self, tmp_path: Path) -> None:
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":1},{"time_s":60,"qps":7},{"time_s":120,"qps":40}]}',
+            encoding="utf-8",
+        )
+        loadgen = CLIConfig(
+            request_rate_series=json_path,
+            arrival_pattern=ArrivalPattern.CONSTANT,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+
+        prof = build_profiling(user)
+
+        assert prof["type"] == PhaseType.CONSTANT
+        assert "rate" not in prof
+        assert prof["rate_series"]["points"][1] == {"time_s": 60.0, "qps": 7.0}
+
+    def test_rate_series_with_request_rate_raises(self, tmp_path: Path) -> None:
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":5},{"time_s":60,"qps":10}]}',
+            encoding="utf-8",
+        )
+        loadgen = CLIConfig(
+            request_rate=100.0,
+            request_rate_series=json_path,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+
+        with pytest.raises(ValueError, match=r"request-rate.*request-rate-series"):
+            build_profiling(user)
+
+    def test_rate_series_with_user_centric_rate_raises(self, tmp_path: Path) -> None:
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":5},{"time_s":60,"qps":10}]}',
+            encoding="utf-8",
+        )
+        loadgen = CLIConfig(
+            user_centric_rate=100.0,
+            request_rate_series=json_path,
+            num_users=4,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+
+        with pytest.raises(ValueError, match="user-centric-rate"):
+            build_profiling(user)

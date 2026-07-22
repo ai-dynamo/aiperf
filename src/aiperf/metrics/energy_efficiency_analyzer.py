@@ -11,6 +11,10 @@ when GPU telemetry is not collected. See design doc ``0005-energy-efficiency-met
 Energy source: prefers the DCGM ``energy_consumption`` counter delta; falls back
 to power-integration (``fleet_power * duration``) when only the power gauge is
 available (e.g. pynvml/amdsmi collectors that expose no energy counter).
+
+Vendor fan-out: the analyzer calls ``gpu.available_platforms()`` and emits
+``nvidia_*`` metrics for NVIDIA GPUs and ``amd_*`` metrics for AMD GPUs.
+Mixed-vendor runs emit both families independently.
 """
 
 from __future__ import annotations
@@ -21,19 +25,35 @@ from typing import TYPE_CHECKING, Any
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.logging import AIPerfLogger
 from aiperf.common.models import MetricResult
+from aiperf.gpu_telemetry.constants import (
+    AMD_GPU_TELEMETRY_PLATFORM,
+    NVIDIA_GPU_TELEMETRY_PLATFORM,
+)
 from aiperf.metrics.types.power_efficiency_metrics import (
-    AverageGpuPowerMetric,
-    EnergyDelayProductMetric,
-    EnergyPerOutputTokenMetric,
-    EnergyPerRequestMetric,
-    EnergyPerTotalTokenMetric,
-    EnergyPerUserMetric,
-    GoodputPerWattMetric,
-    OutputTokensPerJouleMetric,
-    OutputTokensPerSecondPerWattMetric,
-    PerformancePerWattMetric,
-    TotalGpuEnergyMetric,
-    TotalGpuPowerMetric,
+    AmdAverageGpuPowerMetric,
+    AmdEnergyDelayProductMetric,
+    AmdEnergyPerOutputTokenMetric,
+    AmdEnergyPerRequestMetric,
+    AmdEnergyPerTotalTokenMetric,
+    AmdEnergyPerUserMetric,
+    AmdGoodputPerWattMetric,
+    AmdOutputTokensPerJouleMetric,
+    AmdOutputTokensPerSecondPerWattMetric,
+    AmdPerformancePerWattMetric,
+    AmdTotalGpuEnergyMetric,
+    AmdTotalGpuPowerMetric,
+    NvidiaAverageGpuPowerMetric,
+    NvidiaEnergyDelayProductMetric,
+    NvidiaEnergyPerOutputTokenMetric,
+    NvidiaEnergyPerRequestMetric,
+    NvidiaEnergyPerTotalTokenMetric,
+    NvidiaEnergyPerUserMetric,
+    NvidiaGoodputPerWattMetric,
+    NvidiaOutputTokensPerJouleMetric,
+    NvidiaOutputTokensPerSecondPerWattMetric,
+    NvidiaPerformancePerWattMetric,
+    NvidiaTotalGpuEnergyMetric,
+    NvidiaTotalGpuPowerMetric,
 )
 from aiperf.plugin.enums import AccumulatorType
 
@@ -46,6 +66,37 @@ if TYPE_CHECKING:
 _logger = AIPerfLogger(__name__)
 
 _MS_PER_SECOND = 1000.0
+
+_VENDOR_METRICS: dict[str, dict[str, type]] = {
+    NVIDIA_GPU_TELEMETRY_PLATFORM: {
+        "total_power": NvidiaTotalGpuPowerMetric,
+        "average_power": NvidiaAverageGpuPowerMetric,
+        "total_energy": NvidiaTotalGpuEnergyMetric,
+        "output_tokens_per_joule": NvidiaOutputTokensPerJouleMetric,
+        "energy_per_output_token": NvidiaEnergyPerOutputTokenMetric,
+        "energy_per_total_token": NvidiaEnergyPerTotalTokenMetric,
+        "energy_per_request": NvidiaEnergyPerRequestMetric,
+        "energy_per_user": NvidiaEnergyPerUserMetric,
+        "energy_delay_product": NvidiaEnergyDelayProductMetric,
+        "performance_per_watt": NvidiaPerformancePerWattMetric,
+        "output_tps_per_watt": NvidiaOutputTokensPerSecondPerWattMetric,
+        "goodput_per_watt": NvidiaGoodputPerWattMetric,
+    },
+    AMD_GPU_TELEMETRY_PLATFORM: {
+        "total_power": AmdTotalGpuPowerMetric,
+        "average_power": AmdAverageGpuPowerMetric,
+        "total_energy": AmdTotalGpuEnergyMetric,
+        "output_tokens_per_joule": AmdOutputTokensPerJouleMetric,
+        "energy_per_output_token": AmdEnergyPerOutputTokenMetric,
+        "energy_per_total_token": AmdEnergyPerTotalTokenMetric,
+        "energy_per_request": AmdEnergyPerRequestMetric,
+        "energy_per_user": AmdEnergyPerUserMetric,
+        "energy_delay_product": AmdEnergyDelayProductMetric,
+        "performance_per_watt": AmdPerformancePerWattMetric,
+        "output_tps_per_watt": AmdOutputTokensPerSecondPerWattMetric,
+        "goodput_per_watt": AmdGoodputPerWattMetric,
+    },
+}
 
 
 class EnergySource(str, enum.Enum):
@@ -79,8 +130,9 @@ class EnergyEfficiencyAnalyzer:
 
     Reads the live ``GPUTelemetryAccumulator`` (windowed energy/power) and the
     ``MetricsAccumulator`` summary (token/throughput/latency totals) from the
-    SummaryContext, then computes the energy metric family. Each metric is
-    emitted only when its inputs are available.
+    SummaryContext, then computes the energy metric family per vendor. Each metric
+    is emitted only when its inputs are available; vendors with no telemetry data
+    contribute nothing.
     """
 
     def __init__(
@@ -137,30 +189,79 @@ class EnergyEfficiencyAnalyzer:
             span = gpu.scrape_span_ns()
             if span is not None and span[1] > span[0]:
                 duration_s = (span[1] - span[0]) / NANOS_PER_SECOND
-        energy = gpu.total_energy_joules(start_ns, end_ns)
-        power = gpu.total_power_watts(start_ns, end_ns)
+
+        platforms = gpu.available_platforms()
+        concurrency = self._concurrency()
+        out: list[MetricResult] = []
+        for platform in sorted(platforms):
+            vendor_metrics = _VENDOR_METRICS.get(platform)
+            if vendor_metrics is None:
+                _logger.debug(
+                    lambda p=platform: (
+                        f"EnergyEfficiencyAnalyzer: skipping unmapped platform '{p}' — no entry in _VENDOR_METRICS"
+                    )
+                )
+                continue
+            vendor_out = self._analyze_vendor(
+                gpu=gpu,
+                start_ns=start_ns,
+                end_ns=end_ns,
+                duration_s=duration_s,
+                metric=metric,
+                concurrency=concurrency,
+                vendor_metrics=vendor_metrics,
+                platform=platform,
+            )
+            out.extend(vendor_out)
+        return out
+
+    def _analyze_vendor(
+        self,
+        *,
+        gpu: Any,
+        start_ns: int | None,
+        end_ns: int | None,
+        duration_s: float,
+        metric: Callable[[str], float | None],
+        concurrency: int | None,
+        vendor_metrics: dict[str, type],
+        platform: str,
+    ) -> list[MetricResult]:
+        energy = gpu.total_energy_joules(start_ns, end_ns, platform=platform)
+        power = gpu.total_power_watts(start_ns, end_ns, platform=platform)
         total_energy_j, avg_power_w, source = self._resolve_energy(
             energy, power, duration_s
         )
 
         out: list[MetricResult] = []
         if power[1] > 0:
-            out.append(_result(TotalGpuPowerMetric, power[0]))
+            out.append(_result(vendor_metrics["total_power"], power[0]))
         if source is EnergySource.UNAVAILABLE or total_energy_j <= 0:
+            if source is EnergySource.UNAVAILABLE:
+                _logger.warning(
+                    lambda p=platform: (
+                        f"EnergyEfficiencyAnalyzer: no power or energy data available "
+                        f"for platform '{p}' — GPU power efficiency metrics will not be "
+                        f"emitted. Verify that the GPU telemetry collector is reporting "
+                        f"power/energy fields for this hardware."
+                    )
+                )
             return out
 
         # A degenerate/empty profiling window yields duration_s == 0, so the DCGM
         # branch cannot derive an average power; emit total energy but skip the
         # misleading 0 W average (and _per_watt_metrics likewise returns []).
         if avg_power_w > 0:
-            out.append(_result(AverageGpuPowerMetric, avg_power_w))
-        out.append(_result(TotalGpuEnergyMetric, total_energy_j))
-        out += self._energy_ratio_metrics(total_energy_j, metric, self._concurrency())
-        out += self._per_watt_metrics(avg_power_w, metric)
+            out.append(_result(vendor_metrics["average_power"], avg_power_w))
+        out.append(_result(vendor_metrics["total_energy"], total_energy_j))
+        out += self._energy_ratio_metrics(
+            total_energy_j, metric, concurrency, vendor_metrics
+        )
+        out += self._per_watt_metrics(avg_power_w, metric, vendor_metrics)
 
         _logger.debug(
             lambda: (
-                f"EnergyEfficiencyAnalyzer emitted {len(out)} metrics "
+                f"EnergyEfficiencyAnalyzer emitted {len(out)} metrics for {platform} "
                 f"(source={source.value}, energy={total_energy_j:.2f}J, "
                 f"avg_power={avg_power_w:.2f}W)"
             )
@@ -190,21 +291,25 @@ class EnergyEfficiencyAnalyzer:
             return power_w * duration_s, power_w, EnergySource.POWER_INTEGRATION
         return 0.0, 0.0, EnergySource.UNAVAILABLE
 
+    @staticmethod
     def _energy_ratio_metrics(
-        self,
         total_energy_j: float,
         metric: Callable[[str], float | None],
         concurrency: int | None,
+        vendor_metrics: dict[str, type],
     ) -> list[MetricResult]:
         out: list[MetricResult] = []
         output_tokens = metric("total_osl")
         if output_tokens:
             out.append(
-                _result(OutputTokensPerJouleMetric, output_tokens / total_energy_j)
+                _result(
+                    vendor_metrics["output_tokens_per_joule"],
+                    output_tokens / total_energy_j,
+                )
             )
             out.append(
                 _result(
-                    EnergyPerOutputTokenMetric,
+                    vendor_metrics["energy_per_output_token"],
                     total_energy_j * _MS_PER_SECOND / output_tokens,
                 )
             )
@@ -212,21 +317,25 @@ class EnergyEfficiencyAnalyzer:
         if total_tokens > 0:
             out.append(
                 _result(
-                    EnergyPerTotalTokenMetric,
+                    vendor_metrics["energy_per_total_token"],
                     total_energy_j * _MS_PER_SECOND / total_tokens,
                 )
             )
         energy_per_request_j = None
         if request_count := metric("request_count"):
             energy_per_request_j = total_energy_j / request_count
-            out.append(_result(EnergyPerRequestMetric, energy_per_request_j))
+            out.append(
+                _result(vendor_metrics["energy_per_request"], energy_per_request_j)
+            )
         if concurrency is not None:
-            out.append(_result(EnergyPerUserMetric, total_energy_j / concurrency))
+            out.append(
+                _result(vendor_metrics["energy_per_user"], total_energy_j / concurrency)
+            )
         latency_ms = metric("request_latency")
         if energy_per_request_j is not None and latency_ms:
             out.append(
                 _result(
-                    EnergyDelayProductMetric,
+                    vendor_metrics["energy_delay_product"],
                     energy_per_request_j * (latency_ms / _MS_PER_SECOND),
                 )
             )
@@ -234,7 +343,9 @@ class EnergyEfficiencyAnalyzer:
 
     @staticmethod
     def _per_watt_metrics(
-        avg_power_w: float, metric: Callable[[str], float | None]
+        avg_power_w: float,
+        metric: Callable[[str], float | None],
+        vendor_metrics: dict[str, type],
     ) -> list[MetricResult]:
         if avg_power_w <= 0:
             return []
@@ -245,13 +356,19 @@ class EnergyEfficiencyAnalyzer:
         # guaranteed above, so none of these divisions is degenerate.
         throughput = metric("request_throughput")
         if throughput is not None:
-            out.append(_result(PerformancePerWattMetric, throughput / avg_power_w))
+            out.append(
+                _result(
+                    vendor_metrics["performance_per_watt"], throughput / avg_power_w
+                )
+            )
         output_tps = metric("output_token_throughput")
         if output_tps is not None:
             out.append(
-                _result(OutputTokensPerSecondPerWattMetric, output_tps / avg_power_w)
+                _result(vendor_metrics["output_tps_per_watt"], output_tps / avg_power_w)
             )
         goodput = metric("goodput")
         if goodput is not None:
-            out.append(_result(GoodputPerWattMetric, goodput / avg_power_w))
+            out.append(
+                _result(vendor_metrics["goodput_per_watt"], goodput / avg_power_w)
+            )
         return out

@@ -206,8 +206,10 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
     async def _init_orchestrator(self) -> None:
         """Log configured phases (actual initialization happens per-phase in _execute_phases)."""
         self.info(
-            lambda: f"Initialized {len(self._ordered_phase_configs)} phase(s): "
-            f"{[p.phase.replace('_', ' ').title() for p in self._ordered_phase_configs]}"
+            lambda: (
+                f"Initialized {len(self._ordered_phase_configs)} phase(s): "
+                f"{[p.phase.replace('_', ' ').title() for p in self._ordered_phase_configs]}"
+            )
         )
 
     @on_start
@@ -248,7 +250,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 phase_publisher=self._phase_publisher,
                 credit_router=self._credit_router,
                 concurrency_manager=self._concurrency_manager,
-                cancellation_policy=self._cancellation_policy,
+                cancellation_policy=RequestCancellationSimulator(
+                    phase_config.request_cancellation
+                ),
                 callback_handler=self._callback_handler,
                 url_selection_strategy=self._url_sampler,
                 run=self._run,
@@ -318,7 +322,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         """
         if self._active_runners:
             self.debug(
-                lambda: f"Stopping orchestrator with {len(self._active_runners)} active runner(s)"
+                lambda: (
+                    f"Stopping orchestrator with {len(self._active_runners)} active runner(s)"
+                )
             )
             self._cancel_active_runners()
 

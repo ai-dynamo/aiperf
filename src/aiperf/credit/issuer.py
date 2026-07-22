@@ -21,6 +21,7 @@ from msgspec.structs import replace as _struct_replace
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import CreditPhase
+from aiperf.common.phase import phase_runtime_key
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.timing.replay_dependencies import ReplayIssueGate
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
@@ -64,6 +65,10 @@ class CreditIssuer:
         self,
         *,
         phase: CreditPhase,
+        phase_index: int | None = None,
+        profiling_index: int | None = None,
+        phase_name: str | None = None,
+        phase_kind: str | None = None,
         stop_checker: StopConditionChecker,
         progress: PhaseProgressTracker,
         concurrency_manager: ConcurrencyManager,
@@ -94,6 +99,10 @@ class CreditIssuer:
                 per-root-credit release).
         """
         self._phase = phase
+        self._phase_index = phase_index
+        self._profiling_index = profiling_index
+        self._phase_name = phase_name
+        self._phase_kind = phase_kind
         self._stop_checker = stop_checker
         self._progress = progress
         self._concurrency_manager = concurrency_manager
@@ -145,10 +154,14 @@ class CreditIssuer:
         self.stop_issuing()
         self._progress.all_credits_sent_event.set()
 
+    @property
+    def _phase_key(self) -> int | CreditPhase:
+        return phase_runtime_key(self._phase, self._phase_index)
+
     def can_acquire_and_start_new_session(self) -> bool:
         """Check if a session slot can be acquired and a new session can be started."""
         return (
-            self._concurrency_manager.session_slot_available(self._phase)
+            self._concurrency_manager.session_slot_available(self._phase_key)
             and self._stop_checker.can_start_new_session()
         )
 
@@ -334,7 +347,7 @@ class CreditIssuer:
         needs_session_slot = is_session_start and not is_child
         if needs_session_slot:
             acquired = await self._concurrency_manager.acquire_session_slot(
-                self._phase, self._stop_checker.can_start_new_session
+                self._phase_key, self._stop_checker.can_start_new_session
             )
             if not acquired:
                 return False
@@ -343,7 +356,7 @@ class CreditIssuer:
         # Prefill concurrency: one slot per request, released when TTFT arrives.
         # Limits concurrent prompt processing which is the GPU-intensive phase.
         acquired = await self._concurrency_manager.acquire_prefill_slot(
-            self._phase, can_proceed_fn
+            self._phase_key, can_proceed_fn
         )
         if not acquired:
             # CRITICAL: Release session slot if we acquired it to maintain symmetry
@@ -388,14 +401,14 @@ class CreditIssuer:
         needs_session_slot = is_session_start and not is_child
         if needs_session_slot:
             acquired = self._concurrency_manager.try_acquire_session_slot(
-                self._phase, can_proceed_fn
+                self._phase_key, can_proceed_fn
             )
             if not acquired:
                 return None  # No slot - credit not issued
             self._open_session_tree(turn)
 
         acquired = self._concurrency_manager.try_acquire_prefill_slot(
-            self._phase, can_proceed_fn
+            self._phase_key, can_proceed_fn
         )
         if not acquired:
             # CRITICAL: Release session slot if we acquired it to maintain symmetry
@@ -438,6 +451,10 @@ class CreditIssuer:
         credit = Credit(
             id=credit_index,
             phase=self._phase,
+            phase_index=self._phase_index,
+            profiling_index=self._profiling_index,
+            phase_name=self._phase_name,
+            phase_kind=self._phase_kind,
             conversation_id=turn.conversation_id,
             x_correlation_id=turn.x_correlation_id,
             turn_index=turn.turn_index,

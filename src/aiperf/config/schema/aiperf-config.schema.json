@@ -1042,13 +1042,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "concurrency",
@@ -1058,7 +1072,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -1417,13 +1431,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "poisson",
@@ -1433,7 +1461,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -1676,10 +1704,18 @@
                       "title": "Agenticwarmupgraceperiod"
                     },
                     "rate": {
-                      "description": "Target request rate in requests per second (must be > 0).",
-                      "exclusiveMinimum": 0,
-                      "title": "Rate",
-                      "type": "number"
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                      "title": "Rate"
                     },
                     "rateRamp": {
                       "anyOf": [
@@ -1692,14 +1728,55 @@
                       ],
                       "default": null,
                       "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "rateSeries": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RateSeriesConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Piecewise-linear request-rate schedule."
                     }
                   },
                   "required": [
-                    "type",
-                    "rate"
+                    "type"
                   ],
                   "title": "PoissonPhase",
-                  "type": "object"
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "oneOf": [
+                        {
+                          "required": [
+                            "rate"
+                          ],
+                          "properties": {
+                            "rate": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "required": [
+                            "rateSeries"
+                          ],
+                          "properties": {
+                            "rateSeries": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
                 },
                 {
                   "additionalProperties": false,
@@ -1818,13 +1895,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "gamma",
@@ -1834,7 +1925,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -2077,10 +2168,18 @@
                       "title": "Agenticwarmupgraceperiod"
                     },
                     "rate": {
-                      "description": "Target request rate in requests per second (must be > 0).",
-                      "exclusiveMinimum": 0,
-                      "title": "Rate",
-                      "type": "number"
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                      "title": "Rate"
                     },
                     "rateRamp": {
                       "anyOf": [
@@ -2093,6 +2192,18 @@
                       ],
                       "default": null,
                       "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "rateSeries": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RateSeriesConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Piecewise-linear request-rate schedule."
                     },
                     "smoothness": {
                       "anyOf": [
@@ -2110,11 +2221,40 @@
                     }
                   },
                   "required": [
-                    "type",
-                    "rate"
+                    "type"
                   ],
                   "title": "GammaPhase",
-                  "type": "object"
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "oneOf": [
+                        {
+                          "required": [
+                            "rate"
+                          ],
+                          "properties": {
+                            "rate": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "required": [
+                            "rateSeries"
+                          ],
+                          "properties": {
+                            "rateSeries": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
                 },
                 {
                   "additionalProperties": false,
@@ -2233,13 +2373,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "constant",
@@ -2249,7 +2403,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -2492,10 +2646,18 @@
                       "title": "Agenticwarmupgraceperiod"
                     },
                     "rate": {
-                      "description": "Target request rate in requests per second (must be > 0).",
-                      "exclusiveMinimum": 0,
-                      "title": "Rate",
-                      "type": "number"
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                      "title": "Rate"
                     },
                     "rateRamp": {
                       "anyOf": [
@@ -2508,14 +2670,55 @@
                       ],
                       "default": null,
                       "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "rateSeries": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RateSeriesConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Piecewise-linear request-rate schedule."
                     }
                   },
                   "required": [
-                    "type",
-                    "rate"
+                    "type"
                   ],
                   "title": "ConstantPhase",
-                  "type": "object"
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "oneOf": [
+                        {
+                          "required": [
+                            "rate"
+                          ],
+                          "properties": {
+                            "rate": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "required": [
+                            "rateSeries"
+                          ],
+                          "properties": {
+                            "rateSeries": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
                 },
                 {
                   "additionalProperties": false,
@@ -2634,13 +2837,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "user_centric",
@@ -2650,7 +2867,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -2893,10 +3110,18 @@
                       "title": "Agenticwarmupgraceperiod"
                     },
                     "rate": {
-                      "description": "Target request rate in requests per second (must be > 0).",
-                      "exclusiveMinimum": 0,
-                      "title": "Rate",
-                      "type": "number"
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                      "title": "Rate"
                     },
                     "rateRamp": {
                       "anyOf": [
@@ -2919,11 +3144,25 @@
                   },
                   "required": [
                     "type",
-                    "rate",
-                    "users"
+                    "users",
+                    "rate"
                   ],
                   "title": "UserCentricPhase",
-                  "type": "object"
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
                 },
                 {
                   "additionalProperties": false,
@@ -3042,13 +3281,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "fixed_schedule",
@@ -3058,7 +3311,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -4365,13 +4618,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "concurrency",
@@ -4381,7 +4648,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -4740,13 +5007,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "poisson",
@@ -4756,7 +5037,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -4999,10 +5280,18 @@
                   "title": "Agenticwarmupgraceperiod"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -5015,14 +5304,55 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "PoissonPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
@@ -5141,13 +5471,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "gamma",
@@ -5157,7 +5501,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -5400,10 +5744,18 @@
                   "title": "Agenticwarmupgraceperiod"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -5416,6 +5768,18 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
                 },
                 "smoothness": {
                   "anyOf": [
@@ -5433,11 +5797,40 @@
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "GammaPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
@@ -5556,13 +5949,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "constant",
@@ -5572,7 +5979,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -5815,10 +6222,18 @@
                   "title": "Agenticwarmupgraceperiod"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -5831,14 +6246,55 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "ConstantPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
@@ -5957,13 +6413,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "user_centric",
@@ -5973,7 +6443,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -6216,10 +6686,18 @@
                   "title": "Agenticwarmupgraceperiod"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -6242,11 +6720,25 @@
               },
               "required": [
                 "type",
-                "rate",
-                "users"
+                "users",
+                "rate"
               ],
               "title": "UserCentricPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "required": [
+                    "rate"
+                  ],
+                  "properties": {
+                    "rate": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  }
+                }
+              ]
             },
             {
               "additionalProperties": false,
@@ -6365,13 +6857,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "fixed_schedule",
@@ -6381,7 +6887,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -6797,13 +7303,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "concurrency",
@@ -6813,7 +7333,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -7172,13 +7692,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "poisson",
@@ -7188,7 +7722,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -7431,10 +7965,18 @@
                   "title": "Agenticwarmupgraceperiod"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -7447,14 +7989,55 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "PoissonPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
@@ -7573,13 +8156,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "gamma",
@@ -7589,7 +8186,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -7832,10 +8429,18 @@
                   "title": "Agenticwarmupgraceperiod"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -7848,6 +8453,18 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
                 },
                 "smoothness": {
                   "anyOf": [
@@ -7865,11 +8482,40 @@
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "GammaPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
@@ -7988,13 +8634,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "constant",
@@ -8004,7 +8664,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -8247,10 +8907,18 @@
                   "title": "Agenticwarmupgraceperiod"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -8263,14 +8931,55 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "ConstantPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
@@ -8389,13 +9098,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "user_centric",
@@ -8405,7 +9128,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -8648,10 +9371,18 @@
                   "title": "Agenticwarmupgraceperiod"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -8674,11 +9405,25 @@
               },
               "required": [
                 "type",
-                "rate",
-                "users"
+                "users",
+                "rate"
               ],
               "title": "UserCentricPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "required": [
+                    "rate"
+                  ],
+                  "properties": {
+                    "rate": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  }
+                }
+              ]
             },
             {
               "additionalProperties": false,
@@ -8797,13 +9542,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "fixed_schedule",
@@ -8813,7 +9572,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -9486,13 +10245,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "concurrency",
@@ -9502,7 +10275,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -10159,13 +10932,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "constant",
@@ -10175,7 +10962,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -10575,14 +11362,13 @@
           "x-jinja2-supported": true
         },
         "rate": {
-          "description": "Target request rate in requests per second (must be > 0).",
-          "title": "Rate",
-          "oneOf": [
+          "anyOf": [
             {
-              "description": "Target request rate in requests per second (must be > 0).",
               "exclusiveMinimum": 0,
-              "title": "Rate",
               "type": "number"
+            },
+            {
+              "type": "null"
             },
             {
               "type": "string",
@@ -10595,6 +11381,9 @@
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
+          "default": null,
+          "description": "Target request rate in requests per second. Required unless rate_series is set.",
+          "title": "Rate",
           "x-jinja2-supported": true
         },
         "rateRamp": {
@@ -10619,15 +11408,56 @@
           "default": null,
           "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
+        },
+        "rateSeries": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateSeriesConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Piecewise-linear request-rate schedule."
         }
       },
       "required": [
         "name",
-        "type",
-        "rate"
+        "type"
       ],
       "title": "ConstantPhase",
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "rate"
+              ],
+              "properties": {
+                "rate": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            },
+            {
+              "required": [
+                "rateSeries"
+              ],
+              "properties": {
+                "rateSeries": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
     },
     "ConvergenceConfig": {
       "additionalProperties": false,
@@ -12071,13 +12901,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "fixed_schedule",
@@ -12087,7 +12931,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -12808,13 +13652,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "gamma",
@@ -12824,7 +13682,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -13224,14 +14082,13 @@
           "x-jinja2-supported": true
         },
         "rate": {
-          "description": "Target request rate in requests per second (must be > 0).",
-          "title": "Rate",
-          "oneOf": [
+          "anyOf": [
             {
-              "description": "Target request rate in requests per second (must be > 0).",
               "exclusiveMinimum": 0,
-              "title": "Rate",
               "type": "number"
+            },
+            {
+              "type": "null"
             },
             {
               "type": "string",
@@ -13244,6 +14101,9 @@
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
+          "default": null,
+          "description": "Target request rate in requests per second. Required unless rate_series is set.",
+          "title": "Rate",
           "x-jinja2-supported": true
         },
         "rateRamp": {
@@ -13268,6 +14128,18 @@
           "default": null,
           "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
+        },
+        "rateSeries": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateSeriesConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Piecewise-linear request-rate schedule."
         },
         "smoothness": {
           "anyOf": [
@@ -13297,11 +14169,40 @@
       },
       "required": [
         "name",
-        "type",
-        "rate"
+        "type"
       ],
       "title": "GammaPhase",
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "rate"
+              ],
+              "properties": {
+                "rate": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            },
+            {
+              "required": [
+                "rateSeries"
+              ],
+              "properties": {
+                "rateSeries": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
     },
     "GpuTelemetryConfig": {
       "title": "GpuTelemetryConfig",
@@ -15296,13 +16197,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "poisson",
@@ -15312,7 +16227,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -15712,14 +16627,13 @@
           "x-jinja2-supported": true
         },
         "rate": {
-          "description": "Target request rate in requests per second (must be > 0).",
-          "title": "Rate",
-          "oneOf": [
+          "anyOf": [
             {
-              "description": "Target request rate in requests per second (must be > 0).",
               "exclusiveMinimum": 0,
-              "title": "Rate",
               "type": "number"
+            },
+            {
+              "type": "null"
             },
             {
               "type": "string",
@@ -15732,6 +16646,9 @@
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
+          "default": null,
+          "description": "Target request rate in requests per second. Required unless rate_series is set.",
+          "title": "Rate",
           "x-jinja2-supported": true
         },
         "rateRamp": {
@@ -15756,15 +16673,56 @@
           "default": null,
           "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
+        },
+        "rateSeries": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateSeriesConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Piecewise-linear request-rate schedule."
         }
       },
       "required": [
         "name",
-        "type",
-        "rate"
+        "type"
       ],
       "title": "PoissonPhase",
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "rate"
+              ],
+              "properties": {
+                "rate": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            },
+            {
+              "required": [
+                "rateSeries"
+              ],
+              "properties": {
+                "rateSeries": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
     },
     "PostProcessSpec": {
       "additionalProperties": false,
@@ -16522,6 +17480,122 @@
         }
       },
       "title": "RankingsConfig",
+      "type": "object"
+    },
+    "RateSeriesConfig": {
+      "additionalProperties": false,
+      "description": "Piecewise-linear request-rate schedule.",
+      "properties": {
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JSON file path containing request-rate control points.",
+          "title": "Path"
+        },
+        "points": {
+          "description": "Strictly increasing request-rate control points.",
+          "items": {
+            "$ref": "#/$defs/RateSeriesPoint"
+          },
+          "title": "Points",
+          "type": "array",
+          "minItems": 2
+        }
+      },
+      "title": "RateSeriesConfig",
+      "type": "object",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "path"
+              ],
+              "properties": {
+                "path": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            },
+            {
+              "required": [
+                "points"
+              ],
+              "properties": {
+                "points": {
+                  "minItems": 2
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "RateSeriesPoint": {
+      "additionalProperties": false,
+      "description": "One request-rate control point.",
+      "properties": {
+        "timeS": {
+          "description": "Elapsed time in seconds from the start of the request-rate series, after any request-rate ramp completes.",
+          "title": "Times",
+          "oneOf": [
+            {
+              "description": "Elapsed time in seconds from the start of the request-rate series, after any request-rate ramp completes.",
+              "minimum": 0.0,
+              "title": "Times",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "qps": {
+          "description": "Request rate in queries per second at this point.",
+          "title": "Qps",
+          "oneOf": [
+            {
+              "description": "Request rate in queries per second at this point.",
+              "exclusiveMinimum": 0.0,
+              "title": "Qps",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        }
+      },
+      "required": [
+        "timeS",
+        "qps"
+      ],
+      "title": "RateSeriesPoint",
       "type": "object"
     },
     "RequestContentType": {
@@ -18668,13 +19742,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "user_centric",
@@ -18684,7 +19772,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -19084,14 +20172,13 @@
           "x-jinja2-supported": true
         },
         "rate": {
-          "description": "Target request rate in requests per second (must be > 0).",
-          "title": "Rate",
-          "oneOf": [
+          "anyOf": [
             {
-              "description": "Target request rate in requests per second (must be > 0).",
               "exclusiveMinimum": 0,
-              "title": "Rate",
               "type": "number"
+            },
+            {
+              "type": "null"
             },
             {
               "type": "string",
@@ -19104,6 +20191,9 @@
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
+          "default": null,
+          "description": "Target request rate in requests per second. Required unless rate_series is set.",
+          "title": "Rate",
           "x-jinja2-supported": true
         },
         "rateRamp": {
@@ -19156,11 +20246,25 @@
       "required": [
         "name",
         "type",
-        "rate",
-        "users"
+        "users",
+        "rate"
       ],
       "title": "UserCentricPhase",
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "required": [
+            "rate"
+          ],
+          "properties": {
+            "rate": {
+              "not": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     },
     "UserFile": {
       "description": "One user-declared output file rendered into the run directory before benchmark start.\n\nPath is relative to the run directory; subdirectories are allowed; absolute\npaths and any segment equal to '..' are rejected. Content is rendered with\njinja2 against a documented context (variables: + system-injected names).",

@@ -509,6 +509,10 @@ Maximum input context length (tokens) per conversation. DatasetManager tokenizes
 Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for traces, `shuffle` for synthetic).
 <br/>_Choices: [`random`, `sequential`, `shuffle`]_
 
+#### `--allow-dataset-wrap`, `--no-allow-dataset-wrap`
+
+Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled.
+
 #### `--random-seed` `<int>`
 
 Random seed for deterministic data generation. When set, makes synthetic prompts, sampling, delays, and other random operations reproducible across runs. Essential for A/B testing and debugging. Uses system entropy if not specified. Initialized globally at config creation.
@@ -696,7 +700,7 @@ Standard deviation for synthetic input prompt token lengths. Creates variability
 
 #### `--prompt-input-tokens-block-size`, `--synthetic-input-tokens-block-size`, `--isl-block-size` `<int>`
 
-Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. Only supported with synthetic datasets: with `--input-file` the flag is rejected at convert time, and trace replay loaders always use the `default_block_size` from their plugin metadata (16 for `bailian_trace`, 64 for `baseten_trace`, 512 for `mooncake_trace`).
+Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. With `--input-file` this overrides the trace loader's `default_block_size` plugin metadata (16 for `bailian_trace`, 512 for `mooncake_trace`) for loaders that reconstruct prompts from `hash_ids`; it has no effect on `baseten_trace`, which replays literal recorded prompts. Set it when a trace was recorded at a block size different from its loader default (e.g. a Mooncake-format trace recorded at 16).
 <br/>_Constraints: ≥ 1_
 
 #### `--seq-dist`, `--sequence-distribution` `<str>`
@@ -1045,6 +1049,10 @@ Duration in seconds to ramp prefill concurrency from 1 to target.
 Duration in seconds to ramp request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration), ensuring correct behavior for target rates below 1 QPS. Useful for gradual warm-up of the target system.
 <br/>_Constraints: > 0_
 
+#### `--request-rate-series` `<str>`
+
+JSON file containing request-rate points for piecewise-linear request-rate control.
+
 #### `--failed-request-threshold` `<float>`
 
 Abort the run early when (failed_records / total_records) exceeds this ratio. Default None disables the check. Only PROFILING-phase records count toward the ratio. A grace floor of max(concurrency, 10) records must accumulate before the check is armed, so a single early failure cannot kill the run. When the threshold is exceeded a ProfileCancelCommand is broadcast: in-flight requests drain via the normal cancel path, partial results are still aggregated, and the run exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop in record_processor_service so the rate measures real failures only.
@@ -1072,42 +1080,10 @@ AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches in
 Hard ceiling (seconds) for idle gaps within each individual trace. For Weka trace replay, AIPerf looks at all parent and subagent request submission timestamps within one root trace, compresses long gaps between consecutive request submissions, and derives turn delays from the compressed per-trace timeline. Original request api_time values are not used to decide these idle gaps. When set for Weka, this takes precedence over `--inter-turn-delay-cap-seconds` so individual parent/subagent-line delays are not separately capped. Defaults to None (no per-trace idle-gap compression).
 <br/>_Constraints: ≥ 0.0_
 
-#### `--adaptive-scale`
+#### `--request-rate-series`
 
-Enable stable single-run adaptive scale control. Use --adaptive-scale-control variable:min,max:type to choose the controlled variable and bounds, and --adaptive-scale-sla metric:stat:op:threshold to define pass/fail criteria. Also requires --benchmark-duration and --adaptive-sustain-duration.
+JSON file containing request-rate points for piecewise-linear request-rate control.
 <br/>_Flag (no value required)_
-
-#### `--adaptive-sustain-duration` `<float>`
-
-Duration in seconds to sustain load near the discovered adaptive scale boundary.
-<br/>_Constraints: > 0_
-
-#### `--adaptive-assessment-period`, `--adaptive-scale-assessment-period` `<float>`
-
-Duration in seconds for each adaptive scale SLA assessment window.
-<br/>_Constraints: ≥ 1.0_
-
-#### `--adaptive-scale-control` `<str>`
-
-Compact adaptive scale control spec in variable:min,max:type form. The variable is one of concurrency, prefill_concurrency, request_rate, or users; min and max are required explicit bounds; type is int for discrete controls and float for rate controls. Examples: concurrency:1,1000:int, prefill_concurrency:1,8:int, request_rate:1,200:float, users:10,500:int. Do not combine this with expanded --adaptive-control-* flags.
-
-#### `--adaptive-control-variable` `<str>`
-
-Adaptive scale control variable: concurrency, prefill_concurrency, request_rate, or users.
-
-#### `--adaptive-control-min` `<float>`
-
-Minimum adaptive scale control value.
-<br/>_Constraints: > 0_
-
-#### `--adaptive-control-max` `<float>`
-
-Maximum adaptive scale control value. Inferred from the phase target when omitted.
-<br/>_Constraints: > 0_
-
-#### `--adaptive-scale-sla` `<list>`
-
-SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. Latency-family metrics (request_latency, time_to_first_token/ttft, inter_token_latency/itl/tpot) support percentile stats; window scalar/rate metrics (request_throughput, output_token_throughput, goodput, goodput_ratio, success_rate, error_rate, cancellation_rate) support {avg, min, max}. Full metric/stat table: [Adaptive SLA metric support](tutorials/yaml-config.md#adaptive-sla-metric-support). op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
 
 ### Scenario
 
@@ -2072,6 +2048,10 @@ Maximum input context length (tokens) per conversation. DatasetManager tokenizes
 Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for traces, `shuffle` for synthetic).
 <br/>_Choices: [`random`, `sequential`, `shuffle`]_
 
+#### `--allow-dataset-wrap`, `--no-allow-dataset-wrap`
+
+Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurrency lanes) when concurrency exceeds the loaded pool. Defaults to False: over-subscription fails unless wrapping is explicitly enabled.
+
 #### `--random-seed` `<int>`
 
 Random seed for deterministic data generation. When set, makes synthetic prompts, sampling, delays, and other random operations reproducible across runs. Essential for A/B testing and debugging. Uses system entropy if not specified. Initialized globally at config creation.
@@ -2259,7 +2239,7 @@ Standard deviation for synthetic input prompt token lengths. Creates variability
 
 #### `--prompt-input-tokens-block-size`, `--synthetic-input-tokens-block-size`, `--isl-block-size` `<int>`
 
-Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. Only supported with synthetic datasets: with `--input-file` the flag is rejected at convert time, and trace replay loaders always use the `default_block_size` from their plugin metadata (16 for `bailian_trace`, 64 for `baseten_trace`, 512 for `mooncake_trace`).
+Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. With `--input-file` this overrides the trace loader's `default_block_size` plugin metadata (16 for `bailian_trace`, 512 for `mooncake_trace`) for loaders that reconstruct prompts from `hash_ids`; it has no effect on `baseten_trace`, which replays literal recorded prompts. Set it when a trace was recorded at a block size different from its loader default (e.g. a Mooncake-format trace recorded at 16).
 <br/>_Constraints: ≥ 1_
 
 #### `--seq-dist`, `--sequence-distribution` `<str>`
@@ -2608,6 +2588,10 @@ Duration in seconds to ramp prefill concurrency from 1 to target.
 Duration in seconds to ramp request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration), ensuring correct behavior for target rates below 1 QPS. Useful for gradual warm-up of the target system.
 <br/>_Constraints: > 0_
 
+#### `--request-rate-series` `<str>`
+
+JSON file containing request-rate points for piecewise-linear request-rate control.
+
 #### `--failed-request-threshold` `<float>`
 
 Abort the run early when (failed_records / total_records) exceeds this ratio. Default None disables the check. Only PROFILING-phase records count toward the ratio. A grace floor of max(concurrency, 10) records must accumulate before the check is armed, so a single early failure cannot kill the run. When the threshold is exceeded a ProfileCancelCommand is broadcast: in-flight requests drain via the normal cancel path, partial results are still aggregated, and the run exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop in record_processor_service so the rate measures real failures only.
@@ -2635,42 +2619,10 @@ AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches in
 Hard ceiling (seconds) for idle gaps within each individual trace. For Weka trace replay, AIPerf looks at all parent and subagent request submission timestamps within one root trace, compresses long gaps between consecutive request submissions, and derives turn delays from the compressed per-trace timeline. Original request api_time values are not used to decide these idle gaps. When set for Weka, this takes precedence over `--inter-turn-delay-cap-seconds` so individual parent/subagent-line delays are not separately capped. Defaults to None (no per-trace idle-gap compression).
 <br/>_Constraints: ≥ 0.0_
 
-#### `--adaptive-scale`
+#### `--request-rate-series`
 
-Enable stable single-run adaptive scale control. Use --adaptive-scale-control variable:min,max:type to choose the controlled variable and bounds, and --adaptive-scale-sla metric:stat:op:threshold to define pass/fail criteria. Also requires --benchmark-duration and --adaptive-sustain-duration.
+JSON file containing request-rate points for piecewise-linear request-rate control.
 <br/>_Flag (no value required)_
-
-#### `--adaptive-sustain-duration` `<float>`
-
-Duration in seconds to sustain load near the discovered adaptive scale boundary.
-<br/>_Constraints: > 0_
-
-#### `--adaptive-assessment-period`, `--adaptive-scale-assessment-period` `<float>`
-
-Duration in seconds for each adaptive scale SLA assessment window.
-<br/>_Constraints: ≥ 1.0_
-
-#### `--adaptive-scale-control` `<str>`
-
-Compact adaptive scale control spec in variable:min,max:type form. The variable is one of concurrency, prefill_concurrency, request_rate, or users; min and max are required explicit bounds; type is int for discrete controls and float for rate controls. Examples: concurrency:1,1000:int, prefill_concurrency:1,8:int, request_rate:1,200:float, users:10,500:int. Do not combine this with expanded --adaptive-control-* flags.
-
-#### `--adaptive-control-variable` `<str>`
-
-Adaptive scale control variable: concurrency, prefill_concurrency, request_rate, or users.
-
-#### `--adaptive-control-min` `<float>`
-
-Minimum adaptive scale control value.
-<br/>_Constraints: > 0_
-
-#### `--adaptive-control-max` `<float>`
-
-Maximum adaptive scale control value. Inferred from the phase target when omitted.
-<br/>_Constraints: > 0_
-
-#### `--adaptive-scale-sla` `<list>`
-
-SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. Latency-family metrics (request_latency, time_to_first_token/ttft, inter_token_latency/itl/tpot) support percentile stats; window scalar/rate metrics (request_throughput, output_token_throughput, goodput, goodput_ratio, success_rate, error_rate, cancellation_rate) support {avg, min, max}. Full metric/stat table: [Adaptive SLA metric support](tutorials/yaml-config.md#adaptive-sla-metric-support). op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
 
 ### Scenario
 

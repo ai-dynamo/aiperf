@@ -512,8 +512,8 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
 
     phases: list[dict[str, Any]] = []
     if (warmup := build_warmup(cli)) is not None:
-        phases.append({"name": "warmup", **warmup})
-    phases.append({"name": "profiling", **prof})
+        phases.append({"name": "warmup", "kind": "warmup", **warmup})
+    phases.append({"name": "profiling", "kind": "profiling", **prof})
 
     ds = build_dataset(cli)
 

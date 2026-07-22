@@ -294,6 +294,9 @@ Line-delimited JSON with metrics snapshots over time:
 
 Aggregated statistics from profiling period. Metrics from all endpoints are merged, each series tagged with `endpoint_url`.
 
+> [!NOTE]
+> In named multi-phase runs, `server_metrics_export.json` remains the run-level export for existing readers. For exact server metrics from one phase, use `phases/<phase_name>/server_metrics.json`; `phase_manifest.json` lists which phase files were written.
+
 ```json
 {
   "schema_version": "1.0",

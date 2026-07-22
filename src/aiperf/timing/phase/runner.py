@@ -11,13 +11,15 @@ from __future__ import annotations
 import asyncio
 import math
 import time
+import uuid
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
-from aiperf.common.enums import CacheBustTarget, CreditPhase
+from aiperf.common.enums import BaselineKind, CacheBustTarget, CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.mixins import TaskManagerMixin
+from aiperf.common.phase import phase_runtime_key
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TimingMode
@@ -26,7 +28,9 @@ from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
 from aiperf.timing.ramping import Ramper, RamperConfig, RampType
+from aiperf.timing.rate_series import RateSeriesController
 from aiperf.timing.replay_dependencies import ReplayBarrierCoordinator
+from aiperf.timing.request_cancellation import RequestCancellationSimulator
 from aiperf.timing.strategies.core import RateSettableProtocol
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
@@ -42,6 +46,14 @@ if TYPE_CHECKING:
     from aiperf.timing.request_cancellation import RequestCancellationSimulator
     from aiperf.timing.session_tree import SessionTreeRegistry
     from aiperf.timing.strategies.core import TimingStrategyProtocol
+
+
+class RateControllerProtocol(Protocol):
+    """Background controller that can update phase limits over time."""
+
+    def start(self) -> asyncio.Task: ...
+
+    def stop(self) -> None: ...
 
 
 class PhaseRunner(TaskManagerMixin):
@@ -82,7 +94,7 @@ class PhaseRunner(TaskManagerMixin):
         phase_publisher: PhasePublisher,
         credit_router: CreditRouterProtocol,
         concurrency_manager: ConcurrencyManager,
-        cancellation_policy: RequestCancellationSimulator,
+        cancellation_policy: RequestCancellationSimulator | None = None,
         callback_handler: CreditCallbackHandler,
         url_selection_strategy: URLSelectionStrategyProtocol | None = None,
         branch_orchestrator: BranchOrchestrator | None = None,
@@ -157,7 +169,9 @@ class PhaseRunner(TaskManagerMixin):
         self._phase_publisher = phase_publisher
         self._credit_router = credit_router
         self._concurrency_manager = concurrency_manager
-        self._cancellation_policy = cancellation_policy
+        self._cancellation_policy = cancellation_policy or RequestCancellationSimulator(
+            self._config.request_cancellation
+        )
         self._callback_handler = callback_handler
         self._on_phase_complete: Callable[[], None] | None = None
 
@@ -186,7 +200,9 @@ class PhaseRunner(TaskManagerMixin):
         self._progress_task: asyncio.Task | None = None
         self._return_wait_task: asyncio.Task | None = None
         self._was_cancelled = False
-        self._rampers: list[Ramper] = []
+        self._rampers: list[RateControllerProtocol] = []
+        self._baseline_start_ns: int | None = None
+        self._baseline_end_ns: int | None = None
 
     def _build_credit_issuer(
         self, url_selection_strategy: URLSelectionStrategyProtocol | None
@@ -196,6 +212,10 @@ class PhaseRunner(TaskManagerMixin):
         ergonomics file-size cap."""
         return CreditIssuer(
             phase=self._config.phase,
+            phase_index=self._config.phase_index,
+            profiling_index=self._config.profiling_index,
+            phase_name=self._config.phase_name,
+            phase_kind=self._config.phase_kind,
             stop_checker=self._stop_checker,
             progress=self._progress,
             concurrency_manager=self._concurrency_manager,
@@ -274,6 +294,10 @@ class PhaseRunner(TaskManagerMixin):
             self._credit_issuer.replay_gate.set_credit_issued(
                 self._branch_orchestrator.on_credit_issued
             )
+
+    @property
+    def _phase_key(self) -> int | CreditPhase:
+        return phase_runtime_key(self._config.phase, self._config.phase_index)
 
     @property
     def phase(self) -> CreditPhase:
@@ -365,13 +389,38 @@ class PhaseRunner(TaskManagerMixin):
         """Handle completion of background return wait task (seamless mode).
 
         Called when _return_wait_task finishes. Cancels progress reporting and
-        notifies the orchestrator via on_phase_complete callback.
+        notifies the orchestrator callback.
         """
         if self._progress_task:
             self._progress_task.cancel()
 
         if self._on_phase_complete:
             self._on_phase_complete()
+
+    def _capture_baseline_boundary(self, phase_id: str, kind: BaselineKind) -> int:
+        boundary_ns = time.time_ns()
+        self.execute_async(self._publish_phase_baseline_request(phase_id, kind))
+        return boundary_ns
+
+    async def _capture_baseline_boundary_before_completion(
+        self, phase_id: str, kind: BaselineKind
+    ) -> int:
+        boundary_ns = time.time_ns()
+        await self._publish_phase_baseline_request(phase_id, kind)
+        return boundary_ns
+
+    async def _publish_phase_baseline_request(
+        self, phase_id: str, kind: BaselineKind
+    ) -> None:
+        try:
+            await self._phase_publisher.publish_phase_baseline_request(
+                self._config, phase_id, kind
+            )
+        except Exception as exc:
+            self.warning(
+                f"Failed to publish {kind.value} phase baseline request for "
+                f"phase {self._config.phase}: {exc}"
+            )
 
     async def run(
         self,
@@ -429,6 +478,7 @@ class PhaseRunner(TaskManagerMixin):
         """
         self._callback_handler.register_phase(
             phase=self._config.phase,
+            phase_index=self._config.phase_index,
             progress=self._progress,
             lifecycle=self._lifecycle,
             stop_checker=self._stop_checker,
@@ -479,8 +529,12 @@ class PhaseRunner(TaskManagerMixin):
         returning-complete pipeline. The exception path (publishing partial
         lifecycle state) lives in the caller's ``except``.
         """
+        phase_id = uuid.uuid4().hex
+        self._baseline_start_ns: int | None = None
+        self._baseline_end_ns: int | None = None
+
         self._concurrency_manager.configure_for_phase(
-            self._config.phase,
+            self._phase_key,
             self._config.concurrency,
             self._config.prefill_concurrency,
         )
@@ -495,6 +549,10 @@ class PhaseRunner(TaskManagerMixin):
         )
 
         self._create_rampers(strategy)
+
+        self._baseline_start_ns = self._capture_baseline_boundary(
+            phase_id, BaselineKind.START
+        )
 
         self._lifecycle.start()
         stats = self._progress.create_stats(self._lifecycle)
@@ -531,17 +589,22 @@ class PhaseRunner(TaskManagerMixin):
                 self._lifecycle.mark_complete(grace_period_triggered=True)
                 self._progress.freeze_completed_counts()
             self._progress.all_credits_returned_event.set()
-            return self._progress.create_stats(self._lifecycle)
+            self._baseline_end_ns = (
+                await self._capture_baseline_boundary_before_completion(
+                    phase_id, BaselineKind.END
+                )
+            )
+            return self._create_final_stats()
 
         # Seamless mode: phase flows into next without waiting for returns.
         # Progress task continues in background until phase complete.
         if self._config.seamless and not is_final_phase:
             self._return_wait_task = self.execute_async(
-                self._wait_for_returning_complete(strategy)
+                self._wait_for_returning_complete(strategy, phase_id=phase_id)
             )
             self._return_wait_task.add_done_callback(self._on_return_wait_complete)
         else:
-            await self._wait_for_returning_complete(strategy)
+            await self._wait_for_returning_complete(strategy, phase_id=phase_id)
             self._progress_task.cancel()
 
         for ramper in self._rampers:
@@ -564,7 +627,14 @@ class PhaseRunner(TaskManagerMixin):
         if self._should_fire_warmup_backstop(strategy):
             self._report_warmup_failures(strategy)
 
-        return self._progress.create_stats(self._lifecycle)
+        return self._create_final_stats()
+
+    def _create_final_stats(self) -> CreditPhaseStats:
+        return self._progress.create_stats_with_baseline_window(
+            self._lifecycle,
+            baseline_start_ns=self._baseline_start_ns,
+            baseline_end_ns=self._baseline_end_ns,
+        )
 
     def _should_fire_warmup_backstop(self, strategy: TimingStrategyProtocol) -> bool:
         """Whether the teardown warmup-failure raise (a BACKSTOP) should fire.
@@ -662,7 +732,7 @@ class PhaseRunner(TaskManagerMixin):
 
             def setter(limit: float) -> None:
                 return self._concurrency_manager.set_session_limit(
-                    config.phase, int(limit)
+                    self._phase_key, int(limit)
                 )
 
             self._rampers.append(Ramper(setter=setter, config=ramp_config))
@@ -682,7 +752,7 @@ class PhaseRunner(TaskManagerMixin):
 
             def setter(limit: float) -> None:
                 return self._concurrency_manager.set_prefill_limit(
-                    config.phase, int(limit)
+                    self._phase_key, int(limit)
                 )
 
             self._rampers.append(Ramper(setter=setter, config=ramp_config))
@@ -716,9 +786,45 @@ class PhaseRunner(TaskManagerMixin):
                     "Request rate will be fixed at the target value."
                 )
 
+        self._create_rate_series_controller(strategy)
+
+    def _create_rate_series_controller(self, strategy: TimingStrategyProtocol) -> None:
+        """Create a request-rate series controller when configured."""
+        config = self._config
+        if not config.request_rate_series or not config.request_rate:
+            return
+        if not isinstance(strategy, RateSettableProtocol):
+            self.warning(
+                f"Strategy {strategy.__class__.__name__} does not implement RateSettableProtocol. "
+                "Request rate series will be ignored."
+            )
+            return
+
+        points = config.request_rate_series.points
+        start_delay = config.request_rate_ramp_duration_sec or 0.0
+        self.info(
+            f"Starting request rate series: {len(points)} points, "
+            f"initial={points[0].qps} QPS, final={points[-1].qps} QPS, "
+            f"start_delay={start_delay}s"
+        )
+        self._rampers.append(
+            RateSeriesController(
+                setter=strategy.set_request_rate,
+                config=config.request_rate_series,
+                update_interval=Environment.TIMING.RATE_RAMP_UPDATE_INTERVAL,
+                start_delay=start_delay,
+            )
+        )
+
     def _format_phase_started(self, stats: CreditPhaseStats) -> str:
         """Format a concise log message for phase start."""
-        parts = [f"Phase {stats.phase} started"]
+        parts = [
+            f"Phase {stats.phase_name or stats.phase} ({stats.phase_kind or stats.phase}) started"
+        ]
+        if stats.phase_index is not None:
+            parts.append(f"phase_index={stats.phase_index}")
+        if stats.profiling_index is not None:
+            parts.append(f"profiling_index={stats.profiling_index}")
         targets = []
         if stats.total_expected_requests:
             targets.append(f"{stats.total_expected_requests:,} requests")
@@ -732,7 +838,9 @@ class PhaseRunner(TaskManagerMixin):
 
     def _format_phase_sending_complete(self, stats: CreditPhaseStats) -> str:
         """Format a concise log message for phase sending complete."""
-        parts = [f"Phase {stats.phase} sending complete"]
+        parts = [
+            f"Phase {stats.phase_name or stats.phase} ({stats.phase_kind or stats.phase}) sending complete"
+        ]
         parts.append(
             f"sent={stats.requests_sent:,}, "
             f"completed={stats.requests_completed:,}, "
@@ -749,7 +857,9 @@ class PhaseRunner(TaskManagerMixin):
 
     def _format_phase_complete(self, stats: CreditPhaseStats) -> str:
         """Format a concise log message for phase complete."""
-        parts = [f"Phase {stats.phase} complete"]
+        parts = [
+            f"Phase {stats.phase_name or stats.phase} ({stats.phase_kind or stats.phase}) complete"
+        ]
         parts.append(
             f"completed={stats.final_requests_completed:,}, "
             f"cancelled={stats.final_requests_cancelled:,}, "
@@ -889,7 +999,10 @@ class PhaseRunner(TaskManagerMixin):
             await self._phase_publisher.publish_phase_sending_complete(stats)
 
     async def _wait_for_returning_complete(
-        self, strategy: TimingStrategyProtocol
+        self,
+        strategy: TimingStrategyProtocol | None = None,
+        *,
+        phase_id: str | None = None,
     ) -> None:
         """Wait for all credits to return (with grace period).
 
@@ -991,7 +1104,13 @@ class PhaseRunner(TaskManagerMixin):
             if not self._lifecycle.is_complete:
                 self._lifecycle.mark_complete(grace_period_triggered=timed_out)
                 self._progress.freeze_completed_counts()
-            stats = self._progress.create_stats(self._lifecycle)
+            if phase_id is not None and self._baseline_end_ns is None:
+                self._baseline_end_ns = (
+                    await self._capture_baseline_boundary_before_completion(
+                        phase_id, BaselineKind.END
+                    )
+                )
+            stats = self._create_final_stats()
             self.notice(self._format_phase_complete(stats))
             await self._phase_publisher.publish_progress(stats)
             await self._phase_publisher.publish_phase_complete(
@@ -1001,7 +1120,7 @@ class PhaseRunner(TaskManagerMixin):
     def _release_stuck_slots(self) -> None:
         """Release concurrency slots for credits that will never return."""
         session_released, prefill_released = (
-            self._concurrency_manager.release_stuck_slots(self._config.phase)
+            self._concurrency_manager.release_stuck_slots(self._phase_key)
         )
         if session_released or prefill_released:
             self.warning(

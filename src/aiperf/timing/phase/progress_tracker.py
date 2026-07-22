@@ -215,6 +215,10 @@ class PhaseProgressTracker:
         """
         return CreditPhaseStats(
             phase=self._config.phase,
+            phase_index=self._config.phase_index,
+            profiling_index=self._config.profiling_index,
+            phase_name=self._config.phase_name,
+            phase_kind=self._config.phase_kind,
             # Timestamps from lifecycle
             start_ns=lifecycle.started_at_ns,
             sent_end_ns=lifecycle.sending_complete_at_ns,
@@ -245,4 +249,19 @@ class PhaseProgressTracker:
             timeout_triggered=lifecycle.timeout_triggered,
             grace_period_timeout_triggered=lifecycle.grace_period_triggered,
             was_cancelled=lifecycle.was_cancelled,
+        )
+
+    def create_stats_with_baseline_window(
+        self,
+        lifecycle: PhaseLifecycle,
+        *,
+        baseline_start_ns: int | None,
+        baseline_end_ns: int | None,
+    ) -> CreditPhaseStats:
+        """Create stats annotated with metric baseline gate timestamps."""
+        return self.create_stats(lifecycle).model_copy(
+            update={
+                "baseline_start_ns": baseline_start_ns,
+                "baseline_end_ns": baseline_end_ns,
+            }
         )

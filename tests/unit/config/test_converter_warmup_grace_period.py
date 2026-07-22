@@ -16,6 +16,8 @@ the user sees which flag combination is incompatible.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from aiperf.config.flags._converter_warmup import build_warmup

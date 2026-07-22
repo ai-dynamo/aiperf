@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import CreditPhase
+from aiperf.timing.concurrency import PhaseRuntimeKey
 
 if TYPE_CHECKING:
     from aiperf.credit.messages import CreditReturn, FirstToken
@@ -117,7 +118,7 @@ class CreditCallbackHandler:
         self._session_tree_registry = session_tree_registry
         self._on_warmup_abort = on_warmup_abort
         self._warmup_abort_triggered = False
-        self._phase_handlers: dict[CreditPhase, PhaseCallbackContext] = {}
+        self._phase_handlers: dict[PhaseRuntimeKey, PhaseCallbackContext] = {}
 
     @property
     def on_warmup_abort(self) -> Callable[[], Awaitable[None]] | None:
@@ -227,10 +228,17 @@ class CreditCallbackHandler:
             return False
         return False
 
+    @staticmethod
+    def _phase_key(
+        phase: CreditPhase, phase_index: int | None = None
+    ) -> PhaseRuntimeKey:
+        return phase_index if phase_index is not None else phase
+
     def register_phase(
         self,
         *,
         phase: CreditPhase,
+        phase_index: int | None = None,
         progress: PhaseProgressTracker,
         lifecycle: PhaseLifecycle,
         stop_checker: StopConditionChecker,
@@ -250,7 +258,8 @@ class CreditCallbackHandler:
         """
         handle_credit_result = getattr(strategy, "handle_credit_result", None)
         handle_first_token = getattr(strategy, "handle_first_token", None)
-        self._phase_handlers[phase] = PhaseCallbackContext(
+        key = self._phase_key(phase, phase_index)
+        self._phase_handlers[key] = PhaseCallbackContext(
             progress=progress,
             lifecycle=lifecycle,
             stop_checker=stop_checker,
@@ -263,20 +272,9 @@ class CreditCallbackHandler:
             if inspect.iscoroutinefunction(handle_first_token)
             else None,
         )
-        _logger.debug(lambda: f"Registered callback handler for phase {phase}")
-
-    def unregister_phase(self, phase: CreditPhase) -> None:
-        """Unregister phase when done.
-
-        Called by PhaseRunner after phase completes.
-        Late arrivals after unregister are logged but ignored.
-
-        Args:
-            phase: Phase to unregister.
-        """
-        if phase in self._phase_handlers:
-            del self._phase_handlers[phase]
-            _logger.debug(lambda: f"Unregistered callback handler for phase {phase}")
+        _logger.debug(
+            lambda: f"Registered callback handler for phase {phase} key={key}"
+        )
 
     async def _handle_warmup_failure(
         self,
@@ -356,12 +354,13 @@ class CreditCallbackHandler:
         """
         credit = credit_return.credit
         phase = credit.phase
+        key = self._phase_key(phase, credit.phase_index)
 
         # Get phase handler (returns None if phase already cleaned up)
-        handler = self._phase_handlers.get(phase)
+        handler = self._phase_handlers.get(key)
         if not handler:
             _logger.debug(
-                lambda: f"Credit return for unregistered phase {phase}, "
+                lambda: f"Credit return for unregistered phase {phase} key={key}, "
                 f"credit_id={credit.id}, worker={worker_id}"
             )
             return
@@ -369,7 +368,7 @@ class CreditCallbackHandler:
         # Late arrivals after phase complete are logged but don't affect counts
         if handler.lifecycle.is_complete:
             _logger.warning(
-                lambda: f"Credit return after phase {phase} complete, "
+                lambda: f"Credit return after phase {phase} key={key} complete, "
                 f"credit_id={credit.id}, worker={worker_id}"
             )
             return
@@ -393,7 +392,7 @@ class CreditCallbackHandler:
 
         # 3. Release concurrency slots
         self._release_slots_for_return(
-            phase, credit, credit_return, is_final_returned, handler
+            key, credit, credit_return, is_final_returned, handler
         )
 
         # 4. Signal completion if this was the final return. Deferred for
@@ -567,7 +566,7 @@ class CreditCallbackHandler:
 
     def _release_slots_for_return(
         self,
-        phase: CreditPhase,
+        phase: PhaseRuntimeKey,
         credit: Credit,
         credit_return: CreditReturn,
         is_final_returned: bool,
@@ -635,7 +634,8 @@ class CreditCallbackHandler:
             first_token: TTFT event details including credit_id and phase.
         """
         phase = first_token.phase
-        handler = self._phase_handlers.get(phase)
+        key = self._phase_key(first_token.phase, first_token.phase_index)
+        handler = self._phase_handlers.get(key)
 
         if not handler:
             _logger.debug(
@@ -651,4 +651,4 @@ class CreditCallbackHandler:
         handler.progress.increment_prefill_released()
 
         # Release the prefill slot
-        handler.concurrency_manager.release_prefill_slot(phase)
+        handler.concurrency_manager.release_prefill_slot(key)

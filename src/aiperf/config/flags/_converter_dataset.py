@@ -742,6 +742,29 @@ def _apply_file_osl(d: dict[str, Any], cli: CLIConfig) -> None:
     d["osl"] = osl
 
 
+def _apply_file_block_size(d: dict[str, Any], cli: CLIConfig) -> None:
+    """Route ``--isl-block-size`` onto ``FileDataset.block_size`` when
+    --input-file is set.
+
+    Synthetic datasets carry block size on ``prompts.block_size`` (handled by
+    ``_build_prompts``, then stripped for file datasets in
+    ``_apply_dataset_type``). For trace/file datasets, route the same value to
+    the flat ``FileDataset.block_size`` field, which overrides the loader's
+    ``default_block_size`` plugin metadata (needed when a trace was recorded at
+    a block size different from its loader default).
+    """
+    from aiperf.common.enums import DatasetType
+
+    if d.get("type") != DatasetType.FILE:
+        return
+    if (
+        "prompt_input_tokens_block_size" not in cli.model_fields_set
+        or cli.prompt_input_tokens_block_size is None
+    ):
+        return
+    d["block_size"] = cli.prompt_input_tokens_block_size
+
+
 def _apply_inter_turn_delay_cap(d: dict[str, Any], cli: CLIConfig) -> None:
     """Route ``--inter-turn-delay-cap-seconds`` onto ``FileDataset``/``PublicDataset``.
 
@@ -925,6 +948,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     _apply_synthesis(d, cli)
     _apply_implicit_media_batch(d, cli)
     _apply_file_osl(d, cli)
+    _apply_file_block_size(d, cli)
     _apply_inter_turn_delay_cap(d, cli)
     _apply_block_size(d, cli)
     _apply_corpus_and_cache_bust(d, cli)

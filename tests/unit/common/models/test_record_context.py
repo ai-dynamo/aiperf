@@ -39,6 +39,19 @@ class TestRecordContext:
         assert ctx.agent_depth == 3
         assert ctx.parent_correlation_id == "root"
 
+    def test_phase_identity_fields(self):
+        ctx = _make_record_context(
+            phase_index=2,
+            profiling_index=1,
+            phase_name="recovery",
+            phase_kind="profiling",
+        )
+
+        assert ctx.phase_index == 2
+        assert ctx.profiling_index == 1
+        assert ctx.phase_name == "recovery"
+        assert ctx.phase_kind == "profiling"
+
 
 class TestRequestInfoIsRecordContext:
     def test_request_info_inherits_record_context(self):

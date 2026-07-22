@@ -237,6 +237,7 @@ async def generate_realtime_metrics(
     accumulators: list[AccumulatorProtocol],
     timeout: float = 30.0,
     phase: CreditPhase = CreditPhase.PROFILING,
+    phase_index: int | None = None,
 ) -> list[MetricResult]:
     """Generate the real-time metrics for the profile run.
 
@@ -250,7 +251,7 @@ async def generate_realtime_metrics(
     records never dilute the live counts/throughput; the final export path
     applies the same phase mask.
     """
-    ctx = SummaryContext(phase=phase)
+    ctx = SummaryContext(phase=phase, phase_index=phase_index)
     results = await asyncio.gather(
         *[
             asyncio.wait_for(acc.summarize(ctx), timeout=timeout)

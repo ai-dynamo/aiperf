@@ -157,14 +157,6 @@ TOKENIZER_FIELDS: frozenset[str] = frozenset(
 
 LOADGEN_FIELDS: frozenset[str] = frozenset(
     {
-        "adaptive_assessment_period",
-        "adaptive_control_max",
-        "adaptive_control_min",
-        "adaptive_control_variable",
-        "adaptive_scale",
-        "adaptive_scale_control",
-        "adaptive_scale_sla",
-        "adaptive_sustain_duration",
         "arrival_pattern",
         "arrival_smoothness",
         "benchmark_duration",
@@ -181,6 +173,7 @@ LOADGEN_FIELDS: frozenset[str] = frozenset(
         "request_count",
         "request_rate",
         "request_rate_ramp_duration",
+        "request_rate_series",
         "trace_idle_gap_cap_seconds",
         "trajectory_start_max_ratio",
         "trajectory_start_min_ratio",
