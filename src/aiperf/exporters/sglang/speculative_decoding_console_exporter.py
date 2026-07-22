@@ -22,6 +22,12 @@ if TYPE_CHECKING:
     from rich.console import Console
 
 
+SGLANG_SPEC_ACCEPT_RATE = "sglang:spec_accept_rate"
+SGLANG_SPEC_ACCEPT_LENGTH = "sglang:spec_accept_length"
+SGLANG_LEADER_RANK_LABELS = {"pp_rank", "tp_rank"}
+SGLANG_MODEL_LABEL = "model_name"
+
+
 class SpeculativeDecodingRow(NamedTuple):
     """Single speculative decoding row for console output."""
 
@@ -43,26 +49,26 @@ class SGLangSpeculativeDecodingMetric(NamedTuple):
     precision: int
 
 
-class SpeculativeDecodingSeries(NamedTuple):
+class SGLangSpeculativeDecodingSeries(NamedTuple):
     """SGLang speculative decoding gauge series with source endpoint."""
 
     endpoint: str
     series: GaugeSeries
 
 
-class ServerSpeculativeDecodingConsoleExporter(AIPerfLoggerMixin):
+class SGLangSpeculativeDecodingConsoleExporter(AIPerfLoggerMixin):
     """Console exporter for SGLang speculative decoding server metrics."""
 
     _COLUMNS: tuple[str, ...] = ("mean", "min", "max", "p50", "p90")
     _SPEC_METRICS: tuple[SGLangSpeculativeDecodingMetric, ...] = (
         SGLangSpeculativeDecodingMetric(
-            name="sglang:spec_accept_rate",
+            name=SGLANG_SPEC_ACCEPT_RATE,
             display_name="Accept Rate (%)",
             scale=100.0,
             precision=1,
         ),
         SGLangSpeculativeDecodingMetric(
-            name="sglang:spec_accept_length",
+            name=SGLANG_SPEC_ACCEPT_LENGTH,
             display_name="Accept Length",
             scale=1.0,
             precision=2,
@@ -111,6 +117,8 @@ class ServerSpeculativeDecodingConsoleExporter(AIPerfLoggerMixin):
             or not self._server_metrics_results.endpoint_summaries
         ):
             return []
+        if not self._has_speculative_decoding_activity():
+            return []
 
         rows: list[SpeculativeDecodingRow] = []
         for metric in self._SPEC_METRICS:
@@ -133,14 +141,34 @@ class ServerSpeculativeDecodingConsoleExporter(AIPerfLoggerMixin):
                 rows.append(row)
         return rows
 
+    def _has_speculative_decoding_activity(self) -> bool:
+        """Return True when matching SGLang gauges show speculation actually ran."""
+        length_series = self._collect_gauge_series(SGLANG_SPEC_ACCEPT_LENGTH)
+        if length_series:
+            # SGLang emits 0.0 both before speculation runs and when no drafts are
+            # accepted; an all-zero summary is not useful as a "spec is active" signal.
+            return any(
+                self._series_has_positive_max(source) for source in length_series
+            )
+
+        return any(
+            self._series_has_positive_max(source)
+            for source in self._collect_gauge_series(SGLANG_SPEC_ACCEPT_RATE)
+        )
+
+    @staticmethod
+    def _series_has_positive_max(source: SGLangSpeculativeDecodingSeries) -> bool:
+        stats = source.series.stats
+        return stats is not None and is_finite_value(stats.max) and stats.max > 0
+
     def _collect_gauge_series(
         self, metric_name: str
-    ) -> list[SpeculativeDecodingSeries]:
+    ) -> list[SGLangSpeculativeDecodingSeries]:
         if self._server_metrics_results is None:
             return []
 
         summaries = self._server_metrics_results.endpoint_summaries or {}
-        series_list: list[SpeculativeDecodingSeries] = []
+        series_list: list[SGLangSpeculativeDecodingSeries] = []
         for endpoint_summary in summaries.values():
             endpoint = normalize_endpoint_display(endpoint_summary.endpoint_url)
             metric_data = endpoint_summary.metrics.get(metric_name)
@@ -149,7 +177,7 @@ class ServerSpeculativeDecodingConsoleExporter(AIPerfLoggerMixin):
             for series in metric_data.series:
                 if series.stats is not None and self._matches_model(series.labels):
                     series_list.append(
-                        SpeculativeDecodingSeries(
+                        SGLangSpeculativeDecodingSeries(
                             endpoint=endpoint,
                             series=series,
                         )
@@ -159,21 +187,21 @@ class ServerSpeculativeDecodingConsoleExporter(AIPerfLoggerMixin):
     def _matches_model(self, labels: dict[str, str] | None) -> bool:
         if labels is None:
             return False
-        model_name = labels.get("model_name")
+        model_name = labels.get(SGLANG_MODEL_LABEL)
         if model_name is None or model_name.lower() not in self._model_names:
             return False
         # SGLang exposes these gauges with rank labels, but the values describe
         # scheduler acceptance state rather than per-rank work. With all
         # scheduler metrics enabled, non-zero PP/TP ranks duplicate the same
         # signal, so the console view keeps only the leader series.
-        return labels.get("pp_rank", "0") == "0" and labels.get("tp_rank", "0") == "0"
+        return all(labels.get(label, "0") == "0" for label in SGLANG_LEADER_RANK_LABELS)
 
     def _build_row(
         self,
         metric: SGLangSpeculativeDecodingMetric,
-        source: SpeculativeDecodingSeries,
+        source: SGLangSpeculativeDecodingSeries,
         index: int,
-        series_list: list[SpeculativeDecodingSeries],
+        series_list: list[SGLangSpeculativeDecodingSeries],
     ) -> SpeculativeDecodingRow | None:
         series = source.series
         if series.stats is None:
@@ -213,9 +241,9 @@ class ServerSpeculativeDecodingConsoleExporter(AIPerfLoggerMixin):
     def _row_label(
         self,
         display_name: str,
-        source: SpeculativeDecodingSeries,
+        source: SGLangSpeculativeDecodingSeries,
         index: int,
-        series_list: list[SpeculativeDecodingSeries],
+        series_list: list[SGLangSpeculativeDecodingSeries],
     ) -> str:
         if len(series_list) == 1:
             return display_name
@@ -223,12 +251,16 @@ class ServerSpeculativeDecodingConsoleExporter(AIPerfLoggerMixin):
         suffix_parts: list[str] = []
         if len({item.endpoint for item in series_list}) > 1:
             suffix_parts.append(self._label_part("endpoint", source.endpoint))
-        if self._has_multiple_label_values(series_list, "model_name"):
-            suffix_parts.append(self._label_part("model_name", labels["model_name"]))
+        if self._has_multiple_label_values(series_list, SGLANG_MODEL_LABEL):
+            suffix_parts.append(
+                self._label_part(SGLANG_MODEL_LABEL, labels[SGLANG_MODEL_LABEL])
+            )
         suffix_parts.extend(
             self._label_part(key, value)
             for key, value in sorted(labels.items())
-            if key not in {"model_name", "pp_rank", "tp_rank"}
+            # model_name is handled above; pp/tp are leader-filtered in _matches_model.
+            if key not in {SGLANG_MODEL_LABEL, *SGLANG_LEADER_RANK_LABELS}
+            and self._has_multiple_label_values(series_list, key)
         )
         suffix = ", ".join(suffix_parts) if suffix_parts else f"series={index}"
         return f"{display_name} ({suffix})"
@@ -239,7 +271,7 @@ class ServerSpeculativeDecodingConsoleExporter(AIPerfLoggerMixin):
 
     @staticmethod
     def _has_multiple_label_values(
-        series_list: list[SpeculativeDecodingSeries], label_name: str
+        series_list: list[SGLangSpeculativeDecodingSeries], label_name: str
     ) -> bool:
         values = {
             item.series.labels[label_name]

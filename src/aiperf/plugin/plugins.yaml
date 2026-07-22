@@ -1291,7 +1291,7 @@ console_exporter:
       from the main metrics table. Shown when AMD GPU telemetry is available.
 
   server_speculative_decoding:
-    class: aiperf.exporters.server_speculative_decoding_console_exporter:ServerSpeculativeDecodingConsoleExporter
+    class: aiperf.exporters.sglang.speculative_decoding_console_exporter:SGLangSpeculativeDecodingConsoleExporter
     description: |
       Console exporter for SGLang speculative decoding server metrics. Displays
       acceptance rate and acceptance length when the server exposes them.

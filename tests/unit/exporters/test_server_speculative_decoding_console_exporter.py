@@ -17,8 +17,8 @@ from aiperf.common.models import (
 )
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.exporter_config import ExporterConfig
-from aiperf.exporters.server_speculative_decoding_console_exporter import (
-    ServerSpeculativeDecodingConsoleExporter,
+from aiperf.exporters.sglang.speculative_decoding_console_exporter import (
+    SGLangSpeculativeDecodingConsoleExporter,
 )
 from aiperf.plugin.enums import EndpointType
 from tests.unit.conftest import create_exporter_config
@@ -146,7 +146,7 @@ async def test_export_prints_sglang_speculative_decoding_table(
         }
     )
 
-    exporter = ServerSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
+    exporter = SGLangSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
     await exporter.export(Console(width=115))
 
     output = capsys.readouterr().out
@@ -171,7 +171,19 @@ def test_init_disables_when_speculative_decoding_metrics_are_missing() -> None:
     server_metrics_results = _results({})
 
     with pytest.raises(ConsoleExporterDisabled):
-        ServerSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
+        SGLangSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
+
+
+def test_init_disables_when_speculative_decoding_gauges_are_all_zero() -> None:
+    server_metrics_results = _results(
+        {
+            "sglang:spec_accept_rate": _metric(0.0, 0.0, 0.0, 0.0, 0.0),
+            "sglang:spec_accept_length": _metric(0.0, 0.0, 0.0, 0.0, 0.0),
+        }
+    )
+
+    with pytest.raises(ConsoleExporterDisabled):
+        SGLangSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
 
 
 @pytest.mark.asyncio
@@ -190,6 +202,8 @@ async def test_export_renders_multiple_matching_series_without_averaging(
                             "pp_rank": "0",
                             "tp_rank": "0",
                             "dp_rank": "0",
+                            "engine_type": "unified",
+                            "moe_ep_rank": "0",
                         },
                         stats=GaugeStats(
                             avg=0.6,
@@ -205,6 +219,8 @@ async def test_export_renders_multiple_matching_series_without_averaging(
                             "pp_rank": "0",
                             "tp_rank": "0",
                             "dp_rank": "1",
+                            "engine_type": "unified",
+                            "moe_ep_rank": "0",
                         },
                         stats=GaugeStats(
                             avg=0.8,
@@ -219,12 +235,14 @@ async def test_export_renders_multiple_matching_series_without_averaging(
         }
     )
 
-    exporter = ServerSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
+    exporter = SGLangSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
     await exporter.export(Console(width=115))
 
     output = capsys.readouterr().out
     assert "dp_rank=0" in output
     assert "dp_rank=1" in output
+    assert "engine_type=unified" not in output
+    assert "moe_ep_rank=0" not in output
     assert "60.0" in output
     assert "80.0" in output
     assert "70.0" not in output
@@ -245,7 +263,7 @@ async def test_export_distinguishes_matching_series_from_different_endpoints(
         }
     )
 
-    exporter = ServerSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
+    exporter = SGLangSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
     await exporter.export(Console(width=115))
 
     output = capsys.readouterr().out
@@ -298,7 +316,7 @@ async def test_export_escapes_server_metric_labels(
         }
     )
 
-    exporter = ServerSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
+    exporter = SGLangSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
     await exporter.export(Console(width=115))
 
     output = capsys.readouterr().out
@@ -328,7 +346,7 @@ def test_init_disables_when_speculative_decoding_model_label_does_not_match() ->
     )
 
     with pytest.raises(ConsoleExporterDisabled):
-        ServerSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
+        SGLangSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
 
 
 def test_init_disables_when_speculative_decoding_stats_are_non_finite(
@@ -362,11 +380,11 @@ def test_init_disables_when_speculative_decoding_stats_are_non_finite(
     caplog.set_level("WARNING")
 
     with pytest.raises(ConsoleExporterDisabled):
-        ServerSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
+        SGLangSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
 
     assert "Skipping SGLang speculative decoding console row" in caplog.text
     assert "non-finite gauge summary values" in caplog.text
 
 
 def test_scaled_stat_rejects_non_finite_scaled_value() -> None:
-    assert ServerSpeculativeDecodingConsoleExporter._scaled_stat(1e308, 100.0) is None
+    assert SGLangSpeculativeDecodingConsoleExporter._scaled_stat(1e308, 100.0) is None

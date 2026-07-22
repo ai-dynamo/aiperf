@@ -93,6 +93,11 @@ when matching metrics are available, with mean, min, max, p50, and p90 for each
 matching server metric series whose `model_name` label matches a configured
 model name case-insensitively. For SGLang, only the `pp_rank="0"` /
 `tp_rank="0"` leader series is shown to avoid duplicated scheduler-level gauges.
+The console scales `sglang:spec_accept_rate` from a 0-1 ratio to percent; server
+metrics exports keep the raw ratio.
+The table is suppressed when matching `sglang:spec_accept_length` series are all
+zero, which indicates SGLang registered the gauges but speculative decoding did
+not run.
 
 ### "Where is time being spent?"
 
