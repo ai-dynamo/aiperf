@@ -26,7 +26,10 @@ On-disk layout::
         dataset.dat         # mmap data file (or .dat.zst when compress_only)
         index.dat           # mmap index file (or .dat.zst when compress_only)
         manifest.json       # orjson; version + side-data needed to skip the composer
-        inputs.json         # optional; copied from artifact dir on populate
+
+``inputs.json`` is intentionally not cached: cache-served datasets skip
+``inputs.json`` generation (or would just re-dump the verbatim source), and
+legacy entries that still set ``has_inputs_json`` are resolved on lookup only.
 
 Concurrency: writers populate to ``<cache_dir>/<key>.tmp.<pid>`` and atomically
 ``os.replace`` the directory into place. A reader that finds a partial entry
@@ -551,19 +554,18 @@ def populate(
     run_data_path: Path,
     run_index_path: Path,
     manifest: CacheManifest,
-    inputs_json_path: Path | None = None,
 ) -> Path | None:
     """Populate the cache with the artifacts a successful run produced.
 
     Writes a tmp dir and atomically renames it into ``<cache_dir>/<cache_key>``.
     A pre-existing entry at the same key is left in place (winner-stays).
+    Does not cache ``inputs.json`` (see module docstring).
 
     Args:
         cache_key: Cache key for the new entry.
         run_data_path: Source dataset.dat (or .dat.zst) from the run.
         run_index_path: Source index.dat (or .dat.zst) from the run.
         manifest: Manifest to serialize into the entry.
-        inputs_json_path: Optional inputs.json to copy alongside.
 
     Returns:
         The committed entry directory, or None when no entry was committed
@@ -599,6 +601,7 @@ def populate(
         shutil.copyfile(run_data_path, cache_data)
         shutil.copyfile(run_index_path, cache_index)
 
+        # Populate never writes inputs.json; keep the manifest flag honest.
         manifest.has_inputs_json = False
 
         manifest_bytes = orjson.dumps(
@@ -756,14 +759,17 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         # warm entry built with the other setting serves the wrong format.
         "preformat_payloads": Environment.DATASET.PREFORMAT_PAYLOADS,
         # When preformat_payloads is on, endpoint.format_payload() bakes the
-        # stream flag, endpoint.extra, and the max_tokens-vs-max_completion_tokens
-        # field name into the stored bytes, so those knobs must key the cache or a
-        # warm entry serves bytes the run never asked for (e.g. "stream": true).
-        # Gated on the flag so the common non-preformat key stays stable.
+        # stream flag, endpoint.extra, the max_tokens-vs-max_completion_tokens
+        # field name, and (for streaming OpenAI-compatible endpoints)
+        # stream_options.include_usage from use_server_token_count into the
+        # stored bytes, so those knobs must key the cache or a warm entry serves
+        # bytes the run never asked for (e.g. "stream": true). Gated on the flag
+        # so the common non-preformat key stays stable.
         "preformat_endpoint": (
             {
                 "streaming": cfg.endpoint.streaming,
                 "use_legacy_max_tokens": cfg.endpoint.use_legacy_max_tokens,
+                "use_server_token_count": cfg.endpoint.use_server_token_count,
                 "extra": cfg.endpoint.extra,
             }
             if Environment.DATASET.PREFORMAT_PAYLOADS
