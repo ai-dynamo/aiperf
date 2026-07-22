@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 from pytest import param
 
 from aiperf.config.phases import (
@@ -18,6 +19,7 @@ from aiperf.config.phases import (
     UserCentricPhase,
     get_phase_rate,
 )
+from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.plugin.enums import PhaseType
 
 
@@ -107,3 +109,148 @@ class TestGetPhaseRate:
         )
         object.__setattr__(phase, "rate", 7.5)
         assert get_phase_rate(phase) is None
+
+
+class TestAdaptiveScalePhaseValidation:
+    def test_adaptive_scale_enabled_rejects_non_boolean_values(self) -> None:
+        with pytest.raises(ValidationError, match="adaptive_scale.enabled"):
+            ConcurrencyPhase(
+                name="profiling",
+                type=PhaseType.CONCURRENCY,
+                concurrency=2,
+                duration=10,
+                adaptive_scale={
+                    "enabled": 2,
+                    "sustain_duration": 1,
+                    "sla": {"request_latency": {"p95": {"le": 1000}}},
+                },
+            )
+
+    def test_flat_adaptive_scale_rejects_non_boolean_values(self) -> None:
+        with pytest.raises(ValidationError, match="adaptive_scale.enabled"):
+            ConcurrencyPhase(
+                name="profiling",
+                type=PhaseType.CONCURRENCY,
+                concurrency=2,
+                duration=10,
+                adaptive_scale=1,
+                adaptive_sustain_duration=1,
+                sla=[
+                    SLAFilter(
+                        metric_tag="request_latency",
+                        stat="p95",
+                        op="le",
+                        threshold=1000,
+                    )
+                ],
+            )
+
+    def test_adaptive_scale_accepts_camel_case_nested_block(self) -> None:
+        phase = ConcurrencyPhase(
+            name="profiling",
+            type=PhaseType.CONCURRENCY,
+            concurrency=20,
+            duration=10,
+            adaptiveScale={
+                "enabled": True,
+                "control": {"variable": "concurrency", "min": 2, "max": 20},
+                "assessmentPeriod": 5,
+                "sustainDuration": 1,
+                "sla": {"request_latency": {"p95": {"le": 1000}}},
+            },
+        )
+
+        assert phase.adaptive_scale is True
+        assert phase.adaptive_control_variable == "concurrency"
+        assert phase.adaptive_control_min == 2
+        assert phase.adaptive_control_max == 20
+        assert phase.adaptive_assessment_period == 5
+        assert phase.adaptive_sustain_duration == 1
+        assert phase.sla == [
+            SLAFilter(
+                metric_tag="request_latency",
+                stat="p95",
+                op="le",
+                threshold=1000,
+            )
+        ]
+
+    @pytest.mark.parametrize(
+        "adaptive_scale",
+        [
+            {"enabled": True, "typo": 1},
+            {"enabled": True, "control": {"variable": "concurrency", "typo": 1}},
+            {"enabled": True, "strategy": {"type": "ramp_until_fail", "typo": 1}},
+        ],
+    )
+    def test_nested_adaptive_scale_rejects_unknown_keys(
+        self, adaptive_scale: dict[str, object]
+    ) -> None:
+        with pytest.raises(ValidationError, match="unsupported field"):
+            ConcurrencyPhase(
+                name="profiling",
+                type=PhaseType.CONCURRENCY,
+                concurrency=20,
+                duration=10,
+                adaptive_scale=adaptive_scale,
+                adaptive_sustain_duration=1,
+                sla=[
+                    SLAFilter(
+                        metric_tag="request_latency",
+                        stat="p95",
+                        op="le",
+                        threshold=1000,
+                    )
+                ],
+            )
+
+    def test_fixed_schedule_accepts_disabled_adaptive_scale_block(self) -> None:
+        phase = FixedSchedulePhase(
+            name="profiling",
+            type=PhaseType.FIXED_SCHEDULE,
+            duration=10,
+            requests=1,
+            adaptive_scale={"enabled": False},
+        )
+
+        assert phase.adaptive_scale is False
+
+    def test_fixed_schedule_rejects_adaptive_scale(self) -> None:
+        with pytest.raises(ValidationError, match="fixed_schedule"):
+            FixedSchedulePhase(
+                name="profiling",
+                type=PhaseType.FIXED_SCHEDULE,
+                duration=10,
+                requests=1,
+                adaptive_scale={
+                    "enabled": True,
+                    "sustain_duration": 1,
+                    "control": {"min": 1, "max": 2},
+                    "sla": {"request_latency": {"p95": {"le": 1000}}},
+                },
+            )
+
+    def test_request_rate_adaptive_control_rejects_rate_series(self) -> None:
+        with pytest.raises(ValidationError, match="rate_series"):
+            PoissonPhase(
+                name="profiling",
+                type=PhaseType.POISSON,
+                duration=10,
+                requests=10,
+                rate_series={
+                    "points": [
+                        {"time_s": 0, "qps": 5},
+                        {"time_s": 10, "qps": 15},
+                    ]
+                },
+                adaptive_scale={
+                    "enabled": True,
+                    "sustain_duration": 1,
+                    "control": {
+                        "variable": "request_rate",
+                        "min": 1,
+                        "max": 20,
+                    },
+                    "sla": {"request_latency": {"p95": {"le": 1000}}},
+                },
+            )

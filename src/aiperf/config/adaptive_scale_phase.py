@@ -9,6 +9,7 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, model_validator
 
 from aiperf.config.sweep.adaptive import SLAFilter
+from aiperf.plugin.enums import PhaseType
 from aiperf.timing.adaptive_types import AdaptiveControlVariable
 
 _FIRST_TOKEN_SLA_METRICS = frozenset({"time_to_first_token", "ttft"})
@@ -85,6 +86,28 @@ _ADAPTIVE_SCALE_STRATEGY_FIELD_MAP = {
 }
 
 
+_ADAPTIVE_SCALE_FIELD_ALIASES = {
+    "adaptive_scale": "adaptiveScale",
+    "adaptive_sustain_duration": "adaptiveSustainDuration",
+    "adaptive_assessment_period": "adaptiveAssessmentPeriod",
+    "adaptive_min_completed_requests": "adaptiveMinCompletedRequests",
+    "adaptive_control_variable": "adaptiveControlVariable",
+    "adaptive_control_min": "adaptiveControlMin",
+    "adaptive_control_max": "adaptiveControlMax",
+    "adaptive_scale_strategy_type": "adaptiveScaleStrategyType",
+    "adaptive_scale_step_policy": "adaptiveScaleStepPolicy",
+    "adaptive_scale_base_step": "adaptiveScaleBaseStep",
+    "adaptive_scale_max_step_multiplier": "adaptiveScaleMaxStepMultiplier",
+    "adaptive_scale_step_percent": "adaptiveScaleStepPercent",
+}
+
+_ADAPTIVE_SCALE_BLOCK_KEYS = {"enabled", "control", "strategy", "sla"} | set(
+    _ADAPTIVE_SCALE_FIELD_MAP
+)
+_ADAPTIVE_SCALE_CONTROL_KEYS = {"variable", "min", "max"}
+_ADAPTIVE_SCALE_STRATEGY_KEYS = set(_ADAPTIVE_SCALE_STRATEGY_FIELD_MAP)
+
+
 def _copy_mapped_fields(
     lowered: dict[str, object],
     source_data: dict[str, object],
@@ -93,6 +116,15 @@ def _copy_mapped_fields(
     for source, target in field_map.items():
         if source in source_data:
             lowered[target] = source_data[source]
+
+
+def _reject_unknown_keys(
+    data: dict[str, object], allowed: set[str], scope: str
+) -> None:
+    unknown = sorted(set(data) - allowed)
+    if unknown:
+        joined = ", ".join(unknown)
+        raise ValueError(f"{scope} contains unsupported field(s): {joined}")
 
 
 def _parse_enabled(value: object) -> bool:
@@ -107,19 +139,29 @@ def _parse_enabled(value: object) -> bool:
         if normalized in {"false", "no", "off", "0"}:
             return False
         raise ValueError("adaptive_scale.enabled must be a boolean")
-    return bool(value)
+    raise ValueError("adaptive_scale.enabled must be a boolean")
+
+
+def _use_adaptive_scale_aliases(lowered: dict[str, object]) -> None:
+    for field_name, alias in _ADAPTIVE_SCALE_FIELD_ALIASES.items():
+        if field_name in lowered:
+            lowered[alias] = lowered.pop(field_name)
 
 
 def lower_adaptive_scale_details(
     lowered: dict[str, object], block: dict[str, object]
 ) -> None:
     """Lower nested adaptive-scale YAML settings into flat phase fields."""
+    _reject_unknown_keys(block, _ADAPTIVE_SCALE_BLOCK_KEYS, "adaptive_scale")
     lowered["adaptive_scale"] = _parse_enabled(block.get("enabled"))
     _copy_mapped_fields(lowered, block, _ADAPTIVE_SCALE_FIELD_MAP)
 
     control = block.get("control", {})
     if not isinstance(control, dict):
         raise ValueError("adaptive_scale.control must be a mapping")
+    _reject_unknown_keys(
+        control, _ADAPTIVE_SCALE_CONTROL_KEYS, "adaptive_scale.control"
+    )
     if "variable" in control:
         lowered["adaptive_control_variable"] = control["variable"]
     if "min" in control:
@@ -130,6 +172,9 @@ def lower_adaptive_scale_details(
     strategy = block.get("strategy", {})
     if not isinstance(strategy, dict):
         raise ValueError("adaptive_scale.strategy must be a mapping")
+    _reject_unknown_keys(
+        strategy, _ADAPTIVE_SCALE_STRATEGY_KEYS, "adaptive_scale.strategy"
+    )
     _copy_mapped_fields(lowered, strategy, _ADAPTIVE_SCALE_STRATEGY_FIELD_MAP)
 
     sla = block.get("sla")
@@ -263,11 +308,24 @@ class AdaptiveScalePhaseMixin:
         if isinstance(lowered.get("sla"), dict):
             lowered["sla"] = normalize_adaptive_sla(lowered["sla"])
 
-        block = data.get("adaptive_scale")
+        uses_alias = "adaptiveScale" in data and "adaptive_scale" not in data
+        block = (
+            data["adaptive_scale"]
+            if "adaptive_scale" in data
+            else data.get("adaptiveScale")
+        )
         if not isinstance(block, dict):
+            if (
+                "adaptive_scale" in data or "adaptiveScale" in data
+            ) and block is not None:
+                lowered["adaptive_scale"] = _parse_enabled(block)
+                if uses_alias:
+                    _use_adaptive_scale_aliases(lowered)
             return lowered
 
         lower_adaptive_scale_details(lowered, block)
+        if uses_alias:
+            _use_adaptive_scale_aliases(lowered)
         return lowered
 
     @model_validator(mode="after")
@@ -275,6 +333,7 @@ class AdaptiveScalePhaseMixin:
         if not self.adaptive_scale:
             return self
         self._validate_adaptive_scale_required_fields()
+        self._validate_adaptive_scale_phase_type()
         variable = self.adaptive_control_variable
         max_value = self._adaptive_control_max_value(variable)
         self._validate_adaptive_control_bounds(variable, max_value)
@@ -287,6 +346,12 @@ class AdaptiveScalePhaseMixin:
             raise ValueError("adaptive_scale requires adaptive_sustain_duration")
         if not self.sla:
             raise ValueError("adaptive_scale requires sla filters")
+
+    def _validate_adaptive_scale_phase_type(self) -> None:
+        if self.type == PhaseType.FIXED_SCHEDULE:
+            raise ValueError(
+                "adaptive_scale cannot be combined with fixed_schedule phases"
+            )
 
     def _adaptive_control_max_value(self, variable: str) -> float:
         inferred_max = self._infer_adaptive_control_max(variable)
@@ -334,6 +399,11 @@ class AdaptiveScalePhaseMixin:
             raise ValueError(
                 "adaptive_scale control.variable=request_rate cannot be combined "
                 "with rate_ramp"
+            )
+        if getattr(self, "rate_series", None) is not None:
+            raise ValueError(
+                "adaptive_scale control.variable=request_rate cannot be combined "
+                "with rate_series"
             )
         if inferred_max is None:
             raise ValueError(
