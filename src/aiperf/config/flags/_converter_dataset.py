@@ -82,7 +82,7 @@ def _build_prompts(cli: CLIConfig) -> dict[str, Any]:
     if "cache_bust" in s:
         prompts["cache_bust"] = {"target": cli.cache_bust}
     if "prompt_corpus" in s and cli.prompt_corpus is not None:
-        prompts["prompt_corpus"] = cli.prompt_corpus
+        prompts["corpus"] = cli.prompt_corpus
     return prompts
 
 
@@ -1045,17 +1045,10 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
 
 
 def _apply_corpus_and_cache_bust(d: dict[str, Any], cli: CLIConfig) -> None:
-    """Route ``--prompt-corpus`` and ``--cache-bust`` onto FILE/PUBLIC datasets.
+    """Route ``--prompt-corpus`` / ``--cache-bust`` onto FILE/PUBLIC datasets.
 
-    For synthetic datasets these live on ``prompts.{prompt_corpus,cache_bust}``
-    (written by ``_build_prompts``). FILE/PUBLIC datasets drop the entire
-    ``prompts`` subtable in ``_apply_dataset_type``, so the values must be
-    routed to the flat top-level ``FileDataset``/``PublicDataset`` fields here
-    -- AFTER the strip -- or ``--prompt-corpus`` and ``--cache-bust`` silently
-    no-op on trace replay (the corpus reconstruction falls back to the loader
-    default and KV-cache-bust experiments do nothing). Both fields exist on
-    ``FileDataset`` and ``PublicDataset``; ``cache_bust`` is a ``CacheBustConfig``
-    keyed by ``target`` (same shape ``_build_prompts`` uses for synthetic).
+    Corpus is re-attached as ``prompts.corpus`` after the synthetic prompts
+    subtable is stripped. Cache-bust remains a top-level ``cache_bust`` field.
     """
     from aiperf.common.enums import DatasetType
 
@@ -1063,6 +1056,10 @@ def _apply_corpus_and_cache_bust(d: dict[str, Any], cli: CLIConfig) -> None:
         return
     s = cli.model_fields_set
     if "prompt_corpus" in s and cli.prompt_corpus is not None:
-        d["prompt_corpus"] = cli.prompt_corpus
+        prompts = d.get("prompts")
+        if not isinstance(prompts, dict):
+            prompts = {}
+            d["prompts"] = prompts
+        prompts["corpus"] = cli.prompt_corpus
     if "cache_bust" in s:
         d["cache_bust"] = {"target": cli.cache_bust}

@@ -8,11 +8,11 @@ converter -- not be silently dropped by the v2 config cutover.
 ``--prompt-corpus`` and ``--cache-bust`` are written into the ``prompts``
 subtable by ``_build_prompts`` for synthetic datasets, but ``_apply_dataset_type``
 strips that whole subtable for FILE/PUBLIC. Without ``_apply_corpus_and_cache_bust``
-(which routes them to the flat top-level fields after the strip) they no-op on
-trace replay -- the corpus reconstruction falls back to the loader default and
-KV-cache-bust experiments do nothing. ``--inter-turn-delay-cap-seconds`` was
-FILE-only and dropped for weka_hf. These are the gaps a faithful agentx->v2
-port must close.
+(which re-attaches corpus under ``prompts`` after the strip; cache-bust may
+still be top-level) they no-op on trace replay -- the corpus reconstruction
+falls back to the loader default and KV-cache-bust experiments do nothing.
+``--inter-turn-delay-cap-seconds`` was FILE-only and dropped for weka_hf.
+These are the gaps a faithful agentx->v2 port must close.
 """
 
 from __future__ import annotations
@@ -60,20 +60,33 @@ class TestPromptCorpusRouting:
     def test_routes_onto_file_trace(self, trace_jsonl: Path) -> None:
         out = build_dataset(_file_cli(trace_jsonl, prompt_corpus="coding"))
         assert out["type"] == "file"
-        assert out.get("prompt_corpus") == "coding"
+        assert out.get("prompts", {}).get("corpus") == "coding"
         ds = convert_cli_to_aiperf(
             _file_cli(trace_jsonl, prompt_corpus="coding")
         ).benchmark.datasets[0]
-        assert ds.prompt_corpus == "coding"
+        assert ds.prompts is not None
+        assert ds.prompts.corpus == "coding"
 
     def test_routes_onto_public_weka_hf(self) -> None:
         out = build_dataset(_public_cli(prompt_corpus="coding"))
         assert out["type"] == "public"
-        assert out.get("prompt_corpus") == "coding"
+        assert out.get("prompts", {}).get("corpus") == "coding"
         ds = convert_cli_to_aiperf(
             _public_cli(prompt_corpus="coding")
         ).benchmark.datasets[0]
-        assert ds.prompt_corpus == "coding"
+        assert ds.prompts is not None
+        assert ds.prompts.corpus == "coding"
+
+    def test_routes_onto_synthetic_prompts_corpus(self) -> None:
+        cli = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type="chat",
+            prompt_corpus="coding",
+            prompt_input_tokens_mean=16,
+        )
+        out = build_dataset(cli)
+        assert out["type"] == "synthetic"
+        assert out.get("prompts", {}).get("corpus") == "coding"
 
 
 class TestCacheBustRouting:
