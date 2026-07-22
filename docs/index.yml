@@ -223,6 +223,8 @@ navigation:
     path: reference/tokenizer-auto-detection.md
   - page: Input Sequence Length (ISL) Tokenization
     path: reference/isl-tokenization.md
+  - page: Prompt Corpus Selection
+    path: reference/prompt-corpus.md
   - page: ISL Budget Compensation Derivation
     path: reference/isl-budget-compensation.md
   - page: Conversation Context Mode

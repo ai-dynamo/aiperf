@@ -665,7 +665,7 @@ Number of text inputs to include in each request for batch processing endpoints.
 
 #### `--prompt-corpus` `<str>`
 
-Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare sonnets. 'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; agentic-coding loaders such as weka_trace default to 'coding').
+Source corpus for synthetic prompt text generation. Projects to prompts.corpus. 'sonnet' uses Shakespeare sonnets. 'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). Honored only for synthesized content (synthetic datasets and count/hash-id trace loaders); verbatim formats ignore it. When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; agentic-coding loaders such as weka_trace default to 'coding').
 
 **Choices:**
 
@@ -2190,7 +2190,7 @@ Number of text inputs to include in each request for batch processing endpoints.
 
 #### `--prompt-corpus` `<str>`
 
-Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare sonnets. 'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; agentic-coding loaders such as weka_trace default to 'coding').
+Source corpus for synthetic prompt text generation. Projects to prompts.corpus. 'sonnet' uses Shakespeare sonnets. 'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). Honored only for synthesized content (synthetic datasets and count/hash-id trace loaders); verbatim formats ignore it. When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; agentic-coding loaders such as weka_trace default to 'coding').
 
 **Choices:**
 
