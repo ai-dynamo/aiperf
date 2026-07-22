@@ -484,10 +484,12 @@ def _throughput_curves(
     Reuses the same sweep-line primitives the metrics accumulator uses, but fed
     from the exported records: prefill runs over ``[start, generation_start)``
     weighted by ISL, decode over ``[generation_start, end)`` weighted by
-    ``OSL - 1``, and total combines both. ``generation_start`` is derived from
-    TTFT (this is the post-hoc jsonl path). Timestamps are seconds-from-t0 so
-    rates come out directly in tokens/sec. Returns ((pf_ts, pf), (dec_ts, dec),
-    (tot_ts, tot)); each value array is clamped at 0.
+    ``OSL - 1``, and total combines both. ``generation_start`` comes from
+    ``_generation_start_ns`` via ``_record_arrays`` (TTFT when present, else
+    request end, clamped to the request lifetime). Timestamps are
+    seconds-from-t0 so rates come out directly in tokens/sec. Returns
+    ((pf_ts, pf), (dec_ts, dec), (tot_ts, tot)); each value array is clamped
+    at 0.
     """
     start_s, gen_s, end_s, isl_a, osl_a = _record_arrays(sessions, t0_ns)
     pf_ts, pf = prefill_throughput_sweep_line(start_s, gen_s, isl_a)
