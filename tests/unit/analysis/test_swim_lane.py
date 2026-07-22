@@ -19,13 +19,16 @@ import pytest
 
 from aiperf.analysis.swim_lane import (
     PROFILE_JSON,
+    SwimLaneError,
     _group_into_sessions,
     _layout_groups,
     _load_bench_config,
+    _record_arrays,
     _root_map,
     plot_swim_lane,
     write_swim_lane_html,
 )
+from aiperf.cli_commands.swim_lane import swim_lane as swim_lane_cli
 
 matplotlib.use("Agg", force=True)
 
@@ -40,13 +43,17 @@ def _rec(
     parent: str | None = None,
     depth: int = 0,
     root: str | None = None,
+    *,
+    ttft_ms: float | None = 50.0,
+    isl: float = 10,
+    osl: float = 5,
 ) -> dict:
     """Build a minimal profile_export.jsonl record.
 
     ``root`` sets ``root_correlation_id`` (the session-tree root id the runtime
     persists). When omitted the field is absent, exercising the legacy
     parent_correlation_id heuristic; when present, ``_root_map`` groups
-    authoritatively on it.
+    authoritatively on it. ``ttft_ms=None`` omits the TTFT metric entirely.
     """
     meta = {
         "x_correlation_id": sid,
@@ -59,14 +66,16 @@ def _rec(
     }
     if root is not None:
         meta["root_correlation_id"] = root
+    metrics: dict = {
+        "request_latency": {"value": (end_s - start_s) * 1e3, "unit": "ms"},
+        "input_sequence_length": {"value": isl, "unit": "tokens"},
+        "output_sequence_length": {"value": osl, "unit": "tokens"},
+    }
+    if ttft_ms is not None:
+        metrics["time_to_first_token"] = {"value": ttft_ms, "unit": "ms"}
     return {
         "metadata": meta,
-        "metrics": {
-            "time_to_first_token": {"value": 50.0, "unit": "ms"},
-            "request_latency": {"value": (end_s - start_s) * 1e3, "unit": "ms"},
-            "input_sequence_length": {"value": 10, "unit": "tokens"},
-            "output_sequence_length": {"value": 5, "unit": "tokens"},
-        },
+        "metrics": metrics,
     }
 
 
@@ -292,6 +301,22 @@ class TestRenderers:
         assert out == agentic_run_dir / "swim_lane.png"
         assert out.stat().st_size > 0
 
+    def test_plot_creates_missing_parent_dir(
+        self, agentic_run_dir: Path, tmp_path: Path
+    ):
+        out = tmp_path / "nested" / "missing" / "out.png"
+        saved = plot_swim_lane(agentic_run_dir, out=out)
+        assert saved == out
+        assert out.is_file()
+
+    def test_html_creates_missing_parent_dir(
+        self, agentic_run_dir: Path, tmp_path: Path
+    ):
+        out = tmp_path / "nested" / "missing" / "out.html"
+        saved = write_swim_lane_html(agentic_run_dir, out=out)
+        assert saved == out
+        assert out.is_file()
+
     def test_html_payload_nests_subagents_inline(self, agentic_run_dir: Path):
         out = write_swim_lane_html(agentic_run_dir)
         payload = _extract_payload(out)
@@ -321,6 +346,71 @@ class TestRenderers:
         payload = _extract_payload(write_swim_lane_html(tmp_path))
         assert all("sub" not in s and "root" not in s for s in payload["sessions"])
         assert all(s["row0"] == 0 for s in payload["sessions"])
+
+    def test_html_missing_ttft_still_emits_kv_curve(self, tmp_path: Path):
+        """Missing TTFT must fall back to request end so KV/throughput still see
+        the request (NaN generation_start previously dropped it entirely)."""
+        records = [_rec("a", 0, 0.0, 1.0, ttft_ms=None, isl=100, osl=10)]
+        (tmp_path / "profile_export.jsonl").write_bytes(
+            b"\n".join(orjson.dumps(r) for r in records)
+        )
+        payload = _extract_payload(write_swim_lane_html(tmp_path))
+        assert payload["peakKv"] > 0
+        assert payload["kvCache"]["t"]
+        assert payload["kvCache"]["v"]
+
+    def test_html_ttft_past_end_clamped_to_request_lifetime(self, tmp_path: Path):
+        """TTFT after request end must not extend throughput curves past tMax."""
+        records = [_rec("a", 0, 0.0, 1.0, ttft_ms=1500.0, isl=100, osl=10)]
+        (tmp_path / "profile_export.jsonl").write_bytes(
+            b"\n".join(orjson.dumps(r) for r in records)
+        )
+        payload = _extract_payload(write_swim_lane_html(tmp_path))
+        assert payload["tMax"] == pytest.approx(1.0)
+        assert max(payload["prefillTput"]["t"] or [0.0]) <= payload["tMax"] + 1e-9
+
+
+class TestRecordArraysGenerationStart:
+    def test_missing_ttft_falls_back_to_end(self):
+        sessions = _sessions([_rec("a", 0, 0.0, 1.0, ttft_ms=None)])
+        t0 = 0.0
+        _start, gen, end, _isl, _osl = _record_arrays(sessions, t0)
+        assert gen[0] == pytest.approx(end[0])
+
+    def test_ttft_past_end_is_clamped(self):
+        sessions = _sessions([_rec("a", 0, 0.0, 1.0, ttft_ms=1500.0)])
+        _start, gen, end, _isl, _osl = _record_arrays(sessions, 0.0)
+        assert gen[0] == pytest.approx(end[0])
+
+
+class TestSwimLaneCli:
+    def test_partial_failure_exits_nonzero(
+        self, agentic_run_dir: Path, tmp_path: Path, capsys
+    ):
+        missing = tmp_path / "does-not-exist"
+        with pytest.raises(SystemExit) as ei:
+            swim_lane_cli([agentic_run_dir, missing])
+        assert ei.value.code == 1
+        err = capsys.readouterr().err
+        assert "profile_export.jsonl not found" in err
+        assert (agentic_run_dir / "swim_lane.png").is_file()
+
+    def test_all_failures_exits_nonzero(self, tmp_path: Path):
+        with pytest.raises(SystemExit) as ei:
+            swim_lane_cli([tmp_path / "a", tmp_path / "b"])
+        assert ei.value.code == 1
+
+    def test_write_failure_surfaces_as_swim_lane_error(
+        self, agentic_run_dir: Path, tmp_path: Path, monkeypatch
+    ):
+        out = tmp_path / "out.png"
+
+        def boom(*_a, **_k):
+            raise OSError("disk full")
+
+        monkeypatch.setattr("matplotlib.pyplot.savefig", boom)
+        with pytest.raises(SwimLaneError, match="failed to write"):
+            plot_swim_lane(agentic_run_dir, out=out)
 
 
 class TestLoadBenchConfigRamp:

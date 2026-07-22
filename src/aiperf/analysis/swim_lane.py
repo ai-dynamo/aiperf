@@ -460,13 +460,8 @@ def _new_isl_curve(
             start_ns = r["metadata"]["request_start_ns"]
             end_ns = r["metadata"]["request_end_ns"]
             ttft_ms = _metric_value(r, "time_to_first_token")
-            generation_start_ns = (
-                min(start_ns + ttft_ms * NANOS_PER_MILLIS, end_ns)
-                if ttft_ms is not None
-                else end_ns
-            )
             starts.append(start_ns)
-            ends.append(generation_start_ns)
+            ends.append(_generation_start_ns(start_ns, end_ns, ttft_ms))
             weights.append(w)
     if not starts:
         return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
@@ -507,6 +502,20 @@ def _throughput_curves(
     )
 
 
+def _generation_start_ns(
+    start_ns: float, end_ns: float, ttft_ms: float | None
+) -> float:
+    """Synthetic generation-start timestamp in nanoseconds.
+
+    Prefers ``start + TTFT``; falls back to ``end`` when TTFT is missing so
+    active requests still contribute to KV/throughput curves, and clamps to
+    ``[start_ns, end_ns]`` so a late TTFT cannot extend curves past request end.
+    """
+    if ttft_ms is None:
+        return end_ns
+    return min(max(start_ns + ttft_ms * NANOS_PER_MILLIS, start_ns), end_ns)
+
+
 def _record_arrays(
     sessions: dict[str, list[dict]], t0_ns: float
 ) -> tuple[
@@ -518,8 +527,9 @@ def _record_arrays(
 ]:
     """Per-record (start, generation_start, end) in seconds-from-t0 plus ISL/OSL.
 
-    ``generation_start = start + TTFT`` (the post-hoc jsonl path); entries are
-    NaN where the metric is missing so the sweep primitives skip them.
+    ``generation_start`` is synthesized via ``_generation_start_ns`` (TTFT when
+    present, else request end, always clamped to the request lifetime). ISL/OSL
+    are NaN where missing so the sweep primitives skip those weights.
     """
     starts: list[float] = []
     gens: list[float] = []
@@ -531,15 +541,14 @@ def _record_arrays(
         for r in turns:
             meta = r["metadata"]
             s = meta["request_start_ns"]
+            e = meta["request_end_ns"]
             ttft_ms = _metric_value(r, "time_to_first_token")
             isl = _metric_value(r, "input_sequence_length")
             osl = _metric_value(r, "output_sequence_length")
             starts.append((s - t0_ns) / NANOS_PER_SECOND)
-            ends.append((meta["request_end_ns"] - t0_ns) / NANOS_PER_SECOND)
+            ends.append((e - t0_ns) / NANOS_PER_SECOND)
             gens.append(
-                (s + ttft_ms * NANOS_PER_MILLIS - t0_ns) / NANOS_PER_SECOND
-                if ttft_ms is not None
-                else nan
+                (_generation_start_ns(s, e, ttft_ms) - t0_ns) / NANOS_PER_SECOND
             )
             isls.append(float(isl) if isl is not None else nan)
             osls.append(float(osl) if osl is not None else nan)
@@ -906,7 +915,12 @@ def plot_swim_lane(
 
     plt.tight_layout()
     out_path = out or (run_dir / "swim_lane.png")
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    except OSError as e:
+        plt.close(fig)
+        raise SwimLaneError(f"failed to write {out_path}: {e}") from e
     plt.close(fig)
     return out_path
 
@@ -1154,12 +1168,16 @@ def write_swim_lane_html(
     payload_b64 = base64.b64encode(gzip.compress(orjson.dumps(payload), 6)).decode()
     template = safe_read_template_path(str(VIEWER_TEMPLATE))
     if template is None:
-        raise FileNotFoundError(
+        raise SwimLaneError(
             f"Swim-lane viewer template not readable: {VIEWER_TEMPLATE}"
         )
     html = template.replace("__AIPERF_TITLE__", run_dir.name).replace(
         "__AIPERF_PAYLOAD_B64__", payload_b64
     )
     out_path = out or (run_dir / "swim_lane.html")
-    out_path.write_text(html)
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(html)
+    except OSError as e:
+        raise SwimLaneError(f"failed to write {out_path}: {e}") from e
     return out_path
