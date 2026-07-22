@@ -1219,3 +1219,70 @@ class TestStickyCreditRouterDAGChildren:
         assert router._sticky_sessions["root"].worker_id == "worker-A"
         assert router._workers["worker-A"].active_sessions == parent_sessions
         assert router._router_client.send_to.call_args[0][0] == "worker-A"
+
+    async def test_evict_unclaimed_sticky_after_parent_final_with_forks(
+        self, benchmark_run
+    ) -> None:
+        """R3: parent final with has_forks retains sticky; when no child ever
+        calls register_child_routing, evict_unclaimed_sticky must pop the
+        entry and decrement active_sessions."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-A")
+
+        parent_credit = make_credit(
+            id=1,
+            conv_id="parent-conv",
+            turn=0,
+            corr_id="root",
+            num_turns=1,
+            has_forks=True,
+        )
+        await router.send_credit(parent_credit)
+
+        assert "root" in router._sticky_sessions
+        entry = router._sticky_sessions["root"]
+        assert entry.parent_final_seen is True
+        assert entry.ref_count == 0
+        assert router._workers["worker-A"].active_sessions == 1
+
+        # Simulate all-children-failed finalize (no register_child_routing).
+        router.evict_unclaimed_sticky("root")
+
+        assert "root" not in router._sticky_sessions
+        assert router._workers["worker-A"].active_sessions == 0
+
+    async def test_evict_unclaimed_sticky_noop_when_children_hold_refs(
+        self, benchmark_run
+    ) -> None:
+        """Must not pop while register_child_routing has outstanding refs."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._register_worker("worker-A")
+        router._sticky_sessions["root"] = _StickyEntry(
+            worker_id="worker-A", ref_count=1, parent_final_seen=True
+        )
+        router._workers["worker-A"].active_sessions = 1
+        router._workers["worker-A"].active_session_ids.add("root")
+
+        router.evict_unclaimed_sticky("root")
+
+        assert "root" in router._sticky_sessions
+        assert router._sticky_sessions["root"].ref_count == 1
+        assert router._workers["worker-A"].active_sessions == 1
+
+    async def test_evict_unclaimed_sticky_noop_before_parent_final(
+        self, benchmark_run
+    ) -> None:
+        """Mid-session fork failure must leave sticky for remaining parent turns."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._register_worker("worker-A")
+        router._sticky_sessions["root"] = _StickyEntry(
+            worker_id="worker-A", ref_count=0, parent_final_seen=False
+        )
+        router._workers["worker-A"].active_sessions = 1
+        router._workers["worker-A"].active_session_ids.add("root")
+
+        router.evict_unclaimed_sticky("root")
+
+        assert "root" in router._sticky_sessions
+        assert router._workers["worker-A"].active_sessions == 1

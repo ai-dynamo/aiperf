@@ -20,6 +20,10 @@ from aiperf.dataset.loader._delay_cap import (
         (-50.0, 1.0, -50.0),
         (None, 1.0, None),
         (None, None, None),
+        (float("nan"), 1.0, None),
+        (float("nan"), None, None),
+        (float("inf"), 1.0, None),
+        (float("-inf"), 60.0, None),
     ],
 )
 def test_clamp_inter_turn_delay_ms_table(delay_ms, cap_seconds, expected):
@@ -62,6 +66,24 @@ def test_tracker_none_input_passthrough():
     assert tracker.max_observed_ms == 0.0
 
 
+def test_tracker_non_finite_maps_to_none_and_counts():
+    tracker = DelayCapTracker(cap_seconds=60.0)
+    assert tracker.clamp(float("nan")) is None
+    assert tracker.clamp(float("inf")) is None
+    assert tracker.clamp(float("-inf")) is None
+    assert tracker.non_finite_count == 3
+    assert tracker.capped_count == 0
+    assert tracker.max_observed_ms == 0.0
+
+
+def test_tracker_log_summary_warns_on_non_finite(caplog):
+    tracker = DelayCapTracker(cap_seconds=60.0)
+    tracker.clamp(float("nan"))
+    with caplog.at_level(logging.WARNING, logger="aiperf"):
+        tracker.log_summary(logger_name="aiperf.test")
+    assert any("non-finite inter-turn" in r.message for r in caplog.records)
+
+
 def test_tracker_log_summary_emits_when_capped(caplog):
     tracker = DelayCapTracker(cap_seconds=60.0)
     tracker.clamp(120_000.0)
@@ -90,6 +112,8 @@ def test_tracker_log_summary_silent_when_cap_none(caplog):
 def test_tracker_reset_clears_counters():
     tracker = DelayCapTracker(cap_seconds=60.0)
     tracker.clamp(120_000.0)
+    tracker.clamp(float("nan"))
     tracker.reset()
     assert tracker.capped_count == 0
     assert tracker.max_observed_ms == 0.0
+    assert tracker.non_finite_count == 0

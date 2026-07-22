@@ -398,6 +398,53 @@ def test_weka_hf_with_pinned_repo_ok() -> None:
     assert outcome.violations == []
 
 
+def _local_weka_trace_run(*, unsafe_override: bool = False) -> BenchmarkRun:
+    """FileDataset whose resolver would detect ``weka_trace`` (local, unpinned)."""
+    run = _build_run(
+        streaming=True,
+        extra={"ignore_eos": True},
+        unsafe_override=unsafe_override,
+        dataset={
+            "name": "main",
+            "type": "file",
+            "format": "mooncake_trace",
+            "records": [
+                {
+                    "timestamp": 0,
+                    "input_length": 10,
+                    "output_length": 5,
+                    "hash_ids": [1],
+                }
+            ],
+            "cache_bust": {"target": "first_turn_prefix"},
+        },
+    )
+    run.resolved.dataset_types = {"main": "weka_trace"}
+    return run
+
+
+def test_local_weka_trace_raises_without_unsafe_override() -> None:
+    """Local weka_trace is format-ok but unpinned — refuse submission_valid=true."""
+    run = _local_weka_trace_run()
+    with pytest.raises(ScenarioLockError) as exc:
+        apply_scenario(run)
+    assert "cannot verify corpus identity" in str(exc.value)
+    assert any(
+        v.flag == "--custom-dataset-type / --input-file" for v in exc.value.violations
+    )
+
+
+def test_local_weka_trace_unsafe_override_marks_submission_invalid() -> None:
+    """Offline smoke: local weka_trace + --unsafe-override -> submission_valid=false."""
+    run = _local_weka_trace_run(unsafe_override=True)
+    outcome = apply_scenario(run)
+    assert outcome.submission_valid is False
+    assert "unsafe_override" in outcome.submission_invalid_reasons
+    assert any(
+        v.flag == "--custom-dataset-type / --input-file" for v in outcome.violations
+    )
+
+
 # ---------------------------------------------------------------------------
 # require_cache_bust
 # ---------------------------------------------------------------------------

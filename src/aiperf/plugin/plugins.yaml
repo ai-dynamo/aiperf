@@ -927,10 +927,11 @@ timing_strategy:
   agentic_replay:
     class: aiperf.timing.strategies.agentic_replay:AgenticReplayStrategy
     description: |
-      Trajectory-based multi-turn trace replay with randomized 0-70% conversation
-      start, single-turn warmup with warmup barrier, FIFO trace recycling, and
-      configurable inter-turn delay cap. Designed for SemiAnalysis InferenceX
-      AgentX-MVP scenario but usable bare for any agentic-style benchmark.
+      Trajectory-based multi-turn trace replay with randomized conversation start
+      (CLI defaults 25-75%; inferencex-agentx-mvp widens to 0-100%), single-turn
+      warmup with warmup barrier, FIFO trace recycling, and configurable
+      inter-turn delay cap. Designed for SemiAnalysis InferenceX AgentX-MVP
+      scenario but usable bare for any agentic-style benchmark.
     metadata: {}
 
 # =============================================================================

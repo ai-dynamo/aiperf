@@ -328,6 +328,7 @@ async def test_start_branch_child_raise_rolls_back_sticky_refcount_unchanged():
     assert orch.stats.children_errored == 1
     assert orch.stats.children_spawned == 0
     sticky_router.register_child_routing.assert_not_called()
+    sticky_router.evict_unclaimed_sticky.assert_called_once_with("root")
     assert orch._descendant_counts == baseline_descendant_counts
     assert orch._child_to_join == {}
 

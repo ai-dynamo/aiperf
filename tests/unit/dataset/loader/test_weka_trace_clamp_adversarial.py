@@ -9,7 +9,6 @@ and clamp interaction with `--use-think-time-only`.
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -41,17 +40,18 @@ def test_clamp_negative_passes_through_corrupt_trace():
     assert _clamp_delay_ms(-100.0, cap_seconds=60.0) == -100.0
 
 
-def test_clamp_nan_passes_through():
-    # NaN compares false to *every* number, including `cap_ms`, so the
-    # `delay_ms > cap_ms` branch never fires. Pin: NaN passes through unchanged.
-    out = _clamp_delay_ms(float("nan"), cap_seconds=60.0)
-    assert math.isnan(out)
+def test_clamp_nan_maps_to_none():
+    # NaN comparisons are always false, so without an isfinite gate the
+    # `delay_ms > cap_ms` branch never fires. Scrub to None (absent delay).
+    assert _clamp_delay_ms(float("nan"), cap_seconds=60.0) is None
+    assert _clamp_delay_ms(float("nan"), cap_seconds=None) is None
 
 
-def test_clamp_positive_infinity_clamps_to_cap():
-    # `+Inf > cap_ms` is True, so Inf is clamped to `cap_ms` like any other
-    # large finite value. Different from NaN (above) by design.
-    assert _clamp_delay_ms(float("inf"), cap_seconds=60.0) == 60_000.0
+def test_clamp_non_finite_inf_maps_to_none():
+    # ±Inf are non-finite; scrub to None rather than clamping or passing through.
+    assert _clamp_delay_ms(float("inf"), cap_seconds=60.0) is None
+    assert _clamp_delay_ms(float("-inf"), cap_seconds=60.0) is None
+    assert _clamp_delay_ms(float("inf"), cap_seconds=None) is None
 
 
 def test_clamp_zero_cap_clamps_everything_to_zero():

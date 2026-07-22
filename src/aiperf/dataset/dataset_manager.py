@@ -53,6 +53,7 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset import FileDataset, PublicDataset
 from aiperf.dataset import mmap_cache
+from aiperf.dataset.memory_map_utils import turn_from_payload_turn
 from aiperf.dataset.utils import encode_image
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
@@ -1061,13 +1062,35 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     ) -> Conversation | None:
         """Rebuild a minimal Conversation from per-turn payload bytes.
 
+        Restores ``max_tokens`` / ``timestamp`` from index metadata (or wire
+        JSON for legacy indexes) so metric enrichment stays live on the
+        PAYLOAD_BYTES fallback path.
+
         Returns None when the client store has no payload-bytes API or the
         conversation has no payload turns (caller reports not-found).
         """
+        get_payload_turn = getattr(self._dataset_client, "get_payload_turn", None)
+        if get_payload_turn is not None:
+            turns: list[Turn] = []
+            turn_index = 0
+            while (
+                payload_turn := await get_payload_turn(conversation_id, turn_index)
+            ) is not None:
+                turns.append(turn_from_payload_turn(payload_turn))
+                turn_index += 1
+            if not turns:
+                return None
+            return Conversation(
+                session_id=conversation_id,
+                turns=turns,
+                context_mode=self._default_context_mode,
+            )
+
+        # Legacy clients only expose get_payload_bytes.
         get_payload_bytes = getattr(self._dataset_client, "get_payload_bytes", None)
         if get_payload_bytes is None:
             return None
-        turns: list[Turn] = []
+        turns = []
         turn_index = 0
         while (
             payload_bytes := await get_payload_bytes(conversation_id, turn_index)

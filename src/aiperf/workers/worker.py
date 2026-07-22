@@ -7,8 +7,6 @@ import time
 import uuid
 from typing import TYPE_CHECKING
 
-import orjson
-
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.constants import BYTES_PER_MIB, WARMUP_SYSTEM_MESSAGE_PREFIX
@@ -78,6 +76,7 @@ from aiperf.credit.messages import (
     WorkerShutdown,
 )
 from aiperf.credit.structs import Credit, CreditContext
+from aiperf.dataset.memory_map_utils import turn_from_payload_turn
 from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -1057,18 +1056,27 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             or credit.agent_depth != 0
         ):
             return False
-        payload_bytes = await self._dataset_client.get_payload_bytes(
+        payload_turn = await self._dataset_client.get_payload_turn(
             credit.conversation_id, credit.turn_index
         )
-        if payload_bytes is None:
+        if payload_turn is None:
             return False
 
         self.task_stats.total += 1
         request_info = self._create_request_info(
             credit_context=credit_context,
             x_request_id=x_request_id,
-            payload_bytes=payload_bytes,
-            turns=[Turn(role="user")],
+            payload_bytes=payload_turn.payload_bytes,
+            # Scalars only — payload_bytes carries the wire body; enrichment
+            # reads max_tokens / timestamp off this turn for OSL-mismatch and
+            # schedule-lag metrics.
+            turns=[
+                Turn(
+                    role="user",
+                    max_tokens=payload_turn.max_tokens,
+                    timestamp=payload_turn.timestamp,
+                )
+            ],
         )
         record = await self.inference_client.send_request(
             request_info, first_token_callback=first_token_callback
@@ -1450,11 +1458,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         if self._is_payload_bytes and self._dataset_client is not None:
             turns: list[Turn] = []
             for turn_index in range(num_turns):
-                payload_bytes = await self._dataset_client.get_payload_bytes(
+                payload_turn = await self._dataset_client.get_payload_turn(
                     conversation_id, turn_index
                 )
-                raw_payload = orjson.loads(payload_bytes) if payload_bytes else None
-                turns.append(Turn(role="user", raw_payload=raw_payload))
+                if payload_turn is None:
+                    turns.append(Turn(role="user"))
+                    continue
+                turns.append(turn_from_payload_turn(payload_turn))
             return Conversation(
                 session_id=conversation_id,
                 turns=turns,

@@ -26,6 +26,7 @@ from aiperf.analysis.swim_lane import (
     plot_swim_lane,
     write_swim_lane_html,
 )
+from aiperf.cli_commands.swim_lane import swim_lane as cli_swim_lane
 
 matplotlib.use("Agg", force=True)
 
@@ -367,3 +368,37 @@ class TestLoadBenchConfigRamp:
         (tmp_path / PROFILE_JSON).write_bytes(orjson.dumps(export))
         ramp, _ = _load_bench_config(tmp_path)
         assert ramp is None
+
+
+class TestCli:
+    def test_partial_failure_exits_1_and_writes_good(self, tmp_path: Path) -> None:
+        good = tmp_path / "good"
+        good.mkdir()
+        (good / "profile_export.jsonl").write_bytes(
+            b"\n".join(
+                orjson.dumps(r)
+                for r in [_rec("a", 0, 0.0, 1.0), _rec("b", 0, 0.5, 1.5)]
+            )
+        )
+        with pytest.raises(SystemExit) as e:
+            cli_swim_lane([good, tmp_path / "missing"])
+        assert e.value.code == 1
+        assert (good / "swim_lane.png").is_file()
+
+    def test_all_invalid_run_dirs_exit_1(self, tmp_path: Path, capsys) -> None:
+        with pytest.raises(SystemExit) as e:
+            cli_swim_lane([tmp_path / "missing1", tmp_path / "missing2"])
+        assert e.value.code == 1
+        assert capsys.readouterr().err.count("skip") == 2
+
+    def test_out_with_multiple_run_dirs_exits_2(self, tmp_path: Path) -> None:
+        a, b = tmp_path / "a", tmp_path / "b"
+        a.mkdir()
+        b.mkdir()
+        for d in (a, b):
+            (d / "profile_export.jsonl").write_bytes(
+                orjson.dumps(_rec("x", 0, 0.0, 1.0)) + b"\n"
+            )
+        with pytest.raises(SystemExit) as e:
+            cli_swim_lane([a, b], out=tmp_path / "x.png")
+        assert e.value.code == 2

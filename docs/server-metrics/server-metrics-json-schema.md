@@ -108,6 +108,7 @@ data["metrics"]["metric_name"]["series"][0]["stats"]["p99"]
 | `start_time` | datetime | When metrics collection started (ISO 8601) |
 | `end_time` | datetime | When metrics collection ended (ISO 8601) |
 | [`endpoint_info`](#endpoint-info) | object | Per-endpoint collection metadata |
+| `phase_time_ranges` | object or absent | Nanosecond ranges used for phase-scoped aggregation (`profiling` / `warmup`). Each value is `{start_ns, end_ns}` (inclusive). The warmup end matches `warmup_metrics` aggregation and may extend past credit-phase complete to include the end-of-warmup scrape. Present when phase-scoped aggregation ran. |
 
 ### Endpoint Info
 

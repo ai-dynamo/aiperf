@@ -4258,7 +4258,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Maximum input context length (tokens) per conversation. DatasetManager tokenizes each conversation's combined content and drops those exceeding the limit before mmap. No-op without a tokenizer.",
+                  "description": "Maximum peak prompt+output context length (tokens) per Weka root trace. Only honored by format weka_trace: the loader drops whole traces whose *recorded* peak exceeds this ceiling at load time (filter-then-cap before entries). Not a DatasetManager tokenize filter; rejected for non-Weka formats.",
                   "title": "Maxcontextlength"
                 },
                 "cacheBust": {
@@ -4427,7 +4427,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Maximum input context length (tokens) per conversation for HF-backed Weka replay; drops over-length conversations at load (mirror of ``FileDataset.max_context_length``).",
+                  "description": "Maximum peak prompt+output context length (tokens) per conversation for HF-backed Weka replay; drops over-length traces at load using *recorded* lengths (mirror of ``FileDataset.max_context_length``). Rejected for non-Weka public datasets.",
                   "title": "Maxcontextlength"
                 },
                 "cacheBust": {
@@ -12546,7 +12546,7 @@
             }
           ],
           "default": null,
-          "description": "Maximum input context length (tokens) per conversation. DatasetManager tokenizes each conversation's combined content and drops those exceeding the limit before mmap. No-op without a tokenizer.",
+          "description": "Maximum peak prompt+output context length (tokens) per Weka root trace. Only honored by format weka_trace: the loader drops whole traces whose *recorded* peak exceeds this ceiling at load time (filter-then-cap before entries). Not a DatasetManager tokenize filter; rejected for non-Weka formats.",
           "title": "Maxcontextlength",
           "x-jinja2-supported": true
         },
@@ -17196,7 +17196,7 @@
             }
           ],
           "default": null,
-          "description": "Maximum input context length (tokens) per conversation for HF-backed Weka replay; drops over-length conversations at load (mirror of ``FileDataset.max_context_length``).",
+          "description": "Maximum peak prompt+output context length (tokens) per conversation for HF-backed Weka replay; drops over-length traces at load using *recorded* lengths (mirror of ``FileDataset.max_context_length``). Rejected for non-Weka public datasets.",
           "title": "Maxcontextlength",
           "x-jinja2-supported": true
         },

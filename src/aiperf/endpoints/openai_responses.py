@@ -42,7 +42,9 @@ class ResponsesEndpoint(BaseEndpoint):
     # text parts contribute to the tokenisable text list, media parts
     # bump their respective counts.
     PART_TYPES: ClassVar[dict[MediaType, set[str]]] = {
-        MediaType.TEXT: {"input_text"},
+        # ``output_text`` appears on replayed assistant history items;
+        # omitting it undercounts ISL for multi-turn Responses payloads.
+        MediaType.TEXT: {"input_text", "output_text"},
         MediaType.IMAGE: {"input_image"},
         MediaType.AUDIO: {"input_audio"},
         # Responses API does not currently support video input.

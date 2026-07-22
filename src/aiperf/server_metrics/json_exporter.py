@@ -149,6 +149,10 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
     def _build_phase_time_ranges(self) -> dict[str, TimeRangeFilter]:
         """Build per-phase export time ranges, skipping degenerate windows.
 
+        Warmup ``end_ns`` comes from ``ServerMetricsResults.warmup_end_ns``,
+        which is the same (possibly scrape-extended) end used for
+        ``warmup_endpoint_summaries`` aggregation.
+
         TimeRangeFilter rejects start >= end, and a raise here would drop all
         server metrics from the export.
         """

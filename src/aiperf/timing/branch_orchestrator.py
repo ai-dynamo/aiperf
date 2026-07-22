@@ -1154,13 +1154,16 @@ class BranchOrchestrator:
         # If no successful children AND no gated turns, release the
         # reserved parent state so the parent can drain.
         #
-        # Sticky-router note: per-child rollback (the failure branch above)
-        # already calls ``release_child_routing`` exactly once for each FORK
-        # child whose ``register_child_routing`` was ever invoked, so no
-        # additional deferred-eviction step is needed here. (Bug fix:
-        # previous code released here unconditionally when any FORK child
-        # was intended, racing the per-child rollback and double-
-        # decrementing the parent's ref_count.)
+        # Sticky-router note: per-child rollback already calls
+        # ``release_child_routing`` once per FORK child that registered.
+        # When every child fails *before* ``register_child_routing``
+        # (``start_branch_child`` raises), the parent's sticky entry was
+        # retained by ``has_forks`` with ``ref_count`` already at 0 and
+        # nothing left to release it — force-evict that orphan here.
+        # Safe no-op when children hold refs or parent final was not seen
+        # (does not race / double-decrement registered children).
+        if self._sticky_router is not None:
+            self._sticky_router.evict_unclaimed_sticky(parent_corr)
         if (
             not any_child_tracked_for_parent(self._child_to_join, parent_corr)
             and not self._future_joins.get(parent_corr)

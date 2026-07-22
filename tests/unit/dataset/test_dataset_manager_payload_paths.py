@@ -119,6 +119,8 @@ class TestPayloadBytesFallbackServing:
         assert conversation.session_id == conversation_id
         assert len(conversation.turns) == 1
         assert conversation.turns[0].raw_payload == RAW_PAYLOAD
+        # Wire JSON max_tokens must be restored onto the Turn for OSL metrics.
+        assert conversation.turns[0].max_tokens == 7
         await dm.stop()
 
     @pytest.mark.asyncio
@@ -138,6 +140,7 @@ class TestPayloadBytesFallbackServing:
         )
 
         assert response.turn.raw_payload == RAW_PAYLOAD
+        assert response.turn.max_tokens == 7
         await dm.stop()
 
     @pytest.mark.asyncio

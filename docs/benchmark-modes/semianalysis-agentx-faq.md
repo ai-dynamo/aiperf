@@ -202,10 +202,13 @@ From SemiAnalysis captures of real coding-agent sessions (the "cc-traces" corpor
 identities, tool-use markers, timestamps, and any subagents it spawned. The benchmark ships
 several dated corpora (for example the current-default `062126` corpus with ~393 traces; older date
 pins like `061526` remain accepted for reproducibility). You select one with
-`--public-dataset`. The AgentX scenario accepts only Weka-format trace loaders: the pinned SemiAnalysis
-`*_weka_*` public corpora, the generic `weka_trace` loader (local trace files via
-`--custom-dataset-type weka_trace`), and `weka_hf` pinned to the
-`semianalysisai/cc-traces-weka-062126` HuggingFace repo. Under the scenario, `weka_hf` rejects any
+`--public-dataset`. The AgentX scenario stamps `submission_valid: true` only for
+pinned SemiAnalysis `*_weka_*` public corpora and `weka_hf` pinned to the
+`semianalysisai/cc-traces-weka-062126` HuggingFace repo. Local `weka_trace`
+directories (`--custom-dataset-type weka_trace`) are format-compatible for
+offline smoke tests but require `--unsafe-override` under the scenario
+(`submission_valid: false`) — AIPerf cannot fingerprint an arbitrary local
+dir as the public corpus. Under the scenario, `weka_hf` rejects any
 other `--hf-weka-dataset` value; outside the scenario lock, `weka_hf` accepts any compatible Weka
 dataset.
 
@@ -492,9 +495,12 @@ Pick the corpus to match your server's context window:
   around a ~256k context window (for example MiniMax-class models), where the full corpus would
   otherwise have its largest turns rejected and push you over the context-overflow limit.
 
-Both are first-class: the AgentX scenario accepts the full and `_256k` variants of every date-pinned
-corpus it allows (plus the generic `weka_trace` / `weka_hf` loaders). The `_256k` build is not a
-degraded mode — it's the right dataset for a 256k server.
+Both are first-class via `--public-dataset`: the AgentX scenario accepts the full and `_256k`
+variants of every date-pinned corpus it allows. Under the scenario,
+`weka_hf` is pinned only to the full-context HF repo (`semianalysisai/cc-traces-weka-062126`); a
+256k-capped corpus must use `--public-dataset …_256k` — `--hf-weka-dataset …-256k` is rejected.
+Local `weka_trace` dirs need `--unsafe-override` and stamp `submission_valid: false`.
+The `_256k` build is not a degraded mode — it's the right dataset for a 256k server.
 
 ### Q: How does `_256k` differ from just passing `--max-context-length`?
 They target the same problem — don't send prompts your server will reject — but at different
@@ -775,7 +781,7 @@ the context-overflow bound is evaluated during the run.
 | Locked rule | Enforced value | What violates it | Effect |
 |---|---|---|---|
 | Agentic-replay timing | Recorded timing replayed; no request-rate knob | Forcing as-fast-as-possible or a request-rate/schedule mode | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
-| SemiAnalysis corpus | A pinned `*_weka_*` corpus, or the `weka_trace` / `weka_hf` loaders | A non-pinned dataset (or another `--hf-weka-dataset` under the scenario); omitting a dataset entirely (CLI synthetic default) | Explicit wrong loader: refuses to start (or `submission_valid: false` via `--unsafe-override`). Missing/synthetic: always refuses — `--unsafe-override` cannot bypass |
+| SemiAnalysis corpus | A pinned `*_weka_*` `--public-dataset` alias, or `weka_hf` pinned to `semianalysisai/cc-traces-weka-062126` | A non-pinned dataset, local `weka_trace`, or another `--hf-weka-dataset` under the scenario; omitting a dataset entirely (CLI synthetic default) | Explicit wrong / unpinned loader: refuses to start (or `submission_valid: false` via `--unsafe-override`). Missing/synthetic: always refuses — `--unsafe-override` cannot bypass |
 | `ignore_eos` | Injected `ignore_eos=true` | Explicit `ignore_eos=false` | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
 | Streaming | `--streaming` auto-enabled | Explicit `--no-streaming` | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |
 | Honored trace delays | Recorded think-time gaps waited; idle gaps capped at 10s | `--ignore-trace-delays` | Refuses to start (or `submission_valid: false` via `--unsafe-override`) |

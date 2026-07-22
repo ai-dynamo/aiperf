@@ -31,8 +31,10 @@ def test_clamp_zero_cap_clamps_everything():
     assert _clamp_delay_ms(0.0, cap_seconds=0.0) == 0.0
 
 
-def test_clamp_inf_clamps():
-    assert _clamp_delay_ms(float("inf"), cap_seconds=60.0) == 60_000.0
+def test_clamp_inf_maps_to_none():
+    assert _clamp_delay_ms(float("inf"), cap_seconds=60.0) is None
+    assert _clamp_delay_ms(float("-inf"), cap_seconds=60.0) is None
+    assert _clamp_delay_ms(float("nan"), cap_seconds=60.0) is None
 
 
 def test_peak_context_zero_output_counts_as_one_for_filter():

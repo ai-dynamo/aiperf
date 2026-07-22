@@ -208,7 +208,7 @@ class ScenarioLockError(ValueError):
             hint = (
                 "These violations cannot be bypassed with --unsafe-override. "
                 "Provide --public-dataset (e.g. semianalysis_cc_traces_weka_062126) "
-                "or --custom-dataset-type weka_trace --input-file <dir>."
+                "or --hf-weka-dataset semianalysisai/cc-traces-weka-062126."
             )
         super().__init__(
             f"Scenario invariants violated ({len(violations)} conflict"

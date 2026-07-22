@@ -521,7 +521,7 @@ For weka_trace inputs, emit Turn.delay as the end-to-start idle gap `t_curr - (t
 
 #### `--max-context-length` `<int>`
 
-Maximum input context length (tokens) per conversation. DatasetManager tokenizes each conversation's combined content and drops those exceeding the limit before mmap. No-op without a tokenizer.
+Maximum peak prompt+output context length (tokens) per Weka root trace. Weka loaders (--custom-dataset-type weka_trace or a weka --public-dataset) drop whole traces whose *recorded* peak exceeds this ceiling at load time (filter-then-cap before --num-dataset-entries). Not a DatasetManager tokenize filter; rejected for non-Weka formats.
 <br/>_Constraints: ≥ 1_
 
 #### `--dataset-sampling-strategy` `<str>`
@@ -1012,7 +1012,7 @@ Maximum input sequence length for filtering. Traces with input_length > max_isl 
 
 #### `--synthesis-max-osl` `<int>`
 
-Maximum output sequence length cap. Traces with output_length > max_osl are capped to max_osl.
+Maximum output sequence length cap for top-level (parent) turns. Turns with output_length > max_osl are capped to max_osl. Subagent child turns are intentionally uncapped so their decode load stays faithful; flat-chain sidecars still honor the cap.
 <br/>_Constraints: ≥ 1_
 
 ### Load Generator
@@ -2046,7 +2046,7 @@ For weka_trace inputs, emit Turn.delay as the end-to-start idle gap `t_curr - (t
 
 #### `--max-context-length` `<int>`
 
-Maximum input context length (tokens) per conversation. DatasetManager tokenizes each conversation's combined content and drops those exceeding the limit before mmap. No-op without a tokenizer.
+Maximum peak prompt+output context length (tokens) per Weka root trace. Weka loaders (--custom-dataset-type weka_trace or a weka --public-dataset) drop whole traces whose *recorded* peak exceeds this ceiling at load time (filter-then-cap before --num-dataset-entries). Not a DatasetManager tokenize filter; rejected for non-Weka formats.
 <br/>_Constraints: ≥ 1_
 
 #### `--dataset-sampling-strategy` `<str>`
@@ -2537,7 +2537,7 @@ Maximum input sequence length for filtering. Traces with input_length > max_isl 
 
 #### `--synthesis-max-osl` `<int>`
 
-Maximum output sequence length cap. Traces with output_length > max_osl are capped to max_osl.
+Maximum output sequence length cap for top-level (parent) turns. Turns with output_length > max_osl are capped to max_osl. Subagent child turns are intentionally uncapped so their decode load stays faithful; flat-chain sidecars still honor the cap.
 <br/>_Constraints: ≥ 1_
 
 ### Load Generator

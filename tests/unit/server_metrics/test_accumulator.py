@@ -298,6 +298,9 @@ class TestServerMetricsAccumulator:
 
         assert result is not None
         assert result.warmup_endpoint_summaries is not None
+        # Exported warmup_end_ns must be the same extended aggregation end
+        # (post-complete scrape at 2.2s), not the raw credit-phase end (2.0s).
+        assert result.warmup_end_ns == 2_200_000_000
         endpoint_key = next(iter(result.warmup_endpoint_summaries))
         warmup_total = (
             result.warmup_endpoint_summaries[endpoint_key]
@@ -306,7 +309,7 @@ class TestServerMetricsAccumulator:
             .stats.total
         )
         # 100 -> 200 including the final warmup scrape; a window ending
-        # strictly at warmup_end_ns would stop at 150 (delta 50).
+        # strictly at raw warmup_end_ns would stop at 150 (delta 50).
         assert warmup_total == pytest.approx(100.0)
         # Profiling delta is unaffected: baseline 200 (last pre-start
         # sample) -> 300.

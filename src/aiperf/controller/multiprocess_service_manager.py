@@ -258,23 +258,27 @@ class MultiProcessServiceManager(BaseServiceManager):
             self.multi_process_info.remove(info)
 
     async def _wait_for_process(self, info: MultiProcessRunInfo) -> None:
-        """Wait for a process to terminate with timeout handling."""
+        """Force-kill a service process that is still alive after bus shutdown.
+
+        Children install ``signal.SIG_IGN`` for SIGTERM in
+        ``bootstrap_and_run_service`` (to avoid C-extension teardown SIGSEGVs).
+        Graceful exit is exclusively via ``ShutdownCommand`` on the message
+        bus; by the time we reach here that path has already been given its
+        delivery grace. ``Process.terminate()`` (SIGTERM) is therefore a
+        no-op on POSIX, and waiting ``TASK_CANCEL_TIMEOUT_SHORT`` (~2s) on
+        ``join()`` before ``kill()`` only burns wall-clock per process.
+        Skip straight to ``kill()`` (SIGKILL on POSIX; ``TerminateProcess``
+        on Windows, where ``kill``/``terminate`` are equivalent).
+        """
         if not info.process or not info.process.is_alive():
             return
 
-        info.process.terminate()
-        await asyncio.to_thread(
-            info.process.join, timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT
+        self.warning(
+            f"Service {info.service_type} process (pid: {info.process.pid}) "
+            "still alive after bus shutdown grace; killing (SIGKILL / "
+            "TerminateProcess — children ignore SIGTERM)"
         )
-        if info.process.is_alive():
-            self.warning(
-                f"Service {info.service_type} process (pid: {info.process.pid}) did not terminate gracefully, killing"
-            )
-            info.process.kill()
-        else:
-            self.debug(
-                lambda: f"Service {info.service_type} process stopped (pid: {info.process.pid})"
-            )
+        info.process.kill()
 
     async def wait_for_all_services_start(
         self,

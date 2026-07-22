@@ -394,6 +394,58 @@ async def test_register_then_dispatch_fail_rolls_back_sticky_refcount():
 
 
 # ---------------------------------------------------------------------------
+# 5b. R3: all start_branch_child failures must evict unclaimed sticky.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_all_start_branch_child_failures_evict_unclaimed_sticky(benchmark_run):
+    """Parent final with has_forks retains sticky (ref_count=0,
+    parent_final_seen=True). If every start_branch_child raises before
+    register_child_routing, finalize must force-pop the entry or
+    active_sessions leaks permanently."""
+    branch = ConversationBranchInfo(
+        branch_id="root:0",
+        child_conversation_ids=["a", "b"],
+        mode=ConversationBranchMode.FORK,
+    )
+    root = _mk_conv_meta(
+        "root",
+        [TurnMetadata(branch_ids=["root:0"], has_forks=True)],
+        [branch],
+    )
+    cs = _mk_source(
+        [
+            root,
+            _mk_conv_meta("a", [TurnMetadata()], []),
+            _mk_conv_meta("b", [TurnMetadata()], []),
+        ]
+    )
+    cs.start_branch_child = MagicMock(side_effect=RuntimeError("start failed"))
+
+    router = StickyCreditRouter(run=benchmark_run, service_id="rtr-5b")
+    router._workers = {"w1": WorkerLoad(worker_id="w1", active_sessions=1)}
+    router._workers["w1"].active_session_ids.add("corr-root")
+    router._workers_cache = list(router._workers.values())
+    # State after send_credit of parent final with has_forks=True.
+    router._sticky_sessions["corr-root"] = _StickyEntry(
+        worker_id="w1", ref_count=0, parent_final_seen=True
+    )
+
+    orch = BranchOrchestrator(
+        conversation_source=cs,
+        credit_issuer=_mk_issuer(),
+        sticky_router=router,
+    )
+    assert await orch.intercept(_mk_credit("root", "corr-root", 0)) is False
+
+    assert orch.stats.children_errored == 2
+    assert orch.stats.children_spawned == 0
+    assert "corr-root" not in router._sticky_sessions
+    assert router._workers["w1"].active_sessions == 0
+
+
+# ---------------------------------------------------------------------------
 # 6. register_child_routing for a parent with no sticky entry: silent no-op.
 # ---------------------------------------------------------------------------
 

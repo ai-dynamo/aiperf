@@ -30,7 +30,15 @@ class TheoreticalPrefixCacheAccumulator(BaseMetricsProcessor):
     ``theoretical_prefix_cache_total_blocks``. Runtime accounting therefore
     avoids carrying hash_ids or re-tokenizing prompts; each completed record is
     only a metadata lookup plus two integer additions.
+
+    Phase scoping mirrors ``AccuracyAccumulator``: ``export_results(ctx)``
+    filters to ``ctx.phase`` so warmup blocks never leak into the profiling
+    summary (and vice versa).
     """
+
+    # RecordsManager routes phase-scoped-export accumulators through
+    # export_results(ctx) instead of the unscoped summarize().
+    supports_phase_scoped_export = True
 
     def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
         super().__init__(run=run, **kwargs)
@@ -96,11 +104,11 @@ class TheoreticalPrefixCacheAccumulator(BaseMetricsProcessor):
         )
 
     async def summarize(self, ctx: SummaryContext | None = None) -> list[MetricResult]:
-        """Return the current cumulative theoretical prefix-cache hit rate."""
+        """Return the phase-agnostic (all-phase) theoretical prefix-cache hit rate."""
         return self._summarize_phase(None)
 
     async def export_results(self, ctx: ExportContext) -> list[MetricResult]:
-        """Return prefix-cache hit rate for the requested export phase."""
+        """Return prefix-cache hit rate scoped to ``ctx.phase`` (all if None)."""
         return self._summarize_phase(ctx.phase)
 
     def _summarize_phase(self, phase: CreditPhase | None) -> list[MetricResult]:

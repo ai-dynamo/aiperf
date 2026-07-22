@@ -5,6 +5,7 @@ import asyncio
 
 import pytest
 
+from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.enums import CreditPhase
 from aiperf.common.messages import MetricRecordsData
 from aiperf.common.models import (
@@ -29,6 +30,7 @@ def _record(
     conversation_id: str,
     turn_index: int,
     error: ErrorDetails | None = None,
+    benchmark_phase: CreditPhase = CreditPhase.PROFILING,
 ) -> MetricRecordsData:
     return MetricRecordsData(
         metadata=MetricRecordMetadata(
@@ -38,7 +40,7 @@ def _record(
             conversation_id=conversation_id,
             turn_index=turn_index,
             record_processor_id="rp",
-            benchmark_phase=CreditPhase.PROFILING,
+            benchmark_phase=benchmark_phase,
             worker_id="worker",
         ),
         metrics={},
@@ -150,3 +152,70 @@ async def _run_accumulator_skips_missing_metadata_and_errors() -> None:
     )
 
     assert await acc.summarize() == []
+
+
+def test_export_results_scopes_to_profiling_phase() -> None:
+    """Warmup must not bleed into the profiling headline hit rate.
+
+    Equal block totals (10 each) make all-phases average 50% while profiling
+    alone is 10% — the bug this guards against.
+    """
+    asyncio.run(_run_export_results_scopes_to_profiling_phase())
+
+
+async def _run_export_results_scopes_to_profiling_phase() -> None:
+    acc = TheoreticalPrefixCacheAccumulator(
+        make_benchmark_run(endpoint_type=EndpointType.CHAT)
+    )
+    acc.on_dataset_configured(
+        DatasetMetadata(
+            conversations=[
+                ConversationMetadata(
+                    conversation_id="trace-a",
+                    turns=[
+                        # Warmup: 9/10 = 90%
+                        TurnMetadata(
+                            theoretical_prefix_cache_hit_blocks=9,
+                            theoretical_prefix_cache_total_blocks=10,
+                        ),
+                        # Profiling: 1/10 = 10%
+                        TurnMetadata(
+                            theoretical_prefix_cache_hit_blocks=1,
+                            theoretical_prefix_cache_total_blocks=10,
+                        ),
+                    ],
+                )
+            ],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+    )
+
+    await acc.process_record(
+        _record(
+            conversation_id="trace-a",
+            turn_index=0,
+            benchmark_phase=CreditPhase.WARMUP,
+        )
+    )
+    await acc.process_record(
+        _record(
+            conversation_id="trace-a",
+            turn_index=1,
+            benchmark_phase=CreditPhase.PROFILING,
+        )
+    )
+
+    assert acc.supports_phase_scoped_export is True
+
+    [profiling] = await acc.export_results(ExportContext(phase=CreditPhase.PROFILING))
+    assert profiling.current == pytest.approx(10.0)
+    assert profiling.avg == pytest.approx(10.0)
+    assert profiling.count == 10
+    assert profiling.sum == 1
+
+    [warmup] = await acc.export_results(ExportContext(phase=CreditPhase.WARMUP))
+    assert warmup.current == pytest.approx(90.0)
+
+    # summarize() remains phase-agnostic for callers that still use it.
+    [all_phases] = await acc.summarize()
+    assert all_phases.current == pytest.approx(50.0)

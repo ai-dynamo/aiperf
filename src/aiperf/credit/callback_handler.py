@@ -94,19 +94,23 @@ class CreditCallbackHandler:
         Args:
             concurrency_manager: Manages concurrency slots (shared across phases).
             branch_orchestrator: Optional DAG subagent orchestrator. When
-                provided, credit returns are offered to ``orchestrator.intercept``
-                before the strategy's ``handle_credit_return`` is called. If
-                intercept returns True the strategy dispatch is suppressed (the
-                orchestrator has taken over the next-turn path by spawning
-                children / queuing a join turn).
+                provided, non-overflow credit returns are offered to
+                ``orchestrator.intercept`` before the strategy's
+                ``handle_credit_return`` is called. If intercept returns True
+                the strategy dispatch is suppressed (the orchestrator has taken
+                over the next-turn path by spawning children / queuing a join
+                turn). Context-overflow terminals skip intercept entirely so
+                ``on_root_terminal`` / overflow recycle / warmup-failure
+                handling still run.
             session_tree_registry: Optional per-tree session-slot ledger (agentic
                 replay only). When engaged (PROFILING), the depth-0 root session
                 slot is NOT released on the root's terminal return -- it is held
                 until the whole tree drains. The release is deferred to
-                ``registry.on_root_terminal`` (after intercept, so final-turn
-                spawns are counted first); terminal means the authored final
-                turn or a context-overflow early abort. The per-phase teardown
-                releases any still-open trees via the runner's ``release_all``.
+                ``registry.on_root_terminal`` (after intercept for authored-final
+                turns, so final-turn spawns are counted first); terminal means
+                the authored final turn or a context-overflow early abort. The
+                per-phase teardown releases any still-open trees via the
+                runner's ``release_all``.
             on_warmup_abort: Optional async callback fired ONCE on the first
                 terminal WARMUP failure. Used by agentic replay to abort the run
                 early (broadcast ProfileCancelCommand) instead of letting warmup
@@ -445,18 +449,31 @@ class CreditCallbackHandler:
 
         # 5. Dispatch next turn / DAG spawn.
         #
-        # The orchestrator intercept runs FIRST and unconditionally (not gated
-        # behind ``can_send_any_turn``), because when a DAG root finishes its
-        # own terminal turn the phase's "sending complete" lifecycle flag has
-        # already flipped — but the children still need to dispatch. The
-        # orchestrator owns its own dispatch path (``CreditIssuer.
-        # dispatch_first_turn``) which bypasses the session-level stop checks
-        # for DAG children (they inherit the root's session slot).
+        # Context-overflow on a non-final turn is trajectory death (agentic
+        # replay treats it as terminal). Detect it BEFORE honoring intercept
+        # suspension: a gated next turn must not early-return past
+        # ``on_root_terminal`` / strategy overflow recycle /
+        # ``_handle_warmup_failure``. Skip intercept entirely on overflow
+        # terminal -- spawning or suspending a dead parent is wrong.
+        overflow_terminal = (
+            credit_return.error is not None
+            and is_context_overflow_response(body=credit_return.error)
+        )
+        root_terminal = credit.is_final_turn or overflow_terminal
+
+        # The orchestrator intercept runs FIRST (when not overflow-terminal)
+        # and unconditionally (not gated behind ``can_send_any_turn``), because
+        # when a DAG root finishes its own terminal turn the phase's "sending
+        # complete" lifecycle flag has already flipped — but the children still
+        # need to dispatch. The orchestrator owns its own dispatch path
+        # (``CreditIssuer.dispatch_first_turn``) which bypasses the
+        # session-level stop checks for DAG children (they inherit the root's
+        # session slot).
         #
         # Strategy dispatch (for regular multi-turn continuation) remains gated
-        # behind ``can_send_any_turn`` as before.
-        intercepted = False
-        if self._branch_orchestrator is not None:
+        # behind ``can_send_any_turn`` as before. Normal gated suspend
+        # (intercept True, non-overflow) still early-returns.
+        if self._branch_orchestrator is not None and not overflow_terminal:
             intercepted = await self._branch_orchestrator.intercept(credit)
             if intercepted:
                 self._signal_all_credits_returned_if_ready(handler)
@@ -472,12 +489,9 @@ class CreditCallbackHandler:
         # registry releases the session slot and recycles the freed lane only
         # once every descendant has also drained -- which may be now (no
         # outstanding descendants) or later (when the last background subagent
-        # finishes). A root that suspends on a gate (intercepted) is never
-        # terminal, so it never reaches this point.
-        root_terminal = credit.is_final_turn or (
-            credit_return.error is not None
-            and is_context_overflow_response(body=credit_return.error)
-        )
+        # finishes). Overflow-terminal skips intercept above so this path is
+        # always reached for that case; authored-final + gated suspend still
+        # early-returns (next turn gated implies not authored-final).
         if (
             root_terminal
             and credit.agent_depth == 0

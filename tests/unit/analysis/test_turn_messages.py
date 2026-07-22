@@ -158,6 +158,15 @@ class TestWriteHtml:
         out = write_turn_messages_html(tmp_path)
         assert _extract_payload(out)["convs"][0]["id"] == "c1"
 
+    def test_nested_raw_records_are_not_merged(self, tmp_path: Path):
+        # Parent dir with only nested run trees must not silently merge them.
+        for name, conv in (("run_a", "a"), ("run_b", "b")):
+            nested = tmp_path / name
+            nested.mkdir()
+            _write_raw(nested, _accumulated(conv, 1))
+        with pytest.raises(TurnMessagesError, match="no raw records"):
+            write_turn_messages_html(tmp_path)
+
     def test_missing_raw_records_raises(self, tmp_path: Path):
         with pytest.raises(TurnMessagesError, match="no raw records"):
             write_turn_messages_html(tmp_path)
@@ -332,12 +341,13 @@ class TestCli:
         assert e.value.code == 1
         assert capsys.readouterr().err.count("skip") == 2
 
-    def test_partial_failure_exits_zero_and_writes_good(self, tmp_path: Path):
+    def test_partial_failure_exits_1_and_writes_good(self, tmp_path: Path):
         good = tmp_path / "good"
         good.mkdir()
         _write_raw(good, _accumulated("c1", 1))
-        # one good + one missing -> not all failed -> returns normally (no exit)
-        cli_turn_messages([good, tmp_path / "missing"])
+        with pytest.raises(SystemExit) as e:
+            cli_turn_messages([good, tmp_path / "missing"])
+        assert e.value.code == 1
         assert (good / "turn_messages.html").is_file()
 
     def test_accepts_direct_jsonl_file_writes_beside_it(self, tmp_path: Path):

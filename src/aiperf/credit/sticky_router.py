@@ -531,6 +531,27 @@ class StickyCreditRouter(CommunicationMixin):
                 load.active_sessions -= 1
                 load.active_session_ids.discard(parent_correlation_id)
 
+    def evict_unclaimed_sticky(self, parent_correlation_id: str) -> None:
+        """Force-pop a sticky entry retained for FORK children that never registered.
+
+        Parent final turns with ``has_forks=True`` keep the sticky entry alive
+        (``parent_final_seen=True``, ``ref_count`` already decremented) so
+        ``register_child_routing`` can find it. When every child fails before
+        that register (e.g. ``start_branch_child`` raises), nothing else
+        decrements ``active_sessions``. Called from
+        ``BranchOrchestrator._finalize_failed_dispatches``; safe no-op when
+        children hold refs or the parent final has not been seen.
+        """
+        entry = self._sticky_sessions.get(parent_correlation_id)
+        if entry is None or not entry.parent_final_seen or entry.ref_count > 0:
+            return
+        worker_id = entry.worker_id
+        self._sticky_sessions.pop(parent_correlation_id, None)
+        load = self._workers.get(worker_id)
+        if load is not None:
+            load.active_sessions -= 1
+            load.active_session_ids.discard(parent_correlation_id)
+
     # =============================================================================
     # Private Methods
     # =============================================================================

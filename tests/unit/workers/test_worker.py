@@ -18,6 +18,7 @@ from aiperf.common.models import (
 )
 from aiperf.config.phases import ConcurrencyPhase
 from aiperf.credit.structs import Credit, CreditContext
+from aiperf.dataset.memory_map_utils import PayloadTurnData
 from aiperf.workers.worker import (
     Worker,
     _is_terminal_context_overflow,
@@ -712,7 +713,7 @@ class TestPayloadBytesFastPath:
         )
 
         assert handled is False
-        mock_worker._dataset_client.get_payload_bytes.assert_not_called()
+        mock_worker._dataset_client.get_payload_turn.assert_not_called()
 
     async def test_returns_false_for_dag_descendants(self, mock_worker):
         mock_worker._is_payload_bytes = True
@@ -737,7 +738,7 @@ class TestPayloadBytesFastPath:
         )
 
         assert handled is False
-        mock_worker._dataset_client.get_payload_bytes.assert_not_called()
+        mock_worker._dataset_client.get_payload_turn.assert_not_called()
 
     async def test_returns_false_when_no_payload_for_turn(
         self, mock_worker, sample_credit_context
@@ -745,14 +746,14 @@ class TestPayloadBytesFastPath:
         """A missing per-turn payload defers to the normal session path."""
         mock_worker._is_payload_bytes = True
         mock_worker._dataset_client = AsyncMock()
-        mock_worker._dataset_client.get_payload_bytes.return_value = None
+        mock_worker._dataset_client.get_payload_turn.return_value = None
 
         handled = await mock_worker._try_payload_bytes_fast_path(
             sample_credit_context, "x-req-3", None
         )
 
         assert handled is False
-        mock_worker._dataset_client.get_payload_bytes.assert_awaited_once_with(
+        mock_worker._dataset_client.get_payload_turn.assert_awaited_once_with(
             "test-conv-123", 0
         )
 
@@ -761,7 +762,9 @@ class TestPayloadBytesFastPath:
     ):
         mock_worker._is_payload_bytes = True
         mock_worker._dataset_client = AsyncMock()
-        mock_worker._dataset_client.get_payload_bytes.return_value = b'{"p": 1}'
+        mock_worker._dataset_client.get_payload_turn.return_value = PayloadTurnData(
+            payload_bytes=b'{"p": 1}'
+        )
 
         error_record = RequestRecord(
             timestamp_ns=1,
@@ -794,7 +797,9 @@ class TestPayloadBytesFastPath:
         """Lockstep guard must not emit a duplicate failure record after success."""
         mock_worker._is_payload_bytes = True
         mock_worker._dataset_client = AsyncMock()
-        mock_worker._dataset_client.get_payload_bytes.return_value = b'{"p": 1}'
+        mock_worker._dataset_client.get_payload_turn.return_value = PayloadTurnData(
+            payload_bytes=b'{"p": 1}'
+        )
 
         success_record = RequestRecord(
             timestamp_ns=1,
@@ -817,6 +822,72 @@ class TestPayloadBytesFastPath:
         mock_worker._send_inference_result_message.assert_awaited_once_with(
             success_record
         )
+
+    async def test_fast_path_turn_carries_max_tokens_and_timestamp(
+        self, mock_worker, sample_credit_context
+    ):
+        """PAYLOAD_BYTES fast path must hoist turn scalars for metric enrichment.
+
+        Bare ``Turn(role="user")`` left ``request_info.max_tokens`` /
+        ``scheduled_send_ms`` None after ``_finalize_request_record``, silencing
+        OSL-mismatch and schedule-lag metrics even though the wire JSON body
+        still had max_tokens.
+        """
+        mock_worker._is_payload_bytes = True
+        mock_worker._dataset_client = AsyncMock()
+        payload = b'{"messages":[{"role":"user","content":"hi"}],"max_tokens":64}'
+        mock_worker._dataset_client.get_payload_turn.return_value = PayloadTurnData(
+            payload_bytes=payload,
+            max_tokens=64,
+            timestamp=1234.5,
+        )
+
+        success_record = RequestRecord(
+            timestamp_ns=1,
+            start_perf_ns=1,
+            end_perf_ns=2,
+        )
+        mock_worker.inference_client.send_request = AsyncMock(
+            return_value=success_record
+        )
+        mock_worker._send_inference_result_message = AsyncMock()
+
+        handled = await mock_worker._try_payload_bytes_fast_path(
+            sample_credit_context, "x-req-scalars", None
+        )
+
+        assert handled is True
+        sent_request_info = mock_worker.inference_client.send_request.call_args.args[0]
+        assert sent_request_info.payload_bytes == payload
+        assert len(sent_request_info.turns) == 1
+        assert sent_request_info.turns[0].max_tokens == 64
+        assert sent_request_info.turns[0].timestamp == 1234.5
+
+    async def test_retrieve_conversation_for_session_restores_scalars(
+        self, mock_worker, sample_credit_context
+    ):
+        """Session-path reconstruction must restore max_tokens and timestamp."""
+        mock_worker._is_payload_bytes = True
+        mock_worker._dataset_client = AsyncMock()
+        mock_worker._dataset_client.get_payload_turn.return_value = PayloadTurnData(
+            payload_bytes=b'{"max_completion_tokens":32,"messages":[]}',
+            max_tokens=32,
+            timestamp=99,
+        )
+        mock_worker.session_manager = MagicMock()
+        mock_worker.session_manager.default_context_mode = None
+
+        conversation = await mock_worker._retrieve_conversation_for_session(
+            credit_context=sample_credit_context
+        )
+
+        assert len(conversation.turns) == 1
+        assert conversation.turns[0].max_tokens == 32
+        assert conversation.turns[0].timestamp == 99
+        assert conversation.turns[0].raw_payload == {
+            "max_completion_tokens": 32,
+            "messages": [],
+        }
 
 
 # --- First Token Callback Factory Tests ---

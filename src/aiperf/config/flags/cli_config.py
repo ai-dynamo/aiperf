@@ -654,9 +654,14 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             ge=1,
-            description="Maximum input context length (tokens) per conversation. "
-            "DatasetManager tokenizes each conversation's combined content and drops "
-            "those exceeding the limit before mmap. No-op without a tokenizer.",
+            description=(
+                "Maximum peak prompt+output context length (tokens) per Weka root "
+                "trace. Weka loaders (--custom-dataset-type weka_trace or a weka "
+                "--public-dataset) drop whole traces whose *recorded* peak exceeds "
+                "this ceiling at load time (filter-then-cap before "
+                "--num-dataset-entries). Not a DatasetManager tokenize filter; "
+                "rejected for non-Weka formats."
+            ),
         ),
         CLIParameter(
             name=("--max-context-length",),
@@ -1916,7 +1921,12 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             ge=1,
-            description="Maximum output sequence length cap. Traces with output_length > max_osl are capped to max_osl.",
+            description=(
+                "Maximum output sequence length cap for top-level (parent) turns. "
+                "Turns with output_length > max_osl are capped to max_osl. "
+                "Subagent child turns are intentionally uncapped so their decode "
+                "load stays faithful; flat-chain sidecars still honor the cap."
+            ),
         ),
         CLIParameter(name=("--synthesis-max-osl",), group=Groups.SYNTHESIS),
     ] = None

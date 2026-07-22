@@ -240,11 +240,15 @@ def _trace_peak_context_length(trace: WekaTrace, max_osl: int | None = None) -> 
     return peak
 
 
-def _clamp_delay_ms(delay_ms: float, cap_seconds: float | None) -> float:
+def _clamp_delay_ms(delay_ms: float, cap_seconds: float | None) -> float | None:
     """Clamp a delay to at most cap_seconds * 1000 ms.
 
-    Only enforces the upper bound; negative or NaN values pass through unchanged.
+    Only enforces the upper bound; negative values pass through unchanged.
+    Non-finite values (NaN / ±Inf) map to ``None`` (absent delay), matching
+    :func:`aiperf.dataset.loader._delay_cap.clamp_inter_turn_delay_ms`.
     """
+    if not math.isfinite(delay_ms):
+        return None
     if cap_seconds is None:
         return delay_ms
     cap_ms = cap_seconds * 1000.0
@@ -2825,6 +2829,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         parent_convs: list[Conversation] = []
         for result in results:
             self._delay_cap_tracker.capped_count += result.get("capped_count", 0)
+            self._delay_cap_tracker.non_finite_count += result.get(
+                "non_finite_count", 0
+            )
             observed = result.get("max_observed_ms", 0.0)
             if observed > self._delay_cap_tracker.max_observed_ms:
                 self._delay_cap_tracker.max_observed_ms = observed

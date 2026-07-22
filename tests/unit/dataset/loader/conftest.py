@@ -109,7 +109,9 @@ def make_weka_run(
         # so this dataset block only carries the trace-replay knobs the loader
         # reads via get_default_dataset().
         "records": [{"text": "placeholder"}],
-        "format": "single_turn",
+        # weka_trace so max_context_length / weka-only knobs pass FileDataset
+        # validation; the loader is still constructed with filename= directly.
+        "format": "weka_trace",
     }
     if synthesis:
         dataset["synthesis"] = synthesis

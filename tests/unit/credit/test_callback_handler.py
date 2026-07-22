@@ -515,6 +515,137 @@ async def test_root_non_overflow_error_skips_registry_on_root_terminal(
     mock_strategy.handle_credit_return.assert_awaited_once()
 
 
+_OVERFLOW_ERROR = "This model's maximum context length is 131072 tokens"
+
+
+@pytest.mark.asyncio
+async def test_overflow_skips_intercept_and_runs_terminal_path(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+    mock_branch_orchestrator,
+):
+    """Overflow terminal must not honor gated-suspend early-return (R1).
+
+    Even when ``intercept`` would return True (gated next turn), a
+    context-overflow root return must still call ``on_root_terminal``,
+    ``strategy.handle_credit_return`` (overflow recycle), and skip calling
+    intercept entirely.
+    """
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    mock_branch_orchestrator.intercept = AsyncMock(return_value=True)
+    mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+    handler = CreditCallbackHandler(
+        mock_concurrency,
+        branch_orchestrator=mock_branch_orchestrator,
+        session_tree_registry=registry,
+    )
+    handler.register_phase(
+        phase=CreditPhase.PROFILING,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+    credit = make_credit(turn_index=1, num_turns=5)  # non-final
+    assert not credit.is_final_turn
+
+    await handler.on_credit_return(
+        "worker-1",
+        make_credit_return(credit, error=_OVERFLOW_ERROR),
+    )
+
+    mock_branch_orchestrator.intercept.assert_not_awaited()
+    registry.on_root_terminal.assert_called_once_with(
+        credit.effective_root_correlation_id
+    )
+    mock_strategy.handle_credit_return.assert_awaited_once_with(
+        credit, error=_OVERFLOW_ERROR
+    )
+
+
+@pytest.mark.asyncio
+async def test_overflow_with_intercept_true_still_records_warmup_failure(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_branch_orchestrator,
+):
+    """Overflow must reach ``_handle_warmup_failure`` despite gated intercept (R4)."""
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    mock_branch_orchestrator.intercept = AsyncMock(return_value=True)
+    mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+    strategy = MagicMock()
+    strategy.handle_credit_return = AsyncMock()
+    strategy.record_warmup_failure = MagicMock()
+    handler = CreditCallbackHandler(
+        mock_concurrency,
+        branch_orchestrator=mock_branch_orchestrator,
+        session_tree_registry=registry,
+    )
+    handler.register_phase(
+        phase=CreditPhase.WARMUP,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=strategy,
+    )
+    credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+    assert not credit.is_final_turn
+
+    await handler.on_credit_return(
+        "worker-1",
+        make_credit_return(credit, error=_OVERFLOW_ERROR),
+    )
+
+    mock_branch_orchestrator.intercept.assert_not_awaited()
+    strategy.record_warmup_failure.assert_called_once_with(credit.conversation_id)
+    strategy.handle_credit_return.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_non_overflow_gated_suspend_still_early_returns(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+    mock_branch_orchestrator,
+):
+    """Non-overflow gated suspend must still early-return past strategy dispatch."""
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    mock_branch_orchestrator.intercept = AsyncMock(return_value=True)
+    mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+    handler = CreditCallbackHandler(
+        mock_concurrency,
+        branch_orchestrator=mock_branch_orchestrator,
+        session_tree_registry=registry,
+    )
+    handler.register_phase(
+        phase=CreditPhase.PROFILING,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+    credit = make_credit(turn_index=1, num_turns=5)
+
+    await handler.on_credit_return(
+        "worker-1",
+        make_credit_return(credit, error="Internal server error: pool exhausted"),
+    )
+
+    mock_branch_orchestrator.intercept.assert_awaited_once_with(credit)
+    registry.on_root_terminal.assert_not_called()
+    mock_strategy.handle_credit_return.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_cache_warmup_handoff_allows_paused_dag_work(
     callback_handler,

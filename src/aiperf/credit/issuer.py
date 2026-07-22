@@ -307,10 +307,11 @@ class CreditIssuer:
         Flow:
             1. Acquire session slot (root first turn only)
             2. Acquire prefill slot (all turns)
-            3. Atomic numbering via increment_sent
-            4. Calculate cancellation delay
-            5. Create and send Credit
-            6. If final credit: freeze counts + set event
+            3. Open session tree (root first turn only; after both slots succeed)
+            4. Atomic numbering via increment_sent
+            5. Calculate cancellation delay
+            6. Create and send Credit
+            7. If final credit: freeze counts + set event
         """
         gate = getattr(self, "replay_gate", ReplayIssueGate(None))
         return await gate.submit(turn, lambda: self._issue_credit_ready(turn))
@@ -354,7 +355,6 @@ class CreditIssuer:
             )
             if not acquired:
                 return False
-            self._open_session_tree(turn)
 
         # Prefill concurrency: one slot per request, released when TTFT arrives.
         # Limits concurrent prompt processing which is the GPU-intensive phase.
@@ -362,10 +362,17 @@ class CreditIssuer:
             self._phase_key, can_proceed_fn
         )
         if not acquired:
-            # CRITICAL: Release session slot if we acquired it to maintain symmetry
+            # CRITICAL: Release session slot if we acquired it to maintain symmetry.
+            # Tree is not registered yet (deferred until both slots succeed), so
+            # phase teardown release_all cannot double-release this slot.
             if needs_session_slot:
                 self._concurrency_manager.release_session_slot(self._phase_key)
             return False
+
+        # Both slots held: register the tree before issuing so drain/teardown
+        # own the slot release. Must not run before prefill succeeds.
+        if needs_session_slot:
+            self._open_session_tree(turn)
 
         # Slots acquired - proceed with credit issuance
         return await self._issue_credit_internal(turn)
@@ -408,16 +415,20 @@ class CreditIssuer:
             )
             if not acquired:
                 return None  # No slot - credit not issued
-            self._open_session_tree(turn)
 
         acquired = self._concurrency_manager.try_acquire_prefill_slot(
             self._phase_key, can_proceed_fn
         )
         if not acquired:
-            # CRITICAL: Release session slot if we acquired it to maintain symmetry
+            # CRITICAL: Release session slot if we acquired it to maintain symmetry.
+            # Tree is not registered yet (deferred until both slots succeed), so
+            # phase teardown release_all cannot double-release this slot.
             if needs_session_slot:
                 self._concurrency_manager.release_session_slot(self._phase_key)
             return None  # No slot - credit not issued
+
+        if needs_session_slot:
+            self._open_session_tree(turn)
 
         return await self._issue_credit_internal(turn)
 

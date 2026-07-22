@@ -82,5 +82,5 @@ def swim_lane(
         except SwimLaneError as e:
             print(f"skip {run_dir}: {e}", file=sys.stderr)
             failures += 1
-    if failures and failures == len(run_dirs):
+    if failures > 0:
         sys.exit(1)

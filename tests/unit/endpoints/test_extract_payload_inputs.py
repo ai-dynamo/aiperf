@@ -221,6 +221,28 @@ class TestResponsesEndpointOverride:
         assert result.image_count == 1
         assert result.audio_count == 1
 
+    def test_assistant_output_text_counted_in_multiturn_payload(self):
+        """Replayed assistant history uses ``output_text`` parts; ISL must
+        count those alongside user ``input_text`` turns."""
+        payload = {
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "first question"}],
+                },
+                {
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "first answer"}],
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "follow up"}],
+                },
+            ]
+        }
+        result = _responses().extract_payload_inputs(payload)
+        assert result.texts == ["first question", "first answer", "follow up"]
+
     def test_chat_style_part_types_not_counted_by_responses(self):
         """Responses' ``PART_TYPES`` doesn't include chat's ``image_url``
         type name — chat-shape parts in a Responses payload should NOT

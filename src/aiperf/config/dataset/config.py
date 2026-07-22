@@ -570,9 +570,13 @@ class FileDataset(BaseConfig):
         Field(
             default=None,
             ge=1,
-            description="Maximum input context length (tokens) per conversation. "
-            "DatasetManager tokenizes each conversation's combined content and drops "
-            "those exceeding the limit before mmap. No-op without a tokenizer.",
+            description=(
+                "Maximum peak prompt+output context length (tokens) per Weka root "
+                "trace. Only honored by format weka_trace: the loader drops whole "
+                "traces whose *recorded* peak exceeds this ceiling at load time "
+                "(filter-then-cap before entries). Not a DatasetManager tokenize "
+                "filter; rejected for non-Weka formats."
+            ),
         ),
     ]
 
@@ -614,6 +618,23 @@ class FileDataset(BaseConfig):
             raise ValueError(
                 "ignore_trace_delays and use_think_time_only "
                 "(--ignore-trace-delays and --use-think-time-only) cannot be used together"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_max_context_length_weka_only(self) -> FileDataset:
+        """Reject max_context_length on non-Weka file formats.
+
+        Only weka_trace consumes this field (recorded peak filter-then-cap).
+        Other formats would silently store and ignore it.
+        """
+        if self.max_context_length is None:
+            return self
+        if self.format != DatasetFormat.WEKA_TRACE:
+            raise ValueError(
+                "max_context_length (--max-context-length) only applies to "
+                f"format weka_trace; got format {self.format}. It filters by "
+                "recorded peak prompt+output length at load time."
             )
         return self
 
@@ -834,9 +855,13 @@ class PublicDataset(BaseConfig):
         Field(
             default=None,
             ge=1,
-            description="Maximum input context length (tokens) per conversation "
-            "for HF-backed Weka replay; drops over-length conversations at load "
-            "(mirror of ``FileDataset.max_context_length``).",
+            description=(
+                "Maximum peak prompt+output context length (tokens) per "
+                "conversation for HF-backed Weka replay; drops over-length "
+                "traces at load using *recorded* lengths (mirror of "
+                "``FileDataset.max_context_length``). Rejected for non-Weka "
+                "public datasets."
+            ),
         ),
     ]
 
@@ -935,6 +960,23 @@ class PublicDataset(BaseConfig):
             raise ValueError(
                 "ignore_trace_delays and use_think_time_only "
                 "(--ignore-trace-delays and --use-think-time-only) cannot be used together"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_max_context_length_weka_only(self) -> PublicDataset:
+        """Reject max_context_length on non-Weka public datasets.
+
+        Only Weka HF loaders consume this field (recorded peak filter-then-cap).
+        Other public datasets would silently store and ignore it.
+        """
+        if self.max_context_length is None:
+            return self
+        if "weka" not in str(self.dataset).lower():
+            raise ValueError(
+                "max_context_length (--max-context-length) only applies to "
+                f"Weka public datasets; got dataset {self.dataset}. It filters "
+                "by recorded peak prompt+output length at load time."
             )
         return self
 

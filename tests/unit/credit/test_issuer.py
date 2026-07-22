@@ -14,6 +14,7 @@ import pytest
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
+from aiperf.timing.session_tree import SessionTreeRegistry
 
 # =============================================================================
 # Test Fixtures
@@ -45,6 +46,8 @@ def mock_concurrency():
     mock = MagicMock()
     mock.acquire_session_slot = AsyncMock(return_value=True)
     mock.acquire_prefill_slot = AsyncMock(return_value=True)
+    mock.try_acquire_session_slot = MagicMock(return_value=True)
+    mock.try_acquire_prefill_slot = MagicMock(return_value=True)
     mock.release_session_slot = MagicMock()
     return mock
 
@@ -236,16 +239,19 @@ class TestSlotAcquisitionFailures:
         mock_router.send_credit.assert_not_called()
 
     async def test_first_turn_releases_session_slot_when_prefill_fails(
-        self, credit_issuer, mock_concurrency, mock_router
+        self, credit_issuer, mock_concurrency, mock_router, monkeypatch
     ):
         """First turn should release session slot if prefill acquisition fails."""
         mock_concurrency.acquire_session_slot.return_value = True
         mock_concurrency.acquire_prefill_slot.return_value = False
+        open_tree = MagicMock()
+        monkeypatch.setattr(credit_issuer, "_open_session_tree", open_tree)
         turn = make_turn(turn_index=0)
 
         result = await credit_issuer.issue_credit(turn)
 
         assert result is False
+        open_tree.assert_not_called()
         mock_concurrency.release_session_slot.assert_called_once_with(
             CreditPhase.PROFILING
         )
@@ -264,6 +270,101 @@ class TestSlotAcquisitionFailures:
         mock_concurrency.acquire_session_slot.assert_not_called()
         mock_concurrency.release_session_slot.assert_not_called()
         mock_router.send_credit.assert_not_called()
+
+    async def test_issue_credit_prefill_fail_does_not_open_tree_or_double_release(
+        self,
+        mock_stop_checker,
+        mock_progress,
+        mock_router,
+        mock_cancellation,
+        mock_lifecycle,
+    ):
+        """R2: session acquired + prefill fails must not register a tree.
+
+        Before the fix, open_tree ran before prefill; failure released the
+        session slot while leaving the tree registered, so phase teardown
+        release_all released again (concurrency overshoot).
+        """
+        concurrency = _PrefillFailConcurrency()
+        registry = SessionTreeRegistry(concurrency)
+        issuer = CreditIssuer(
+            phase=CreditPhase.PROFILING,
+            stop_checker=mock_stop_checker,
+            progress=mock_progress,
+            concurrency_manager=concurrency,
+            credit_router=mock_router,
+            cancellation_policy=mock_cancellation,
+            lifecycle=mock_lifecycle,
+            session_tree_registry=registry,
+            session_tree_registry_enabled=True,
+        )
+        turn = make_turn(conversation_id="conv1", turn_index=0)
+
+        result = await issuer.issue_credit(turn)
+
+        assert result is False
+        assert registry.open_count(CreditPhase.PROFILING) == 0
+        assert not registry.has_tree(turn.effective_root_correlation_id)
+        assert concurrency.session_releases == 1
+        assert registry.release_all(CreditPhase.PROFILING) == 0
+        assert concurrency.session_releases == 1
+        mock_router.send_credit.assert_not_called()
+
+    async def test_try_issue_credit_prefill_fail_does_not_open_tree_or_double_release(
+        self,
+        mock_stop_checker,
+        mock_progress,
+        mock_router,
+        mock_cancellation,
+        mock_lifecycle,
+    ):
+        """R2: try_issue_credit same contract — no open_tree on prefill fail."""
+        concurrency = _PrefillFailConcurrency()
+        registry = SessionTreeRegistry(concurrency)
+        issuer = CreditIssuer(
+            phase=CreditPhase.PROFILING,
+            stop_checker=mock_stop_checker,
+            progress=mock_progress,
+            concurrency_manager=concurrency,
+            credit_router=mock_router,
+            cancellation_policy=mock_cancellation,
+            lifecycle=mock_lifecycle,
+            session_tree_registry=registry,
+            session_tree_registry_enabled=True,
+        )
+        turn = make_turn(conversation_id="conv1", turn_index=0)
+
+        result = await issuer.try_issue_credit(turn)
+
+        assert result is None
+        assert registry.open_count(CreditPhase.PROFILING) == 0
+        assert not registry.has_tree(turn.effective_root_correlation_id)
+        assert concurrency.session_releases == 1
+        assert registry.release_all(CreditPhase.PROFILING) == 0
+        assert concurrency.session_releases == 1
+        mock_router.send_credit.assert_not_called()
+
+
+class _PrefillFailConcurrency:
+    """Session slot succeeds; prefill always fails. Counts session releases."""
+
+    def __init__(self) -> None:
+        self.session_releases = 0
+
+    async def acquire_session_slot(self, phase: CreditPhase, can_proceed) -> bool:
+        return True
+
+    async def acquire_prefill_slot(self, phase: CreditPhase, can_proceed) -> bool:
+        return False
+
+    def try_acquire_session_slot(self, phase: CreditPhase, can_proceed) -> bool:
+        return True
+
+    def try_acquire_prefill_slot(self, phase: CreditPhase, can_proceed) -> bool:
+        return False
+
+    def release_session_slot(self, phase: CreditPhase) -> None:
+        self.session_releases += 1
 
 
 # =============================================================================

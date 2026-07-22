@@ -831,22 +831,41 @@ def _apply_trace_delay_flags(d: dict[str, Any], cli: CLIConfig) -> None:
         d["trace_idle_gap_cap_seconds"] = cli.trace_idle_gap_cap_seconds
 
 
-def _apply_max_context_length(d: dict[str, Any], cli: CLIConfig) -> None:
-    """Route ``--max-context-length`` onto ``FileDataset``/``PublicDataset``.
-
-    Weka (file and HF) selection filters traces whose peak prompt+output
-    exceeds this ceiling before applying ``--num-dataset-entries``. Without
-    this route the CLI flag is silently ignored on trace datasets.
-    """
+def _is_weka_dataset(d: dict[str, Any]) -> bool:
+    """True when ``d`` is a Weka file format or Weka public-dataset alias."""
     from aiperf.common.enums import DatasetType
 
-    if d.get("type") not in (DatasetType.FILE, DatasetType.PUBLIC):
-        return
+    dtype = d.get("type")
+    if dtype == DatasetType.FILE:
+        fmt = d.get("format")
+        return fmt is not None and str(fmt) == "weka_trace"
+    if dtype == DatasetType.PUBLIC:
+        public = d.get("dataset")
+        return public is not None and "weka" in str(public).lower()
+    return False
+
+
+def _apply_max_context_length(d: dict[str, Any], cli: CLIConfig) -> None:
+    """Route ``--max-context-length`` onto Weka ``FileDataset``/``PublicDataset``.
+
+    Weka selection filters traces whose *recorded* peak prompt+output exceeds
+    this ceiling before applying ``--num-dataset-entries``. Non-Weka datasets
+    do not consume the flag (there is no DatasetManager tokenize path), so
+    reject loudly instead of silently no-op'ing.
+    """
     if (
         "max_context_length" not in cli.model_fields_set
         or cli.max_context_length is None
     ):
         return
+    if not _is_weka_dataset(d):
+        raise ValueError(
+            "--max-context-length only applies to Weka trace replay "
+            "(--custom-dataset-type weka_trace or a weka --public-dataset). "
+            "It filters by recorded peak prompt+output length at load time; "
+            "other formats do not implement this filter. Drop "
+            "--max-context-length or switch to a Weka dataset."
+        )
     d["max_context_length"] = cli.max_context_length
 
 

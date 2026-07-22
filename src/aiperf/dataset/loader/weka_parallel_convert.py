@@ -101,6 +101,7 @@ class _WekaProcessTaskResult(TypedDict):
     dropped_agent_ids: list[str]
     capped_count: int
     max_observed_ms: float
+    non_finite_count: int
 
 
 class _WekaNormalRequestPayload(TypedDict):
@@ -723,6 +724,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
         "dropped_agent_ids": list(dropped_agent_ids),
         "capped_count": delay_tracker.capped_count,
         "max_observed_ms": delay_tracker.max_observed_ms,
+        "non_finite_count": delay_tracker.non_finite_count,
     }
 
 

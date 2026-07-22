@@ -154,6 +154,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         Reads the profiling window from ``ctx.start_ns/ctx.end_ns`` (excludes
         warmup; reference points before start_ns drive counter/histogram deltas)
         and the warmup window from ``ctx.warmup_start_ns/ctx.warmup_end_ns``.
+        Exported ``warmup_end_ns`` is the aggregation window end (may extend
+        past the credit-phase complete timestamp to include the end-of-warmup
+        scrape) so ``phase_time_ranges["warmup"]`` matches
+        ``warmup_endpoint_summaries``.
 
         Returns:
             ServerMetricsResults containing endpoint summaries with computed statistics,
@@ -181,14 +185,19 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             include_final_collection=not ctx.is_phase_scoped,
         )
         warmup_endpoint_summaries = None
+        # Prefer a single consistent end for aggregation + export
+        # (phase_time_ranges["warmup"]): extend past credit-phase complete to
+        # include the dedicated end-of-warmup scrape when present.
+        warmup_summary_end_ns = warmup_end_ns
         if (
             warmup_start_ns is not None
             and warmup_end_ns is not None
             and warmup_start_ns < warmup_end_ns
         ):
+            warmup_summary_end_ns = self._warmup_summary_end_ns(warmup_end_ns, start_ns)
             warmup_endpoint_summaries = self._compute_endpoint_summaries(
                 warmup_start_ns,
-                self._warmup_summary_end_ns(warmup_end_ns, start_ns),
+                warmup_summary_end_ns,
                 self._slice_duration,
                 include_final_collection=False,
             )
@@ -204,7 +213,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             endpoints_successful=endpoint_list,
             error_summary=error_summary or [],
             warmup_start_ns=warmup_start_ns,
-            warmup_end_ns=warmup_end_ns,
+            warmup_end_ns=warmup_summary_end_ns,
         )
 
         # Export Parquet file directly from accumulator if format is enabled.

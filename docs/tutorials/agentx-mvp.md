@@ -264,7 +264,7 @@ flag.
 | `--ignore-trace-delays` is off | Trace-derived delays are preserved, with long idle gaps capped by the trace idle-gap rule below | The whole point of replay is to preserve the agent's pacing without letting coffee-break gaps dominate steady-state. |
 | `--trace-idle-gap-cap-seconds = 10` | Gaps between recorded request starts over 10s are compressed to 10s per trace | Real coding sessions have long idle gaps; capping request-start gaps preserves relative subagent overlap better than clamping each parent turn delay independently. |
 | `--cache-bust first_turn_prefix` | A unique per-conversation marker is injected at the start of the first user turn for every play (each dispatch of a trace, initial or recycled) | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker gives every recycled play a fresh prompt prefix. |
-| Loader is a Weka with-subagents corpus loader | The dataset must be the public SemiAnalysis Weka with-subagents corpus, reachable via a with-subagents `--public-dataset` alias, a local Weka-format directory (`weka_trace`), or `--hf-weka-dataset` (`weka_hf`) — all three produce byte-identical conversations. The [Troubleshooting](#troubleshooting) entry for this lock lists the exact flag forms. | The benchmark is defined against exact, hash-verifiable corpora so submissions are reproducible. |
+| Loader is a pinned Weka with-subagents corpus | The dataset must be a with-subagents `--public-dataset` alias or `--hf-weka-dataset semianalysisai/cc-traces-weka-062126` (`weka_hf`). A local `weka_trace` directory is format-compatible but unpinned — the run refuses unless you pass `--unsafe-override` (which stamps `submission_valid: false`). The [Troubleshooting](#troubleshooting) entry for this lock lists the exact flag forms. | Submission validity requires a known public corpus identity; arbitrary local dirs are not hash-verifiable. |
 | `--benchmark-duration >= 900` (defaults to 1800 when unset) | The run lasts at least 15 minutes; if omitted, it runs for 30 minutes | Steady-state needs time to stabilize; short runs are noise. |
 | No client-side input truncation | `--synthesis-max-isl` — the file-based synthesis ISL filter — is rejected because it drops traces whose input length exceeds the cap (the `--public-dataset` corpus has no synthesis filter, so there the flag has no effect either way) | Truncating prompts on the client side would falsify the workload. |
 | `--random-seed` is set | If you didn't pass one, AIPerf picks a strong random one and logs it | Reproducibility — every replayed result can be regenerated. |
@@ -553,7 +553,8 @@ your network connectivity to `huggingface.co` and confirm the
 `semianalysis_cc_traces_weka_062126`), or `weka_hf` with
 `--hf-weka-dataset semianalysisai/cc-traces-weka-062126`. On an offline
 machine, replay a local Weka-format trace directory via
-`--custom-dataset-type weka_trace --input-file <dir>` — see the
+`--custom-dataset-type weka_trace --input-file <dir> --unsafe-override`
+(offline smoke only — `submission_valid: false`) — see the
 [Weka Traces tutorial](weka-trace.md) for how to obtain or capture one, and
 note the model tokenizer must also be available offline (pre-populate the HF
 cache and set `HF_HUB_OFFLINE=1`, or point `--tokenizer` at a local path).
@@ -564,7 +565,7 @@ a short smoke duration) but omitted a weka dataset source. The CLI then
 defaults to synthetic prompts (`session_000000`, 1 turn each). AgentX refuses
 that combination even under `--unsafe-override`. Add
 `--public-dataset semianalysis_cc_traces_weka_062126` (or another allowed
-alias / local `--custom-dataset-type weka_trace --input-file <dir>`).
+alias / `--hf-weka-dataset semianalysisai/cc-traces-weka-062126`).
 
 **The tokenizer can't be resolved or downloaded**
 The Weka loaders rebuild every prompt through a HuggingFace tokenizer
@@ -602,29 +603,25 @@ a rate), top-level in `profile_export_aiperf.json` and under `metrics` in
 the aggregate file — divide it by the run's total request count to see how
 close you were to the 1% threshold.
 
-**"scenario `'inferencex-agentx-mvp'` requires loader=any of …"**
-The AgentX MVP scenario is defined against the public SemiAnalysis Weka
-corpus (`semianalysisai/cc-traces-weka-062126`), replayed via the
-with-subagents `--public-dataset` aliases (rolling or date-pinned; the
-legacy no-subagents aliases are rejected), the local file-based loader
-(`weka_trace`), or the generic HuggingFace Weka loader (`weka_hf`)
-constrained to the same repo. Pass one of:
+**"scenario `'inferencex-agentx-mvp'` requires loader=any of …" / cannot verify corpus identity for a local weka_trace directory**
+The AgentX MVP scenario stamps `submission_valid: true` only for a pinned
+public SemiAnalysis Weka corpus (`semianalysisai/cc-traces-weka-062126`),
+replayed via with-subagents `--public-dataset` aliases (rolling or
+date-pinned; the legacy no-subagents aliases are rejected) or the generic
+HuggingFace Weka loader (`weka_hf`) constrained to that repo. Pass one of:
 
 - `--public-dataset semianalysis_cc_traces_weka_with_subagents` (zero-setup;
   rolling alias for the current corpus),
 - `--public-dataset semianalysis_cc_traces_weka_062126` (zero-setup;
-  date-pinned),
-- `--custom-dataset-type weka_trace --input-file <local-trace-dir>` (offline;
-  the dir must contain compatible Weka trace JSON files), or
+  date-pinned), or
 - `--hf-weka-dataset semianalysisai/cc-traces-weka-062126` (auto-selects `weka_hf`).
 
-A bare `--input-file <weka-dir>` also satisfies the lock: the dataset
-resolver structurally auto-detects Weka trace directories before the scenario
-locks are checked, so `--custom-dataset-type weka_trace` just pins the choice
-explicitly. If you're trying to replay a *different* corpus under this
-scenario, that's not a supported submission — but you can pass
-`--unsafe-override` to run anyway; the result will be marked
-`submission_valid: false`.
+A local `--custom-dataset-type weka_trace --input-file <dir>` (or a bare
+`--input-file <weka-dir>` that auto-detects as `weka_trace`) is accepted for
+offline smoke tests only with `--unsafe-override` — the result is marked
+`submission_valid: false`, because AIPerf cannot fingerprint an arbitrary
+local directory as the public corpus. The same override path applies if you
+intentionally replay a *different* Weka-format corpus under this scenario.
 
 **"scenario `'inferencex-agentx-mvp'` requires `cache_bust.target=first_turn_prefix`; got `<other>`"**
 You explicitly passed `--cache-bust <other>` (e.g. `system_suffix` or `none`)
