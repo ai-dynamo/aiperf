@@ -7,12 +7,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from aiperf.config.flags._adaptive_control_cli import (
-    parse_adaptive_scale_control,
-    reject_mixed_adaptive_control_cli,
-)
-from aiperf.orchestrator.search_planner.parsing import parse_sla_filter
-
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -29,13 +23,6 @@ _PROF_FIELD_ROUTES: tuple[tuple[str, str], ...] = (
     ("users", "num_users"),
     ("rate", "request_rate"),
     ("rate", "user_centric_rate"),
-    ("adaptive_scale", "adaptive_scale"),
-    ("adaptive_sustain_duration", "adaptive_sustain_duration"),
-    ("adaptive_assessment_period", "adaptive_assessment_period"),
-    ("adaptive_scale_control", "adaptive_scale_control"),
-    ("adaptive_control_variable", "adaptive_control_variable"),
-    ("adaptive_control_min", "adaptive_control_min"),
-    ("adaptive_control_max", "adaptive_control_max"),
 )
 
 
@@ -66,7 +53,7 @@ def _profiling_phase_type(cli: CLIConfig) -> Any:
         return PhaseType.FIXED_SCHEDULE
     if cli.user_centric_rate is not None:
         return PhaseType.USER_CENTRIC
-    if cli.request_rate is not None:
+    if cli.request_rate is not None or cli.request_rate_series is not None:
         match cli.arrival_pattern:
             case ArrivalPattern.GAMMA:
                 return PhaseType.GAMMA
@@ -84,39 +71,21 @@ def _apply_profiling_ramps(prof: dict[str, Any], cli: CLIConfig) -> None:
             prof[key] = {"duration": getattr(cli, field)}
 
 
-def _parse_adaptive_scale_sla_filter(value: str) -> dict[str, Any]:
-    try:
-        return parse_sla_filter(value).model_dump(mode="json")
-    except TypeError as exc:
-        message = str(exc).replace("--search-sla", "--adaptive-scale-sla")
-        raise TypeError(message) from exc
-
-
-def _apply_adaptive_scale_sla(prof: dict[str, Any], cli: CLIConfig) -> None:
-    if "adaptive_scale_sla" not in cli.model_fields_set or not cli.adaptive_scale_sla:
+def _apply_profiling_rate_series(prof: dict[str, Any], cli: CLIConfig) -> None:
+    if "request_rate_series" not in cli.model_fields_set:
         return
+    if "request_rate" in cli.model_fields_set:
+        raise ValueError(
+            "--request-rate and --request-rate-series are mutually exclusive."
+        )
+    if cli.user_centric_rate is not None:
+        raise ValueError(
+            "--request-rate-series is not supported with --user-centric-rate."
+        )
+    from aiperf.config.rate_series import RateSeriesConfig
 
-    parsed_sla = [
-        _parse_adaptive_scale_sla_filter(value) for value in cli.adaptive_scale_sla
-    ]
-    if not prof.get("adaptive_scale"):
-        raise ValueError("--adaptive-scale-sla requires --adaptive-scale")
-
-    prof["sla"] = parsed_sla
-
-
-def _apply_adaptive_scale_control(prof: dict[str, Any], cli: CLIConfig) -> None:
-    reject_mixed_adaptive_control_cli(cli.model_fields_set)
-    if "adaptive_scale_control" not in cli.model_fields_set:
-        if "adaptive_control_variable" in cli.model_fields_set:
-            prof["_adaptive_control_variable_source"] = "--adaptive-control-variable"
-        return
-    if not prof.get("adaptive_scale"):
-        raise ValueError("--adaptive-scale-control requires --adaptive-scale")
-    control = parse_adaptive_scale_control(cli.adaptive_scale_control or "")
-    prof.update(control)
-    prof["_adaptive_control_variable_source"] = "--adaptive-scale-control"
-    prof.pop("adaptive_scale_control", None)
+    series = RateSeriesConfig(path=str(cli.request_rate_series))
+    prof["rate_series"] = series.model_dump(exclude_none=True, exclude={"path"})
 
 
 def _reject_orphan_load_generator_flags(prof: dict[str, Any], cli: CLIConfig) -> None:
@@ -131,40 +100,6 @@ def _reject_orphan_load_generator_flags(prof: dict[str, Any], cli: CLIConfig) ->
 
     fields_set = cli.model_fields_set
     phase_type = prof["type"]
-
-    if prof.get("adaptive_scale"):
-        variable = prof.get("adaptive_control_variable", "concurrency")
-        required = {
-            "concurrency": ("concurrency", "--concurrency"),
-            "prefill_concurrency": ("prefill_concurrency", "--prefill-concurrency"),
-            "request_rate": ("rate", "--request-rate"),
-            "users": ("users", "--num-users"),
-        }.get(variable)
-        if required is None:
-            source = prof.get(
-                "_adaptive_control_variable_source",
-                "--adaptive-control-variable",
-            )
-            raise ValueError(f"unsupported {source} variable {variable!r}")
-        required_key, required_flag = required
-        if required_key not in prof and "adaptive_control_max" not in prof:
-            if variable == "concurrency":
-                raise ValueError(
-                    "--adaptive-scale requires --concurrency or --adaptive-control-max"
-                )
-            raise ValueError(
-                f"--adaptive-scale control variable {variable!r} requires "
-                f"{required_flag} or --adaptive-control-max"
-            )
-    if (
-        prof.get("adaptive_scale")
-        and "search_sla" in fields_set
-        and "adaptive_scale_sla" not in fields_set
-    ):
-        raise ValueError(
-            "--adaptive-scale uses --adaptive-scale-sla; --search-sla is reserved "
-            "for adaptive-search/grid runs"
-        )
 
     if "num_users" in fields_set and phase_type != PhaseType.USER_CENTRIC:
         raise ValueError(
@@ -184,6 +119,15 @@ def _reject_orphan_load_generator_flags(prof: dict[str, Any], cli: CLIConfig) ->
             "--request-rate-ramp-duration can only be used with rate-controlled "
             "scheduling (--request-rate or --user-centric-rate). Pass one of "
             "those to enable rate ramping, or drop --request-rate-ramp-duration."
+        )
+
+    if "rate_series" in prof and phase_type not in (
+        PhaseType.POISSON,
+        PhaseType.GAMMA,
+        PhaseType.CONSTANT,
+    ):
+        raise ValueError(
+            "--request-rate-series can only be used with rate-controlled scheduling."
         )
 
 
@@ -416,6 +360,8 @@ def _first_record_has_timestamp(file_path: object) -> bool:
                     data = load_json_str(stripped)
                 except (ValueError, TypeError):
                     return False
+                if not isinstance(data, dict):
+                    return False
                 return data.get("timestamp") is not None
     except OSError:
         return False
@@ -464,14 +410,10 @@ def build_profiling(cli: CLIConfig) -> dict[str, Any]:
             prof[output_key] = getattr(cli, attr_name)
 
     _apply_profiling_ramps(prof, cli)
+    _apply_profiling_rate_series(prof, cli)
 
     prof["type"] = _profiling_phase_type(cli)
-    _apply_adaptive_scale_control(prof, cli)
-    _apply_adaptive_scale_sla(prof, cli)
-
     _reject_orphan_load_generator_flags(prof, cli)
-    prof.pop("_adaptive_control_variable_source", None)
-
     _apply_phase_specific_routes(prof, cli)
 
     if prof["type"] == PhaseType.FIXED_SCHEDULE and "start_offset" in prof:

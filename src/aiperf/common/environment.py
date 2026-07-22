@@ -388,12 +388,6 @@ class _GPUSettings(BaseSettings):
         default=5.0,
         description="Delay in seconds before shutting down GPU telemetry service to allow command response transmission",
     )
-    THREAD_JOIN_TIMEOUT: float = Field(
-        ge=1.0,
-        le=300.0,
-        default=5.0,
-        description="Timeout in seconds for joining GPU telemetry collection threads during shutdown",
-    )
 
 
 class _HTTPSettings(BaseSettings):
@@ -430,22 +424,10 @@ class _HTTPSettings(BaseSettings):
         default=10485760,  # 10MB
         description="Socket receive buffer size in bytes (default: 10MB for high-throughput streaming)",
     )
-    SO_RCVTIMEO: int = Field(
-        ge=1,
-        le=100000,
-        default=30,
-        description="Socket receive timeout in seconds",
-    )
     SO_SNDBUF: int = Field(
         ge=1024,
         default=10485760,  # 10MB
         description="Socket send buffer size in bytes (default: 10MB for high-throughput streaming)",
-    )
-    SO_SNDTIMEO: int = Field(
-        ge=1,
-        le=100000,
-        default=30,
-        description="Socket send timeout in seconds",
     )
     TCP_KEEPCNT: int = Field(
         ge=1,
@@ -1181,6 +1163,17 @@ class _UISettings(BaseSettings):
         env_prefix="AIPERF_UI_",
     )
 
+    CONSOLE_EXPORT_WIDTH: int = Field(
+        ge=40,
+        le=10000,
+        default=140,
+        description=(
+            "Fixed column width used to render the post-run console exporter "
+            "tables. Applied both to the recording console that produces "
+            "profile_export_console.txt and to the live console when stdout "
+            "is not a tty (so non-tty CI logs match the saved artifact)."
+        ),
+    )
     LOG_REFRESH_INTERVAL: float = Field(
         ge=0.01,
         le=100000.0,
@@ -1192,12 +1185,6 @@ class _UISettings(BaseSettings):
         le=100.0,
         default=1.0,
         description="Minimum percentage difference from last update to trigger a UI update (for non-dashboard UIs)",
-    )
-    NOTIFICATION_TIMEOUT: int = Field(
-        ge=1,
-        le=100000,
-        default=3,
-        description="Duration in seconds to display UI notifications before auto-dismissing",
     )
     REALTIME_METRICS_INTERVAL: float | None = Field(
         ge=0.0,
@@ -1322,12 +1309,6 @@ class _ZMQSettings(BaseSettings):
         env_prefix="AIPERF_ZMQ_",
     )
 
-    CONTEXT_TERM_TIMEOUT: float = Field(
-        ge=1.0,
-        le=100000.0,
-        default=10.0,
-        description="Timeout in seconds for terminating the ZMQ context during shutdown",
-    )
     PULL_YIELD_INTERVAL: int = Field(
         ge=0,
         le=1_000_000,

@@ -225,3 +225,29 @@ class TestSynthesisHooks:
         ]
         with pytest.raises(ValueError, match="synth_dicts length"):
             loader._reconstruct_traces(originals, synth_dicts)
+
+
+class TestMaxOslCapApplied:
+    """--synthesis-max-osl must cap output_length for BurstGPT too. The
+    base-loader refactor moved the cap out of _filter_and_cap_trace into a
+    grouped pass run by the base load_dataset; this loader overrides
+    load_dataset and must call _cap_grouped_traces_max_osl explicitly (it once
+    returned uncapped output lengths)."""
+
+    def test_output_length_capped_after_load(self, tmp_path: Path) -> None:
+        path = _make_csv_file([_make_row(response_tokens="200")], tmp_path)
+        loader = _make_loader(path)
+        loader._max_osl = 50
+        data = loader.load_dataset()
+        osls = [t.output_length for traces in data.values() for t in traces]
+        assert osls and all(o == 50 for o in osls)
+        assert loader._capped_max_osl == 1
+
+    def test_under_cap_unchanged(self, tmp_path: Path) -> None:
+        path = _make_csv_file([_make_row(response_tokens="30")], tmp_path)
+        loader = _make_loader(path)
+        loader._max_osl = 50
+        data = loader.load_dataset()
+        osls = [t.output_length for traces in data.values() for t in traces]
+        assert osls == [30]
+        assert loader._capped_max_osl == 0

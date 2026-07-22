@@ -614,7 +614,7 @@ Standard deviation for synthetic input prompt token lengths. Creates variability
 
 #### `--prompt-input-tokens-block-size`, `--synthetic-input-tokens-block-size`, `--isl-block-size` `<int>`
 
-Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. Only supported with synthetic datasets: with `--input-file` the flag is rejected at convert time, and trace replay loaders always use the `default_block_size` from their plugin metadata (16 for `bailian_trace`, 64 for `baseten_trace`, 512 for `mooncake_trace`).
+Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. With `--input-file` this overrides the trace loader's `default_block_size` plugin metadata (16 for `bailian_trace`, 512 for `mooncake_trace`) for loaders that reconstruct prompts from `hash_ids`; it has no effect on `baseten_trace`, which replays literal recorded prompts. Set it when a trace was recorded at a block size different from its loader default (e.g. a Mooncake-format trace recorded at 16).
 <br/>_Constraints: ≥ 1_
 
 #### `--seq-dist`, `--sequence-distribution` `<str>`
@@ -963,42 +963,9 @@ Duration in seconds to ramp prefill concurrency from 1 to target.
 Duration in seconds to ramp request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration), ensuring correct behavior for target rates below 1 QPS. Useful for gradual warm-up of the target system.
 <br/>_Constraints: > 0_
 
-#### `--adaptive-scale`
+#### `--request-rate-series` `<str>`
 
-Enable stable single-run adaptive scale control. Use --adaptive-scale-control variable:min,max:type to choose the controlled variable and bounds, and --adaptive-scale-sla metric:stat:op:threshold to define pass/fail criteria. Also requires --benchmark-duration and --adaptive-sustain-duration.
-<br/>_Flag (no value required)_
-
-#### `--adaptive-sustain-duration` `<float>`
-
-Duration in seconds to sustain load near the discovered adaptive scale boundary.
-<br/>_Constraints: > 0_
-
-#### `--adaptive-assessment-period`, `--adaptive-scale-assessment-period` `<float>`
-
-Duration in seconds for each adaptive scale SLA assessment window.
-<br/>_Constraints: ≥ 1.0_
-
-#### `--adaptive-scale-control` `<str>`
-
-Compact adaptive scale control spec in variable:min,max:type form. The variable is one of concurrency, prefill_concurrency, request_rate, or users; min and max are required explicit bounds; type is int for discrete controls and float for rate controls. Examples: concurrency:1,1000:int, prefill_concurrency:1,8:int, request_rate:1,200:float, users:10,500:int. Do not combine this with expanded --adaptive-control-* flags.
-
-#### `--adaptive-control-variable` `<str>`
-
-Adaptive scale control variable: concurrency, prefill_concurrency, request_rate, or users.
-
-#### `--adaptive-control-min` `<float>`
-
-Minimum adaptive scale control value.
-<br/>_Constraints: > 0_
-
-#### `--adaptive-control-max` `<float>`
-
-Maximum adaptive scale control value. Inferred from the phase target when omitted.
-<br/>_Constraints: > 0_
-
-#### `--adaptive-scale-sla` `<list>`
-
-SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. Latency-family metrics (request_latency, time_to_first_token/ttft, inter_token_latency/itl/tpot) support percentile stats; window scalar/rate metrics (request_throughput, output_token_throughput, goodput, goodput_ratio, success_rate, error_rate, cancellation_rate) support {avg, min, max}. Full metric/stat table: [Adaptive SLA metric support](tutorials/yaml-config.md#adaptive-sla-metric-support). op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
+JSON file containing request-rate points for piecewise-linear request-rate control.
 
 ### Warmup
 
@@ -2077,7 +2044,7 @@ Standard deviation for synthetic input prompt token lengths. Creates variability
 
 #### `--prompt-input-tokens-block-size`, `--synthetic-input-tokens-block-size`, `--isl-block-size` `<int>`
 
-Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. Only supported with synthetic datasets: with `--input-file` the flag is rejected at convert time, and trace replay loaders always use the `default_block_size` from their plugin metadata (16 for `bailian_trace`, 64 for `baseten_trace`, 512 for `mooncake_trace`).
+Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. With `--input-file` this overrides the trace loader's `default_block_size` plugin metadata (16 for `bailian_trace`, 512 for `mooncake_trace`) for loaders that reconstruct prompts from `hash_ids`; it has no effect on `baseten_trace`, which replays literal recorded prompts. Set it when a trace was recorded at a block size different from its loader default (e.g. a Mooncake-format trace recorded at 16).
 <br/>_Constraints: ≥ 1_
 
 #### `--seq-dist`, `--sequence-distribution` `<str>`
@@ -2426,42 +2393,9 @@ Duration in seconds to ramp prefill concurrency from 1 to target.
 Duration in seconds to ramp request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration), ensuring correct behavior for target rates below 1 QPS. Useful for gradual warm-up of the target system.
 <br/>_Constraints: > 0_
 
-#### `--adaptive-scale`
+#### `--request-rate-series` `<str>`
 
-Enable stable single-run adaptive scale control. Use --adaptive-scale-control variable:min,max:type to choose the controlled variable and bounds, and --adaptive-scale-sla metric:stat:op:threshold to define pass/fail criteria. Also requires --benchmark-duration and --adaptive-sustain-duration.
-<br/>_Flag (no value required)_
-
-#### `--adaptive-sustain-duration` `<float>`
-
-Duration in seconds to sustain load near the discovered adaptive scale boundary.
-<br/>_Constraints: > 0_
-
-#### `--adaptive-assessment-period`, `--adaptive-scale-assessment-period` `<float>`
-
-Duration in seconds for each adaptive scale SLA assessment window.
-<br/>_Constraints: ≥ 1.0_
-
-#### `--adaptive-scale-control` `<str>`
-
-Compact adaptive scale control spec in variable:min,max:type form. The variable is one of concurrency, prefill_concurrency, request_rate, or users; min and max are required explicit bounds; type is int for discrete controls and float for rate controls. Examples: concurrency:1,1000:int, prefill_concurrency:1,8:int, request_rate:1,200:float, users:10,500:int. Do not combine this with expanded --adaptive-control-* flags.
-
-#### `--adaptive-control-variable` `<str>`
-
-Adaptive scale control variable: concurrency, prefill_concurrency, request_rate, or users.
-
-#### `--adaptive-control-min` `<float>`
-
-Minimum adaptive scale control value.
-<br/>_Constraints: > 0_
-
-#### `--adaptive-control-max` `<float>`
-
-Maximum adaptive scale control value. Inferred from the phase target when omitted.
-<br/>_Constraints: > 0_
-
-#### `--adaptive-scale-sla` `<list>`
-
-SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. Latency-family metrics (request_latency, time_to_first_token/ttft, inter_token_latency/itl/tpot) support percentile stats; window scalar/rate metrics (request_throughput, output_token_throughput, goodput, goodput_ratio, success_rate, error_rate, cancellation_rate) support {avg, min, max}. Full metric/stat table: [Adaptive SLA metric support](tutorials/yaml-config.md#adaptive-sla-metric-support). op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
+JSON file containing request-rate points for piecewise-linear request-rate control.
 
 ### Warmup
 

@@ -111,10 +111,12 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         )
 
         # Precedence: per-dataset block_size > plugin metadata default > hardcoded fallback.
-        # Only synthetic-style datasets carry prompts.block_size; FileDataset has no
-        # equivalent field, so fall through to the plugin/default chain.
-        prompts = getattr(dataset, "prompts", None)
-        user_block_size = getattr(prompts, "block_size", None) if prompts else None
+        # File datasets carry block_size directly; synthetic-style datasets carry it on
+        # prompts.block_size.
+        user_block_size = getattr(dataset, "block_size", None)
+        if user_block_size is None:
+            prompts = getattr(dataset, "prompts", None)
+            user_block_size = getattr(prompts, "block_size", None) if prompts else None
         if user_block_size is not None:
             self._block_size = user_block_size
         elif default_block_size is not None:

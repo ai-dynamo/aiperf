@@ -17,13 +17,15 @@ from aiperf.config.sweep.adaptive import SearchSpaceDimension
 
 
 def find_phase_index(phases: list[dict[str, Any]], name: str) -> int | None:
-    """Return the index of the first phase with ``name`` field equal to ``name``.
+    """Return the first phase matching a literal name or semantic kind.
 
     Defensive against malformed fixtures where a phase entry is not a dict
     (e.g. test stubs); such entries are skipped rather than raising.
     """
     for idx, phase in enumerate(phases):
-        if isinstance(phase, dict) and phase.get("name") == name:
+        if not isinstance(phase, dict):
+            continue
+        if phase.get("name") == name or phase.get("kind") == name:
             return idx
     return None
 
