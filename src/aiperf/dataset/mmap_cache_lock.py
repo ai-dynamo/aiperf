@@ -196,11 +196,6 @@ async def acquire_cache_lock(
             acquired = await asyncio.to_thread(
                 _blocking_acquire, lock, timeout, lock_path, _cache_complete
             )
-            # SoftFileLock only applies mode via os.open (umask-masked); FileLock
-            # fchmods. Force group-writable so a second user can contend under
-            # umask 077 (else EPERM falls through to the unlocked-populate path).
-            if acquired:
-                await asyncio.to_thread(_ensure_lock_file_mode, lock_path)
     except Timeout:
         # A populator SIGKILLed *before* completing (e.g. on the SoftFileLock/NFS
         # path, where the lock tombstone persists) leaves an incomplete entry, so
@@ -217,6 +212,12 @@ async def acquire_cache_lock(
             )
         )
         acquired = False
+    # SoftFileLock only applies mode via os.open (umask-masked); FileLock
+    # fchmods. Also covers filelock>=3.24, which auto-mutates FileLock to
+    # SoftFileLock on flock ENOSYS without raising NotImplementedError.
+    # Harmless when FileLock already forced 0o664.
+    if acquired:
+        await asyncio.to_thread(_ensure_lock_file_mode, lock_path)
     try:
         yield
     finally:
