@@ -35,6 +35,16 @@ _LOCK_LOG_EVERY_SECONDS = 10.0
 # slowest tokenize-and-mmap on a multi-GB trace corpus comfortably finishes
 # before a waiter gives up. Override via ``timeout`` kwarg.
 _LOCK_DEFAULT_TIMEOUT_S = 1800.0
+# Substring of the ``NotImplementedError`` message raised by filelock's
+# ``UnixFileLock`` when ``fcntl.flock`` is unavailable (NFS without flock,
+# some FUSE mounts). Anchored to filelock 3.13–3.24 (``filelock>=3.13``);
+# filelock>=3.25 auto-mutates to SoftFileLock instead of raising, so this
+# branch is only hit on the lower end of the pin. A test asserts this
+# constant so a future filelock upgrade that drops the string fails loudly.
+_FLOCK_UNSUPPORTED_HINT = "use SoftFileLock instead"
+# Group-writable so multiple users sharing a cache dir can contend on the
+# same lock file under a restrictive umask (common on shared NFS clusters).
+_LOCK_FILE_MODE = 0o664
 
 
 def _blocking_acquire(
@@ -150,7 +160,7 @@ async def acquire_cache_lock(
     # know about the acquire and silently no-ops, leaving the OS lock held
     # forever.
     lock: FileLock | SoftFileLock = FileLock(
-        str(lock_path), mode=0o664, thread_local=False
+        str(lock_path), mode=_LOCK_FILE_MODE, thread_local=False
     )
     try:
         try:
@@ -158,7 +168,7 @@ async def acquire_cache_lock(
                 _blocking_acquire, lock, timeout, lock_path, _cache_complete
             )
         except NotImplementedError as e:
-            if "use SoftFileLock instead" not in str(e):
+            if _FLOCK_UNSUPPORTED_HINT not in str(e):
                 raise
             _logger.warning(
                 lambda: (
@@ -166,7 +176,9 @@ async def acquire_cache_lock(
                     f"falling back to SoftFileLock (less robust on crash)."
                 )
             )
-            lock = SoftFileLock(str(lock_path), thread_local=False)
+            lock = SoftFileLock(
+                str(lock_path), mode=_LOCK_FILE_MODE, thread_local=False
+            )
             acquired = await asyncio.to_thread(
                 _blocking_acquire, lock, timeout, lock_path, _cache_complete
             )

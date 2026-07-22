@@ -146,11 +146,13 @@ class TestComputeCacheKey:
     def test_preformat_endpoint_knobs_change_key_only_when_preformat_on(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # With preformat on, endpoint.format_payload() bakes the stream flag and
-        # the max_tokens-vs-max_completion_tokens field name into the stored
-        # bytes, so runs differing only in those knobs must NOT share a cache
-        # entry (else a HIT serves bytes the run never asked for). With preformat
-        # off the knobs don't touch the stored mmap, so the key must be stable.
+        # With preformat on, endpoint.format_payload() bakes the stream flag,
+        # the max_tokens-vs-max_completion_tokens field name, and (for streaming
+        # OpenAI-compatible endpoints) stream_options.include_usage from
+        # use_server_token_count into the stored bytes, so runs differing only
+        # in those knobs must NOT share a cache entry (else a HIT serves bytes
+        # the run never asked for). With preformat off the knobs don't touch
+        # the stored mmap, so the key must be stable.
         from aiperf.common.environment import Environment
         from aiperf.plugin.enums import CustomDatasetType
 
@@ -159,7 +161,12 @@ class TestComputeCacheKey:
             b'{"session_id": "s1", "timestamp": 0, "input_length": 8}\n',
         )
 
-        def key_for(*, streaming: bool, legacy: bool) -> str | None:
+        def key_for(
+            *,
+            streaming: bool = False,
+            legacy: bool = False,
+            server_token_count: bool = False,
+        ) -> str | None:
             run = make_run_from_cli(
                 CLIConfig(
                     model_names=["test-model"],
@@ -168,21 +175,19 @@ class TestComputeCacheKey:
                     prompt_output_tokens_mean=64,
                     streaming=streaming,
                     use_legacy_max_tokens=legacy,
+                    use_server_token_count=server_token_count,
                 )
             )
             return mmap_cache.compute_cache_key_from_run(run)
 
         monkeypatch.setattr(Environment.DATASET, "PREFORMAT_PAYLOADS", True)
-        assert key_for(streaming=True, legacy=False) != key_for(
-            streaming=False, legacy=False
-        )
-        assert key_for(streaming=False, legacy=True) != key_for(
-            streaming=False, legacy=False
-        )
+        assert key_for(streaming=True) != key_for(streaming=False)
+        assert key_for(legacy=True) != key_for(legacy=False)
+        assert key_for(server_token_count=True) != key_for(server_token_count=False)
 
         monkeypatch.setattr(Environment.DATASET, "PREFORMAT_PAYLOADS", False)
-        assert key_for(streaming=True, legacy=False) == key_for(
-            streaming=False, legacy=True
+        assert key_for(streaming=True, legacy=True, server_token_count=True) == key_for(
+            streaming=False, legacy=False, server_token_count=False
         )
 
     def test_inter_turn_delay_cap_changes_key_on_file_dataset(
@@ -401,7 +406,6 @@ def _populate_entry(
     cache_key: str,
     data_bytes: bytes = b"DATA",
     index_bytes: bytes = b"IDX",
-    inputs_json: bytes | None = None,
     compressed: bool = False,
 ) -> Path:
     """Populate a cache entry through the public API and return the entry dir."""
@@ -412,11 +416,6 @@ def _populate_entry(
     idx_p = src_dir / f"index{ext}"
     data_p.write_bytes(data_bytes)
     idx_p.write_bytes(index_bytes)
-
-    inputs_p: Path | None = None
-    if inputs_json is not None:
-        inputs_p = src_dir / "inputs.json"
-        inputs_p.write_bytes(inputs_json)
 
     manifest = mmap_cache.CacheManifest(
         cache_key=cache_key,
@@ -433,7 +432,6 @@ def _populate_entry(
         run_data_path=data_p,
         run_index_path=idx_p,
         manifest=manifest,
-        inputs_json_path=inputs_p,
     )
     assert out is not None
     return out
@@ -455,17 +453,7 @@ class TestLookupAndPopulate:
         assert hit.inputs_json_path is None
         assert hit.manifest.cache_key == "abc123"
         assert hit.manifest.num_conversations == 1
-
-    def test_populate_ignores_inputs_json_when_provided(self, tmp_path: Path) -> None:
-        cache_root = mmap_cache.cache_dir()
-        entry_dir = _populate_entry(
-            cache_root, cache_key="withjson", inputs_json=b'{"data": []}'
-        )
-        hit = mmap_cache.lookup("withjson", compressed=False)
-        assert hit is not None
-        assert hit.inputs_json_path is None
         assert hit.manifest.has_inputs_json is False
-        assert not (entry_dir / mmap_cache.INPUTS_JSON_FILENAME).exists()
 
     def test_lookup_corrupt_manifest_returns_none(self, tmp_path: Path) -> None:
         cache_root = mmap_cache.cache_dir()
@@ -1139,15 +1127,21 @@ class TestAcquireCacheLockBypassAndFallback:
 
         from aiperf.dataset import mmap_cache_lock
 
+        # Pin the substring we match against filelock's NFS flock message so a
+        # future filelock upgrade that drops/renames it fails this test.
+        assert mmap_cache_lock._FLOCK_UNSUPPORTED_HINT == "use SoftFileLock instead"
+
         attempted: list[type] = []
+        soft_modes: list[int | None] = []
         real_blocking = mmap_cache_lock._blocking_acquire
 
         def flock_then_soft(lock, timeout, lock_path, cache_complete_check=None):
             attempted.append(type(lock))
             if len(attempted) == 1:
                 raise NotImplementedError(
-                    "FileLock is unavailable, use SoftFileLock instead"
+                    f"FileLock is unavailable, {mmap_cache_lock._FLOCK_UNSUPPORTED_HINT}"
                 )
+            soft_modes.append(getattr(lock, "mode", None))
             return real_blocking(lock, timeout, lock_path, cache_complete_check)
 
         monkeypatch.setattr(mmap_cache_lock, "_blocking_acquire", flock_then_soft)
@@ -1156,6 +1150,7 @@ class TestAcquireCacheLockBypassAndFallback:
             pass
 
         assert attempted == [FileLock, SoftFileLock]
+        assert soft_modes == [mmap_cache_lock._LOCK_FILE_MODE]
 
     @pytest.mark.asyncio
     async def test_unrelated_not_implemented_error_propagates(
