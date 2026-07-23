@@ -2346,6 +2346,21 @@ class CLIConfig(BaseConfig):
         ),
     ] = False
 
+    export_outputs_json: Annotated[
+        bool,
+        Field(
+            description=(
+                "Export generated response text to outputs.json after the run. "
+                "When enabled, the raw generated-text payload for each request is "
+                "written to an outputs.json file in the artifact directory."
+            ),
+        ),
+        CLIParameter(
+            name=("--export-outputs-json",),
+            group=Groups.OUTPUT,
+        ),
+    ] = False
+
     ##############################################################################
     # OpenTelemetry / MLflow
     ##############################################################################

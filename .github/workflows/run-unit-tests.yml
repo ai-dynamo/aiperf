@@ -2,11 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 name: "Run Unit Tests"
 
+# The Linux matrix leg runs on Velonix. Only run repository code from trusted
+# branch pushes; fork PRs enter CI after being copied to pull-request/<number>.
 on:
-  pull_request:
   push:
     branches:
       - main
+      - 'pull-request/[0-9]+'
+      - 'release/*'
 
 jobs:
   build:

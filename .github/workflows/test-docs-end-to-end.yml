@@ -4,24 +4,23 @@
 # Runs tests/ci/test_docs_end_to_end/setup_test.sh on the AMD GPU runner.
 #
 # Triggers:
-#   pull_request      — auto-runs on PRs that touch tutorial markdown or the
-#                       test runner itself.
-#   workflow_dispatch — manual trigger from the Actions UI / gh CLI.
-#   workflow_call     — invoked by nightly.yml so the nightly stays green.
+#   push          — runs for trusted main, release, and mirrored PR branch
+#                   pushes that touch tutorial markdown or the test runner.
+#   workflow_call — invoked by nightly.yml so the nightly stays green.
 #
-# A cheap ubuntu-latest detect-changes job pre-flights the work and skips the
-# AMD GPU job when a PR doesn't actually change anything the parser would
-# extract from the tutorials.
+# The paths filter avoids allocating AMD GPU runners for unrelated pushes.
 
 name: Test Docs End-to-End
 
 on:
-  pull_request:
-    branches: [main]
+  push:
+    branches:
+      - main
+      - 'pull-request/[0-9]+'
+      - 'release/*'
     paths:
       - 'docs/tutorials/**'
       - 'tests/ci/test_docs_end_to_end/**'
-  workflow_dispatch:
   workflow_call:
     inputs:
       source_ref:
@@ -50,8 +49,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Non-PR triggers (workflow_dispatch, workflow_call from nightly)
-          # have no base/head to compare; always run the test.
+          # Trusted push and workflow_call events have no PR base/head to
+          # compare; the push paths filter already removed unrelated changes.
           if [[ "${{ github.event_name }}" != "pull_request" ]]; then
             echo "run_test=true" >> "$GITHUB_OUTPUT"
             exit 0

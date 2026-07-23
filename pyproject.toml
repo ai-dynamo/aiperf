@@ -26,6 +26,7 @@ dependencies = [
   "cyclopts>=4,<5",
   "fastapi>=0.115,<1",
   "ffmpeg-python~=0.2.0",
+  "filelock>=3.13", # Cross-process populate lock for the mmap dataset cache
   # datasets pulls pyarrow (its Arrow core), which has no Windows-on-ARM wheel
   # (apache/arrow#47195). Excluded on win_arm64 so the base install works there;
   # HF-backed --public-dataset is gated on that platform, but synthetic /
@@ -264,4 +265,4 @@ filterwarnings = [
 
 [tool.codespell]
 skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html,src/aiperf/config/schema/aiperf-config.schema.json"
-ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency"
+ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency,clen"
