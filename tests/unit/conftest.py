@@ -8,6 +8,7 @@ and made available to test functions in the same directory and subdirectories.
 """
 
 import asyncio
+import os
 import uuid
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
@@ -57,6 +58,29 @@ DEFAULT_INPUT_TOKENS = 5
 DEFAULT_OUTPUT_TOKENS = 2
 
 _REAL_SLEEP = asyncio.sleep
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _hf_offline_mode():
+    """Never load a real tokenizer over the network in unit tests.
+
+    Both HF_HUB_OFFLINE and TRANSFORMERS_OFFLINE are set: the loader's
+    forkserver tokenizer preload (``aiperf.dataset._tokenizer_preload``) and the
+    tokenizer validator's prefetch path spawn subprocesses that inherit this env
+    and bypass any in-process ``Tokenizer.from_pretrained`` patch. Mirrors the
+    integration / component_integration suites. tiktoken builtins are local and
+    unaffected; a real HF load fails fast offline instead of downloading.
+    """
+    keys = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+    prev = {k: os.environ.get(k) for k in keys}
+    for k in keys:
+        os.environ[k] = "1"
+    yield
+    for k, v in prev.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
 
 
 @pytest.fixture(autouse=True)
