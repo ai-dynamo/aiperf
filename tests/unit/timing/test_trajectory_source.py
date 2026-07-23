@@ -18,18 +18,7 @@ from aiperf.common.scenario.base import (
 )
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.trajectory_source import TrajectorySource
-
-
-def _make_dataset_metadata(turn_counts_by_id: dict[str, int]):
-    md = MagicMock()
-    convs = []
-    for cid, n in turn_counts_by_id.items():
-        c = MagicMock()
-        c.conversation_id = cid
-        c.turns = [MagicMock(has_forks=False) for _ in range(n)]
-        convs.append(c)
-    md.conversations = convs
-    return md
+from tests.unit.timing._shared_helpers import _make_dataset_metadata
 
 
 def _make_timestamped_subagent_dataset() -> DatasetMetadata:

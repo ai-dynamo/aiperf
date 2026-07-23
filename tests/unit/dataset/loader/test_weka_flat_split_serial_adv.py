@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from tests.unit.dataset.loader._shared_helpers import _mk_user_config
+
 import logging
 from unittest.mock import MagicMock
 
@@ -16,13 +18,6 @@ from aiperf.dataset.loader.weka_trace_models import WekaTrace
 
 _MODEL = "claude-opus-4-5-20251101"
 _HAIKU = "claude-haiku-4-5-20251001"
-
-
-def _mk_user_config(**overrides):
-    from tests.unit.dataset.loader.conftest import make_weka_run
-
-    overrides.setdefault("model_names", [_MODEL, _HAIKU])
-    return make_weka_run(**overrides)
 
 
 def _stub_prompt_generator_for_reconstructor(loader) -> None:

@@ -19,7 +19,7 @@ from aiperf.timing.trajectory_source import (
     Trajectory,
     TrajectorySource,
 )
-from tests.unit.timing.strategies._shared_helpers import _make_dataset
+from tests.unit.timing.strategies._shared_helpers import _make_credit, _make_dataset
 
 # Helpers (mirror test_agentic_replay.py patterns; kept local for isolation)
 
@@ -74,26 +74,6 @@ def _make_strategy(
         lifecycle=MagicMock(),
     )
     return strategy, issuer, scheduler, src
-
-
-def _make_credit(
-    *,
-    conversation_id: str,
-    turn_index: int,
-    num_turns: int,
-    phase: CreditPhase = CreditPhase.PROFILING,
-    x_correlation_id: str = "xcorr",
-) -> Credit:
-    return Credit(
-        id=0,
-        phase=phase,
-        conversation_id=conversation_id,
-        x_correlation_id=x_correlation_id,
-        turn_index=turn_index,
-        num_turns=num_turns,
-        issued_at_ns=0,
-        branch_mode=ConversationBranchMode.FORK,
-    )
 
 
 # Test 1: WARMUP phase + non-AGENTIC_REPLAY timing_mode is a defensive case

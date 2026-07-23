@@ -12,6 +12,18 @@ from aiperf.common.models import (
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
 
+def _make_dataset_metadata(turn_counts_by_id: dict[str, int]) -> MagicMock:
+    md = MagicMock()
+    convs = []
+    for cid, n in turn_counts_by_id.items():
+        c = MagicMock()
+        c.conversation_id = cid
+        c.turns = [MagicMock(has_forks=False) for _ in range(n)]
+        convs.append(c)
+    md.conversations = convs
+    return md
+
+
 def _mk_conv(
     cid: str,
     turns: list[TurnMetadata],

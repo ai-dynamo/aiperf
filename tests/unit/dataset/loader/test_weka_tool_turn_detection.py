@@ -21,11 +21,12 @@ input turns.
 """
 
 from __future__ import annotations
+from tests.unit.dataset.loader._shared_helpers import _stub_loader, _mk_user_config
 
 import json
 from multiprocessing import shared_memory
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -39,32 +40,6 @@ from aiperf.dataset.loader.weka_trace_models import WekaNormalRequest
 
 _MODEL = "claude-opus-4-5-20251101"
 _HAIKU = "claude-haiku-4-5-20251001"
-
-
-def _mk_user_config(**overrides):
-    from tests.unit.dataset.loader.conftest import make_weka_run
-
-    overrides.setdefault("model_names", [_MODEL, _HAIKU])
-    return make_weka_run(**overrides)
-
-
-def _stub_loader(loader: WekaTraceLoader) -> None:
-    from tests.unit.dataset.loader.conftest import stub_hash_id_corpus_rng
-
-    pg = MagicMock()
-    pg._cache = {}
-    pg._sample_tokens.side_effect = lambda n: [0] * n
-    pg._tokenized_corpus = list(range(10000, 11000))
-    pg._corpus_size = 1000
-    pg._bpe_stable_terminator_tokens = []
-    stub_hash_id_corpus_rng(pg)
-    pg.tokenizer.decode.side_effect = lambda toks: f"<dec:{len(toks)}>"
-    pg._hash_id_corpus_rng.seed = 12345
-    loader.prompt_generator = pg
-    loader._tokenizer_name = "test-tok"
-    loader._trust_remote_code = False
-    loader._tokenizer_revision = None
-    loader._block_size = 64
 
 
 def _req(

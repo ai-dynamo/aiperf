@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from tests.unit.dataset.loader._shared_helpers import _write_trace
+from tests.unit.dataset.loader._shared_helpers import _make_loader, _write_trace
 
 """Tests for WekaTraceLoader model-name rewrite behavior.
 
@@ -8,8 +8,6 @@ The trace's per-request ``model`` field is rewritten to
 ``endpoint.model_names`` via a per-trace deterministic mapping. Always-on;
 no flag.
 """
-
-from unittest.mock import MagicMock
 
 
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
@@ -27,31 +25,6 @@ def _mk_user_config(*, max_isl=None, model_names=("primary",), **overrides):
         max_isl=max_isl,
         **overrides,
     )
-
-
-def _make_loader(filename, uc, monkeypatch):
-    loader = WekaTraceLoader(filename=str(filename), run=uc)
-    monkeypatch.setattr(
-        loader,
-        "synthesize_prompts_from_hash_ids",
-        lambda rs: {r.key: f"p-{r.key}" for r in rs},
-    )
-    loader.prompt_generator = MagicMock()
-    loader.prompt_generator._cache = {}
-    loader.prompt_generator._sample_tokens.side_effect = lambda n: [0] * n
-    loader.prompt_generator._tokenized_corpus = list(range(10000, 11000))
-    loader.prompt_generator._corpus_size = 1000
-    from tests.unit.dataset.loader.conftest import stub_hash_id_corpus_rng
-
-    stub_hash_id_corpus_rng(loader.prompt_generator)
-    loader.prompt_generator.tokenizer.decode.side_effect = (
-        lambda toks: f"<dec:{len(toks)}>"
-    )
-    loader._tokenizer_name = "t"
-    loader._trust_remote_code = False
-    loader._tokenizer_revision = None
-    loader._block_size = 64
-    return loader
 
 
 def _trace(trace_id, requests, models=("m",)):

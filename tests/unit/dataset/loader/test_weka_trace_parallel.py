@@ -7,6 +7,7 @@ so xdist-safe.
 """
 
 from __future__ import annotations
+from tests.unit.dataset.loader._shared_helpers import _stub_loader
 
 import shutil
 from pathlib import Path
@@ -33,30 +34,6 @@ def _mk_user_config(model_names=None):
         ],
         tokenizer_name="test-tok",
     )
-
-
-def _stub_loader(loader: WekaTraceLoader) -> None:
-    """Wire a deterministic stubbed PromptGenerator the serial reconstructor needs.
-
-    Mirrors the fixtures in test_weka_trace.py so the serial run is byte-exact
-    reproducible without a real tokenizer.
-    """
-    from tests.unit.dataset.loader.conftest import stub_hash_id_corpus_rng
-
-    pg = MagicMock()
-    pg._cache = {}
-    pg._sample_tokens.side_effect = lambda n: [0] * n
-    pg._tokenized_corpus = list(range(10000, 11000))
-    pg._corpus_size = 1000
-    pg._bpe_stable_terminator_tokens = []
-    stub_hash_id_corpus_rng(pg)
-    pg.tokenizer.decode.side_effect = lambda toks: f"<dec:{len(toks)}>"
-    pg._hash_id_corpus_rng.seed = 12345
-    loader.prompt_generator = pg
-    loader._tokenizer_name = "test-tok"
-    loader._trust_remote_code = False
-    loader._tokenizer_revision = None
-    loader._block_size = 64
 
 
 def _drive_parallel_inproc(

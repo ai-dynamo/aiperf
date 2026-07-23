@@ -13,21 +13,9 @@ from aiperf.plugin.enums import ArrivalPattern, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.runner import PhaseRunner
 from aiperf.timing.trajectory_source import TrajectorySource
+from tests.unit.timing._shared_helpers import _make_dataset_metadata
 
 pytestmark = pytest.mark.asyncio
-
-
-def _make_dataset_metadata(turn_counts_by_id: dict[str, int]) -> MagicMock:
-    """Build a MagicMock dataset_metadata mirroring the existing trajectory tests."""
-    md = MagicMock()
-    convs = []
-    for cid, n in turn_counts_by_id.items():
-        c = MagicMock()
-        c.conversation_id = cid
-        c.turns = [MagicMock(has_forks=False) for _ in range(n)]
-        convs.append(c)
-    md.conversations = convs
-    return md
 
 
 def _warmup_config(concurrency: int) -> CreditPhaseConfig:

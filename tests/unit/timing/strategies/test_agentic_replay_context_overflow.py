@@ -8,43 +8,23 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import ConversationBranchMode, CreditPhase
+from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     DatasetMetadata,
 )
-from aiperf.credit.structs import Credit
-from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import (
     Trajectory,
-    TrajectorySource,
 )
-from tests.unit.timing.strategies._shared_helpers import _make_dataset
+from tests.unit.timing.strategies._shared_helpers import (
+    _build_real_trajectory_source,
+    _make_credit,
+    _make_dataset,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures (lifted from test_agentic_replay_recycle_adversarial.py for parity)
 # ---------------------------------------------------------------------------
-
-
-def _build_real_trajectory_source(
-    *,
-    dataset: DatasetMetadata,
-    trajectories: list[Trajectory],
-) -> TrajectorySource:
-    src = TrajectorySource.__new__(TrajectorySource)
-    src._dataset_metadata = dataset
-    _roots = [
-        c.conversation_id
-        for c in src._dataset_metadata.conversations
-        if getattr(c, "is_root", True)
-    ]
-    src._dataset_sampler = SequentialSampler(_roots) if _roots else MagicMock()
-    src._pool_size = len(_roots)
-    src._metadata_lookup = {c.conversation_id: c for c in dataset.conversations}
-    src._random_seed = 0
-    src._target_size = len(trajectories)
-    src.trajectories = list(trajectories)
-    return src
 
 
 def _make_strategy(
@@ -72,26 +52,6 @@ def _make_strategy(
         lifecycle=MagicMock(),
     )
     return strategy, issuer, stop_checker
-
-
-def _make_credit(
-    *,
-    conversation_id: str,
-    turn_index: int,
-    num_turns: int,
-    phase: CreditPhase = CreditPhase.PROFILING,
-    x_correlation_id: str = "xcorr",
-) -> Credit:
-    return Credit(
-        id=0,
-        phase=phase,
-        conversation_id=conversation_id,
-        x_correlation_id=x_correlation_id,
-        turn_index=turn_index,
-        num_turns=num_turns,
-        issued_at_ns=0,
-        branch_mode=ConversationBranchMode.FORK,
-    )
 
 
 # ---------------------------------------------------------------------------
