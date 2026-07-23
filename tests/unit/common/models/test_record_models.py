@@ -244,6 +244,12 @@ class TestSSEMessageDataclass:
         json_obj = msg.get_json()
         assert json_obj == {"key": "value"}
 
+    def test_get_text_and_json_with_additional_field(self) -> None:
+        """Protocol methods retain the generic path for multi-field messages."""
+        msg = SSEMessage.parse('data: {"key": "value"}\nevent: message', perf_ns=1)
+        assert msg.get_text() == '{"key": "value"}'
+        assert msg.get_json() == {"key": "value"}
+
 
 class TestMetricResultSumField:
     """Test the sum field on MetricResult."""
