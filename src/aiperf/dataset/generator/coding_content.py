@@ -941,16 +941,29 @@ class CodingContentGenerator(BaseGenerator):
         for index, hash_id in enumerate(hash_ids):
             current_block_size = final_block_size if index == m - 1 else block_size
 
-            if hash_id not in self._cache:
+            cached = self._cache.get(hash_id)
+            if cached is None:
                 self._hash_id_corpus_rng.reseed_for_hash_id(hash_id)
-                self._cache[hash_id] = sample_tokens_from_corpus(
+                cached = sample_tokens_from_corpus(
                     self._tool_pool,
                     current_block_size,
                     self._hash_id_corpus_rng,
                     self.tokenizer.block_separation_token_id,
                 )
+                self._cache[hash_id] = cached
+            elif len(cached) != current_block_size:
+                # A hash_id identifies a fixed block of content, so it can only
+                # ever have one size. The same id at two sizes means a corrupt
+                # trace or a block_size that disagrees with the recorded blocks.
+                raise ConfigurationError(
+                    f"hash_id {hash_id} requested at {current_block_size} tokens "
+                    f"but was already materialized at {len(cached)} tokens. A "
+                    f"hash_id must map to a single fixed block size; inconsistent "
+                    f"sizes indicate a corrupt trace or a --isl-block-size that "
+                    f"disagrees with the recorded blocks."
+                )
 
-            final_prompt.extend(self._cache[hash_id])
+            final_prompt.extend(cached)
 
         # Prefix-only: pad the un-hashed tail with sampled (uncached) tokens.
         tail = num_tokens - len(final_prompt)

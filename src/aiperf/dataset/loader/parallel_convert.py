@@ -138,12 +138,22 @@ def _process_batch(
     block_cache = _worker_state.block_cache
 
     def get_block_tokens(hash_id: int, size: int) -> list[int]:
-        if hash_id in block_cache:
-            return block_cache[hash_id]
-        hash_rng.reseed_for_hash_id(hash_id)
-        tokens = sample_tokens(corpus, size, hash_rng, sep_token)
-        block_cache[hash_id] = tokens
-        return tokens
+        cached = block_cache.get(hash_id)
+        if cached is None:
+            hash_rng.reseed_for_hash_id(hash_id)
+            cached = sample_tokens(corpus, size, hash_rng, sep_token)
+            block_cache[hash_id] = cached
+        elif len(cached) != size:
+            # A hash_id identifies a fixed block of content, so it can only ever
+            # have one size. The same id at two sizes means a corrupt trace or a
+            # block_size that disagrees with the recorded blocks.
+            raise ConfigurationError(
+                f"hash_id {hash_id} requested at {size} tokens but was already "
+                f"materialized at {len(cached)} tokens. A hash_id must map to a "
+                f"single fixed block size; inconsistent sizes indicate a corrupt "
+                f"trace or a --isl-block-size that disagrees with the recorded blocks."
+            )
+        return cached
 
     results = []
     for session_id, traces in batch:

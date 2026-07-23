@@ -237,6 +237,22 @@ class TestPromptGeneratorComprehensive:
         # Final block should have different size
         assert len(generator._cache[3]) == 2  # Final block: 12 - (2 * 5) = 2
 
+    def test_generate_cached_prompt_same_hash_two_sizes_raises(self, basic_config):
+        """A hash_id materialized at one size then requested at another is a
+        corrupt-trace signal and must hard-error, not silently resize."""
+        tokenizer, prompts, prefix_prompts = basic_config
+        generator = _make_generator(
+            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
+        )
+
+        # First materialize hash_id 7 as a full 5-token block.
+        generator._generate_cached_prompt(num_tokens=5, hash_ids=[7], block_size=5)
+        # Now hash_id 7 is the final partial (3 tokens) of a 8-token prompt.
+        with pytest.raises(ConfigurationError, match="single fixed block size"):
+            generator._generate_cached_prompt(
+                num_tokens=8, hash_ids=[1, 7], block_size=5
+            )
+
     @pytest.mark.parametrize(
         "num_tokens, hash_ids, block_size, should_raise",
         [
