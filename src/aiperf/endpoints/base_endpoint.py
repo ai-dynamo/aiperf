@@ -190,15 +190,48 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         leading ``system`` role in chat; a top-level ``instructions`` field
         in Responses). Callers handle that in their ``format_payload``.
         """
+        return self._flatten_turns(turns)
+
+    def _flatten_turns(
+        self,
+        turns: list[Turn],
+        *,
+        transform_raw_item: Callable[[dict[str, Any]], dict[str, Any] | None]
+        | None = None,
+        render_synthetic: Callable[[Turn], dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Shared flatten-and-merge skeleton for ``build_messages`` overrides.
+
+        Handles turn iteration, ``reset_context`` (a reset turn discards
+        everything accumulated so far before splicing its own
+        ``raw_messages``), and the synthetic-turn fallback. Subclasses supply
+        only the per-item behaviour:
+
+        - ``transform_raw_item``: map each ``raw_messages`` item to its wire
+          form, or return ``None`` to drop it (e.g. Responses replay-unsafe
+          output items). Defaults to identity.
+        - ``render_synthetic``: render a turn that carries no ``raw_messages``.
+          Defaults to ``_render_turn_message``.
+        """
         messages: list[dict[str, Any]] = []
         for turn in turns:
             if turn.raw_messages:
                 if turn.reset_context:
-                    messages = list(turn.raw_messages)
-                else:
-                    messages.extend(turn.raw_messages)
+                    messages = []
+                for item in turn.raw_messages:
+                    wire_item = (
+                        transform_raw_item(item)
+                        if transform_raw_item is not None
+                        else item
+                    )
+                    if wire_item is not None:
+                        messages.append(wire_item)
                 continue
-            messages.append(self._render_turn_message(turn))
+            messages.append(
+                render_synthetic(turn)
+                if render_synthetic is not None
+                else self._render_turn_message(turn)
+            )
         return messages
 
     def _render_turn_message(self, turn: Turn) -> dict[str, Any]:
