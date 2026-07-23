@@ -611,8 +611,6 @@ class TestSessionHeader:
         ALONGSIDE X-Correlation-ID (both headers) -- distinct from
         --session-header, which renames the single header. A router may
         require both for session affinity."""
-        from aiperf.common.environment import Environment
-
         monkeypatch.setattr(Environment.HTTP, "X_SESSION_ID_FROM_CORRELATION_ID", True)
         transport = self._make_transport()  # no --session-header
         request_info = self._make_request_info(transport)
@@ -625,8 +623,6 @@ class TestSessionHeader:
     def test_env_knob_off_by_default_sends_only_correlation(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        from aiperf.common.environment import Environment
-
         monkeypatch.setattr(Environment.HTTP, "X_SESSION_ID_FROM_CORRELATION_ID", False)
         transport = self._make_transport()
         headers = transport.build_headers(self._make_request_info(transport))
@@ -638,8 +634,6 @@ class TestSessionHeader:
     ):
         """Opt-in SGLang Model Gateway affinity header: X-SMG-Routing-Key
         aliases the stable X-Correlation-ID so a session's requests co-locate."""
-        from aiperf.common.environment import Environment
-
         monkeypatch.setattr(
             Environment.HTTP, "X_SMG_ROUTING_KEY_FROM_CORRELATION_ID", True
         )
@@ -649,14 +643,45 @@ class TestSessionHeader:
         assert headers["X-SMG-Routing-Key"] == "conv-uuid-123"
 
     def test_smg_routing_key_off_by_default(self, monkeypatch: pytest.MonkeyPatch):
-        from aiperf.common.environment import Environment
-
         monkeypatch.setattr(
             Environment.HTTP, "X_SMG_ROUTING_KEY_FROM_CORRELATION_ID", False
         )
         transport = self._make_transport()
         headers = transport.build_headers(self._make_request_info(transport))
         assert "X-SMG-Routing-Key" not in headers
+
+    def test_session_id_authoritative_over_endpoint_headers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The derived X-Session-ID wins over a caller-supplied --header of the
+        same (case-insensitive) name, so session affinity cannot be silently
+        broken by endpoint headers."""
+        monkeypatch.setattr(Environment.HTTP, "X_SESSION_ID_FROM_CORRELATION_ID", True)
+        transport = self._make_transport()
+        request_info = self._make_request_info(transport)
+        request_info.endpoint_headers = {"x-session-id": "endpoint-override"}
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Session-ID"] == "conv-uuid-123"
+        assert "x-session-id" not in headers
+
+    def test_smg_routing_key_authoritative_over_endpoint_headers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The derived X-SMG-Routing-Key wins over a caller-supplied --header of
+        the same (case-insensitive) name."""
+        monkeypatch.setattr(
+            Environment.HTTP, "X_SMG_ROUTING_KEY_FROM_CORRELATION_ID", True
+        )
+        transport = self._make_transport()
+        request_info = self._make_request_info(transport)
+        request_info.endpoint_headers = {"x-smg-routing-key": "endpoint-override"}
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-SMG-Routing-Key"] == "conv-uuid-123"
+        assert "x-smg-routing-key" not in headers
 
 
 class TestTransportMetadata:
