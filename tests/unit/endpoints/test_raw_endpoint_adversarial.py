@@ -114,7 +114,6 @@ class TestFormatPayloadEdges:
         )
         result = raw_endpoint.format_payload(request_info)
         assert result == payload
-        # Deep equality across nested structure including unicode
         assert result["messages"][0]["content"] == "你好, world"
         assert result["metadata"]["nested"]["deep"][2][2]["x"] is None
 
