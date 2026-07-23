@@ -340,6 +340,55 @@ class TestChatMessagesField:
             {"role": "assistant", "content": "", "tool_calls": tool_calls},
         ]
 
+    def test_message_tool_calls_not_double_counted_in_tool_texts(self):
+        """tool_calls riding in ``messages`` are excluded from ``tool_texts``.
+
+        The chat-template ISL path renders ``messages`` (tool_calls included)
+        and tokenises ``tool_texts`` on top; keeping the same call text in both
+        would count it twice. It must still appear in ``texts`` for the
+        bare-text path.
+        """
+        payload = {
+            "messages": [
+                {"role": "user", "content": "weather?"},
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": '{"city": "SF"}',
+                            },
+                        }
+                    ],
+                },
+            ]
+        }
+        result = _chat().extract_payload_inputs(payload)
+        assert result.tool_texts == []
+        assert "get_weather" in result.texts
+        assert '{"city": "SF"}' in result.texts
+
+    def test_responses_function_call_stays_in_tool_texts(self):
+        """Responses ``function_call`` items have no role, so they are absent
+        from ``messages`` and must remain in ``tool_texts`` for the
+        chat-template path to account for them."""
+        payload = {
+            "input": [
+                {"role": "user", "content": "weather?"},
+                {
+                    "type": "function_call",
+                    "name": "get_weather",
+                    "arguments": '{"city": "SF"}',
+                },
+            ]
+        }
+        result = _responses().extract_payload_inputs(payload)
+        assert "get_weather" in result.tool_texts
+        assert '{"city": "SF"}' in result.tool_texts
+
     def test_flat_shapes_leave_messages_none(self):
         for payload in (
             {"prompt": "hi"},

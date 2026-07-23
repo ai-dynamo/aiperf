@@ -98,10 +98,17 @@ def _walk_item(
     to ``chat_messages`` when the item carries a string ``role``.
     """
     msg_text_parts = _walk_item_content(item, result, type_to_media)
-    _walk_item_tool_calls(item, result)
-    _walk_item_function_call(item, result)
     role = item.get("role")
-    if isinstance(role, str):
+    # When the item lands in ``chat_messages`` its ``tool_calls`` ride along
+    # in the role/content view, so the chat-template path renders them and
+    # they must NOT also enter ``tool_texts`` (which that path tokenises on
+    # top) - that would double-count. They still enter ``texts`` for the
+    # bare-text path. Items without a string role never reach ``messages``,
+    # so their tool calls stay in ``tool_texts`` as before.
+    in_messages = isinstance(role, str)
+    _walk_item_tool_calls(item, result, in_messages=in_messages)
+    _walk_item_function_call(item, result)
+    if in_messages:
         # Chat templates expect string content. Concatenate the text parts
         # of mixed-content messages; media parts are dropped here (they don't
         # templatize meaningfully and the media counts already captured them).
@@ -157,13 +164,21 @@ def _walk_content_part(
         result.video_count += 1
 
 
-def _walk_item_tool_calls(item: dict[str, Any], result: ExtractedPayload) -> None:
+def _walk_item_tool_calls(
+    item: dict[str, Any], result: ExtractedPayload, in_messages: bool
+) -> None:
     """Chat-shape assistant message replaying earlier ``tool_calls``.
 
     Each call's ``function.name`` and ``function.arguments`` are tokens the
     model previously generated, and the server tokenises them on input
     replay. Without this the ISL of agent-history replays is undercounted
     by everything in those calls.
+
+    ``in_messages`` is True when the parent item is also emitted into the
+    role/content ``messages`` view (carrying its ``tool_calls`` through). In
+    that case the strings go to ``texts`` only - the chat-template path
+    already renders them via ``messages`` and adding them to ``tool_texts``
+    would double-count. Otherwise they go to both ledgers.
     """
     tool_calls = item.get("tool_calls")
     if not isinstance(tool_calls, list):
@@ -175,7 +190,10 @@ def _walk_item_tool_calls(item: dict[str, Any], result: ExtractedPayload) -> Non
         if isinstance(fn, dict):
             collected: list[str] = []
             _collect_str_fields(fn, ("name", "arguments"), collected)
-            _append_tool_texts(result, collected)
+            if in_messages:
+                result.texts.extend(collected)
+            else:
+                _append_tool_texts(result, collected)
 
 
 def _walk_item_function_call(item: dict[str, Any], result: ExtractedPayload) -> None:
