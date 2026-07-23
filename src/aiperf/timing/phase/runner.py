@@ -155,6 +155,8 @@ class PhaseRunner(TaskManagerMixin):
         self._return_wait_task: asyncio.Task | None = None
         self._was_cancelled = False
         self._rampers: list[RateControllerProtocol] = []
+        self._baseline_start_ns: int | None = None
+        self._baseline_end_ns: int | None = None
 
     def _build_credit_issuer(
         self, url_selection_strategy: URLSelectionStrategyProtocol | None
@@ -406,8 +408,8 @@ class PhaseRunner(TaskManagerMixin):
         lifecycle state) lives in the caller's ``except``.
         """
         phase_id = uuid.uuid4().hex
-        self._baseline_start_ns: int | None = None
-        self._baseline_end_ns: int | None = None
+        self._baseline_start_ns = None
+        self._baseline_end_ns = None
 
         self._concurrency_manager.configure_for_phase(
             self._phase_key,
