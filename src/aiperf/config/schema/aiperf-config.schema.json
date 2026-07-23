@@ -930,10 +930,19 @@
                   "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
                   "properties": {
                     "adaptiveScale": {
-                      "default": false,
-                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                       "title": "Adaptivescale",
-                      "type": "boolean"
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     },
                     "adaptiveSustainDuration": {
                       "anyOf": [
@@ -1306,6 +1315,21 @@
                       "default": null,
                       "description": "AGENTIC_REPLAY only: grace period in seconds the auto-synthesized warmup barrier waits for in-flight priming requests after the warmup burst sends. Read off the profiling phase by ``timing.config._build_agentic_warmup_config`` (the agentic warmup is not a user-declared phase, so it does not inherit ``--warmup-grace-period``, which requires ``--warmup-duration``). None waits indefinitely (the agentic warmup must complete every primed trajectory before profiling starts).",
                       "title": "Agenticwarmupgraceperiod"
+                    },
+                    "adaptive_scale": {
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                      "title": "Adaptivescale",
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -1319,10 +1343,19 @@
                   "description": "Poisson-distributed request arrivals at the target rate.",
                   "properties": {
                     "adaptiveScale": {
-                      "default": false,
-                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                       "title": "Adaptivescale",
-                      "type": "boolean"
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     },
                     "adaptiveSustainDuration": {
                       "anyOf": [
@@ -1740,6 +1773,21 @@
                       ],
                       "default": null,
                       "description": "Piecewise-linear request-rate schedule."
+                    },
+                    "adaptive_scale": {
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                      "title": "Adaptivescale",
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -1783,10 +1831,19 @@
                   "description": "Gamma-distributed request arrivals with configurable smoothness.",
                   "properties": {
                     "adaptiveScale": {
-                      "default": false,
-                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                       "title": "Adaptivescale",
-                      "type": "boolean"
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     },
                     "adaptiveSustainDuration": {
                       "anyOf": [
@@ -2218,6 +2275,21 @@
                       "default": null,
                       "description": "Gamma distribution shape parameter (must be > 0). 1.0 = Poisson, <1 = bursty, >1 = regular.",
                       "title": "Smoothness"
+                    },
+                    "adaptive_scale": {
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                      "title": "Adaptivescale",
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -2261,10 +2333,19 @@
                   "description": "Constant-rate request arrivals (fixed inter-arrival time).",
                   "properties": {
                     "adaptiveScale": {
-                      "default": false,
-                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                       "title": "Adaptivescale",
-                      "type": "boolean"
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     },
                     "adaptiveSustainDuration": {
                       "anyOf": [
@@ -2682,6 +2763,21 @@
                       ],
                       "default": null,
                       "description": "Piecewise-linear request-rate schedule."
+                    },
+                    "adaptive_scale": {
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                      "title": "Adaptivescale",
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -2725,10 +2821,19 @@
                   "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
                   "properties": {
                     "adaptiveScale": {
-                      "default": false,
-                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                       "title": "Adaptivescale",
-                      "type": "boolean"
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     },
                     "adaptiveSustainDuration": {
                       "anyOf": [
@@ -3140,6 +3245,21 @@
                       "minimum": 1,
                       "title": "Users",
                       "type": "integer"
+                    },
+                    "adaptive_scale": {
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                      "title": "Adaptivescale",
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -3169,10 +3289,16 @@
                   "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
                   "properties": {
                     "adaptiveScale": {
-                      "default": false,
-                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "description": "Enable single-run adaptive scale control for this phase. Fixed-schedule phases only accept disabled adaptive-scale no-op blocks.",
                       "title": "Adaptivescale",
-                      "type": "boolean"
+                      "anyOf": [
+                        {
+                          "const": false
+                        },
+                        {
+                          "$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"
+                        }
+                      ]
                     },
                     "adaptiveSustainDuration": {
                       "anyOf": [
@@ -3586,6 +3712,18 @@
                       "default": null,
                       "description": "Filter out trace requests after this timestamp in ms (must be >= 0).",
                       "title": "Endoffset"
+                    },
+                    "adaptive_scale": {
+                      "description": "Enable single-run adaptive scale control for this phase. Fixed-schedule phases only accept disabled adaptive-scale no-op blocks.",
+                      "title": "Adaptivescale",
+                      "anyOf": [
+                        {
+                          "const": false
+                        },
+                        {
+                          "$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -4506,10 +4644,19 @@
               "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -4882,6 +5029,21 @@
                   "default": null,
                   "description": "AGENTIC_REPLAY only: grace period in seconds the auto-synthesized warmup barrier waits for in-flight priming requests after the warmup burst sends. Read off the profiling phase by ``timing.config._build_agentic_warmup_config`` (the agentic warmup is not a user-declared phase, so it does not inherit ``--warmup-grace-period``, which requires ``--warmup-duration``). None waits indefinitely (the agentic warmup must complete every primed trajectory before profiling starts).",
                   "title": "Agenticwarmupgraceperiod"
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -4895,10 +5057,19 @@
               "description": "Poisson-distributed request arrivals at the target rate.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -5316,6 +5487,21 @@
                   ],
                   "default": null,
                   "description": "Piecewise-linear request-rate schedule."
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -5359,10 +5545,19 @@
               "description": "Gamma-distributed request arrivals with configurable smoothness.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -5794,6 +5989,21 @@
                   "default": null,
                   "description": "Gamma distribution shape parameter (must be > 0). 1.0 = Poisson, <1 = bursty, >1 = regular.",
                   "title": "Smoothness"
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -5837,10 +6047,19 @@
               "description": "Constant-rate request arrivals (fixed inter-arrival time).",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -6258,6 +6477,21 @@
                   ],
                   "default": null,
                   "description": "Piecewise-linear request-rate schedule."
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -6301,10 +6535,19 @@
               "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -6716,6 +6959,21 @@
                   "minimum": 1,
                   "title": "Users",
                   "type": "integer"
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -6745,10 +7003,16 @@
               "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Fixed-schedule phases only accept disabled adaptive-scale no-op blocks.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -7162,6 +7426,18 @@
                   "default": null,
                   "description": "Filter out trace requests after this timestamp in ms (must be >= 0).",
                   "title": "Endoffset"
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Fixed-schedule phases only accept disabled adaptive-scale no-op blocks.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -7191,10 +7467,19 @@
               "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -7567,6 +7852,21 @@
                   "default": null,
                   "description": "AGENTIC_REPLAY only: grace period in seconds the auto-synthesized warmup barrier waits for in-flight priming requests after the warmup burst sends. Read off the profiling phase by ``timing.config._build_agentic_warmup_config`` (the agentic warmup is not a user-declared phase, so it does not inherit ``--warmup-grace-period``, which requires ``--warmup-duration``). None waits indefinitely (the agentic warmup must complete every primed trajectory before profiling starts).",
                   "title": "Agenticwarmupgraceperiod"
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -7580,10 +7880,19 @@
               "description": "Poisson-distributed request arrivals at the target rate.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -8001,6 +8310,21 @@
                   ],
                   "default": null,
                   "description": "Piecewise-linear request-rate schedule."
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -8044,10 +8368,19 @@
               "description": "Gamma-distributed request arrivals with configurable smoothness.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -8479,6 +8812,21 @@
                   "default": null,
                   "description": "Gamma distribution shape parameter (must be > 0). 1.0 = Poisson, <1 = bursty, >1 = regular.",
                   "title": "Smoothness"
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -8522,10 +8870,19 @@
               "description": "Constant-rate request arrivals (fixed inter-arrival time).",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -8943,6 +9300,21 @@
                   ],
                   "default": null,
                   "description": "Piecewise-linear request-rate schedule."
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -8986,10 +9358,19 @@
               "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -9401,6 +9782,21 @@
                   "minimum": 1,
                   "title": "Users",
                   "type": "integer"
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -9430,10 +9826,16 @@
               "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Fixed-schedule phases only accept disabled adaptive-scale no-op blocks.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -9847,6 +10249,18 @@
                   "default": null,
                   "description": "Filter out trace requests after this timestamp in ms (must be >= 0).",
                   "title": "Endoffset"
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Fixed-schedule phases only accept disabled adaptive-scale no-op blocks.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -10010,10 +10424,19 @@
       "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
       "properties": {
         "adaptiveScale": {
-          "default": false,
-          "description": "Enable single-run adaptive scale control for this phase.",
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
           "title": "Adaptivescale",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         },
         "adaptiveSustainDuration": {
           "anyOf": [
@@ -10673,6 +11096,21 @@
           "description": "AGENTIC_REPLAY only: grace period in seconds the auto-synthesized warmup barrier waits for in-flight priming requests after the warmup burst sends. Read off the profiling phase by ``timing.config._build_agentic_warmup_config`` (the agentic warmup is not a user-declared phase, so it does not inherit ``--warmup-grace-period``, which requires ``--warmup-duration``). None waits indefinitely (the agentic warmup must complete every primed trajectory before profiling starts).",
           "title": "Agenticwarmupgraceperiod",
           "x-jinja2-supported": true
+        },
+        "adaptive_scale": {
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+          "title": "Adaptivescale",
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         }
       },
       "required": [
@@ -10697,10 +11135,19 @@
       "description": "Constant-rate request arrivals (fixed inter-arrival time).",
       "properties": {
         "adaptiveScale": {
-          "default": false,
-          "description": "Enable single-run adaptive scale control for this phase.",
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
           "title": "Adaptivescale",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         },
         "adaptiveSustainDuration": {
           "anyOf": [
@@ -11420,6 +11867,21 @@
           ],
           "default": null,
           "description": "Piecewise-linear request-rate schedule."
+        },
+        "adaptive_scale": {
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+          "title": "Adaptivescale",
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         }
       },
       "required": [
@@ -12648,10 +13110,16 @@
       "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
       "properties": {
         "adaptiveScale": {
-          "default": false,
-          "description": "Enable single-run adaptive scale control for this phase.",
+          "description": "Enable single-run adaptive scale control for this phase. Fixed-schedule phases only accept disabled adaptive-scale no-op blocks.",
           "title": "Adaptivescale",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"
+            }
+          ]
         },
         "adaptiveSustainDuration": {
           "anyOf": [
@@ -13367,6 +13835,18 @@
           "description": "Filter out trace requests after this timestamp in ms (must be >= 0).",
           "title": "Endoffset",
           "x-jinja2-supported": true
+        },
+        "adaptive_scale": {
+          "description": "Enable single-run adaptive scale control for this phase. Fixed-schedule phases only accept disabled adaptive-scale no-op blocks.",
+          "title": "Adaptivescale",
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"
+            }
+          ]
         }
       },
       "required": [
@@ -13399,10 +13879,19 @@
       "description": "Gamma-distributed request arrivals with configurable smoothness.",
       "properties": {
         "adaptiveScale": {
-          "default": false,
-          "description": "Enable single-run adaptive scale control for this phase.",
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
           "title": "Adaptivescale",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         },
         "adaptiveSustainDuration": {
           "anyOf": [
@@ -14147,6 +14636,21 @@
           "description": "Gamma distribution shape parameter (must be > 0). 1.0 = Poisson, <1 = bursty, >1 = regular.",
           "title": "Smoothness",
           "x-jinja2-supported": true
+        },
+        "adaptive_scale": {
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+          "title": "Adaptivescale",
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         }
       },
       "required": [
@@ -15944,10 +16448,19 @@
       "description": "Poisson-distributed request arrivals at the target rate.",
       "properties": {
         "adaptiveScale": {
-          "default": false,
-          "description": "Enable single-run adaptive scale control for this phase.",
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
           "title": "Adaptivescale",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         },
         "adaptiveSustainDuration": {
           "anyOf": [
@@ -16667,6 +17180,21 @@
           ],
           "default": null,
           "description": "Piecewise-linear request-rate schedule."
+        },
+        "adaptive_scale": {
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+          "title": "Adaptivescale",
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         }
       },
       "required": [
@@ -19505,10 +20033,19 @@
       "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
       "properties": {
         "adaptiveScale": {
-          "default": false,
-          "description": "Enable single-run adaptive scale control for this phase.",
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
           "title": "Adaptivescale",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         },
         "adaptiveSustainDuration": {
           "anyOf": [
@@ -20239,6 +20776,21 @@
             }
           ],
           "x-jinja2-supported": true
+        },
+        "adaptive_scale": {
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+          "title": "Adaptivescale",
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         }
       },
       "required": [
@@ -20763,6 +21315,1159 @@
       ],
       "title": "ZipSweep",
       "type": "object"
+    },
+    "AdaptiveScaleNestedBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "enum": [
+                "true",
+                "false",
+                "yes",
+                "no",
+                "on",
+                "off",
+                "1",
+                "0"
+              ]
+            }
+          ]
+        },
+        "control": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "variable": {
+              "type": "string",
+              "enum": [
+                "concurrency",
+                "prefill_concurrency",
+                "request_rate",
+                "users"
+              ]
+            },
+            "min": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "max": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            }
+          }
+        },
+        "strategy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "ramp_until_fail"
+              ]
+            },
+            "stepPolicy": {
+              "type": "string",
+              "enum": [
+                "sla_margin",
+                "fixed_percent_step"
+              ]
+            },
+            "step_policy": {
+              "type": "string",
+              "enum": [
+                "sla_margin",
+                "fixed_percent_step"
+              ]
+            },
+            "baseStep": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "base_step": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "maxStepMultiplier": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "max_step_multiplier": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "stepPercent": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "step_percent": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            }
+          }
+        },
+        "sla": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/SLAFilter"
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  }
+                }
+              },
+              "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+            }
+          ]
+        },
+        "controlVariable": {
+          "type": "string",
+          "enum": [
+            "concurrency",
+            "prefill_concurrency",
+            "request_rate",
+            "users"
+          ]
+        },
+        "control_variable": {
+          "type": "string",
+          "enum": [
+            "concurrency",
+            "prefill_concurrency",
+            "request_rate",
+            "users"
+          ]
+        },
+        "controlMin": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "control_min": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "controlMax": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "control_max": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "minConcurrency": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "min_concurrency": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "maxConcurrency": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "max_concurrency": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "window": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "assessmentPeriod": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "assessment_period": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "minCompletedRequests": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "min_completed_requests": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "sustainDuration": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "sustain_duration": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        }
+      }
+    },
+    "DisabledAdaptiveScaleNestedBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "type": "string",
+              "enum": [
+                "false",
+                "no",
+                "off",
+                "0"
+              ]
+            }
+          ]
+        },
+        "control": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "variable": {
+              "type": "string",
+              "enum": [
+                "concurrency",
+                "prefill_concurrency",
+                "request_rate",
+                "users"
+              ]
+            },
+            "min": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "max": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            }
+          }
+        },
+        "strategy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "ramp_until_fail"
+              ]
+            },
+            "stepPolicy": {
+              "type": "string",
+              "enum": [
+                "sla_margin",
+                "fixed_percent_step"
+              ]
+            },
+            "step_policy": {
+              "type": "string",
+              "enum": [
+                "sla_margin",
+                "fixed_percent_step"
+              ]
+            },
+            "baseStep": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "base_step": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "maxStepMultiplier": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "max_step_multiplier": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "stepPercent": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "step_percent": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            }
+          }
+        },
+        "sla": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/SLAFilter"
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  }
+                }
+              },
+              "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+            }
+          ]
+        },
+        "controlVariable": {
+          "type": "string",
+          "enum": [
+            "concurrency",
+            "prefill_concurrency",
+            "request_rate",
+            "users"
+          ]
+        },
+        "control_variable": {
+          "type": "string",
+          "enum": [
+            "concurrency",
+            "prefill_concurrency",
+            "request_rate",
+            "users"
+          ]
+        },
+        "controlMin": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "control_min": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "controlMax": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "control_max": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "minConcurrency": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "min_concurrency": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "maxConcurrency": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "max_concurrency": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "window": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "assessmentPeriod": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "assessment_period": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "minCompletedRequests": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "min_completed_requests": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "sustainDuration": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "sustain_duration": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        }
+      },
+      "required": [
+        "enabled"
+      ]
     }
   },
   "additionalProperties": false,

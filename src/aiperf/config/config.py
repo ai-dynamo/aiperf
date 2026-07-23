@@ -913,6 +913,24 @@ class AIPerfConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def validate_adaptive_search_not_nested_with_adaptive_scale(self) -> Self:
+        """Reject nested adaptive loops: adaptive_search outside adaptive_scale."""
+        if self.sweep is None or self.sweep.type != "adaptive_search":
+            return self
+        adaptive_phases = [
+            phase.name
+            for phase in self.benchmark.phases
+            if getattr(phase, "adaptive_scale", False)
+        ]
+        if adaptive_phases:
+            raise ValueError(
+                "adaptive_search sweeps cannot be combined with adaptive_scale "
+                f"phases: {adaptive_phases}. Use either the outer adaptive_search "
+                "sweep or per-phase adaptive_scale, not both."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _apply_consistent_seed_default(self) -> Self:
         # Why: confidence statistics across trials and per-variation comparisons
         # in a sweep require identical workloads. Without a seed, synthetic
