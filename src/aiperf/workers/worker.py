@@ -102,12 +102,14 @@ _logger = AIPerfLogger(__name__)
 
 
 def _error_message(error: str | ErrorDetails | None) -> str | None:
-    """Extract the wire message from a CreditContext error.
+    """Extract the human error text for overflow substring matching.
 
     ``credit_context.error`` usually holds an ``ErrorDetails``; read its
-    ``.message`` rather than relying on the model's ``__str__`` repr (which
-    embeds ``code=``/``type=`` and would silently break substring matching if
-    the repr ever changed).
+    ``.message`` rather than the model's ``__str__`` repr (which embeds
+    ``code=``/``type=``/``cause=`` noise and would silently break substring
+    matching if the repr ever changed). Used only for classification -- the
+    wire ``CreditReturn.error`` still carries the full ``str(ErrorDetails)`` so
+    no diagnostic detail (code/type/cause) is dropped downstream.
     """
     if error is None:
         return None
@@ -766,7 +768,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             credit=credit_context.credit,
             cancelled=credit_context.cancelled,
             first_token_sent=credit_context.first_token_sent,
-            error=_error_message(credit_context.error),
+            error=str(credit_context.error) if credit_context.error else None,
             request_latency_ns=credit_context.request_latency_ns,
             inter_token_latency_ns=credit_context.inter_token_latency_ns,
             output_sequence_length=credit_context.output_sequence_length,
@@ -844,7 +846,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 credit=credit_context.credit,
                 cancelled=credit_context.cancelled,
                 first_token_sent=credit_context.first_token_sent,
-                error=_error_message(credit_context.error),
+                error=str(credit_context.error) if credit_context.error else None,
                 request_latency_ns=credit_context.request_latency_ns,
                 inter_token_latency_ns=credit_context.inter_token_latency_ns,
                 output_sequence_length=credit_context.output_sequence_length,
