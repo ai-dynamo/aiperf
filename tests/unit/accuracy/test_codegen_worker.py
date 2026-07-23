@@ -23,6 +23,10 @@ def _fake_codegen_boom(*_args: Any, **_kwargs: Any) -> tuple[dict[str, Any], Any
     raise RuntimeError("sandbox exploded")
 
 
+def _fake_codegen_list_pass(*_args: Any, **_kwargs: Any) -> tuple[dict[str, Any], Any]:
+    return {"pass@1": [1.0]}, {}
+
+
 class TestHandleRequest:
     def test_ok_request_returns_metrics_with_id(self) -> None:
         req = {
@@ -32,6 +36,18 @@ class TestHandleRequest:
         }
         resp = worker.handle_request(req, _fake_codegen_ok)
         assert resp == {"id": 7, "ok": True, "metrics": {"pass@1": 1.0}}
+
+    def test_list_shaped_pass_at_1_is_preserved(self) -> None:
+        # lighteval returns pass@1 as a list on some pins; it must survive
+        # coercion rather than be dropped as non-numeric (silent 0.000 bug).
+        req = {
+            "id": 9,
+            "evaluation_sample": [{"input_output": "{}"}],
+            "generated_code": [["x"]],
+        }
+        resp = worker.handle_request(req, _fake_codegen_list_pass)
+        assert resp["ok"] is True
+        assert resp["metrics"]["pass@1"] == [1.0]
 
     def test_codegen_exception_becomes_error_response(self) -> None:
         req = {

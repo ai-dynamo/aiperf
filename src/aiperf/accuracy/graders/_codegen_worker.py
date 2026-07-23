@@ -25,6 +25,10 @@ import orjson
 _LCB_PASS_AT_K = (1,)
 _LCB_NUM_PROCESSES = 8
 
+# A pathological lighteval exception could stringify to megabytes; bound the
+# error so a single response line stays well under the client's stream limit.
+_MAX_ERROR_CHARS = 4096
+
 
 def handle_request(
     req: dict[str, Any],
@@ -48,14 +52,32 @@ def handle_request(
         )
     except Exception as exc:
         # A single bad problem must never crash the worker loop.
-        return {"id": req_id, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        error = f"{type(exc).__name__}: {exc}"
+        return {"id": req_id, "ok": False, "error": _truncate_error(error)}
 
     return {"id": req_id, "ok": True, "metrics": _coerce_metrics(metrics)}
 
 
+def _truncate_error(error: str) -> str:
+    """Bound an error string so it cannot produce a multi-MB response line."""
+    if len(error) <= _MAX_ERROR_CHARS:
+        return error
+    return error[:_MAX_ERROR_CHARS] + "...[truncated]"
+
+
 def _coerce_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
-    """orjson can't serialize numpy scalars lighteval returns; coerce to float."""
-    return {k: float(v) for k, v in metrics.items() if _is_number(v)}
+    """orjson can't serialize numpy scalars lighteval returns; coerce to float.
+
+    lighteval returns pass@1 as a scalar on some pins and a list on others; both
+    must survive so the client's scalar/list extractor sees a real value rather
+    than falling back to 0.0. Genuinely non-numeric values are dropped."""
+    coerced: dict[str, Any] = {}
+    for key, value in metrics.items():
+        if isinstance(value, list) and all(_is_number(x) for x in value):
+            coerced[key] = [float(x) for x in value]
+        elif not isinstance(value, list) and _is_number(value):
+            coerced[key] = float(value)
+    return coerced
 
 
 def _is_number(value: Any) -> bool:

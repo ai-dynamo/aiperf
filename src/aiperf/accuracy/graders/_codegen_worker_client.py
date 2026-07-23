@@ -23,6 +23,12 @@ _log = AIPerfLogger(__name__)
 
 _DEFAULT_WORKER_CMD = [sys.executable, "-m", "aiperf.accuracy.graders._codegen_worker"]
 
+# asyncio's StreamReader defaults to a 64 KiB line limit; readline() raises
+# ValueError past it. A grading error string can legitimately be large, so give
+# the reader generous headroom while still bounding memory. The worker also caps
+# its error strings, so this limit should never be reached in practice.
+_STREAM_LIMIT = 16 * 1024 * 1024
+
 
 class CodegenWorkerError(Exception):
     """Raised when the grading worker cannot produce a result (timeout, crash,
@@ -73,6 +79,7 @@ class CodegenGradingWorker:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
+                limit=_STREAM_LIMIT,
             )
         except Exception as exc:
             self._start_failures += 1
@@ -84,7 +91,10 @@ class CodegenGradingWorker:
             self._proc.stdin.write(orjson.dumps(req) + b"\n")
             await self._proc.stdin.drain()
             line = await asyncio.wait_for(self._proc.stdout.readline(), timeout)
-        except (TimeoutError, ConnectionError, BrokenPipeError) as exc:
+        except (TimeoutError, ConnectionError, BrokenPipeError, ValueError) as exc:
+            # ValueError covers readline() overrunning the StreamReader limit
+            # (asyncio.LimitOverrunError); route it through the fault path so the
+            # worker is killed and counted rather than desyncing the next grade.
             await self._handle_fault()
             raise CodegenWorkerError(f"grading worker fault: {exc!r}") from exc
 
@@ -108,6 +118,16 @@ class CodegenGradingWorker:
             await self._handle_fault()
             raise CodegenWorkerError(
                 f"grading worker emitted a non-object response: {line!r}"
+            )
+
+        if resp.get("id") != req["id"]:
+            # A mismatched id means the response no longer correlates to the
+            # request; the stream is desynced, so fault it before trusting
+            # ok/metrics from a stale or wrong frame.
+            await self._handle_fault()
+            raise CodegenWorkerError(
+                f"grading worker response id mismatch: expected {req['id']}, "
+                f"got {resp.get('id')!r}"
             )
 
         if not resp.get("ok"):

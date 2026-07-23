@@ -192,6 +192,65 @@ _EMIT_OK_NO_METRICS = """
 """
 
 
+# Emits a single line larger than the client's StreamReader limit so
+# readline() raises ValueError (asyncio.LimitOverrunError). The overrun must
+# route through the fault path instead of escaping it and desyncing the client.
+_EMIT_OVERSIZED_LINE = """
+    import sys
+    for line in sys.stdin.buffer:
+        line = line.strip()
+        if not line:
+            continue
+        sys.stdout.buffer.write(b"a" * (17 * 1024 * 1024) + b"\\n")
+        sys.stdout.buffer.flush()
+"""
+
+
+# Always echoes a fixed WRONG id regardless of the request id, simulating a
+# worker whose responses no longer correlate to requests (a desync).
+_ECHO_WRONG_ID = """
+    import sys, orjson
+    for line in sys.stdin.buffer:
+        line = line.strip()
+        if not line:
+            continue
+        orjson.loads(line)
+        resp = {"id": 999, "ok": True, "metrics": {"pass@1": 1.0}}
+        sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
+        sys.stdout.buffer.flush()
+"""
+
+
+class TestOversizedResponse:
+    async def test_oversized_line_faults_and_kills_worker(self, tmp_path) -> None:
+        worker = CodegenGradingWorker(
+            worker_cmd=_write_worker(tmp_path, _EMIT_OVERSIZED_LINE)
+        )
+        try:
+            with pytest.raises(CodegenWorkerError):
+                await worker.grade_codegen(
+                    [{"input_output": "{}"}], [["x"]], timeout=30
+                )
+            assert worker._proc is None
+        finally:
+            await worker.aclose()
+
+
+class TestResponseIdMismatch:
+    async def test_wrong_id_faults_and_kills_worker(self, tmp_path) -> None:
+        worker = CodegenGradingWorker(
+            worker_cmd=_write_worker(tmp_path, _ECHO_WRONG_ID)
+        )
+        try:
+            with pytest.raises(CodegenWorkerError):
+                await worker.grade_codegen(
+                    [{"input_output": "{}"}], [["x"]], timeout=30
+                )
+            assert worker._proc is None
+        finally:
+            await worker.aclose()
+
+
 class TestMalformedResponse:
     async def test_non_json_response_faults_and_kills_worker(self, tmp_path) -> None:
         worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _EMIT_GARBAGE))
