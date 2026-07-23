@@ -1098,7 +1098,7 @@ def write_swim_lane_html(
             ]
             entry = {
                 "id": m.sid,
-                "conv": session[0]["metadata"]["conversation_id"],
+                "conv": session[0]["metadata"]["conversation_id"] or m.sid,
                 "slot": g.slot,
                 "ci": ci,
                 "row0": m.row0,

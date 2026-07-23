@@ -420,6 +420,15 @@ class TestRenderers:
         assert "&quot;" in rendered
         assert "&gt;" in rendered
 
+    def test_html_null_conversation_id_falls_back_to_sid(self, tmp_path: Path):
+        """A null conversation_id (valid in real exports) must not crash the
+        `:aux:`/`:wg:` membership checks; it falls back to the session id."""
+        rec = _rec("a", 0, 0.0, 1.0)
+        rec["metadata"]["conversation_id"] = None
+        (tmp_path / "profile_export.jsonl").write_bytes(orjson.dumps(rec))
+        payload = _extract_payload(write_swim_lane_html(tmp_path))
+        assert payload["sessions"][0]["conv"] == "a"
+
 
 class TestRecordArraysGenerationStart:
     def test_missing_ttft_falls_back_to_end(self):
