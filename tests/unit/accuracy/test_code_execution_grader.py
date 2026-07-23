@@ -105,6 +105,16 @@ class TestDeriveGradeTimeout:
         assert _derive_grade_timeout(1) < _derive_grade_timeout(10)
         assert _derive_grade_timeout(100000) == 300.0
 
+    def test_cap_is_configurable_via_env(self, monkeypatch) -> None:
+        """The hard cap reads AIPERF_ACCURACY_LCB_GRADE_TIMEOUT_MAX_S so a slow
+        large-problem grade need not be prematurely failed by the default 300s."""
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.ACCURACY, "LCB_GRADE_TIMEOUT_MAX_S", 60.0)
+        assert _derive_grade_timeout(100000) == 60.0
+        # Small problems stay below the cap regardless.
+        assert _derive_grade_timeout(1) == 7.0 + 5.0 + 30.0
+
 
 @pytest.mark.asyncio
 class TestGradeDelegatesToWorker:

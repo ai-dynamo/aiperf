@@ -83,6 +83,18 @@ class _AccuracySettings(BaseSettings):
         "export. Set to 0 to skip the wait entirely.",
     )
 
+    LCB_GRADE_TIMEOUT_MAX_S: float = Field(
+        default=300.0,
+        gt=0.0,
+        description="Hard ceiling (seconds) on the client-side wall-clock timeout "
+        "for a single LiveCodeBench code-execution grade. The per-grade timeout "
+        "scales with the problem's test-case count (lighteval's internal budget "
+        "plus a margin) but is capped here so one wedged grading worker cannot "
+        "stall the whole run. Raise it if legitimately slow large problems are "
+        "being prematurely failed; lower it to fail wedged workers faster. "
+        "Consumed by ``aiperf.accuracy.graders.code_execution._derive_grade_timeout``.",
+    )
+
     LCB_RELEASE_TAG: str = Field(
         default="v4_v5",
         description="LiveCodeBench dataset subset (HF config name) "

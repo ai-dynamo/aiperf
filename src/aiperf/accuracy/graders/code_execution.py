@@ -178,8 +178,14 @@ class CodeExecutionGrader(BaseGrader):
 def _derive_grade_timeout(num_cases: int) -> float:
     """Client-side wall-clock ceiling for one grade. lighteval caps a problem at
     ``(6 + 1) * num_cases + 5`` seconds internally; add a margin and hard-cap so a
-    single wedged worker cannot stall the run, without firing on merely slow ones."""
-    return min(300.0, 7.0 * max(num_cases, 1) + 5.0 + 30.0)
+    single wedged worker cannot stall the run, without firing on merely slow ones.
+    The cap is configurable via ``AIPERF_ACCURACY_LCB_GRADE_TIMEOUT_MAX_S``."""
+    from aiperf.common.environment import Environment
+
+    return min(
+        Environment.ACCURACY.LCB_GRADE_TIMEOUT_MAX_S,
+        7.0 * max(num_cases, 1) + 5.0 + 30.0,
+    )
 
 
 def _extract_pass_at_1(metrics: dict[str, Any]) -> float | None:
