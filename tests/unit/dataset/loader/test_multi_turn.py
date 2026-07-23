@@ -631,6 +631,57 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         assert conversations[0].turns[0].texts[0].contents == ["First"]
         assert conversations[1].turns[0].texts[0].contents == ["Second"]
 
+    def test_convert_passes_through_raw_messages(self, default_cfg):
+        """Test that raw_messages are passed through to Turn objects."""
+        raw_msgs = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi"},
+        ]
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[SingleTurn(raw_messages=raw_msgs)],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        turn = conversations[0].turns[0]
+        assert turn.raw_messages == raw_msgs
+        assert turn.raw_tools is None
+
+    def test_convert_passes_through_raw_messages_and_raw_tools(self, default_cfg):
+        """Test that raw_messages and raw_tools are both passed through."""
+        raw_msgs = [{"role": "user", "content": "Use a tool"}]
+        raw_tools = [
+            {"type": "function", "function": {"name": "get_weather", "parameters": {}}}
+        ]
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(raw_messages=raw_msgs, raw_tools=raw_tools),
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        turn = conversations[0].turns[0]
+        assert turn.raw_messages == raw_msgs
+        assert turn.raw_tools == raw_tools
+
 
 class TestMultiTurnDatasetLoaderSystemPromptHoist:
     """Test that a leading system turn is hoisted to conversation.system_message."""

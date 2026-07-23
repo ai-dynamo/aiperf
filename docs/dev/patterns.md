@@ -835,6 +835,15 @@ Coverage:
 
 `raw_endpoint` intentionally skips this merge — it ships the user-authored `Turn.raw_payload` verbatim.
 
+### Per-turn dataset `raw_messages` / `raw_tools`
+
+`single_turn` and `multi_turn` rows may author pre-formatted OpenAI-shape messages directly, for traces the normal modality fields cannot express (structured tool-calling turns, multiple messages of different roles in one turn):
+
+- `raw_messages: list[dict] | None` — spliced verbatim into the chat payload's `messages` array. A turn carrying `raw_messages` satisfies the "at least one modality" check on its own. Validated at load time: the list must be non-empty, every entry must carry a `role` key (via the shared `validate_chat_messages`, same as `MooncakeTrace`), and it is mutually exclusive with the text/image/audio/video modality fields — the endpoint's `build_messages` short-circuits on `raw_messages`, so a coexisting `text` would be silently dropped.
+- `raw_tools: list[dict] | None` — injected as the payload `tools` field. Requires `raw_messages` on the same row (validated at load time); like a system prompt, it walks conversation history via `_latest_turn_attr`, so later turns need not redeclare it.
+
+The loaders (`single_turn.py`, `multi_turn.py`) pass both fields straight onto `Turn`. Accumulation across turns — interleaving `raw_messages` with prior model responses to preserve prefix-cache reuse — is handled endpoint-side by `BaseEndpoint.build_messages` (`if turn.raw_messages: messages.extend(turn.raw_messages)`), the same path `mooncake_trace` already uses. This differs from `mooncake_trace`, which discards inter-turn model responses; the `multi_turn` path keeps them.
+
 ## Strategy Protocol Pattern
 
 The OTel results processor uses a strategy protocol to dispatch incoming data
