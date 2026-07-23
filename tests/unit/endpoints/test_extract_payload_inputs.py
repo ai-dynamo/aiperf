@@ -12,6 +12,8 @@ JSON payload. Endpoints may extend this walk by setting ``PART_TYPES``
 
 from __future__ import annotations
 
+from typing import Any
+
 from aiperf.common.models import (
     ExtractedPayload,
     InferenceServerResponse,
@@ -267,7 +269,7 @@ class TestImageRetrievalOverride:
 class MinimalEndpoint(BaseEndpoint):
     """Concrete subclass for testing base behaviour without other overrides."""
 
-    def format_payload(self, request_info: RequestInfo) -> dict:
+    def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         return {}
 
     def parse_response(
