@@ -5,8 +5,9 @@
 * FILTER: drop a candidate whose peak context exceeds ``max_context_length``.
 * CAP: keep the first ``num_dataset_entries`` *eligible* candidates.
 
-Capping the raw prefix before filtering lets oversized rows in the first N
-slots shrink the loaded pool below the requested entry count.
+Filtering happens before the cap counts a slot: an oversized row is skipped
+without consuming an entry, so the loaded pool always reaches the requested
+entry count when enough eligible candidates exist.
 """
 
 from __future__ import annotations

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Self
 from msgspec import Struct
 
 from aiperf.common.enums import CacheBustTarget, ConversationBranchMode, CreditPhase
+from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.types import PhaseKind
 
 if TYPE_CHECKING:
@@ -124,7 +125,8 @@ class CreditContext(
         cancelled: True if the credit was cancelled before completion.
         returned: True if the credit was returned after completion.
         first_token_sent: True if the first token was sent before this return.
-        error: The error message if the request failed (None on success).
+        error: The error if the request failed (None on success). Usually an
+            ``ErrorDetails``; a plain string is also accepted for back-compat.
         record_emitted: True once an inference record has been pushed for this
             credit. Used to keep the records-side count in lockstep with the
             credit-side count: a completed (non-cancelled) credit with no
@@ -142,7 +144,7 @@ class CreditContext(
     cancelled: bool = False
     returned: bool = False
     first_token_sent: bool = False
-    error: str | None = None
+    error: str | ErrorDetails | None = None
     record_emitted: bool = False
     request_latency_ns: int | None = None
     inter_token_latency_ns: float | None = None

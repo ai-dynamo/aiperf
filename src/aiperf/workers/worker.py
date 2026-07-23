@@ -101,6 +101,19 @@ def _phase_needs_first_token_callback(phase) -> bool:
 _logger = AIPerfLogger(__name__)
 
 
+def _error_message(error: str | ErrorDetails | None) -> str | None:
+    """Extract the wire message from a CreditContext error.
+
+    ``credit_context.error`` usually holds an ``ErrorDetails``; read its
+    ``.message`` rather than relying on the model's ``__str__`` repr (which
+    embeds ``code=``/``type=`` and would silently break substring matching if
+    the repr ever changed).
+    """
+    if error is None:
+        return None
+    return error.message if isinstance(error, ErrorDetails) else str(error)
+
+
 def _is_terminal_context_overflow(
     credit: Credit, credit_context: CreditContext
 ) -> bool:
@@ -114,8 +127,8 @@ def _is_terminal_context_overflow(
     """
     if credit.is_final_turn or credit_context.cancelled:
         return False
-    error = credit_context.error
-    return error is not None and is_context_overflow_response(body=str(error))
+    body = _error_message(credit_context.error)
+    return body is not None and is_context_overflow_response(body=body)
 
 
 def _apply_cache_bust_to_system_message(
@@ -753,7 +766,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             credit=credit_context.credit,
             cancelled=credit_context.cancelled,
             first_token_sent=credit_context.first_token_sent,
-            error=str(credit_context.error) if credit_context.error else None,
+            error=_error_message(credit_context.error),
             request_latency_ns=credit_context.request_latency_ns,
             inter_token_latency_ns=credit_context.inter_token_latency_ns,
             output_sequence_length=credit_context.output_sequence_length,
@@ -831,7 +844,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 credit=credit_context.credit,
                 cancelled=credit_context.cancelled,
                 first_token_sent=credit_context.first_token_sent,
-                error=str(credit_context.error) if credit_context.error else None,
+                error=_error_message(credit_context.error),
                 request_latency_ns=credit_context.request_latency_ns,
                 inter_token_latency_ns=credit_context.inter_token_latency_ns,
                 output_sequence_length=credit_context.output_sequence_length,
@@ -1031,10 +1044,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             credit_context, request_info, first_token_callback
         )
 
-        if session.should_store_response() and (
-            resp_turn := self.inference_client.endpoint.build_assistant_turn(record)
-        ):
-            session.store_response(resp_turn)
+        self._maybe_store_response(session, record)
 
     async def _try_payload_bytes_fast_path(
         self,
@@ -1047,7 +1057,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         Payload bytes fast path: stream pre-encoded bytes from the mmap
         verbatim, bypassing session/conversation deserialization and
         per-request payload formatting entirely. Skipped for DAG descendants
-        (agent_depth > 0), whose turn accumulation needs session state.
+        (agent_depth > 0), whose turn accumulation needs session state, and for
+        credits carrying a ``max_tokens_override``: the override cannot be
+        reflected in the pre-encoded bytes, so serving them verbatim would send
+        the baked-in cap while the enriched metric turn reports the override,
+        yielding a spurious OSL mismatch. Those defer to the session path, which
+        formats the payload with the override applied.
 
         Returns:
             True when the request was fully handled (sent + result emitted);
@@ -1058,6 +1073,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             not self._is_payload_bytes
             or self._dataset_client is None
             or credit.agent_depth != 0
+            or credit.max_tokens_override is not None
         ):
             return False
         payload_turn = await self._dataset_client.get_payload_turn(

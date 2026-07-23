@@ -613,9 +613,24 @@ def populate(
         try:
             os.replace(tmp_dir, final_dir)
         except OSError:
-            # Another writer beat us; leave their entry, drop ours.
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            return final_dir if final_dir.exists() else None
+            # os.replace onto a non-empty directory fails (ENOTEMPTY). A
+            # complete entry (has manifest) means a concurrent writer won:
+            # leave their entry, drop ours. A partial entry (no manifest) is a
+            # crashed/old-layout leftover that the module contract says to
+            # overwrite, so reclaim it and retry once; otherwise every future
+            # populate for this key no-ops and the corpus is re-tokenized
+            # forever.
+            manifest_present = (final_dir / MANIFEST_FILENAME).exists()
+            if final_dir.exists() and not manifest_present:
+                shutil.rmtree(final_dir, ignore_errors=True)
+                try:
+                    os.replace(tmp_dir, final_dir)
+                except OSError:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                    return final_dir if final_dir.exists() else None
+            else:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                return final_dir if final_dir.exists() else None
         _logger.info(f"Populated mmap cache entry {final_dir}")
         return final_dir
     except Exception as e:

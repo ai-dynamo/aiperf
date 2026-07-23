@@ -314,7 +314,18 @@ class ReplayBarrierCoordinator:
 
     @staticmethod
     async def _dispatch_pending(pending: _PendingDispatch) -> None:
-        issued = await pending.issue()
+        try:
+            issued = await pending.issue()
+        except Exception:
+            # This runs detached in a task whose only done-callback discards it,
+            # so a raise here would be swallowed ("Task exception was never
+            # retrieved") and any parent join waiting on this stream would hang
+            # until the drain timeout. Treat an issue failure as a refusal so
+            # on_refused cleanup runs and the phase can fail fast.
+            _logger.exception(
+                "Barrier-released replay dispatch failed for %r", pending.turn
+            )
+            issued = False
         if not issued and pending.on_refused is not None:
             await pending.on_refused()
 
