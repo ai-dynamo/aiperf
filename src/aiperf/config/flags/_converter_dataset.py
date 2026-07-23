@@ -845,20 +845,46 @@ def _is_weka_dataset(d: dict[str, Any]) -> bool:
     return False
 
 
+def _is_definitely_non_weka_dataset(d: dict[str, Any]) -> bool:
+    """True only when ``d`` is provably NOT weka.
+
+    A content-auto-detected FILE trace has ``format=None`` here (weka itself is
+    auto-detected via ``can_load``), so it is ambiguous, not provably non-weka.
+    Only an explicit non-weka file format or a non-weka public dataset is
+    definite.
+    """
+    from aiperf.common.enums import DatasetType
+
+    dtype = d.get("type")
+    if dtype == DatasetType.FILE:
+        fmt = d.get("format")
+        # format=None is a content-auto-detected trace (possibly weka): ambiguous.
+        if fmt is None:
+            return False
+        return str(fmt) != "weka_trace"
+    if dtype == DatasetType.PUBLIC:
+        public = d.get("dataset")
+        return public is None or "weka" not in str(public).lower()
+    # Synthetic and every other non-file/public type is provably not weka.
+    return True
+
+
 def _apply_max_context_length(d: dict[str, Any], cli: CLIConfig) -> None:
     """Route ``--max-context-length`` onto Weka ``FileDataset``/``PublicDataset``.
 
     Weka selection filters traces whose *recorded* peak prompt+output exceeds
-    this ceiling before applying ``--num-dataset-entries``. Non-Weka datasets
-    do not consume the flag (there is no DatasetManager tokenize path), so
-    reject loudly instead of silently no-op'ing.
+    this ceiling before applying ``--num-dataset-entries``. Provably non-Weka
+    datasets do not consume the flag (there is no DatasetManager tokenize path),
+    so reject those loudly. An auto-detected FILE trace (format=None) may still
+    be weka, so it is allowed through -- the loader ignores the field if it does
+    not implement the filter.
     """
     if (
         "max_context_length" not in cli.model_fields_set
         or cli.max_context_length is None
     ):
         return
-    if not _is_weka_dataset(d):
+    if _is_definitely_non_weka_dataset(d):
         raise ValueError(
             "--max-context-length only applies to Weka trace replay "
             "(--custom-dataset-type weka_trace or a weka --public-dataset). "
@@ -921,6 +947,15 @@ def _apply_block_size(d: dict[str, Any], cli: CLIConfig) -> None:
             "replay the trace's own block sizes."
         )
     if fmt in _BLOCK_SIZE_TRACE_FORMATS:
+        d["block_size"] = cli.prompt_input_tokens_block_size
+        return
+    # Content-auto-detected FILE traces (mooncake/bailian/etc. selected via
+    # can_load, not an explicit --custom-dataset-type) have format=None here.
+    # We cannot tell hash-id traces from other file shapes at convert time, so
+    # restore #1159 by routing onto the flat FileDataset.block_size; loaders
+    # that do not decode hash blocks ignore it. Explicit weka is already
+    # rejected above.
+    if fmt is None and d.get("type") == DatasetType.FILE:
         d["block_size"] = cli.prompt_input_tokens_block_size
         return
     raise ValueError(

@@ -45,6 +45,22 @@ def test_block_size_routed_onto_filedataset_for_hash_id_traces(
     assert "prompts" not in out
 
 
+def test_block_size_routed_onto_autodetected_file_trace(trace_file: Path) -> None:
+    # No --custom-dataset-type: the loader is content-auto-detected, so format
+    # is None at convert time. --isl-block-size must still route onto
+    # FileDataset.block_size (regression for #1159; PR #1165 review).
+    out = build_dataset(
+        CLIConfig(
+            model_names=["m"],
+            input_file=str(trace_file),
+            prompt_input_tokens_block_size=512,
+            prompt_output_tokens_mean=64,
+        )
+    )
+    assert out["type"] == "file"
+    assert out["block_size"] == 512
+
+
 def test_weka_trace_file_rejects_block_size(trace_file: Path) -> None:
     with pytest.raises(ValueError, match="inline"):
         build_dataset(

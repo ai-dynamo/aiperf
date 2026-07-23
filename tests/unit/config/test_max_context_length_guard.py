@@ -54,6 +54,18 @@ class TestMaxContextLengthRouting:
 
 
 class TestMaxContextLengthConverterGuard:
+    def test_allows_autodetected_file_trace(self, trace_jsonl: Path) -> None:
+        # No --custom-dataset-type: weka is content-auto-detected (can_load), so
+        # format is None at convert time. --max-context-length must NOT be
+        # rejected on an ambiguous auto-detected trace (PR #1165 review).
+        cli = CLIConfig(
+            model_names=["m"],
+            input_file=str(trace_jsonl),
+            max_context_length=128000,
+        )
+        out = build_dataset(cli)
+        assert out["max_context_length"] == 128000
+
     @pytest.mark.parametrize(
         "fmt",
         [
