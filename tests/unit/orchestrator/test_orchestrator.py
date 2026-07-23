@@ -225,6 +225,35 @@ def test_stamp_scenario_submission_metadata_unsafe_override_marks_invalid() -> N
     )
 
 
+def test_stamp_scenario_submission_metadata_reresolve_failure_marks_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-resolve exceptions fail closed with ``scenario_reresolve_failed``.
+
+    Aggregation must still stamp carrier keys; an optimistic
+    ``submission_valid=True`` would under-report lock failures when
+    ``apply_scenario`` cannot be re-run for environmental reasons.
+    """
+    import aiperf.cli_runner as cli_runner_pkg
+    from aiperf.cli_runner._aggregate import _stamp_scenario_submission_metadata
+
+    def _boom(_config: Any) -> Any:
+        raise RuntimeError("import/env breakage")
+
+    monkeypatch.setattr(cli_runner_pkg, "_make_benchmark_run", _boom)
+
+    plan = _make_plan(scenario="inferencex-agentx-mvp")
+    aggregate = _make_aggregate()
+
+    _stamp_scenario_submission_metadata(aggregate, [], plan)
+
+    assert aggregate.metadata["_scenario_name"] == "inferencex-agentx-mvp"
+    assert aggregate.metadata["_validator_submission_valid"] is False
+    assert aggregate.metadata["_validator_submission_invalid_reasons"] == [
+        "scenario_reresolve_failed"
+    ]
+
+
 @pytest.mark.parametrize(
     ("per_run_cancelled", "expected"),
     [

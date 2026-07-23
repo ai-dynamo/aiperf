@@ -154,3 +154,21 @@ def test_avg_truncated_to_int() -> None:
     # int(10.9) + int(0.0) + int(2.7) = 10 + 0 + 2 = 12 ; overflow = int(2.7) = 2
     assert total_responses == 12
     assert overflow == 2
+
+
+def test_non_finite_avg_contributes_zero() -> None:
+    """NaN/inf avgs must not raise ``ValueError`` from ``int(...)``."""
+    run = RunResult(
+        label="nan-avg",
+        success=True,
+        summary_metrics={
+            "request_count": JsonMetricResult(unit="count", avg=float("nan")),
+            "error_request_count": JsonMetricResult(unit="count", avg=float("inf")),
+            "context_overflow_count": JsonMetricResult(unit="count", avg=float("-inf")),
+            "skipped_context_overflow_count": JsonMetricResult(
+                unit="count", avg=float("nan")
+            ),
+        },
+    )
+
+    assert _sum_runtime_response_counts([run]) == (0, 0)

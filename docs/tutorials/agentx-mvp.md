@@ -334,6 +334,10 @@ Three possible states for `submission_valid`:
     Ctrl+C AIPerf cancels gracefully and still writes the export files with
     whatever partial metrics it collected (a second Ctrl+C force-quits
     without writing); a cancelled run is always stamped invalid.
+  - `"scenario_reresolve_failed"` — multi-run aggregate export could not
+    re-apply the scenario lock on the base config (import/env breakage).
+    Fail-closed: the aggregate stamps `submission_valid: false` rather than
+    assuming the lock held.
 - **Field absent** — you ran without `--scenario`. The submission-validity
   machinery is gated on the scenario flag.
 

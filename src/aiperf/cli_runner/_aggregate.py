@@ -98,10 +98,11 @@ def _sum_runtime_response_counts(results: list) -> tuple[int, int]:
     side channel. The overflow numerator is the (possibly merged)
     ``context_overflow_count`` metric. Missing metrics contribute 0.
     """
+    from aiperf.common.finite import is_finite_value
 
     def _avg(run, tag: str) -> int:
         m = run.summary_metrics.get(tag)
-        if m is None or m.avg is None:
+        if m is None or not is_finite_value(m.avg):
             return 0
         return int(m.avg)
 
@@ -151,6 +152,7 @@ def _stamp_scenario_submission_metadata(
         return
 
     outcome = None
+    reresolve_failed = False
     try:
         from aiperf.cli_runner import _make_benchmark_run
         from aiperf.common.scenario import apply_scenario
@@ -158,14 +160,23 @@ def _stamp_scenario_submission_metadata(
         run = _make_benchmark_run(base_config)
         apply_scenario(run)
         outcome = getattr(run.resolved, "scenario_outcome", None)
-    except Exception:
-        # A re-resolution failure must not break aggregation/export; fall back
-        # to the optimistic submission_valid default.
-        outcome = None
+    except Exception as exc:
+        # Fail closed: do not stamp submission_valid=True when the invariant
+        # lock could not be re-checked. Aggregation/export must still proceed.
+        from aiperf.common.aiperf_logger import AIPerfLogger
 
-    if outcome is None:
+        AIPerfLogger(__name__).warning(
+            f"Scenario re-resolution failed during aggregate stamp; "
+            f"marking submission_valid=False: {exc}"
+        )
+        reresolve_failed = True
+
+    if reresolve_failed:
+        submission_valid = False
+        submission_invalid_reasons: list[str] = ["scenario_reresolve_failed"]
+    elif outcome is None:
         submission_valid = True
-        submission_invalid_reasons: list[str] = []
+        submission_invalid_reasons = []
     else:
         submission_valid = bool(getattr(outcome, "submission_valid", True))
         submission_invalid_reasons = list(
