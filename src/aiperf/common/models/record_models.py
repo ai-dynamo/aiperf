@@ -28,7 +28,6 @@ from aiperf.common.enums import (
     CreditPhase,
     MetricConsoleGroup,
     MetricValueTypeT,
-    SSEFieldType,
 )
 from aiperf.common.exceptions import InvalidInferenceResultError
 from aiperf.common.finite import FiniteFloat
@@ -45,8 +44,9 @@ from aiperf.common.types import JsonObject, MetricTagT, PhaseKind
 from aiperf.common.utils import load_json_str
 
 _logger = AIPerfLogger(__name__)
-_SSE_DATA_FIELD_NAME = str(SSEFieldType.DATA)
-_SSE_DATA_PREFIX = f"{SSEFieldType.DATA}:"
+_SSE_COMMENT_FIELD_NAME = "comment"
+_SSE_DATA_FIELD_NAME = "data"
+_SSE_DATA_PREFIX = "data:"
 
 
 class MetricResult(JsonMetricResult):
@@ -513,7 +513,7 @@ class SSEField:
     was the #1 memory allocator.
     """
 
-    name: SSEFieldType | str
+    name: str
     """The name of the field. e.g. 'data', 'event', 'id', 'retry', 'comment'."""
 
     value: str | None = None
@@ -668,11 +668,11 @@ class SSEMessage:
 
             if field_name == "":
                 # Field name is empty, so this is a comment
-                field_name = SSEFieldType.COMMENT
+                field_name = _SSE_COMMENT_FIELD_NAME
 
             # Spec says strip only one leading space; we strip() all whitespace
             # to normalize inconsistent servers for downstream exact comparisons
-            # (e.g. "[DONE]", SSEEventType.ERROR).
+            # (e.g. "[DONE]", "error").
             message.packets.append(
                 SSEField(name=field_name.strip(), value=value.strip())
             )
@@ -693,7 +693,7 @@ class SSEMessage:
         return "\n".join(
             packet.value
             for packet in self.packets
-            if packet.name == SSEFieldType.DATA and packet.value
+            if packet.name == _SSE_DATA_FIELD_NAME and packet.value
         )
 
     def get_raw(self) -> Any | None:

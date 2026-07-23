@@ -6,12 +6,14 @@ import time
 from collections.abc import AsyncIterator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.enums import SSEEventType, SSEFieldType
 from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.models import SSEMessage
 
 _logger = AIPerfLogger(__name__)
-_SSE_DATA_FIELD_NAME = str(SSEFieldType.DATA)
+_SSE_COMMENT_FIELD_NAME = "comment"
+_SSE_DATA_FIELD_NAME = "data"
+_SSE_ERROR_EVENT_VALUE = "error"
+_SSE_EVENT_FIELD_NAME = "event"
 
 
 class AsyncSSEStreamReader:
@@ -92,14 +94,15 @@ class AsyncSSEStreamReader:
             return
 
         has_error_event = any(
-            packet.name == SSEFieldType.EVENT and packet.value == SSEEventType.ERROR
+            packet.name == _SSE_EVENT_FIELD_NAME
+            and packet.value == _SSE_ERROR_EVENT_VALUE
             for packet in message.packets
         )
 
         if has_error_event:
             error_message = None
             for packet in message.packets:
-                if packet.name == SSEFieldType.COMMENT:
+                if packet.name == _SSE_COMMENT_FIELD_NAME:
                     error_message = packet.value
                     break
 
