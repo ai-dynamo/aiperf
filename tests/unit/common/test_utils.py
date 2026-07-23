@@ -14,12 +14,6 @@ from aiperf.common.utils import (
     call_all_functions,
     call_all_functions_self,
     load_json_str,
-    use_fork_start_method,
-)
-
-_FORK_AVAILABLE = "fork" in mp.get_all_start_methods()
-_requires_fork = pytest.mark.skipif(
-    not _FORK_AVAILABLE, reason="fork start method unavailable on this platform"
 )
 
 
@@ -123,114 +117,6 @@ class TestAllowDaemonChildren:
             assert mp.current_process().daemon is True
         finally:
             self._set_daemon(original)
-
-
-class TestUseForkStartMethod:
-    """``use_fork_start_method`` temporarily forces the 'fork' multiprocessing
-    start method so lighteval's LCB codegen sandbox (which passes a nested local
-    function as the Process target — only picklable-free under fork) grades
-    correctly regardless of the process-wide default (spawn on macOS)."""
-
-    @staticmethod
-    def _restore(original: str | None) -> None:
-        if original is not None:
-            mp.set_start_method(original, force=True)
-
-    @_requires_fork
-    def test_forces_fork_when_default_is_not_fork(self) -> None:
-        original = mp.get_start_method(allow_none=True)
-        try:
-            mp.set_start_method("spawn", force=True)
-            with use_fork_start_method():
-                assert mp.get_start_method() == "fork"
-            # restored to the non-fork default after exit
-            assert mp.get_start_method() == "spawn"
-        finally:
-            self._restore(original)
-
-    @_requires_fork
-    def test_restores_original_on_exception(self) -> None:
-        original = mp.get_start_method(allow_none=True)
-        try:
-            mp.set_start_method("spawn", force=True)
-            with pytest.raises(RuntimeError), use_fork_start_method():
-                assert mp.get_start_method() == "fork"
-                raise RuntimeError("boom")
-            assert mp.get_start_method() == "spawn"
-        finally:
-            self._restore(original)
-
-    @_requires_fork
-    def test_noop_when_already_fork(self) -> None:
-        original = mp.get_start_method(allow_none=True)
-        try:
-            mp.set_start_method("fork", force=True)
-            with use_fork_start_method():
-                assert mp.get_start_method() == "fork"
-            assert mp.get_start_method() == "fork"
-        finally:
-            self._restore(original)
-
-    @_requires_fork
-    def test_reentrant_nested_restores_only_at_outermost_exit(self) -> None:
-        """Nested entries keep fork active until the outermost exits, so an
-        inner block completing doesn't restore spawn while an outer codegen
-        call still needs fork."""
-        original = mp.get_start_method(allow_none=True)
-        try:
-            mp.set_start_method("spawn", force=True)
-            with use_fork_start_method():
-                with use_fork_start_method():
-                    assert mp.get_start_method() == "fork"
-                # inner exited, outer still active → stay fork
-                assert mp.get_start_method() == "fork"
-            # outermost exited → restored
-            assert mp.get_start_method() == "spawn"
-        finally:
-            self._restore(original)
-
-    def test_noop_when_fork_unavailable(self, monkeypatch) -> None:
-        """On platforms without fork (Windows), the context is a pure no-op and
-        never calls set_start_method."""
-        monkeypatch.setattr(mp, "get_all_start_methods", lambda: ["spawn"])
-
-        def _fail(*_a, **_k):
-            raise AssertionError("set_start_method must not be called")
-
-        monkeypatch.setattr(mp, "set_start_method", _fail)
-        with use_fork_start_method():
-            pass  # no exception == pass
-
-    @_requires_fork
-    def test_concurrent_threads_keep_fork_until_all_exit(self) -> None:
-        """Under concurrent use (the LCB asyncio.to_thread grading pattern), fork
-        must stay active while ANY thread is inside the context — an
-        early-finishing thread must not restore spawn under the others."""
-        original = mp.get_start_method(allow_none=True)
-        entered = threading.Barrier(3)  # 2 workers + main
-        release = threading.Event()
-        observed: list[str] = []
-        try:
-            mp.set_start_method("spawn", force=True)
-
-            def worker() -> None:
-                with use_fork_start_method():
-                    entered.wait(timeout=5)
-                    release.wait(timeout=5)
-                    observed.append(mp.get_start_method())
-
-            threads = [threading.Thread(target=worker) for _ in range(2)]
-            for t in threads:
-                t.start()
-            entered.wait(timeout=5)  # both workers inside the context
-            assert mp.get_start_method() == "fork"
-            release.set()
-            for t in threads:
-                t.join(timeout=5)
-            assert observed == ["fork", "fork"]
-            assert mp.get_start_method() == "spawn"
-        finally:
-            self._restore(original)
 
 
 class TestSetDaemon:

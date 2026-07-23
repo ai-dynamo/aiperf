@@ -203,58 +203,6 @@ def allow_daemon_children() -> Iterator[None]:
                 _set_daemon(True)
 
 
-# Reentrancy/thread-safety for use_fork_start_method: the multiprocessing start
-# method is process-global, but LCB grading fans out via asyncio.to_thread so
-# multiple grade() calls may force fork concurrently. A lock-protected depth
-# counter switches to fork on the first entry and restores the original method
-# only when the last concurrent caller exits, so no caller flips the method back
-# to spawn while another is still mid-fork.
-_fork_override_lock = threading.Lock()
-_fork_override_depth = 0
-_fork_override_original: str | None = None
-
-
-@contextmanager
-def use_fork_start_method() -> Iterator[None]:
-    """Temporarily force the ``fork`` multiprocessing start method (reentrant, thread-safe).
-
-    lighteval's LCB codegen sandbox (``check_correctness``) passes a nested local
-    function as the ``multiprocessing.Process`` target, which is only compatible
-    with the ``fork`` start method: under ``spawn``/``forkserver`` the target
-    can't be pickled, the sandbox subprocess never starts, and every test case is
-    silently recorded as failed (``pass@1 = 0``). Forcing ``fork`` around the
-    codegen call keeps grading correct regardless of the process-wide default
-    (``spawn`` on macOS, configurable/``forkserver`` on Linux).
-
-    No-op when ``fork`` is unavailable (Windows — where LCB can't run anyway, as
-    lighteval's harness relies on POSIX ``SIGALRM``) or already the default. Safe
-    under concurrent/nested use: ``fork`` stays active while any caller is inside
-    the context and the original method is restored only when the last caller
-    exits. Composes with :func:`allow_daemon_children`.
-    """
-    global _fork_override_depth, _fork_override_original
-    if "fork" not in mp.get_all_start_methods():
-        yield
-        return
-    with _fork_override_lock:
-        if _fork_override_depth == 0:
-            _fork_override_original = mp.get_start_method(allow_none=False)
-            if _fork_override_original != "fork":
-                mp.set_start_method("fork", force=True)
-        _fork_override_depth += 1
-    try:
-        yield
-    finally:
-        with _fork_override_lock:
-            _fork_override_depth -= 1
-            if (
-                _fork_override_depth == 0
-                and _fork_override_original is not None
-                and _fork_override_original != "fork"
-            ):
-                mp.set_start_method(_fork_override_original, force=True)
-
-
 # This is used to identify the source file of the call_all_functions function
 # in the AIPerfLogger class to skip it when determining the caller.
 # NOTE: Using similar logic to logging._srcfile
