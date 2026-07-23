@@ -201,8 +201,8 @@ spec_decode_adapter:
     Spec-decode adapters read an engine's raw per-request speculative-decoding
     payload off the parsed responses and fill the engine-neutral
     SpecDecodeAcceptanceRecord, so nothing engine-specific leaks into the
-    metrics layer. Auto-detected: adapters are tried in priority order based on
-    can_adapt(). One-to-many mapping: all registered adapters are consulted.
+    metrics layer. Auto-detected: adapters are tried in priority order and the
+    first whose can_adapt() recognizes the payload wins.
 
 
 # =============================================================================

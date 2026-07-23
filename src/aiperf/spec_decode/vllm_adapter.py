@@ -96,7 +96,10 @@ class VLLMSpecDecodeAdapter:
             # payload must not abort a run. can_adapt already matched the vLLM
             # signature, so this only fires when a signature-matching body still
             # has a broken value (a non-dict histogram, a negative count, ...).
+            # Rebind to a normal local so the lazy lambda can reference it (the
+            # ``except ... as e`` name is cleared at block exit).
+            error = e
             _logger.warning(
-                f"Ignoring malformed vLLM spec-decode payload {payload!r}: {e!r}"
+                lambda: f"Ignoring malformed vLLM spec-decode payload {payload!r}: {error!r}"
             )
             return None

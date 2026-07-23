@@ -13,6 +13,7 @@ The sample payloads mirror the wire format from vLLM PR
 https://github.com/vllm-project/vllm/pull/48915.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -78,7 +79,9 @@ class TestVLLMSpecDecodeAdapter:
             param(_streaming, id="streaming"),
         ],
     )  # fmt: skip
-    def test_summary_payload_fills_record(self, make_responses):
+    def test_adapt_summary_payload_fills_record(
+        self, make_responses: Callable[[dict[str, Any]], list[ParsedResponse]]
+    ) -> None:
         responses = make_responses(SUMMARY_PAYLOAD)
 
         assert VLLMSpecDecodeAdapter.can_adapt(responses) is True
@@ -126,12 +129,14 @@ class TestVLLMSpecDecodeAdapter:
             ),
         ],
     )  # fmt: skip
-    def test_absent_or_unrecognized_payload_yields_no_record(self, responses):
+    def test_adapt_absent_or_unrecognized_payload_yields_no_record(
+        self, responses: list[ParsedResponse]
+    ) -> None:
         """No field, or a non-vLLM payload: can_adapt False, adapt None."""
         assert VLLMSpecDecodeAdapter.can_adapt(responses) is False
         assert VLLMSpecDecodeAdapter.adapt(responses) is None
 
-    def test_zero_step_payload(self):
+    def test_adapt_zero_step_payload_fills_record(self) -> None:
         """No verify steps: empty histogram, mean 1.0, rate 0.0 (server-computed)."""
         payload = {
             "mean_acceptance_length": 1.0,
@@ -152,7 +157,7 @@ class TestVLLMSpecDecodeAdapter:
         assert record.num_accepted_draft_tokens == 0
         assert record.num_draft_tokens == 0
 
-    def test_fully_rejected_payload(self):
+    def test_adapt_fully_rejected_payload_fills_record(self) -> None:
         """Every draft rejected: all steps land in the j=0 bucket, mean 1.0."""
         payload = {
             "mean_acceptance_length": 1.0,
@@ -172,7 +177,7 @@ class TestVLLMSpecDecodeAdapter:
         assert record.num_draft_tokens == 60
         assert record.draft_acceptance_rate == 0.0
 
-    def test_detailed_payload_carries_per_step_arrays(self):
+    def test_adapt_detailed_payload_carries_per_step_arrays(self) -> None:
         payload = {
             **SUMMARY_PAYLOAD,
             "per_step_accepted": [0, 1, 3, 0],
@@ -184,14 +189,14 @@ class TestVLLMSpecDecodeAdapter:
         assert record.per_step_accepted == [0, 1, 3, 0]
         assert record.per_step_drafted == [3, 3, 3, 3]
 
-    def test_missing_num_spec_tokens_is_optional(self):
+    def test_adapt_missing_num_spec_tokens_is_optional(self) -> None:
         payload = {k: v for k, v in SUMMARY_PAYLOAD.items() if k != "num_spec_tokens"}
         record = VLLMSpecDecodeAdapter.adapt(_non_streaming(payload))
 
         assert record is not None
         assert record.num_spec_tokens is None
 
-    def test_no_usage_leaves_completion_tokens_none(self):
+    def test_adapt_no_usage_leaves_completion_tokens_none(self) -> None:
         responses = [_response(spec_decode_stats=SUMMARY_PAYLOAD)]
         record = VLLMSpecDecodeAdapter.adapt(responses)
 
@@ -217,14 +222,16 @@ class TestVLLMSpecDecodeAdapter:
             ),
         ],
     )  # fmt: skip
-    def test_malformed_payload_degrades_to_none(self, bad_payload):
+    def test_adapt_malformed_payload_degrades_to_none(
+        self, bad_payload: dict[str, Any]
+    ) -> None:
         """A signature-matching but broken payload must not raise -- no record."""
         responses = [_response(spec_decode_stats=bad_payload)]
         # can_adapt matches the vLLM signature; adapt must swallow the bad shape.
         assert VLLMSpecDecodeAdapter.can_adapt(responses) is True
         assert VLLMSpecDecodeAdapter.adapt(responses) is None
 
-    def test_last_payload_wins_across_chunks(self):
+    def test_adapt_last_payload_wins_across_chunks(self) -> None:
         """If more than one chunk carried stats, the last is authoritative."""
         first = {**SUMMARY_PAYLOAD, "num_spec_steps": 1}
         responses = [
@@ -236,7 +243,7 @@ class TestVLLMSpecDecodeAdapter:
         assert record is not None
         assert record.num_spec_steps == 43
 
-    def test_negative_count_payload_degrades_to_none(self):
+    def test_adapt_negative_count_payload_degrades_to_none(self) -> None:
         """A signature-matching payload with a negative count is rejected by the
         record's ge=0 constraints, and the adapter degrades to None."""
         bad = {**SUMMARY_PAYLOAD, "acceptance_histogram": {"0": -1}}
@@ -254,7 +261,7 @@ class TestVLLMSpecDecodeAdapter:
             param({**SUMMARY_PAYLOAD, "num_draft_tokens": 5}, id="accepted_exceeds_drafted"),
         ],
     )  # fmt: skip
-    def test_inconsistent_aggregate_payload_degrades_to_none(
+    def test_adapt_inconsistent_aggregate_payload_degrades_to_none(
         self, bad_payload: dict[str, Any]
     ) -> None:
         """Contradictory (but non-negative) aggregates fail the record's integer
@@ -287,7 +294,7 @@ class TestRecordConstraints:
             param({"per_step_accepted": [0, -1]}, id="negative_per_step_value"),
         ],
     )  # fmt: skip
-    def test_rejects_negative_counts(self, override):
+    def test_record_rejects_negative_counts(self, override: dict[str, Any]) -> None:
         with pytest.raises(ValidationError):
             SpecDecodeAcceptanceRecord(**{**self._valid_kwargs(), **override})
 
@@ -313,6 +320,8 @@ class TestRecordConstraints:
             ),
         ],
     )  # fmt: skip
-    def test_rejects_inconsistent_aggregates(self, kwargs: dict[str, Any]) -> None:
+    def test_record_rejects_inconsistent_aggregates(
+        self, kwargs: dict[str, Any]
+    ) -> None:
         with pytest.raises(ValidationError):
             SpecDecodeAcceptanceRecord(**{**self._valid_kwargs(), **kwargs})

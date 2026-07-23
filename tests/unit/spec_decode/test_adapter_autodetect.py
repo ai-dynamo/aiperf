@@ -16,13 +16,13 @@ from aiperf.records.inference_result_parser import InferenceResultParser
 from tests.unit.spec_decode.test_vllm_adapter import SUMMARY_PAYLOAD
 
 
-def test_vllm_adapter_is_registered():
+def test_vllm_adapter_is_registered() -> None:
     """The vllm adapter resolves through the spec_decode_adapter category."""
     adapter = plugins.get_class(PluginType.SPEC_DECODE_ADAPTER, "vllm")
     assert adapter.__name__ == "VLLMSpecDecodeAdapter"
 
 
-def test_extract_returns_record_when_stats_present():
+def test_extract_returns_record_when_stats_present() -> None:
     responses = [
         ParsedResponse(perf_ns=1, spec_decode_stats=SUMMARY_PAYLOAD),
         ParsedResponse(perf_ns=2, usage={"completion_tokens": 7}),
@@ -34,17 +34,21 @@ def test_extract_returns_record_when_stats_present():
     assert record.completion_tokens == 7
 
 
-def test_extract_returns_none_when_no_stats():
-    """Fast path: records without any spec-decode payload yield None."""
+def test_extract_returns_none_when_no_stats() -> None:
+    """Records whose responses carry no spec-decode payload yield None."""
     responses = [
         ParsedResponse(perf_ns=1),
         ParsedResponse(perf_ns=2, usage={"completion_tokens": 7}),
     ]
     assert InferenceResultParser._extract_spec_decode_acceptance(responses) is None
+
+
+def test_extract_returns_none_for_empty_responses() -> None:
+    """No responses at all yields None."""
     assert InferenceResultParser._extract_spec_decode_acceptance([]) is None
 
 
-def test_extract_returns_none_for_unrecognized_engine_payload():
+def test_extract_returns_none_for_unrecognized_engine_payload() -> None:
     """A payload present but matching no registered adapter yields no record.
 
     Guards the auto-detection contract: the vLLM adapter must not greedily claim

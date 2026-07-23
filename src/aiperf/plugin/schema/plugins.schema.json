@@ -149,7 +149,7 @@
     "spec_decode_adapter": {
       "title": "Spec Decode Adapter Plugins",
       "type": "object",
-      "description": "Spec-decode adapters read an engine's raw per-request speculative-decoding\npayload off the parsed responses and fill the engine-neutral\nSpecDecodeAcceptanceRecord, so nothing engine-specific leaks into the\nmetrics layer. Auto-detected: adapters are tried in priority order based on\ncan_adapt(). One-to-many mapping: all registered adapters are consulted.",
+      "description": "Spec-decode adapters read an engine's raw per-request speculative-decoding\npayload off the parsed responses and fill the engine-neutral\nSpecDecodeAcceptanceRecord, so nothing engine-specific leaks into the\nmetrics layer. Auto-detected: adapters are tried in priority order and the\nfirst whose can_adapt() recognizes the payload wins.",
       "additionalProperties": {
         "$ref": "#/$defs/SpecDecodeAdapterPlugin"
       }
@@ -1334,7 +1334,7 @@
         "class"
       ],
       "title": "Spec Decode Adapter Plugin",
-      "description": "Spec-decode adapters read an engine's raw per-request speculative-decoding\npayload off the parsed responses and fill the engine-neutral\nSpecDecodeAcceptanceRecord, so nothing engine-specific leaks into the\nmetrics layer. Auto-detected: adapters are tried in priority order based on\ncan_adapt(). One-to-many mapping: all registered adapters are consulted."
+      "description": "Spec-decode adapters read an engine's raw per-request speculative-decoding\npayload off the parsed responses and fill the engine-neutral\nSpecDecodeAcceptanceRecord, so nothing engine-specific leaks into the\nmetrics layer. Auto-detected: adapters are tried in priority order and the\nfirst whose can_adapt() recognizes the payload wins."
     },
     "AccuracyGraderPlugin": {
       "type": "object",
