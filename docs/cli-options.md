@@ -1084,6 +1084,11 @@ Auto-invoke `aiperf plot` against the artifact directory after the benchmark com
 Treat auto-plot failures as fatal: re-raise so `aiperf profile` exits non-zero. Only meaningful when auto-plot is on. Default False = warn and continue.
 <br/>_Flag (no value required)_
 
+#### `--export-outputs-json`
+
+Export generated response text to outputs.json after the run. When enabled, the raw generated-text payload for each request is written to an outputs.json file in the artifact directory.
+<br/>_Flag (no value required)_
+
 #### `--otel-url` `<str>`
 
 OTLP/HTTP metrics endpoint URL.
@@ -2512,6 +2517,11 @@ Auto-invoke `aiperf plot` against the artifact directory after the benchmark com
 #### `--plot-required`
 
 Treat auto-plot failures as fatal: re-raise so `aiperf profile` exits non-zero. Only meaningful when auto-plot is on. Default False = warn and continue.
+<br/>_Flag (no value required)_
+
+#### `--export-outputs-json`
+
+Export generated response text to outputs.json after the run. When enabled, the raw generated-text payload for each request is written to an outputs.json file in the artifact directory.
 <br/>_Flag (no value required)_
 
 #### `--otel-url` `<str>`
