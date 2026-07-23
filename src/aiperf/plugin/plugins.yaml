@@ -195,6 +195,7 @@ endpoint:
       supports_audio: true
       supports_images: true
       supports_videos: true
+      consumes_system_message: true
       metrics_title: LLM Metrics
 
   cohere_rankings:
@@ -234,6 +235,7 @@ endpoint:
       tokenizes_input: true
       supports_images: true
       supports_audio: true
+      consumes_system_message: true
       metrics_title: LLM Metrics
 
   messages:
@@ -250,6 +252,7 @@ endpoint:
       produces_tokens: true
       tokenizes_input: true
       supports_images: true
+      consumes_system_message: true
       metrics_title: LLM Metrics
 
   chat_embeddings:
@@ -265,6 +268,7 @@ endpoint:
       produces_tokens: false
       tokenizes_input: true
       supports_images: true
+      consumes_system_message: true
       metrics_title: Embeddings Metrics
 
   embeddings:
