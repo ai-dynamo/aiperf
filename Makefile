@@ -18,7 +18,7 @@
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install install-app docker docker-run first-time-setup \
 		ci-install check-mock-server-install \
-		test-verbose setup-venv install-mock-server test-ci test-all \
+		test-verbose setup-venv install-mock-server install-mock-amdsmi test-ci test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
@@ -164,6 +164,9 @@ version: #? print the version of the project.
 
 install-mock-server: #? install the mock server in editable mode.
 	$(activate_venv) && uv pip install -e "tests/aiperf_mock_server[dev]"
+
+install-mock-amdsmi: #? install the fake amdsmi bindings for testing the AMD telemetry path (not part of default install).
+	$(activate_venv) && uv pip install -e "tests/aiperf_mock_amdsmi[dev]"
 
 check-mock-server-install: #? verify the mock server package and CLI entry point are installed.
 	$(activate_venv) && python -c "import aiperf_mock_server" && command -v aiperf-mock-server >/dev/null
