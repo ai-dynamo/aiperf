@@ -360,6 +360,10 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # RateSeriesConfig.points: list[RateSeriesPoint], not a numeric field. The
     # substring-based heuristic sees "int" inside "Point".
     "RateSeriesConfig.points",
+    # OutputFragment.metrics: dict[str, MetricValueTypeT], not a numeric leaf.
+    # Per-metric values are constrained by the metrics system; no field-level
+    # bound is meaningful on the container.
+    "OutputFragment.metrics",
 }
 
 
