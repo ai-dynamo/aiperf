@@ -92,16 +92,40 @@ class CodegenGradingWorker:
             await self._handle_fault()
             raise CodegenWorkerError("grading worker exited before responding")
 
-        resp = orjson.loads(line)
+        try:
+            resp = orjson.loads(line)
+        except orjson.JSONDecodeError as exc:
+            # Garbage on stdout means the worker desynced; fault it like an EOF
+            # so it is killed and counted rather than silently reused.
+            await self._handle_fault()
+            raise CodegenWorkerError(
+                f"grading worker emitted non-JSON output: {line!r}"
+            ) from exc
+
+        if not isinstance(resp, dict):
+            await self._handle_fault()
+            raise CodegenWorkerError(
+                f"grading worker emitted a non-object response: {line!r}"
+            )
+
         if not resp.get("ok"):
             # A clean error response is a proven worker; do not restart.
             self._worker_proven = True
             self._start_failures = 0
             raise CodegenWorkerError(resp.get("error", "unknown grading error"))
 
+        metrics = resp.get("metrics")
+        if not isinstance(metrics, dict):
+            # ok:true without a usable metrics dict is a broken worker, not a
+            # clean result; fault it rather than returning junk to the grader.
+            await self._handle_fault()
+            raise CodegenWorkerError(
+                "grading worker reported success without valid metrics"
+            )
+
         self._worker_proven = True
         self._start_failures = 0
-        return resp["metrics"]
+        return metrics
 
     async def _handle_fault(self) -> None:
         _log.debug(

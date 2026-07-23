@@ -136,3 +136,52 @@ class TestTimeoutRestart:
             assert worker._worker_proven is True
         finally:
             await worker.aclose()
+
+
+# Exits immediately without responding (simulates import crash on startup).
+_DIE_ON_START = """
+    import sys
+    sys.exit(1)
+"""
+
+
+class TestCrashAndCap:
+    async def test_worker_that_dies_on_start_hits_cap(self, tmp_path) -> None:
+        worker = CodegenGradingWorker(
+            worker_cmd=_write_worker(tmp_path, _DIE_ON_START), max_start_failures=3
+        )
+        try:
+            for _ in range(3):
+                with pytest.raises(CodegenWorkerError):
+                    await worker.grade_codegen(
+                        [{"input_output": "{}"}], [["x"]], timeout=5
+                    )
+            # Cap reached: further grades fast-fail without spawning.
+            with pytest.raises(CodegenWorkerError, match="unavailable after"):
+                await worker.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=5)
+        finally:
+            await worker.aclose()
+
+
+# Reads a request then emits a non-JSON line, simulating a worker whose stdout
+# has desynced. The raw bytes must not propagate as a decode error.
+_EMIT_GARBAGE = """
+    import sys
+    for line in sys.stdin.buffer:
+        line = line.strip()
+        if not line:
+            continue
+        sys.stdout.buffer.write(b"not json\\n")
+        sys.stdout.buffer.flush()
+"""
+
+
+class TestMalformedResponse:
+    async def test_non_json_response_faults_and_kills_worker(self, tmp_path) -> None:
+        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _EMIT_GARBAGE))
+        try:
+            with pytest.raises(CodegenWorkerError):
+                await worker.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=5)
+            assert worker._proc is None
+        finally:
+            await worker.aclose()
