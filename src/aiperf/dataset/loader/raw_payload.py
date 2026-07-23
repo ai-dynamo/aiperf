@@ -161,8 +161,9 @@ def _dir_has_raw_payload_jsonl(directory: Path) -> bool:
                     return isinstance(record, dict) and isinstance(
                         record.get("messages"), list
                     )
-        except (orjson.JSONDecodeError, ValueError):
-            # Narrow: only malformed JSON is skipped. OSError/PermissionError
+        except ValueError:
+            # Narrow: only malformed JSON is skipped (orjson.JSONDecodeError is a
+            # ValueError subclass). OSError/PermissionError
             # from an unreadable file must propagate so can_load fails loud
             # instead of silently misclassifying the directory.
             continue

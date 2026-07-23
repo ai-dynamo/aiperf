@@ -130,13 +130,22 @@ class TestWave2FixForwardCompatibility:
         with pytest.raises(ValueError, match="duplicate"):
             loader.load_dataset()
 
+    @pytest.mark.parametrize(
+        "missing_key",
+        [
+            param("session_id", id="session_id"),
+            param("payloads", id="payloads"),
+        ],
+    )  # fmt: skip
     def test_load_dataset_missing_required_key_raises_value_error_post_fix(
-        self, tmp_path
+        self, tmp_path, missing_key
     ):
+        entry = {"session_id": "s", "payloads": [{"x": 1}]}
+        del entry[missing_key]
         path = tmp_path / "inputs.json"
-        path.write_bytes(orjson.dumps({"data": [{"payloads": [{"x": 1}]}]}))
+        path.write_bytes(orjson.dumps({"data": [entry]}))
         loader = _make_loader(path)
-        with pytest.raises(ValueError, match="session_id"):
+        with pytest.raises(ValueError, match=missing_key):
             loader.load_dataset()
 
     @pytest.mark.parametrize(
