@@ -15,9 +15,9 @@ multithreaded-fork hang. See issue #1145.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, BinaryIO
 
-import orjson  # noqa: F401  # used by run_worker_loop stream loop added in a later task
+import orjson
 
 _LCB_PASS_AT_K = (1,)
 _LCB_NUM_PROCESSES = 8
@@ -61,3 +61,27 @@ def _is_number(value: Any) -> bool:
         return True
     except (TypeError, ValueError):
         return False
+
+
+def run_worker_loop(
+    stdin: BinaryIO,
+    out: BinaryIO,
+    codegen_fn: Callable[..., tuple[dict[str, Any], Any]],
+) -> None:
+    """Serve JSONL grading requests until stdin EOF. One response per request."""
+    for line in stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            req = orjson.loads(line)
+        except orjson.JSONDecodeError as exc:
+            resp: dict[str, Any] = {
+                "id": None,
+                "ok": False,
+                "error": f"bad json: {exc}",
+            }
+        else:
+            resp = handle_request(req, codegen_fn)
+        out.write(orjson.dumps(resp) + b"\n")
+        out.flush()
