@@ -51,6 +51,13 @@ RATE_METRICS = {
     "cancellation_rate",
     "request_cancellation_rate",
 }
+ZERO_SUCCESS_WINDOW_METRICS = {
+    "error_rate",
+    "request_error_rate",
+    "cancellation_rate",
+    "request_cancellation_rate",
+}
+
 SUPPORTED_METRICS_MESSAGE = (
     "adaptive_scale supports request_latency, time_to_first_token, "
     "inter_token_latency, request throughput, output_token_throughput, "
@@ -285,6 +292,29 @@ class AdaptiveScaleSLAEvaluator:
             )
         for sla in sla_filters:
             self.validate_single_filter(sla)
+
+    @staticmethod
+    def can_evaluate_without_successes(
+        sla_filters: list[SLAFilter], stats: WindowStats
+    ) -> bool:
+        """Return True when zero-success terminal states are covered by SLA filters."""
+        if not all(
+            sla.metric_tag in ZERO_SUCCESS_WINDOW_METRICS for sla in sla_filters
+        ):
+            return False
+
+        if stats.errors and stats.cancelled:
+            return False
+
+        metric_tags = {sla.metric_tag for sla in sla_filters}
+        has_error_rate_filter = bool(metric_tags & {"error_rate", "request_error_rate"})
+        if stats.errors and not has_error_rate_filter:
+            return False
+
+        has_cancellation_rate_filter = bool(
+            metric_tags & {"cancellation_rate", "request_cancellation_rate"}
+        )
+        return not (stats.cancelled and not has_cancellation_rate_filter)
 
     @staticmethod
     def validate_single_filter(sla: SLAFilter) -> None:

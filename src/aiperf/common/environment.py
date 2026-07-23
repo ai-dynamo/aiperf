@@ -240,6 +240,32 @@ class _DatasetSettings(BaseSettings):
         "Example: AIPERF_DATASET_MMAP_BASE_PATH=/mnt/shared-pvc "
         "creates files at /mnt/shared-pvc/aiperf_mmap_{benchmark_id}/",
     )
+    MMAP_CACHE_ENABLED: bool = Field(
+        default=True,
+        description="If True, AIPerf reuses memory-mapped dataset files across runs whose "
+        "input bytes, tokenizer identity, and prompt/input settings are byte-identical. "
+        "Set to False to force every run to re-tokenize and re-write its mmap files. "
+        "Cache misses still produce byte-identical mmap files to a non-cached run.",
+    )
+    MMAP_CACHE_DIR: Path | None = Field(
+        default=None,
+        description="Directory holding the content-addressed mmap cache. If None, defaults to "
+        "~/.cache/aiperf/dataset_mmap. Each cache entry lives under a `dir/key` subpath and contains "
+        "dataset.dat, index.dat, and manifest.json. "
+        "No automatic eviction is implemented yet -- delete the directory to reclaim disk.",
+    )
+    PREFORMAT_PAYLOADS: bool = Field(
+        default=False,
+        description="If True, pre-encode single-turn / self-contained synthetic "
+        "conversations to the PAYLOAD_BYTES mmap fast path at dataset-build time "
+        "so workers stream the bytes verbatim and skip per-request encoding. This "
+        "is a throughput optimization that DROPS input-tokenization metrics "
+        "(input_sequence_length, image counts) because the structured prompt is "
+        "discarded. Default False keeps the structured-turns (CONVERSATION) path "
+        "so those metrics are computed. Datasets that natively ship raw payloads "
+        "(raw_payload / inputs_json / mooncake-with-payload) always use "
+        "PAYLOAD_BYTES regardless of this flag.",
+    )
     PUBLIC_DATASET_TIMEOUT: float = Field(
         ge=1.0,
         le=100000.0,
@@ -494,6 +520,18 @@ class _HTTPSettings(BaseSettings):
         description="Trust environment variables for HTTP client configuration. "
         "When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, "
         "and NO_PROXY environment variables.",
+    )
+    X_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
+        default=False,
+        description="Also send X-Session-ID with the stable X-Correlation-ID value. "
+        "Use this when an external router requires a session-affinity header. This is "
+        "ADDITIVE (both headers are sent); --session-header only RENAMES the single "
+        "correlation header.",
+    )
+    X_SMG_ROUTING_KEY_FROM_CORRELATION_ID: bool = Field(
+        default=False,
+        description="Also send X-SMG-Routing-Key with the stable X-Correlation-ID value. "
+        "Use this with the SGLang Model Gateway manual routing policy.",
     )
     X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
         default=False,
