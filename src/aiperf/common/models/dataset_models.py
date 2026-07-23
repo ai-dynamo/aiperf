@@ -5,12 +5,13 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, ClassVar
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from aiperf.common.enums import (
     ConversationBranchMode,
     ConversationContextMode,
     MediaType,
+    MemoryMapFormat,
 )
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch import ConversationBranchInfo
@@ -43,6 +44,11 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
 
     client_type: DatasetClientStoreType = DatasetClientStoreType.MEMORY_MAP
 
+    format: MemoryMapFormat = Field(
+        default=MemoryMapFormat.CONVERSATION,
+        description="Storage format of the memory-mapped dataset files "
+        "(serialized Conversations vs pre-encoded per-turn payload bytes).",
+    )
     data_file_path: Path = Field(
         ...,
         description="Path to the memory-mapped data file containing serialized conversations.",
@@ -98,6 +104,29 @@ class Image(Media):
     """Media that contains image data."""
 
     media_type: ClassVar[MediaTypeT] = MediaType.IMAGE
+
+    uuids: list[str] = Field(
+        default_factory=list,
+        description="Optional cache UUIDs aligned 1:1 with `contents`. "
+        "UUID-only references normalize omitted contents to empty strings; "
+        "otherwise lengths must match. "
+        "vLLM-extension only: opaque IDs that let the server reuse a cached "
+        "processed image embedding across requests. Authored UUIDs pass through "
+        "on the chat endpoint regardless of automatic stripping.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_uuid_alignment(self) -> "Image":
+        if self.uuids and not self.contents:
+            self.contents = [""] * len(self.uuids)
+        elif self.uuids and len(self.uuids) != len(self.contents):
+            raise ValueError(
+                f"Image.uuids length ({len(self.uuids)}) must match "
+                f"contents length ({len(self.contents)}) when set."
+            )
+        if any(uuid == "" for uuid in self.uuids):
+            raise ValueError("Image.uuids must not contain empty strings")
+        return self
 
 
 class Audio(Media):
@@ -254,8 +283,10 @@ class Turn(AIPerfBaseModel):
 
         This preserves text data (needed for tokenization) and raw messages/tools
         (needed for API payload reconstruction) but replaces potentially large
-        image/audio/video contents with small placeholder strings. This is
-        more efficient than a full deep copy followed by stripping.
+        image/audio/video contents with small placeholder strings. Empty image
+        slots are preserved so cache-only UUID references remain distinguishable
+        from images whose content was present on the wire. This is more efficient
+        than a full deep copy followed by stripping.
 
         Returns:
             A new Turn with stripped multimodal contents and messages.
@@ -275,7 +306,11 @@ class Turn(AIPerfBaseModel):
             images=[
                 Image(
                     name=img.name,
-                    contents=[f"image_{i}" for i in range(len(img.contents))],
+                    contents=[
+                        f"image_{i}" if content else ""
+                        for i, content in enumerate(img.contents)
+                    ],
+                    uuids=list(img.uuids),
                 )
                 for img in self.images
             ],

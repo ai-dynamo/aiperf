@@ -34,7 +34,7 @@ class TestImageGenerationEndpoint:
             f"""
             aiperf profile \
                 --model black-forest-labs/FLUX.1-dev \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type image_generation \
                 --synthetic-input-tokens-mean 150 \
                 --synthetic-input-tokens-stddev 30 \
@@ -64,7 +64,7 @@ class TestImageGenerationEndpoint:
             f"""
             aiperf profile \
                 --model black-forest-labs/FLUX.1-dev \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type image_generation \
                 --extra-inputs size:512x512 quality:standard \
                 --request-count {defaults.request_count} \

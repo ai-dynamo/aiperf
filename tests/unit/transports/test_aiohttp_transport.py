@@ -1634,3 +1634,64 @@ class TestConnectionStrategiesStress:
         assert len(transport.lease_manager._leases) == 0
 
         await transport.stop()
+
+
+class TestSendRequestPayloadEncoding:
+    """Payload-type dispatch in send_request: bytes verbatim, multipart dicts
+    through FormData, plain dicts through orjson."""
+
+    @pytest.mark.asyncio
+    async def test_multipart_dict_payload_builds_form_data(
+        self, model_endpoint_non_streaming
+    ):
+        import aiohttp as aiohttp_lib
+
+        from aiperf.common.enums import RequestContentType
+
+        multipart_endpoint = model_endpoint_non_streaming.model_copy(
+            update={
+                "endpoint": model_endpoint_non_streaming.endpoint.model_copy(
+                    update={
+                        "request_content_type": RequestContentType.MULTIPART_FORM_DATA
+                    }
+                )
+            }
+        )
+        transport = AioHttpTransport(model_endpoint=multipart_endpoint)
+        await transport.initialize()
+        transport.aiohttp_client.post_request = AsyncMock(return_value=RequestRecord())
+
+        request_info = create_request_info(multipart_endpoint)
+        await transport.send_request(request_info, {"prompt": "hello", "n": 1})
+
+        body = transport.aiohttp_client.post_request.call_args[0][1]
+        assert isinstance(body, aiohttp_lib.FormData)
+        await transport.stop()
+
+    @pytest.mark.asyncio
+    async def test_bytes_payload_sent_verbatim_even_for_multipart(
+        self, model_endpoint_non_streaming
+    ):
+        """Pre-encoded bytes are never re-wrapped, regardless of content type."""
+        from aiperf.common.enums import RequestContentType
+
+        multipart_endpoint = model_endpoint_non_streaming.model_copy(
+            update={
+                "endpoint": model_endpoint_non_streaming.endpoint.model_copy(
+                    update={
+                        "request_content_type": RequestContentType.MULTIPART_FORM_DATA
+                    }
+                )
+            }
+        )
+        transport = AioHttpTransport(model_endpoint=multipart_endpoint)
+        await transport.initialize()
+        transport.aiohttp_client.post_request = AsyncMock(return_value=RequestRecord())
+
+        payload_bytes = b'{"prompt": "verbatim"}'
+        request_info = create_request_info(multipart_endpoint)
+        await transport.send_request(request_info, payload_bytes)
+
+        body = transport.aiohttp_client.post_request.call_args[0][1]
+        assert body is payload_bytes
+        await transport.stop()

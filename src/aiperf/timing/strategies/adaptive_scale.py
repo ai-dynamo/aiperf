@@ -205,7 +205,25 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
         return (observed - sla.threshold) / threshold
 
     def _resolve_artifact_path(self, filename: str) -> Path | None:
-        return self._artifacts.resolve_path(self._config.artifact_dir, filename)
+        return self._artifacts.phase_scoped_path(
+            self._config.artifact_dir, self._config.phase_name, filename
+        )
+
+    def _write_adaptive_manifest_entry(self) -> None:
+        if self._config.artifact_dir is None or self._config.phase_name is None:
+            return
+        phase_root = f"phases/{self._config.phase_name}"
+        self._artifacts.write_manifest_entry(
+            self._config.artifact_dir,
+            {
+                "phase_index": self._config.phase_index,
+                "profiling_index": self._config.profiling_index,
+                "phase_name": self._config.phase_name,
+                "phase_kind": self._config.phase_kind,
+                "events_path": f"{phase_root}/{self.EVENT_FILE}",
+                "summary_path": f"{phase_root}/{self.SUMMARY_FILE}",
+            },
+        )
 
     async def setup_phase(self) -> None:
         await self._artifacts.start()
@@ -224,6 +242,7 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
                 sample_count=0,
                 error_count=0,
             )
+            self._write_adaptive_manifest_entry()
             await self._artifacts.flush()
             setup_complete = True
         finally:
@@ -233,10 +252,25 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
     async def execute_phase(self) -> None:
         self._assessment_task = asyncio.create_task(self._assessment_loop())
         try:
-            if self._user_strategy is not None:
-                await self._user_strategy.execute_phase()
-            else:
-                await super().execute_phase()
+            try:
+                if self._user_strategy is not None:
+                    await self._user_strategy.execute_phase()
+                else:
+                    await super().execute_phase()
+            except asyncio.CancelledError:
+                if self._completed_reason is None:
+                    self._complete_controller(
+                        reason="phase_cancelled",
+                        terminal_event="adaptive_failed",
+                    )
+                raise
+            except Exception as exc:
+                if self._completed_reason is None:
+                    self._complete_controller(
+                        reason=f"phase_failed: {exc}",
+                        terminal_event="adaptive_failed",
+                    )
+                raise
         finally:
             if self._completed_reason is None:
                 self._complete_controller(reason="phase_stopped")
@@ -269,9 +303,18 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
             "cancelled": self._retired_user_cancellations,
         }
 
+    def _is_pre_sustain_credit(self, credit: Credit) -> bool:
+        return (
+            self._controller_phase == "sustain"
+            and self._sustain_started_at_ns is not None
+            and credit.issued_at_ns < self._sustain_started_at_ns
+        )
+
     async def handle_credit_result(self, credit_return: CreditReturn) -> None:
         async with self._lock:
             ttft_ns = self._window_ttft_by_credit_id.pop(credit_return.credit.id, None)
+            if self._is_pre_sustain_credit(credit_return.credit):
+                return
             if (
                 credit_return.error is not None
                 or credit_return.request_latency_ns is None

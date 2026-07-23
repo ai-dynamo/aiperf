@@ -372,7 +372,7 @@ aiperf profile \
   --model echo-model \
   --url http://localhost:8000 \
   --endpoint-type echo \
-  --tokenizer gpt2 \
+  --tokenizer builtin \
   --synthetic-input-tokens-mean 100 \
   --request-count 10
 
@@ -381,7 +381,7 @@ aiperf profile \
   --model echo-model \
   --url http://localhost:8000 \
   --endpoint-type echo \
-  --tokenizer gpt2 \
+  --tokenizer builtin \
   --synthetic-input-tokens-mean 100 \
   --concurrency 4 \
   --request-count 100

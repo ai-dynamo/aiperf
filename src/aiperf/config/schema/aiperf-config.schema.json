@@ -930,10 +930,19 @@
                   "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
                   "properties": {
                     "adaptiveScale": {
-                      "default": false,
-                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                       "title": "Adaptivescale",
-                      "type": "boolean"
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     },
                     "adaptiveSustainDuration": {
                       "anyOf": [
@@ -1042,13 +1051,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "concurrency",
@@ -1058,7 +1081,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -1215,6 +1238,21 @@
                       "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
                       "title": "Seamless",
                       "type": "boolean"
+                    },
+                    "adaptive_scale": {
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                      "title": "Adaptivescale",
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -1228,10 +1266,19 @@
                   "description": "Poisson-distributed request arrivals at the target rate.",
                   "properties": {
                     "adaptiveScale": {
-                      "default": false,
-                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                       "title": "Adaptivescale",
-                      "type": "boolean"
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     },
                     "adaptiveSustainDuration": {
                       "anyOf": [
@@ -1340,13 +1387,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "poisson",
@@ -1356,7 +1417,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -1522,10 +1583,18 @@
                       "type": "boolean"
                     },
                     "rate": {
-                      "description": "Target request rate in requests per second (must be > 0).",
-                      "exclusiveMinimum": 0,
-                      "title": "Rate",
-                      "type": "number"
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                      "title": "Rate"
                     },
                     "rateRamp": {
                       "anyOf": [
@@ -1538,24 +1607,89 @@
                       ],
                       "default": null,
                       "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "rateSeries": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RateSeriesConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Piecewise-linear request-rate schedule."
+                    },
+                    "adaptive_scale": {
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                      "title": "Adaptivescale",
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     }
                   },
                   "required": [
-                    "type",
-                    "rate"
+                    "type"
                   ],
                   "title": "PoissonPhase",
-                  "type": "object"
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "oneOf": [
+                        {
+                          "required": [
+                            "rate"
+                          ],
+                          "properties": {
+                            "rate": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "required": [
+                            "rateSeries"
+                          ],
+                          "properties": {
+                            "rateSeries": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
                 },
                 {
                   "additionalProperties": false,
                   "description": "Gamma-distributed request arrivals with configurable smoothness.",
                   "properties": {
                     "adaptiveScale": {
-                      "default": false,
-                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                       "title": "Adaptivescale",
-                      "type": "boolean"
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     },
                     "adaptiveSustainDuration": {
                       "anyOf": [
@@ -1664,13 +1798,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "gamma",
@@ -1680,7 +1828,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -1846,10 +1994,18 @@
                       "type": "boolean"
                     },
                     "rate": {
-                      "description": "Target request rate in requests per second (must be > 0).",
-                      "exclusiveMinimum": 0,
-                      "title": "Rate",
-                      "type": "number"
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                      "title": "Rate"
                     },
                     "rateRamp": {
                       "anyOf": [
@@ -1862,6 +2018,18 @@
                       ],
                       "default": null,
                       "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "rateSeries": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RateSeriesConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Piecewise-linear request-rate schedule."
                     },
                     "smoothness": {
                       "anyOf": [
@@ -1876,24 +2044,77 @@
                       "default": null,
                       "description": "Gamma distribution shape parameter (must be > 0). 1.0 = Poisson, <1 = bursty, >1 = regular.",
                       "title": "Smoothness"
+                    },
+                    "adaptive_scale": {
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                      "title": "Adaptivescale",
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     }
                   },
                   "required": [
-                    "type",
-                    "rate"
+                    "type"
                   ],
                   "title": "GammaPhase",
-                  "type": "object"
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "oneOf": [
+                        {
+                          "required": [
+                            "rate"
+                          ],
+                          "properties": {
+                            "rate": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "required": [
+                            "rateSeries"
+                          ],
+                          "properties": {
+                            "rateSeries": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
                 },
                 {
                   "additionalProperties": false,
                   "description": "Constant-rate request arrivals (fixed inter-arrival time).",
                   "properties": {
                     "adaptiveScale": {
-                      "default": false,
-                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                       "title": "Adaptivescale",
-                      "type": "boolean"
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     },
                     "adaptiveSustainDuration": {
                       "anyOf": [
@@ -2002,13 +2223,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "constant",
@@ -2018,7 +2253,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -2184,10 +2419,18 @@
                       "type": "boolean"
                     },
                     "rate": {
-                      "description": "Target request rate in requests per second (must be > 0).",
-                      "exclusiveMinimum": 0,
-                      "title": "Rate",
-                      "type": "number"
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                      "title": "Rate"
                     },
                     "rateRamp": {
                       "anyOf": [
@@ -2200,24 +2443,89 @@
                       ],
                       "default": null,
                       "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "rateSeries": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/RateSeriesConfig"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Piecewise-linear request-rate schedule."
+                    },
+                    "adaptive_scale": {
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                      "title": "Adaptivescale",
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     }
                   },
                   "required": [
-                    "type",
-                    "rate"
+                    "type"
                   ],
                   "title": "ConstantPhase",
-                  "type": "object"
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "oneOf": [
+                        {
+                          "required": [
+                            "rate"
+                          ],
+                          "properties": {
+                            "rate": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "required": [
+                            "rateSeries"
+                          ],
+                          "properties": {
+                            "rateSeries": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
                 },
                 {
                   "additionalProperties": false,
                   "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
                   "properties": {
                     "adaptiveScale": {
-                      "default": false,
-                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                       "title": "Adaptivescale",
-                      "type": "boolean"
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     },
                     "adaptiveSustainDuration": {
                       "anyOf": [
@@ -2326,13 +2634,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "user_centric",
@@ -2342,7 +2664,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -2508,10 +2830,18 @@
                       "type": "boolean"
                     },
                     "rate": {
-                      "description": "Target request rate in requests per second (must be > 0).",
-                      "exclusiveMinimum": 0,
-                      "title": "Rate",
-                      "type": "number"
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                      "title": "Rate"
                     },
                     "rateRamp": {
                       "anyOf": [
@@ -2530,25 +2860,60 @@
                       "minimum": 1,
                       "title": "Users",
                       "type": "integer"
+                    },
+                    "adaptive_scale": {
+                      "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                      "title": "Adaptivescale",
+                      "anyOf": [
+                        {
+                          "default": false,
+                          "description": "Enable single-run adaptive scale control for this phase.",
+                          "title": "Adaptivescale",
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                        }
+                      ]
                     }
                   },
                   "required": [
                     "type",
-                    "rate",
-                    "users"
+                    "users",
+                    "rate"
                   ],
                   "title": "UserCentricPhase",
-                  "type": "object"
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
                 },
                 {
                   "additionalProperties": false,
                   "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
                   "properties": {
                     "adaptiveScale": {
-                      "default": false,
-                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "description": "Enable single-run adaptive scale control for this phase. Fixed-schedule phases only accept disabled adaptive-scale no-op blocks.",
                       "title": "Adaptivescale",
-                      "type": "boolean"
+                      "anyOf": [
+                        {
+                          "const": false
+                        },
+                        {
+                          "$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"
+                        }
+                      ]
                     },
                     "adaptiveSustainDuration": {
                       "anyOf": [
@@ -2657,13 +3022,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "fixed_schedule",
@@ -2673,7 +3052,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -2871,6 +3250,18 @@
                       "default": null,
                       "description": "Filter out trace requests after this timestamp in ms (must be >= 0).",
                       "title": "Endoffset"
+                    },
+                    "adaptive_scale": {
+                      "description": "Enable single-run adaptive scale control for this phase. Fixed-schedule phases only accept disabled adaptive-scale no-op blocks.",
+                      "title": "Adaptivescale",
+                      "anyOf": [
+                        {
+                          "const": false
+                        },
+                        {
+                          "$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -3466,6 +3857,20 @@
                   "default": null,
                   "description": "Output sequence length to apply when records do not specify one. Can be a fixed integer or {mean, stddev} distribution. Per-line `output_length` values in the file always take precedence.",
                   "title": "Osl"
+                },
+                "blockSize": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Token block size for hash-based prompt reconstruction from `hash_ids` in trace datasets. Overrides the loader's `default_block_size` plugin metadata. Governs how the recorded `input_length` is partitioned into cache blocks (mooncake_trace and other hash-reconstructing loaders); it has no effect on loaders that replay literal recorded prompts (baseten_trace). Set this when a trace was recorded at a block size different from its loader default, e.g. a Mooncake-format trace recorded at block size 16. None uses the loader default.",
+                  "title": "Blocksize"
                 }
               },
               "required": [
@@ -3566,10 +3971,19 @@
               "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -3678,13 +4092,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "concurrency",
@@ -3694,7 +4122,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -3851,6 +4279,21 @@
                   "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
                   "title": "Seamless",
                   "type": "boolean"
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -3864,10 +4307,19 @@
               "description": "Poisson-distributed request arrivals at the target rate.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -3976,13 +4428,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "poisson",
@@ -3992,7 +4458,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -4158,10 +4624,18 @@
                   "type": "boolean"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -4174,24 +4648,89 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "PoissonPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
               "description": "Gamma-distributed request arrivals with configurable smoothness.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -4300,13 +4839,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "gamma",
@@ -4316,7 +4869,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -4482,10 +5035,18 @@
                   "type": "boolean"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -4498,6 +5059,18 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
                 },
                 "smoothness": {
                   "anyOf": [
@@ -4512,24 +5085,77 @@
                   "default": null,
                   "description": "Gamma distribution shape parameter (must be > 0). 1.0 = Poisson, <1 = bursty, >1 = regular.",
                   "title": "Smoothness"
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "GammaPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
               "description": "Constant-rate request arrivals (fixed inter-arrival time).",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -4638,13 +5264,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "constant",
@@ -4654,7 +5294,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -4820,10 +5460,18 @@
                   "type": "boolean"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -4836,24 +5484,89 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "ConstantPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
               "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -4962,13 +5675,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "user_centric",
@@ -4978,7 +5705,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -5144,10 +5871,18 @@
                   "type": "boolean"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -5166,25 +5901,60 @@
                   "minimum": 1,
                   "title": "Users",
                   "type": "integer"
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
                 "type",
-                "rate",
-                "users"
+                "users",
+                "rate"
               ],
               "title": "UserCentricPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "required": [
+                    "rate"
+                  ],
+                  "properties": {
+                    "rate": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  }
+                }
+              ]
             },
             {
               "additionalProperties": false,
               "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Fixed-schedule phases only accept disabled adaptive-scale no-op blocks.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -5293,13 +6063,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "fixed_schedule",
@@ -5309,7 +6093,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -5507,6 +6291,18 @@
                   "default": null,
                   "description": "Filter out trace requests after this timestamp in ms (must be >= 0).",
                   "title": "Endoffset"
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Fixed-schedule phases only accept disabled adaptive-scale no-op blocks.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -5536,10 +6332,19 @@
               "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -5648,13 +6453,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "concurrency",
@@ -5664,7 +6483,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -5821,6 +6640,21 @@
                   "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
                   "title": "Seamless",
                   "type": "boolean"
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -5834,10 +6668,19 @@
               "description": "Poisson-distributed request arrivals at the target rate.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -5946,13 +6789,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "poisson",
@@ -5962,7 +6819,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -6128,10 +6985,18 @@
                   "type": "boolean"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -6144,24 +7009,89 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "PoissonPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
               "description": "Gamma-distributed request arrivals with configurable smoothness.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -6270,13 +7200,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "gamma",
@@ -6286,7 +7230,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -6452,10 +7396,18 @@
                   "type": "boolean"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -6468,6 +7420,18 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
                 },
                 "smoothness": {
                   "anyOf": [
@@ -6482,24 +7446,77 @@
                   "default": null,
                   "description": "Gamma distribution shape parameter (must be > 0). 1.0 = Poisson, <1 = bursty, >1 = regular.",
                   "title": "Smoothness"
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "GammaPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
               "description": "Constant-rate request arrivals (fixed inter-arrival time).",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -6608,13 +7625,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "constant",
@@ -6624,7 +7655,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -6790,10 +7821,18 @@
                   "type": "boolean"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -6806,24 +7845,89 @@
                   ],
                   "default": null,
                   "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "rateSeries": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RateSeriesConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Piecewise-linear request-rate schedule."
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
-                "type",
-                "rate"
+                "type"
               ],
               "title": "ConstantPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "oneOf": [
+                    {
+                      "required": [
+                        "rate"
+                      ],
+                      "properties": {
+                        "rate": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "rateSeries"
+                      ],
+                      "properties": {
+                        "rateSeries": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             },
             {
               "additionalProperties": false,
               "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -6932,13 +8036,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "user_centric",
@@ -6948,7 +8066,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -7114,10 +8232,18 @@
                   "type": "boolean"
                 },
                 "rate": {
-                  "description": "Target request rate in requests per second (must be > 0).",
-                  "exclusiveMinimum": 0,
-                  "title": "Rate",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Target request rate in requests per second. Required unless rate_series is set.",
+                  "title": "Rate"
                 },
                 "rateRamp": {
                   "anyOf": [
@@ -7136,25 +8262,60 @@
                   "minimum": 1,
                   "title": "Users",
                   "type": "integer"
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    {
+                      "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
                 "type",
-                "rate",
-                "users"
+                "users",
+                "rate"
               ],
               "title": "UserCentricPhase",
-              "type": "object"
+              "type": "object",
+              "allOf": [
+                {
+                  "required": [
+                    "rate"
+                  ],
+                  "properties": {
+                    "rate": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  }
+                }
+              ]
             },
             {
               "additionalProperties": false,
               "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
               "properties": {
                 "adaptiveScale": {
-                  "default": false,
-                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "description": "Enable single-run adaptive scale control for this phase. Fixed-schedule phases only accept disabled adaptive-scale no-op blocks.",
                   "title": "Adaptivescale",
-                  "type": "boolean"
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"
+                    }
+                  ]
                 },
                 "adaptiveSustainDuration": {
                   "anyOf": [
@@ -7263,13 +8424,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "fixed_schedule",
@@ -7279,7 +8454,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -7477,6 +8652,18 @@
                   "default": null,
                   "description": "Filter out trace requests after this timestamp in ms (must be >= 0).",
                   "title": "Endoffset"
+                },
+                "adaptive_scale": {
+                  "description": "Enable single-run adaptive scale control for this phase. Fixed-schedule phases only accept disabled adaptive-scale no-op blocks.",
+                  "title": "Adaptivescale",
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -7615,10 +8802,19 @@
       "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
       "properties": {
         "adaptiveScale": {
-          "default": false,
-          "description": "Enable single-run adaptive scale control for this phase.",
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
           "title": "Adaptivescale",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         },
         "adaptiveSustainDuration": {
           "anyOf": [
@@ -7850,13 +9046,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "concurrency",
@@ -7866,7 +9076,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -8118,6 +9328,21 @@
           "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
           "title": "Seamless",
           "type": "boolean"
+        },
+        "adaptive_scale": {
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+          "title": "Adaptivescale",
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         }
       },
       "required": [
@@ -8142,10 +9367,19 @@
       "description": "Constant-rate request arrivals (fixed inter-arrival time).",
       "properties": {
         "adaptiveScale": {
-          "default": false,
-          "description": "Enable single-run adaptive scale control for this phase.",
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
           "title": "Adaptivescale",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         },
         "adaptiveSustainDuration": {
           "anyOf": [
@@ -8377,13 +9611,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "constant",
@@ -8393,7 +9641,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -8647,14 +9895,13 @@
           "type": "boolean"
         },
         "rate": {
-          "description": "Target request rate in requests per second (must be > 0).",
-          "title": "Rate",
-          "oneOf": [
+          "anyOf": [
             {
-              "description": "Target request rate in requests per second (must be > 0).",
               "exclusiveMinimum": 0,
-              "title": "Rate",
               "type": "number"
+            },
+            {
+              "type": "null"
             },
             {
               "type": "string",
@@ -8667,6 +9914,9 @@
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
+          "default": null,
+          "description": "Target request rate in requests per second. Required unless rate_series is set.",
+          "title": "Rate",
           "x-jinja2-supported": true
         },
         "rateRamp": {
@@ -8691,15 +9941,71 @@
           "default": null,
           "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
+        },
+        "rateSeries": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateSeriesConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Piecewise-linear request-rate schedule."
+        },
+        "adaptive_scale": {
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+          "title": "Adaptivescale",
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         }
       },
       "required": [
         "name",
-        "type",
-        "rate"
+        "type"
       ],
       "title": "ConstantPhase",
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "rate"
+              ],
+              "properties": {
+                "rate": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            },
+            {
+              "required": [
+                "rateSeries"
+              ],
+              "properties": {
+                "rateSeries": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
     },
     "ConvergenceConfig": {
       "additionalProperties": false,
@@ -9286,6 +10592,12 @@
           "description": "HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header. Useful when the inference server expects a custom session-affinity header (e.g. `--session-header X-Session-ID`).",
           "title": "Sessionheader"
         },
+        "uuidAndStrip": {
+          "default": false,
+          "description": "Enable AIPerf-managed image stripping for vLLM's multimodal processor cache. Dataset-authored image UUIDs, including UUID-only cache references, always pass through on the chat endpoint; this flag only strips repeated content after AIPerf observes it in the same session. Automatic stripping supports only single_turn datasets with session_id-grouped rows; multi_turn is rejected. The server cache must cover the working set, and requests in a session must reach a replica that retains earlier UUIDs.",
+          "title": "Uuidandstrip",
+          "type": "boolean"
+        },
         "waitForModelTimeout": {
           "default": 0.0,
           "description": "Enable a pre-flight readiness probe by setting this to a positive value (seconds). aiperf applies this timeout to each URL/model probe before starting the benchmark, aborting with a non-zero exit if any probe times out. For multiple URLs or models, worst-case wall-clock time can be roughly this timeout multiplied by the number of URL/model probes. The probe strategy is controlled by `--wait-for-model-mode`, which defaults to sending a 1-token inference request. 0 (default) disables the probe. Eliminates the need for external shell-based readiness loops in containers and Kubernetes recipes.",
@@ -9691,6 +11003,31 @@
           "default": null,
           "description": "Output sequence length to apply when records do not specify one. Can be a fixed integer or {mean, stddev} distribution. Per-line `output_length` values in the file always take precedence.",
           "title": "Osl"
+        },
+        "blockSize": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Token block size for hash-based prompt reconstruction from `hash_ids` in trace datasets. Overrides the loader's `default_block_size` plugin metadata. Governs how the recorded `input_length` is partitioned into cache blocks (mooncake_trace and other hash-reconstructing loaders); it has no effect on loaders that replay literal recorded prompts (baseten_trace). Set this when a trace was recorded at a block size different from its loader default, e.g. a Mooncake-format trace recorded at block size 16. None uses the loader default.",
+          "title": "Blocksize",
+          "x-jinja2-supported": true
         }
       },
       "required": [
@@ -9774,10 +11111,16 @@
       "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
       "properties": {
         "adaptiveScale": {
-          "default": false,
-          "description": "Enable single-run adaptive scale control for this phase.",
+          "description": "Enable single-run adaptive scale control for this phase. Fixed-schedule phases only accept disabled adaptive-scale no-op blocks.",
           "title": "Adaptivescale",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"
+            }
+          ]
         },
         "adaptiveSustainDuration": {
           "anyOf": [
@@ -10009,13 +11352,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "fixed_schedule",
@@ -10025,7 +11382,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -10333,6 +11690,18 @@
           "description": "Filter out trace requests after this timestamp in ms (must be >= 0).",
           "title": "Endoffset",
           "x-jinja2-supported": true
+        },
+        "adaptive_scale": {
+          "description": "Enable single-run adaptive scale control for this phase. Fixed-schedule phases only accept disabled adaptive-scale no-op blocks.",
+          "title": "Adaptivescale",
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"
+            }
+          ]
         }
       },
       "required": [
@@ -10365,10 +11734,19 @@
       "description": "Gamma-distributed request arrivals with configurable smoothness.",
       "properties": {
         "adaptiveScale": {
-          "default": false,
-          "description": "Enable single-run adaptive scale control for this phase.",
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
           "title": "Adaptivescale",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         },
         "adaptiveSustainDuration": {
           "anyOf": [
@@ -10600,13 +11978,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "gamma",
@@ -10616,7 +12008,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -10870,14 +12262,13 @@
           "type": "boolean"
         },
         "rate": {
-          "description": "Target request rate in requests per second (must be > 0).",
-          "title": "Rate",
-          "oneOf": [
+          "anyOf": [
             {
-              "description": "Target request rate in requests per second (must be > 0).",
               "exclusiveMinimum": 0,
-              "title": "Rate",
               "type": "number"
+            },
+            {
+              "type": "null"
             },
             {
               "type": "string",
@@ -10890,6 +12281,9 @@
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
+          "default": null,
+          "description": "Target request rate in requests per second. Required unless rate_series is set.",
+          "title": "Rate",
           "x-jinja2-supported": true
         },
         "rateRamp": {
@@ -10915,6 +12309,18 @@
           "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
+        "rateSeries": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateSeriesConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Piecewise-linear request-rate schedule."
+        },
         "smoothness": {
           "anyOf": [
             {
@@ -10939,15 +12345,59 @@
           "description": "Gamma distribution shape parameter (must be > 0). 1.0 = Poisson, <1 = bursty, >1 = regular.",
           "title": "Smoothness",
           "x-jinja2-supported": true
+        },
+        "adaptive_scale": {
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+          "title": "Adaptivescale",
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         }
       },
       "required": [
         "name",
-        "type",
-        "rate"
+        "type"
       ],
       "title": "GammaPhase",
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "rate"
+              ],
+              "properties": {
+                "rate": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            },
+            {
+              "required": [
+                "rateSeries"
+              ],
+              "properties": {
+                "rateSeries": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
     },
     "GpuTelemetryConfig": {
       "title": "GpuTelemetryConfig",
@@ -12707,10 +14157,19 @@
       "description": "Poisson-distributed request arrivals at the target rate.",
       "properties": {
         "adaptiveScale": {
-          "default": false,
-          "description": "Enable single-run adaptive scale control for this phase.",
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
           "title": "Adaptivescale",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         },
         "adaptiveSustainDuration": {
           "anyOf": [
@@ -12942,13 +14401,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "poisson",
@@ -12958,7 +14431,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -13212,14 +14685,13 @@
           "type": "boolean"
         },
         "rate": {
-          "description": "Target request rate in requests per second (must be > 0).",
-          "title": "Rate",
-          "oneOf": [
+          "anyOf": [
             {
-              "description": "Target request rate in requests per second (must be > 0).",
               "exclusiveMinimum": 0,
-              "title": "Rate",
               "type": "number"
+            },
+            {
+              "type": "null"
             },
             {
               "type": "string",
@@ -13232,6 +14704,9 @@
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
+          "default": null,
+          "description": "Target request rate in requests per second. Required unless rate_series is set.",
+          "title": "Rate",
           "x-jinja2-supported": true
         },
         "rateRamp": {
@@ -13256,15 +14731,71 @@
           "default": null,
           "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
+        },
+        "rateSeries": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateSeriesConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Piecewise-linear request-rate schedule."
+        },
+        "adaptive_scale": {
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+          "title": "Adaptivescale",
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         }
       },
       "required": [
         "name",
-        "type",
-        "rate"
+        "type"
       ],
       "title": "PoissonPhase",
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "rate"
+              ],
+              "properties": {
+                "rate": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            },
+            {
+              "required": [
+                "rateSeries"
+              ],
+              "properties": {
+                "rateSeries": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
     },
     "PostProcessSpec": {
       "additionalProperties": false,
@@ -13817,6 +15348,122 @@
         }
       },
       "title": "RankingsConfig",
+      "type": "object"
+    },
+    "RateSeriesConfig": {
+      "additionalProperties": false,
+      "description": "Piecewise-linear request-rate schedule.",
+      "properties": {
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JSON file path containing request-rate control points.",
+          "title": "Path"
+        },
+        "points": {
+          "description": "Strictly increasing request-rate control points.",
+          "items": {
+            "$ref": "#/$defs/RateSeriesPoint"
+          },
+          "title": "Points",
+          "type": "array",
+          "minItems": 2
+        }
+      },
+      "title": "RateSeriesConfig",
+      "type": "object",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "path"
+              ],
+              "properties": {
+                "path": {
+                  "not": {
+                    "type": "null"
+                  }
+                }
+              }
+            },
+            {
+              "required": [
+                "points"
+              ],
+              "properties": {
+                "points": {
+                  "minItems": 2
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "RateSeriesPoint": {
+      "additionalProperties": false,
+      "description": "One request-rate control point.",
+      "properties": {
+        "timeS": {
+          "description": "Elapsed time in seconds from the start of the request-rate series, after any request-rate ramp completes.",
+          "title": "Times",
+          "oneOf": [
+            {
+              "description": "Elapsed time in seconds from the start of the request-rate series, after any request-rate ramp completes.",
+              "minimum": 0.0,
+              "title": "Times",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "qps": {
+          "description": "Request rate in queries per second at this point.",
+          "title": "Qps",
+          "oneOf": [
+            {
+              "description": "Request rate in queries per second at this point.",
+              "exclusiveMinimum": 0.0,
+              "title": "Qps",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        }
+      },
+      "required": [
+        "timeS",
+        "qps"
+      ],
+      "title": "RateSeriesPoint",
       "type": "object"
     },
     "RequestContentType": {
@@ -15707,10 +17354,19 @@
       "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
       "properties": {
         "adaptiveScale": {
-          "default": false,
-          "description": "Enable single-run adaptive scale control for this phase.",
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
           "title": "Adaptivescale",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         },
         "adaptiveSustainDuration": {
           "anyOf": [
@@ -15942,13 +17598,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'baseline_traffic', 'cancellation_stress', or 'recovery_traffic'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "user_centric",
@@ -15958,7 +17628,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -16212,14 +17882,13 @@
           "type": "boolean"
         },
         "rate": {
-          "description": "Target request rate in requests per second (must be > 0).",
-          "title": "Rate",
-          "oneOf": [
+          "anyOf": [
             {
-              "description": "Target request rate in requests per second (must be > 0).",
               "exclusiveMinimum": 0,
-              "title": "Rate",
               "type": "number"
+            },
+            {
+              "type": "null"
             },
             {
               "type": "string",
@@ -16232,6 +17901,9 @@
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
+          "default": null,
+          "description": "Target request rate in requests per second. Required unless rate_series is set.",
+          "title": "Rate",
           "x-jinja2-supported": true
         },
         "rateRamp": {
@@ -16279,16 +17951,45 @@
             }
           ],
           "x-jinja2-supported": true
+        },
+        "adaptive_scale": {
+          "description": "Enable single-run adaptive scale control for this phase. Accepts either a boolean or a nested adaptive-scale configuration block.",
+          "title": "Adaptivescale",
+          "anyOf": [
+            {
+              "default": false,
+              "description": "Enable single-run adaptive scale control for this phase.",
+              "title": "Adaptivescale",
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/AdaptiveScaleNestedBlock"
+            }
+          ]
         }
       },
       "required": [
         "name",
         "type",
-        "rate",
-        "users"
+        "users",
+        "rate"
       ],
       "title": "UserCentricPhase",
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "required": [
+            "rate"
+          ],
+          "properties": {
+            "rate": {
+              "not": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     },
     "UserFile": {
       "description": "One user-declared output file rendered into the run directory before benchmark start.\n\nPath is relative to the run directory; subdirectories are allowed; absolute\npaths and any segment equal to '..' are rejected. Content is rendered with\njinja2 against a documented context (variables: + system-injected names).",
@@ -16789,6 +18490,1159 @@
       ],
       "title": "ZipSweep",
       "type": "object"
+    },
+    "AdaptiveScaleNestedBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "enum": [
+                "true",
+                "false",
+                "yes",
+                "no",
+                "on",
+                "off",
+                "1",
+                "0"
+              ]
+            }
+          ]
+        },
+        "control": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "variable": {
+              "type": "string",
+              "enum": [
+                "concurrency",
+                "prefill_concurrency",
+                "request_rate",
+                "users"
+              ]
+            },
+            "min": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "max": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            }
+          }
+        },
+        "strategy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "ramp_until_fail"
+              ]
+            },
+            "stepPolicy": {
+              "type": "string",
+              "enum": [
+                "sla_margin",
+                "fixed_percent_step"
+              ]
+            },
+            "step_policy": {
+              "type": "string",
+              "enum": [
+                "sla_margin",
+                "fixed_percent_step"
+              ]
+            },
+            "baseStep": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "base_step": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "maxStepMultiplier": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "max_step_multiplier": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "stepPercent": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "step_percent": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            }
+          }
+        },
+        "sla": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/SLAFilter"
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  }
+                }
+              },
+              "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+            }
+          ]
+        },
+        "controlVariable": {
+          "type": "string",
+          "enum": [
+            "concurrency",
+            "prefill_concurrency",
+            "request_rate",
+            "users"
+          ]
+        },
+        "control_variable": {
+          "type": "string",
+          "enum": [
+            "concurrency",
+            "prefill_concurrency",
+            "request_rate",
+            "users"
+          ]
+        },
+        "controlMin": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "control_min": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "controlMax": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "control_max": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "minConcurrency": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "min_concurrency": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "maxConcurrency": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "max_concurrency": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "window": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "assessmentPeriod": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "assessment_period": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "minCompletedRequests": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "min_completed_requests": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "sustainDuration": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "sustain_duration": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        }
+      }
+    },
+    "DisabledAdaptiveScaleNestedBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "type": "string",
+              "enum": [
+                "false",
+                "no",
+                "off",
+                "0"
+              ]
+            }
+          ]
+        },
+        "control": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "variable": {
+              "type": "string",
+              "enum": [
+                "concurrency",
+                "prefill_concurrency",
+                "request_rate",
+                "users"
+              ]
+            },
+            "min": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "max": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            }
+          }
+        },
+        "strategy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "ramp_until_fail"
+              ]
+            },
+            "stepPolicy": {
+              "type": "string",
+              "enum": [
+                "sla_margin",
+                "fixed_percent_step"
+              ]
+            },
+            "step_policy": {
+              "type": "string",
+              "enum": [
+                "sla_margin",
+                "fixed_percent_step"
+              ]
+            },
+            "baseStep": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "base_step": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "maxStepMultiplier": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "max_step_multiplier": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "stepPercent": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            },
+            "step_percent": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\{\\{.*\\}\\}.*",
+                  "description": "Jinja2 template (e.g., '{{ variable }}')."
+                },
+                {
+                  "type": "string",
+                  "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                  "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                }
+              ]
+            }
+          }
+        },
+        "sla": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/SLAFilter"
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  }
+                }
+              },
+              "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+            }
+          ]
+        },
+        "controlVariable": {
+          "type": "string",
+          "enum": [
+            "concurrency",
+            "prefill_concurrency",
+            "request_rate",
+            "users"
+          ]
+        },
+        "control_variable": {
+          "type": "string",
+          "enum": [
+            "concurrency",
+            "prefill_concurrency",
+            "request_rate",
+            "users"
+          ]
+        },
+        "controlMin": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "control_min": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "controlMax": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "control_max": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "minConcurrency": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "min_concurrency": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "maxConcurrency": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "max_concurrency": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "window": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "assessmentPeriod": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "assessment_period": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "minCompletedRequests": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "min_completed_requests": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "sustainDuration": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        },
+        "sustain_duration": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ]
+        }
+      },
+      "required": [
+        "enabled"
+      ]
     }
   },
   "additionalProperties": false,

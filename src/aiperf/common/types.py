@@ -7,7 +7,7 @@ helps with type hinting.
 
 from collections.abc import Awaitable, Callable
 from types import UnionType
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, Union
 
 from aiperf.common.enums import (
     CaseInsensitiveStrEnum,
@@ -56,6 +56,7 @@ MessageTypeT: TypeAlias = MessageType | str
 MetricTagT: TypeAlias = str
 ModelEndpointInfoT = TypeVar("ModelEndpointInfoT", bound="ModelEndpointInfo")
 OutputT = TypeVar("OutputT", bound=Any)
+PhaseKind: TypeAlias = Literal["warmup", "profiling"]
 PluginClassT = TypeVar("PluginClassT", bound=Any)
 ProtocolT = TypeVar("ProtocolT", bound=Any)
 RawRequestT = TypeVar("RawRequestT", bound=Any, contravariant=True)

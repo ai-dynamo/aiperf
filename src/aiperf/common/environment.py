@@ -240,6 +240,32 @@ class _DatasetSettings(BaseSettings):
         "Example: AIPERF_DATASET_MMAP_BASE_PATH=/mnt/shared-pvc "
         "creates files at /mnt/shared-pvc/aiperf_mmap_{benchmark_id}/",
     )
+    MMAP_CACHE_ENABLED: bool = Field(
+        default=True,
+        description="If True, AIPerf reuses memory-mapped dataset files across runs whose "
+        "input bytes, tokenizer identity, and prompt/input settings are byte-identical. "
+        "Set to False to force every run to re-tokenize and re-write its mmap files. "
+        "Cache misses still produce byte-identical mmap files to a non-cached run.",
+    )
+    MMAP_CACHE_DIR: Path | None = Field(
+        default=None,
+        description="Directory holding the content-addressed mmap cache. If None, defaults to "
+        "~/.cache/aiperf/dataset_mmap. Each cache entry lives under a `dir/key` subpath and contains "
+        "dataset.dat, index.dat, and manifest.json. "
+        "No automatic eviction is implemented yet -- delete the directory to reclaim disk.",
+    )
+    PREFORMAT_PAYLOADS: bool = Field(
+        default=False,
+        description="If True, pre-encode single-turn / self-contained synthetic "
+        "conversations to the PAYLOAD_BYTES mmap fast path at dataset-build time "
+        "so workers stream the bytes verbatim and skip per-request encoding. This "
+        "is a throughput optimization that DROPS input-tokenization metrics "
+        "(input_sequence_length, image counts) because the structured prompt is "
+        "discarded. Default False keeps the structured-turns (CONVERSATION) path "
+        "so those metrics are computed. Datasets that natively ship raw payloads "
+        "(raw_payload / inputs_json / mooncake-with-payload) always use "
+        "PAYLOAD_BYTES regardless of this flag.",
+    )
     PUBLIC_DATASET_TIMEOUT: float = Field(
         ge=1.0,
         le=100000.0,
@@ -388,12 +414,6 @@ class _GPUSettings(BaseSettings):
         default=5.0,
         description="Delay in seconds before shutting down GPU telemetry service to allow command response transmission",
     )
-    THREAD_JOIN_TIMEOUT: float = Field(
-        ge=1.0,
-        le=300.0,
-        default=5.0,
-        description="Timeout in seconds for joining GPU telemetry collection threads during shutdown",
-    )
 
 
 class _HTTPSettings(BaseSettings):
@@ -430,22 +450,10 @@ class _HTTPSettings(BaseSettings):
         default=10485760,  # 10MB
         description="Socket receive buffer size in bytes (default: 10MB for high-throughput streaming)",
     )
-    SO_RCVTIMEO: int = Field(
-        ge=1,
-        le=100000,
-        default=30,
-        description="Socket receive timeout in seconds",
-    )
     SO_SNDBUF: int = Field(
         ge=1024,
         default=10485760,  # 10MB
         description="Socket send buffer size in bytes (default: 10MB for high-throughput streaming)",
-    )
-    SO_SNDTIMEO: int = Field(
-        ge=1,
-        le=100000,
-        default=30,
-        description="Socket send timeout in seconds",
     )
     TCP_KEEPCNT: int = Field(
         ge=1,
@@ -513,6 +521,13 @@ class _HTTPSettings(BaseSettings):
         "When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, "
         "and NO_PROXY environment variables.",
     )
+    X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
+        default=False,
+        description="Also send X-Dynamo-Session-ID with the stable X-Correlation-ID value, "
+        "plus X-Dynamo-Parent-Session-ID on subagent children. Use this with a Dynamo "
+        "frontend running --router-session-affinity-ttl-secs to pin every turn of a "
+        "session to the replica holding its KV prefix.",
+    )
     VIDEO_POLL_INTERVAL: float = Field(
         ge=0.001,
         le=10.0,
@@ -557,6 +572,12 @@ class _MetricsSettings(BaseSettings):
         default=10000,
         description="Initial array capacity for metric storage dictionaries to minimize reallocation",
     )
+    EXPORT_FLUSH_INTERVAL: float = Field(
+        ge=0.05,
+        le=60.0,
+        default=1.0,
+        description="Periodic flush interval (seconds) for buffered JSONL stream exporters (raw record writer, record export, gpu/server-metrics JSONL writers). Bounds the worst-case freshness of low-throughput export files when the in-memory batch never reaches batch_size.",
+    )
     USAGE_PCT_DIFF_THRESHOLD: float = Field(
         ge=0.0,
         le=100.0,
@@ -583,12 +604,6 @@ class _MetricsSettings(BaseSettings):
     LIST_BACKEND: Literal["ragged", "tdigest"] = Field(
         default="ragged",
         description="Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (at most 0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint.",
-    )
-    EXPORT_FLUSH_INTERVAL: float = Field(
-        ge=0.05,
-        le=60.0,
-        default=1.0,
-        description="Periodic flush interval (seconds) for buffered JSONL stream exporters (raw record writer, record export, gpu/server-metrics JSONL writers). Bounds the worst-case freshness of low-throughput export files when the in-memory batch never reaches batch_size.",
     )
 
 
@@ -1174,6 +1189,17 @@ class _UISettings(BaseSettings):
         env_prefix="AIPERF_UI_",
     )
 
+    CONSOLE_EXPORT_WIDTH: int = Field(
+        ge=40,
+        le=10000,
+        default=140,
+        description=(
+            "Fixed column width used to render the post-run console exporter "
+            "tables. Applied both to the recording console that produces "
+            "profile_export_console.txt and to the live console when stdout "
+            "is not a tty (so non-tty CI logs match the saved artifact)."
+        ),
+    )
     LOG_REFRESH_INTERVAL: float = Field(
         ge=0.01,
         le=100000.0,
@@ -1186,12 +1212,6 @@ class _UISettings(BaseSettings):
         default=1.0,
         description="Minimum percentage difference from last update to trigger a UI update (for non-dashboard UIs)",
     )
-    NOTIFICATION_TIMEOUT: int = Field(
-        ge=1,
-        le=100000,
-        default=3,
-        description="Duration in seconds to display UI notifications before auto-dismissing",
-    )
     REALTIME_METRICS_INTERVAL: float | None = Field(
         ge=0.0,
         le=1000.0,
@@ -1199,7 +1219,7 @@ class _UISettings(BaseSettings):
         description=(
             "Interval in seconds between real-time metrics messages (and the "
             "per-tick stats log block). 0 disables the log block; dashboards "
-            "still poll. When None, ``realtime_metrics_interval(ui_type)`` "
+            "still poll. When None, `realtime_metrics_interval(ui_type)` "
             "auto-defaults to 5.0 under --ui dashboard, 30.0 otherwise."
         ),
     )
@@ -1315,12 +1335,6 @@ class _ZMQSettings(BaseSettings):
         env_prefix="AIPERF_ZMQ_",
     )
 
-    CONTEXT_TERM_TIMEOUT: float = Field(
-        ge=1.0,
-        le=100000.0,
-        default=10.0,
-        description="Timeout in seconds for terminating the ZMQ context during shutdown",
-    )
     PULL_YIELD_INTERVAL: int = Field(
         ge=0,
         le=1_000_000,
