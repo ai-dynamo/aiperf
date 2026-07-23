@@ -323,7 +323,7 @@ class PhaseRunner(TaskManagerMixin):
             )
         except Exception as exc:
             self.warning(
-                f"Failed to publish {kind.value} phase baseline request for "
+                f"Failed to publish {kind} phase baseline request for "
                 f"phase {self._config.phase}: {exc}"
             )
 
@@ -927,7 +927,7 @@ class PhaseRunner(TaskManagerMixin):
                         and warmup_log_interval > 0
                         and now >= next_warmup_log_at
                     ):
-                        self.info(self._format_warmup_progress(stats))
+                        self.info(lambda s=stats: self._format_warmup_progress(s))
                         next_warmup_log_at = now + warmup_log_interval
                 except Exception as e:
                     self.error(
