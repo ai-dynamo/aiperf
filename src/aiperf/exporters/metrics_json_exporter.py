@@ -8,7 +8,7 @@ import orjson
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.exceptions import DataExporterDisabled
-from aiperf.common.finite import scrub_non_finite
+from aiperf.common.finite import is_finite_value, scrub_non_finite
 from aiperf.common.models import MetricResult
 from aiperf.common.models.export_models import (
     JsonExportData,
@@ -157,7 +157,7 @@ class MetricsJsonExporter(MetricsBaseExporter):
 
             def _metric_avg(tag: str) -> int:
                 m = prepared_json_metrics.get(tag)
-                if m is None or m.avg is None:
+                if m is None or not is_finite_value(m.avg):
                     return 0
                 return int(m.avg)
 

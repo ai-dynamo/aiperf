@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 import orjson
 
-from aiperf.common.finite import scrub_non_finite
+from aiperf.common.finite import is_finite_value, scrub_non_finite
 from aiperf.exporters.aggregate.aggregate_base_exporter import AggregateBaseExporter
 
 if TYPE_CHECKING:
@@ -98,10 +98,10 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
         validator_reasons = result_metadata.pop(
             "_validator_submission_invalid_reasons", None
         )
-        total_responses = int(result_metadata.pop("_total_responses", 0) or 0)
-        context_overflow_count = int(
-            result_metadata.pop("_context_overflow_count", 0) or 0
-        )
+        _total = result_metadata.pop("_total_responses", 0)
+        total_responses = int(_total) if is_finite_value(_total) else 0
+        _overflow = result_metadata.pop("_context_overflow_count", 0)
+        context_overflow_count = int(_overflow) if is_finite_value(_overflow) else 0
         was_cancelled = bool(result_metadata.pop("_was_cancelled", False))
 
         submission_valid, submission_invalid_reasons = compute_submission_outcome(
