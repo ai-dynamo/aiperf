@@ -31,15 +31,17 @@ from aiperf.common.enums import (
     SSEFieldType,
 )
 from aiperf.common.exceptions import InvalidInferenceResultError
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
-from aiperf.common.models.export_models import JsonMetricResult
+from aiperf.common.models.export_models import JsonMetricResult, TelemetryExportData
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
-from aiperf.common.types import JsonObject, MetricTagT
+from aiperf.common.types import JsonObject, MetricTagT, PhaseKind
 from aiperf.common.utils import load_json_str
 
 _logger = AIPerfLogger(__name__)
@@ -208,6 +210,20 @@ class MetricRecordMetadata(AIPerfBaseModel):
         ...,
         description="The benchmark phase of the record, either warmup or profiling.",
     )
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index in the ordered phases list."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index among profiling-kind phases; None for warmup.",
+    )
+    phase_name: str | None = Field(
+        default=None, description="User-provided unique phase name."
+    )
+    phase_kind: PhaseKind | None = Field(
+        default=None, description="Phase semantic kind: warmup or profiling."
+    )
     was_cancelled: bool = Field(
         default=False,
         description="Whether the request was cancelled during execution.",
@@ -226,6 +242,13 @@ class MetricRecordMetadata(AIPerfBaseModel):
         default=None,
         description="The x_correlation_id of the parent session that spawned this record's session via a "
         "DAG subagent fork. None for root sessions. Use to group sibling branches of the same DAG.",
+    )
+    root_correlation_id: str | None = Field(
+        default=None,
+        description="The x_correlation_id of the depth-0 root of this record's session TREE. Stable "
+        "across the whole tree (root + every descendant subagent at any depth); equals x_correlation_id "
+        "for a root session. Groups every record of one agentic session (root + subagents) under a single "
+        "lane and lets analysis reconstruct exactly-N session-tree concurrency.",
     )
 
 
@@ -274,6 +297,75 @@ class TimesliceResult(AIPerfBaseModel):
         if isinstance(value, list):
             return {r.tag: r for r in value}
         return value
+
+
+class PhaseProfileResults(AIPerfBaseModel):
+    """Metric summary for one concrete named phase."""
+
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index in the ordered phases list."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index among profiling-kind phases; None for warmup.",
+    )
+    phase_name: str = Field(description="User-provided unique phase name.")
+    phase_kind: PhaseKind = Field(
+        description="Phase semantic kind: warmup or profiling."
+    )
+    records: list[MetricResult] = Field(
+        default_factory=list, description="Metric results scoped to this phase."
+    )
+    start_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Phase start time in nanoseconds, when available.",
+    )
+    end_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Phase request completion time in nanoseconds, when available.",
+    )
+    baseline_start_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Phase START baseline request publish time in nanoseconds, when available.",
+    )
+    baseline_end_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Phase END baseline request publish time in nanoseconds, when available.",
+    )
+    was_cancelled: bool = Field(
+        default=False, description="Whether this phase was cancelled early."
+    )
+    successful_request_count: int = Field(
+        default=0, ge=0, description="Successful records for this phase."
+    )
+    error_request_count: int = Field(
+        default=0, ge=0, description="Errored records for this phase."
+    )
+    error_summary: list[ErrorDetailsCount] = Field(
+        default_factory=list,
+        description="A list of the unique phase error details and their counts",
+    )
+    telemetry_results: TelemetryExportData | None = Field(
+        default=None,
+        description="GPU telemetry summary scoped to this concrete phase.",
+    )
+    server_metrics_results: ServerMetricsResults | None = Field(
+        default=None,
+        description="Server metrics summary scoped to this concrete phase.",
+    )
+    telemetry_warnings: list[str] = Field(
+        default_factory=list,
+        description="Non-fatal telemetry warnings for phase artifact export.",
+    )
+    server_metrics_warnings: list[str] = Field(
+        default_factory=list,
+        description="Non-fatal server metrics warnings for phase artifact export.",
+    )
 
 
 class ProfileResults(AIPerfBaseModel):
@@ -331,6 +423,10 @@ class ProfileResults(AIPerfBaseModel):
         "None for non-DAG runs; a populated snapshot for DAG-shaped "
         "runs. Forwarded to profile_export_aiperf.json under the "
         "``branch_stats`` key when present.",
+    )
+    phase_records: list[PhaseProfileResults] | None = Field(
+        default=None,
+        description="Internal per-phase metric summaries used for phase artifacts.",
     )
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
@@ -645,6 +741,20 @@ class RecordContext(AIPerfBaseModel):
         ...,
         description="The type of credit phase (either warmup or profiling)",
     )
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index in the ordered phases list."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index among profiling-kind phases; None for warmup.",
+    )
+    phase_name: str | None = Field(
+        default=None, description="User-provided unique phase name."
+    )
+    phase_kind: PhaseKind | None = Field(
+        default=None, description="Phase semantic kind: warmup or profiling."
+    )
     conversation_id: str = Field(
         ...,
         description="The ID of the conversation (if applicable).",
@@ -680,6 +790,14 @@ class RecordContext(AIPerfBaseModel):
         description="The x_correlation_id of the parent session that spawned this session via a DAG "
         "subagent fork. None for root sessions. Sourced from the originating Credit.",
     )
+    root_correlation_id: str | None = Field(
+        default=None,
+        description="The x_correlation_id of the depth-0 root of this record's session TREE. "
+        "Stable across the whole tree (root + every descendant subagent at any depth); equals "
+        "x_correlation_id for a root session. Sourced from the originating Credit. Use to group "
+        "every record of one agentic session (root + subagents) and to reconstruct exactly-N "
+        "session-tree concurrency in analysis.",
+    )
 
     # --- Hoisted metric inputs (avoid shipping full Turn structs) -------------
 
@@ -701,23 +819,13 @@ class RecordContext(AIPerfBaseModel):
         "record-enrichment time so the record processor reads it directly off the record without "
         "the full ``turns`` list on the wire. None for non-ASR requests.",
     )
-
-    # --- Records-pipeline reads (read by inference_result_parser, raw_record_writer) ----
-
-    turns: list[Turn] = Field(
-        default_factory=list,
-        description="The actual turns of the request. This will include assistant turns as well as user turns in multi-turn conversations. "
-        "Read by the records pipeline (``inference_result_parser``, ``raw_record_writer_processor``) for response parsing and raw export.",
-    )
-    system_message: str | None = Field(
+    scheduled_send_ms: FiniteFloat | None = Field(
         default=None,
-        description="Optional shared system message to prepend to the first turn. "
-        "Extracted from conversation.system_message at request time. Read by the records pipeline.",
-    )
-    user_context_message: str | None = Field(
-        default=None,
-        description="Optional per-conversation user context message to prepend to the first turn. "
-        "Extracted from conversation.user_context_message at request time. Read by the records pipeline.",
+        description="Absolute schedule timestamp (ms, schedule-relative) from the "
+        "dispatched turn's ``Turn.timestamp``. Populated at record-enrichment time "
+        "so fixed-schedule replay lag metrics can read it off the slim record "
+        "without the full ``turns`` list on the wire. None for delay-scheduled "
+        "continuation turns and non-fixed-schedule datasets.",
     )
 
 
@@ -736,6 +844,29 @@ class RequestInfo(RecordContext):
     model_endpoint: ModelEndpointInfo = Field(
         ...,
         description="The model endpoint that the request was sent to.",
+    )
+    turns: list[Turn] = Field(
+        default_factory=list,
+        description="The actual turns of the request, consumed by "
+        "``format_payload`` to build the wire body. Lives on ``RequestInfo`` "
+        "(not ``RecordContext``) so the full Turn list never crosses the "
+        "ZMQ hop to the record processor — only the canonical "
+        "``payload_bytes`` travel.",
+    )
+    system_message: str | None = Field(
+        default=None,
+        description="Optional shared system message extracted from "
+        "``Conversation.system_message`` at request time. Consumed by the "
+        "endpoint's ``format_payload`` (or top-level ``instructions`` on the "
+        "Responses API) and inlined into ``payload_bytes`` before transport; "
+        "lives on ``RequestInfo`` because the record processor reads only "
+        "``payload_bytes`` downstream.",
+    )
+    user_context_message: str | None = Field(
+        default=None,
+        description="Optional per-conversation user context message extracted "
+        "from ``Conversation.user_context_message`` at request time. Same "
+        "inlining contract as ``system_message``.",
     )
     endpoint_headers: dict[str, str] = Field(
         default_factory=dict,
@@ -838,11 +969,6 @@ class RequestRecord(AIPerfBaseModel):
         description="Comprehensive trace data captured via a trace config. "
         "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
         "The type of the trace data is determined by the transport and library used.",
-    )
-    turns: list[Turn] = Field(
-        default_factory=list,
-        description="Deep copy of the request turns. This is a copy of the turns from request_info, "
-        "made to avoid mutating the original session data when stripping multimodal content.",
     )
 
     @field_validator("trace_data", mode="before")
@@ -1320,7 +1446,7 @@ class MetricRecordInfo(AIPerfBaseModel):
 
     metadata: MetricRecordMetadata = Field(
         ...,
-        description="The metadata of the record. Should match the metadata in the RecordsMessage.",
+        description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",
     )
     metrics: dict[str, MetricValue] = Field(
         ...,
@@ -1343,7 +1469,7 @@ class RawRecordInfo(AIPerfBaseModel):
 
     metadata: MetricRecordMetadata = Field(
         ...,
-        description="The metadata of the record. Should match the metadata in the RecordsMessage.",
+        description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",
     )
     start_perf_ns: int = Field(
         default_factory=time.perf_counter_ns,

@@ -555,3 +555,52 @@ class TestServerMetricsHierarchy:
         assert len(ts.metrics) == 2
         assert ServerMetricKey("gauge", (("model", "a"),)) in ts.metrics
         assert ServerMetricKey("gauge", (("model", "b"),)) in ts.metrics
+
+
+class TestHistogramBucketSchemaMismatch:
+    """Warn-once behavior for histogram samples with drifting bucket schemas."""
+
+    def test_mismatched_sample_warns_once_and_normalizes_buckets(self):
+        ts = HistogramTimeSeries()
+        ts.append(
+            0,
+            MetricSample(buckets={"0.5": 1.0, "+Inf": 2.0}, sum=1.0, count=2.0),
+        )
+        assert ts._bucket_schema_mismatch_warned is False
+
+        # Missing "0.5" and unexpected "1.0" -> one warning, flag latched.
+        ts.append(
+            _NS,
+            MetricSample(buckets={"1.0": 5.0, "+Inf": 6.0}, sum=3.0, count=6.0),
+        )
+        assert ts._bucket_schema_mismatch_warned is True
+
+        # Further mismatches are suppressed (early return) but still append.
+        ts.append(
+            2 * _NS,
+            MetricSample(buckets={"2.0": 7.0, "+Inf": 8.0}, sum=4.0, count=8.0),
+        )
+        assert len(ts) == 3
+
+        # Missing buckets fill with 0.0; extra buckets are dropped.
+        assert ts.get_bucket_dict(1) == {"0.5": 0.0, "+Inf": 6.0}
+
+
+class TestObservationRatesWindowGuards:
+    """Time-filter guards for observation rate computation."""
+
+    def test_observation_rates_empty_when_filter_ends_before_first_sample(self):
+        ts = make_histogram_ts(
+            [
+                ({"1.0": 5.0, "+Inf": 10.0}, 1.0, 10.0),
+                ({"1.0": 10.0, "+Inf": 20.0}, 2.0, 20.0),
+            ]
+        )
+        # Samples land at 0s and 1s; use a window entirely before them by
+        # shifting the series forward first.
+        ts._timestamps = ts._timestamps + 10 * _NS
+
+        rates = ts.get_observation_rates(TimeRangeFilter(start_ns=0, end_ns=_NS))
+
+        assert rates.dtype == np.float64
+        assert len(rates) == 0

@@ -20,9 +20,12 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("pyarrow")
+
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
 from pydantic import ValidationError
 from pytest import param
 

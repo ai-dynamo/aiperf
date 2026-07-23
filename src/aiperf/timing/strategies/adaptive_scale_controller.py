@@ -19,8 +19,19 @@ class AdaptiveScaleController:
 
     async def assess_window(self, strategy) -> None:
         stats = await strategy._take_window()
+        can_evaluate_zero_success = (
+            not stats.samples
+            and (stats.errors or _cancelled_count(stats))
+            and strategy._sla.can_evaluate_without_successes(
+                strategy._sla_filters, stats
+            )
+        )
         try:
-            if not stats.samples and (stats.errors or _cancelled_count(stats)):
+            if (
+                not stats.samples
+                and (stats.errors or _cancelled_count(stats))
+                and not can_evaluate_zero_success
+            ):
                 strategy._emit_event(
                     event="adaptive_window",
                     reason="no successful requests in assessment window",
@@ -39,7 +50,10 @@ class AdaptiveScaleController:
                 self.assess_failed_window(strategy, stats)
                 return
 
-            if len(stats.samples) < strategy._min_completed_requests:
+            if (
+                len(stats.samples) < strategy._min_completed_requests
+                and not can_evaluate_zero_success
+            ):
                 strategy._emit_event(
                     event="adaptive_window",
                     reason="inconclusive: completed request count below minimum",

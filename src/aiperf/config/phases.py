@@ -19,6 +19,8 @@ from pydantic import (
     model_validator,
 )
 
+from aiperf.common.phase import infer_legacy_phase_kind
+from aiperf.common.types import PhaseKind
 from aiperf.config.adaptive_scale_phase import AdaptiveScalePhaseMixin
 from aiperf.config.base import BaseConfig
 from aiperf.config.cancellation import CancellationConfig
@@ -28,6 +30,7 @@ from aiperf.config.loader.duration import (
     _parse_duration,
 )
 from aiperf.config.ramp import RampConfig, RampSpec, _normalize_ramp
+from aiperf.config.rate_series import RateSeriesConfig
 from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.plugin.enums import PhaseType, PhaseTypeStr, RampType
 
@@ -42,10 +45,12 @@ __all__ = [
     "PhaseConfig",
     "PhaseType",
     "PhaseTypeStr",
+    "PhaseKind",
     "PoissonPhase",
     "RampConfig",
     "RampSpec",
     "RampType",
+    "RateSeriesConfig",
     "RatePhaseConfig",
     "UserCentricPhase",
     "_normalize_duration",
@@ -70,11 +75,30 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     model_config = ConfigDict(extra="forbid")
 
     name: Annotated[
-        Literal["warmup", "profiling"],
+        str,
         Field(
-            description="Phase identifier — must be 'warmup' or 'profiling'. "
-            "The credit pipeline only distinguishes these two phase kinds. "
-            "Used in logs, status, sweep targeting, and result file naming.",
+            pattern=r"^[A-Za-z_][A-Za-z0-9_-]*$",
+            description="Unique workflow label for this phase, such as "
+            "'baseline_traffic', 'cancellation_stress', or "
+            "'recovery_traffic'. This is distinct from phase kind: "
+            "multiple phases may share kind='profiling' while each keeps a "
+            "different name. Used in logs, status, sweep targeting, artifact "
+            "paths, and result file naming. Must be a strict identifier: "
+            "letters, numbers, underscores, and hyphens; must start with a "
+            "letter or underscore.",
+        ),
+    ]
+
+    kind: Annotated[
+        PhaseKind | None,
+        Field(
+            default=None,
+            description="Semantic runtime role for the phase. Only 'warmup' "
+            "and 'profiling' are valid kinds because the credit/results "
+            "pipeline distinguishes those two roles. This field is nullable "
+            "only as an input compatibility bridge: legacy canonical names "
+            "('warmup' and 'profiling') infer kind during normalization, "
+            "while validated phases always carry a concrete kind.",
         ),
     ]
 
@@ -100,9 +124,9 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         Field(
             default=False,
             description="Exclude this phase's metrics from final results. "
-            "Forced by phase name: 'warmup' is always excluded, "
-            "'profiling' is always included. Explicitly setting this "
-            "field to a value inconsistent with the phase name is rejected.",
+            "Forced by phase kind: kind='warmup' is always excluded, "
+            "kind='profiling' is always included. Explicitly setting this "
+            "field to a value inconsistent with the phase kind is rejected.",
         ),
     ]
 
@@ -226,6 +250,11 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     # ``aiperf.config.flags._converter_profiling``); YAML users must be
     # explicit.
     _stop_condition_required: ClassVar[bool] = True
+    _windows_reserved_phase_names: ClassVar[frozenset[str]] = frozenset(
+        {"CON", "PRN", "AUX", "NUL"}
+        | {f"COM{idx}" for idx in range(1, 10)}
+        | {f"LPT{idx}" for idx in range(1, 10)}
+    )
 
     # =========================================================================
     # VALIDATORS
@@ -234,19 +263,37 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     @model_validator(mode="after")
     def _validate_phase_constraints(self) -> Self:
         """Validate stop condition and cross-field constraints."""
-        required = {"warmup": True, "profiling": False}.get(self.name)
-        if required is not None:
-            if (
-                "exclude_from_results" in self.model_fields_set
-                and self.exclude_from_results != required
-            ):
-                raise ValueError(
-                    f"Phase '{self.name}': exclude_from_results must be "
-                    f"{required} (warmup is always excluded; profiling is "
-                    f"always included)"
-                )
-            if self.exclude_from_results != required:
-                self.exclude_from_results = required
+        windows_basename = self.name.split(".", 1)[0].upper()
+        if windows_basename in self._windows_reserved_phase_names:
+            raise ValueError(
+                f"Phase name '{self.name}' is reserved by Windows and cannot "
+                "be used as an artifact directory name."
+            )
+
+        self.kind = infer_legacy_phase_kind(self.name, self.kind)
+        if self.kind is None:
+            raise ValueError(
+                f"Phase '{self.name}': kind is required for non-canonical phase "
+                "names. Set kind to 'warmup' or 'profiling'."
+            )
+        if self.name in {"warmup", "profiling"} and self.kind != self.name:
+            raise ValueError(
+                f"Phase name '{self.name}' is reserved for kind '{self.name}'; "
+                f"got kind '{self.kind}'."
+            )
+
+        required = self.kind == "warmup"
+        if (
+            "exclude_from_results" in self.model_fields_set
+            and self.exclude_from_results != required
+        ):
+            raise ValueError(
+                f"Phase '{self.name}': exclude_from_results must be "
+                f"{required} for kind '{self.kind}' (warmup is always "
+                "excluded; profiling is always included)"
+            )
+        if self.exclude_from_results != required:
+            self.exclude_from_results = required
         if (
             self._stop_condition_required
             and self.requests is None
@@ -309,10 +356,11 @@ class RatePhaseConfig(BasePhaseConfig):
     """Base for rate-controlled phases. Not instantiated directly."""
 
     rate: Annotated[
-        float,
+        float | None,
         Field(
+            default=None,
             gt=0,
-            description="Target request rate in requests per second (must be > 0).",
+            description="Target request rate in requests per second. Required unless rate_series is set.",
         ),
     ]
 
@@ -324,6 +372,23 @@ class RatePhaseConfig(BasePhaseConfig):
             "Can be number (seconds) or {duration, strategy}.",
         ),
     ]
+
+    rate_series: Annotated[
+        RateSeriesConfig | None,
+        Field(
+            default=None,
+            description="Piecewise-linear request-rate schedule.",
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def validate_rate_source(self) -> Self:
+        """Require exactly one of a scalar rate or a rate series."""
+        if self.rate is None and self.rate_series is None:
+            raise ValueError("rate-controlled phases require rate or rate_series")
+        if self.rate is not None and self.rate_series is not None:
+            raise ValueError("rate and rate_series are mutually exclusive")
+        return self
 
 
 class PoissonPhase(RatePhaseConfig):
@@ -387,6 +452,9 @@ class UserCentricPhase(RatePhaseConfig):
     @model_validator(mode="after")
     def validate_user_centric_constraints(self) -> UserCentricPhase:
         """Validate user-centric mode constraints."""
+        if self.rate_series is not None:
+            raise ValueError("user-centric phases do not support rate_series")
+
         if self.sessions is not None and self.sessions < self.users:
             raise ValueError(
                 f"Phase '{self.name}': --num-sessions ({self.sessions}) must be "
@@ -477,4 +545,10 @@ def get_phase_rate(phase: BasePhaseConfig) -> float | None:
     Single accessor for the ``rate`` field so a future rename fails fast here
     instead of being silently swallowed by scattered ``getattr(..., None)`` reads.
     """
-    return phase.rate if isinstance(phase, RatePhaseConfig) else None
+    if not isinstance(phase, RatePhaseConfig):
+        return None
+    if phase.rate is not None:
+        return phase.rate
+    if phase.rate_series is not None:
+        return phase.rate_series.initial_qps
+    return None

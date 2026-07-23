@@ -119,6 +119,7 @@ class RequestRateStrategy(AIPerfLoggerMixin):
             PluginType.ARRIVAL_PATTERN, interval_config.arrival_pattern
         )
         self._rate_generator = GeneratorClass(interval_config)
+        self._rate_update_event = asyncio.Event()
 
     async def setup_phase(self) -> None:
         """Setup the phase."""
@@ -153,9 +154,29 @@ class RequestRateStrategy(AIPerfLoggerMixin):
             if next_target_perf < now:
                 next_target_perf = now
 
+            if self._rate_update_event.is_set():
+                self._rate_update_event.clear()
+                next_target_perf = min(
+                    next_target_perf,
+                    time.perf_counter() + self._rate_generator.next_interval(),
+                )
+                continue
+
             sleep_duration = next_target_perf - now
             if sleep_duration > 0:
-                await asyncio.sleep(sleep_duration)
+                try:
+                    await asyncio.wait_for(
+                        self._rate_update_event.wait(), timeout=sleep_duration
+                    )
+                except asyncio.TimeoutError:  # noqa: UP041 - distinct on Python 3.10
+                    pass
+                else:
+                    self._rate_update_event.clear()
+                    next_target_perf = min(
+                        next_target_perf,
+                        time.perf_counter() + self._rate_generator.next_interval(),
+                    )
+                    continue
             else:
                 # CRITICAL: Always yield to event loop to allow callbacks to run.
                 # Without this, CONCURRENCY_BURST mode (0 interval) busy-loops and
@@ -299,4 +320,7 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         """
         if new_rate <= 0:
             raise ValueError(f"Rate must be > 0, got {new_rate}")
+        if getattr(self._rate_generator, "rate", None) == new_rate:
+            return
         self._rate_generator.set_rate(new_rate)
+        self._rate_update_event.set()
