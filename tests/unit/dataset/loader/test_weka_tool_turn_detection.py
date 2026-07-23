@@ -117,9 +117,7 @@ def _write_trace(tmp_path: Path, trace: dict) -> str:
     return str(p)
 
 
-# ---------------------------------------------------------------------------
 # _classify_turn_input
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -162,9 +160,7 @@ def test_classify_turn_input_first_turn_no_prev_with_own_types():
     )
 
 
-# ---------------------------------------------------------------------------
 # Turn model plumbing
-# ---------------------------------------------------------------------------
 
 
 def test_turn_input_kind_defaults_to_none():
@@ -176,9 +172,7 @@ def test_turn_input_kind_projects_into_metadata():
     assert turn.metadata().input_kind == TurnInputKind.TOOL_RESULT
 
 
-# ---------------------------------------------------------------------------
 # Serial reconstruction
-# ---------------------------------------------------------------------------
 
 
 def _scope_trace(trace_id: str) -> dict:
@@ -262,10 +256,8 @@ def test_convert_to_conversations_legacy_trace_input_kind_none(tmp_path):
     assert all(t.input_kind is None for c in convs for t in c.turns)
 
 
-# ---------------------------------------------------------------------------
 # Parallel parity: the REAL _reconstruct_parallel (pool run in-process) must
 # emit the same input_kind per turn as the serial path.
-# ---------------------------------------------------------------------------
 
 
 def _run_pool_inproc(tasks, *, corpus, base_seed, block_size, **_kwargs):

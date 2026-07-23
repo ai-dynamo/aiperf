@@ -17,9 +17,7 @@ import pytest
 
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader, _clamp_delay_ms
 
-# ---------------------------------------------------------------------------
 # Helper-level adversarial cases (operate directly on `_clamp_delay_ms`).
-# ---------------------------------------------------------------------------
 
 
 def test_clamp_at_cap_is_inclusive_unchanged():
@@ -66,11 +64,9 @@ def test_clamp_none_cap_passes_through_24h_delay():
     assert _clamp_delay_ms(86_400_000.0, cap_seconds=None) == 86_400_000.0
 
 
-# ---------------------------------------------------------------------------
 # Parameterized integration tests: parent path (line ~400) and subagent path
 # (line ~527) must clamp identically. Spec 8.4.4 calls for "a parameterized
 # test that runs the same scenarios on both code paths".
-# ---------------------------------------------------------------------------
 
 FIXTURES = Path(__file__).parents[3] / "fixtures" / "weka_traces"
 
@@ -295,9 +291,7 @@ def test_subagent_child_turn_delay_clamp_matrix(
     assert child.turns[1].delay == pytest.approx(expected_delay_ms)
 
 
-# ---------------------------------------------------------------------------
 # Cap interaction with `--use-think-time-only` (spec 8.4.4 bullet 8).
-# ---------------------------------------------------------------------------
 
 
 def test_think_time_only_path_also_clamps_when_think_time_exceeds_cap(

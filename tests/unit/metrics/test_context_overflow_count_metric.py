@@ -1,13 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for ``ContextOverflowCountMetric``.
-
-Coverage:
-- Metric is registered in ``MetricRegistry`` with the expected tag and flags.
-- Counter increments by 1 per record where ``request.context_overflow=True``.
-- Counter contributes 0 for records without the flag (mixed batch).
-- All-zero result when no records carry the flag.
-"""
+"""Unit tests for ``ContextOverflowCountMetric``."""
 
 from aiperf.common.enums import MetricFlags
 from aiperf.common.models import ErrorDetails

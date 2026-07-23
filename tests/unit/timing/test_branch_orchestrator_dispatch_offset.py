@@ -1,20 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Recorded dispatch offsets for SPAWN children in :class:`BranchOrchestrator`.
-
-A SPAWN child whose first request was recorded after the branch spawn
-(child turn-0 ``timestamp_ms`` past the branch ``start_timestamp_ms``) must
-dispatch at that offset via a delayed background task, not immediately at
-spawn. Covers:
-
-- offset computation from branch start vs child turn-0 timestamps
-- fallback branch start = min child turn-0 timestamp
-- immediate dispatch when timestamps are absent (legacy / --ignore-trace-delays)
-- SPAWN_JOIN gates keep waiting for a still-sleeping child
-- cleanup() cancels pending sleepers without dispatching
-- post-sleep stop-condition refusal rolls back like an immediate refusal
-- mixed branches dispatch immediate children during intercept
-"""
+"""Recorded dispatch offsets for SPAWN children in :class:`BranchOrchestrator`."""
 
 from __future__ import annotations
 

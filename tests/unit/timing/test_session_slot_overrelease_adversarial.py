@@ -1,26 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Regression: agentic mid-trace resume acquires/releases the session slot balanced.
-
-Session-slot symmetry contract (issuer.py): a session slot is acquired on a
-session's first credit in the phase and released on its final turn.
-
-Agentic replay resumes a sampled trajectory at ``turn_index = k_i + 1`` (>= 1)
-in PROFILING, so the resumed root's first PROFILING credit has ``turn_index > 0``.
-The FIX flags that credit ``is_session_start=True`` (via
-``SampledSession.build_turn_at_index``), so ``CreditIssuer.issue_credit``
-acquires a session slot for it (``needs_session_slot = is_session_start and not
-is_child``). On the root's final turn
-``CreditCallbackHandler._release_slots_for_return`` releases it, keeping the
-session semaphore balanced.
-
-Before the fix the resume credit acquired NO slot (the gate was
-``turn_index == 0``) yet the final-turn release still fired, over-releasing the
-(unbounded ``asyncio.Semaphore``) session limiter and admitting sessions above
-``--concurrency``. Agentic replay enables the session limiter
-(config.py sets ``concurrency=loadgen.concurrency`` for both phases), so the
-over-subscription was real.
-"""
+"""Regression: agentic mid-trace resume acquires/releases the session slot balanced."""
 
 from __future__ import annotations
 

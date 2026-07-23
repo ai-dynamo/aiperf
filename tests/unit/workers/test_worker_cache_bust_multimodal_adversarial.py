@@ -1,26 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Exhaustive adversarial coverage for multimodal cache-bust marker injection
-in ``aiperf.workers.worker``.
-
-Companion to ``test_worker_cache_bust_injection.py`` (parallel agent's basic
-multimodal happy-path tests) and ``test_worker_cache_bust_adversarial.py``
-(prior adversarial coverage). This file focuses on:
-
-- Every multimodal content shape (text-only, image-first, audio/video mixed)
-  with both prefix and suffix orientations.
-- Extra dict-key preservation across the spread-then-overwrite rewrite, with
-  multimodal content (the basic file proved this for string content).
-- Edge cases: empty list content, dict content (not list), int content (the
-  ``isinstance(content, list)`` guard).
-- The ``_inject_marker_into_first_user_turn`` variant on a system+user shape
-  (skip-system semantics: marker hits first user, system unchanged).
-
-All tests use the SAME prefix/suffix marker shapes the worker uses on the
-hot path: ``"[rid:abc123def456]\\n\\n"`` (prefix) and ``"\\n\\n[rid:abc123def456]"``
-(suffix). The helpers' ``is_prefix`` kwarg is the source of truth — these
-tests lock both code paths.
-"""
+"""Exhaustive adversarial coverage for multimodal cache-bust marker injection in ``aiperf.workers.worker``."""
 
 from __future__ import annotations
 
@@ -39,11 +19,6 @@ _SUFFIX_MARKER = "\n\n[rid:abc123def456]"
 # building the new ``{"type": "text", "text": ...}`` dict.
 _PREFIX_PART_TEXT = _PREFIX_MARKER.strip()
 _SUFFIX_PART_TEXT = _SUFFIX_MARKER.strip()
-
-
-# =============================================================================
-# _inject_marker_into_raw_messages: text-only multimodal
-# =============================================================================
 
 
 def test_inject_marker_into_text_only_multimodal_prefix():
@@ -85,11 +60,6 @@ def test_inject_marker_into_text_only_multimodal_suffix():
     ]
 
 
-# =============================================================================
-# _inject_marker_into_raw_messages: image-first multimodal
-# =============================================================================
-
-
 def test_inject_marker_into_image_first_multimodal_prefix():
     """When the original content opens with an image_url part (no leading
     text), the marker still goes at index 0 — token-0 cache-bust semantics
@@ -115,11 +85,6 @@ def test_inject_marker_into_image_first_multimodal_prefix():
     assert raw[0]["content"][1]["image_url"]["url"] == "data:image/png;base64,iVBORw=="
     assert raw[0]["content"][2] == {"type": "text", "text": "caption"}
     assert len(raw[0]["content"]) == 3
-
-
-# =============================================================================
-# _inject_marker_into_raw_messages: mixed-modality content
-# =============================================================================
 
 
 @pytest.mark.parametrize(
@@ -174,11 +139,6 @@ def test_inject_marker_into_audio_video_mixed_content(
     assert remaining == original_parts
 
 
-# =============================================================================
-# Extra-key preservation on multimodal rewrite
-# =============================================================================
-
-
 def test_inject_marker_preserves_extra_keys_on_message_dict_multimodal():
     """The spread-then-overwrite rewrite (``{**first, "content": new_content}``)
     must preserve every non-content key on the original message dict —
@@ -215,11 +175,6 @@ def test_inject_marker_preserves_extra_keys_on_message_dict_multimodal():
     assert out["extra_field"] is sentinel_obj
 
 
-# =============================================================================
-# Unexpected content types: int, dict
-# =============================================================================
-
-
 def test_inject_marker_into_raw_messages_unexpected_content_int(caplog):
     """``content = 12345`` (int) -> not str, not list -> helper logs WARNING
     and leaves the message untouched (marker dropped, but loudly)."""
@@ -250,11 +205,6 @@ def test_inject_marker_into_raw_messages_unexpected_content_dict(caplog):
     assert raw == [{"role": "system", "content": {"foo": "bar"}}]
     assert any("cache-bust" in rec.message for rec in caplog.records)
     assert any("dict" in rec.message for rec in caplog.records)
-
-
-# =============================================================================
-# _inject_marker_into_first_user_turn multimodal coverage
-# =============================================================================
 
 
 @pytest.mark.parametrize(
@@ -357,11 +307,6 @@ def test_inject_marker_multimodal_first_user_after_system():
     assert raw[1]["content"][1]["image_url"]["url"] == "https://x/img.jpg"
     assert raw[1]["content"][2] == {"type": "text", "text": "what's in this picture?"}
     assert len(raw[1]["content"]) == 3
-
-
-# =============================================================================
-# Empty-list content edge case
-# =============================================================================
 
 
 def test_inject_marker_into_empty_list_content_system_role():

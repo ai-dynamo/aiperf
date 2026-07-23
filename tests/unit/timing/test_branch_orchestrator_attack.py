@@ -1,23 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Hostile-input attacks against BranchOrchestrator (PR #891).
-
-Targets BranchOrchestrator semantics with adversarial inputs across:
-
-- Deep / very-deep SPAWN nesting (recursion / stack depth).
-- FORK at non-zero depth, with ``background=true`` fork-and-continue.
-- Concurrent intercepts on *different* correlation_ids (per-corr locking).
-- Drain observer firing during in-flight intercept.
-- ``has_pending_branch_work`` dominance over branch_ids check at every depth.
-- Mid-flight child errors with and without ``AIPERF_DAG_FAIL_FAST``.
-- Pre-session edge cases (is_root / agent_depth combinations, empty turns,
-  100 root conversations, interleaved sampling).
-- Drain / completion gates with out-of-order child vs. parent termination.
-- Sticky routing FORK refcount invariants across nested children.
-
-Helpers reused from ``test_branch_orchestrator_adversarial_full`` to keep
-style consistent.
-"""
+"""Hostile-input attacks against BranchOrchestrator (PR #891)."""
 
 from __future__ import annotations
 
@@ -49,9 +32,7 @@ from tests.unit.timing.test_branch_orchestrator_adversarial_full import (
     _mk_source,
 )
 
-# ---------------------------------------------------------------------------
 # Helpers specific to this attack suite
-# ---------------------------------------------------------------------------
 
 
 def _spawn_branch(branch_id: str, child_ids: list[str]) -> ConversationBranchInfo:
@@ -108,9 +89,7 @@ def _nested_spawn_chain(depth: int, branch_factor: int = 1) -> list:
     return convs
 
 
-# ===========================================================================
 # DEEP NESTING
-# ===========================================================================
 
 
 @pytest.mark.asyncio
@@ -215,9 +194,7 @@ async def test_fork_background_at_depth_3_dispatches_child_no_gate():
     )
 
 
-# ===========================================================================
 # CONCURRENT INTERCEPTS / RACE-SHAPED SCENARIOS
-# ===========================================================================
 
 
 @pytest.mark.asyncio
@@ -337,9 +314,7 @@ async def test_has_pending_branch_work_dominates_branch_ids_at_every_depth():
         orch.get_branch_ids(_mk_credit("nope", "corr-nope", 0))
 
 
-# ===========================================================================
 # CHILD ERROR PATHS
-# ===========================================================================
 
 
 @pytest.mark.asyncio
@@ -504,9 +479,7 @@ async def test_fork_background_child_errors_parent_still_continues(monkeypatch):
     assert sticky.release_child_routing.call_count == 1
 
 
-# ===========================================================================
 # PRE-SESSION EDGE CASES
-# ===========================================================================
 
 
 @pytest.mark.asyncio
@@ -684,9 +657,7 @@ async def test_pre_dispatched_branch_not_re_dispatched_on_intercept_turn_zero():
     assert cs.start_branch_child.call_count == pre_count_branch
 
 
-# ===========================================================================
 # DRAIN / COMPLETION GATES
-# ===========================================================================
 
 
 @pytest.mark.asyncio
@@ -784,9 +755,7 @@ async def test_all_children_fail_before_any_return_aborts_cleanly(monkeypatch):
     assert aborted >= {"corr-root", "corr-c2"}
 
 
-# ===========================================================================
 # STICKY ROUTING / REFCOUNT INVARIANTS
-# ===========================================================================
 
 
 @pytest.mark.asyncio
@@ -864,9 +833,7 @@ async def test_fork_child_in_flight_when_parent_finishes_refcount_outstanding():
     assert orch.has_pending_branch_work() is False
 
 
-# ===========================================================================
 # Deep-nesting + edge: nested SPAWN with SPAWN_JOIN at depth=3
-# ===========================================================================
 
 
 @pytest.mark.asyncio
@@ -910,9 +877,7 @@ async def test_nested_spawn_with_join_at_depth_3():
     issuer.dispatch_join_turn.assert_awaited_once()
 
 
-# ===========================================================================
 # pre+sampling interleaving — pre-dispatched does not double on regular intercept
-# ===========================================================================
 
 
 @pytest.mark.asyncio

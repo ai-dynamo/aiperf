@@ -18,11 +18,6 @@ from aiperf.orchestrator.orchestrator import MultiRunOrchestrator
 _WEKA_LOADER = "semianalysis_cc_traces_weka_with_subagents"
 
 
-# ---------------------------------------------------------------------------
-# API surface guard
-# ---------------------------------------------------------------------------
-
-
 def test_obsolete_multi_run_orchestrator_api_is_absent() -> None:
     """The orchestrator accepts a plan/executor and exposes no legacy driver API."""
     sig = inspect.signature(MultiRunOrchestrator.__init__)
@@ -50,11 +45,6 @@ def test_obsolete_multi_run_orchestrator_api_is_absent() -> None:
         assert not hasattr(MultiRunOrchestrator, obsolete_method), (
             f"obsolete orchestrator method {obsolete_method!r} unexpectedly exists"
         )
-
-
-# ---------------------------------------------------------------------------
-# Scenario-submission stamping
-# ---------------------------------------------------------------------------
 
 
 def _make_plan(

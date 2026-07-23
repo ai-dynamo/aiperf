@@ -1,11 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for the consolidated weka prompt-synthesis primitives.
-
-Covers :func:`aiperf.dataset.loader.weka_synth_buf.compose_weka_prompt_tokens`
-across all three weka layouts and the determinism contract of the
-sha256-keyed partial-tail sampler used by both the serial and parallel paths.
-"""
+"""Unit tests for the consolidated weka prompt-synthesis primitives."""
 
 from __future__ import annotations
 

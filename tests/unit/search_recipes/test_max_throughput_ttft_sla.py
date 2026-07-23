@@ -1,12 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the MaxThroughputUnderTTFTSLA built-in recipe.
-
-Recipes emit ``AdaptiveSearchSweep`` with a nested ``Objective`` and consume a
-``SearchRecipeContext`` carrying a validated ``BenchmarkConfig``. The
-``make_ctx`` helper in ``conftest.py`` builds one.
-"""
+"""Tests for the MaxThroughputUnderTTFTSLA built-in recipe."""
 
 from __future__ import annotations
 

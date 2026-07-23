@@ -1,31 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial unit tests for the BranchOrchestrator state machine.
-
-Targets the Phase 0-3 invariants under stress:
-
-- Race ordering between parent suspension and child completion.
-- Concurrent intercepts on the same parent_corr (per-parent lock serialization).
-- Idempotent double-delivery of child completions.
-- Vacuous-gate trap protection via PrereqState.registered.
-- Cleanup mid-cascade and idempotency.
-- has_pending_branch_work truth-table under partial state.
-- Bypassed-validator pathological inputs (K=0 self-gate, empty children,
-  duplicate branch_ids on one turn, gated_turn_index past num_turns,
-  pre-session branches against missing/non-root conversations).
-- Massive fan-in / fan-out scaling.
-- Multi-consumer branches feeding multiple gates with fail-fast cascade.
-- Stop-condition flips during a delayed-join gap.
-- AIPERF_DAG_FAIL_FAST cascade across multiple future gates.
-- Reentry / cleanup-mid-intercept deadlock avoidance.
-- Orphan child completion (no matching prereq).
-- Mixed FORK + SPAWN feeding one gate, FORK refcount partial release.
-- Pre-session child becoming a parent of its own DAG (second-level dispatch).
-
-When a test reveals a real bug, we either patch the smallest fix inline or
-mark with ``pytest.mark.xfail(strict=True, reason=...)`` and document the
-follow-up.
-"""
+"""Adversarial unit tests for the BranchOrchestrator state machine."""
 
 from __future__ import annotations
 

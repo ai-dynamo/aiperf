@@ -1,26 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Regression: ``CreditCounter`` session accounting under agentic mid-trace resume.
-
-Agentic replay resumes a sampled trajectory mid-conversation:
-``AgenticReplayStrategy._execute_profiling`` issues the first PROFILING credit
-of every trajectory at ``turn_index = k_i + 1`` (>= 1), and snapshot lanes
-resume their live root at ``state.next_turn_index`` (also > 0). The root's
-turn 0 is therefore NEVER sent during the PROFILING phase.
-
-The FIX: the strategy flags that first credit ``is_session_start=True`` (via
-``SampledSession.build_turn_at_index``), so ``increment_sent`` bumps
-``_sent_sessions`` for ``agent_depth == 0 and (turn_index == 0 or
-is_session_start)`` and ``increment_returned`` bumps ``_completed_sessions`` on
-the final turn -- keeping ``completed_sessions <= sent_sessions`` and
-``in_flight_sessions >= 0``.
-
-Before the fix, ``increment_sent`` gated only on ``turn_index == 0``, so a
-resumed root *completed* a session it never *started*, breaking the invariant
-and driving ``in_flight_sessions`` negative.
-
-These are pure-counter assertions, no async wiring required.
-"""
+"""Regression: ``CreditCounter`` session accounting under agentic mid-trace resume."""
 
 from __future__ import annotations
 

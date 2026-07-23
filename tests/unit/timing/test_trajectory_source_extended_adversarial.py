@@ -1,17 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Extended adversarial unit tests for ``TrajectorySource`` and ``SampledSession.build_turn_at_index``.
-
-Complements ``test_trajectory_source_adversarial.py`` (selection mechanics +
-seed determinism) with coverage of:
-
-- concurrency=0 boundary (target_size becomes 0)
-- mixed-validity pool: 0-turn traces interleaved with valid ones
-- seed sensitivity: different seeds drive at least one differing k_i
-- ``_seed_for_trace`` cross-trace independence (no SHA-256 collisions in small N)
-- ``session_for`` correlation-id minting + override semantics
-- ``SampledSession.build_turn_at_index`` out-of-range + boundary indices
-"""
+"""Extended adversarial unit tests for ``TrajectorySource`` and ``SampledSession.build_turn_at_index``."""
 
 from __future__ import annotations
 
@@ -32,9 +21,7 @@ from aiperf.timing.trajectory_source import (
     _seed_for_trace,
 )
 
-# =============================================================================
 # Helpers
-# =============================================================================
 
 
 def _make_dataset(turns_per_trace_by_id: dict[str, int]) -> DatasetMetadata:
@@ -69,9 +56,7 @@ class _Sampler:
         return cid
 
 
-# =============================================================================
 # concurrency=0 -> _target_size=0 -> empty trajectories -> EmptyTracePoolError
-# =============================================================================
 
 
 def test_concurrency_zero_yields_empty_trajectories_then_raises() -> None:
@@ -89,9 +74,7 @@ def test_concurrency_zero_yields_empty_trajectories_then_raises() -> None:
         )
 
 
-# =============================================================================
 # Mixed valid + invalid traces: 0-turn ones are skipped, valid ones survive
-# =============================================================================
 
 
 def test_mixed_valid_and_invalid_traces_skips_zero_turn_traces() -> None:
@@ -155,9 +138,7 @@ def test_mixed_valid_and_invalid_traces_concurrency_over_usable_wrap_fills() -> 
     assert len(distinct) < 5  # wrap-fill activated
 
 
-# =============================================================================
 # Seed sensitivity: different seeds drive at least one differing k_i
-# =============================================================================
 
 
 def test_different_seeds_can_yield_different_k_i() -> None:
@@ -192,9 +173,7 @@ def test_different_seeds_can_yield_different_k_i() -> None:
     )
 
 
-# =============================================================================
 # _seed_for_trace independence across distinct trace_ids
-# =============================================================================
 
 
 def test_seed_for_trace_independence_across_traces() -> None:
@@ -207,9 +186,7 @@ def test_seed_for_trace_independence_across_traces() -> None:
     )
 
 
-# =============================================================================
 # session_for: persistent trajectory correlation_id when no override
-# =============================================================================
 
 
 def test_session_for_reuses_trajectory_correlation_id_per_call() -> None:
@@ -233,9 +210,7 @@ def test_session_for_reuses_trajectory_correlation_id_per_call() -> None:
     assert s2.start_turn_index == trajectory.start_turn_index
 
 
-# =============================================================================
 # session_for: explicit x_correlation_id used verbatim
-# =============================================================================
 
 
 def test_session_for_accepts_explicit_correlation_id() -> None:
@@ -255,9 +230,7 @@ def test_session_for_accepts_explicit_correlation_id() -> None:
     assert session.x_correlation_id == "my-fixed-id"
 
 
-# =============================================================================
 # SampledSession.build_turn_at_index: negative index rejected
-# =============================================================================
 
 
 def test_build_turn_at_index_negative_raises_index_error() -> None:
@@ -276,9 +249,7 @@ def test_build_turn_at_index_negative_raises_index_error() -> None:
         session.build_turn_at_index(-1)
 
 
-# =============================================================================
 # SampledSession.build_turn_at_index: index at or beyond length rejected
-# =============================================================================
 
 
 def test_build_turn_at_index_at_or_beyond_length_raises() -> None:
@@ -299,9 +270,7 @@ def test_build_turn_at_index_at_or_beyond_length_raises() -> None:
         session.build_turn_at_index(99)
 
 
-# =============================================================================
 # SampledSession.build_turn_at_index: first and last in-range indices succeed
-# =============================================================================
 
 
 def test_build_turn_at_index_first_and_last_succeed() -> None:

@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.enums import ConversationContextMode, MemoryMapFormat
 from aiperf.common.environment import Environment
@@ -400,16 +401,18 @@ class TestGenerateInputPayloadsVerbatim:
 
 
 class TestRunMmapPaths:
-    def test_local_paths_are_uncompressed(self) -> None:
+    @pytest.mark.parametrize(
+        "compress_only, data_name, index_name",
+        [
+            param(False, "dataset.dat", "index.dat", id="local-uncompressed"),
+            param(True, "dataset.dat.zst", "index.dat.zst", id="kubernetes-compressed"),
+        ],
+    )  # fmt: skip
+    def test_run_mmap_paths(
+        self, compress_only: bool, data_name: str, index_name: str
+    ) -> None:
         dm = DatasetManager(run=_make_synthetic_run(), service_id="dm-test")
-        dm._compress_only = False
+        dm._compress_only = compress_only
         data_p, index_p = dm._run_mmap_paths()
-        assert data_p.name == "dataset.dat"
-        assert index_p.name == "index.dat"
-
-    def test_kubernetes_paths_are_compressed(self) -> None:
-        dm = DatasetManager(run=_make_synthetic_run(), service_id="dm-test")
-        dm._compress_only = True
-        data_p, index_p = dm._run_mmap_paths()
-        assert data_p.name == "dataset.dat.zst"
-        assert index_p.name == "index.dat.zst"
+        assert data_p.name == data_name
+        assert index_p.name == index_name

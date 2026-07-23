@@ -1,18 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial coverage for cache_bust field propagation through CreditIssuer.
-
-The basic propagation is asserted in ``test_issuer.py::TestCacheBustFieldsPropagation``;
-this file adds:
-
-- An explicit SYSTEM_PREFIX target check (the only target the marker is paired
-  with by the strategy in practice — locks the propagation against future
-  refactors that might serialize the enum incorrectly).
-- The default-when-unset case (defensive — also covered upstream, repeated
-  here to make this file independently meaningful).
-- A msgpack roundtrip on the resulting Credit struct to lock the wire contract
-  for cross-process credit dispatch (router -> worker over ZMQ).
-"""
+"""Adversarial coverage for cache_bust field propagation through CreditIssuer."""
 
 from __future__ import annotations
 
@@ -27,9 +15,7 @@ from aiperf.common.enums import CacheBustTarget, CreditPhase
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import Credit, TurnToSend
 
-# =============================================================================
 # Fixtures (mirror tests/unit/credit/test_issuer.py)
-# =============================================================================
 
 
 @pytest.fixture
@@ -103,9 +89,7 @@ def credit_issuer(
     )
 
 
-# =============================================================================
 # Cache-bust propagation through issue_credit
-# =============================================================================
 
 
 async def test_issue_credit_propagates_cache_bust_marker_and_target(

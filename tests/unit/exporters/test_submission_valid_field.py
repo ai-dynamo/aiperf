@@ -1,18 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the aggregate run-metadata helpers.
+"""Tests for the aggregate run-metadata helpers."""
 
-`_build_run_metadata_dict` is the integration point used by Task 9 to merge
-scenario-submission tracking fields (`scenario`, `submission_valid`,
-`submission_invalid_reasons`) into the top-level
-`profile_export_aiperf_aggregate.json` output. The helper intentionally
-returns an empty dict when `scenario_name is None` so non-scenario runs are
-never polluted with submission-tracking fields.
-
-`compute_submission_outcome` folds runtime-only signals into the validator
-verdict; the cancellation tests here pin that a cancelled run is never a
-valid scenario submission (reason `"run_cancelled"`).
-"""
+import pytest
+from pytest import param
 
 from aiperf.exporters.aggregate.aggregate_base_exporter import (
     CONTEXT_OVERFLOW_REASON,
@@ -51,24 +42,42 @@ def test_submission_valid_false_with_reason() -> None:
     assert "context_overflow_rate_exceeded" in md["submission_invalid_reasons"]
 
 
-def test_cancelled_run_flips_submission_valid_false() -> None:
+@pytest.mark.parametrize(
+    "scenario_name, validator_submission_valid, was_cancelled, expected_valid, expected_reasons",
+    [
+        param(
+            "inferencex-agentx-mvp",
+            True,
+            True,
+            False,
+            [RUN_CANCELLED_REASON],
+            id="cancelled_flips_false",
+        ),
+        param(
+            "inferencex-agentx-mvp",
+            True,
+            False,
+            True,
+            [],
+            id="not_cancelled_keeps_true",
+        ),
+        param(None, None, True, None, [], id="cancelled_without_scenario_omits"),
+    ],
+)  # fmt: skip
+def test_cancellation_submission_outcome(
+    scenario_name,
+    validator_submission_valid,
+    was_cancelled,
+    expected_valid,
+    expected_reasons,
+) -> None:
     valid, reasons = compute_submission_outcome(
-        scenario_name="inferencex-agentx-mvp",
-        validator_submission_valid=True,
-        was_cancelled=True,
+        scenario_name=scenario_name,
+        validator_submission_valid=validator_submission_valid,
+        was_cancelled=was_cancelled,
     )
-    assert valid is False
-    assert reasons == [RUN_CANCELLED_REASON]
-
-
-def test_not_cancelled_run_keeps_submission_valid_true() -> None:
-    valid, reasons = compute_submission_outcome(
-        scenario_name="inferencex-agentx-mvp",
-        validator_submission_valid=True,
-        was_cancelled=False,
-    )
-    assert valid is True
-    assert reasons == []
+    assert valid is expected_valid
+    assert reasons == expected_reasons
 
 
 def test_cancelled_run_appends_reason_to_existing_reasons() -> None:
@@ -111,13 +120,3 @@ def test_overflow_rate_boundary_without_double_count() -> None:
     )
     assert valid_inflated is True
     assert reasons_inflated == []
-
-
-def test_cancelled_run_without_scenario_omits_submission_valid() -> None:
-    valid, reasons = compute_submission_outcome(
-        scenario_name=None,
-        validator_submission_valid=None,
-        was_cancelled=True,
-    )
-    assert valid is None
-    assert reasons == []

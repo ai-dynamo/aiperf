@@ -1,16 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Context-overflow short-circuit tests for AgenticReplayStrategy.
-
-When a non-final turn returns with a context-length error from the server,
-the strategy must terminate the trajectory immediately and recycle into
-the next trace, rather than dispatching subsequent turns whose cumulative
-prompts will also overflow.
-
-Mirrors kv-cache-tester's "user truncated" semantics: once a trajectory
-has blown past the model's context limit, we don't waste compute on its
-later turns.
-"""
+"""Context-overflow short-circuit tests for AgenticReplayStrategy."""
 
 from __future__ import annotations
 

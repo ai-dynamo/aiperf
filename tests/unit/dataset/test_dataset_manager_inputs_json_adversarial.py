@@ -46,9 +46,7 @@ from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.plugin.enums import CustomDatasetType, EndpointType
 from tests.unit.conftest import make_run_from_cli
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _raw() -> dict[str, Any]:
@@ -114,9 +112,7 @@ def _full_manager(
     )
 
 
-# ---------------------------------------------------------------------------
 # _generate_input_payloads: raw vs formatted branch
-# ---------------------------------------------------------------------------
 
 
 class TestGenerateInputPayloadsAdversarial:
@@ -221,9 +217,7 @@ class TestGenerateInputPayloadsAdversarial:
         assert inputs.data[0].payloads == [{"f": 0}, {"f": 1}]
 
 
-# ---------------------------------------------------------------------------
 # _preformat_payloads: all-or-nothing + NotImplementedError escape
-# ---------------------------------------------------------------------------
 
 
 class TestPreformatPayloadsAdversarial:
@@ -349,9 +343,7 @@ class TestPreformatPayloadsAdversarial:
         assert convs[3].turns[0].raw_payload is None
 
 
-# ---------------------------------------------------------------------------
 # Skip-logic in _profile_configure_command
-# ---------------------------------------------------------------------------
 
 
 class TestSkipInputsJsonAdversarial:
@@ -393,9 +385,7 @@ class TestSkipInputsJsonAdversarial:
             mock_gen.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
 # _generate_inputs_json_file: error handling + cleanup
-# ---------------------------------------------------------------------------
 
 
 class TestGenerateInputsJsonFileAdversarial:
@@ -476,9 +466,7 @@ class TestGenerateInputsJsonFileAdversarial:
         assert not tmp_file.exists()
 
 
-# ---------------------------------------------------------------------------
 # Wave-2 fix targets (xfail strict)
-# ---------------------------------------------------------------------------
 
 
 class TestWave2FixTargets:

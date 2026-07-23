@@ -6,6 +6,7 @@ import math
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.dataset.loader.weka_trace_models import (
     WekaNormalRequest,
@@ -48,46 +49,23 @@ def _valid_subagent(inner_requests: list[dict]) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
 # Group A: discriminator attacks
-# ---------------------------------------------------------------------------
 
 
-def test_discriminator_unknown_type_rejected():
-    """Pin: unknown type tag 'x' must fail tagged-union discrimination."""
-    bad = _trace_with_request({"t": 0.0, "type": "x", "model": "m", "in": 10, "out": 1})
+@pytest.mark.parametrize(
+    "req",
+    [
+        param({"t": 0.0, "type": "x", "model": "m", "in": 10, "out": 1}, id="unknown_type"),
+        param({"t": 0.0, "type": None, "model": "m", "in": 10, "out": 1}, id="null_type"),
+        param({"t": 0.0, "model": "m", "in": 10, "out": 1}, id="missing_type"),
+        param({"t": 0.0, "type": "N", "model": "m", "in": 10, "out": 1}, id="uppercase_type"),
+        param({"t": 0.0, "type": "", "model": "m", "in": 10, "out": 1}, id="empty_string_type"),
+    ],
+)  # fmt: skip
+def test_discriminator_invalid_type_rejected(req: dict):
+    """Pin: invalid discriminator tags must fail tagged-union discrimination."""
     with pytest.raises(ValidationError):
-        WekaTrace.model_validate(bad)
-
-
-def test_discriminator_null_type_rejected():
-    """Pin: null type must fail discrimination (not coerce to a variant)."""
-    bad = _trace_with_request(
-        {"t": 0.0, "type": None, "model": "m", "in": 10, "out": 1}
-    )
-    with pytest.raises(ValidationError):
-        WekaTrace.model_validate(bad)
-
-
-def test_discriminator_missing_type_rejected():
-    """Pin: absent type field must fail discrimination."""
-    bad = _trace_with_request({"t": 0.0, "model": "m", "in": 10, "out": 1})
-    with pytest.raises(ValidationError):
-        WekaTrace.model_validate(bad)
-
-
-def test_discriminator_uppercase_type_rejected():
-    """Pin: discriminator is case-sensitive; 'N' must not match 'n'."""
-    bad = _trace_with_request({"t": 0.0, "type": "N", "model": "m", "in": 10, "out": 1})
-    with pytest.raises(ValidationError):
-        WekaTrace.model_validate(bad)
-
-
-def test_discriminator_empty_string_type_rejected():
-    """Pin: empty-string discriminator must fail (no variant matches '')."""
-    bad = _trace_with_request({"t": 0.0, "type": "", "model": "m", "in": 10, "out": 1})
-    with pytest.raises(ValidationError):
-        WekaTrace.model_validate(bad)
+        WekaTrace.model_validate(_trace_with_request(req))
 
 
 def test_discriminator_nested_subagent_rejected():
@@ -133,33 +111,23 @@ def test_discriminator_ttft_on_normal_request_rejected():
         WekaTrace.model_validate(bad)
 
 
-# ---------------------------------------------------------------------------
 # Group B: numeric boundary + non-finite (currently accepted)
-# ---------------------------------------------------------------------------
 
 
-def test_normal_request_negative_input_length_accepted():
-    """Pin: no lower bound on input_length; negative int parses."""
+@pytest.mark.parametrize(
+    "in_value",
+    [
+        param(-1, id="negative"),
+        param(0, id="zero"),
+        param(10**9, id="huge"),
+    ],
+)  # fmt: skip
+def test_normal_request_input_length_no_bounds(in_value: int):
+    """Pin: input_length has no lower/upper bound; negative, zero, huge all parse."""
     req = WekaNormalRequest.model_validate(
-        {"t": 0.0, "type": "n", "model": "m", "in": -1, "out": 1}
+        {"t": 0.0, "type": "n", "model": "m", "in": in_value, "out": 1}
     )
-    assert req.input_length == -1
-
-
-def test_normal_request_zero_input_length_accepted():
-    """Pin: zero input_length parses (no ge=1 constraint)."""
-    req = WekaNormalRequest.model_validate(
-        {"t": 0.0, "type": "n", "model": "m", "in": 0, "out": 1}
-    )
-    assert req.input_length == 0
-
-
-def test_normal_request_huge_input_length_accepted():
-    """Pin: no upper bound on input_length; 10**9 parses."""
-    req = WekaNormalRequest.model_validate(
-        {"t": 0.0, "type": "n", "model": "m", "in": 10**9, "out": 1}
-    )
-    assert req.input_length == 10**9
+    assert req.input_length == in_value
 
 
 def test_normal_request_negative_output_length_accepted():
@@ -194,9 +162,7 @@ def test_normal_request_neg_inf_timestamp_accepted():
     assert req.t == -math.inf
 
 
-# ---------------------------------------------------------------------------
 # Group C: type coercion probes
-# ---------------------------------------------------------------------------
 
 
 def test_normal_request_string_input_coerced_to_int():
@@ -241,21 +207,15 @@ def test_hash_ids_with_fractional_float_rejected():
         )
 
 
-# ---------------------------------------------------------------------------
 # Group D: required-field and Literal edge
-# ---------------------------------------------------------------------------
 
 
-def test_weka_trace_missing_required_id_rejected():
-    """Pin: 'id' is required at the trace level."""
-    bad = {k: v for k, v in _VALID.items() if k != "id"}
-    with pytest.raises(ValidationError):
-        WekaTrace.model_validate(bad)
-
-
-def test_weka_trace_missing_required_block_size_rejected():
-    """Pin: 'block_size' is required at the trace level."""
-    bad = {k: v for k, v in _VALID.items() if k != "block_size"}
+@pytest.mark.parametrize(
+    "field", [param("id", id="id"), param("block_size", id="block_size")]
+)
+def test_weka_trace_missing_required_field_rejected(field: str):
+    """Pin: 'id' and 'block_size' are required at the trace level."""
+    bad = {k: v for k, v in _VALID.items() if k != field}
     with pytest.raises(ValidationError):
         WekaTrace.model_validate(bad)
 

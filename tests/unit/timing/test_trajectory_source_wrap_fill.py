@@ -1,13 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for TrajectorySource lane sampling when concurrency exceeds the pool.
-
-Trace selection is the dataset sampler's job: ``TrajectorySource`` samples one
-trace per concurrency lane straight from the sampler (which wraps), so when
-concurrency > pool the same trace recurs across lanes, each with its own t*
-snapshot. There is no separate wrap-fill step. The full happy path lives in
-``tests/component_integration/test_agentic_replay_wrap_fill.py``.
-"""
+"""Unit tests for TrajectorySource lane sampling when concurrency exceeds the pool."""
 
 from __future__ import annotations
 

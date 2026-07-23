@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config import BenchmarkConfig
@@ -619,11 +620,15 @@ class TestAdaptiveStrategy:
 class TestSweepMode:
     """Tests for the SweepMode enum."""
 
-    def test_independent_value(self):
-        assert SweepMode.INDEPENDENT == "independent"
-
-    def test_repeated_value(self):
-        assert SweepMode.REPEATED == "repeated"
+    @pytest.mark.parametrize(
+        ("member", "expected"),
+        [
+            param(SweepMode.INDEPENDENT, "independent", id="independent"),
+            param(SweepMode.REPEATED, "repeated", id="repeated"),
+        ],
+    )  # fmt: skip
+    def test_value(self, member, expected):
+        assert member == expected
 
     def test_members(self):
         assert {m.value for m in SweepMode} == {"independent", "repeated"}
@@ -632,17 +637,15 @@ class TestSweepMode:
 class TestSanitizeLabel:
     """Tests for the module-level _sanitize_label helper."""
 
-    def test_strips_parent_dir_traversal(self):
-        assert _sanitize_label("../foo") == "foo"
-
-    def test_strips_path_separators(self):
-        assert _sanitize_label("foo/bar\\baz") == "foobarbaz"
-
-    def test_strips_shell_special_chars(self):
-        assert _sanitize_label('a<b>c|d:e"f?g*h') == "abcdefgh"
-
-    def test_passthrough_safe_label(self):
-        assert _sanitize_label("concurrency_10") == "concurrency_10"
-
-    def test_passthrough_run_label(self):
-        assert _sanitize_label("run_0001") == "run_0001"
+    @pytest.mark.parametrize(
+        ("label", "expected"),
+        [
+            param("../foo", "foo", id="parent_dir_traversal"),
+            param("foo/bar\\baz", "foobarbaz", id="path_separators"),
+            param('a<b>c|d:e"f?g*h', "abcdefgh", id="shell_special_chars"),
+            param("concurrency_10", "concurrency_10", id="passthrough_safe"),
+            param("run_0001", "run_0001", id="passthrough_run"),
+        ],
+    )  # fmt: skip
+    def test_sanitize(self, label, expected):
+        assert _sanitize_label(label) == expected

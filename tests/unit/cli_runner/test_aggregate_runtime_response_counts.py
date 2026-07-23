@@ -1,18 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit coverage for ``_sum_runtime_response_counts``.
-
-Pins the runtime-totals accounting that feeds the aggregate JSON's
-``submission_valid`` carrier keys (``_total_responses`` /
-``_context_overflow_count`` stamped by ``_stamp_scenario_submission_metadata``).
-
-``total_responses`` is ``request_count + error_request_count +
-skipped_context_overflow_count``. Metric-path overflows are already inside
-``error_request_count`` (``ContextOverflowCountMetric`` is ERROR_ONLY); only
-AGENTIC_REPLAY skip-path overflows (side-channel) are added again. The
-overflow numerator remains ``context_overflow_count`` (merged). Failed runs
-are skipped and missing metrics contribute 0.
-"""
+"""Unit coverage for ``_sum_runtime_response_counts``."""
 
 from __future__ import annotations
 

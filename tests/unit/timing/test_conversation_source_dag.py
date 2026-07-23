@@ -1,11 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for ConversationSource DAG child builders.
-
-Covers the FORK and SPAWN entry points used by the DAG BranchOrchestrator:
-- ``start_branch_child``: child shares parent's correlation_id (sticky co-locate)
-- ``start_pre_session_child``: no parent; child routes on its own correlation_id
-"""
+"""Unit tests for ConversationSource DAG child builders."""
 
 import pytest
 

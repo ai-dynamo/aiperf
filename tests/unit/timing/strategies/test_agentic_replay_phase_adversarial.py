@@ -1,13 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial unit tests for AgenticReplayStrategy phase-branching.
-
-Spec §8.4.5 - attacks the phase-branching surface past the happy-path tests in
-``test_agentic_replay.py``: defensive constructor checks, empty-trajectory handling,
-warmup failure surfacing, no embedded wall-clock timeout, defensive pin for
-PROFILING-without-WARMUP, mid-turn duration stops, in-WARMUP subagent dispatch
-semantics, and the multi-construction defensive pin.
-"""
+"""Adversarial unit tests for AgenticReplayStrategy phase-branching."""
 
 from __future__ import annotations
 
@@ -32,9 +25,7 @@ from aiperf.timing.trajectory_source import (
     TrajectorySource,
 )
 
-# =============================================================================
 # Helpers (mirror test_agentic_replay.py patterns; kept local for isolation)
-# =============================================================================
 
 
 def _make_dataset(num_traces: int, turns_per_trace: int) -> DatasetMetadata:
@@ -122,9 +113,7 @@ def _make_credit(
     )
 
 
-# =============================================================================
 # Test 1: WARMUP phase + non-AGENTIC_REPLAY timing_mode is a defensive case
-# =============================================================================
 
 
 def test_warmup_phase_with_non_agentic_timing_mode_pins_current_behavior():
@@ -157,9 +146,7 @@ def test_warmup_phase_with_non_agentic_timing_mode_pins_current_behavior():
     assert strategy.config.phase == CreditPhase.WARMUP
 
 
-# =============================================================================
 # Test 2: WARMUP empty trajectory -> no credits; PROFILING aborts with clear error
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -186,10 +173,8 @@ async def test_profiling_empty_trajectories_aborts_setup_with_clear_error():
     assert "empty" in msg.lower() or "warmup" in msg.lower()
 
 
-# =============================================================================
 # Test 3: WARMUP credit terminal failure -> TrajectoryWarmupFailedError
 #         and PROFILING never runs (the strategy contract).
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -228,9 +213,7 @@ async def test_warmup_terminal_failure_blocks_profiling():
     assert exc_info.value.failed_trace_ids == ["trace_0", "trace_2"]
 
 
-# =============================================================================
 # Test 4: WARMUP exceeds 5 minutes wall-clock - strategy has no embedded timeout
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -259,9 +242,7 @@ async def test_warmup_no_embedded_wallclock_abort():
     assert not hasattr(strategy, "_warmup_aborted")
 
 
-# =============================================================================
 # Test 5: PROFILING without preceding WARMUP -> strategy is operator-trusting
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -293,9 +274,7 @@ async def test_profiling_without_preceding_warmup_does_not_self_enforce():
     assert issued.conversation_id == "trace_0"
 
 
-# =============================================================================
 # Test 6: PROFILING DurationStopCondition mid-turn -> in-flight finishes; metrics include it
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -334,9 +313,7 @@ async def test_profiling_credit_return_after_stop_dispatches_next_turn():
     assert next_turn.conversation_id == "trace_0"
 
 
-# =============================================================================
 # Test 7: Subagent SPAWN during WARMUP -> strategy does not branch; orchestrator handles it
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -380,9 +357,7 @@ async def test_warmup_credit_return_does_not_self_spawn_subagents():
     assert issuer.issue_credit.await_count == 0
 
 
-# =============================================================================
 # Test 8: Multiple constructions within one phase -> independent instances (PINNED)
-# =============================================================================
 
 
 def test_strategy_constructed_multiple_times_within_one_phase_is_independent():
@@ -451,12 +426,10 @@ async def test_strategy_setup_twice_within_one_phase_is_idempotent():
     assert strategy.conversation_source.next_recycle_conversation_id() is not None
 
 
-# =============================================================================
 # Bonus pin: warmup INFO log on long elapsed time would live OUTSIDE the
 # strategy. This explicit no-op test guards against a regression where
 # someone adds a strategy-level long-warmup logger that fires per-credit
 # (which would spam logs at high trajectory sizes).
-# =============================================================================
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial tests for the namespace-group setup prefix (spec section 5.4)
-and the shared prefix-cache metric pre-pass (spec section 5.5) in
-``weka_agent_chains``."""
+"""Adversarial tests for the namespace-group setup prefix and shared prefix-cache metric pre-pass in ``weka_agent_chains``."""
 
 import random
 
@@ -52,9 +50,7 @@ def _live_outer_indices(result) -> list[int]:
     return out
 
 
-# ---------------------------------------------------------------------------
 # compute_chain_prefix_blocks — namespace groups (spec section 5.4)
-# ---------------------------------------------------------------------------
 
 
 def test_compute_chain_prefix_blocks_group_survives_cascaded_seam_splices():
@@ -231,9 +227,7 @@ def test_compute_chain_prefix_blocks_empty_detection_returns_empty():
     assert prefixes == {}
 
 
-# ---------------------------------------------------------------------------
 # compute_shared_prefix_cache_metrics — shared seen-set pre-pass (spec 5.5)
-# ---------------------------------------------------------------------------
 
 
 def test_compute_shared_prefix_cache_metrics_hits_stop_at_first_unseen_block():

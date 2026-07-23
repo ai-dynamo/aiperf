@@ -1,14 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial tests for ``TheoreticalPrefixCacheAccumulator``.
-
-The accumulator sums loader-provided ``(hit_blocks, total_blocks)`` per turn
-and reports ``100 * hit_blocks / total_blocks`` (theoretical_prefix_cache.py:
-77-87). It guards ``total_blocks <= 0`` but never enforces the
-``hit_blocks <= total_blocks`` invariant, so a loader that violates it (a
-miscount in WEKA prefix accounting) produces a hit rate > 100% with no clamp
-and no warning -- a metric a reader will treat as a percentage.
-"""
+"""Adversarial tests for ``TheoreticalPrefixCacheAccumulator``."""
 
 from __future__ import annotations
 

@@ -1,15 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for SessionTreeRegistry: per-session-tree session-slot accounting.
-
-A "session tree" is a depth-0 root plus every descendant subagent it spawns
-(children, subchildren, background sidecars). The registry holds exactly one
-session slot per live tree and releases it exactly once, when the tree drains:
-the root has sent its terminal turn AND every descendant has terminally
-completed. This is the invariant that keeps agentic-replay concurrency at
-exactly N: never more (a root that frees its slot while subagents still run),
-never less (a rootless/gated lane that holds no slot).
-"""
+"""Unit tests for SessionTreeRegistry: per-session-tree session-slot accounting."""
 
 from __future__ import annotations
 

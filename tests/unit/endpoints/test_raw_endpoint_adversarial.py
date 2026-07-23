@@ -1,13 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial coverage for RawEndpoint.format_payload and JMESPathResponseMixin.
-
-Pins current behavior at edge inputs:
-- format_payload accepts/refuses raw_payload variants and always uses the last turn
-- JMESPath compile is robust to non-string and falsy response_field values
-  (b51275159 caught TypeError alongside JMESPathError)
-- parse_response handles empty/invalid bodies and falls back to auto-detect
-"""
+"""Adversarial coverage for RawEndpoint.format_payload and JMESPathResponseMixin."""
 
 from __future__ import annotations
 

@@ -1,13 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial tests for ``CreditIssuer.dispatch_join_turn``.
-
-Covers preconditions, return-value wiring, TurnToSend construction, and
-structural invariants (hardcoded FORK mode, no joins_suppressed accounting,
-no session-slot acquisition). Harness mirrors
-``tests/unit/credit/test_dispatch_join_turn.py``: direct ``__new__`` +
-attribute injection with ``MagicMock``/``AsyncMock``.
-"""
+"""Adversarial tests for ``CreditIssuer.dispatch_join_turn``."""
 
 from __future__ import annotations
 

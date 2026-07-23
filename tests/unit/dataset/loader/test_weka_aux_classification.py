@@ -1,22 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for worker-chain classification of detected chains.
-
-Three predicates partition detected worker chains into agent vs auxiliary vs
-parallel fan-out:
-
-- ``is_aux_chain``: a short chain from a small fresh context, or a cross-model
-  one-shot, is a tool-issued sidecar (``::fa:`` -> ``::aux:``).
-- ``is_reduction_chain``: a same-model single large-input/short-output one-shot
-  is a reduction sidecar (``::fa:`` -> ``::aux:``).
-- ``worker_group_assignment`` / ``worker_group_members``: among workers that
-  forked from shared context, those whose active intervals OVERLAP form a
-  concurrent parallel fan-out, tagged ``::fa:`` -> ``::wg:{group}_{member}``.
-
-All apply at both layers (top-level flat chains and subagent overflow). The
-``_worker_suffix`` helper resolves the precedence (aux > reduction > worker-
-group > solo agent) and builds the marker + index/coordinate.
-"""
+"""Tests for worker-chain classification of detected chains."""
 
 from aiperf.dataset.loader.weka_agent_chains import (
     AgentChain,

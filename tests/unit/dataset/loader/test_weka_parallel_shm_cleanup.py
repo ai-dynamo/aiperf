@@ -1,17 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Cleanup robustness for the parallel weka reconstruction driver.
-
-The orchestrator's ``finally`` block unlinks the shared-memory corpus segment.
-That segment may already be gone (a worker reclaimed it, or the OS reclaimed it
-under abnormal pool shutdown), so ``shm.unlink()`` is guarded with
-``suppress(FileNotFoundError)``. These tests pin that guard: an
-already-unlinked segment must neither fail a successful load nor mask an
-in-flight reconstruction exception.
-
-The real multiprocessing pool is stubbed so the tests stay in-process and
-xdist-safe; only the driver's setup + ``finally`` cleanup actually run.
-"""
+"""Cleanup robustness for the parallel weka reconstruction driver's shm unlink guard."""
 
 from __future__ import annotations
 

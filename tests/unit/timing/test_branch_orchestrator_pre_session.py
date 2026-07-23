@@ -1,20 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 2b unit tests: pre-session background SPAWN dispatch.
-
-Covers the Phase 2b semantics:
-
-- A branch marked ``dispatch_timing="pre"`` fires via
-  ``dispatch_pre_session_branches`` BEFORE the parent's turn 0 credit is
-  issued. Children receive ``agent_depth=1`` and
-  ``parent_correlation_id=None``.
-- When the parent's turn 0 credit later returns, the per-turn spawn path
-  skips pre-dispatched branches (records in ``_pre_dispatched_branches``)
-  so children are never dispatched twice.
-- Mixing a pre-session branch with a post branch on the same turn 0:
-  pre-dispatch fires only the pre branch; intercept fires only the post
-  branch.
-"""
+"""Phase 2b unit tests: pre-session background SPAWN dispatch."""
 
 from __future__ import annotations
 

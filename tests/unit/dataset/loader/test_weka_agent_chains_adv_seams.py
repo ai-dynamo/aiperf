@@ -1,12 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial tests for phase-2 seam resolution (``_resolve_seams``).
-
-Attack surface: the join-seam vs spawn election (spec section 4 "Phase 2").
-Every test encodes the spec's expected behavior and throws a hostile input
-at the detector. Helpers mirror the reference suite
-(``test_weka_agent_chains.py``); the reference file is never modified.
-"""
+"""Adversarial tests for phase-2 seam resolution (``_resolve_seams``)."""
 
 from aiperf.dataset.loader.weka_agent_chains import (
     _EPSILON_SECONDS,
@@ -49,9 +43,7 @@ def _all_emitted_outer_indices(result) -> list[int]:
     return out
 
 
-# --------------------------------------------------------------------------
 # Election tie-breaks: equal depth -> earliest fork_time; then lowest index.
-# --------------------------------------------------------------------------
 
 
 def test_election_equal_depth_earliest_fork_time_wins():
@@ -93,9 +85,7 @@ def test_election_equal_depth_equal_fork_time_lowest_index_wins():
     assert _chain_outer_indices(r, r.worker_indices[0]) == [2]
 
 
-# --------------------------------------------------------------------------
 # The "T must be final" rule and depth-recorded-at-fork-time.
-# --------------------------------------------------------------------------
 
 
 def test_t_extended_after_fork_makes_fork_a_spawn():
@@ -137,9 +127,7 @@ def test_fork_depth_is_recorded_against_tail_at_fork_time():
     assert worker.fork.fork_outer_idx == 1  # M2, the tail at fork time
 
 
-# --------------------------------------------------------------------------
 # Cascading splices and alias resolution.
-# --------------------------------------------------------------------------
 
 
 def test_cascaded_three_compactions_collapse_to_one_chain():
@@ -224,9 +212,7 @@ def test_cascade_independent_of_file_order_when_outer_precedes_time():
     assert _chain_outer_indices(r, r.main_index) == [2, 0, 1]
 
 
-# --------------------------------------------------------------------------
 # Temporal veto at the epsilon boundary.
-# --------------------------------------------------------------------------
 
 
 def test_temporal_veto_seam_allowed_exactly_at_epsilon_boundary():
@@ -272,9 +258,7 @@ def test_zero_api_time_tail_allows_seam_at_equal_timestamp():
     assert _chain_outer_indices(r, r.main_index) == [0, 1]
 
 
-# --------------------------------------------------------------------------
 # Same-model rule in phase 2.
-# --------------------------------------------------------------------------
 
 
 def test_deepest_fork_cross_model_shallower_same_model_elected():
@@ -308,9 +292,7 @@ def test_all_candidates_cross_model_no_splice_at_all():
     assert _chain_outer_indices(r, r.main_index) == [0]
 
 
-# --------------------------------------------------------------------------
 # In-flight sibling at depth == len(tail): never electable.
-# --------------------------------------------------------------------------
 
 
 def test_in_flight_full_prefix_sibling_never_seams():
@@ -348,9 +330,7 @@ def test_full_prefix_sibling_near_miss_extension_at_exact_end():
     assert _chain_outer_indices(r, r.main_index) == [0, 1]
 
 
-# --------------------------------------------------------------------------
 # Spawn whose own tail dies and absorbs its own seam continuation.
-# --------------------------------------------------------------------------
 
 
 def test_worker_compacts_midlife_absorbs_own_seam_main_unaffected():
@@ -373,9 +353,7 @@ def test_worker_compacts_midlife_absorbs_own_seam_main_unaffected():
     assert _chain_outer_indices(r, r.worker_indices[0]) == [1, 2, 4]
 
 
-# --------------------------------------------------------------------------
 # worker_indices ordering / seams_merged counting / spliced bookkeeping.
-# --------------------------------------------------------------------------
 
 
 def test_worker_indices_ordered_by_first_request_time_not_outer():
@@ -449,11 +427,9 @@ def test_seams_merged_counts_one_per_splice_across_independent_tails():
     assert _chain_outer_indices(r, r.worker_indices[0]) == [2, 3]
 
 
-# --------------------------------------------------------------------------
 # Seam guard: a far-future low-overlap continuation is a distinct session
 # (spawn), not the same agent resuming. Prompt compactions and high-overlap
 # long-gap resumes are preserved.
-# --------------------------------------------------------------------------
 
 
 def test_seam_guard_splits_far_low_overlap_continuation():

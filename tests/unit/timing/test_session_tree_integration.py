@@ -1,13 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Integration of SessionTreeRegistry with a real ConcurrencyManager and the
-BranchOrchestrator: the session slot must be held until the WHOLE tree drains.
-
-This is the behavior the whole feature exists for -- a background subagent that
-outlives its root must NOT free the lane's session slot (which would let a new
-root start and push live trees above the configured concurrency). The slot is
-released, and the lane recycle signalled, only once the last descendant drains.
-"""
+"""Integration of SessionTreeRegistry with a real ConcurrencyManager and the"""
 
 from __future__ import annotations
 

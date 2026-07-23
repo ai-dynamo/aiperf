@@ -1,23 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Regression: AGENTIC_REPLAY phase flags override YAML-supplied phases.
-
-The YAML+CLI resolver originally only overlaid section-level overrides and a
-fixed ``_LOADGEN_PHASE_FIELD_MAP`` onto the YAML profiling phase, so
-
-    aiperf profile -f scenario.yaml --agentic-cache-warmup-duration 30
-
-(and the four sibling agentic-replay phase flags --burst-phase-starts,
---failed-request-threshold, --trajectory-start-min-ratio,
---trajectory-start-max-ratio) silently no-opped: ``agentic_cache_warmup_duration``
-is not even in ``LOADGEN_FIELDS`` and the four siblings were missing from the
-phase field map.
-
-The fix in ``aiperf.config.flags.resolver._apply_phase_loadgen_overrides``
-reuses the CLI-only converter helper ``_apply_agentic_replay_fields`` to overlay
-these ``BasePhaseConfig`` fields onto the resolved profiling phase. This test
-locks that in.
-"""
+"""Regression: AGENTIC_REPLAY phase flags override YAML-supplied phases."""
 
 from __future__ import annotations
 

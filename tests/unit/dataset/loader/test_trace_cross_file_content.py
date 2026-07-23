@@ -1,19 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Cross-file content distinction for trace loaders sharing PromptGenerator.
-
-``PromptGenerator._cache`` keyed only on ``hash_id`` would let two different
-trace files with overlapping ``hash_id`` values produce identical content.
-``BaseTraceDatasetLoader`` scopes block content by file content hash via
-``HashIdRandomGenerator.set_trace_id`` and clears the cache in
-``_init_trace_scope``.
-
-These tests confirm the contract for the three loaders that inherit from
-``BaseTraceDatasetLoader`` (Mooncake, Bailian, BurstGPT). They use a realistic
-``PromptGenerator`` driven by the mocked ``Tokenizer`` so we exercise the
-actual ``_build_token_sequence`` reseed path end-to-end.
-"""
+"""Cross-file content distinction for trace loaders sharing PromptGenerator."""
 
 from __future__ import annotations
 
@@ -98,9 +86,7 @@ def _write_burst_csv(
     return str(p)
 
 
-# ---------------------------------------------------------------------------
 # Mooncake
-# ---------------------------------------------------------------------------
 
 
 class TestMooncakeCrossFileContent:
@@ -170,9 +156,7 @@ class TestMooncakeCrossFileContent:
         assert turn0_prompt == turn1_prompt
 
 
-# ---------------------------------------------------------------------------
 # Bailian
-# ---------------------------------------------------------------------------
 
 
 class TestBailianCrossFileContent:
@@ -242,9 +226,7 @@ class TestBailianCrossFileContent:
         assert prompts[0] == prompts[1]
 
 
-# ---------------------------------------------------------------------------
 # BurstGPT
-# ---------------------------------------------------------------------------
 
 
 class TestBurstGPTCrossFileContent:

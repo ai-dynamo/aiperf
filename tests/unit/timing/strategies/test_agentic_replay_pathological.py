@@ -1,40 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Pathological / adversarial unit tests for AgenticReplayStrategy.
-
-These probe accounting and edge-case anomalies NOT covered by the existing
-agentic-replay test suites (base, context-overflow, warmup-failure). Each test
-probes exactly one thing:
-
-    * recycle-pool trace LEAK when a popped trace yields no spawnable session
-      (missing metadata / empty turns) - the popped trace is silently dropped
-      while the finished trace is re-enqueued (CONFIRMED BUG, xfail).
-    * recycle-pool trace LEAK for an empty-turns trace (same root cause, xfail).
-    * _pop_next_eligible_trace busy-loop bound + FIFO order preservation when
-      every queued trace is active (characterization).
-    * _active_traces self-heal: decrement of an unknown/zero-count trace does not
-      leak a negative count (characterization).
-    * double-recycle guard raises RuntimeError on a duplicate final-turn
-      (characterization - already partly covered, but exercises the post-spawn
-      lane-fallback interaction).
-    * _release_lane_for missing-entry fallback to lane 0 keeps recycle
-      progressing (characterization).
-    * num_turns / metadata mismatch: a non-final credit whose num_turns
-      overstates real turns raises ValueError from get_next_turn_metadata
-      (characterization of the fragility).
-    * context-overflow short-circuit on a non-final CHILD turn (agent_depth>0)
-      routes to BranchOrchestrator.on_child_stopped and prunes bookkeeping
-      (characterization).
-    * child overflow cleanup with branch_orchestrator=None still prunes dicts
-      (characterization).
-    * setup_phase recycle pool excludes non-root (DAG child) conversations
-      (characterization).
-    * wrap-fill + cache_bust=NONE emits the byte-identical-traffic warning;
-      non-NONE suppresses it (characterization).
-    * snapshot single-turn root sampled at t* == turn-0 ts (n == 0) profiles
-      its own turn 0 with a minted marker instead of recycling at startup
-      (characterization).
-"""
+"""Pathological / adversarial unit tests for AgenticReplayStrategy."""
 
 from __future__ import annotations
 
@@ -65,9 +31,7 @@ from aiperf.timing.trajectory_source import (
     TrajectorySource,
 )
 
-# =============================================================================
 # Helpers (mirrors the sibling adversarial suites for parity)
-# =============================================================================
 
 _RID_RE = re.compile(r"\[rid:[0-9a-f]{12}\]")
 
@@ -215,9 +179,7 @@ def _rid(marker: str | None) -> str | None:
     return m.group(0) if m else None
 
 
-# =============================================================================
 # Characterization: double-recycle guard + lane-0 fallback interaction
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -246,9 +208,7 @@ async def test_duplicate_final_turn_for_same_correlation_raises_runtime_error() 
         await strategy.handle_credit_return(final)
 
 
-# =============================================================================
 # Characterization: num_turns / metadata mismatch fragility
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -277,9 +237,7 @@ async def test_non_final_credit_overstating_num_turns_raises_value_error() -> No
         await strategy.handle_credit_return(bogus)
 
 
-# =============================================================================
 # Characterization: context-overflow short-circuit on a CHILD turn
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -353,9 +311,7 @@ async def test_child_overflow_with_no_orchestrator_still_prunes_bookkeeping() ->
     assert "child-corr" not in strategy._correlation_to_lane
 
 
-# =============================================================================
 # Characterization: recycle pool excludes non-root (DAG child) conversations
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -398,9 +354,7 @@ async def test_recycle_excludes_non_root_children() -> None:
     assert "root_0::sa" not in seen
 
 
-# =============================================================================
 # Characterization: wrap-fill + cache_bust=NONE warning coherence
-# =============================================================================
 
 
 def test_wrap_fill_with_cache_bust_none_warns_about_identical_traffic() -> None:
@@ -456,9 +410,7 @@ def test_wrap_fill_with_cache_bust_none_warns_about_identical_traffic() -> None:
     assert nonnone_calls == [], "non-NONE target must suppress the wrap-fill warning"
 
 
-# =============================================================================
 # Characterization: snapshot terminal-root immediate recycle rotates marker
-# =============================================================================
 
 
 @pytest.mark.asyncio

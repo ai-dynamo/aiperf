@@ -1,11 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Schema-only filter-then-cap selection.
-
-Cap-then-filter would take the first N raw rows (including over-limit rejects)
-and under-fill the pool. Filter-then-cap scans past rejects until N eligible
-traces are kept.
-"""
+"""Schema-only filter-then-cap selection."""
 
 from __future__ import annotations
 

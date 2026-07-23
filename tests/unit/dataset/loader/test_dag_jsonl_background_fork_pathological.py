@@ -1,15 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial / pathological test cases for ``DagFork.background`` to
-ensure the loader fails fast and predictably on every authoring foot-gun
-we can think of, and accepts the legitimate edge cases (BG on final turn,
-nested BG, BG with mixed siblings).
-
-If a case here regresses, the loader's strict-mode posture is broken —
-not just a typo bug. These are the cases where authors will typically
-hand-author DAG fixtures and where Pydantic's ``extra="forbid"`` and the
-loader's structural validators are the only thing standing between a
-typo and a silently-different benchmark."""
+"""Adversarial / pathological test cases for ``DagFork.background`` strict-mode loader posture."""
 
 from __future__ import annotations
 
@@ -38,9 +29,7 @@ def _branches(convs, sid: str):
     return next(c.branches for c in convs if c.session_id == sid)
 
 
-# ============================================================================
 # Pydantic strict-mode (DagFork field validation)
-# ============================================================================
 
 
 class TestDagForkPydanticStrictMode:
@@ -100,9 +89,7 @@ class TestDagForkPydanticStrictMode:
         assert f0.background is False
 
 
-# ============================================================================
 # Empty / degenerate fork lists
-# ============================================================================
 
 
 class TestEmptyAndDegenerateFork:
@@ -132,9 +119,7 @@ class TestEmptyAndDegenerateFork:
         assert b.mode == ConversationBranchMode.FORK
 
 
-# ============================================================================
 # Cycle detection across BG fork edges
-# ============================================================================
 
 
 class TestCycleDetectionAcrossBgForks:
@@ -183,9 +168,7 @@ class TestCycleDetectionAcrossBgForks:
             _load(text)
 
 
-# ============================================================================
 # Cross-edge multi-parent constraint
-# ============================================================================
 
 
 class TestMultiParentAcrossModes:
@@ -225,9 +208,7 @@ class TestMultiParentAcrossModes:
             _load(text)
 
 
-# ============================================================================
 # Mode mismatches: BG-fork target also referenced as something else
-# ============================================================================
 
 
 class TestModeMismatchAcrossBgFork:
@@ -266,9 +247,7 @@ class TestModeMismatchAcrossBgFork:
         assert all("c" in b.child_conversation_ids for b in r_bs)
 
 
-# ============================================================================
 # BG fork stacked across turns (long parent, many BG fan-outs)
-# ============================================================================
 
 
 class TestStackedBgForks:
@@ -302,9 +281,7 @@ class TestStackedBgForks:
             assert b.child_conversation_ids == [f"c{i}"]
 
 
-# ============================================================================
 # Deep nesting (BG-fork's child has its own BG-fork)
-# ============================================================================
 
 
 class TestNestedBgForks:
@@ -335,9 +312,7 @@ class TestNestedBgForks:
         assert a_bs[0].child_conversation_ids == ["b"]
 
 
-# ============================================================================
 # BG-fork + SPAWN_JOIN on later turn
-# ============================================================================
 
 
 class TestBgForkCoexistsWithSpawnJoin:

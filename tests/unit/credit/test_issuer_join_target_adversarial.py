@@ -1,19 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial tests for ``CreditIssuer`` DAG-child target membership.
-
-``counts_toward_phase_target`` decides whether a credit can flip
-``is_final_credit`` in ``CreditCounter.increment_sent`` (and therefore freeze
-sent counts + fire ``all_credits_sent_event``). Reactive DAG work is spawned
-*after* the root plan is sampled, so it must NOT count toward the phase target.
-
-``CreditIssuer.dispatch_child_turn`` correctly strips the flag
-(issuer.py). ``dispatch_join_turn`` builds its ``TurnToSend`` with
-``counts_toward_phase_target=pending.parent_agent_depth == 0`` and
-routes through blocking ``issue_credit``. For a *nested* parent
-(``parent_agent_depth > 0``) the join turn is itself reactive DAG work
-and must not count toward the phase target.
-"""
+"""Adversarial tests for ``CreditIssuer`` DAG-child target membership."""
 
 from __future__ import annotations
 

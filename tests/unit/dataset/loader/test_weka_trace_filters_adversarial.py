@@ -115,7 +115,7 @@ def _base_trace(requests, trace_id="t", model="m"):
     }
 
 
-# ---------- Boundary equality: filter is strict > / < ----------
+# Boundary equality: filter is strict > / <
 
 
 def test_max_isl_equals_input_length_keeps_request(tmp_path, monkeypatch):
@@ -303,7 +303,7 @@ def test_schedule_negative_end_offset_filters_everything(monkeypatch):
     assert len(convs[0].turns) == 0
 
 
-# ---------- Filter + subagent interaction ----------
+# Filter + subagent interaction
 
 
 def test_filter_kills_following_turn_subagent_becomes_background(monkeypatch):

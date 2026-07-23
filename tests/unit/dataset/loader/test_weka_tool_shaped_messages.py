@@ -154,9 +154,7 @@ def tool_shaped_env(monkeypatch):
     )
 
 
-# ---------------------------------------------------------------------------
 # tool_shape_segment_messages helper
-# ---------------------------------------------------------------------------
 
 
 def _seg(role: str, tool_result_turn: int | None = None):
@@ -245,9 +243,7 @@ def test_tool_shape_segment_messages_does_not_mutate_input():
     assert msgs[1] == {"role": "user", "content": "b"}
 
 
-# ---------------------------------------------------------------------------
 # Loader, serial path
-# ---------------------------------------------------------------------------
 
 
 def _roles(turn) -> list[str]:
@@ -329,9 +325,7 @@ def test_serial_legacy_trace_never_shaped(tool_shaped_env, tmp_path):
             assert all(m["role"] != "tool" for m in t.raw_messages)
 
 
-# ---------------------------------------------------------------------------
 # Parallel parity
-# ---------------------------------------------------------------------------
 
 
 def _run_pool_inproc(tasks, *, corpus, base_seed, block_size, **_kwargs):
@@ -403,11 +397,9 @@ def test_parallel_tool_shaping_matches_serial(tool_shaped_env, tmp_path):
     assert shaped_seen, "expected at least one tool-shaped turn in this trace"
 
 
-# ---------------------------------------------------------------------------
 # Shaping must survive reset_context re-emits: a reset REPLACES the wire
 # context, so if the full re-emission renders previously-shaped tool turns as
 # plain user, the reset retroactively unshapes everything already sent.
-# ---------------------------------------------------------------------------
 
 
 def _reset_trace(trace_id: str) -> dict:

@@ -1,21 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial test: DAG children HONOR the ``--request-count`` cap (v2).
-
-V2 PORT NOTE: the original agentx engine set
-``RequestCountStopCondition.applies_to_dag_children = False`` so children ran
-past the cap. The v2 port reconciled agentx's reactive child-dispatch gating
-with main's #891 DAG path: ``--request-count`` is a literal wire-request cap
-(every HTTP request counts, children included), so children now HONOR it like
-roots, and only ``SessionCountStopCondition`` opts out of DAG-child gating.
-This is the documented intended behaviour -- see
-``stop_conditions.py`` ``StopCondition`` base docstring and
-``StopConditionChecker.can_send_dag_child_turn``, and the authoritative
-classification test ``test_stop_conditions_dag_applies.py``.
-
-This test pins the v2 behaviour (children stop at the cap, like roots) while
-still confirming the cancellation guarantee remains selective.
-"""
+"""Adversarial test: DAG children HONOR the ``--request-count`` cap (v2)."""
 
 from __future__ import annotations
 

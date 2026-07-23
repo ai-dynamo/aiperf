@@ -1,19 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for the PrefillTTFTCurve grid recipe.
-
-Pins the ISL-sweep grid defaults ([256, 32768]), the concurrency=1 isolation
-rule, the ``ttft_curve_fit`` post-process spec, and the streaming-required
-guard so the user-facing contract cannot drift.
-
-Sweep keys are body-rooted (``datasets.main.prompts.isl``,
-``phases.profiling.concurrency``).
-"""
+"""Unit tests for the PrefillTTFTCurve grid recipe."""
 
 from __future__ import annotations
 
 import pytest
+from pytest import param
 
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -64,19 +57,17 @@ def test_prefill_ttft_curve_allows_default_streaming():
 # ---- Adversarial cases ----
 
 
-def test_prefill_ttft_curve_isl_lo_eq_hi_raises():
-    with pytest.raises(ValueError, match=r"hi .* must be > lo"):
-        PrefillTTFTCurve().expand(make_ctx(isl_min=1024, isl_max=1024))
-
-
-def test_prefill_ttft_curve_isl_lo_gt_hi_raises():
-    with pytest.raises(ValueError, match=r"hi .* must be > lo"):
-        PrefillTTFTCurve().expand(make_ctx(isl_min=4096, isl_max=256))
-
-
-def test_prefill_ttft_curve_zero_isl_steps_raises():
-    with pytest.raises(ValueError, match="steps must be >= 2"):
-        PrefillTTFTCurve().expand(make_ctx(isl_steps=0))
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        param({"isl_min": 1024, "isl_max": 1024}, r"hi .* must be > lo", id="isl_lo_eq_hi"),
+        param({"isl_min": 4096, "isl_max": 256}, r"hi .* must be > lo", id="isl_lo_gt_hi"),
+        param({"isl_steps": 0}, "steps must be >= 2", id="zero_isl_steps"),
+    ],
+)  # fmt: skip
+def test_prefill_ttft_curve_invalid_grid_raises(overrides, match):
+    with pytest.raises(ValueError, match=match):
+        PrefillTTFTCurve().expand(make_ctx(**overrides))
 
 
 def test_prefill_ttft_curve_concurrency_overrides_silently_ignored():

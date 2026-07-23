@@ -28,9 +28,7 @@ def _mk_user_config(**overrides):
     return make_weka_run(**overrides)
 
 
-# ---------------------------------------------------------------------------
 # File-content attacks
-# ---------------------------------------------------------------------------
 
 
 def test_can_load_zero_byte_file_returns_false(tmp_path: Path):
@@ -95,9 +93,7 @@ def test_can_load_concatenated_json_objects_returns_false(tmp_path: Path):
     assert WekaTraceLoader.can_load(filename=p) is False
 
 
-# ---------------------------------------------------------------------------
 # Filesystem attacks
-# ---------------------------------------------------------------------------
 
 
 def test_can_load_uppercase_json_extension_rejected(tmp_path: Path):
@@ -128,9 +124,7 @@ def test_can_load_broken_symlink_returns_false(tmp_path: Path):
     assert WekaTraceLoader.can_load(filename=link) is False
 
 
-# ---------------------------------------------------------------------------
 # Directory-mode attacks
-# ---------------------------------------------------------------------------
 
 
 def test_can_load_directory_single_probe_invalid_returns_false(tmp_path: Path):

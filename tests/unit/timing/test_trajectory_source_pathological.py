@@ -1,28 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Pathological / adversarial unit tests for ``TrajectorySource`` snapshot sampling.
-
-Probes accounting and numeric-edge anomalies NOT already covered by
-``test_trajectory_source.py``, ``test_trajectory_source_extended_adversarial.py``,
-or ``test_trajectory_source_wrap_fill.py``:
-
-- Non-finite timestamps (NaN / +inf) poisoning ``_trace_time_bounds`` ->
-  ``rng.uniform`` (CONFIRMED crash, xfail).
-- Non-monotonic / duplicate timestamps and ``_next_turn_index_at_or_after``
-  picking the first-at-or-after turn (characterization).
-- ``start_max_ratio == 1.0`` snapshot putting the root on its final turn with
-  no profiling turn after warmup (asymmetry vs the timestamp-less ``n-2`` cap).
-- ``pool_size`` (root-only) vs the build loop accepting any sampled id
-  (characterization).
-- Background-only subagent snapshot (``root_next_idx is None``) defaulting the
-  trajectory ``start_turn_index`` to 0 despite no root state.
-- Empty ``child_conversation_ids`` on a joined branch -> root not marked
-  waiting (vacuous join, characterization).
-- Missing child metadata silently dropped from the snapshot.
-- ``warmup_credit_count`` matching exactly what ``_execute_warmup`` would
-  dispatch across mixed trajectory types.
-- ``start_min_ratio``/``start_max_ratio`` boundary validation.
-"""
+"""Pathological / adversarial unit tests for ``TrajectorySource`` snapshot sampling."""
 
 from __future__ import annotations
 
@@ -44,9 +22,7 @@ from aiperf.timing.trajectory_source import (
     _next_turn_index_at_or_after,
 )
 
-# =============================================================================
 # Helpers
-# =============================================================================
 
 
 class _Sampler:
@@ -97,10 +73,8 @@ def _build(
     )
 
 
-# =============================================================================
 # Regression: non-finite timestamps must not crash construction
 # (fixed: _as_timestamp_ms rejects NaN/+-inf so they are treated as absent)
-# =============================================================================
 
 
 def test_nan_timestamp_in_root_does_not_crash_construction() -> None:
@@ -122,9 +96,7 @@ def test_positive_inf_timestamp_in_root_does_not_crash_construction() -> None:
     assert len(src.trajectories) == 1
 
 
-# =============================================================================
 # _next_turn_index_at_or_after: non-monotonic / duplicate timestamps
-# =============================================================================
 
 
 def test_next_turn_index_non_monotonic_returns_first_at_or_after_not_earliest() -> None:
@@ -171,9 +143,7 @@ def test_duplicate_timestamp_snapshot_collapses_all_offsets_to_zero() -> None:
     assert root.next_dispatch_offset_ms == pytest.approx(0.0)
 
 
-# =============================================================================
 # start_max_ratio == 1.0: timestamped snapshot can land root on its final turn
-# =============================================================================
 
 
 def test_timestamped_snapshot_at_ratio_one_places_root_on_final_turn() -> None:
@@ -213,9 +183,7 @@ def test_timestampless_path_caps_k_i_at_n_minus_two() -> None:
     assert traj.start_turn_index == 5 - 2  # n-2, leaving a profile turn at n-1
 
 
-# =============================================================================
 # pool_size (root-only) vs build loop (accepts whatever the sampler returns)
-# =============================================================================
 
 
 def test_pool_size_counts_roots_only_but_build_accepts_non_root_sampled_id() -> None:
@@ -246,9 +214,7 @@ def test_pool_size_counts_roots_only_but_build_accepts_non_root_sampled_id() -> 
     assert src.trajectories[0].conversation_id == "child"  # built on the child
 
 
-# =============================================================================
 # Background-only subagent snapshot: root_next_idx is None
-# =============================================================================
 
 
 def test_background_only_snapshot_keeps_child_but_start_index_defaults_to_zero() -> (
@@ -305,9 +271,7 @@ def test_background_only_snapshot_keeps_child_but_start_index_defaults_to_zero()
     assert src.warmup_credit_count == 1  # the one ready child state
 
 
-# =============================================================================
 # Empty child_conversation_ids on a joined branch: root not marked waiting
-# =============================================================================
 
 
 def test_join_branch_with_empty_children_leaves_root_not_waiting() -> None:
@@ -352,9 +316,7 @@ def test_join_branch_with_empty_children_leaves_root_not_waiting() -> None:
     assert src.warmup_credit_count == 1
 
 
-# =============================================================================
 # Missing child metadata is silently dropped from the snapshot
-# =============================================================================
 
 
 def test_branch_child_missing_metadata_is_dropped_root_survives() -> None:
@@ -390,9 +352,7 @@ def test_branch_child_missing_metadata_is_dropped_root_survives() -> None:
     assert cids == {"trace"}  # ghost child dropped, no phantom state
 
 
-# =============================================================================
 # warmup_credit_count must equal exactly what _execute_warmup would dispatch
-# =============================================================================
 
 
 def test_warmup_credit_count_matches_dispatchable_states_mixed_trajectories() -> None:
@@ -469,9 +429,7 @@ def test_warmup_credit_count_matches_dispatchable_states_mixed_trajectories() ->
     assert dispatchable == 3
 
 
-# =============================================================================
 # start ratio boundary validation
-# =============================================================================
 
 
 def test_equal_start_ratios_accepted_strictly_greater_rejected() -> None:

@@ -1208,9 +1208,7 @@ class TestMooncakeTraceReproducibility:
             loader.convert_to_conversations(trace_data)
 
 
-# ============================================================================
 # Synthesis Integration Tests
-# ============================================================================
 
 
 def make_synthesis_config(
@@ -1265,9 +1263,7 @@ class TestMooncakeTraceSynthesisIntegration:
             ],
         }
 
-    # ============================================================================
     # Basic Functionality
-    # ============================================================================
 
     def test_synthesis_not_applied_when_disabled(
         self, mock_prompt_generator, sample_trace_data
@@ -1325,9 +1321,7 @@ class TestMooncakeTraceSynthesisIntegration:
             for trace in traces:
                 assert isinstance(trace, MooncakeTrace)
 
-    # ============================================================================
     # Synthesis Parameters
-    # ============================================================================
 
     def test_speedup_ratio_applied(self, mock_prompt_generator):
         """Test that speedup_ratio scales timestamps."""
@@ -1447,9 +1441,7 @@ class TestMooncakeTraceSynthesisIntegration:
 
         assert result["session-1"][0].timestamp == expected_ts
 
-    # ============================================================================
     # Field Preservation
-    # ============================================================================
 
     def test_delay_field_preserved(self, mock_prompt_generator):
         """Test that delay field is preserved through synthesis."""
@@ -1472,9 +1464,7 @@ class TestMooncakeTraceSynthesisIntegration:
         assert result["session-1"][0].delay == 500
         assert result["session-1"][1].delay == 1000
 
-    # ============================================================================
     # Edge Cases
-    # ============================================================================
 
     def test_empty_input(self, mock_prompt_generator):
         """Test synthesis with empty input data."""
@@ -1589,9 +1579,7 @@ class TestMooncakeTraceSynthesisIntegration:
         assert len(result["only-session"]) == 1
         assert isinstance(result["only-session"][0], MooncakeTrace)
 
-    # ============================================================================
     # End-to-End: load_dataset with synthesis
-    # ============================================================================
 
     def test_load_dataset_applies_synthesis(
         self, create_jsonl_file, mock_prompt_generator
@@ -1667,9 +1655,7 @@ class TestMooncakeTraceSynthesisIntegration:
         traces = list(dataset.values())
         assert traces[0][0].timestamp == 1000
 
-    # ============================================================================
     # messages field synthesis
-    # ============================================================================
 
     def test_speedup_ratio_applied_to_messages_traces(self, mock_prompt_generator):
         """Test that speedup_ratio scales timestamps for traces with messages."""

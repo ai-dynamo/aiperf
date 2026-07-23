@@ -1,16 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Strategy-level marker-uniqueness coverage for AgenticReplayStrategy.
-
-Existing ``test_agentic_replay.py`` already covers the small-scale
-warmup/profile reuse and single recycle rotation paths. This file scales the
-same minting helpers (``_mint_marker_for_session``) up to 1000+ markers and
-asserts the cross-recycle, cross-trace, cross-lane uniqueness invariants
-hold under sustained churn.
-
-Mirrors the harness construction in ``test_agentic_replay.py`` deliberately
-so the fixture surface stays one place to debug.
-"""
+"""Strategy-level marker-uniqueness coverage for AgenticReplayStrategy."""
 
 from __future__ import annotations
 
@@ -30,9 +20,7 @@ from aiperf.timing.trajectory_source import Trajectory, TrajectorySource
 _RID_RE = re.compile(r"\[rid:[0-9a-f]{12}\]")
 
 
-# =============================================================================
 # Harness (mirrors test_agentic_replay.py)
-# =============================================================================
 
 
 def _make_dataset(num_traces: int, turns_per_trace: int) -> DatasetMetadata:
@@ -138,9 +126,7 @@ def _extract_rid(marker: str | None) -> str | None:
     return m.group(0) if m else None
 
 
-# =============================================================================
 # Tests
-# =============================================================================
 
 
 def test_mint_produces_unique_markers_across_many_recycles():

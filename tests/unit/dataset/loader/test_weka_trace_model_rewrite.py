@@ -86,9 +86,7 @@ def _subagent(t, agent_id, inner_requests, models=("m",)):
     }
 
 
-# ---------------------------------------------------------------------------
 # Unit tests for _build_model_map
-# ---------------------------------------------------------------------------
 
 
 def _make_trace_obj(requests_dicts, trace_id="tr"):
@@ -240,9 +238,7 @@ def test_build_model_map_empty_trace_returns_empty():
     assert loader._build_model_map(trace) == {}
 
 
-# ---------------------------------------------------------------------------
 # End-to-end loader tests (serial path; parallel path is forced off in conftest)
-# ---------------------------------------------------------------------------
 
 
 def test_loader_rewrites_parent_turn_model_to_configured_model_zero(

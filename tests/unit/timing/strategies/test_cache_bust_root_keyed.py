@@ -1,12 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit coverage for the root-keyed (per trajectory tree) cache-bust marker resolver.
-
-The marker is a property of the trajectory TREE (root_correlation_id): every member
-of a tree (main turns + subagents + flat agents) shares one marker, regardless of
-which member resolves first, and the marker is stable across the warmup->profiling
-boundary while remaining distinct across lanes, recycles, and benchmark runs.
-"""
+"""Unit coverage for the root-keyed (per trajectory tree) cache-bust marker resolver."""
 
 import pytest
 

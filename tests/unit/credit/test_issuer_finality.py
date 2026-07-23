@@ -1,17 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Guards the credit issuer's lineage-finality stamp (three-touch touch #2).
-
-Touch #1 (the ``Credit`` struct fields) and touch #3 (worker -> ``RequestInfo``,
-``test_create_request_info_plumbs_finality_from_credit``) are already covered.
-This file covers touch #2: ``CreditIssuer`` reading per-tree state from a REAL
-``SessionTreeRegistry`` (``_finality_for_issue``) AND stamping the result onto
-the emitted ``Credit`` at its sole construction site.
-
-Both the registry and the emitted ``Credit`` are real objects here on purpose --
-a MagicMock would auto-create ``is_parent_final`` / ``is_tree_final`` and pass
-even if the ``Credit(...)`` kwargs were deleted, defeating the guard.
-"""
+"""Guards the credit issuer's lineage-finality stamp (three-touch touch #2)."""
 
 import time
 from unittest.mock import MagicMock
@@ -117,9 +106,7 @@ def _child_turn(root_id: str = "root-1", child_id: str = "child-1") -> TurnToSen
     )
 
 
-# =============================================================================
 # _finality_for_issue: reads REAL SessionTreeRegistry state
-# =============================================================================
 
 
 def test_finality_root_final_turn_no_descendants_is_tree_final():
@@ -233,9 +220,7 @@ def test_build_first_turn_stamps_has_branches_and_gates_finality():
     assert issuer._finality_for_issue(turn) == (None, False)
 
 
-# =============================================================================
 # GUARD: the Credit(...) construction site must pass the helper's results through
-# =============================================================================
 
 
 async def test_issue_credit_stamps_finality_onto_emitted_credit():

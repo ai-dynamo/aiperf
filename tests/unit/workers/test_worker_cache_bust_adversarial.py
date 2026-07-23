@@ -1,19 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial edge-case coverage for cache-bust injection helpers in
-``aiperf.workers.worker``.
-
-These tests exercise the boundary conditions of the three pure helpers:
-
-- ``_apply_cache_bust_to_system_message``
-- ``_inject_marker_into_raw_messages``
-- ``_inject_marker_into_first_user_turn``
-
-The happy-path coverage lives in ``test_worker_cache_bust_injection.py`` (owned
-by a parallel agent). This file deliberately focuses on the edge cases that
-documented behavior depends on (empty markers, non-string content, multimodal
-content blocks, extra dict keys preserved on rewrite, first-user-only mutation).
-"""
+"""Adversarial edge-case coverage for cache-bust injection helpers in ``aiperf.workers.worker``."""
 
 from __future__ import annotations
 
@@ -23,10 +10,6 @@ from aiperf.workers.worker import (
     _inject_marker_into_first_user_turn,
     _inject_marker_into_raw_messages,
 )
-
-# =============================================================================
-# _apply_cache_bust_to_system_message
-# =============================================================================
 
 
 def test_apply_to_system_message_empty_string_marker_is_noop():
@@ -57,11 +40,6 @@ def test_apply_to_system_message_unknown_target_is_passthrough():
         "hello", "marker-x", CacheBustTarget.FIRST_TURN_PREFIX
     )
     assert out == "hello"
-
-
-# =============================================================================
-# _inject_marker_into_raw_messages
-# =============================================================================
 
 
 def test_inject_into_raw_messages_multimodal_content_list_injects_text_part():
@@ -113,11 +91,6 @@ def test_inject_into_raw_messages_first_message_not_dict_is_noop():
     _inject_marker_into_raw_messages(raw, "M", is_prefix=True)
 
     assert raw == snapshot
-
-
-# =============================================================================
-# _inject_marker_into_first_user_turn
-# =============================================================================
 
 
 def test_inject_into_first_user_turn_only_first_user_mutated():

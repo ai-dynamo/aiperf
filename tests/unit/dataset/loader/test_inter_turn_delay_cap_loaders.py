@@ -1,12 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Cap behavior across non-weka trace loaders.
-
-Each test builds a minimal in-memory dataset, runs the loader, and asserts
-that ``Turn.delay`` is clamped to ``cap_seconds * 1000`` whenever the
-trace's recorded delay exceeds the cap.
-"""
+"""Cap behavior across non-weka trace loaders."""
 
 import json
 import logging

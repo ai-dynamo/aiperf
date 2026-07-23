@@ -1,9 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for CreditCallbackHandler.
-
-Tests credit lifecycle callbacks from CreditRouter.
-"""
+"""Tests for CreditCallbackHandler credit lifecycle callbacks from CreditRouter."""
 
 import asyncio
 import time
@@ -16,9 +13,7 @@ from aiperf.credit.callback_handler import CreditCallbackHandler
 from aiperf.credit.messages import CreditReturn, FirstToken
 from aiperf.credit.structs import Credit
 
-# =============================================================================
 # Test Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -136,9 +131,7 @@ def make_credit_return(
     )
 
 
-# =============================================================================
 # Test: Phase Registration
-# =============================================================================
 
 
 class TestPhaseRegistration:
@@ -212,9 +205,7 @@ class TestPhaseRegistration:
         mock_concurrency.release_prefill_slot.assert_called_once_with(1)
 
 
-# =============================================================================
 # Test: Credit Return - Basic Flow
-# =============================================================================
 
 
 class TestCreditReturnBasicFlow:
@@ -318,9 +309,7 @@ class TestCreditReturnBasicFlow:
         mock_concurrency.release_session_slot.assert_not_called()
 
 
-# =============================================================================
 # Test: Credit Return - TTFT Handling
-# =============================================================================
 
 
 class TestCreditReturnTTFTHandling:
@@ -355,9 +344,7 @@ class TestCreditReturnTTFTHandling:
         mock_concurrency.release_prefill_slot.assert_not_called()
 
 
-# =============================================================================
 # Test: Credit Return - Final Return Handling
-# =============================================================================
 
 
 class TestCreditReturnFinalHandling:
@@ -391,9 +378,7 @@ class TestCreditReturnFinalHandling:
         assert mock_concurrency.release_session_slot.call_count == 3
 
 
-# =============================================================================
 # Test: Credit Return - Next Turn Dispatch
-# =============================================================================
 
 
 class TestNextTurnDispatch:
@@ -731,9 +716,7 @@ async def test_cache_warmup_handoff_allows_paused_dag_work(
     mock_branch_orchestrator.has_pending_branch_work.assert_called_once_with()
 
 
-# =============================================================================
 # Test: Credit Return - Unregistered/Complete Phase
-# =============================================================================
 
 
 class TestUnregisteredAndCompletePhaseHandling:
@@ -757,9 +740,7 @@ class TestUnregisteredAndCompletePhaseHandling:
         mock_progress.increment_returned.assert_not_called()
 
 
-# =============================================================================
 # Test: First Token (TTFT) Handling
-# =============================================================================
 
 
 class TestFirstTokenHandling:
@@ -810,9 +791,7 @@ class TestFirstTokenHandling:
         mock_strategy.handle_first_token.assert_awaited_once_with(first_token)
 
 
-# =============================================================================
 # Test: Edge Cases
-# =============================================================================
 
 
 class TestEdgeCases:
@@ -1148,9 +1127,7 @@ class TestAbortObserverWiring:
         mock_lifecycle.cancel.assert_not_called()
 
 
-# =============================================================================
 # Test: WARMUP Terminal-Failure Accumulation + Live Early-Abort
-# =============================================================================
 
 
 class TestWarmupFailureRecording:

@@ -1,15 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for AgenticReplayStrategy with wrap-filled (shared-trace) lanes.
-
-Covers invariants relaxed when ``len(distinct trace_ids) < concurrency``:
-
-1. ``_active_traces`` is a multiset; ``_pop_next_eligible_trace`` skips only
-   when every lane for a trace is busy.
-2. ``_lanes_per_trace`` reflects wrap-fill distribution.
-3. Old "any lane busy" semantics preserved when every trajectory has a
-   distinct trace_id (every lanes_per_trace value == 1).
-"""
+"""Tests for AgenticReplayStrategy with wrap-filled (shared-trace) lanes."""
 
 from __future__ import annotations
 

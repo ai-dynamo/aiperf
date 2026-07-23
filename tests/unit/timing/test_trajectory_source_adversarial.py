@@ -1,11 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial unit tests for TrajectorySource (spec §8.4.2).
-
-Covers boundary and salting behavior of trajectory selection: pool/concurrency
-mismatches, empty pools, zero/one/two-turn traces, distinctness invariants,
-seed determinism (including 0 and max int64), and per-trace RNG salting.
-"""
+"""Adversarial unit tests for TrajectorySource (spec §8.4.2)."""
 
 from __future__ import annotations
 

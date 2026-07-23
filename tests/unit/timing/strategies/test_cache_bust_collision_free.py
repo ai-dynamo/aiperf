@@ -1,18 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""High-volume robustness coverage for ``build_cache_bust_marker``.
-
-The basic determinism / position / per-dimension digest assertions live in
-``test_cache_bust.py``. This file is the regression bar for the
-collision-free fix (commit ``9261865fc``): the marker tuple now embeds
-``trace_id`` so cross-trace collisions on the same ``(recycle_pass, lane)``
-slot are eliminated by construction.
-
-Tests here scale to 10k+ inputs to make any digest truncation, hashing
-mistake, or input-string concatenation regression visible. Each test runs
-in well under a second on a modern laptop; tune the loop counts down if
-xdist contention surfaces flakes.
-"""
+"""High-volume robustness coverage for ``build_cache_bust_marker``."""
 
 from __future__ import annotations
 

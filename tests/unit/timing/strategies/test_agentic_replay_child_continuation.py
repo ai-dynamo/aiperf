@@ -92,9 +92,7 @@ def _root_credit() -> Credit:
     )
 
 
-# =============================================================================
 # Child continuation, immediate path (no delay_ms)
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -140,9 +138,7 @@ async def test_child_at_cap_without_orchestrator_swallows_silently() -> None:
     issuer.issue_credit.assert_not_called()
 
 
-# =============================================================================
 # Child continuation, delayed path (delay_ms > 0)
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -173,9 +169,7 @@ async def test_child_delayed_schedules_chokepoint_coro_not_issue_credit() -> Non
     orch.on_child_stopped.assert_awaited_once_with("child-xcid")
 
 
-# =============================================================================
 # Root continuation keeps issue_credit
-# =============================================================================
 
 
 @pytest.mark.asyncio

@@ -1,13 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the turn-messages viewer: interning, zstd round-trip, fzstd safety.
-
-Focus: every turn re-sends accumulated history, so unique ``(role, body)``
-messages must be interned into a shared ``msgs`` table referenced by integer
-``ids``; structured content / ``tool_calls`` survive as JSON; and the embedded
-payload must decode under a fzstd-safe ``windowLog`` window (the inlined
-decoder silently corrupts windows > 26).
-"""
+"""Tests for the turn-messages viewer: interning, zstd round-trip, fzstd safety."""
 
 from __future__ import annotations
 

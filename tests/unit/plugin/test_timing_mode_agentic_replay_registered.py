@@ -1,12 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Plugin registration test for the agentic_replay timing strategy.
-
-Verifies that:
-1. `TimingMode.AGENTIC_REPLAY` enum value exists with the canonical string value.
-2. The `agentic_replay` strategy is registered under `PluginType.TIMING_STRATEGY`
-   and resolves to the `AgenticReplayStrategy` class.
-"""
+"""Plugin registration test for the agentic_replay timing strategy."""
 
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TimingMode

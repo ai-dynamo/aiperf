@@ -1,20 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial coverage for AgenticReplayStrategy cache-bust state lifecycle.
-
-The happy paths (warmup-to-profile reuse, recycle rotation, lane-distinct digests,
-target=NONE no-op) are covered in ``test_agentic_replay.py``. This file targets
-the edge-case bookkeeping seams:
-
-- Disabled feature when ``user_config`` is None.
-- ``_recycle_pass`` dict bounded by pool size (not unbounded growth).
-- ``_session_marker`` / ``_correlation_to_lane`` pruned on the queue-empty
-  recycle path (extends the existing stop-checker-reject regression).
-- ``_session_marker`` pruned on the metadata-miss recycle path.
-- ``TurnToSend.from_previous_credit`` propagates the marker (continuation seam).
-- ``TurnToSend.from_previous_credit`` propagates the marker for fork children
-  (parent_correlation_id present, marker carried through).
-"""
+"""Adversarial coverage for AgenticReplayStrategy cache-bust state lifecycle."""
 
 from __future__ import annotations
 
@@ -34,9 +20,7 @@ from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import Trajectory, TrajectorySource
 
-# =============================================================================
 # Helpers (mirror test_agentic_replay.py)
-# =============================================================================
 
 
 def _make_dataset(num_traces: int, turns_per_trace: int) -> DatasetMetadata:
@@ -174,9 +158,7 @@ def _make_run(*, target: CacheBustTarget, benchmark_id: str = "bench-fixed"):
     )
 
 
-# =============================================================================
 # Cache-bust disabled (user_config is None)
-# =============================================================================
 
 
 def test_cache_bust_disabled_when_user_config_is_none():
@@ -195,9 +177,7 @@ def test_cache_bust_disabled_when_user_config_is_none():
     assert strategy._session_marker == {}
 
 
-# =============================================================================
 # _recycle_pass dict bounded by pool size
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -254,9 +234,7 @@ async def test_recycle_pass_dict_grows_only_to_pool_size():
     assert set(strategy._recycle_pass.keys()) <= {f"trace_{i}" for i in range(n)}
 
 
-# =============================================================================
 # Marker dict pruned on queue-empty recycle (complement to stop-checker test)
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -325,9 +303,7 @@ async def test_session_marker_dict_pruned_on_metadata_miss_recycle():
     assert finished_corr not in strategy._correlation_to_lane
 
 
-# =============================================================================
 # from_previous_credit cache-bust propagation
-# =============================================================================
 
 
 def test_marker_propagates_through_from_previous_credit_within_session():

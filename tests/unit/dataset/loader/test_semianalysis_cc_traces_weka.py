@@ -1,18 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for ``SemiAnalysisCCTracesWekaLoader``.
-
-The loader is a thin HF wrapper that:
-
-- downloads the SemiAnalysis cc-traces dataset from HuggingFace,
-- validates each row as a ``WekaTrace`` model,
-- delegates conversation reconstruction to ``WekaTraceLoader``.
-
-Tests focus on behaviors the wrapper actually owns: row validation,
-duplicate-id rejection, delegation to the file-based loader, streaming
-override, and plugin registry resolution. The real HuggingFace endpoint
-is never hit; ``BaseHFDatasetLoader.load_dataset`` is mocked.
-"""
+"""Tests for ``SemiAnalysisCCTracesWekaLoader``."""
 
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -33,9 +21,7 @@ from aiperf.plugin.enums import (
     PublicDatasetType,
 )
 
-# ============================================================================
 # Fixtures and helpers
-# ============================================================================
 
 
 _NO_SUBAGENTS_HF_DATASET_NAME = "semianalysisai/cc-traces-weka-no-subagents-051826"
@@ -81,9 +67,7 @@ async def loader(user_config) -> SemiAnalysisCCTracesWekaLoader:
     )
 
 
-# ============================================================================
 # Constructor wiring
-# ============================================================================
 
 
 @pytest.mark.asyncio
@@ -137,9 +121,7 @@ class TestConstructorWiring:
         assert loader.hf_split == "train"
 
 
-# ============================================================================
 # Row validation: load_dataset
-# ============================================================================
 
 
 @pytest.mark.asyncio
@@ -215,9 +197,7 @@ class TestLoadDatasetRowValidation:
             await loader.load_dataset()
 
 
-# ============================================================================
 # Delegation to WekaTraceLoader
-# ============================================================================
 
 
 @pytest.mark.asyncio
@@ -238,9 +218,7 @@ class TestConvertToConversationsDelegation:
         loader._weka.convert_to_conversations.assert_called_once_with(data)
 
 
-# ============================================================================
 # Sampling strategy
-# ============================================================================
 
 
 class TestSamplingStrategy:
@@ -251,9 +229,7 @@ class TestSamplingStrategy:
         )
 
 
-# ============================================================================
 # Plugin registry integration
-# ============================================================================
 
 
 class TestPluginRegistry:

@@ -1,9 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for CreditIssuer.
-
-Tests credit issuance with concurrency control and stop condition checking.
-"""
+"""Tests for CreditIssuer credit issuance with concurrency control and stop conditions."""
 
 import asyncio
 import time
@@ -16,9 +13,7 @@ from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
 from aiperf.timing.session_tree import SessionTreeRegistry
 
-# =============================================================================
 # Test Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -115,9 +110,7 @@ def make_turn(
     )
 
 
-# =============================================================================
 # Test: Basic Credit Issuance
-# =============================================================================
 
 
 class TestBasicCreditIssuance:
@@ -217,9 +210,7 @@ class TestBasicCreditIssuance:
         assert result is False
 
 
-# =============================================================================
 # Test: Slot Acquisition Failures
-# =============================================================================
 
 
 class TestSlotAcquisitionFailures:
@@ -367,9 +358,7 @@ class _PrefillFailConcurrency:
         self.session_releases += 1
 
 
-# =============================================================================
 # Test: Stop Condition Checking
-# =============================================================================
 
 
 class TestStopConditionChecking:
@@ -402,9 +391,7 @@ class TestStopConditionChecking:
         assert check_fn == mock_stop_checker.can_send_any_turn
 
 
-# =============================================================================
 # Test: Final Credit Handling
-# =============================================================================
 
 
 class TestFinalCreditHandling:
@@ -441,9 +428,7 @@ class TestFinalCreditHandling:
         assert not mock_progress.all_credits_sent_event.is_set()
 
 
-# =============================================================================
 # Test: Sending-Complete Signals
-# =============================================================================
 
 
 class TestSendingCompleteSignals:
@@ -483,9 +468,7 @@ class TestSendingCompleteSignals:
         assert mock_progress.all_credits_sent_event.is_set()
 
 
-# =============================================================================
 # Test: Cancellation Policy Integration
-# =============================================================================
 
 
 class TestCancellationPolicy:
@@ -528,9 +511,7 @@ class TestCancellationPolicy:
         )
 
 
-# =============================================================================
 # Test: Atomic Credit Numbering
-# =============================================================================
 
 
 class TestAtomicCreditNumbering:
@@ -577,9 +558,7 @@ class TestAtomicCreditNumbering:
         assert [c.id for c in sent_credits] == [1, 2, 3]
 
 
-# =============================================================================
 # Test: Edge Cases
-# =============================================================================
 
 
 class TestEdgeCases:
@@ -633,9 +612,7 @@ class TestEdgeCases:
         assert sent_credit.num_turns == 100
 
 
-# =============================================================================
 # Test: Concurrency Slot Contract
-# =============================================================================
 
 
 class TestConcurrencySlotContract:
@@ -680,9 +657,7 @@ class TestConcurrencySlotContract:
             mock_concurrency.acquire_prefill_slot.assert_called_once()
 
 
-# =============================================================================
 # Test: Issued At Timestamp
-# =============================================================================
 
 
 class TestIssuedAtTimestamp:
@@ -713,9 +688,7 @@ class TestIssuedAtTimestamp:
         assert (after - sent_credit.issued_at_ns) < 1_000_000_000
 
 
-# =============================================================================
 # Test: URL Selection Strategy Integration
-# =============================================================================
 
 
 class TestURLSelectionStrategy:

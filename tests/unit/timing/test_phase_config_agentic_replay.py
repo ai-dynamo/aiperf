@@ -1,17 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""AGENTIC_REPLAY warmup/profiling CreditPhaseConfig construction.
-
-- ``_build_warmup_config(phase: PhaseConfig)`` builds a *user-declared* warmup
-  phase (REQUEST_RATE; ``total_expected_requests = phase.requests``).
-- ``_build_agentic_warmup_config(phase: PhaseConfig)`` builds the AGENTIC_REPLAY
-  *auto*-warmup from the profiling phase, sizing
-  ``total_expected_requests = phase.concurrency`` (one credit per concurrency
-  lane, dispatched as a single CONCURRENCY_BURST).
-
-Both take a ``PhaseConfig``, so the test builds a real profiling phase with
-``timing_mode=AGENTIC_REPLAY``.
-"""
+"""AGENTIC_REPLAY warmup/profiling CreditPhaseConfig construction."""
 
 import pydantic
 

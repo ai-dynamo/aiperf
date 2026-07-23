@@ -1,16 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for ``BaseEndpoint.extract_payload_inputs`` and its overrides.
-
-Covers the single-pass walk that feeds ISL tokenisation
-(``ExtractedPayload.texts``) and per-record ``MediaCounts``
-(``image_count``/``audio_count``/``video_count``) from the wire-ready
-JSON payload. Endpoints may extend this walk by setting ``PART_TYPES``
-(chat-shape content-part type names) or overriding
-``extract_payload_inputs`` directly.
-"""
+"""Unit tests for ``BaseEndpoint.extract_payload_inputs`` and its overrides."""
 
 from __future__ import annotations
+
+import pytest
+from pytest import param
 
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 from aiperf.endpoints.nim_image_retrieval import ImageRetrievalEndpoint
@@ -138,44 +133,33 @@ class TestFlatFieldFallbacks:
     shapes doesn't silently double-count.
     """
 
-    def test_completions_prompt_string(self):
-        result = _chat().extract_payload_inputs({"prompt": "one shot"})
-        assert result.texts == ["one shot"]
-
-    def test_completions_prompt_list(self):
-        result = _chat().extract_payload_inputs({"prompt": ["a", "b"]})
-        assert result.texts == ["a", "b"]
-
-    def test_embeddings_input_string(self):
-        result = _chat().extract_payload_inputs({"input": "to embed"})
-        assert result.texts == ["to embed"]
-
-    def test_rankings_query_and_passages(self):
-        result = _chat().extract_payload_inputs(
-            {
-                "query": "my question",
-                "passages": ["p1", {"text": "p2"}, "p3"],
-            }
-        )
-        assert result.texts == ["my question", "p1", "p2", "p3"]
-
-    def test_huggingface_inputs_string(self):
-        result = _chat().extract_payload_inputs({"inputs": "hf text"})
-        assert result.texts == ["hf text"]
-
-    def test_prompt_wins_over_later_shapes(self):
-        """Regression: if a plugin erroneously emits both ``prompt`` and
-        ``input`` (flat), the walker must not double-count."""
-        result = _chat().extract_payload_inputs(
-            {"prompt": "P", "input": "I", "inputs": "HF"}
-        )
-        assert result.texts == ["P"]
-
-    def test_input_wins_over_query_when_prompt_absent(self):
-        result = _chat().extract_payload_inputs(
-            {"input": "I", "query": "Q", "passages": ["p"]}
-        )
-        assert result.texts == ["I"]
+    @pytest.mark.parametrize(
+        "payload, expected_texts",
+        [
+            param({"prompt": "one shot"}, ["one shot"], id="completions_prompt_string"),
+            param({"prompt": ["a", "b"]}, ["a", "b"], id="completions_prompt_list"),
+            param({"input": "to embed"}, ["to embed"], id="embeddings_input_string"),
+            param(
+                {"query": "my question", "passages": ["p1", {"text": "p2"}, "p3"]},
+                ["my question", "p1", "p2", "p3"],
+                id="rankings_query_and_passages",
+            ),
+            param({"inputs": "hf text"}, ["hf text"], id="huggingface_inputs_string"),
+            param(
+                {"prompt": "P", "input": "I", "inputs": "HF"},
+                ["P"],
+                id="prompt_wins_over_later_shapes",
+            ),
+            param(
+                {"input": "I", "query": "Q", "passages": ["p"]},
+                ["I"],
+                id="input_wins_over_query_when_prompt_absent",
+            ),
+        ],
+    )  # fmt: skip
+    def test_flat_field_texts(self, payload, expected_texts):
+        result = _chat().extract_payload_inputs(payload)
+        assert result.texts == expected_texts
 
 
 class TestResponsesEndpointOverride:

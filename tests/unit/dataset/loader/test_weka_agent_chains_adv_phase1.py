@@ -1,14 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial tests for phase-1 greedy chain building in detect_agent_chains.
-
-Targets the sharp edges of spec section 4 "Phase 1" (design spec
-2026-06-10-weka-flattened-agent-lcp-detection-design.md): the 1e-6 temporal
-epsilon boundary, extension and fork-witness tie-breaks (deepest tail vs
-lowest index), input ordering by (t, outer_idx), degenerate api_time values,
-the same-model rule among multiple extension candidates, and the spec
-section 8 empty-hash invisibility rules.
-"""
+"""Adversarial tests for phase-1 greedy chain building in detect_agent_chains."""
 
 import pytest
 
@@ -66,9 +58,7 @@ def _worker_by_first_outer(result) -> dict[int, int]:
     return {result.chains[i].requests[0][0]: i for i in result.worker_indices}
 
 
-# ---------------------------------------------------------------------------
 # Temporal epsilon boundary (spec 4 phase 1: end(tail) <= start(r) + eps)
-# ---------------------------------------------------------------------------
 
 
 def test_detect_agent_chains_overlap_within_epsilon_extends():
@@ -131,9 +121,7 @@ def test_detect_agent_chains_degenerate_api_time_zero_duration_tail_extends(
     assert _chain_outer_indices(r, r.main_index) == [0, 1]
 
 
-# ---------------------------------------------------------------------------
 # Extension target tie-breaks (deepest tail, then lowest chain index)
-# ---------------------------------------------------------------------------
 
 
 def test_detect_agent_chains_equal_length_tails_extension_lowest_index_wins():
@@ -217,9 +205,7 @@ def test_detect_agent_chains_last_element_match_full_mismatch_not_extension():
     assert worker.fork.depth == 0
 
 
-# ---------------------------------------------------------------------------
 # Fork-witness tie-breaks (spec 4 step 2: deepest LCP, deeper tail, low idx)
-# ---------------------------------------------------------------------------
 
 
 def test_detect_agent_chains_equal_lcp_deeper_tail_wins_fork_witness():
@@ -280,9 +266,7 @@ def test_detect_agent_chains_fork_depth_matches_older_midchain_ancestor():
     assert worker.fork.depth == 2
 
 
-# ---------------------------------------------------------------------------
 # Input ordering (spec 4: process in (t, outer_idx) order)
-# ---------------------------------------------------------------------------
 
 
 def test_detect_agent_chains_unsorted_input_processed_in_time_order():
@@ -311,9 +295,7 @@ def test_detect_agent_chains_equal_t_ties_broken_by_outer_idx():
     assert _chain_outer_indices(r, r.main_index) == [0, 1]
 
 
-# ---------------------------------------------------------------------------
 # Empty-hash requests (spec 8: invisible, kept on main, counted)
-# ---------------------------------------------------------------------------
 
 
 def test_detect_agent_chains_first_request_empty_hash_keeps_single_chain():
@@ -378,9 +360,7 @@ def test_detect_agent_chains_empty_hash_after_dead_tail_does_not_demote_seam():
     assert _chain_outer_indices(r, r.main_index) == [0, 1, 2]
 
 
-# ---------------------------------------------------------------------------
 # Degenerate traces
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -431,9 +411,7 @@ def test_detect_agent_chains_identical_duplicates_zero_duration_one_chain():
     assert _chain_outer_indices(r, r.main_index) == [0, 1]
 
 
-# ---------------------------------------------------------------------------
 # Global invariants on a hostile composite trace
-# ---------------------------------------------------------------------------
 
 
 def test_detect_agent_chains_partition_and_order_invariants_composite_trace():

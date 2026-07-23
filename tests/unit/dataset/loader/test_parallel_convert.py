@@ -1,22 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Determinism + cross-process consistency for parallel_convert workers.
-
-The opt-in :func:`parallel_convert.parallel_convert` path runs trace -> prompt
-generation inside multiprocessing workers. Each worker holds its own
-:class:`HashIdRandomGenerator` seeded with the same ``(base_seed, trace_id)``,
-so reseed-per-hash_id produces byte-identical token sequences across:
-
-1. The in-process 3-phase pipeline used by
-   :meth:`BaseTraceDatasetLoader.convert_to_conversations`.
-2. The opt-in parallel_convert workers
-   (:meth:`convert_to_conversations_parallel`).
-
-This file drives ``_init_worker`` + ``_process_batch`` directly without
-spawning a Pool — that's fast, xdist-safe, and exercises the same code path
-the real Pool runs in each worker.
-"""
+"""Determinism + cross-process consistency for parallel_convert workers."""
 
 from __future__ import annotations
 

@@ -1,16 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial unit tests for AgenticReplayStrategy warmup-failure accumulation
-and dispatch routing.
-
-Covers spec section 8.4 surfaces not exercised by the existing recycle/phase
-adversarial tests:
-
-    * record_warmup_failure / report_warmup_failures bookkeeping invariants
-    * handle_credit_return WARMUP no-op contract
-    * _dispatch_next_turn delay routing (immediate vs scheduler)
-    * setup_phase WARMUP/PROFILING queue construction edge cases
-"""
+"""Adversarial unit tests for AgenticReplayStrategy warmup-failure accumulation and dispatch routing."""
 
 from __future__ import annotations
 
@@ -34,9 +24,7 @@ from aiperf.timing.trajectory_source import (
     TrajectorySource,
 )
 
-# =============================================================================
 # Helpers (duplicated from sibling adversarial tests for self-containment)
-# =============================================================================
 
 
 def _make_dataset(num_traces: int, turns_per_trace: int) -> DatasetMetadata:
@@ -124,9 +112,7 @@ def _make_credit(
     )
 
 
-# =============================================================================
 # Test 1: record_warmup_failure preserves call order including duplicates
-# =============================================================================
 
 
 def test_record_warmup_failure_accumulates_in_call_order() -> None:
@@ -144,9 +130,7 @@ def test_record_warmup_failure_accumulates_in_call_order() -> None:
     assert strategy._failed_warmup_traces == ["a", "b", "a"]
 
 
-# =============================================================================
 # Test 2: report_warmup_failures with no failures is a noop
-# =============================================================================
 
 
 def test_report_warmup_failures_empty_is_noop() -> None:
@@ -161,9 +145,7 @@ def test_report_warmup_failures_empty_is_noop() -> None:
     assert result is None
 
 
-# =============================================================================
 # Test 3: report_warmup_failures raises with the recorded ids in order
-# =============================================================================
 
 
 def test_report_warmup_failures_raises_with_failed_trace_ids() -> None:
@@ -185,9 +167,7 @@ def test_report_warmup_failures_raises_with_failed_trace_ids() -> None:
     assert exc_info.value.failed_trace_ids == ["trace_1", "trace_0"]
 
 
-# =============================================================================
 # Test 4: WARMUP handle_credit_return is a strategy-level no-op
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -218,9 +198,7 @@ async def test_warmup_handle_credit_return_is_noop() -> None:
     scheduler.schedule_later.assert_not_called()
 
 
-# =============================================================================
 # Test 5: PROFILING credit return during cooldown does not spawn or push
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -253,9 +231,7 @@ async def test_profiling_handle_credit_return_during_cooldown_no_spawn() -> None
     assert issuer.issue_credit.await_count == 0
 
 
-# =============================================================================
 # Test 6: _dispatch_next_turn with delay_ms=0 issues immediately
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -286,9 +262,7 @@ async def test_dispatch_next_turn_with_zero_delay_issues_immediately() -> None:
     scheduler.schedule_later.assert_not_called()
 
 
-# =============================================================================
 # Test 7: _dispatch_next_turn with positive delay routes through scheduler
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -336,9 +310,7 @@ async def test_dispatch_next_turn_with_positive_delay_routes_through_scheduler()
     assert issuer.issue_credit.await_count == 0
 
 
-# =============================================================================
 # Test 8: _dispatch_next_turn with delay_ms=None issues immediately
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -369,9 +341,7 @@ async def test_dispatch_next_turn_with_none_delay_issues_immediately() -> None:
     scheduler.schedule_later.assert_not_called()
 
 
-# =============================================================================
 # Test 10: PROFILING setup with empty trajectories raises with the canonical message
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -396,9 +366,7 @@ async def test_profiling_setup_raises_when_trajectories_empty() -> None:
     assert "WARMUP must complete" in str(exc_info.value)
 
 
-# =============================================================================
 # G17: empty-warmup unblock (signal_sending_complete when nothing precedes t*)
-# =============================================================================
 
 
 @pytest.mark.asyncio

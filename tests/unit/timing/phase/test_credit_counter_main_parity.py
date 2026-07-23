@@ -1,21 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Regression tests for CreditCounter DAG accounting.
-
-1. Error accounting: ``increment_returned(..., errored=True)`` bumps
-   ``request_errors`` (the timing-layer counter the phase-complete
-   ``errors=`` log reads).
-
-2. Root-only session-completion predicate: ``_root_requests_sent`` is used in
-   the ``expected_num_sessions`` branch of ``is_final_credit`` instead of the
-   global ``requests_sent``, so DAG children (which bump ``requests_sent`` but
-   not ``sent_sessions``) cannot prematurely satisfy
-   ``sent >= total_session_turns`` and exit the strategy loop before a
-   multi-turn parent finishes dispatching.
-
-The final tests lock in the child-triggered session-count invariant: DAG child
-returns must not increment root-session completion or cancellation counters.
-"""
+"""Regression tests for CreditCounter DAG accounting."""
 
 from __future__ import annotations
 

@@ -1,17 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 0 unit tests for :class:`BranchOrchestrator` and :class:`CreditIssuer`.
-
-Covers Phase 0 adjacent bug fixes (still valid under Phase 1's revised
-data model):
-
-- ``dispatch_join_turn`` propagates ``parent_branch_mode`` and
-  ``parent_has_forks_on_gated_turn`` from :class:`PendingBranchJoin` instead
-  of hardcoding FORK.
-- ``BranchOrchestrator.intercept`` dispatches the gated join turn immediately
-  when every ``start_branch_child`` call fails (no children landed), instead
-  of registering a dead pending join that hangs the parent.
-"""
+"""Phase 0 unit tests for :class:`BranchOrchestrator` and :class:`CreditIssuer`."""
 
 from __future__ import annotations
 
@@ -51,9 +40,7 @@ def _mk_source(conversations: list[ConversationMetadata]):
     return cs
 
 
-# ============================================================
 # 0.1. dispatch_join_turn propagates SPAWN parent mode
-# ============================================================
 
 # NOTE: test_dispatch_join_turn_preserves_spawn_parent_mode and
 # test_dispatch_join_turn_preserves_has_forks_on_gated_turn pruned here -
@@ -62,9 +49,7 @@ def _mk_source(conversations: list[ConversationMetadata]):
 # and PendingBranchJoin (aiperf.timing.branch_orchestrator).
 
 
-# ============================================================
 # 0.3. intercept with all-children-failed + gate must not hang
-# ============================================================
 
 
 @pytest.mark.asyncio

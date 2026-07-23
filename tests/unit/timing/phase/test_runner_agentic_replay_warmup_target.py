@@ -1,22 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Regression tests for AGENTIC_REPLAY warmup ``total_expected_requests``.
-
-Originally these tests pinned the ``PhaseRunner.__init__`` re-anchor logic
-that lowered ``total_expected_requests`` to match the actual trajectory count
-when ``concurrency`` exceeded the number of usable trajectories. That bug
-class is now handled earlier: ``TrajectorySource.__init__`` always wrap-fills
-to ``concurrency`` lanes (cycling through distinct trajectories with fresh
-``start_turn_index`` values), so ``len(trajectories) == concurrency`` by
-construction and the runner-side re-anchor is a no-op in practice.
-
-This module now exercises:
-- the wrap-fill path that keeps ``len(trajectories) == concurrency`` even
-  when the pool or the usable subset is smaller than ``concurrency``;
-- the unchanged in-budget path: warmup target equals ``concurrency`` when the
-  trajectory build matches it exactly;
-- the unchanged non-AGENTIC_REPLAY warmup and PROFILING phase behavior.
-"""
+"""Regression tests for AGENTIC_REPLAY warmup ``total_expected_requests``."""
 
 from __future__ import annotations
 

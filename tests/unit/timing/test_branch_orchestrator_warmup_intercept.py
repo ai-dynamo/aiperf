@@ -1,21 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""WARMUP-phase short-circuit in ``BranchOrchestrator.intercept``.
-
-Regression for the H100/B200 ``concurrency=16`` warmup hang: warmup is
-one-shot per trajectory and the strategy refuses to advance child
-continuation turns, so spawning branches during WARMUP leaks
-``_descendant_counts`` (children never reach ``is_final_turn``) and wedges
-``all_credits_returned_event``. ``intercept`` must therefore return early
-for any ``credit.phase == CreditPhase.WARMUP`` BEFORE it touches the
-conversation source or spawns children. DAG dispatch only runs in
-PROFILING.
-
-These tests share a single spawn-declaring conversation source so the
-WARMUP case and the PROFILING case differ ONLY in ``credit.phase`` —
-proving the short-circuit is the thing suppressing the spawn, not a
-missing branch.
-"""
+"""WARMUP-phase short-circuit in ``BranchOrchestrator.intercept``."""
 
 from __future__ import annotations
 

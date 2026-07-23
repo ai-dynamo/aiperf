@@ -1,11 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for async-subagent and parallel-inner-request replay in WekaTraceLoader.
-
-Reuses the helpers from test_weka_trace_graph_adversarial.py: same
-``_subagent``/``_normal``/``_build_trace``/``_make_loader`` pattern, same fixture
-loader path.
-"""
+"""Tests for async-subagent and parallel-inner-request replay in WekaTraceLoader."""
 
 from pathlib import Path
 from unittest.mock import MagicMock

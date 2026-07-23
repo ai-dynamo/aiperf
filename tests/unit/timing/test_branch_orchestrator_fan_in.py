@@ -1,21 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 3 unit tests: fan-in (multi-prereq per gated turn).
-
-Covers the Phase 3 semantics:
-
-- A single gated parent turn may declare prerequisites on multiple different
-  branches spawned from different parent turns. The gate only fires once ALL
-  prereqs are satisfied.
-- The gate is idempotent under double-delivery: the same child_corr reporting
-  twice against the same prereq does not advance the counter twice.
-- Rollback on dispatch failure decrements ``expected`` without touching the
-  ``completed`` set. When ``expected == 0`` for every prereq, the gate fires
-  immediately.
-- Fail-fast cascades across orphan siblings of every contributing branch.
-- FORK + SPAWN mixed branches can feed one gate with sticky refcounts
-  tracked correctly per branch.
-"""
+"""Phase 3 unit tests: fan-in (multi-prereq per gated turn)."""
 
 from __future__ import annotations
 
