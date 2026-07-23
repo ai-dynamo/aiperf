@@ -251,6 +251,7 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                 f"{hoisted_count}/{len(conversations)} conversation(s) "
                 f"(endpoint '{self.run.cfg.endpoint.type}')"
             )
+        self._delay_cap_tracker.log_summary(logger_name=__name__)
         return conversations
 
     def _endpoint_consumes_system_message(self) -> bool:
