@@ -73,8 +73,13 @@ class TestRequestInfoIsRecordContext:
         # The hoisted scalars stay on RecordContext (they cross the wire).
         assert "max_tokens" not in extras
         assert "audio_duration_seconds" not in extras
-        assert "scheduled_send_ms" not in extras
         assert "payload_bytes" not in extras
+        assert "scheduled_send_ms" not in extras
+        # Phase identity fields also live on RecordContext.
+        assert "phase_index" not in extras
+        assert "profiling_index" not in extras
+        assert "phase_name" not in extras
+        assert "phase_kind" not in extras
 
 
 class TestRequestRecordHoldsRecordContext:
