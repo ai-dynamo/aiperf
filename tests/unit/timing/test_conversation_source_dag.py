@@ -1,6 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for ConversationSource DAG child builders."""
+"""Unit tests for ConversationSource DAG child builders.
+
+Covers the FORK and SPAWN entry points used by the DAG BranchOrchestrator:
+- ``start_branch_child``: child shares parent's correlation_id (sticky routing)
+- ``start_pre_session_child``: child gets a fresh correlation_id (free routing)
+"""
 
 import pytest
 
@@ -105,8 +110,8 @@ class TestStartBranchChild:
             branch_mode=ConversationBranchMode.SPAWN,
         )
         assert child.branch_mode == ConversationBranchMode.SPAWN
-        # SPAWN still sticky-pins via parent_correlation_id; the router
-        # co-locates while the parent sticky entry is live (no SPAWN refcount).
+        # SPAWN still sticky-pins via parent_correlation_id at this layer;
+        # routing freedom is enforced upstream by the orchestrator/router.
         assert child.routing_key == "parent-corr"
 
     def test_unknown_child_conversation_raises(self, src: ConversationSource):
@@ -125,7 +130,7 @@ class TestStartPreSessionChild:
         assert child.conversation_id == "child-conv"
 
     def test_fresh_routing_key(self, src: ConversationSource):
-        """SPAWN pre-session: routing_key equals child's own x_correlation_id."""
+        """SPAWN pre-session: routing_key equals child's own x_correlation_id (free routing)."""
         child = src.start_pre_session_child(child_conversation_id="child-conv")
         assert child.parent_correlation_id is None
         assert child.routing_key == child.x_correlation_id

@@ -478,8 +478,6 @@ class TestServerMetricsJsonExporterGenerateContent:
             "start_ns": 1_000_000_000_000,
             "end_ns": 1_300_000_000_000,
         }
-        # phase_time_ranges["warmup"] mirrors ServerMetricsResults.warmup_end_ns
-        # (aggregation window, including any end-of-warmup scrape extension).
         assert data["summary"]["phase_time_ranges"]["warmup"] == {
             "start_ns": 900_000_000_000,
             "end_ns": 999_000_000_000,

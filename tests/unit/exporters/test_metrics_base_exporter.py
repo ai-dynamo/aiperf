@@ -149,7 +149,7 @@ class TestMetricsBaseExporterPrepareMetrics:
         Regression guard for the accumulator-summary path: reverting the
         _prepare_metrics filter would leak internal metrics (e.g.
         min_request_timestamp, credit_drop_latency) into profile_export_aiperf
-        .json/.csv.
+        .json/.csv -- which origin/main excluded.
         """
         exporter = ConcreteExporter(exporter_config)
         metrics = [
