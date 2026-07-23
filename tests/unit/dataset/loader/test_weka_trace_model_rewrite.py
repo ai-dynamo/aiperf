@@ -1,14 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from tests.unit.dataset.loader._shared_helpers import _make_loader, _write_trace
-
 """WekaTraceLoader rewrites each request's ``model`` to ``endpoint.model_names`` via a per-trace deterministic mapping (always-on, no flag)."""
-
 
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
 from aiperf.dataset.loader.weka_trace_models import (
     WekaTrace,
 )
+from tests.unit.dataset.loader._shared_helpers import _make_loader, _write_trace
 
 
 def _mk_user_config(*, max_isl=None, model_names=("primary",), **overrides):

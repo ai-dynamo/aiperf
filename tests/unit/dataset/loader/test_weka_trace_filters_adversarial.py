@@ -1,7 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from tests.unit.dataset.loader._shared_helpers import _write_trace
-
 """Adversarial filter-boundary tests for WekaTraceLoader."""
 
 from pathlib import Path
@@ -10,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
+from tests.unit.dataset.loader._shared_helpers import _write_trace
 
 FIXTURES = Path(__file__).parents[3] / "fixtures" / "weka_traces"
 

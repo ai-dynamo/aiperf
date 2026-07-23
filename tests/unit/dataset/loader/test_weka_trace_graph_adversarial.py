@@ -1,7 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from tests.unit.dataset.loader._shared_helpers import _make_loader, _write_trace
-
 """Adversarial subagent-graph-pathology tests for WekaTraceLoader."""
 
 from pathlib import Path
@@ -9,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from aiperf.common.enums import ConversationBranchMode
+from tests.unit.dataset.loader._shared_helpers import _make_loader, _write_trace
 
 FIXTURES = Path(__file__).parents[3] / "fixtures" / "weka_traces"
 
