@@ -269,7 +269,12 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
         # Capture last response timestamp before parsing frees raw SSE data.
         last_response_perf_ns = (
-            record.responses[-1].perf_ns if record.responses else None
+            message.last_response_perf_ns
+            if isinstance(message, InferenceResultsMessage)
+            and message.last_response_perf_ns is not None
+            else record.responses[-1].perf_ns
+            if record.responses
+            else None
         )
 
         try:
@@ -302,7 +307,25 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         last_response_perf_ns: int | None,
     ) -> None:
         """Parse, produce, observe, and forward the records for a single request."""
-        parsed_record = await self.inference_result_parser.parse_request_record(record)
+        parsed_responses = (
+            [
+                response_payload.to_parsed_response()
+                for response_payload in message.parsed_responses
+            ]
+            if isinstance(message, InferenceResultsMessage)
+            and message.parsed_responses is not None
+            else None
+        )
+        parsed_record = await self.inference_result_parser.parse_request_record(
+            record,
+            parsed_responses=parsed_responses,
+            raw_response_count=message.raw_response_count
+            if isinstance(message, InferenceResultsMessage)
+            else None,
+            responses_validated=message.responses_validated
+            if isinstance(message, InferenceResultsMessage)
+            else False,
+        )
 
         # Free raw SSE messages now that parsing extracted what it needs.
         # Skip when RAW export is active -- the raw writer needs them.

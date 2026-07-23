@@ -14,6 +14,7 @@ from aiperf.common.enums import (
     CommandType,
     ConversationBranchMode,
     CreditPhase,
+    ExportLevel,
     MemoryMapFormat,
     MessageType,
 )
@@ -38,6 +39,7 @@ from aiperf.common.messages.dataset_messages import (
     ConversationRequestMessage,
     ConversationResponseMessage,
 )
+from aiperf.common.messages.inference_messages import encode_parsed_responses
 from aiperf.common.mixins import ProcessHealthMixin
 from aiperf.common.models import (
     Conversation,
@@ -536,13 +538,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             record: RequestRecord = await self.inference_client.send_request(
                 request_info, first_token_callback=first_token_callback
             )
-            await self._send_inference_result_message(record)
 
             # Copy request-level errors to credit context for CreditReturn tracking
             if record.error is not None:
                 credit_context.error = record.error
 
-            self._finalize_session_response(session, credit_context, record)
+            parsed_responses = None
+            try:
+                parsed_responses = self._finalize_session_response(
+                    session, credit_context, record
+                )
+            finally:
+                await self._send_inference_result_message(record, parsed_responses)
 
         except asyncio.CancelledError:
             # Mark cancelled before re-raising so finally can evict session
@@ -596,8 +603,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         record = await self.inference_client.send_request(
             request_info, first_token_callback=first_token_callback
         )
-        self._populate_response_metrics(credit_context, record)
-        await self._send_inference_result_message(record)
+        parsed_responses = self._populate_response_metrics(credit_context, record)
+        await self._send_inference_result_message(record, parsed_responses)
         if record.error is not None:
             credit_context.error = record.error
         return True
@@ -634,7 +641,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         session: UserSession,
         credit_context: CreditContext,
         record: RequestRecord,
-    ) -> None:
+    ) -> list[ParsedResponse]:
         """Capture replay state and metrics from one response-processing pass."""
         parsed_responses, assistant_turn = self._process_responses_for_record(
             record,
@@ -643,13 +650,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         if assistant_turn is not None:
             session.store_response(assistant_turn)
         self._populate_response_metrics(credit_context, record, parsed_responses)
+        return parsed_responses
 
     def _populate_response_metrics(
         self,
         credit_context: CreditContext,
         record: RequestRecord,
         parsed_responses: list[ParsedResponse] | None = None,
-    ) -> None:
+    ) -> list[ParsedResponse]:
         """Derive latency/OSL/ITL from ``record`` onto ``credit_context``.
 
         Shared by the normal session path and the payload-bytes fast path so
@@ -674,6 +682,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             parsed_responses,
             credit_context.output_sequence_length,
         )
+        return parsed_responses
 
     def _content_response_perf_ns_for_record(
         self,
@@ -966,7 +975,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         return conversation_response.conversation
 
-    async def _send_inference_result_message(self, record: RequestRecord) -> None:
+    async def _send_inference_result_message(
+        self,
+        record: RequestRecord,
+        parsed_responses: list[ParsedResponse] | None = None,
+    ) -> None:
         """Send RequestRecord to RecordProcessor for metric calculation.
 
         All records (success and error) flow through this method to ensure consistent
@@ -980,11 +993,32 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         Note: Uses execute_async() to avoid blocking on network I/O.
         """
         # All records will flow through here to be sent to the inference results push client.
-        self.task_stats.task_finished(record.valid)
+        responses_validated = record.valid
+        self.task_stats.task_finished(responses_validated)
+
+        raw_response_count = len(record.responses) if record.responses else 0
+        last_response_perf_ns = (
+            record.responses[-1].perf_ns
+            if responses_validated and record.responses
+            else None
+        )
+        parsed_response_payloads = None
+        if (
+            responses_validated
+            and parsed_responses is not None
+            and self.run.cfg.artifacts.export_level != ExportLevel.RAW
+        ):
+            parsed_response_payloads = encode_parsed_responses(parsed_responses)
+            if parsed_response_payloads is not None:
+                record.responses = None
 
         msg = InferenceResultsMessage(
             service_id=self.service_id,
             record=record,
+            parsed_responses=parsed_response_payloads,
+            last_response_perf_ns=last_response_perf_ns,
+            raw_response_count=raw_response_count,
+            responses_validated=parsed_response_payloads is not None,
         )
         self.execute_async(self.inference_results_push_client.push(msg))
 

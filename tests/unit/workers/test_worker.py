@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -9,6 +10,7 @@ from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
+    BaseResponseData,
     Conversation,
     ErrorDetails,
     ParsedResponse,
@@ -647,7 +649,100 @@ class TestPayloadBytesFastPath:
         assert handled is True
         assert sample_credit_context.error == error_record.error
         mock_worker._send_inference_result_message.assert_awaited_once_with(
-            error_record
+            error_record, []
         )
         sent_request_info = mock_worker.inference_client.send_request.call_args.args[0]
         assert sent_request_info.payload_bytes == b'{"p": 1}'
+
+
+@pytest.mark.asyncio
+class TestInferenceResultIPC:
+    @staticmethod
+    def _capture_push(mock_worker):
+        mock_worker.inference_results_push_client.push = Mock(return_value=Mock())
+        mock_worker.execute_async = Mock()
+        return mock_worker.inference_results_push_client.push
+
+    async def test_summary_export_sends_parsed_responses_without_raw(self, mock_worker):
+        push = self._capture_push(mock_worker)
+        record = RequestRecord(
+            model_name="test-model",
+            start_perf_ns=1,
+            end_perf_ns=3,
+            responses=[SSEMessage(perf_ns=2)],
+        )
+        parsed_responses = [ParsedResponse(perf_ns=2, data=TextResponseData("hello"))]
+
+        await mock_worker._send_inference_result_message(record, parsed_responses)
+
+        message = push.call_args.args[0]
+        assert record.responses is None
+        assert message.parsed_responses is not None
+        assert message.last_response_perf_ns == 2
+        assert message.raw_response_count == 1
+        assert message.responses_validated is True
+        assert "responses" not in message.model_dump(exclude_none=True)["record"]
+
+    async def test_raw_export_retains_raw_responses(self, mock_worker):
+        push = self._capture_push(mock_worker)
+        mock_worker.run.cfg.artifacts.raw = True
+        response = SSEMessage(perf_ns=2)
+        record = RequestRecord(
+            model_name="test-model",
+            start_perf_ns=1,
+            end_perf_ns=3,
+            responses=[response],
+        )
+
+        await mock_worker._send_inference_result_message(
+            record, [ParsedResponse(perf_ns=2, data=TextResponseData("hello"))]
+        )
+
+        message = push.call_args.args[0]
+        assert record.responses == [response]
+        assert message.parsed_responses is None
+        assert message.responses_validated is False
+
+    async def test_custom_response_data_retains_raw_responses(self, mock_worker):
+        @dataclass(slots=True)
+        class CustomResponseData(BaseResponseData):
+            value: str
+
+        push = self._capture_push(mock_worker)
+        response = SSEMessage(perf_ns=2)
+        record = RequestRecord(
+            model_name="test-model",
+            start_perf_ns=1,
+            end_perf_ns=3,
+            responses=[response],
+        )
+
+        await mock_worker._send_inference_result_message(
+            record,
+            [ParsedResponse(perf_ns=2, data=CustomResponseData(value="custom"))],
+        )
+
+        message = push.call_args.args[0]
+        assert record.responses == [response]
+        assert message.parsed_responses is None
+        assert message.responses_validated is False
+
+    async def test_invalid_response_timestamp_retains_raw_response(self, mock_worker):
+        push = self._capture_push(mock_worker)
+        response = SSEMessage(perf_ns=-1)
+        record = RequestRecord(
+            model_name="test-model",
+            start_perf_ns=1,
+            end_perf_ns=3,
+            responses=[response],
+        )
+
+        await mock_worker._send_inference_result_message(
+            record, [ParsedResponse(perf_ns=-1, data=TextResponseData("invalid"))]
+        )
+
+        message = push.call_args.args[0]
+        assert record.responses == [response]
+        assert message.parsed_responses is None
+        assert message.last_response_perf_ns is None
+        assert message.responses_validated is False

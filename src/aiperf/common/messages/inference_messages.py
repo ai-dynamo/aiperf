@@ -1,16 +1,133 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from pydantic import Field, SerializeAsAny, field_validator
+from pydantic import ConfigDict, Field, SerializeAsAny, TypeAdapter, field_validator
 
 from aiperf.common.enums import MessageType, MetricValueTypeT
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import ErrorDetails, RecordData, RequestRecord
+from aiperf.common.models import (
+    BaseResponseData,
+    EmbeddingResponseData,
+    ErrorDetails,
+    ImageResponseData,
+    ImageRetrievalResponseData,
+    ParsedResponse,
+    RAGSources,
+    RankingsResponseData,
+    ReasoningResponseData,
+    RecordData,
+    RequestRecord,
+    TextResponseData,
+    ToolCallResponseData,
+    VideoResponseData,
+)
 from aiperf.common.models.record_models import MetricRecordMetadata, MetricResult
 from aiperf.common.models.trace_models import BaseTraceData
 from aiperf.common.types import MessageTypeT, MetricTagT
+
+ParsedResponseDataType = Literal[
+    "base",
+    "embedding",
+    "image",
+    "image_retrieval",
+    "rankings",
+    "reasoning",
+    "text",
+    "tool_call",
+    "video",
+]
+_RESPONSE_DATA_TYPE_BY_CLASS: dict[type[BaseResponseData], ParsedResponseDataType] = {
+    BaseResponseData: "base",
+    EmbeddingResponseData: "embedding",
+    ImageResponseData: "image",
+    ImageRetrievalResponseData: "image_retrieval",
+    RankingsResponseData: "rankings",
+    ReasoningResponseData: "reasoning",
+    TextResponseData: "text",
+    ToolCallResponseData: "tool_call",
+    VideoResponseData: "video",
+}
+_RESPONSE_DATA_ADAPTER_BY_TYPE = {
+    data_type: TypeAdapter(data_class)
+    for data_class, data_type in _RESPONSE_DATA_TYPE_BY_CLASS.items()
+}
+
+
+@dataclass(slots=True)
+class ParsedResponsePayload:
+    """Compact built-in parsed response representation for internal IPC."""
+
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    perf_ns: int
+    """Performance timestamp of the parsed response in nanoseconds."""
+
+    data_type: ParsedResponseDataType | None = None
+    """Built-in response data discriminator, or None for usage-only responses."""
+
+    data: Any | None = None
+    """Built-in parsed response data."""
+
+    usage: dict[str, Any] | None = None
+    """Server-reported usage associated with this response."""
+
+    sources: RAGSources | None = None
+    """RAG sources associated with this response."""
+
+    metadata: dict[str, Any] = field(default_factory=dict)
+    """Additional response metadata."""
+
+    @classmethod
+    def from_parsed_response(
+        cls, response: ParsedResponse
+    ) -> ParsedResponsePayload | None:
+        """Encode a parsed response when its concrete data type is built in."""
+        data = response.data
+        data_type = None
+        if data is not None:
+            data_type = _RESPONSE_DATA_TYPE_BY_CLASS.get(type(data))
+            if data_type is None:
+                return None
+
+        return cls(
+            perf_ns=response.perf_ns,
+            data_type=data_type,
+            data=data,
+            usage=dict(response.usage) if response.usage is not None else None,
+            sources=response.sources,
+            metadata=response.metadata,
+        )
+
+    def to_parsed_response(self) -> ParsedResponse:
+        """Reconstruct the worker-produced parsed response."""
+        data = self.data
+        if self.data_type is not None and isinstance(data, dict):
+            data = _RESPONSE_DATA_ADAPTER_BY_TYPE[self.data_type].validate_python(data)
+        return ParsedResponse(
+            perf_ns=self.perf_ns,
+            data=data,
+            usage=self.usage,
+            sources=self.sources,
+            metadata=self.metadata,
+        )
+
+
+def encode_parsed_responses(
+    responses: list[ParsedResponse],
+) -> list[ParsedResponsePayload] | None:
+    """Encode built-in responses atomically, falling back on any custom type."""
+    payloads: list[ParsedResponsePayload] = []
+    for response in responses:
+        payload = ParsedResponsePayload.from_parsed_response(response)
+        if payload is None:
+            return None
+        payloads.append(payload)
+    return payloads
 
 
 class InferenceResultsMessage(BaseServiceMessage):
@@ -20,6 +137,24 @@ class InferenceResultsMessage(BaseServiceMessage):
 
     record: SerializeAsAny[RequestRecord] = Field(
         ..., description="The inference results record"
+    )
+    parsed_responses: list[ParsedResponsePayload] | None = Field(
+        default=None,
+        description="Worker-produced parsed responses for compact internal processing.",
+    )
+    last_response_perf_ns: int | None = Field(
+        default=None,
+        gt=0,
+        description="Performance timestamp of the final raw response.",
+    )
+    raw_response_count: int | None = Field(
+        default=None,
+        ge=0,
+        description="Number of raw responses received before optional compaction.",
+    )
+    responses_validated: bool = Field(
+        default=False,
+        description="Whether the worker validated the raw responses before compaction.",
     )
 
 

@@ -10,9 +10,12 @@ from aiperf.accuracy.models import AccuracyRecordsData
 from aiperf.common.enums import CreditPhase, ExportLevel
 from aiperf.common.messages import (
     BaseServiceErrorMessage,
+    InferenceResultsMessage,
     MetricRecordsData,
     RecordsMessage,
 )
+from aiperf.common.messages.inference_messages import encode_parsed_responses
+from aiperf.common.models import ParsedResponse, RequestRecord, TextResponseData
 from aiperf.common.utils import compute_time_ns
 from aiperf.records.record_processor_service import RecordProcessor
 from tests.unit.post_processors.conftest import create_metric_metadata
@@ -152,6 +155,32 @@ class TestRecordProcessorGenericShip:
         mock_self.records_push_client.push.assert_awaited_once()
         msg = mock_self.records_push_client.push.await_args.args[0]
         assert msg.records == [accuracy_record]
+
+    @pytest.mark.asyncio
+    async def test_compact_message_passes_worker_parsed_responses_to_parser(self):
+        mock_self = _make_processor_mock(producers=[])
+        parsed_responses = [ParsedResponse(perf_ns=2, data=TextResponseData("hello"))]
+        payloads = encode_parsed_responses(parsed_responses)
+        assert payloads is not None
+        message = InferenceResultsMessage(
+            service_id="w1",
+            record=RequestRecord(start_perf_ns=1, end_perf_ns=3),
+            parsed_responses=payloads,
+            last_response_perf_ns=2,
+            raw_response_count=3,
+            responses_validated=True,
+        )
+
+        await RecordProcessor._process_and_forward_record(
+            mock_self, message, message.record, message.last_response_perf_ns
+        )
+
+        mock_self.inference_result_parser.parse_request_record.assert_awaited_once_with(
+            message.record,
+            parsed_responses=parsed_responses,
+            raw_response_count=3,
+            responses_validated=True,
+        )
 
 
 class TestRecordProcessorCreateMetricRecordMetadata:

@@ -121,7 +121,12 @@ class InferenceResultParser(CommunicationMixin):
             return self.tokenizers[model]
 
     async def parse_request_record(
-        self, request_record: RequestRecord
+        self,
+        request_record: RequestRecord,
+        *,
+        parsed_responses: list[ParsedResponse] | None = None,
+        raw_response_count: int | None = None,
+        responses_validated: bool = False,
     ) -> ParsedResponseRecord:
         """Handle an inference results message.
 
@@ -144,7 +149,8 @@ class InferenceResultParser(CommunicationMixin):
         )
 
         # Make sure any invalid request records are converted to error records for combined processing.
-        request_record.create_error_from_invalid()
+        if not responses_validated:
+            request_record.create_error_from_invalid()
 
         # One payload decode + walk per record, shared by the ISL tokeniser and
         # the MediaCounts builder. Both valid and error records go through this.
@@ -181,9 +187,13 @@ class InferenceResultParser(CommunicationMixin):
 
         else:
             try:
-                raw_response_count = len(request_record.responses)
+                if raw_response_count is None:
+                    raw_response_count = len(request_record.responses)
                 record = await self.process_valid_record(
-                    request_record, inputs=inputs, media_counts=media_counts
+                    request_record,
+                    inputs=inputs,
+                    media_counts=media_counts,
+                    parsed_responses=parsed_responses,
                 )
 
                 # Check if the parsed record is actually valid (e.g., has content responses)
@@ -263,6 +273,7 @@ class InferenceResultParser(CommunicationMixin):
         *,
         inputs: ExtractedPayload | None = None,
         media_counts: MediaCounts | None = None,
+        parsed_responses: list[ParsedResponse] | None = None,
     ) -> ParsedResponseRecord:
         """Process a valid request record.
 
@@ -270,6 +281,8 @@ class InferenceResultParser(CommunicationMixin):
         ``parse_request_record`` (single payload decode shared with the token
         counter). When called directly (tests, other entry points) both default
         to ``None`` and the tokeniser falls back to a per-call decode.
+        ``parsed_responses`` bypasses endpoint extraction when the worker
+        supplied an internal IPC representation.
         """
         if request_record.model_name is None:
             self.warning(
@@ -283,7 +296,11 @@ class InferenceResultParser(CommunicationMixin):
                 media_counts=media_counts or MediaCounts(),
             )
 
-        resp = self.endpoint.extract_response_data(request_record)
+        resp = (
+            parsed_responses
+            if parsed_responses is not None
+            else self.endpoint.extract_response_data(request_record)
+        )
 
         # Free the raw responses list after extraction.
         # Skip when RAW export needs the original responses for serialization.

@@ -208,6 +208,38 @@ class TestInvalidRecords:
 
 
 @pytest.mark.asyncio
+async def test_parse_request_record_uses_worker_parsed_responses(
+    server_token_parser, request_record
+):
+    parsed_responses = [
+        make_parsed_response(
+            text="worker parsed",
+            perf_ns=1_000,
+            prompt_tokens=32,
+            completion_tokens=4,
+        )
+    ]
+    request_record.start_perf_ns = 1
+    request_record.end_perf_ns = 2_000
+    request_record.responses = None
+    server_token_parser.endpoint.extract_response_data = MagicMock(
+        side_effect=AssertionError("response must not be parsed again")
+    )
+
+    result = await server_token_parser.parse_request_record(
+        request_record,
+        parsed_responses=parsed_responses,
+        raw_response_count=2,
+        responses_validated=True,
+    )
+
+    assert result.responses == parsed_responses
+    assert result.token_counts.input == 32
+    assert result.token_counts.output == 4
+    server_token_parser.endpoint.extract_response_data.assert_not_called()
+
+
+@pytest.mark.asyncio
 class TestAsyncTokenizerEncode:
     """Tests for async _compute_token_count using asyncio.to_thread."""
 
