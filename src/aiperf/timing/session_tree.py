@@ -239,8 +239,12 @@ class SessionTreeRegistry:
             # the session slot until phase teardown. A completion with no pending
             # buffer is a genuine late event (tree already released / untracked).
             pending = self._pending_descendants.get(root_corr, 0)
-            if pending > 0:
+            if pending > 1:
                 self._pending_descendants[root_corr] = pending - 1
+            elif pending == 1:
+                # Last buffered descendant done before the tree opened: drop the
+                # entry so it can't linger for a tree that never acquires a slot.
+                del self._pending_descendants[root_corr]
             else:
                 self._late_events += 1
             return False
