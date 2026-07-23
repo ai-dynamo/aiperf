@@ -52,22 +52,22 @@ def build_artifacts(cli: CLIConfig) -> dict[str, Any]:
         {
             "artifact_directory": "dir",
             "export_http_trace": "trace",
+            "export_outputs_json": "export_outputs_json",
             "show_trace_timing": "show_trace_timing",
         },
     )
     cli_set = cli.model_fields_set
     if "slice_duration" in cli_set and cli.slice_duration is not None:
         artifacts["slice_duration"] = cli.slice_duration
-    # Only JSONL is wired up for per-record export today (no records-CSV
-    # exporter exists). RECORDS/RAW enable it; SUMMARY disables it.
-    if cli.export_level in (ExportLevel.RECORDS, ExportLevel.RAW):
-        artifacts["records"] = [ExportFormat.JSONL]
-    elif "export_level" in cli_set and cli.export_level == ExportLevel.SUMMARY:
-        artifacts["records"] = False
-    # Only emit raw when the user explicitly set the level OR the level is
-    # actually RAW (the CLIConfig default is RECORDS, so an unset field
-    # shouldn't noise up the artifacts dict with raw=False).
-    if "export_level" in cli_set or cli.export_level == ExportLevel.RAW:
+    # Only emit records/raw when the user explicitly set --export-level.
+    # The CLIConfig default is RECORDS, but we must not override a YAML
+    # config that set `artifacts.records: false` just because the default
+    # value happens to be RECORDS.
+    if "export_level" in cli_set:
+        if cli.export_level in (ExportLevel.RECORDS, ExportLevel.RAW):
+            artifacts["records"] = [ExportFormat.JSONL]
+        elif cli.export_level == ExportLevel.SUMMARY:
+            artifacts["records"] = False
         artifacts["raw"] = cli.export_level == ExportLevel.RAW
     if "profile_export_prefix" in cli_set and cli.profile_export_prefix:
         # If the user passes an absolute path, drop the directory portion so

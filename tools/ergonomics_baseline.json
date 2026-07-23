@@ -28,6 +28,16 @@
     ],
     [
       "keyword-only-args",
+      "src/aiperf/analysis/turn_messages.py",
+      "build_payload"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/cli_commands/turn_messages.py",
+      "turn_messages"
+    ],
+    [
+      "keyword-only-args",
       "src/aiperf/common/mixins/task_manager_mixin.py",
       "TaskManagerMixin._background_task_loop"
     ],

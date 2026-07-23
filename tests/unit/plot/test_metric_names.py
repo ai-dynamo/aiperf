@@ -260,7 +260,7 @@ class TestGetMetricDisplayNameWithUnit:
 
     def test_handles_gpu_utilization_metric(self):
         """Test that GPU utilization metrics get percentage unit."""
-        result = get_metric_display_name_with_unit("gpu_utilization")
+        result = get_metric_display_name_with_unit("nvidia_gpu_utilization")
         assert "(%)" in result or result.endswith("%)")
 
     def test_unit_in_parentheses_format(self):

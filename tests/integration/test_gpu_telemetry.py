@@ -29,7 +29,7 @@ class TestGpuTelemetry:
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --gpu-telemetry {" ".join(aiperf_mock_server.dcgm_urls)} \
                 --streaming \
@@ -56,9 +56,9 @@ class TestGpuTelemetry:
 
                 # Counter metrics only have avg (delta), not min/max
                 counter_metrics = {
-                    "energy_consumption",
-                    "xid_errors",
-                    "power_violation",
+                    "nvidia_energy_consumption",
+                    "nvidia_xid_errors",
+                    "nvidia_power_violation",
                 }
                 for metric_name, metric_value in gpu_data.metrics.items():
                     assert metric_value is not None
@@ -78,7 +78,7 @@ class TestGpuTelemetry:
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --gpu-telemetry {" ".join(aiperf_mock_server.dcgm_urls)} \
                 --streaming \
@@ -135,7 +135,7 @@ class TestGpuTelemetry:
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --gpu-telemetry {" ".join(aiperf_mock_server.dcgm_urls)} \
                 --streaming \
@@ -173,7 +173,7 @@ class TestGpuTelemetry:
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --streaming \
                 --request-count 25 \

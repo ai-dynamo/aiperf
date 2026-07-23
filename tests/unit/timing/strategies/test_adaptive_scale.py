@@ -7,7 +7,7 @@ import asyncio
 import re
 import time
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import orjson
 import pytest
@@ -37,6 +37,10 @@ def _strategy(
 ) -> AdaptiveScaleStrategy:
     config_kwargs = {
         "phase": CreditPhase.PROFILING,
+        "phase_index": 0,
+        "profiling_index": 0,
+        "phase_name": "profiling",
+        "phase_kind": "profiling",
         "timing_mode": TimingMode.ADAPTIVE_SCALE,
         "expected_duration_sec": 60.0,
         "concurrency": 10,
@@ -75,6 +79,18 @@ def _strategy(
     return strategy
 
 
+def _event_path(tmp_path: Path, phase_name: str = "profiling") -> Path:
+    return tmp_path / "phases" / phase_name / "adaptive_scale_events.jsonl"
+
+
+def _summary_path(tmp_path: Path, phase_name: str = "profiling") -> Path:
+    return tmp_path / "phases" / phase_name / "adaptive_scale_summary.json"
+
+
+def _manifest_path(tmp_path: Path) -> Path:
+    return tmp_path / "adaptive_scale_manifest.json"
+
+
 def _assert_event_clock_fields(event: dict) -> None:
     assert event["schema_version"] == 2
     assert isinstance(event["timestamp"], int)
@@ -87,6 +103,109 @@ def _assert_event_clock_fields(event: dict) -> None:
 
 def test_percentile_interpolates_p95() -> None:
     assert _percentile([10, 20, 30, 40, 50], 95) == pytest.approx(48.0)
+
+
+@pytest.mark.asyncio
+async def test_setup_phase_writes_phase_scoped_manifest(tmp_path: Path) -> None:
+    strategy = _strategy(tmp_path)
+
+    await strategy.setup_phase()
+    await strategy._artifacts.flush()
+    await strategy._artifacts.close()
+
+    manifest = orjson.loads(_manifest_path(tmp_path).read_bytes())
+    assert manifest["adaptive_phases"] == [
+        {
+            "events_path": "phases/profiling/adaptive_scale_events.jsonl",
+            "phase_index": 0,
+            "phase_kind": "profiling",
+            "phase_name": "profiling",
+            "profiling_index": 0,
+            "summary_path": "phases/profiling/adaptive_scale_summary.json",
+        }
+    ]
+    assert _event_path(tmp_path).exists()
+    assert not (tmp_path / "adaptive_scale_events.jsonl").exists()
+    assert not (tmp_path / "adaptive_scale_summary.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_setup_phase_failure_does_not_write_manifest(tmp_path: Path) -> None:
+    strategy = _strategy(tmp_path)
+    strategy._user_strategy = MagicMock()
+    strategy._user_strategy.setup_phase = AsyncMock(
+        side_effect=RuntimeError("setup failed")
+    )
+
+    with pytest.raises(RuntimeError, match="setup failed"):
+        await strategy.setup_phase()
+
+    assert not _manifest_path(tmp_path).exists()
+    assert not _event_path(tmp_path).exists()
+    assert not _summary_path(tmp_path).exists()
+
+
+def test_manifest_entries_are_sorted_and_replaced_by_phase_identity(
+    tmp_path: Path,
+) -> None:
+    writer = AdaptiveScaleArtifactWriter()
+    writer._schedule_write = lambda write: write()
+
+    writer.write_manifest_entry(
+        tmp_path,
+        {
+            "events_path": "phases/storm_1/adaptive_scale_events.jsonl",
+            "phase_index": 2,
+            "phase_kind": "profiling",
+            "phase_name": "storm_1",
+            "profiling_index": 1,
+            "summary_path": "phases/storm_1/adaptive_scale_summary.json",
+        },
+    )
+    writer.write_manifest_entry(
+        tmp_path,
+        {
+            "events_path": "phases/low/adaptive_scale_events.jsonl",
+            "phase_index": 1,
+            "phase_kind": "profiling",
+            "phase_name": "low",
+            "profiling_index": 0,
+            "summary_path": "phases/low/adaptive_scale_summary.json",
+        },
+    )
+    writer.write_manifest_entry(
+        tmp_path,
+        {
+            "events_path": "phases/storm_1/adaptive_scale_events.v2.jsonl",
+            "phase_index": 2,
+            "phase_kind": "profiling",
+            "phase_name": "storm_1",
+            "profiling_index": 1,
+            "summary_path": "phases/storm_1/adaptive_scale_summary.v2.json",
+        },
+    )
+
+    manifest = orjson.loads(_manifest_path(tmp_path).read_bytes())
+
+    assert manifest["schema_version"] == 2
+    assert manifest["adaptive_phases"] == [
+        {
+            "events_path": "phases/low/adaptive_scale_events.jsonl",
+            "phase_index": 1,
+            "phase_kind": "profiling",
+            "phase_name": "low",
+            "profiling_index": 0,
+            "summary_path": "phases/low/adaptive_scale_summary.json",
+        },
+        {
+            "events_path": "phases/storm_1/adaptive_scale_events.v2.jsonl",
+            "phase_index": 2,
+            "phase_kind": "profiling",
+            "phase_name": "storm_1",
+            "profiling_index": 1,
+            "summary_path": "phases/storm_1/adaptive_scale_summary.v2.json",
+        },
+    ]
 
 
 @pytest.mark.asyncio
@@ -216,12 +335,9 @@ def test_discover_scales_up_and_writes_event(tmp_path) -> None:
 
     strategy._assess_discover(10.0, True, stats)
 
-    strategy._concurrency_manager.set_session_limit.assert_called_with(
-        CreditPhase.PROFILING, 10
-    )
+    strategy._concurrency_manager.set_session_limit.assert_called_with(0, 10)
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     assert events[-1]["event"] == "adaptive_decision"
     assert events[-1]["control_value_before"] == 2
@@ -245,9 +361,7 @@ def test_percent_step_policy_uses_current_concurrency_percent(tmp_path) -> None:
 
     strategy._assess_discover(10.0, True, stats)
 
-    strategy._concurrency_manager.set_session_limit.assert_called_with(
-        CreditPhase.PROFILING, 3
-    )
+    strategy._concurrency_manager.set_session_limit.assert_called_with(0, 3)
 
 
 def test_margin_step_is_capped_by_max_multiplier(tmp_path) -> None:
@@ -622,8 +736,7 @@ async def test_adaptive_window_reports_itl_and_goodput_sla_values(tmp_path) -> N
     await strategy._assess_window()
 
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     window = next(event for event in events if event["event"] == "adaptive_window")
     assert window["sla_values"][strategy._sla_key(itl_sla)] == pytest.approx(10.0)
@@ -640,12 +753,9 @@ def test_breach_enters_sustain_at_last_good_boundary(tmp_path) -> None:
 
     assert strategy._controller_phase == "sustain"
     assert strategy._boundary_concurrency == 4
-    strategy._concurrency_manager.set_session_limit.assert_called_with(
-        CreditPhase.PROFILING, 4
-    )
+    strategy._concurrency_manager.set_session_limit.assert_called_with(0, 4)
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     assert [event["event"] for event in events] == [
         "sustain_started",
@@ -668,11 +778,10 @@ def test_sustain_completion_writes_complete_event_and_summary(tmp_path) -> None:
     strategy._assess_sustain(50.0, True, stats)
 
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     assert events[-1]["event"] == "adaptive_complete"
-    summary = orjson.loads((tmp_path / "adaptive_scale_summary.json").read_bytes())
+    summary = orjson.loads(_summary_path(tmp_path).read_bytes())
     assert summary["schema_version"] == 2
     assert summary["status"] == "completed"
     assert summary["boundary_value"] == 4
@@ -714,12 +823,11 @@ def test_execute_finalizer_writes_summary_when_phase_stops_before_boundary(
     strategy._complete_controller(reason="phase_stopped")
 
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     assert events[-1]["event"] == "adaptive_complete"
     assert events[-1]["reason"] == "phase_stopped"
-    summary = orjson.loads((tmp_path / "adaptive_scale_summary.json").read_bytes())
+    summary = orjson.loads(_summary_path(tmp_path).read_bytes())
     assert summary["status"] == "completed"
     assert summary["boundary_value"] is None
     assert summary["result"]["boundary_value"] is None
@@ -736,12 +844,9 @@ def test_all_failed_discover_window_enters_sustain(tmp_path) -> None:
 
     assert strategy._controller_phase == "sustain"
     assert strategy._boundary_concurrency == 4
-    strategy._concurrency_manager.set_session_limit.assert_called_with(
-        CreditPhase.PROFILING, 4
-    )
+    strategy._concurrency_manager.set_session_limit.assert_called_with(0, 4)
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     assert [event["event"] for event in events] == [
         "sustain_started",
@@ -758,13 +863,12 @@ def test_minimum_breach_fails_without_sustainable_concurrency(tmp_path) -> None:
     strategy._assess_discover(150.0, False, stats)
 
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     assert events[-1]["event"] == "adaptive_failed"
     assert events[-1]["reason"] == "no_sustainable_concurrency_found"
     assert events[-1]["first_failing_value"] == 2
-    summary = orjson.loads((tmp_path / "adaptive_scale_summary.json").read_bytes())
+    summary = orjson.loads(_summary_path(tmp_path).read_bytes())
     assert summary["status"] == "failed"
     assert summary["completed_reason"] == "no_sustainable_concurrency_found"
     assert summary["result"] == {
@@ -782,8 +886,7 @@ def test_max_concurrency_passing_is_incomplete_not_boundary(tmp_path) -> None:
     strategy._assess_discover(50.0, True, stats)
 
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     assert events[-1]["event"] == "adaptive_incomplete"
     assert events[-1]["reason"] == "max_control_value_reached_without_saturation"
@@ -799,8 +902,7 @@ async def test_sparse_window_is_inconclusive(tmp_path) -> None:
     await strategy._assess_window()
 
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     assert events[-1]["event"] == "adaptive_window"
     assert events[-1]["adaptive_iteration"] == 0
@@ -916,15 +1018,56 @@ async def test_setup_phase_sets_initial_concurrency_and_event(tmp_path) -> None:
 
     await strategy.setup_phase()
 
-    strategy._concurrency_manager.set_session_limit.assert_called_with(
-        CreditPhase.PROFILING, 2
-    )
+    strategy._concurrency_manager.set_session_limit.assert_called_with(0, 2)
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     assert events[-1]["event"] == "adaptive_phase_started"
     assert events[-1]["control_value"] == 2
+
+
+@pytest.mark.asyncio
+async def test_execute_phase_failure_writes_failed_terminal_artifacts(tmp_path) -> None:
+    strategy = _strategy(tmp_path)
+    strategy._user_strategy = MagicMock()
+    strategy._user_strategy.execute_phase = AsyncMock(
+        side_effect=RuntimeError("execute failed")
+    )
+
+    with pytest.raises(RuntimeError, match="execute failed"):
+        await strategy.execute_phase()
+
+    events = [
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
+    ]
+    assert events[-1]["event"] == "adaptive_failed"
+    assert events[-1]["reason"] == "phase_failed: execute failed"
+    summary = orjson.loads(_summary_path(tmp_path).read_bytes())
+    assert summary["status"] == "failed"
+    assert summary["completed_reason"] == "phase_failed: execute failed"
+
+
+@pytest.mark.asyncio
+async def test_execute_phase_cancellation_writes_failed_terminal_artifacts(
+    tmp_path,
+) -> None:
+    strategy = _strategy(tmp_path)
+    strategy._user_strategy = MagicMock()
+    strategy._user_strategy.execute_phase = AsyncMock(
+        side_effect=asyncio.CancelledError()
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await strategy.execute_phase()
+
+    events = [
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
+    ]
+    assert events[-1]["event"] == "adaptive_failed"
+    assert events[-1]["reason"] == "phase_cancelled"
+    summary = orjson.loads(_summary_path(tmp_path).read_bytes())
+    assert summary["status"] == "failed"
+    assert summary["completed_reason"] == "phase_cancelled"
 
 
 @pytest.mark.asyncio
@@ -944,11 +1087,10 @@ async def test_assessment_loop_failure_completes_and_cancels(
     assert strategy._completed_reason == "assessment_failed: bad window"
     strategy._lifecycle.cancel.assert_called_once()
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     assert events[-1]["event"] == "adaptive_failed"
-    summary = orjson.loads((tmp_path / "adaptive_scale_summary.json").read_bytes())
+    summary = orjson.loads(_summary_path(tmp_path).read_bytes())
     assert summary["status"] == "failed"
     assert summary["completed_reason"] == "assessment_failed: bad window"
 
@@ -964,8 +1106,7 @@ async def test_assess_window_evaluates_sustain_phase(tmp_path) -> None:
     await strategy._assess_window()
 
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     assert {event["adaptive_iteration"] for event in events} == {0}
     assert strategy._adaptive_iteration == 1
@@ -987,8 +1128,7 @@ async def test_assess_window_all_failed_without_boundary_fails(tmp_path) -> None
     )
     assert strategy._progress.all_credits_sent_event.is_set()
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     assert events[-2]["reason"] == "no successful requests in assessment window"
     assert events[-1]["event"] == "adaptive_failed"
@@ -1002,8 +1142,7 @@ async def test_cancellation_only_window_fails_and_reports_cancelled(tmp_path) ->
     await strategy._assess_window()
 
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     assert events[-2]["event"] == "adaptive_window"
     assert events[-2]["reason"] == "no successful requests in assessment window"
@@ -1011,7 +1150,7 @@ async def test_cancellation_only_window_fails_and_reports_cancelled(tmp_path) ->
     assert events[-2]["cancelled"] == 2
     assert events[-1]["event"] == "adaptive_failed"
     assert events[-1]["cancelled"] == 2
-    summary = orjson.loads((tmp_path / "adaptive_scale_summary.json").read_bytes())
+    summary = orjson.loads(_summary_path(tmp_path).read_bytes())
     assert summary["status"] == "failed"
     assert summary["totals"] == {
         "sent": 2,
@@ -1019,6 +1158,209 @@ async def test_cancellation_only_window_fails_and_reports_cancelled(tmp_path) ->
         "errored": 0,
         "cancelled": 2,
     }
+
+
+@pytest.mark.asyncio
+async def test_all_error_rate_sla_window_evaluates_without_successes(tmp_path) -> None:
+    error_sla = SLAFilter(
+        metric_tag="error_rate",
+        stat="avg",
+        op="le",
+        threshold=1.0,
+    )
+    strategy = _strategy(tmp_path, adaptive_sla_filters=[error_sla])
+    strategy._window_errors = 2
+    strategy._window_started_at = time.perf_counter() - 1.0
+
+    await strategy._assess_window()
+
+    assert strategy._completed_reason is None
+    strategy._concurrency_manager.set_session_limit.assert_called_with(0, 10)
+    events = [
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
+    ]
+    window = next(event for event in events if event["event"] == "adaptive_window")
+    assert window["reason"] == "SLA window evaluated"
+    assert window["sla_passed"] is True
+    assert window["sla_values"] == {"error_rate:avg:le:1": 1.0}
+    assert events[-1]["event"] == "adaptive_decision"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_window_does_not_pass_error_rate_only_sla(tmp_path) -> None:
+    error_sla = SLAFilter(
+        metric_tag="error_rate",
+        stat="avg",
+        op="le",
+        threshold=0.0,
+    )
+    strategy = _strategy(tmp_path, adaptive_sla_filters=[error_sla])
+    strategy._window_cancelled = 2
+    strategy._window_started_at = time.perf_counter() - 1.0
+
+    await strategy._assess_window()
+
+    events = [
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
+    ]
+    window = next(event for event in events if event["event"] == "adaptive_window")
+    assert window["reason"] == "no successful requests in assessment window"
+    assert window["sla_passed"] is False
+    assert window["sla_values"] == {}
+    assert not any(event["event"] == "adaptive_decision" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_mixed_error_cancel_window_does_not_pass_terminal_rate_slas(
+    tmp_path,
+) -> None:
+    error_sla = SLAFilter(
+        metric_tag="error_rate",
+        stat="avg",
+        op="le",
+        threshold=0.5,
+    )
+    cancellation_sla = SLAFilter(
+        metric_tag="cancellation_rate",
+        stat="avg",
+        op="le",
+        threshold=0.5,
+    )
+    strategy = _strategy(
+        tmp_path,
+        adaptive_sla_filters=[error_sla, cancellation_sla],
+        adaptive_min_completed_requests=5,
+    )
+    strategy._window_errors = 1
+    strategy._window_cancelled = 1
+    strategy._window_started_at = time.perf_counter() - 1.0
+
+    await strategy._assess_window()
+
+    events = [
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
+    ]
+    window = next(event for event in events if event["event"] == "adaptive_window")
+    assert window["reason"] == "no successful requests in assessment window"
+    assert window["sla_passed"] is False
+    assert window["sla_values"] == {}
+    assert not any(event["event"] == "adaptive_decision" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_error_window_does_not_pass_cancellation_rate_only_sla(tmp_path) -> None:
+    cancellation_sla = SLAFilter(
+        metric_tag="cancellation_rate",
+        stat="avg",
+        op="le",
+        threshold=0.0,
+    )
+    strategy = _strategy(tmp_path, adaptive_sla_filters=[cancellation_sla])
+    strategy._window_errors = 2
+    strategy._window_started_at = time.perf_counter() - 1.0
+
+    await strategy._assess_window()
+
+    events = [
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
+    ]
+    window = next(event for event in events if event["event"] == "adaptive_window")
+    assert window["reason"] == "no successful requests in assessment window"
+    assert window["sla_passed"] is False
+    assert window["sla_values"] == {}
+    assert not any(event["event"] == "adaptive_decision" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_error_window_does_not_pass_error_rate_plus_throughput_cap(
+    tmp_path,
+) -> None:
+    error_sla = SLAFilter(
+        metric_tag="error_rate",
+        stat="avg",
+        op="le",
+        threshold=1.0,
+    )
+    throughput_sla = SLAFilter(
+        metric_tag="throughput",
+        stat="avg",
+        op="le",
+        threshold=100.0,
+    )
+    strategy = _strategy(tmp_path, adaptive_sla_filters=[error_sla, throughput_sla])
+    strategy._window_errors = 3
+    strategy._window_started_at = time.perf_counter() - 1.0
+
+    await strategy._assess_window()
+
+    events = [
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
+    ]
+    window = next(event for event in events if event["event"] == "adaptive_window")
+    assert window["reason"] == "no successful requests in assessment window"
+    assert window["sla_passed"] is False
+    assert window["sla_values"] == {}
+    assert not any(event["event"] == "adaptive_decision" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_error_window_does_not_pass_output_token_throughput_cap(tmp_path) -> None:
+    throughput_sla = SLAFilter(
+        metric_tag="output_token_throughput",
+        stat="avg",
+        op="le",
+        threshold=1.0,
+    )
+    strategy = _strategy(tmp_path, adaptive_sla_filters=[throughput_sla])
+    strategy._window_errors = 2
+    strategy._window_started_at = time.perf_counter() - 1.0
+
+    await strategy._assess_window()
+
+    events = [
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
+    ]
+    window = next(event for event in events if event["event"] == "adaptive_window")
+    assert window["reason"] == "no successful requests in assessment window"
+    assert window["sla_passed"] is False
+    assert window["sla_values"] == {}
+    assert not any(event["event"] == "adaptive_decision" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_error_window_success_rate_does_not_cover_cancellation_sla(
+    tmp_path,
+) -> None:
+    success_sla = SLAFilter(
+        metric_tag="success_rate",
+        stat="avg",
+        op="ge",
+        threshold=0.0,
+    )
+    cancellation_sla = SLAFilter(
+        metric_tag="cancellation_rate",
+        stat="avg",
+        op="le",
+        threshold=0.0,
+    )
+    strategy = _strategy(
+        tmp_path,
+        adaptive_sla_filters=[success_sla, cancellation_sla],
+        adaptive_min_completed_requests=5,
+    )
+    strategy._window_errors = 3
+    strategy._window_started_at = time.perf_counter() - 1.0
+
+    await strategy._assess_window()
+
+    events = [
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
+    ]
+    window = next(event for event in events if event["event"] == "adaptive_window")
+    assert window["reason"] == "no successful requests in assessment window"
+    assert window["sla_passed"] is False
+    assert window["sla_values"] == {}
+    assert not any(event["event"] == "adaptive_decision" for event in events)
 
 
 def test_all_failed_sustain_window_downshifts_with_reason(tmp_path) -> None:
@@ -1030,12 +1372,9 @@ def test_all_failed_sustain_window_downshifts_with_reason(tmp_path) -> None:
 
     strategy._assess_failed_window(stats)
 
-    strategy._concurrency_manager.set_session_limit.assert_called_with(
-        CreditPhase.PROFILING, 4
-    )
+    strategy._concurrency_manager.set_session_limit.assert_called_with(0, 4)
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     assert events[-1]["reason"] == "all requests failed in assessment window"
     assert events[-1]["step_size"] == 2
@@ -1055,11 +1394,10 @@ def test_second_sustain_breach_after_recovery_fails(tmp_path) -> None:
 
     assert strategy._completed_reason == "sustain_failed_after_recovery"
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     assert events[-1]["event"] == "adaptive_failed"
-    summary = orjson.loads((tmp_path / "adaptive_scale_summary.json").read_bytes())
+    summary = orjson.loads(_summary_path(tmp_path).read_bytes())
     assert summary["status"] == "failed"
     assert summary["completed_reason"] == "sustain_failed_after_recovery"
 
@@ -1094,6 +1432,46 @@ def test_sustain_breach_downshift_does_not_promote_unconfirmed_target(
 
     assert strategy._control.current < 6
     assert strategy._last_good_concurrency == 8
+
+
+@pytest.mark.asyncio
+async def test_pre_sustain_credit_results_do_not_poison_sustain_window(
+    tmp_path,
+) -> None:
+    strategy = _strategy(tmp_path, threshold=100.0)
+    strategy._controller_phase = "sustain"
+    strategy._last_good_concurrency = strategy._control.minimum
+    strategy._set_control(strategy._control.minimum)
+    strategy._sustain_started_at_ns = time.time_ns()
+    old_credit = Credit(
+        id=1,
+        phase=CreditPhase.PROFILING,
+        conversation_id="old",
+        x_correlation_id="old",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=strategy._sustain_started_at_ns - 1,
+    )
+    new_credit = Credit(
+        id=2,
+        phase=CreditPhase.PROFILING,
+        conversation_id="new",
+        x_correlation_id="new",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=strategy._sustain_started_at_ns + 1,
+    )
+
+    await strategy.handle_credit_result(
+        CreditReturn(credit=old_credit, request_latency_ns=150_000_000)
+    )
+    await strategy.handle_credit_result(
+        CreditReturn(credit=new_credit, request_latency_ns=10_000_000)
+    )
+
+    stats = await strategy._take_window()
+
+    assert stats.samples == [10_000_000]
 
 
 def test_enter_sustain_requires_last_good_boundary(tmp_path) -> None:
@@ -1156,8 +1534,7 @@ def test_emit_event_preserves_zero_candidate_value(tmp_path) -> None:
     )
 
     events = [
-        orjson.loads(line)
-        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
     ]
     assert events[-1]["candidate_value"] == 0
     assert events[-1]["accepted_value"] == 5
@@ -1181,8 +1558,8 @@ def test_artifact_disabled_paths_do_not_write(tmp_path) -> None:
     strategy._complete_controller(reason="ignored")
 
     assert strategy._completed_reason == "done"
-    assert not (tmp_path / "adaptive_scale_events.jsonl").exists()
-    assert not (tmp_path / "adaptive_scale_summary.json").exists()
+    assert not _event_path(tmp_path).exists()
+    assert not _summary_path(tmp_path).exists()
 
 
 def test_percentile_empty_single_and_exact_rank() -> None:
@@ -1331,9 +1708,7 @@ def test_control_backend_clamps_and_snapshots(tmp_path) -> None:
     strategy._set_control(99)
 
     assert strategy._control.current == 10
-    strategy._concurrency_manager.set_session_limit.assert_called_with(
-        CreditPhase.PROFILING, 10
-    )
+    strategy._concurrency_manager.set_session_limit.assert_called_with(0, 10)
     assert strategy._control.snapshot() == {"target_value": 10, "actual_value": 10}
 
 

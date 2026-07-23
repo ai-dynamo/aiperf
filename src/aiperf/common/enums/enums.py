@@ -334,6 +334,16 @@ class MediaType(CaseInsensitiveStrEnum):
     VIDEO = "video"
 
 
+class MemoryMapFormat(CaseInsensitiveStrEnum):
+    """Storage format for memory-mapped dataset files."""
+
+    CONVERSATION = "conversation"
+    """Each entry is a JSON-serialized Conversation object."""
+
+    PAYLOAD_BYTES = "payload_bytes"
+    """Each entry is pre-encoded payload bytes for verbatim API replay."""
+
+
 class MessageType(CaseInsensitiveStrEnum):
     """The various types of messages that can be sent between services.
 
@@ -343,7 +353,6 @@ class MessageType(CaseInsensitiveStrEnum):
     """
 
     ALL_RECORDS_RECEIVED = "all_records_received"
-    CANCEL_CREDITS = "cancel_credits"
     COMMAND = "command"
     COMMAND_RESPONSE = "command_response"
     CONNECTION_PROBE = "connection_probe"
@@ -363,14 +372,13 @@ class MessageType(CaseInsensitiveStrEnum):
     HEARTBEAT = "heartbeat"
     INFERENCE_RESULTS = "inference_results"
     RECORDS = "records"
-    PARSED_INFERENCE_RESULTS = "parsed_inference_results"
+    PHASE_BASELINE_REQUEST = "phase_baseline_request"
     PROCESSING_STATS = "processing_stats"
     PROCESS_RECORDS_RESULT = "process_records_result"
     PROCESS_TELEMETRY_RESULT = "process_telemetry_result"
     PROCESS_SERVER_METRICS_RESULT = "process_server_metrics_result"
     PROCESS_ACCURACY_RESULT = "process_accuracy_result"
     PROCESS_ALL_RESULTS = "process_all_results"
-    PROFILE_PROGRESS = "profile_progress"
     PROFILE_RESULTS = "profile_results"
     REALTIME_METRICS = "realtime_metrics"
     REALTIME_TELEMETRY_METRICS = "realtime_telemetry_metrics"
