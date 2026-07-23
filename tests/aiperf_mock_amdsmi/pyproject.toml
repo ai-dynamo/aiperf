@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Build
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aiperf-mock-amdsmi"
+version = "0.1.0"
+description = "Fake amdsmi bindings that let AIPerf's AMD ROCm telemetry path run on non-AMD hardware"
+authors = []
+dependencies = []
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+
+# Exposes the top-level import name `amdsmi`, shadowing the real ROCm bindings
+# in any venv where this package is installed. AIPERF_MOCK_AMDSMI controls
+# whether the fake is dormant (raises OSError) or active — not whether shadowing
+# occurs. Do not install on real AMD hardware.
+[tool.setuptools]
+packages = ["amdsmi"]
+
+[tool.setuptools.package-dir]
+"amdsmi" = "amdsmi"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.3",
+    "pytest-asyncio>=0.21.1",
+    "ruff>=0.0.0",
+]
+
+[tool.ruff]
+line-length = 88
+indent-width = 4
+exclude = ["__pycache__", "build", "dist", ".venv", "venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "UP", "B", "SIM", "I"]
+ignore = ["E501"]
