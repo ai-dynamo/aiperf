@@ -19,6 +19,7 @@ from unittest.mock import patch
 import orjson
 import pytest
 
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset import mmap_cache
 from tests.unit.conftest import make_run_from_cli
@@ -1150,17 +1151,20 @@ class TestAcquireCacheLockBypassAndFallback:
         monkeypatch.setattr(mmap_cache_lock, "_blocking_acquire", flock_then_soft)
 
         # SoftFileLock's mode= is umask-masked; the post-acquire chmod must still
-        # yield 0o664 under a restrictive cluster umask.
+        # yield 0o664 under a restrictive cluster umask. POSIX permission bits
+        # and umask are Unix semantics: Windows os.chmod only toggles the
+        # read-only bit, so the mode assertion is guarded to non-Windows.
         old_umask = os.umask(0o077)
         try:
             async with mmap_cache.acquire_cache_lock("softlock", timeout=5.0):
                 assert attempted == [FileLock, SoftFileLock]
                 assert lock_path_holder, "SoftFileLock acquire path was not exercised"
-                on_disk = stat.S_IMODE(lock_path_holder[0].stat().st_mode)
-                assert on_disk == mmap_cache_lock._LOCK_FILE_MODE, (
-                    f"SoftFileLock lock file mode {oct(on_disk)} != "
-                    f"{oct(mmap_cache_lock._LOCK_FILE_MODE)} under umask 077"
-                )
+                if not IS_WINDOWS:
+                    on_disk = stat.S_IMODE(lock_path_holder[0].stat().st_mode)
+                    assert on_disk == mmap_cache_lock._LOCK_FILE_MODE, (
+                        f"SoftFileLock lock file mode {oct(on_disk)} != "
+                        f"{oct(mmap_cache_lock._LOCK_FILE_MODE)} under umask 077"
+                    )
         finally:
             os.umask(old_umask)
 
