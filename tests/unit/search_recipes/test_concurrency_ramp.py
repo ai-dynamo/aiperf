@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for the ConcurrencyRamp grid recipe."""
+"""Unit tests for the ConcurrencyRamp grid recipe.
+
+Pins the recipe's default-grid endpoints, post-process spec, and override
+behavior so the user-facing contract (default ramp 1->1000, 20% threshold,
+post-process emits ``degradation_knee.json``) cannot drift silently.
+
+Ported from ``ajc/k8s`` to the BenchmarkConfig-based ``SearchRecipeContext``.
+Recipe sweep keys are envelope-prefixed (``phases.profiling.<...>``).
+"""
 
 from __future__ import annotations
 

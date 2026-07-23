@@ -106,8 +106,18 @@ async def mock_worker(
     await worker.stop()
 
 
+# --- FirstToken Callback Test Helpers ---
+
+
 def create_first_token_callback(worker: Worker):
-    """Create a first-token callback mirroring the Worker implementation, using endpoint.parse_response to detect meaningful SSE content."""
+    """Create a first token callback that mirrors Worker implementation.
+
+    This callback uses endpoint.parse_response to check if an SSE message
+    contains meaningful content.
+
+    Returns:
+        Async callback function (ttft_ns, message) -> bool
+    """
 
     async def first_token_callback(ttft_ns: int, message: SSEMessage) -> bool:
         parsed = worker.inference_client.endpoint.parse_response(message)
@@ -117,7 +127,13 @@ def create_first_token_callback(worker: Worker):
 
 
 def setup_mock_endpoint(worker: Worker, monkeypatch, parse_response_return):
-    """Set up a mock endpoint with the specified parse_response return value (or side_effect if a list)."""
+    """Setup mock endpoint with specified parse_response return value.
+
+    Args:
+        worker: MockWorker instance
+        monkeypatch: pytest monkeypatch fixture
+        parse_response_return: Return value or side_effect for parse_response
+    """
     mock_endpoint = Mock()
     if isinstance(parse_response_return, list):
         mock_endpoint.parse_response = Mock(side_effect=parse_response_return)
@@ -135,6 +151,7 @@ class TestWorkerFirstTokenCallback:
     @pytest.mark.parametrize(
         "parse_return,expected_result,description",
         [
+            # Meaningful content - should return True
             pytest.param(
                 ParsedResponse(
                     perf_ns=100_000_000, data=TextResponseData(text="Hello")
@@ -143,12 +160,14 @@ class TestWorkerFirstTokenCallback:
                 "meaningful text content",
                 id="meaningful_content",
             ),
+            # None response - should return False
             pytest.param(
                 None,
                 False,
                 "parse_response returns None",
                 id="none_response",
             ),
+            # ParsedResponse with data=None (usage only) - should return False
             pytest.param(
                 ParsedResponse(
                     perf_ns=100_000_000,
@@ -604,6 +623,9 @@ class TestEmitCreditFailureRecord:
         assert record.request_info.phase_kind == "profiling"
 
 
+# --- Fixture for CreditContext ---
+
+
 @pytest.fixture
 def sample_credit_context() -> CreditContext:
     """Create a sample CreditContext for testing."""
@@ -620,6 +642,9 @@ def sample_credit_context() -> CreditContext:
         ),
         drop_perf_ns=2000000,
     )
+
+
+# --- RetrieveConversation Tests ---
 
 
 @pytest.mark.asyncio
@@ -750,6 +775,9 @@ class TestTerminalDisposition:
             is_final=False, cancelled=False, error="connection reset by peer"
         )
         worker._release_and_evict_for_terminal.assert_not_called()
+
+
+# --- Payload Bytes Fast Path Tests ---
 
 
 @pytest.mark.asyncio

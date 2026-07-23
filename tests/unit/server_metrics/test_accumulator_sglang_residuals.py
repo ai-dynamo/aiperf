@@ -1,6 +1,22 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Server-metrics realtime-snapshot residuals not covered by the pathological suite."""
+"""Server-metrics realtime-snapshot residuals not covered by the pathological suite.
+
+Four behaviors of ``ServerMetricsAccumulator``:
+
+* SGLang ``num_retracted_reqs_total`` (parser-stripped to ``num_retracted_reqs``)
+  feeds ``num_preemptions`` via a COUNTER-typed delta (``_add_preemptions`` /
+  ``_counter_delta``).
+* Counter lookups use the parser-stripped family name (no ``_total`` suffix),
+  driven here through the *real* ``prometheus_client.parser`` so any drift
+  between lookup names and the parser convention fails loudly.
+* ``realtime_snapshot`` suppresses counter deltas that have only a single
+  sample (``_counter_delta`` needs >= 2 points), so hit-rate / preemption rows
+  never appear off one scrape.
+* ``export_results`` widens the Parquet export window to the final
+  per-endpoint ``last_update_ns`` (``_export_parquet_if_enabled``) so Parquet
+  uses the same end window as the summaries.
+"""
 
 from __future__ import annotations
 

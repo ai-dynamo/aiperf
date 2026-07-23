@@ -1,7 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for the PromptGenerator class."""
+"""
+Comprehensive unit tests for PromptGenerator class.
+
+This test file provides complete coverage of all methods in the PromptGenerator class,
+including edge cases, error conditions, and integration scenarios.
+"""
 
 from unittest.mock import mock_open, patch
 
@@ -55,7 +60,9 @@ class TestPromptGeneratorComprehensive:
         prefix_prompts = PrefixPromptConfig(pool_size=5, length=10)
         return mock_tokenizer, prompts, prefix_prompts
 
+    # ============================================================================
     # Initialization Tests
+    # ============================================================================
 
     def test_init_basic_configuration(self, basic_config):
         """Test basic initialization without prefix prompts."""
@@ -91,7 +98,9 @@ class TestPromptGeneratorComprehensive:
             )
             mock_init.assert_called_once()
 
+    # ============================================================================
     # Generate Method Tests
+    # ============================================================================
 
     def test_generate_without_hash_ids(self, basic_config):
         """Test generate method without hash_ids uses normal generation."""
@@ -137,7 +146,9 @@ class TestPromptGeneratorComprehensive:
         assert isinstance(result, str)
         assert len(result) > 0
 
+    # ============================================================================
     # generate_prompt Method Tests
+    # ============================================================================
 
     def testgenerate_prompt_normal_case(self, basic_config):
         """Test generate_prompt method with normal parameters."""
@@ -167,7 +178,9 @@ class TestPromptGeneratorComprehensive:
 
         generator.generate_prompt(1000)
 
+    # ============================================================================
     # _generate_cached_prompt Method Tests
+    # ============================================================================
 
     def test_generate_cached_prompt_valid_parameters(self, basic_config):
         """Test _generate_cached_prompt with valid parameters."""
@@ -347,7 +360,9 @@ class TestPromptGeneratorComprehensive:
         assert all(h in generator._cache for h in hash_ids)
         assert all(len(generator._cache[h]) == block_size for h in hash_ids)
 
+    # ============================================================================
     # _sample_tokens Method Tests
+    # ============================================================================
 
     def test_sample_tokens_normal_case(self, basic_config):
         """Test _sample_tokens with normal parameters."""
@@ -427,7 +442,9 @@ class TestPromptGeneratorComprehensive:
         with pytest.raises(NotInitializedError):
             generator._sample_tokens(5)
 
+    # ============================================================================
     # get_random_prefix_prompt Method Tests
+    # ============================================================================
 
     def test_get_random_prefix_prompt_success(self, prefix_config):
         """Test get_random_prefix_prompt with populated pool."""
@@ -470,7 +487,9 @@ class TestPromptGeneratorComprehensive:
         with pytest.raises(InvalidStateError):
             generator.get_random_prefix_prompt()
 
+    # ============================================================================
     # _initialize_corpus Method Tests
+    # ============================================================================
 
     @patch("os.cpu_count", return_value=4)
     def test_initialize_corpus_success(self, mock_cpu_count, basic_config):
@@ -485,7 +504,9 @@ class TestPromptGeneratorComprehensive:
         assert isinstance(generator._tokenized_corpus, list)
         assert all(isinstance(token, int) for token in generator._tokenized_corpus)
 
+    # ============================================================================
     # _create_prefix_prompt_pool Method Tests
+    # ============================================================================
 
     def test_create_prefix_prompt_pool_success(self, prefix_config):
         """Test _create_prefix_prompt_pool successful creation."""
@@ -532,7 +553,9 @@ class TestPromptGeneratorComprehensive:
         assert len(generator._prefix_prompts) == 5
         assert all(prompt == "" for prompt in generator._prefix_prompts)
 
+    # ============================================================================
     # Shared System Prompt Tests
+    # ============================================================================
 
     def test_generate_shared_system_prompt_success(self, mock_tokenizer):
         """Test _generate_shared_system_prompt generates prompt successfully."""
@@ -585,7 +608,9 @@ class TestPromptGeneratorComprehensive:
         assert "not initialized" in str(exc_info.value)
         assert "shared-system-prompt-length" in str(exc_info.value)
 
+    # ============================================================================
     # User Context Prompt Tests
+    # ============================================================================
 
     def test_generate_user_context_prompt_first_session(self, mock_tokenizer):
         """Test generate_user_context_prompt for first session."""
@@ -676,7 +701,9 @@ class TestPromptGeneratorComprehensive:
 
         assert "corpus" in str(exc_info.value).lower()
 
+    # ============================================================================
     # Decoded String Cache Tests
+    # ============================================================================
 
     def test_decoded_cache_initialized_empty(self, basic_config):
         """Test that decoded cache is initialized as empty dict."""
@@ -698,7 +725,9 @@ class TestPromptGeneratorComprehensive:
     # are removed: the decode is now always fresh. ``_decoded_cache`` remains a
     # declared attribute (other call sites still reference it).
 
+    # ============================================================================
     # _build_token_sequence Method Tests
+    # ============================================================================
 
     def test_build_token_sequence_returns_tokens(self, basic_config):
         """Test that _build_token_sequence returns a list of token IDs."""

@@ -12,7 +12,9 @@ from aiperf.dataset.loader.bailian_trace import BailianTraceDatasetLoader
 from aiperf.dataset.loader.models import BailianTrace
 from tests.unit.conftest import make_run_from_cli
 
+# ============================================================================
 # BailianTrace Model Tests
+# ============================================================================
 
 
 class TestBailianTrace:
@@ -74,7 +76,9 @@ class TestBailianTrace:
             BailianTrace(**kwargs)
 
 
+# ============================================================================
 # BailianTraceDatasetLoader Tests
+# ============================================================================
 
 
 class TestBailianTraceDatasetLoader:
@@ -111,6 +115,8 @@ class TestBailianTraceDatasetLoader:
             model_names=["test-model"],
             **input_kwargs,
         )
+
+    # ---- basic loading ----
 
     def test_load_basic(self, create_jsonl_file, mock_prompt_generator, default_cfg):
         content = [
@@ -168,6 +174,8 @@ class TestBailianTraceDatasetLoader:
 
         total = sum(len(v) for v in dataset.values())
         assert total == 2
+
+    # ---- multi-turn grouping ----
 
     def test_groups_by_parent_chat_id(
         self, create_jsonl_file, mock_prompt_generator, default_cfg
@@ -233,6 +241,8 @@ class TestBailianTraceDatasetLoader:
         session = list(dataset.values())[0]
         assert [t.turn for t in session] == [1, 2, 3]
 
+    # ---- offset filtering ----
+
     @pytest.mark.parametrize(
         "start_offset,end_offset,expected_count,description",
         [
@@ -291,6 +301,8 @@ class TestBailianTraceDatasetLoader:
         loader.load_dataset()
 
         assert "Skipped 2 traces" in caplog.text
+
+    # ---- max_isl / max_osl ----
 
     @pytest.mark.parametrize(
         "max_isl,expected_count",
@@ -360,6 +372,8 @@ class TestBailianTraceDatasetLoader:
         actual = [t.output_length for traces in dataset.values() for t in traces]
         assert actual == expected_output_lengths
 
+    # ---- can_load ----
+
     @pytest.mark.parametrize(
         "data,expected",
         [
@@ -372,6 +386,8 @@ class TestBailianTraceDatasetLoader:
     )  # fmt: skip
     def test_can_load(self, data, expected):
         assert BailianTraceDatasetLoader.can_load(data=data) is expected
+
+    # ---- convert_to_conversations ----
 
     @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     def test_convert_to_conversations(
@@ -502,6 +518,8 @@ class TestBailianTraceDatasetLoader:
         with pytest.raises(ValueError, match="zip"):
             loader.convert_to_conversations(trace_data)
 
+    # ---- multi-turn conversation conversion ----
+
     @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     def test_multi_turn_conversation_ordering(
         self, mock_parallel_decode, mock_prompt_generator, default_cfg
@@ -558,7 +576,9 @@ class TestBailianTraceDatasetLoader:
         assert conv.turns[2].timestamp == 3000.0
 
 
+# ============================================================================
 # Synthesis Integration Tests
+# ============================================================================
 
 
 def _make_synthesis_config(

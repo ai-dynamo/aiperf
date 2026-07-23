@@ -1,7 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for the DecodeITLCurve grid recipe."""
+"""Unit tests for the DecodeITLCurve grid recipe.
+
+Pins the concurrency x OSL grid defaults (concurrency in [1, 200], 6 steps;
+osl in [64, 1024], 4 steps), the ``itl_surface_fit`` post-process spec, and
+the streaming-required guard so the user-facing contract cannot drift.
+
+Ported from ``ajc/k8s`` to the BenchmarkConfig-based ``SearchRecipeContext``.
+Sweep keys are envelope-prefixed (``phases.profiling.concurrency``
+and ``datasets.main.prompts.osl``).
+"""
 
 from __future__ import annotations
 

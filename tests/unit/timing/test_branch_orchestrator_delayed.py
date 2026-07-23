@@ -1,6 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 1 unit tests for delayed joins in :class:`BranchOrchestrator`."""
+"""Phase 1 unit tests for delayed joins in :class:`BranchOrchestrator`.
+
+Covers the delayed-join semantics:
+
+- K>1 delayed joins: parent runs turns [spawn+1 .. gate-1] without suspension
+  and suspends only when it's about to dispatch the gated turn.
+- Children finishing before the parent arrives pop the future gate and the
+  parent breezes through with no suspension.
+- K=1 (legacy) behavior still works under the new architecture.
+- Stop conditions during the gap propagate to ``joins_suppressed``.
+- Fail-fast aborts parent + orphan siblings mid-gap.
+"""
 
 from __future__ import annotations
 

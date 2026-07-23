@@ -9,8 +9,7 @@ Covers:
   MemoryMapSerializationError).
 - ``_preformat_payloads`` gating (opt-in env, self-contained-only, endpoint
   NotImplementedError skip).
-- ``_select_mmap_format`` (PAYLOAD_BYTES only when all turns have raw_payload;
-  global mix falls back to CONVERSATION; per-conversation mix raises).
+- ``_select_mmap_format`` uniformity check.
 - ``_generate_input_payloads`` verbatim export for raw-payload datasets.
 - ``_run_mmap_paths`` compressed (Kubernetes) variants.
 """

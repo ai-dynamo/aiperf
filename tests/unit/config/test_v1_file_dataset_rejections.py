@@ -13,10 +13,9 @@ These flags previously leaked through ``_apply_dataset_type``'s strip into
 Reject at convert-time instead so the user sees a clear flag-level error
 rather than a Pydantic stack trace or silently-dropped flags.
 
-NOTE: ``--isl-block-size`` is NOT rejected here -- it is the hash-id block
-granularity that the trace loaders (mooncake/bailian/...) consume, so it is
-routed onto ``FileDataset.block_size`` by ``_apply_block_size``. It is rejected
-ONLY for weka (inline per-block sizes). See ``test_block_size_routing.py``.
+``--isl-block-size`` is the exception: it is NOT rejected on file datasets
+(AIP-1016). Block size partitions the recorded ISL into cache blocks for
+trace replay, so it is meaningful, and it routes onto ``FileDataset.block_size``.
 """
 
 from __future__ import annotations

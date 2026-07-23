@@ -1,14 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Regression tests for `--profile-export-prefix`.
+"""Parity regression tests for `--profile-export-prefix`.
 
-Passing `--profile-export-prefix foo` makes every export file use `foo` as the
-base:
+On `main`, passing `--profile-export-prefix foo` makes EVERY export file use
+`foo` as the base:
 
     foo.csv                  foo.json                  foo_timeslices.csv
     foo_timeslices.json      foo.jsonl                 foo_raw.jsonl
     foo_gpu_telemetry.jsonl  foo_server_metrics.jsonl  foo_server_metrics.json
     foo_server_metrics.csv   foo_server_metrics.parquet
+
+This branch narrowed the prefix to only the summary/timeslice files. The
+JSONL family, GPU telemetry, and server-metrics exports stopped honoring
+the prefix. These tests pin the restoration of full-coverage parity.
 
 When `--profile-export-prefix` is NOT given, the historical per-file
 defaults remain: `profile_export_aiperf.csv`, `profile_export.jsonl`,

@@ -27,7 +27,9 @@ from aiperf.plugin.enums import (
 )
 from tests.unit.conftest import make_run_from_cli
 
+# ============================================================================
 # Shared Fixtures
+# ============================================================================
 
 
 @pytest.fixture(autouse=True)
@@ -73,7 +75,9 @@ async def configured_dataset_manager(initialized_dataset_manager, base_cfg):
     return initialized_dataset_manager
 
 
+# ============================================================================
 # Helper Functions
+# ============================================================================
 
 
 def create_mock_conversations(session_ids: list[str]) -> list[Conversation]:
@@ -110,7 +114,9 @@ def extract_dataset_notifications(
     return [msg for msg in messages if isinstance(msg, DatasetConfiguredNotification)]
 
 
+# ============================================================================
 # Test Classes
+# ============================================================================
 
 
 class TestDatasetManager:
@@ -674,7 +680,9 @@ class TestDatasetManagerTokenizerSkip:
             )
 
 
+# ============================================================================
 # Media URL Inline Conversion Tests
+# ============================================================================
 
 # 1x1 red PNG image bytes
 _TINY_PNG_BYTES = (
@@ -851,7 +859,9 @@ class TestConfigureDatasetInlineMediaGating:
         assert meta.requires_inline_media is False
 
 
+# ============================================================================
 # Accuracy mode sampling strategy guards
+# ============================================================================
 
 
 def _make_accuracy_cfg(

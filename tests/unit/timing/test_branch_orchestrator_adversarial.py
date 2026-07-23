@@ -1,6 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial unit tests for :class:`BranchOrchestrator`."""
+"""Adversarial unit tests for :class:`BranchOrchestrator`.
+
+These tests focus on edge cases, failure paths, and invariants around the
+pre-built ``_prereq_index``, ``intercept``'s per-parent serialization
+and partial-dispatch rollback, the fail-fast ``on_child_errored`` path, and
+cleanup diagnostics.
+"""
 
 from __future__ import annotations
 
