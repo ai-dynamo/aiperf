@@ -451,6 +451,12 @@ class TestSwimLaneCli:
             swim_lane_cli([tmp_path / "a", tmp_path / "b"])
         assert ei.value.code == 1
 
+    def test_empty_run_dirs_exits_nonzero(self, capsys):
+        with pytest.raises(SystemExit) as ei:
+            swim_lane_cli([])
+        assert ei.value.code == 2
+        assert "at least one run directory is required" in capsys.readouterr().err
+
     def test_write_failure_surfaces_as_swim_lane_error(
         self, agentic_run_dir: Path, tmp_path: Path, monkeypatch
     ):

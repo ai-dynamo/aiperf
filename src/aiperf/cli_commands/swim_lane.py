@@ -64,6 +64,10 @@ def swim_lane(
         write_swim_lane_html,
     )
 
+    if not run_dirs:
+        print("error: at least one run directory is required", file=sys.stderr)
+        sys.exit(2)
+
     if out is not None and len(run_dirs) > 1:
         print("error: --out only valid with a single run dir", file=sys.stderr)
         sys.exit(2)
