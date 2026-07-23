@@ -418,7 +418,7 @@ class PhaseRunner(TaskManagerMixin):
             )
         except Exception as exc:
             self.warning(
-                f"Failed to publish {kind.value} phase baseline request for "
+                f"Failed to publish {kind} phase baseline request for "
                 f"phase {self._config.phase}: {exc}"
             )
 
@@ -530,8 +530,8 @@ class PhaseRunner(TaskManagerMixin):
         lifecycle state) lives in the caller's ``except``.
         """
         phase_id = uuid.uuid4().hex
-        self._baseline_start_ns: int | None = None
-        self._baseline_end_ns: int | None = None
+        self._baseline_start_ns = None
+        self._baseline_end_ns = None
 
         self._concurrency_manager.configure_for_phase(
             self._phase_key,
@@ -1077,6 +1077,12 @@ class PhaseRunner(TaskManagerMixin):
                     f"phase {self._config.phase}. Need {need} more credits."
                 )
                 if need <= 0:
+                    # Forced-completion path: DAG children are being cancelled
+                    # too, so don't defer on pending branch work here.
+                    self.info(
+                        f"All credits already returned after cancel for phase "
+                        f"{self._config.phase}. Skipping drain wait."
+                    )
                     self._progress.all_credits_returned_event.set()
                 # Wait with timeout to avoid hanging indefinitely
                 drain_timeout = Environment.TIMING.CANCEL_DRAIN_TIMEOUT
@@ -1203,7 +1209,7 @@ class PhaseRunner(TaskManagerMixin):
                         and warmup_log_interval > 0
                         and now >= next_warmup_log_at
                     ):
-                        self.info(self._format_warmup_progress(stats))
+                        self.info(lambda s=stats: self._format_warmup_progress(s))
                         next_warmup_log_at = now + warmup_log_interval
                 except Exception as e:
                     self.error(
