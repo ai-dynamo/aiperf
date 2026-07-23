@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from unittest.mock import Mock
+
 import pytest
 
 from aiperf.common.models import (
@@ -39,6 +41,29 @@ def _text_response(perf_ns: int) -> TextResponse:
 
 
 class TestBuildAssistantTurnDefault:
+    def test_process_responses_reuses_parsed_objects_for_assistant_turn(self):
+        canned = {
+            10: ParsedResponse(perf_ns=10, data=TextResponseData(text="Hello")),
+            20: ParsedResponse(perf_ns=20, data=TextResponseData(text=" world")),
+        }
+        ep = _StubEndpoint(canned)
+        ep.parse_response = Mock(wraps=ep.parse_response)
+        record = RequestRecord(
+            responses=[_text_response(10), _text_response(20)],
+            start_perf_ns=0,
+            end_perf_ns=20,
+        )
+
+        parsed_responses, turn = ep.process_responses(
+            record, capture_assistant_turn=True
+        )
+
+        assert ep.parse_response.call_count == 2
+        assert parsed_responses is record._parsed_responses_cache
+        assert turn is not None
+        assert turn.texts[0].contents == ["Hello world"]
+        assert "_parsed_responses_cache" not in record.model_dump()
+
     def test_text_only_record(self):
         canned = {
             10: ParsedResponse(perf_ns=10, data=TextResponseData(text="Hello")),
