@@ -17,7 +17,6 @@ from aiperf.common.models import (
 from aiperf.timing.branch_orchestrator import BranchOrchestrator
 from tests.unit.timing._shared_helpers import _mk_conv, _mk_source
 
-
 # 0.1. dispatch_join_turn propagates SPAWN parent mode
 
 # NOTE: test_dispatch_join_turn_preserves_spawn_parent_mode and

@@ -7,7 +7,6 @@ so xdist-safe.
 """
 
 from __future__ import annotations
-from tests.unit.dataset.loader._shared_helpers import _stub_loader
 
 import shutil
 from pathlib import Path
@@ -19,6 +18,7 @@ from pytest import param
 
 from aiperf.dataset.loader import weka_parallel_convert as wpc
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
+from tests.unit.dataset.loader._shared_helpers import _stub_loader
 
 FIXTURES = Path(__file__).parents[3] / "fixtures" / "weka_traces"
 

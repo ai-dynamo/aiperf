@@ -21,7 +21,6 @@ input turns.
 """
 
 from __future__ import annotations
-from tests.unit.dataset.loader._shared_helpers import _stub_loader, _mk_user_config
 
 import json
 from multiprocessing import shared_memory
@@ -37,6 +36,7 @@ from aiperf.common.models import Turn
 from aiperf.dataset.loader import weka_parallel_convert as wpc
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader, _classify_turn_input
 from aiperf.dataset.loader.weka_trace_models import WekaNormalRequest
+from tests.unit.dataset.loader._shared_helpers import _mk_user_config, _stub_loader
 
 _MODEL = "claude-opus-4-5-20251101"
 _HAIKU = "claude-haiku-4-5-20251001"
