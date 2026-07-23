@@ -685,6 +685,12 @@ class PhaseRunner(TaskManagerMixin):
                     f"phase {self._config.phase}. Need {need} more credits."
                 )
                 if need <= 0:
+                    # Forced-completion path: DAG children are being cancelled
+                    # too, so don't defer on pending branch work here.
+                    self.info(
+                        f"All credits already returned after cancel for phase "
+                        f"{self._config.phase}. Skipping drain wait."
+                    )
                     self._progress.all_credits_returned_event.set()
                 # Wait with timeout to avoid hanging indefinitely
                 drain_timeout = Environment.TIMING.CANCEL_DRAIN_TIMEOUT
