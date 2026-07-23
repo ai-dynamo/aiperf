@@ -1470,7 +1470,7 @@ class _UISettings(BaseSettings):
         description=(
             "Interval in seconds between real-time metrics messages (and the "
             "per-tick stats log block). 0 disables the log block; dashboards "
-            "still poll. When None, ``realtime_metrics_interval(ui_type)`` "
+            "still poll. When None, `realtime_metrics_interval(ui_type)` "
             "auto-defaults to 5.0 under --ui dashboard, 30.0 otherwise."
         ),
     )

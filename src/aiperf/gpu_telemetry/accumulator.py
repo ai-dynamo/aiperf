@@ -115,7 +115,12 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         await self.process_telemetry_record(record)
 
     def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
-        """Return a boolean mask where True marks records in [start_ns, end_ns)."""
+        """Return a boolean mask where True marks records in ``[start_ns, end_ns)``.
+
+        Half-open by design to match ``AccumulatorProtocol.query_time_range``
+        and the metrics accumulator. Distinct from server-metrics per-series
+        filters, which use inclusive ``[start_ns, end_ns]``.
+        """
         if len(self._timestamps_ns) == 0:
             return np.array([], dtype=bool)
         ts = self._timestamps_ns.data
@@ -160,15 +165,20 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         wake the task via ``START_REALTIME_TELEMETRY`` (sent by the dashboard
         when the telemetry pane is toggled on).
 
-        ``--stats-interval 0`` disables realtime reporting by short-circuiting
-        here before the loop, mirroring the records-manager task; otherwise the
-        ``asyncio.sleep(0)`` tail would busy-spin re-summarizing every tick.
+        ``--stats-interval 0`` disables only the per-tick log-block cadence on
+        the records side; the dashboard must still be able to wake this task and
+        receive telemetry updates. Mirror the records-manager fallback by using
+        the per-UI default cadence when the configured interval is 0, avoiding
+        an ``asyncio.sleep(0)`` busy-spin while keeping the task wakeable.
         """
-        interval = self.run.cfg.runtime.realtime_metrics_interval(
+        configured_interval = self.run.cfg.runtime.realtime_metrics_interval(
             self.run.cfg.runtime.ui
         )
-        if interval == 0:
-            return
+        interval = (
+            configured_interval
+            if configured_interval != 0
+            else self._default_realtime_interval()
+        )
         while not self.stop_requested:
             if (
                 self.run.cfg.ui_type != UIType.DASHBOARD
@@ -183,6 +193,10 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
 
             await self._report_realtime_metrics()
             await asyncio.sleep(interval)
+
+    def _default_realtime_interval(self) -> float:
+        """Resolve the per-UI default cadence for interval-0 dashboard polling."""
+        return 5.0 if self.run.cfg.ui_type == UIType.DASHBOARD else 30.0
 
     async def _report_realtime_metrics(self) -> None:
         """Report real-time GPU telemetry metrics."""

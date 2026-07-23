@@ -131,6 +131,18 @@ _REALTIME_ROW_INDENT = 2
 # labels, so the column can hold p95 on one row and p90 on the next.
 _LATENCY_PERCENTILES: tuple[str, ...] = ("p50", "p75", "p95", "p99")
 _TOKEN_PERCENTILES: tuple[str, ...] = ("p50", "p75", "p90", "p99")
+_SERVER_SNAPSHOT_METRIC_DISPLAY: dict[str, tuple[str, str]] = {
+    "prefix_cache_hit_rate": ("Prefix Cache Hit Rate", "%"),
+    "external_prefix_cache_hit_rate": ("External Prefix Cache Hit Rate", "%"),
+    "kv_cache_usage_pct": ("KV Cache Usage", "%"),
+    "cpu_kv_cache_usage_pct": ("CPU KV Cache Usage", "%"),
+    "num_running": ("Server Running Requests", "req"),
+    "num_waiting": ("Server Waiting Requests", "req"),
+    "num_preemptions": ("Server Preemptions", "req"),
+    "input_token_throughput_srv": ("Server Input Throughput", "tokens/s"),
+    "output_token_throughput_srv": ("Server Output Throughput", "tokens/s"),
+    "unique_input_tokens_srv": ("Unique Input Tokens", "tokens"),
+}
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -155,6 +167,28 @@ def _format_int(value: float | None) -> str:
     if value is None:
         return "-"
     return f"{int(round(value)):,}"
+
+
+def _server_snapshot_to_metric_results(
+    server_snapshot: dict[str, float],
+) -> list[MetricResult]:
+    """Convert live server snapshot scalars into realtime MetricResult rows."""
+    metrics: list[MetricResult] = []
+    for tag, value in server_snapshot.items():
+        header, unit = _SERVER_SNAPSHOT_METRIC_DISPLAY.get(
+            tag,
+            (tag.replace("_", " ").title(), ""),
+        )
+        metrics.append(
+            MetricResult(
+                tag=tag,
+                header=header,
+                unit=unit,
+                avg=value,
+                current=value,
+            )
+        )
+    return metrics
 
 
 def _render_realtime_block(
@@ -1212,10 +1246,18 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             self._metric_record_accumulators,
             phase_index=phase_stats.phase_index,
         )
-        if not raw_metrics:
-            return
+        if server_snapshot is None:
+            server_snapshot = self._collect_realtime_server_snapshot(
+                start_ns=phase_stats.start_ns
+            )
 
-        display_metrics = records_manager_processing.filter_display_metrics(raw_metrics)
+        publish_metrics = [
+            *raw_metrics,
+            *_server_snapshot_to_metric_results(server_snapshot),
+        ]
+        display_metrics = records_manager_processing.filter_display_metrics(
+            publish_metrics
+        )
         if not display_metrics:
             return
         await self.publish(
@@ -1229,11 +1271,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # throughput rows can show ``prefill_throughput_per_user`` etc. —
         # those have ``console_group=NONE`` (hidden from the dashboard table)
         # and ``filter_display_metrics`` strips them, leaving the row blank.
-        if server_snapshot is None:
-            server_snapshot = self._collect_realtime_server_snapshot(
-                start_ns=phase_stats.start_ns
-            )
-
         prev_realtime_phase_index = getattr(self, "_prev_realtime_phase_index", None)
         prev_realtime_snapshot = (
             self._prev_realtime_snapshot
@@ -2081,13 +2118,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         # Get timing from profiling phase stats (warmup is automatically excluded)
         # TimeFilter will be constructed per-endpoint in accumulator with per-endpoint end times
-        phase_stats = self._records_tracker.create_aggregate_stats_for_phase(
-            CreditPhase.PROFILING
+        phase_stats = RecordsManager._create_result_stats_for_phase(
+            self, CreditPhase.PROFILING
         )
         profiling_start_ns = phase_stats.start_ns or time.time_ns()
         profiling_end_ns = phase_stats.requests_end_ns or time.time_ns()
-        warmup_phase_stats = self._records_tracker.create_stats_for_phase(
-            CreditPhase.WARMUP
+        warmup_phase_stats = RecordsManager._create_result_stats_for_phase(
+            self, CreditPhase.WARMUP
         )
 
         server_metrics_export_data = (
