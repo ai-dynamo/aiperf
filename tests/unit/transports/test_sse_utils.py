@@ -4,6 +4,7 @@ import time
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.models import SSEField, SSEMessage
@@ -47,21 +48,33 @@ class TestParseSSEMessage:
         "field_name,field_value,expected_name,expected_value",
         [
             # Standard SSE field types
-            ("data", "Hello World", "data", "Hello World"),
-            ("event", "message", "event", "message"),
-            ("id", "123456", "id", "123456"),
-            ("retry", "5000", "retry", "5000"),
+            param("data", "Hello World", "data", "Hello World", id="data"),
+            param("event", "message", "event", "message", id="event"),
+            param("id", "123456", "id", "123456", id="id"),
+            param("retry", "5000", "retry", "5000", id="retry"),
             # Custom field names
-            ("custom-field", "custom-value", "custom-field", "custom-value"),
-            ("X-Custom-Header", "header-value", "X-Custom-Header", "header-value"),
+            param(
+                "custom-field",
+                "custom-value",
+                "custom-field",
+                "custom-value",
+                id="custom",
+            ),
+            param(
+                "X-Custom-Header",
+                "header-value",
+                "X-Custom-Header",
+                "header-value",
+                id="custom-case-preserved",
+            ),
             # Case sensitivity tests (should preserve original case)
-            ("Data", "test", "Data", "test"),
-            ("EVENT", "test", "EVENT", "test"),
+            param("Data", "test", "Data", "test", id="data-case-preserved"),
+            param("EVENT", "test", "EVENT", "test", id="event-case-preserved"),
             # Empty values
-            ("data", "", "data", ""),
-            ("event", "", "event", ""),
+            param("data", "", "data", "", id="empty-data"),
+            param("event", "", "event", "", id="empty-event"),
         ],
-    )
+    )  # fmt: skip
     def test_parse_single_field_messages(
         self,
         field_name: str,
@@ -403,14 +416,24 @@ retry: 5000"""
         assert result1 is not result2
         assert result1.packets is not result2.packets
 
-    def test_standard_fields_use_plain_strings(self, base_perf_ns: int) -> None:
+    @pytest.mark.parametrize(
+        "field_str",
+        [
+            param("data", id="data"),
+            param("event", id="event"),
+            param("id", id="id"),
+            param("retry", id="retry"),
+        ],
+    )  # fmt: skip
+    def test_standard_fields_use_plain_strings(
+        self, field_str: str, base_perf_ns: int
+    ) -> None:
         """Test that standard SSE field names are stored as exact strings."""
-        for field_str in ("data", "event", "id", "retry"):
-            raw_message = f"{field_str}: test"
-            result = SSEMessage.parse(raw_message, base_perf_ns)
+        raw_message = f"{field_str}: test"
+        result = SSEMessage.parse(raw_message, base_perf_ns)
 
-            assert result.packets[0].name == field_str
-            assert type(result.packets[0].name) is str
+        assert result.packets[0].name == field_str
+        assert type(result.packets[0].name) is str
 
     def test_comment_field_special_handling(self, base_perf_ns: int) -> None:
         """Test special handling of comment fields (empty field name)."""
@@ -666,18 +689,22 @@ class TestInspectMessageForError:
     @pytest.mark.parametrize(
         "raw_message",
         [
-            "event: ERROR\n: Error message",
-            "event: Error\n: Error message",
-            "Event: error\n: Error message",
+            param("event: ERROR\n: Error message", id="uppercase-value"),
+            param("event: Error\n: Error message", id="titlecase-value"),
+            param("Event: error\n: Error message", id="titlecase-field"),
         ],
-    )
-    def test_error_event_comparison_is_case_sensitive(
+    )  # fmt: skip
+    def test_error_event_comparison_is_case_insensitive_raises(
         self, raw_message: str, base_perf_ns: int
     ) -> None:
-        """Differently-cased event names and values are not protocol errors."""
+        """Differently-cased error event names and values preserve legacy detection."""
         message = SSEMessage.parse(raw_message, base_perf_ns)
 
-        AsyncSSEStreamReader.inspect_message_for_error(message)
+        with pytest.raises(SSEResponseError) as exc_info:
+            AsyncSSEStreamReader.inspect_message_for_error(message)
+
+        assert "Error message" in str(exc_info.value)
+        assert exc_info.value.error_code == 502
 
 
 @pytest.fixture

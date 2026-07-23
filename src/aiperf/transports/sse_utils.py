@@ -94,8 +94,9 @@ class AsyncSSEStreamReader:
             return
 
         has_error_event = any(
-            packet.name == _SSE_EVENT_FIELD_NAME
-            and packet.value == _SSE_ERROR_EVENT_VALUE
+            packet.name.casefold() == _SSE_EVENT_FIELD_NAME
+            and packet.value is not None
+            and packet.value.casefold() == _SSE_ERROR_EVENT_VALUE
             for packet in message.packets
         )
 
