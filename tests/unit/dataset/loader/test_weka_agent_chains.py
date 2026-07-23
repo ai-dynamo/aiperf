@@ -1,10 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from tests.unit.dataset.loader._shared_helpers import (
-    _req,
-    _normals,
-    _chain_outer_indices,
-)
 from aiperf.dataset.loader.weka_agent_chains import (
     compute_chain_prefix_blocks,
     detect_agent_chains,
@@ -12,6 +7,11 @@ from aiperf.dataset.loader.weka_agent_chains import (
 from aiperf.dataset.loader.weka_metric_prepass import (
     MetricRecord,
     compute_shared_prefix_cache_metrics,
+)
+from tests.unit.dataset.loader._shared_helpers import (
+    _chain_outer_indices,
+    _normals,
+    _req,
 )
 
 

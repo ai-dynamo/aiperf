@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-from tests.unit.dataset.loader._shared_helpers import _mk_user_config
-
 import logging
 from unittest.mock import MagicMock
 
@@ -15,6 +13,7 @@ from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
 from aiperf.common.environment import Environment
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
 from aiperf.dataset.loader.weka_trace_models import WekaTrace
+from tests.unit.dataset.loader._shared_helpers import _mk_user_config
 
 _MODEL = "claude-opus-4-5-20251101"
 _HAIKU = "claude-haiku-4-5-20251001"

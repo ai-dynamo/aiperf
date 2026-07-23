@@ -6,7 +6,6 @@ from tests.unit.dataset.loader._shared_helpers import _make_loader, _write_trace
 
 from pathlib import Path
 
-
 from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
 from aiperf.common.environment import Environment
 

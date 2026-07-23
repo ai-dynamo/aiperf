@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from tests.unit.dataset.loader._shared_helpers import (
-    _req,
-    _normals,
     _chain_outer_indices,
+    _normals,
+    _req,
 )
 
 """Adversarial tests for phase-2 seam resolution (``_resolve_seams``)."""
