@@ -363,17 +363,6 @@ class Turn(AIPerfBaseModel):
         description="Pre-formatted OpenAI-compatible tool definitions. "
         "When set alongside raw_messages, injected into the API payload.",
     )
-    reset_context: bool = Field(
-        default=False,
-        description=(
-            "When True, the endpoint formatter discards messages accumulated "
-            "from prior turns in this conversation before applying this turn's "
-            "raw_messages. Used by delta-encoded multi-turn conversations to "
-            "express a non-monotonic context change (any source that needs to "
-            "rewrite an earlier prefix). Has no effect when raw_messages is "
-            "None."
-        ),
-    )
     raw_system: list[dict[str, Any]] | None = Field(
         default=None,
         description="Pre-formatted vendor-shaped ``system`` field (list of "
