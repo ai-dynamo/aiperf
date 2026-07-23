@@ -913,10 +913,8 @@ class TestResponsesExtraBody:
 
 class TestResponsesBuildMessagesResetContext:
     """ResponsesEndpoint.build_messages must honor reset_context (discard prior
-    accumulated turns) like BaseEndpoint.build_messages. The v2 Responses
-    override duplicated the flatten-and-filter skeleton but dropped the reset,
-    leaving pre-reset items on the wire -- breaking weka delta-replay ISL and
-    the worker's cache-bust prefix slice for endpoint=responses."""
+    accumulated turns) like BaseEndpoint.build_messages, so pre-reset items
+    never reach the wire for endpoint=responses."""
 
     @pytest.fixture
     def endpoint(self):

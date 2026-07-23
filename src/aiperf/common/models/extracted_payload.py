@@ -24,12 +24,14 @@ class ExtractedPayload(AIPerfBaseModel):
     )
     tool_texts: list[str] = Field(
         default_factory=list,
-        description="Subset of ``texts`` contributed by tool machinery: "
-        "replayed ``tool_calls`` / ``function_call`` items and top-level "
-        "``tools`` schemas. These strings are NOT part of the ``messages`` "
-        "role/content view, so the chat-template ISL path tokenises them "
-        "separately on top of the templated count; the bare-text path "
-        "already covers them via ``texts``.",
+        description="Subset of ``texts`` contributed by tool machinery that is "
+        "NOT already represented in the ``messages`` role/content view: "
+        "Responses ``function_call`` / ``function_call_output`` items and "
+        "top-level ``tools`` schemas. The chat-template ISL path tokenises "
+        "these on top of the templated count; the bare-text path already "
+        "covers them via ``texts``. Assistant ``tool_calls`` that ride along "
+        "in ``messages`` are deliberately excluded here so the chat-template "
+        "path does not count them twice.",
     )
     image_count: int = Field(
         default=0,
