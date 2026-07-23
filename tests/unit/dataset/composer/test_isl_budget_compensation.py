@@ -160,7 +160,7 @@ class TestSharedSystemPromptCompensation:
                 return_value=(0, 0),
             ),
             patch(
-                "aiperf.dataset.composer.base.PromptGenerator"
+                "aiperf.dataset.generator.corpus.PromptGenerator"
             ) as mock_prompt_gen_cls,
         ):
             SyntheticDatasetComposer(run=config, tokenizer=tokenizer)
@@ -187,7 +187,7 @@ class TestSharedSystemPromptCompensation:
                 return_value=(0, 0),
             ),
             patch(
-                "aiperf.dataset.composer.base.PromptGenerator"
+                "aiperf.dataset.generator.corpus.PromptGenerator"
             ) as mock_prompt_gen_cls,
         ):
             SyntheticDatasetComposer(run=config, tokenizer=tokenizer)
@@ -212,7 +212,7 @@ class TestSharedSystemPromptCompensation:
                 return_value=(0, 0),
             ),
             patch(
-                "aiperf.dataset.composer.base.PromptGenerator"
+                "aiperf.dataset.generator.corpus.PromptGenerator"
             ) as mock_prompt_gen_cls,
         ):
             SyntheticDatasetComposer(run=config, tokenizer=tokenizer)
@@ -236,7 +236,7 @@ class TestSharedSystemPromptCompensation:
                 "aiperf.dataset.composer.base._estimate_chat_template_overheads",
                 return_value=(0, 0),
             ),
-            patch("aiperf.dataset.composer.base.PromptGenerator"),
+            patch("aiperf.dataset.generator.corpus.PromptGenerator"),
         ):
             SyntheticDatasetComposer(run=config, tokenizer=tokenizer)
 
@@ -508,7 +508,7 @@ def test_marker_estimator_is_invoked_when_compensation_is_needed(
             "aiperf.dataset.composer.base._estimate_chat_template_overheads",
             return_value=(0, 0),
         ),
-        patch("aiperf.dataset.composer.base.PromptGenerator"),
+        patch("aiperf.dataset.generator.corpus.PromptGenerator"),
     ):
         SyntheticDatasetComposer(run=config, tokenizer=tokenizer)
 
