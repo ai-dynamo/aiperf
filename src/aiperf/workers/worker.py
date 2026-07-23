@@ -608,7 +608,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         *,
         capture_assistant_turn: bool,
     ) -> tuple[list[ParsedResponse], Turn | None]:
-        """Process responses with optional endpoint replay capabilities."""
+        """Process responses while preserving protocol-only third-party endpoints.
+
+        The fallback supports ``EndpointProtocol`` implementations that do not
+        inherit ``BaseEndpoint`` and therefore lack its optional replay helpers.
+        """
         endpoint = self.inference_client.endpoint
         process_responses = getattr(endpoint, "process_responses", None)
         if callable(process_responses):

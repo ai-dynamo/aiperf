@@ -906,7 +906,8 @@ class RequestRecord(AIPerfBaseModel):
 
     _parsed_responses_cache: list[ParsedResponse] | None = PrivateAttr(default=None)
     """Memoized endpoint-final parsed responses, local to this process and never
-    serialized. Populated by endpoint response processing and treated as read-only."""
+    serialized. Populated by endpoint response processing and treated as read-only.
+    Records are single-pass; responses must be complete before memoization."""
 
     request_info: RecordContext | None = Field(
         default=None,
