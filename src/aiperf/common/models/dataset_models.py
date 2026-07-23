@@ -11,6 +11,7 @@ from aiperf.common.enums import (
     ConversationBranchMode,
     ConversationContextMode,
     MediaType,
+    MemoryMapFormat,
 )
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch import ConversationBranchInfo
@@ -43,6 +44,11 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
 
     client_type: DatasetClientStoreType = DatasetClientStoreType.MEMORY_MAP
 
+    format: MemoryMapFormat = Field(
+        default=MemoryMapFormat.CONVERSATION,
+        description="Storage format of the memory-mapped dataset files "
+        "(serialized Conversations vs pre-encoded per-turn payload bytes).",
+    )
     data_file_path: Path = Field(
         ...,
         description="Path to the memory-mapped data file containing serialized conversations.",

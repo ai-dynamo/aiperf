@@ -227,7 +227,6 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
 
     async def setup_phase(self) -> None:
         await self._artifacts.start()
-        self._write_adaptive_manifest_entry()
         setup_complete = False
         try:
             self._set_control(self._control.minimum)
@@ -243,6 +242,7 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
                 sample_count=0,
                 error_count=0,
             )
+            self._write_adaptive_manifest_entry()
             await self._artifacts.flush()
             setup_complete = True
         finally:
@@ -252,10 +252,25 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
     async def execute_phase(self) -> None:
         self._assessment_task = asyncio.create_task(self._assessment_loop())
         try:
-            if self._user_strategy is not None:
-                await self._user_strategy.execute_phase()
-            else:
-                await super().execute_phase()
+            try:
+                if self._user_strategy is not None:
+                    await self._user_strategy.execute_phase()
+                else:
+                    await super().execute_phase()
+            except asyncio.CancelledError:
+                if self._completed_reason is None:
+                    self._complete_controller(
+                        reason="phase_cancelled",
+                        terminal_event="adaptive_failed",
+                    )
+                raise
+            except Exception as exc:
+                if self._completed_reason is None:
+                    self._complete_controller(
+                        reason=f"phase_failed: {exc}",
+                        terminal_event="adaptive_failed",
+                    )
+                raise
         finally:
             if self._completed_reason is None:
                 self._complete_controller(reason="phase_stopped")
@@ -288,9 +303,18 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
             "cancelled": self._retired_user_cancellations,
         }
 
+    def _is_pre_sustain_credit(self, credit: Credit) -> bool:
+        return (
+            self._controller_phase == "sustain"
+            and self._sustain_started_at_ns is not None
+            and credit.issued_at_ns < self._sustain_started_at_ns
+        )
+
     async def handle_credit_result(self, credit_return: CreditReturn) -> None:
         async with self._lock:
             ttft_ns = self._window_ttft_by_credit_id.pop(credit_return.credit.id, None)
+            if self._is_pre_sustain_credit(credit_return.credit):
+                return
             if (
                 credit_return.error is not None
                 or credit_return.request_latency_ns is None

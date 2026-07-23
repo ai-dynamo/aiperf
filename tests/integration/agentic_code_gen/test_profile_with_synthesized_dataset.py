@@ -59,12 +59,21 @@ class TestAgenticCodeGenProfile:
         )
 
         assert result.request_count == total_turns
-        assert result.has_all_outputs
+        assert result.has_all_outputs_except_inputs
+        assert result.inputs is None, "trace datasets (mooncake_trace) skip inputs.json"
 
-        # Verify all 5 sessions were loaded with correct multi-turn structure
-        assert result.inputs is not None
-        assert len(result.inputs.data) == len(sessions)
-        for input_session, synth_session in zip(
-            result.inputs.data, sessions, strict=False
-        ):
-            assert len(input_session.payloads) == len(synth_session.turns)
+        # inputs.json is skipped for trace datasets, so verify all 5 sessions
+        # loaded with the correct multi-turn structure from the per-record
+        # metadata (one record per turn) instead.
+        assert result.jsonl is not None
+        turns_per_session: dict[str, int] = {}
+        for record in result.jsonl:
+            conversation_id = record.metadata.conversation_id
+            assert conversation_id is not None
+            turns_per_session[conversation_id] = (
+                turns_per_session.get(conversation_id, 0) + 1
+            )
+        assert len(turns_per_session) == len(sessions)
+        assert sorted(turns_per_session.values()) == sorted(
+            len(synth_session.turns) for synth_session in sessions
+        )

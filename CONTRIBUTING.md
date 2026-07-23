@@ -39,6 +39,7 @@ pre-commit install    # Install pre-commit hooks
 | `make install` | Install project and mock server in editable mode |
 | `make install-app` | Install project only |
 | `make install-mock-server` | Install mock server only |
+| `make install-mock-amdsmi` | Install fake `amdsmi` bindings to exercise the AMD telemetry path on non-AMD hardware (see [Mocking a ROCm Environment](docs/reference/mock-amdsmi.md)) |
 | `make test` | Unit tests (parallel, excludes integration) |
 | `make test-verbose` | Unit tests with DEBUG logging |
 | `make test-all` | All tests (unit + component integration + integration) |
