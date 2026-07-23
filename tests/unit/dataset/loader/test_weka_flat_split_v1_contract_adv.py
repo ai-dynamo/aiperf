@@ -1,31 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial tests for the flattened-agent-split EMITTED-DATASET CONTRACT.
-
-Surface: everything detection can emit must be replayable. Concretely, the
-``DatasetMetadata`` projected from the loader's conversations must pass
-``validate_for_orchestrator_v1`` (``src/aiperf/common/validators/orchestrator_v1.py``)
-and satisfy the structural invariants of spec sections 5.1-5.3:
-
-- branches reference only emitted conversations,
-- no duplicate ``branch_id`` on one parent turn,
-- every SPAWN_JOIN prereq references a branch declared on a strictly-earlier
-  turn (no branch declared at-or-after its gated turn),
-- emitted flat-chain children are non-root ``agent_depth=1`` with
-  ``parent_conversation_id == trace_id`` and carry NO branches/prerequisites
-  of their own (v1 cannot nest spawns),
-- conservation: every retained top-level request lands in exactly one
-  conversation turn exactly once,
-- session-id shape ``::fa:NNN`` zero-padded, dense from 000, stable across
-  two identical loads,
-- streaming ``type:"s"`` rows split identically to ``type:"n"``.
-
-These build hostile (but deterministic) traces and run them through the full
-``convert_to_conversations`` serial path, which itself calls
-``validate_for_orchestrator_v1`` at the end. Findings that are genuine
-implementation bugs per the spec are decorated ``xfail(strict=True)`` and
-reported.
-"""
+"""Adversarial tests for the flattened-agent-split EMITTED-DATASET CONTRACT."""
 
 from __future__ import annotations
 
@@ -45,9 +20,7 @@ from tests.unit.dataset.loader.test_weka_trace import (
     _stub_prompt_generator_for_reconstructor,
 )
 
-# ---------------------------------------------------------------------------
 # Trace construction helpers (deterministic; no randomness leaks into asserts).
-# ---------------------------------------------------------------------------
 
 
 def _row(
@@ -119,10 +92,8 @@ def _retained_top_level_count(requests: list[dict], uc=None) -> int:
     return sum(1 for r in requests if r["type"] in ("n", "s"))
 
 
-# ---------------------------------------------------------------------------
 # 1. Validator acceptance: a hostile fan-out that forces multiple groups, mixed
 #    streaming rows, and a background chain still validates for orchestrator v1.
-# ---------------------------------------------------------------------------
 
 
 def test_convert_to_conversations_hostile_fanout_passes_orchestrator_v1(tmp_path):
@@ -147,9 +118,7 @@ def test_convert_to_conversations_hostile_fanout_passes_orchestrator_v1(tmp_path
     assert any(sid.startswith("hostile::fa:") for sid in convs)
 
 
-# ---------------------------------------------------------------------------
 # 2. child_conversation_ids referencing only emitted conversations.
-# ---------------------------------------------------------------------------
 
 
 def test_branch_child_ids_reference_only_emitted_conversations(tmp_path):
@@ -172,10 +141,8 @@ def test_branch_child_ids_reference_only_emitted_conversations(tmp_path):
                 )
 
 
-# ---------------------------------------------------------------------------
 # 3. No duplicate branch_id on a single parent turn (validator 59-68).
 #    Many adjacent groups collapsing must not double-register one branch_id.
-# ---------------------------------------------------------------------------
 
 
 def test_no_duplicate_branch_id_per_turn_many_adjacent_groups(tmp_path):
@@ -199,11 +166,9 @@ def test_no_duplicate_branch_id_per_turn_many_adjacent_groups(tmp_path):
         )
 
 
-# ---------------------------------------------------------------------------
 # 4. SPAWN_JOIN prereqs never reference a branch declared at/after the gated
 #    turn. Attack: a chain spawning off a late main turn whose join would need
 #    a later turn -> must become background, never an invalid (forward) gate.
-# ---------------------------------------------------------------------------
 
 
 def test_spawn_join_prereq_always_references_strictly_earlier_branch(tmp_path):
@@ -234,11 +199,9 @@ def test_spawn_join_prereq_always_references_strictly_earlier_branch(tmp_path):
     assert n_prereqs == 0
 
 
-# ---------------------------------------------------------------------------
 # 5. Generic invariant sweep over a battery of hostile traces: validator
 #    acceptance + strictly-earlier branch declaration verified independently
 #    of the loader's own internal validation call.
-# ---------------------------------------------------------------------------
 
 
 def _hostile_traces() -> list[tuple[str, list[dict]]]:
@@ -314,10 +277,8 @@ def test_emitted_metadata_validates_and_gates_are_well_ordered(name, reqs, tmp_p
                 )
 
 
-# ---------------------------------------------------------------------------
 # 6. Conservation: every retained top-level request lands in exactly one
 #    conversation turn exactly once; sum of turns over root+fa:* == retained.
-# ---------------------------------------------------------------------------
 
 
 def test_conservation_every_retained_request_in_exactly_one_turn(tmp_path):
@@ -388,10 +349,8 @@ def _normals_from_rows(rows: list[dict]):
     return out
 
 
-# ---------------------------------------------------------------------------
 # 7. Per-chain timestamps strictly increasing; delays == diffs (no warp / no
 #    think-time). Spec §5.6.
-# ---------------------------------------------------------------------------
 
 
 def test_per_chain_timestamps_increasing_and_delays_are_intra_chain_diffs(tmp_path):
@@ -417,10 +376,8 @@ def test_per_chain_timestamps_increasing_and_delays_are_intra_chain_diffs(tmp_pa
             assert conv.turns[k].delay == pytest.approx(ts[k] - ts[k - 1]), (sid, k)
 
 
-# ---------------------------------------------------------------------------
 # 8. Flat-chain children carry NO branches/prerequisites (v1 cannot nest), are
 #    non-root agent_depth=1, parent_conversation_id == trace_id.
-# ---------------------------------------------------------------------------
 
 
 def test_flat_chain_children_are_leaf_non_root_depth_one(tmp_path):
@@ -446,9 +403,7 @@ def test_flat_chain_children_are_leaf_non_root_depth_one(tmp_path):
             assert turn.prerequisites == [], sid
 
 
-# ---------------------------------------------------------------------------
 # 9. Session-id shape: ::fa:NNN zero-padded, dense from 000.
-# ---------------------------------------------------------------------------
 
 
 def test_flat_session_ids_are_zero_padded_and_dense(tmp_path):
@@ -550,12 +505,10 @@ def test_shared_spawn_fanout_emits_worker_group_ids(tmp_path, monkeypatch):
     assert not any(sid.startswith("wg::fa:") for sid in convs), sorted(convs)
 
 
-# ---------------------------------------------------------------------------
 # 9b. Production-default classification: the cases above each monkeypatch one
 #     knob to a chosen value. These assert the END-TO-END loader output at the
 #     ACTUAL shipped (model-field) defaults, so a default drift moves the
 #     classification with it, and verify the arms COMPOSE in one reconstruction.
-# ---------------------------------------------------------------------------
 
 
 def _enable_production_classification(monkeypatch) -> None:
@@ -637,10 +590,8 @@ def test_production_defaults_shared_spawn_fanout_is_worker_group(tmp_path, monke
     assert not any(s.startswith("prod_wg::fa:") for s in convs), sorted(convs)
 
 
-# ---------------------------------------------------------------------------
 # 10. Determinism: two identical loads produce identical session ids, turn
 #     counts, branch shapes, timestamps, and reset_context flags.
-# ---------------------------------------------------------------------------
 
 
 def test_two_identical_loads_byte_stable_structure(tmp_path):
@@ -678,11 +629,9 @@ def test_two_identical_loads_byte_stable_structure(tmp_path):
     assert _snapshot() == _snapshot()
 
 
-# ---------------------------------------------------------------------------
 # 11. Mixed s/n: discriminator union splits identically to all-n. A streaming
 #     worker and a normal worker forking off the same prefix produce the same
 #     partition shape regardless of which row is s vs n.
-# ---------------------------------------------------------------------------
 
 
 def test_streaming_rows_split_identically_to_normal_rows(tmp_path):
@@ -724,10 +673,8 @@ def test_streaming_rows_split_identically_to_normal_rows(tmp_path):
     assert all_normal == worker_stream == all_stream
 
 
-# ---------------------------------------------------------------------------
 # 12. Env-off legacy path: detection disabled emits exactly one root with all
 #     retained rows on it; nothing references a fa:* child (none exist).
-# ---------------------------------------------------------------------------
 
 
 def test_env_off_emits_single_root_with_all_rows(tmp_path, monkeypatch):
@@ -747,11 +694,9 @@ def test_env_off_emits_single_root_with_all_rows(tmp_path, monkeypatch):
     assert convs[0].branches == []
 
 
-# ---------------------------------------------------------------------------
 # 13. Theoretical prefix-cache totals conservation: per source request, the sum
 #     over all emitted turns of total_blocks equals len(hash_ids) summed over
 #     retained requests (spec §5.5: total_blocks == len(hash_ids) per request).
-# ---------------------------------------------------------------------------
 
 
 def test_theoretical_total_blocks_equals_hash_len_per_request(tmp_path):
@@ -781,9 +726,7 @@ def test_theoretical_total_blocks_equals_hash_len_per_request(tmp_path):
     assert emitted_total == expected_total
 
 
-# ---------------------------------------------------------------------------
 # 14. Delays are never negative on any emitted turn (no warp, no think-time).
-# ---------------------------------------------------------------------------
 
 
 def test_no_emitted_delay_is_negative(tmp_path):
@@ -805,10 +748,8 @@ def test_no_emitted_delay_is_negative(tmp_path):
                 assert turn.delay >= 0.0, f"{sid} turn {k} delay {turn.delay} < 0"
 
 
-# ---------------------------------------------------------------------------
 # 15. Branch start_timestamp_ms is the min chain start * 1000 of the group and
 #     a SPAWN branch is never FORK-mode (orchestrator only honors SPAWN here).
-# ---------------------------------------------------------------------------
 
 
 def test_flat_branches_are_spawn_mode_with_min_start_timestamp(tmp_path):
@@ -830,11 +771,9 @@ def test_flat_branches_are_spawn_mode_with_min_start_timestamp(tmp_path):
         assert b.start_timestamp_ms == pytest.approx(1.25 * 1000.0)
 
 
-# ---------------------------------------------------------------------------
 # 16. Equal-timestamp tie-break: two requests with the EXACT same t but
 #     different outer indices must order by outer_idx, keeping per-chain order
 #     deterministic and the partition stable across the (t, outer) sort.
-# ---------------------------------------------------------------------------
 
 
 def test_exact_equal_timestamps_tie_break_by_outer_index(tmp_path):
@@ -859,11 +798,9 @@ def test_exact_equal_timestamps_tie_break_by_outer_index(tmp_path):
     assert total == retained
 
 
-# ---------------------------------------------------------------------------
 # 17. Interaction: subagent markers coexist with flat chains. Subagent children
 #     and flat children must have disjoint, non-colliding branch_ids on the
 #     root, and the emitted metadata must validate.
-# ---------------------------------------------------------------------------
 
 
 def test_subagent_and_flat_chain_branch_ids_disjoint(tmp_path):
@@ -916,14 +853,12 @@ def test_subagent_and_flat_chain_branch_ids_disjoint(tmp_path):
             assert cid in emitted, cid
 
 
-# ---------------------------------------------------------------------------
 # 18. Flat-child turn-0 prefix invariant: the system segment a worker opens
 #     with is exactly its namespace-group's observed prefix, which by
 #     construction never exceeds the worker's own first-request hash length —
 #     so init_turn_0 must never raise the "prefix requires N hash blocks but
 #     only M recorded" error. Attack: a group whose shortest member has fewer
 #     blocks than its peers.
-# ---------------------------------------------------------------------------
 
 
 def test_flat_child_observed_prefix_never_exceeds_first_request(tmp_path):
@@ -954,11 +889,9 @@ def test_flat_child_observed_prefix_never_exceeds_first_request(tmp_path):
             assert t0.theoretical_prefix_cache_total_blocks is not None
 
 
-# ---------------------------------------------------------------------------
 # 19. Group min start_timestamp_ms: when multiple chains collapse into one
 #     branch (shared spawn+join), the branch's start_timestamp_ms is the MIN
 #     chain start across the whole group, not just the first-listed chain.
-# ---------------------------------------------------------------------------
 
 
 def test_collapsed_group_branch_uses_min_chain_start(tmp_path):

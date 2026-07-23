@@ -1,10 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for AgenticReplayStrategy.
-
-Tests the phase-aware trajectory dispatch (WARMUP) and resume-at-k+1 + recycle
-(PROFILING) behaviors specified in agentx-mvp Spec §4.2.
-"""
+"""Unit tests for AgenticReplayStrategy phase-aware dispatch and recycle."""
 
 from __future__ import annotations
 
@@ -34,9 +30,7 @@ from aiperf.timing.trajectory_source import (
     TrajectorySource,
 )
 
-# =============================================================================
 # Helpers
-# =============================================================================
 
 
 def _make_dataset(num_traces: int, turns_per_trace: int) -> DatasetMetadata:
@@ -143,9 +137,7 @@ def _make_credit(
     )
 
 
-# =============================================================================
 # Constructor validation
-# =============================================================================
 
 
 def test_constructor_rejects_unknown_phase():
@@ -208,9 +200,7 @@ def test_warmup_only_overrides_max_tokens():
     )
 
 
-# =============================================================================
 # WARMUP phase
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -841,9 +831,7 @@ def test_report_warmup_failures_silent_when_no_failures():
     strategy.report_warmup_failures()  # must not raise
 
 
-# =============================================================================
 # PROFILING phase: setup_phase + execute_phase
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -1945,9 +1933,7 @@ async def test_profiling_skips_trajectory_at_last_turn_and_recycles():
     assert captured[0][0] == "trace_0"
 
 
-# =============================================================================
 # PROFILING handle_credit_return: continuation + recycle
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -2198,9 +2184,7 @@ async def test_handle_credit_return_warmup_phase_is_noop_for_final_turn():
     assert issuer.issue_credit.await_count == 0
 
 
-# =============================================================================
 # Warmup signals sending-complete after dispatch
-# =============================================================================
 #
 # Belt-and-suspenders alongside total_expected_requests=loadgen.concurrency:
 # _execute_warmup must call lifecycle.mark_sending_complete() AFTER the
@@ -2308,9 +2292,7 @@ async def test_warmup_skips_mark_sending_complete_when_already_complete():
     strategy.lifecycle.mark_sending_complete.assert_not_called()
 
 
-# =============================================================================
 # Cache-bust marker minting (Task 5)
-# =============================================================================
 #
 # Per spec §4.5, AgenticReplayStrategy mints one marker per session keyed by
 # x_correlation_id, reuses it across the warmup k_i / profile k_i+1 boundary,
@@ -2601,9 +2583,7 @@ async def test_two_traces_at_same_pass_and_lane_get_distinct_markers():
     )
 
 
-# =============================================================================
 # Signature lock: _spawn_from_recycle_or_id requires finished_correlation_id
-# =============================================================================
 
 
 def test_spawn_from_recycle_or_id_requires_finished_correlation_id() -> None:
@@ -2647,9 +2627,7 @@ async def test_spawn_from_recycle_or_id_pops_lane_and_marker_for_correlation() -
     assert correlation_id not in strategy._session_marker
 
 
-# =============================================================================
 # PROFILING phase: rootless lanes (root finished before t*) hold a lane credit
-# =============================================================================
 
 
 def _children_dataset() -> DatasetMetadata:

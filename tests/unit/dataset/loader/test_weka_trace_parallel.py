@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+from pytest import param
 
 from aiperf.dataset.loader import weka_parallel_convert as wpc
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
@@ -469,12 +470,18 @@ def test_parallel_byte_equivalence_with_subagent(tmp_path):
                 )
 
 
-def test_parallel_threshold_falls_back_to_serial(monkeypatch):
-    """N < threshold -> serial path (no Pool spawn).
-
-    We verify by setting the threshold above the trace count and asserting
-    weka_parallel_convert.run_parallel_weka_reconstruction is never called.
-    """
+@pytest.mark.parametrize(
+    "env_overrides",
+    [
+        param({"WEKA_PARALLEL_THRESHOLD": 100}, id="threshold_above_count"),
+        param(
+            {"WEKA_PARALLEL_THRESHOLD": 1, "WEKA_PARALLEL_WORKERS": 1},
+            id="workers_one",
+        ),
+    ],
+)  # fmt: skip
+def test_parallel_disabled_forces_serial(monkeypatch, env_overrides):
+    """N < threshold or WEKA_PARALLEL_WORKERS=1 forces the serial path (no Pool)."""
     from aiperf.common import environment as env_mod
 
     serial_loader = WekaTraceLoader(
@@ -482,13 +489,14 @@ def test_parallel_threshold_falls_back_to_serial(monkeypatch):
     )
     _stub_loader(serial_loader)
 
-    monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_THRESHOLD", 100)
+    for name, value in env_overrides.items():
+        monkeypatch.setattr(env_mod.Environment.DATASET, name, value)
 
     called = {"hit": False}
 
     def boom(*a, **kw):
         called["hit"] = True
-        raise AssertionError("parallel path should not run when N < threshold")
+        raise AssertionError("parallel path should not run when disabled")
 
     monkeypatch.setattr(
         "aiperf.dataset.loader.weka_parallel_convert.run_parallel_weka_reconstruction",
@@ -498,35 +506,6 @@ def test_parallel_threshold_falls_back_to_serial(monkeypatch):
     data = serial_loader.load_dataset()
     convs = serial_loader.convert_to_conversations(data)
     assert convs, "expected at least one conversation from serial path"
-    assert not called["hit"]
-
-
-def test_parallel_workers_one_disables_parallel(monkeypatch):
-    """WEKA_PARALLEL_WORKERS=1 forces the serial path."""
-    from aiperf.common import environment as env_mod
-
-    serial_loader = WekaTraceLoader(
-        filename=str(FIXTURES / "simple.json"), run=_mk_user_config()
-    )
-    _stub_loader(serial_loader)
-
-    monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_THRESHOLD", 1)
-    monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_WORKERS", 1)
-
-    called = {"hit": False}
-
-    def boom(*a, **kw):
-        called["hit"] = True
-        raise AssertionError("parallel path should not run when WORKERS=1")
-
-    monkeypatch.setattr(
-        "aiperf.dataset.loader.weka_parallel_convert.run_parallel_weka_reconstruction",
-        boom,
-    )
-
-    data = serial_loader.load_dataset()
-    convs = serial_loader.convert_to_conversations(data)
-    assert convs
     assert not called["hit"]
 
 

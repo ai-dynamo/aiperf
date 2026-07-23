@@ -1,23 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for the byte-exact weka conversation reconstructor.
-
-These tests stub out the real prompt synthesis so they don't need a
-tokenizer; they verify segment shapes, LCP-driven truncation, and the
-symmetric asst|user attribution rule.
-
-Invariants tested:
-- ``sum(len(seg.tokens)) == in_tokens`` exactly after init_turn_0 and
-  advance_turn (block-aligned segment sizes).
-- Every segment except the trailing user holds ``block_count * bs`` tokens.
-- The hash-content invariant: a given ``hash_id`` decodes to the identical
-  token sequence in every segment of every turn (no terminator stamp on
-  the trailing tokens).
-"""
+"""Unit tests for the byte-exact weka conversation reconstructor."""
 
 import math
 
 import pytest
+from pytest import param
 
 from aiperf.dataset.loader.weka_synth_buf import (
     ConversationReconstructor,
@@ -242,28 +230,23 @@ def test_snapshot_messages_round_trips_segments():
     ]
 
 
-def test_lcp_identical_lists():
-    assert longest_common_prefix([1, 2, 3], [1, 2, 3]) == 3
-
-
-def test_lcp_empty():
-    assert longest_common_prefix([], []) == 0
-    assert longest_common_prefix([], [1]) == 0
-    assert longest_common_prefix([1], []) == 0
-
-
-def test_lcp_prefix_extension():
-    assert longest_common_prefix([1, 2, 3], [1, 2, 3, 4, 5]) == 3
-    assert longest_common_prefix([1, 2, 3, 4, 5], [1, 2, 3]) == 3
-
-
-def test_lcp_divergence_at_first_position():
-    assert longest_common_prefix([1, 2, 3], [4, 5, 6]) == 0
-
-
-def test_lcp_mid_sequence_replacement():
-    # Pattern B: trailing-block churn
-    assert longest_common_prefix([1, 2, 3, 4], [1, 2, 3, 5, 6]) == 3
+@pytest.mark.parametrize(
+    "cases",
+    [
+        param([([1, 2, 3], [1, 2, 3], 3)], id="identical_lists"),
+        param([([], [], 0), ([], [1], 0), ([1], [], 0)], id="empty"),
+        param(
+            [([1, 2, 3], [1, 2, 3, 4, 5], 3), ([1, 2, 3, 4, 5], [1, 2, 3], 3)],
+            id="prefix_extension",
+        ),
+        param([([1, 2, 3], [4, 5, 6], 0)], id="divergence_at_first_position"),
+        param([([1, 2, 3, 4], [1, 2, 3, 5, 6], 3)], id="mid_sequence_replacement"),
+    ],
+)  # fmt: skip
+def test_lcp(cases):
+    """longest_common_prefix over identical, empty, extension, and churn shapes."""
+    for a, b, expected in cases:
+        assert longest_common_prefix(a, b) == expected
 
 
 def test_truncate_at_segment_boundary():
@@ -687,11 +670,6 @@ def test_advance_token_level_slicing_asst_user_split():
     assert r._segments[2].tokens == new_region[128:192]
 
 
-# ---------------------------------------------------------------------------
-# Byte-exact sum + hash-content stability
-# ---------------------------------------------------------------------------
-
-
 def test_byte_exact_sum_matches_recorded_init_turn_0():
     """sum(len(seg.tokens)) == in_tokens after init_turn_0 across various
     tool/sys/in combinations including edge cases that previously had
@@ -836,11 +814,6 @@ def test_hash_content_stability_terminator_field_unused():
         assert s_no.tokens == s_yes.tokens
         # Last token is the underlying block's last token, not 99999.
         assert s_yes.tokens[-1] != 99999
-
-
-# ---------------------------------------------------------------------------
-# Prefix-stability invariant: surviving segments are strict prefixes
-# ---------------------------------------------------------------------------
 
 
 def _snapshot_segments(recon):
@@ -1437,11 +1410,6 @@ def test_init_turn_0_system_only_prompt_records_caveat():
     )
     assert [s.role for s in r._segments] == ["system"]
     assert r._trailing_non_user_turns == [0]
-
-
-# ---------------------------------------------------------------------------
-# compute_asst_block_caps (Pass-1 planner) + advance_turn(max_asst_blocks=...)
-# ---------------------------------------------------------------------------
 
 
 def test_compute_caps_canonical_degenerate():

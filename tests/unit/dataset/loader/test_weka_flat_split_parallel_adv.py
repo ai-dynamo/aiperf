@@ -1,20 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial serial-vs-parallel byte-parity tests for flattened-agent splitting.
-
-Spec: ~/.aiperf/docs/superpowers/specs/2026-06-10-weka-flattened-agent-lcp-detection-design.md
-(goal 5: "Deterministic, byte-identical across the serial and parallel
-reconstruction paths").
-
-Each test crafts a hostile trace shape (idle-gap warp mid-chain, mixed
-split/no-split directories, subagent + flat-chain interleaving, compaction
-seams inside the main chain, nonce-poisoned hashes, max-osl caps, cross-model
-worker batches, effective-prefix overrides, epsilon-exact join boundaries),
-runs the FULL ``convert_to_conversations`` through both reconstruction paths
-(the worker pool replaced by an in-process map over ``_process_task``, per the
-pattern in test_weka_trace_parallel.test_fanout_split_parallel_byte_identical_to_serial),
-and compares the outputs field by field.
-"""
+"""Adversarial serial-vs-parallel byte-parity tests for flattened-agent splitting."""
 
 from __future__ import annotations
 
@@ -33,9 +19,7 @@ from aiperf.common.models import Conversation
 from aiperf.dataset.loader import weka_parallel_convert as wpc
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
 
-# ---------------------------------------------------------------------------
 # Config / loader helpers (conventions copied from test_weka_trace_parallel.py)
-# ---------------------------------------------------------------------------
 
 
 def _mk_user_config(
@@ -77,9 +61,7 @@ def _stub_loader_real_rng(loader: WekaTraceLoader) -> None:
     loader._block_size = 64
 
 
-# ---------------------------------------------------------------------------
 # Trace builders
-# ---------------------------------------------------------------------------
 
 
 def _nreq(
@@ -152,9 +134,7 @@ def _write_traces(tmp_path: Path, traces: list[dict[str, Any]]) -> Path:
     return d
 
 
-# ---------------------------------------------------------------------------
 # Serial / in-proc-parallel runners + field-by-field comparator
-# ---------------------------------------------------------------------------
 
 
 def _convert_serial(path: Path, uc, monkeypatch) -> list[Conversation]:
@@ -287,9 +267,7 @@ def _by_sid(convs: list[Conversation]) -> dict[str, Conversation]:
     return {c.session_id: c for c in convs}
 
 
-# ---------------------------------------------------------------------------
 # Tests
-# ---------------------------------------------------------------------------
 
 
 def test_convert_fanout_idle_gap_warp_parallel_byte_identical(tmp_path, monkeypatch):

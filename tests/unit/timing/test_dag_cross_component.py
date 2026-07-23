@@ -1,26 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Cross-component adversarial tests for the DAG orchestrator.
-
-Targets the seams between :class:`BranchOrchestrator` and the surrounding
-machinery:
-
-- :class:`UserSessionManager` (FORK turn_list snapshot semantics, FORK refcount
-  lifecycle through evict).
-- :class:`StickyCreditRouter` (refcount lifecycle across delayed gaps,
-  parent_final_seen + ref_count==0 eviction trigger, both orderings of the race
-  between parent terminal turn arrival and child completion, register before
-  the parent has any sticky entry).
-- :class:`CreditIssuer` (try_issue_credit returning None vs True/False;
-  dispatch_join_turn returning False; rate-limited pre-session dispatch).
-- :class:`ConversationSource` (start_branch_child / start_pre_session_child /
-  get_metadata exception paths).
-- :class:`WorkerLoad` (active_sessions accounting under FORK fanout, sticky
-  pinning of FORK siblings vs SPAWN sticky co-locate without refcount bump).
-
-These tests intentionally exercise documented invariants of the surrounding
-components, not just the orchestrator's internal state.
-"""
+"""Cross-component adversarial tests for the DAG orchestrator."""
 
 from __future__ import annotations
 
@@ -52,10 +32,6 @@ from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.branch_orchestrator import BranchOrchestrator
 from aiperf.workers.session_manager import UserSessionManager
-
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
 
 
 def _mk_conv_meta(
@@ -177,11 +153,6 @@ def _make_real_conversation(cid: str, num_turns: int) -> Conversation:
     )
 
 
-# ---------------------------------------------------------------------------
-# 1. FORK child seeded from parent's turn_list AT SNAPSHOT TIME (mid-progression)
-# ---------------------------------------------------------------------------
-
-
 def test_fork_child_turn_list_snapshot_taken_at_create_time():
     """A FORK child seeded when the parent has dispatched turns 0..2 must
     snapshot the parent's CURRENT turn_list. Later parent advances must not
@@ -224,11 +195,6 @@ def test_fork_child_turn_list_snapshot_taken_at_create_time():
     assert len(child.turn_list) == 3, (
         "FORK snapshot must not alias the parent's turn_list"
     )
-
-
-# ---------------------------------------------------------------------------
-# 2. FORK refcount: each FORK branch increments; decrements on terminal.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -290,11 +256,6 @@ async def test_fork_refcount_decrements_on_child_terminal_not_on_gate_satisfy():
     assert sticky.release_child_routing.call_count == 2
 
 
-# ---------------------------------------------------------------------------
-# 3. Sticky entry stays alive when child completes mid-gap (parent_final_seen=False)
-# ---------------------------------------------------------------------------
-
-
 def test_sticky_entry_stays_when_child_completes_before_parent_final(benchmark_run):
     """Child completion decrements ref_count, but the entry must remain in
     place because parent_final_seen=False (parent hasn't reached its terminal
@@ -313,11 +274,6 @@ def test_sticky_entry_stays_when_child_completes_before_parent_final(benchmark_r
     entry = router._sticky_sessions["parent-corr"]
     assert entry.ref_count == 1
     assert entry.parent_final_seen is False
-
-
-# ---------------------------------------------------------------------------
-# 4. Sticky eviction race: parent_final_seen flips True; both orderings.
-# ---------------------------------------------------------------------------
 
 
 def test_sticky_evicts_when_parent_final_then_child_release(benchmark_run):
@@ -363,12 +319,6 @@ def test_sticky_evicts_when_child_release_brings_ref_to_zero_after_final(benchma
     assert "parent-corr" not in router._sticky_sessions
 
 
-# ---------------------------------------------------------------------------
-# 5. register_child_routing called BEFORE _dispatch_first_turn; if dispatch
-#    fails, intercept rolls back via release_child_routing -> net-zero.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_register_then_dispatch_fail_rolls_back_sticky_refcount():
     """The orchestrator registers FORK sticky refcount BEFORE
@@ -391,11 +341,6 @@ async def test_register_then_dispatch_fail_rolls_back_sticky_refcount():
     # ``dispatch_first=False`` is stop-condition refusal, not an error.
     assert orch.stats.children_truncated == 1
     assert orch.stats.children_errored == 0
-
-
-# ---------------------------------------------------------------------------
-# 5b. R3: all start_branch_child failures must evict unclaimed sticky.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -445,11 +390,6 @@ async def test_all_start_branch_child_failures_evict_unclaimed_sticky(benchmark_
     assert router._workers["w1"].active_sessions == 0
 
 
-# ---------------------------------------------------------------------------
-# 6. register_child_routing for a parent with no sticky entry: silent no-op.
-# ---------------------------------------------------------------------------
-
-
 def test_register_child_routing_with_no_existing_sticky_entry_is_noop(benchmark_run):
     """register_child_routing on a parent that never had a turn dispatched
     is a documented no-op. The router does NOT create one."""
@@ -462,11 +402,6 @@ def test_register_child_routing_with_no_existing_sticky_entry_is_noop(benchmark_
 
     router.release_child_routing("ghost-parent")
     assert "ghost-parent" not in router._sticky_sessions
-
-
-# ---------------------------------------------------------------------------
-# 7. dispatch_join_turn returns False -> joins_suppressed++; gate dropped.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -489,11 +424,6 @@ async def test_dispatch_join_turn_returns_false_increments_joins_suppressed():
     assert "corr-root" not in orch._future_joins
 
 
-# ---------------------------------------------------------------------------
-# 8. dispatch_first_turn coerces None to False uniformly via bool() wrapper.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_orchestrator_handles_dispatch_first_turn_returning_falsy():
     """The orchestrator's _dispatch_first_turn wraps with bool(); both False
@@ -513,13 +443,6 @@ async def test_orchestrator_handles_dispatch_first_turn_returning_falsy():
     assert orch.stats.children_truncated == 1
     assert orch.stats.children_errored == 0
     assert sticky.release_child_routing.call_count == 1
-
-
-# ---------------------------------------------------------------------------
-# 9. UserSessionManager.create_and_store raising during FORK child creation
-#    propagates as exception; orchestrator's gather(return_exceptions=True)
-#    captures it; per-child rollback fires.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -545,11 +468,6 @@ async def test_orchestrator_handles_dispatch_first_turn_raising():
     assert orch.stats.children_errored == 1
     assert sticky.register_child_routing.call_count == 1
     assert sticky.release_child_routing.call_count == 1
-
-
-# ---------------------------------------------------------------------------
-# 10. Worker disconnects mid-DAG: cleanup logs leak warnings; tracking cleared.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -579,11 +497,6 @@ async def test_worker_disconnect_mid_dag_cleanup_clears_state(caplog):
     assert not orch._child_to_join
     assert not orch._descendant_counts
     assert any("leaked state" in m for m in caplog.messages)
-
-
-# ---------------------------------------------------------------------------
-# 11. Two FORK children of the same parent: both pin to parent's worker.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -636,11 +549,6 @@ async def test_fork_siblings_pin_to_parents_worker_via_sticky_routing(benchmark_
     )
 
 
-# ---------------------------------------------------------------------------
-# 12. SPAWN child does NOT trigger sticky register_child_routing.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_spawn_child_does_not_call_register_child_routing():
     """SPAWN-mode children do not bump sticky refcount; the orchestrator
@@ -685,12 +593,6 @@ async def test_spawn_child_does_not_call_register_child_routing():
     sticky.release_child_routing.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# 13. Pre-session SPAWN child has parent_correlation_id=None; routing_key
-#     falls back to its own x_correlation_id.
-# ---------------------------------------------------------------------------
-
-
 def test_pre_session_child_routing_key_falls_back_to_own_correlation():
     """SampledSession.routing_key returns parent_correlation_id when set,
     else x_correlation_id. Pre-session children have parent_correlation_id=
@@ -707,12 +609,6 @@ def test_pre_session_child_routing_key_falls_back_to_own_correlation():
         branch_mode=ConversationBranchMode.SPAWN,
     )
     assert pre.routing_key == "self-corr"
-
-
-# ---------------------------------------------------------------------------
-# 14. Pre-session dispatch failed (issuer returns False). Branch is still
-#     recorded so intercept doesn't double-dispatch later.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -745,11 +641,6 @@ async def test_pre_session_dispatch_failure_still_records_branch():
 
     await orch.intercept(_mk_credit("root", "corr-root", 0))
     cs.start_branch_child.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# 15. start_branch_child raises -- per-child try/except catches; siblings continue.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -805,11 +696,6 @@ async def test_start_branch_child_raises_for_one_sibling_others_continue():
     issuer.dispatch_first_turn.assert_awaited_once()
 
 
-# ---------------------------------------------------------------------------
-# 16. start_pre_session_child raises -- siblings continue.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_start_pre_session_child_raises_siblings_continue():
     """In dispatch_pre_session_branches, an exception from
@@ -857,11 +743,6 @@ async def test_start_pre_session_child_raises_siblings_continue():
     issuer.dispatch_first_turn.assert_awaited_once()
 
 
-# ---------------------------------------------------------------------------
-# 17. get_metadata raising propagates through intercept (NOT silently swallowed).
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_get_metadata_raises_propagates_through_intercept():
     """ConversationSource.get_metadata raising KeyError on an unknown
@@ -875,14 +756,6 @@ async def test_get_metadata_raises_propagates_through_intercept():
 
     with pytest.raises(KeyError):
         await orch.intercept(_mk_credit("root", "corr-root", 0))
-
-
-# ---------------------------------------------------------------------------
-# 18. SPAWN child WITH parent_correlation_id: routing_key falls back to
-#     parent_correlation_id (per docstring). Documenting actual behavior:
-#     SPAWN children DO sticky-route to parent's worker too (via routing_key)
-#     even though the orchestrator does not bump sticky refcount.
-# ---------------------------------------------------------------------------
 
 
 def test_spawn_child_with_parent_correlation_routes_to_parent_worker():
@@ -901,11 +774,6 @@ def test_spawn_child_with_parent_correlation_routes_to_parent_worker():
         branch_mode=ConversationBranchMode.SPAWN,
     )
     assert spawn.routing_key == "parent-corr"
-
-
-# ---------------------------------------------------------------------------
-# 19. Concurrent register/release on the same parent: refcount converges.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -927,13 +795,6 @@ async def test_concurrent_register_release_refcount_converges(benchmark_run):
 
     await asyncio.gather(*(_bump_and_release() for _ in range(50)))
     assert router._sticky_sessions["parent-corr"].ref_count == 1
-
-
-# ---------------------------------------------------------------------------
-# 20. WorkerLoad.active_sessions accounting under FORK fan-out: parent +
-#     N FORK children all on same worker. active_sessions reflects parent
-#     only -- FORK children share the parent's sticky entry.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio

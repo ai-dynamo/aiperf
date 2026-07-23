@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CacheBustTarget, ConversationBranchMode, CreditPhase
 from aiperf.common.models.dataset_models import Conversation, Text, Turn
@@ -113,20 +114,20 @@ def test_inject_marker_into_raw_messages_suffix():
     assert raw[0]["content"] == "you are helpful" + _SUFFIX_MARKER
 
 
-def test_inject_marker_into_raw_messages_prefix_idempotent():
+@pytest.mark.parametrize(
+    ("marker", "is_prefix", "expected"),
+    [
+        param(_PREFIX_MARKER, True, _PREFIX_MARKER + "you are helpful", id="prefix"),
+        param(_SUFFIX_MARKER, False, "you are helpful" + _SUFFIX_MARKER, id="suffix"),
+    ],
+)  # fmt: skip
+def test_inject_marker_into_raw_messages_idempotent(marker, is_prefix, expected):
     """In DELTAS mode turn_list[0] is a single shared object re-visited every
     credit; re-injecting the same marker must NOT stack it."""
     raw = [{"role": "system", "content": "you are helpful"}]
-    _inject_marker_into_raw_messages(raw, _PREFIX_MARKER, is_prefix=True)
-    _inject_marker_into_raw_messages(raw, _PREFIX_MARKER, is_prefix=True)
-    assert raw[0]["content"] == _PREFIX_MARKER + "you are helpful"
-
-
-def test_inject_marker_into_raw_messages_suffix_idempotent():
-    raw = [{"role": "system", "content": "you are helpful"}]
-    _inject_marker_into_raw_messages(raw, _SUFFIX_MARKER, is_prefix=False)
-    _inject_marker_into_raw_messages(raw, _SUFFIX_MARKER, is_prefix=False)
-    assert raw[0]["content"] == "you are helpful" + _SUFFIX_MARKER
+    _inject_marker_into_raw_messages(raw, marker, is_prefix=is_prefix)
+    _inject_marker_into_raw_messages(raw, marker, is_prefix=is_prefix)
+    assert raw[0]["content"] == expected
 
 
 def test_inject_marker_into_raw_messages_multimodal_idempotent():
@@ -330,16 +331,17 @@ def _make_synthetic_session(turn: Turn, *, num_turns: int = 1) -> UserSession:
     )
 
 
-def test_inject_first_user_text_prefix_mutates_first_content():
+@pytest.mark.parametrize(
+    ("marker", "is_prefix", "expected"),
+    [
+        param(_PREFIX_MARKER, True, _PREFIX_MARKER + "hello", id="prefix"),
+        param(_SUFFIX_MARKER, False, "hello" + _SUFFIX_MARKER, id="suffix"),
+    ],
+)  # fmt: skip
+def test_inject_first_user_text_mutates_first_content(marker, is_prefix, expected):
     turn = Turn(raw_messages=None, texts=[Text(contents=["hello"])])
-    _inject_marker_into_first_user_text(turn, _PREFIX_MARKER, is_prefix=True)
-    assert turn.texts[0].contents[0] == _PREFIX_MARKER + "hello"
-
-
-def test_inject_first_user_text_suffix_appends():
-    turn = Turn(raw_messages=None, texts=[Text(contents=["hello"])])
-    _inject_marker_into_first_user_text(turn, _SUFFIX_MARKER, is_prefix=False)
-    assert turn.texts[0].contents[0] == "hello" + _SUFFIX_MARKER
+    _inject_marker_into_first_user_text(turn, marker, is_prefix=is_prefix)
+    assert turn.texts[0].contents[0] == expected
 
 
 def test_inject_first_user_text_empty_texts_creates_marker_text():

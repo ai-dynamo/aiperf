@@ -1,17 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial unit tests for the FIFO recycle queue in AgenticReplayStrategy.
-
-Covers spec section 8.4.3:
-    1. Single trace, concurrency=1: recycle reuses the just-finished trace.
-    2. Pool=1, concurrency=2: second consumer waits without deadlock.
-    3. Burst of 10 completions in one tick: order preserved.
-    4. Push-back races concurrent pop: asyncio.Queue order preserved.
-    5. Double-recycle programmer error: debug-build assertion guard.
-    6. Cooldown after DurationStopCondition: no new sessions begin.
-    7. Pool=750, concurrency=100: every trace replayed; deterministic order.
-    8. Trajectory with N_i=1 (warmup-only): immediate recycle at PROFILING.
-"""
+"""Adversarial unit tests for the FIFO recycle queue in AgenticReplayStrategy."""
 
 from __future__ import annotations
 
@@ -35,9 +24,7 @@ from aiperf.timing.trajectory_source import (
     TrajectorySource,
 )
 
-# =============================================================================
 # Helpers
-# =============================================================================
 
 
 def _make_dataset(num_traces: int, turns_per_trace: int) -> DatasetMetadata:
@@ -175,9 +162,7 @@ def _make_credit(
     )
 
 
-# =============================================================================
 # Test 1: Single trace, concurrency=1 -> immediate self-recycle
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -212,9 +197,7 @@ async def test_single_trace_concurrency_one_recycles_self():
     assert issued == [("trace_0", 0)]
 
 
-# =============================================================================
 # Test 2: Pool=1, concurrency=2 -> second consumer waits, no deadlock
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -285,9 +268,7 @@ async def test_pool_one_concurrency_two_no_deadlock():
     assert issued == ["trace_0", "trace_1"]
 
 
-# =============================================================================
 # Test 3: Burst of 10 completions within one tick -> order preserved
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -337,9 +318,7 @@ async def test_burst_of_ten_completions_recycle_in_sampler_order():
     assert served == [f"trace_{i}" for i in range(10)]
 
 
-# =============================================================================
 # Test 4: Push-back races concurrent pop -> no lost or duplicated trace_ids
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -393,9 +372,7 @@ async def test_concurrent_recycle_serves_distinct_roots_from_pool():
     assert len(set(served)) == 50
 
 
-# =============================================================================
 # Test 5: Double-recycle programmer error -> debug-build assertion
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -438,9 +415,7 @@ async def test_double_recycle_same_trace_raises():
         await strategy.handle_credit_return(final)
 
 
-# =============================================================================
 # Test 6: Recycle during PROFILING-end cooldown -> no new sessions
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -477,9 +452,7 @@ async def test_recycle_during_cooldown_does_not_start_new_sessions():
     assert issuer.issue_credit.await_count == 0
 
 
-# =============================================================================
 # Test 7: Pool=750, concurrency=100 -> every trace replayed; deterministic order
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -566,9 +539,7 @@ async def test_large_pool_every_trace_replayed_deterministic_order():
     ]
 
 
-# =============================================================================
 # Test 8: Trajectory with N_i=1 (warmup-only) -> immediate recycle
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -628,9 +599,7 @@ async def test_trajectory_with_one_turn_recycles_immediately_at_profiling_start(
     assert issued[0] == ("trace_0", 0)
 
 
-# =============================================================================
 # Test 9: Missing finished_correlation_id in _correlation_to_lane logs warning
-# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -680,7 +649,6 @@ async def test_recycle_missing_correlation_id_logs_warning(caplog):
     assert issuer.issue_credit.await_count == 1
 
 
-# =============================================================================
 # Tests 10-13: DAG-child final-turn short-circuit
 #
 # DAG-child terminal completion is owned by BranchOrchestrator
@@ -690,7 +658,6 @@ async def test_recycle_missing_correlation_id_logs_warning(caplog):
 # entries, and they repeat across recycle passes of the same parent. Without
 # the short-circuit, the second time a parent re-runs, its child re-completes
 # with the same conversation_id and trips the double-recycle guard.
-# =============================================================================
 
 
 def _make_child_credit(

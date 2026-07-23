@@ -1,12 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""v2 scenario-resolver tests.
-
-Rebased from the v1 ``validate_scenario(user_config)`` MagicMock suite onto the
-v2 ``apply_scenario(run)`` resolver. Each test builds a REAL ``BenchmarkConfig``
-+ ``BenchmarkRun`` (no MagicMock) so attribute-path drift fails loudly, and runs
-either ``apply_scenario(run)`` directly or the full resolver chain.
-"""
+"""v2 scenario-resolver tests."""
 
 from __future__ import annotations
 
@@ -86,22 +80,12 @@ def _build_run(
     )
 
 
-# ---------------------------------------------------------------------------
-# No scenario -> no-op
-# ---------------------------------------------------------------------------
-
-
 def test_no_scenario_returns_noop() -> None:
     run = _build_run(scenario=None)
     outcome = apply_scenario(run)
     assert outcome.violations == []
     assert outcome.submission_valid is None
     assert run.resolved.scenario_outcome is outcome
-
-
-# ---------------------------------------------------------------------------
-# Happy path through the full resolver chain
-# ---------------------------------------------------------------------------
 
 
 def test_clean_weka_public_dataset_through_resolver_chain() -> None:
@@ -118,11 +102,6 @@ def test_clean_weka_public_dataset_through_resolver_chain() -> None:
     assert isinstance(outcome, ScenarioOutcome)
     assert outcome.submission_valid is True
     assert "timing_mode" in outcome.applied_locks
-
-
-# ---------------------------------------------------------------------------
-# timing_mode
-# ---------------------------------------------------------------------------
 
 
 def test_timing_mode_stamped_on_profiling_phase() -> None:
@@ -199,11 +178,6 @@ def test_explicit_scheduling_phase_unsafe_override_keeps_user_mode() -> None:
     assert run.cfg.get_profiling_phases()[0].timing_mode != TimingMode.AGENTIC_REPLAY
 
 
-# ---------------------------------------------------------------------------
-# require_streaming
-# ---------------------------------------------------------------------------
-
-
 def test_absent_streaming_auto_enabled() -> None:
     run = _build_run(extra={"ignore_eos": True})
     assert run.cfg.endpoint.streaming is False
@@ -226,11 +200,6 @@ def test_streaming_on_no_violation() -> None:
     assert outcome.submission_valid is True
 
 
-# ---------------------------------------------------------------------------
-# require_ignore_eos
-# ---------------------------------------------------------------------------
-
-
 def test_absent_ignore_eos_injected() -> None:
     run = _build_run(streaming=True)
     apply_scenario(run)
@@ -241,11 +210,6 @@ def test_explicit_ignore_eos_false_raises() -> None:
     run = _build_run(streaming=True, extra={"ignore_eos": False})
     with pytest.raises(ScenarioLockError):
         apply_scenario(run)
-
-
-# ---------------------------------------------------------------------------
-# forbid_ignore_trace_delays
-# ---------------------------------------------------------------------------
 
 
 def test_ignore_trace_delays_raises() -> None:
@@ -277,11 +241,6 @@ def test_ignore_trace_delays_raises_through_resolver_chain() -> None:
     )
     with pytest.raises(ScenarioLockError):
         build_default_resolver_chain().resolve_all(run)
-
-
-# ---------------------------------------------------------------------------
-# require_loader
-# ---------------------------------------------------------------------------
 
 
 def test_wrong_public_loader_raises() -> None:
@@ -445,11 +404,6 @@ def test_local_weka_trace_unsafe_override_marks_submission_invalid() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# require_cache_bust
-# ---------------------------------------------------------------------------
-
-
 def test_cache_bust_auto_filled_when_default() -> None:
     run = _build_run(streaming=True, extra={"ignore_eos": True})
     assert run.cfg.get_cache_bust_target() == CacheBustTarget.NONE
@@ -488,11 +442,6 @@ def test_explicit_cache_bust_first_turn_prefix_ok() -> None:
     assert outcome.violations == []
 
 
-# ---------------------------------------------------------------------------
-# duration
-# ---------------------------------------------------------------------------
-
-
 def test_duration_below_floor_raises() -> None:
     run = _build_run(streaming=True, extra={"ignore_eos": True}, duration=300)
     with pytest.raises(ScenarioLockError) as exc:
@@ -513,11 +462,6 @@ def test_duration_unset_auto_filled_to_scenario_default() -> None:
     run.cfg.get_profiling_phases()[0].duration = None
     apply_scenario(run)
     assert run.cfg.get_profiling_phases()[0].duration == 1800.0
-
-
-# ---------------------------------------------------------------------------
-# trajectory ratios
-# ---------------------------------------------------------------------------
 
 
 def test_trajectory_ratios_auto_filled_when_default() -> None:
@@ -549,11 +493,6 @@ def test_trajectory_ratios_explicit_honored() -> None:
     assert phase.trajectory_start_max_ratio == 0.9
 
 
-# ---------------------------------------------------------------------------
-# trace_idle_gap_cap_seconds
-# ---------------------------------------------------------------------------
-
-
 def test_trace_idle_gap_cap_auto_filled() -> None:
     run = _build_run(streaming=True, extra={"ignore_eos": True})
     assert run.cfg.get_default_dataset().trace_idle_gap_cap_seconds is None
@@ -575,11 +514,6 @@ def test_trace_idle_gap_cap_explicit_other_value_raises() -> None:
     with pytest.raises(ScenarioLockError) as exc:
         apply_scenario(run)
     assert "trace-idle-gap-cap-seconds" in str(exc.value)
-
-
-# ---------------------------------------------------------------------------
-# inter_turn_delay_cap_seconds
-# ---------------------------------------------------------------------------
 
 
 def test_inter_turn_delay_cap_shipped_scenario_does_not_lock() -> None:
@@ -673,11 +607,6 @@ def test_inter_turn_delay_cap_explicit_matching_value_ok(
     assert "inter_turn_delay_cap" in outcome.applied_locks
 
 
-# ---------------------------------------------------------------------------
-# unsafe_override
-# ---------------------------------------------------------------------------
-
-
 def test_unsafe_override_converts_errors_to_warnings() -> None:
     run = _build_run(
         streaming=False,  # would raise --streaming
@@ -702,11 +631,6 @@ def test_outcome_stored_on_resolved() -> None:
     outcome = apply_scenario(run)
     assert run.resolved.scenario_outcome is outcome
     assert outcome.scenario_name == "inferencex-agentx-mvp"
-
-
-# ---------------------------------------------------------------------------
-# random_seed auto-fill (per-run reproducibility)
-# ---------------------------------------------------------------------------
 
 
 def test_random_seed_unset_auto_filled(caplog: pytest.LogCaptureFixture) -> None:

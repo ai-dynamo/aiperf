@@ -1,41 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Pathological / adversarial probes for the Weka trace loaders.
-
-These tests hunt for accounting anomalies, timeline inconsistencies, and
-edge-case math errors that the existing suites do not cover. Each test
-probes ONE thing:
-
-Confirmed bugs (xfail, strict):
-  * ``ConversationBranchInfo.start_timestamp_ms`` is emitted in *raw* trace
-    seconds while every other timestamp on the conversation is rewritten by
-    the per-trace idle-gap warp, so the branch's recorded spawn time can land
-    long after the parent conversation's final turn and after the child's own
-    first request.
-  * The parallel-path subagent payload declares an ``effective_t`` field but
-    never populates it, so ``_process_task`` falls back to the raw ``t`` for
-    ``start_timestamp`` even when an idle-gap warp is active.
-  * ``_sa_end_seconds`` trusts ``duration_ms`` blindly: a negative duration
-    yields a subagent end strictly *before* its own spawn timestamp.
-  * ``_sa_end_seconds`` propagates a NaN inner ``api_time`` straight into the
-    recorded end time, poisoning the join-selection comparison.
-  * ``--use-think-time-only`` emits a recorded negative ``think_time`` as a
-    negative ``Turn.delay`` (a delay that points into the past).
-
-Passing characterizations (surprising-but-intended):
-  * idle-gap cap uses a strict ``>`` so a gap exactly equal to the cap is left
-    uncompressed.
-  * nested LCP chain detection clamps NaN / infinite / negative inner
-    ``api_time`` to zero duration (a non-finite chain-tail end would block
-    same-context extensions forever and explode a subagent into one-turn
-    children).
-  * equal-``t`` context-disjoint inner requests split deterministically.
-  * nested chain detection runs on the normalized root-trace timeline.
-  * duplicate hash-ids within a single request inflate the theoretical
-    prefix-cache hit count to a (still <= total) 100%.
-  * an empty-``requests`` trace reconstructs to an empty conversation.
-  * duplicate subagent ``agent_id`` values within one trace are rejected.
-"""
+"""Pathological / adversarial probes for the Weka trace loaders."""
 
 from __future__ import annotations
 
@@ -60,9 +25,7 @@ from aiperf.dataset.loader.weka_trace_models import (
 FIXTURES = Path(__file__).parents[3] / "fixtures" / "weka_traces"
 
 
-# ---------------------------------------------------------------------------
 # Shared harness (mirrors test_weka_trace.py / *_filters_adversarial.py)
-# ---------------------------------------------------------------------------
 
 
 def _mk_user_config(**overrides):
@@ -192,9 +155,7 @@ def _inner_request(**overrides) -> WekaNormalRequest:
     return WekaNormalRequest.model_validate(base)
 
 
-# ===========================================================================
 # Regression: idle-gap-mapped subagent spawn time (fixed)
-# ===========================================================================
 
 
 def test_idle_gap_branch_start_timestamp_uses_mapped_time_not_raw(tmp_path):
@@ -334,9 +295,7 @@ def test_think_time_only_negative_think_time_not_negative_delay(tmp_path):
     assert convs[0].turns[1].delay >= 0.0
 
 
-# ===========================================================================
 # PASSING CHARACTERIZATIONS (surprising but intended / not invariant-breaking)
-# ===========================================================================
 
 
 def test_idle_gap_exactly_equal_to_cap_is_not_compressed():

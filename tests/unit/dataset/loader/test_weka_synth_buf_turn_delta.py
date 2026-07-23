@@ -1,19 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for ``ConversationReconstructor.turn_delta``.
-
-Covers the four classification cases from the delta-encoding spec
-(``docs/dev/proposal-weka-delta-encoding.md``):
-
-* Case 0 (baseline): first call after ``init_turn_0`` emits ALL segments,
-  ``reset_context=False``.
-* Case 1 (strict append): monotonic LCP — emits only newly-appended
-  segments, ``reset_context=False``.
-* Case 2 (boundary cut on emitted segment): partial-tail strip on a
-  previously-emitted segment forces a context reset.
-* Case 3 (mid-segment cut on emitted segment): re-slice of a previously
-  emitted segment forces a context reset.
-"""
+"""Unit tests for ``ConversationReconstructor.turn_delta``."""
 
 from __future__ import annotations
 
@@ -53,11 +40,6 @@ def _make_recon() -> ConversationReconstructor:
     )
 
 
-# ---------------------------------------------------------------------------
-# Case 0: baseline (first call after init_turn_0)
-# ---------------------------------------------------------------------------
-
-
 def test_turn_delta_case_0_baseline_emits_all_segments_no_reset():
     r = _make_recon()
     # Block-aligned: 2 blocks * 16 = 32 tokens, no partial tail.
@@ -95,11 +77,6 @@ def test_turn_delta_case_0_with_system_prefix():
     roles = [m["role"] for m in delta.delta_messages]
     assert roles == ["system", "user"]
     assert delta.reset_context is False
-
-
-# ---------------------------------------------------------------------------
-# Case 1: strict append (monotonic LCP, no disturbance to emitted segments)
-# ---------------------------------------------------------------------------
 
 
 def test_turn_delta_case_1_strict_append_emits_only_new_segments():
@@ -187,11 +164,6 @@ def test_turn_delta_case_1_strict_append_three_turns_chain():
     assert full == r.snapshot_messages()
 
 
-# ---------------------------------------------------------------------------
-# Case 2: boundary cut on a previously-emitted segment
-# ---------------------------------------------------------------------------
-
-
 def test_turn_delta_case_2_boundary_cut_resets_context():
     """Boundary cut strips partial-tail of a previously-emitted segment."""
     r = _make_recon()
@@ -236,11 +208,6 @@ def test_turn_delta_case_2_boundary_cut_resets_context():
     assert r._last_disturbance_at is None
 
 
-# ---------------------------------------------------------------------------
-# Case 3: mid-segment cut on a previously-emitted segment
-# ---------------------------------------------------------------------------
-
-
 def test_turn_delta_case_3_mid_segment_cut_resets_context():
     """LCP lands inside a previously-emitted segment -> reset_context."""
     r = _make_recon()
@@ -276,11 +243,6 @@ def test_turn_delta_case_3_mid_segment_cut_resets_context():
     assert len(d1.delta_messages) == len(r._segments)
     for msg, seg in zip(d1.delta_messages, r._segments, strict=True):
         assert msg == {"role": seg.role, "content": seg.content}
-
-
-# ---------------------------------------------------------------------------
-# truncate_synth_buf_at_block return-value contract
-# ---------------------------------------------------------------------------
 
 
 def test_truncate_returns_index_when_boundary_cut_drops_segments_past_boundary():
@@ -456,11 +418,8 @@ def test_truncate_returns_none_when_zeroes_empty_buffer():
     assert segs == []
 
 
-# ---------------------------------------------------------------------------
-# Regression coverage for: truncation deletes previously-emitted segments
-# without modifying a surviving segment in place. (See issue: weka synth
-# buffer should reset context when truncation deletes emitted segments.)
-# ---------------------------------------------------------------------------
+# Regression coverage: truncation deletes previously-emitted segments without
+# modifying a surviving segment in place (context must reset).
 
 
 def test_turn_delta_resets_when_lcp_zero_after_emitted_turn():
@@ -636,12 +595,10 @@ def test_turn_delta_emits_assistant_segment():
     assert [m["role"] for m in delta.delta_messages] == ["assistant", "user"]
 
 
-# ---------------------------------------------------------------------------
 # Context-loss rule: a conversation resumes at a USER turn. When truncation
-# removes every user segment (or turn 0 was system-only), the new region
-# must not open with an assistant segment — the wire cannot present
-# assistant output before any user input.
-# ---------------------------------------------------------------------------
+# removes every user segment (or turn 0 was system-only), the new region must
+# not open with an assistant segment — the wire cannot present assistant output
+# before any user input.
 
 
 def test_context_loss_to_system_boundary_resumes_with_user_turn():

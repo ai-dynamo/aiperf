@@ -1068,7 +1068,6 @@ def test_trace_idle_gap_cap_is_per_trace_and_uses_request_starts(tmp_path):
     assert trace_b_turns[1].timestamp == 210_000.0
 
 
-# =============================================================================
 # hash_id_scope: subagents share the parent trace's hash_id namespace.
 #
 # A weka trace declares ``hash_id_scope: "local"`` == one hash_id namespace per
@@ -1081,7 +1080,6 @@ def test_trace_idle_gap_cap_is_per_trace_and_uses_request_starts(tmp_path):
 # instead of ``stub_hash_id_corpus_rng``. The stub ignores ``set_trace_id``, so a
 # given hash_id decodes identically under any scope -- it cannot detect a
 # per-child scope regression.
-# =============================================================================
 
 
 def _wire_real_scope_rng(loader, *, block_size: int, seed: int = 1234) -> None:

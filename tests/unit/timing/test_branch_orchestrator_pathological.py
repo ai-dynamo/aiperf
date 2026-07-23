@@ -1,34 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Pathological / adversarial probes for the DAG ``BranchOrchestrator``.
-
-These tests target accounting and ordering anomalies NOT covered by
-``test_branch_orchestrator.py`` or ``test_branch_orchestrator_adversarial_full.py``:
-
-Confirmed bugs (xfail strict):
-  * Delayed-join (K>1) gates that become zero-outstanding because EVERY child
-    failed to start dispatch the gated turn IMMEDIATELY on the spawning turn's
-    return, skipping the parent's intervening turns (turn-ordering violation).
-    Probed via both the start_branch_child-raises path and the
-    dispatch-refused (gather-False) path.
-  * A FORK child seeded through ``seed_snapshot`` never has its sticky refcount
-    incremented (seed does not touch the router), yet ``_handle_child_done``
-    releases it once on leaf — a net sticky refcount underflow.
-
-Passing characterizations (surprising-but-current behavior):
-  * Duplicate intercept of the same spawning-turn credit double-dispatches the
-    branch's children (no per-turn idempotency guard).
-  * Full rollback of a background branch (all children refused) leaves zero
-    leaked accounting state.
-  * ``_notify_drain`` fires the observer on the last child's drain, and
-    ``has_pending_branch_work`` flips False exactly then.
-  * leaf-then-error and stopped-then-error double delivery for one child is
-    counted exactly once (the first hook wins; the second is a no-op).
-  * Seeding a child whose parent state is absent tracks it as an ungated
-    descendant and drains cleanly on leaf.
-  * An over-completed prereq (more distinct children report than expected)
-    never reports a negative ``total_outstanding``.
-"""
+"""Pathological / adversarial probes for the DAG ``BranchOrchestrator``."""
 
 from __future__ import annotations
 
@@ -57,9 +29,7 @@ from aiperf.timing.branch_orchestrator import (
 )
 from aiperf.timing.trajectory_source import ConversationState
 
-# ---------------------------------------------------------------------------
 # Shared helpers (mirror the style of test_branch_orchestrator_adversarial_full)
-# ---------------------------------------------------------------------------
 
 
 def _mk_conv(
@@ -196,10 +166,8 @@ def _seed_fork_conv():
     return _Source(), branch_id
 
 
-# ---------------------------------------------------------------------------
 # 1. CONFIRMED BUG: all-children-fail-to-start on a delayed (K>1) gate
 #    dispatches the gated turn out of order.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -225,10 +193,8 @@ async def test_delayed_join_all_children_raise_does_not_dispatch_gate_early():
     issuer.dispatch_join_turn.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
 # 2. CONFIRMED BUG: same as (1) but via the dispatch-refused (gather-False)
 #    rollback path rather than an exception.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -245,9 +211,7 @@ async def test_delayed_join_all_children_refused_does_not_dispatch_gate_early():
     issuer.dispatch_join_turn.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
 # 3. CONFIRMED BUG: seed_snapshot FORK child -> sticky refcount underflow.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -291,9 +255,7 @@ async def test_seed_snapshot_fork_child_sticky_release_is_balanced():
     )
 
 
-# ---------------------------------------------------------------------------
 # 4. CHARACTERIZATION: duplicate spawning-turn credit double-dispatches.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -335,9 +297,7 @@ async def test_duplicate_spawning_turn_credit_double_dispatches_children():
     assert len(orch._child_to_join) == 2
 
 
-# ---------------------------------------------------------------------------
 # 5. CHARACTERIZATION: full rollback of a background branch leaves no leak.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -377,9 +337,7 @@ async def test_background_branch_all_children_refused_drains_clean():
     assert orch.has_pending_branch_work() is False
 
 
-# ---------------------------------------------------------------------------
 # 6. CHARACTERIZATION: _notify_drain fires on the last child's drain.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -410,9 +368,7 @@ async def test_drain_observer_fires_when_last_ungated_child_drains():
     assert orch.has_pending_branch_work() is False
 
 
-# ---------------------------------------------------------------------------
 # 7. CHARACTERIZATION: leaf-then-error double delivery counts once.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -459,9 +415,7 @@ async def test_leaf_then_error_double_delivery_counts_child_once(force_fail_fast
     assert issuer.dispatch_join_turn.await_count == 1
 
 
-# ---------------------------------------------------------------------------
 # 8. CHARACTERIZATION: stopped-then-error double delivery counts once.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -486,9 +440,7 @@ async def test_stopped_then_error_double_delivery_counts_child_once():
     assert orch.stats.children_errored == 0
 
 
-# ---------------------------------------------------------------------------
 # 9. CHARACTERIZATION: seeded child with no parent state is ungated + drains.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -545,10 +497,8 @@ async def test_seed_snapshot_orphan_child_without_parent_state_drains_clean():
     assert orch.has_pending_branch_work() is False
 
 
-# ---------------------------------------------------------------------------
 # 10. CHARACTERIZATION: over-completed prereq never reports negative
 #     total_outstanding.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -575,10 +525,8 @@ async def test_over_completed_prereq_total_outstanding_clamped_non_negative():
     assert pending.is_satisfied is True
 
 
-# ---------------------------------------------------------------------------
 # 11. CHARACTERIZATION: cleanup mid-drain leaves has_pending_branch_work False
 #     and a late child completion is a no-op.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -615,10 +563,8 @@ async def test_cleanup_mid_drain_then_late_child_is_noop():
     assert orch.stats.children_completed == 0
 
 
-# ---------------------------------------------------------------------------
 # 12. CHARACTERIZATION: non-fail-fast child error on a multi-consumer branch
 #     fires every satisfied gate but counts the error once.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio

@@ -1,20 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial tests for WekaTraceLoader serial-path flattened-agent split.
-
-Surface: ``weka_trace.py`` serial integration -
-``_detect_and_split_flat_chains``, branch anchoring/grouping in
-``_reconstruct_serial`` / ``_emit_flat_chain_conversation``, timing, filters,
-and env gating. Each test encodes the design spec
-(``2026-06-10-weka-flattened-agent-lcp-detection-design.md``) and throws a
-hostile input at the loader. Findings that contradict the spec are kept and
-marked ``xfail(strict=True)`` so the suite stays green while documenting the
-gap.
-
-Traces are built inline as dicts, validated through ``WekaTrace`` schema by
-calling ``convert_to_conversations({tid: [trace]})`` on a loader constructed
-with ``filename=None`` and a real v2 ``BenchmarkRun`` (via ``make_weka_run``).
-"""
+"""Adversarial tests for WekaTraceLoader serial-path flattened-agent split."""
 
 from __future__ import annotations
 
@@ -113,11 +99,9 @@ def _retained_request_count(convs: dict) -> int:
     return sum(len(c.turns) for c in convs.values())
 
 
-# --------------------------------------------------------------------------
 # Branch anchoring: turn-0 fallback when filters drop the main chain's
 # earliest turns so a worker's first outer_idx precedes every retained main
 # outer_idx (spec §5.3 "Fallback ... anchor to main turn 0").
-# --------------------------------------------------------------------------
 
 
 def test_flat_chain_anchoring_turn_zero_fallback_passes_orchestrator_v1():
@@ -151,10 +135,8 @@ def test_flat_chain_anchoring_turn_zero_fallback_passes_orchestrator_v1():
     assert _retained_request_count(convs) == 4  # 2 main + 2 worker
 
 
-# --------------------------------------------------------------------------
 # Join boundary epsilon: chain end EXACTLY equal to a main turn's t joins
 # within 1e-6 (spec §5.3 "first main turn with t + eps >= end(tail(chain))").
-# --------------------------------------------------------------------------
 
 
 def test_flat_chain_join_at_exact_equality_gates_that_main_turn():
@@ -221,11 +203,9 @@ def test_flat_chain_just_past_last_main_turn_is_background_no_prereq():
     }
 
 
-# --------------------------------------------------------------------------
 # Grouping: two chains sharing (preceding, join) collapse into one branch with
 # both child ids; a third chain in a different group gets its own branch_id
 # (spec §5.3 "Grouping ... branch_id = ...:flatspawn:{first_chain_index}").
-# --------------------------------------------------------------------------
 
 
 def test_two_flat_chains_sharing_spawn_and_join_collapse_to_one_branch():
@@ -279,11 +259,9 @@ def test_three_flat_chains_distinct_groups_get_unique_branch_ids():
         assert len(turn.branch_ids) == len(set(turn.branch_ids))
 
 
-# --------------------------------------------------------------------------
 # Interaction: real type:"subagent" entries coexist with flat-chain split.
 # Subagent anchoring must use main-chain turns only; both branch kinds may
 # share one turn (spec §5.3).
-# --------------------------------------------------------------------------
 
 
 def test_subagent_and_flat_branch_coexist_on_same_turn():
@@ -323,11 +301,9 @@ def test_subagent_and_flat_branch_coexist_on_same_turn():
     assert "flt_coexist::fa:000" in convs
 
 
-# --------------------------------------------------------------------------
 # Disjoint-batch path: with no nonce-poison guard, a trace of mutually-
 # disjoint requests is an independent-agent batch and splits into per-agent
 # chains rather than being skipped.
-# --------------------------------------------------------------------------
 
 
 def test_disjoint_batch_splits_into_independent_chains(caplog):
@@ -347,10 +323,8 @@ def test_disjoint_batch_splits_into_independent_chains(caplog):
     ), "the nonce-poison guard was removed; no such warning should be logged"
 
 
-# --------------------------------------------------------------------------
 # Idle-gap warp interaction (spec §5.6): flat-chain warped timestamps/delays
 # and the warp gap structure must match the unsplit trace shifted equivalently.
-# --------------------------------------------------------------------------
 
 
 def test_idle_gap_warp_flat_chain_gap_structure_matches_unsplit_run():
@@ -442,10 +416,8 @@ def test_idle_gap_warp_flat_branch_start_uses_mapped_time_not_raw():
     assert offsets[1] == pytest.approx(2_000.0)
 
 
-# --------------------------------------------------------------------------
 # Timing: per-chain delays, think_time_only and ignore_delays on flat-chain
 # turns (spec §5.6). Delays never negative.
-# --------------------------------------------------------------------------
 
 
 def test_flat_chain_delays_are_within_chain_and_nonnegative():
@@ -511,11 +483,9 @@ def test_flat_chain_ignore_delays_nulls_timestamp_and_delay():
             assert turn.delay is None
 
 
-# --------------------------------------------------------------------------
 # --max-osl caps flat-chain max_tokens but NOT subagent children (spec §5.4
 # diff: "max_tokens honors --max-osl like the top-level requests these rows
 # used to be"; subagent children keep their own output_length).
-# --------------------------------------------------------------------------
 
 
 def test_max_osl_caps_flat_chain_but_not_subagent_child():
@@ -551,10 +521,8 @@ def test_max_osl_caps_flat_chain_but_not_subagent_child():
     assert child.turns[0].max_tokens == 100, "subagent child max_tokens NOT capped"
 
 
-# --------------------------------------------------------------------------
 # Effective-prefix length guard (spec §5.4): observed > declared but turn-0
 # hash list SHORTER than observed -> declared used, no crash.
-# --------------------------------------------------------------------------
 
 
 def test_zero_declared_fanout_keeps_shared_prefix_in_user_content():
@@ -602,10 +570,8 @@ def test_flat_chain_prefix_blocks_zero_yields_all_user_turn0():
     assert "system" not in roles0, "singleton-group worker turn 0 must be all-user"
 
 
-# --------------------------------------------------------------------------
 # Invariant: every retained request appears in exactly one conversation
 # exactly once (no duplication, no loss) across a fan-out split.
-# --------------------------------------------------------------------------
 
 
 def test_every_retained_request_appears_exactly_once_across_conversations():
@@ -628,10 +594,8 @@ def test_every_retained_request_appears_exactly_once_across_conversations():
     assert sum(1 for sid in convs if "::fa:" in sid) == 2
 
 
-# --------------------------------------------------------------------------
 # Zero api_time boundary: a worker whose requests all have api_time=0 has end
 # == start; join derivation uses end so a same-t main turn still joins.
-# --------------------------------------------------------------------------
 
 
 def test_zero_api_time_worker_join_uses_request_start_as_end():
@@ -654,10 +618,8 @@ def test_zero_api_time_worker_join_uses_request_start_as_end():
     ]
 
 
-# --------------------------------------------------------------------------
 # Env gating: split disabled restores legacy single-stream on a fan-out trace
 # (spec §6). All requests stay in one conversation.
-# --------------------------------------------------------------------------
 
 
 def test_split_disabled_keeps_single_conversation_on_fanout():
@@ -677,10 +639,8 @@ def test_split_disabled_keeps_single_conversation_on_fanout():
     assert len(convs["flt_disabled"].turns) == 4
 
 
-# --------------------------------------------------------------------------
 # Branch invariant: every flat-chain branch's child_conversation_ids resolve
 # to emitted conversations, and SPAWN_JOIN targets are never background.
-# --------------------------------------------------------------------------
 
 
 def test_flat_branch_child_ids_resolve_and_join_targets_not_background():
@@ -708,13 +668,11 @@ def test_flat_branch_child_ids_resolve_and_join_targets_not_background():
             assert branches_by_id[p.branch_id].mode == ConversationBranchMode.SPAWN
 
 
-# --------------------------------------------------------------------------
 # Preamble split: a leading request that shares NO blocks with the rest of the
 # trace is a one-shot preamble and must not found the main chain. Small ones
 # (Claude Code title generation) and large fully-disjoint ones (observed on 4
 # real 060826 traces: a 25-31k-token disjoint giant hijacked main_index into a
 # 1-turn "main" while the real session split into dozens of fa:* chains).
-# --------------------------------------------------------------------------
 
 
 def _req(t: float, hash_ids: list[int], out: int):

@@ -1,25 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Concurrency / cancellation / stop-condition pathology tests for ``BranchOrchestrator``.
-
-Targets are orthogonal to ``test_branch_orchestrator_adversarial_full.py``:
-
-- ``asyncio.CancelledError`` propagation through every awaited boundary in
-  ``intercept`` (lock acquired, dispatch in flight, gather of children,
-  pre-session loop, ``_satisfy_prerequisite`` mid-decrement,
-  ``_release_blocked_join``).
-- High-fan concurrent intercept stress on independent vs shared parents.
-- Parent / child completion races driven by ``asyncio.Event`` synchronizers.
-- Cleanup-mid-anything (intercept, pre-session, satisfy).
-- Stop-condition "flip mid-flight" simulated by toggling
-  ``issuer.dispatch_join_turn`` return value between the satisfy decision
-  and the actual dispatch.
-- Fail-fast race where two siblings of one parent error simultaneously.
-- ``applies_to_dag_children`` truth-table walk for each stop condition.
-- ``asyncio.wait_for(intercept, timeout=0)`` cancellation propagation.
-- Reentrancy guards: a second intercept queued on the same parent never
-  sees ``_release_blocked_join`` re-enter ``intercept``.
-"""
+"""Concurrency / cancellation / stop-condition pathology tests for ``BranchOrchestrator``."""
 
 from __future__ import annotations
 
@@ -48,11 +29,6 @@ from aiperf.timing.phase.stop_conditions import (
     RequestCountStopCondition,
     SessionCountStopCondition,
 )
-
-# ---------------------------------------------------------------------------
-# Helpers — kept local so changes to test_branch_orchestrator_adversarial_full
-# don't introduce coupling.
-# ---------------------------------------------------------------------------
 
 
 def _mk_conv(
@@ -149,11 +125,6 @@ def _simple_spawn_metadata(
     return [root, *children]
 
 
-# ---------------------------------------------------------------------------
-# 1. CancelledError raised inside intercept while it holds _parent_locks.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_cancel_during_intercept_releases_parent_lock():
     """Cancel a task awaiting ``dispatch_first_turn`` inside ``intercept``.
@@ -197,11 +168,6 @@ async def test_cancel_during_intercept_releases_parent_lock():
     # the turn-0 metadata still says branch_ids=["root:0"]; second intercept
     # spawns again. We only assert no hang and consistent suspension.
     assert isinstance(result, bool)
-
-
-# ---------------------------------------------------------------------------
-# 2. CancelledError raised in _satisfy_prerequisite mid-decrement.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -254,11 +220,6 @@ async def test_cancel_during_satisfy_prerequisite_keeps_state_consistent():
     assert issuer.dispatch_join_turn.await_count == 1
 
 
-# ---------------------------------------------------------------------------
-# 3. CancelledError raised in asyncio.gather of children's _dispatch_first_turn.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_cancel_during_gather_partial_dispatch_rolls_back_consistently():
     """One child raises a generic exception (return_exceptions=True ⇒ caught
@@ -290,11 +251,6 @@ async def test_cancel_during_gather_partial_dispatch_rolls_back_consistently():
     assert state.expected == 2
     assert orch.stats.children_errored == 1
     assert orch.stats.children_spawned == 2  # net after rollback decrement
-
-
-# ---------------------------------------------------------------------------
-# 4. CancelledError raised during dispatch_pre_session_branches mid-loop.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -357,11 +313,6 @@ async def test_cancel_during_pre_session_loop_partial_pre_dispatched_set():
     assert ("root", "root:pre2") not in pre
 
 
-# ---------------------------------------------------------------------------
-# 5. 100 concurrent intercepts on 100 different parents.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_100_concurrent_intercepts_independent_parents_isolated_state():
     """Each parent's gates / joins are independent. No cross-talk via the
@@ -391,11 +342,6 @@ async def test_100_concurrent_intercepts_independent_parents_isolated_state():
         assert state.expected == 2
 
 
-# ---------------------------------------------------------------------------
-# 6. 100 concurrent intercepts on the SAME parent (different turn_indexes).
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_100_concurrent_intercepts_same_parent_serialized():
     """Single parent receives 100 intercept calls at distinct turn_indexes
@@ -419,11 +365,6 @@ async def test_100_concurrent_intercepts_same_parent_serialized():
     # Lock must still be acquirable (no leak).
     lock = orch._parent_locks["corr-root"]
     assert not lock.locked()
-
-
-# ---------------------------------------------------------------------------
-# 7. Race: parent return and last child completion happen "simultaneously".
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -487,11 +428,6 @@ async def test_race_parent_return_and_last_child_completion_gate_fires_once():
     issuer2.dispatch_join_turn.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# 8. Cleanup mid-pre-session loop.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_cleanup_mid_pre_session_dispatch_no_state_leak():
     """``cleanup()`` is synchronous — it cannot interrupt an awaiting
@@ -550,11 +486,6 @@ async def test_cleanup_mid_pre_session_dispatch_no_state_leak():
     assert (await orch.intercept(_mk_credit("root", "corr-root", 0))) is False
 
 
-# ---------------------------------------------------------------------------
-# 9. Stop-condition flips False during _release_blocked_join.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_stop_flips_during_release_increments_joins_suppressed_only_once():
     """``dispatch_join_turn`` returns False (simulating stop). Verify
@@ -575,11 +506,6 @@ async def test_stop_flips_during_release_increments_joins_suppressed_only_once()
     await orch.on_child_leaf_reached("corr-root-c0")
     assert orch.stats.joins_suppressed == 1
     issuer.dispatch_join_turn.assert_awaited_once()
-
-
-# ---------------------------------------------------------------------------
-# 10. Fail-fast race: two siblings of one parent error simultaneously.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -620,11 +546,6 @@ async def test_fail_fast_two_simultaneous_child_errors_aborts_parent_once(
     assert orch.stats.parents_failed_due_to_child_error == 1
 
 
-# ---------------------------------------------------------------------------
-# 11. Cancel via asyncio.wait_for(..., timeout=0).
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_wait_for_zero_timeout_cancels_intercept_lock_released():
     """Force a TimeoutError -> CancelledError propagation into intercept.
@@ -653,11 +574,6 @@ async def test_wait_for_zero_timeout_cancels_intercept_lock_released():
         assert not lock.locked()
     # Unblock to drain the awaiting coroutine if any was orphaned.
     block.set()
-
-
-# ---------------------------------------------------------------------------
-# 12. Reentrancy: _release_blocked_join must not synchronously call intercept.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -700,11 +616,6 @@ async def test_release_blocked_join_does_not_recurse_into_intercept():
     issuer.dispatch_join_turn.assert_awaited_once()
 
 
-# ---------------------------------------------------------------------------
-# 13. on_child_leaf_reached and on_child_errored race for same child.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_leaf_and_errored_for_same_child_one_wins():
     """Concurrent leaf + errored for same child. ``_child_to_join.pop``
@@ -733,11 +644,6 @@ async def test_leaf_and_errored_for_same_child_one_wins():
     assert len(state.completed) == 1
 
 
-# ---------------------------------------------------------------------------
-# 14. applies_to_dag_children truth-table (v2).
-# ---------------------------------------------------------------------------
-
-
 def test_stop_condition_applies_to_dag_children_truth_table():
     """Children honor: cancellation (DagLifecycle), Duration, RequestCount.
     Skip: sending-complete (Lifecycle), SessionCount.
@@ -758,12 +664,6 @@ def test_stop_condition_applies_to_dag_children_truth_table():
     # --request-count is a literal wire cap: HONORED by children in v2.
     assert RequestCountStopCondition.applies_to_dag_children is True
     assert SessionCountStopCondition.applies_to_dag_children is False
-
-
-# ---------------------------------------------------------------------------
-# 15. Pre-session child whose dispatch_first_turn returns False
-#     (issuer stopped) must increment children_errored, not raise.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -799,11 +699,6 @@ async def test_pre_session_dispatch_first_turn_returns_false_counts_truncated():
     assert ("root", "root:pre") in orch._pre_dispatched_branches
 
 
-# ---------------------------------------------------------------------------
-# 16. Many parents reaching their gated turns within the same loop tick.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_many_parents_simultaneous_gate_arrival_no_active_joins_iter_corruption():
     """50 parents all arrive at their gated turn simultaneously. _active_joins
@@ -835,11 +730,6 @@ async def test_many_parents_simultaneous_gate_arrival_no_active_joins_iter_corru
     assert orch.stats.parents_resumed == N
 
 
-# ---------------------------------------------------------------------------
-# 17. TaskGroup-style: 50 children dispatched via gather; one raises.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_one_of_fifty_children_raises_others_complete_state_consistent():
     """Inside ``_spawn_children_and_register_gates`` the gather uses
@@ -869,12 +759,6 @@ async def test_one_of_fifty_children_raises_others_complete_state_consistent():
             continue
         await orch.on_child_leaf_reached(f"corr-root-c{i}")
     issuer.dispatch_join_turn.assert_awaited_once()
-
-
-# ---------------------------------------------------------------------------
-# 18. Cancel during _release_blocked_join AFTER pop, BEFORE dispatch.
-#     Verify stats counters do not increment on a cancelled call.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -916,11 +800,6 @@ async def test_cancel_release_blocked_join_before_dispatch_returns_no_double_cou
     block.set()
 
 
-# ---------------------------------------------------------------------------
-# 19. Many concurrent intercepts on cleanup'd orchestrator.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_concurrent_intercepts_post_cleanup_all_short_circuit():
     """After cleanup, every intercept must early-return False without
@@ -940,11 +819,6 @@ async def test_concurrent_intercepts_post_cleanup_all_short_circuit():
     cs.start_branch_child.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# 20. Intercept after cleanup never grows _parent_locks (no leak).
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_intercept_after_cleanup_does_not_repopulate_parent_locks():
     cs = _mk_source(_simple_spawn_metadata(1))
@@ -958,12 +832,6 @@ async def test_intercept_after_cleanup_does_not_repopulate_parent_locks():
     # acquiring the lock (the _cleaning_up check is first), so no entries
     # are re-added.
     assert orch._parent_locks == {}
-
-
-# ---------------------------------------------------------------------------
-# 21. Cancel during _spawn_children_and_register_gates rolls nothing back
-#     prematurely (state matches what the cancelled call had committed).
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -1016,11 +884,6 @@ async def test_cancel_mid_spawn_partial_state_visible_no_corruption():
     orch.cleanup()
 
 
-# ---------------------------------------------------------------------------
-# 22. Race: cleanup mid-satisfy via interleaved tasks.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_cleanup_during_satisfy_release_does_not_fire_dispatch():
     """``cleanup()`` sets ``_cleaning_up=True`` synchronously. A child
@@ -1055,12 +918,6 @@ async def test_cleanup_during_satisfy_release_does_not_fire_dispatch():
     issuer.dispatch_join_turn.assert_awaited_once()
 
 
-# ---------------------------------------------------------------------------
-# 23. Defensive: ChildJoinEntry invariants — frozen, hashable,
-#     orchestrator stores them in dict values.
-# ---------------------------------------------------------------------------
-
-
 def test_child_join_entry_is_frozen_and_hashable():
     e = ChildJoinEntry(
         parent_correlation_id="p", gated_turn_index=1, prereq_key="SPAWN_JOIN:b"
@@ -1070,13 +927,6 @@ def test_child_join_entry_is_frozen_and_hashable():
     # Hashable (slots=True, frozen=True).
     s = {e}
     assert e in s
-
-
-# ---------------------------------------------------------------------------
-# 24. Stop-condition all-active simultaneously: orchestrator state is
-#     orthogonal to stop conditions; verify by inspection that
-#     orchestrator does not touch any StopCondition class.
-# ---------------------------------------------------------------------------
 
 
 def test_orchestrator_never_imports_stop_conditions():
