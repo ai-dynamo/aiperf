@@ -96,14 +96,7 @@ def test_recycled_session_started_at_turn_zero_is_slot_balanced() -> None:
 
 
 def test_mid_trace_root_acquires_and_releases_session_slot_balanced() -> None:
-    """A mid-trace resume (turn_index > 0, is_session_start) acquires a session
-    slot on its first credit and releases it on its final turn -- balanced, so
-    it can never over-release and admit a session above --concurrency.
-
-    The resume credit carries is_session_start=True (set by
-    SampledSession.build_turn_at_index); the strategy only emits these at a
-    phase's initial dispatch, so the acquisition always finds a free slot.
-    """
+    """A mid-trace resume (turn_index > 0, is_session_start) acquires a session slot on its first credit and releases it on its final turn, balanced so it can never admit a session above --concurrency."""
 
     async def body() -> tuple[int, int]:
         issuer, cm = _build_issuer_with_real_concurrency()
@@ -124,14 +117,7 @@ def test_mid_trace_root_acquires_and_releases_session_slot_balanced() -> None:
 
 
 def test_lane_credit_acquires_and_releases_one_session_slot_balanced() -> None:
-    """A rootless/gated lane holds its session slot via the lane-credit path --
-    the SAME session semaphore as root credits -- and releasing is balanced.
-
-    A rootless snapshot (root finished before t*) and a gated parent dispatch
-    no slot-acquiring root credit at PROFILING start; ``acquire_lane_credit``
-    lets the lane hold one slot so it still counts toward --concurrency, while
-    its subagents/sidecars acquire none.
-    """
+    """A rootless/gated lane holds its session slot via the lane-credit path (the same session semaphore as root credits) so it counts toward --concurrency, and releasing is balanced."""
 
     async def body() -> tuple[int, int, int]:
         issuer, cm = _build_issuer_with_real_concurrency()
@@ -148,15 +134,7 @@ def test_lane_credit_acquires_and_releases_one_session_slot_balanced() -> None:
 
 
 def test_gated_parent_lane_accounts_session_via_tracker() -> None:
-    """A gated parent lane (root_pending=True, session_turns>0) routes session
-    accounting through ``PhaseProgressTracker.account_lane_session`` -- the
-    issuer holds a ``PhaseProgressTracker`` (not a ``CreditCounter``), so the
-    delegation must exist or ``acquire_lane_credit`` raises ``AttributeError``.
-
-    The gated parent's join turn later bumps ``completed_sessions``; counting it
-    in ``sent_sessions`` here keeps ``in_flight_sessions`` non-negative once the
-    terminal turn returns. A rootless lane (root_pending=False) bumps neither.
-    """
+    """A gated parent lane (root_pending=True, session_turns>0) routes session accounting through ``PhaseProgressTracker.account_lane_session``, counting its session as sent so ``in_flight_sessions`` stays non-negative once the terminal turn returns."""
 
     async def body() -> tuple[int, int, int]:
         issuer, _cm = _build_issuer_with_real_concurrency()
@@ -177,9 +155,7 @@ def test_gated_parent_lane_accounts_session_via_tracker() -> None:
 
 
 def test_gated_parent_lane_keeps_in_flight_sessions_non_negative() -> None:
-    """End-to-end through the issuer: a gated parent lane that accounts its
-    session via the tracker, then has its terminal turn return, leaves
-    ``in_flight_sessions`` at zero (not negative)."""
+    """End-to-end through the issuer, a gated parent lane that accounts its session and then has its terminal turn return leaves ``in_flight_sessions`` at zero (not negative)."""
 
     async def body() -> int:
         issuer, _cm = _build_issuer_with_real_concurrency()
@@ -195,8 +171,7 @@ def test_gated_parent_lane_keeps_in_flight_sessions_non_negative() -> None:
 
 
 def test_lane_credit_counts_against_the_session_concurrency_limit() -> None:
-    """Lane credits draw from the same budget as root credits: with LIMIT=2,
-    two lane credits exhaust it (so rootless/gated lanes cannot oversubscribe)."""
+    """Lane credits draw from the same budget as root credits: with LIMIT=2, two lane credits exhaust it, so rootless/gated lanes cannot oversubscribe."""
 
     async def body() -> tuple[bool, bool, int]:
         issuer, cm = _build_issuer_with_real_concurrency()

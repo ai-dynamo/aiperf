@@ -1,19 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""ISL budget compensation tests.
-
-Three components compose the budget (see
-``docs/reference/isl-budget-compensation.md``):
-
-1. Cache-bust marker token cost (first user turn, when marker lands there).
-2. Chat-template wrapping, decomposed into per-request fixed (BOS +
-   generation prompt) and per-message wrap (role header + EOT). Fixed
-   applies to first turn only; per-message wrap applies to every user
-   turn.
-3. Shared system prompt regeneration when SYSTEM_* lands on it — done
-   in the composer by passing a ``model_copy``-d prompt config to
-   ``PromptGenerator``.
-"""
+"""ISL budget compensation tests covering cache-bust marker cost, chat-template wrapping (per-request fixed + per-message wrap), and shared-system-prompt regeneration (see docs/reference/isl-budget-compensation.md)."""
 
 from unittest.mock import MagicMock, patch
 
@@ -38,17 +25,7 @@ def _make_config(
     isl_mean: int = 100,
     apply_chat_template: bool = True,
 ):
-    """Build a v2 ``BenchmarkRun`` for budget tests.
-
-    Replaces the v1 ``UserConfig.model_construct`` pattern. The composer reads
-    the synthetic prompt slice off ``run.cfg`` -- ``prompts.cache_bust.target``,
-    ``prefix_prompts.shared_system_length``, ``tokenizer.apply_chat_template`` --
-    so a real BenchmarkRun (built through the v2 resolver) is required.
-
-    ``apply_chat_template`` defaults to True since this module's purpose is
-    exercising chat-template-aware ISL budget accounting; a dedicated test
-    verifies the opt-out (flag=False) path.
-    """
+    """Build a real v2 BenchmarkRun (via the resolver) for budget tests, defaulting apply_chat_template=True since this module exercises chat-template-aware ISL accounting."""
     overrides: dict = {
         "model_names": ["test-model"],
         "conversation_num_dataset_entries": 1,
@@ -413,14 +390,10 @@ class TestSyntheticPromptBudgetSubtraction:
 
 
 class TestApplyChatTemplateOptOut:
-    """Without ``--apply-chat-template`` (the default), the composer
-    must skip the chat-template overhead probe entirely so synthetic
-    ISL passes through at the bare-text token count.
-    """
+    """Without --apply-chat-template (the default), the composer skips the overhead probe so synthetic ISL passes through at the bare-text token count."""
 
     def test_overhead_probe_not_invoked_when_flag_off(self):
-        """Probe is expensive (multiple template renders + encodes); it
-        must not fire when the user opted out."""
+        """The expensive probe (multiple template renders + encodes) must not fire when the user opted out."""
         config = _make_config(apply_chat_template=False)
         tokenizer = _make_tokenizer_no_chat_template()
         with (
@@ -443,8 +416,7 @@ class TestApplyChatTemplateOptOut:
         assert composer.subsequent_turn_isl_adjustment == 0
 
     def test_synthetic_isl_passes_through_when_flag_off(self):
-        """End-to-end: prompt generator receives the user's ``--isl``
-        verbatim (no template wrapping subtraction)."""
+        """End-to-end: the prompt generator receives the user's --isl verbatim (no template-wrapping subtraction)."""
         config = _make_config(
             apply_chat_template=False,
             cache_bust_target=CacheBustTarget.NONE,

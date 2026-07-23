@@ -32,16 +32,14 @@ def _mk_user_config(**overrides):
 
 
 def test_can_load_zero_byte_file_returns_false(tmp_path: Path):
-    """A zero-byte .json file isn't valid JSON; can_load must swallow the
-    decode error and return False rather than raise."""
+    """A zero-byte .json file isn't valid JSON; can_load swallows the decode error and returns False rather than raising."""
     p = tmp_path / "empty.json"
     p.write_bytes(b"")
     assert WekaTraceLoader.can_load(filename=p) is False
 
 
 def test_can_load_json_null_returns_false(tmp_path: Path):
-    """`null` parses as JSON but isn't a dict; can_load must reject non-dict
-    top-level values."""
+    """`null` parses as JSON but isn't a dict; can_load rejects non-dict top-level values."""
     p = tmp_path / "null.json"
     p.write_bytes(b"null")
     assert WekaTraceLoader.can_load(filename=p) is False
@@ -55,16 +53,14 @@ def test_can_load_json_array_returns_false(tmp_path: Path):
 
 
 def test_can_load_json_trailing_garbage_returns_false(tmp_path: Path):
-    """orjson rejects trailing garbage after a valid object; can_load must
-    return False, not raise."""
+    """orjson rejects trailing garbage after a valid object; can_load returns False rather than raising."""
     p = tmp_path / "garbage.json"
     p.write_bytes(b'{"id":"t"} garbage')
     assert WekaTraceLoader.can_load(filename=p) is False
 
 
 def test_can_load_json_with_bom_returns_false(tmp_path: Path):
-    """UTF-8 BOM prefixes are not stripped by orjson; a BOM-prefixed valid
-    trace must be rejected rather than parsed."""
+    """UTF-8 BOM prefixes aren't stripped by orjson; a BOM-prefixed valid trace is rejected rather than parsed."""
     p = tmp_path / "bom.json"
     p.write_bytes(b"\xef\xbb\xbf" + orjson.dumps(_VALID))
     assert WekaTraceLoader.can_load(filename=p) is False
@@ -78,16 +74,14 @@ def test_can_load_utf16_encoded_file_returns_false(tmp_path: Path):
 
 
 def test_can_load_gzipped_bytes_with_json_extension_returns_false(tmp_path: Path):
-    """Gzipped payload masquerading as .json: orjson can't decode raw gzip
-    bytes, so can_load must return False."""
+    """Gzipped payload masquerading as .json: orjson can't decode raw gzip bytes, so can_load returns False."""
     p = tmp_path / "gz.json"
     p.write_bytes(gzip.compress(orjson.dumps(_VALID)))
     assert WekaTraceLoader.can_load(filename=p) is False
 
 
 def test_can_load_concatenated_json_objects_returns_false(tmp_path: Path):
-    """NDJSON / concatenated objects aren't valid single JSON documents;
-    orjson rejects them and can_load must return False."""
+    """NDJSON / concatenated objects aren't valid single JSON documents; orjson rejects them and can_load returns False."""
     p = tmp_path / "cat.json"
     p.write_bytes(orjson.dumps(_VALID) + orjson.dumps(_VALID))
     assert WekaTraceLoader.can_load(filename=p) is False
@@ -97,28 +91,24 @@ def test_can_load_concatenated_json_objects_returns_false(tmp_path: Path):
 
 
 def test_can_load_uppercase_json_extension_rejected(tmp_path: Path):
-    """`_probe_file` checks `path.suffix != '.json'` case-sensitively, so
-    `trace.JSON` must be rejected even if its contents would validate."""
+    """`_probe_file` checks the suffix case-sensitively, so `trace.JSON` is rejected even if its contents would validate."""
     p = tmp_path / "trace.JSON"
     p.write_bytes(orjson.dumps(_VALID))
     assert WekaTraceLoader.can_load(filename=p) is False
 
 
 def test_can_load_nonexistent_path_returns_false():
-    """A path that doesn't exist is not a file or dir; can_load returns
-    False without raising."""
+    """A path that doesn't exist is neither file nor dir; can_load returns False without raising."""
     assert WekaTraceLoader.can_load(filename="/does/not/exist_xyz.json") is False
 
 
 def test_can_load_path_that_is_neither_file_nor_dir_returns_false():
-    """/dev/null is a character device - neither a regular file nor a dir;
-    can_load must return False."""
+    """/dev/null is a character device, neither a regular file nor a dir; can_load returns False."""
     assert WekaTraceLoader.can_load(filename="/dev/null") is False
 
 
 def test_can_load_broken_symlink_returns_false(tmp_path: Path):
-    """A dangling symlink resolves to a missing target; can_load returns
-    False rather than raising."""
+    """A dangling symlink resolves to a missing target; can_load returns False rather than raising."""
     link = tmp_path / "link.json"
     os.symlink(tmp_path / "missing.json", link)
     assert WekaTraceLoader.can_load(filename=link) is False
@@ -128,10 +118,7 @@ def test_can_load_broken_symlink_returns_false(tmp_path: Path):
 
 
 def test_can_load_directory_single_probe_invalid_returns_false(tmp_path: Path):
-    """Directory detection is single-probe (``next(sorted(glob(...)))``), not an
-    exhaustive scan. A directory whose alphabetically-first JSON fails
-    validation returns False even if other valid files exist — this
-    documents the O(1) probe contract."""
+    """Directory detection is single-probe, not an exhaustive scan: an alphabetically-first invalid JSON returns False even if valid files follow."""
     # After the sorted-glob fix, "a_bad.json" is deterministically probed
     # before "b_good.json" on all filesystems.
     (tmp_path / "a_bad.json").write_bytes(b"{}")
@@ -140,17 +127,14 @@ def test_can_load_directory_single_probe_invalid_returns_false(tmp_path: Path):
 
 
 def test_can_load_directory_single_probe_valid_first_returns_true(tmp_path: Path):
-    """Inverse of single_probe_invalid: alphabetically-first is valid → True
-    even if later files are invalid. Determinism depends on the sorted-glob
-    fix in can_load."""
+    """Inverse of single_probe_invalid: an alphabetically-first valid JSON returns True even if later files are invalid."""
     (tmp_path / "a_good.json").write_bytes(orjson.dumps(_VALID))
     (tmp_path / "b_bad.json").write_bytes(b"{}")
     assert WekaTraceLoader.can_load(filename=tmp_path) is True
 
 
 def test_load_dataset_duplicate_id_across_files_raises(tmp_path: Path):
-    """Two files with the same trace id in one directory must raise -
-    trace ids form the dict key and silent overwrite would lose data."""
+    """Two files sharing a trace id in one directory must raise, since ids form the dict key and silent overwrite would lose data."""
     (tmp_path / "a.json").write_bytes(orjson.dumps(_VALID))
     (tmp_path / "b.json").write_bytes(orjson.dumps(_VALID))
     loader = WekaTraceLoader(filename=str(tmp_path), run=_mk_user_config())
@@ -159,8 +143,7 @@ def test_load_dataset_duplicate_id_across_files_raises(tmp_path: Path):
 
 
 def test_load_dataset_ignores_non_json_siblings(tmp_path: Path):
-    """Directory enumeration uses `*.json` glob, so sibling README/txt files
-    are ignored and load_dataset returns only the valid trace."""
+    """Directory enumeration uses a `*.json` glob, so sibling README/txt files are ignored and only the valid trace is returned."""
     (tmp_path / "trace.json").write_bytes(orjson.dumps(_VALID))
     (tmp_path / "readme.txt").write_bytes(b"hello")
     loader = WekaTraceLoader(filename=str(tmp_path), run=_mk_user_config())
@@ -169,8 +152,7 @@ def test_load_dataset_ignores_non_json_siblings(tmp_path: Path):
 
 
 def test_load_dataset_does_not_recurse_into_subdirs(tmp_path: Path):
-    """`*.json` glob is non-recursive; JSON files in subdirectories must be
-    ignored so nested fixtures can't smuggle extra traces."""
+    """The `*.json` glob is non-recursive; JSON files in subdirectories are ignored so nested fixtures can't smuggle extra traces."""
     (tmp_path / "a.json").write_bytes(orjson.dumps(_VALID))
     sub = tmp_path / "sub"
     sub.mkdir()

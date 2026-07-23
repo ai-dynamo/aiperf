@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Integration of SessionTreeRegistry with a real ConcurrencyManager and the"""
+"""Integration of SessionTreeRegistry with a real ConcurrencyManager and BranchOrchestrator."""
 
 from __future__ import annotations
 
@@ -152,9 +152,7 @@ async def test_root_with_no_descendants_releases_slot_immediately_on_terminal():
 
 @pytest.mark.asyncio
 async def test_seed_snapshot_registers_grandchildren_under_tree_root():
-    """Depth≥2 snapshot children must register against the depth-0 root,
-    matching live spawn / ``_tree_descendant_done`` decrement keying.
-    """
+    """Depth>=2 snapshot children must register against the depth-0 root, matching live spawn / ``_tree_descendant_done`` decrement keying."""
     from aiperf.timing.trajectory_source import ConversationState
 
     cm = ConcurrencyManager()

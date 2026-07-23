@@ -100,8 +100,7 @@ def _make_credit(
 
 
 def test_cache_bust_disabled_when_user_config_is_none():
-    """No user_config -> target defaults to NONE and benchmark_id to "unknown".
-    Construction stays cheap (no marker minting at __init__)."""
+    """No user_config -> target defaults to NONE and benchmark_id to "unknown". Construction stays cheap (no marker minting at __init__)."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     strategy, *_ = _make_strategy(
         phase=CreditPhase.WARMUP,
@@ -120,8 +119,7 @@ def test_cache_bust_disabled_when_user_config_is_none():
 
 @pytest.mark.asyncio
 async def test_recycle_pass_dict_grows_only_to_pool_size():
-    """Recycling N traces twice each must NOT inflate _recycle_pass beyond
-    the pool size — the dict is keyed by trace_id, not by recycle event."""
+    """Recycling N traces twice each must NOT inflate _recycle_pass beyond the pool size — the dict is keyed by trace_id, not by recycle event."""
     n = 3
     trajectories = [
         Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(n)
@@ -177,9 +175,7 @@ async def test_recycle_pass_dict_grows_only_to_pool_size():
 
 @pytest.mark.asyncio
 async def test_session_marker_dict_pruned_on_recycle():
-    """``_spawn_from_recycle_or_id`` prunes the finished session's bookkeeping
-    up front, before any later branch (cooldown, empty pool) can short-circuit.
-    """
+    """``_spawn_from_recycle_or_id`` prunes the finished session's bookkeeping up front, before any later branch (cooldown, empty pool) can short-circuit."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     run = _make_run(target=CacheBustTarget.SYSTEM_PREFIX)
     strategy, _, _, _ = _make_strategy(
@@ -206,11 +202,7 @@ async def test_session_marker_dict_pruned_on_recycle():
 
 @pytest.mark.asyncio
 async def test_session_marker_dict_pruned_on_metadata_miss_recycle():
-    """If ``_build_session_for_trace`` cannot resolve the next trace (metadata
-    missing in the lookup) the spawn returns early. The finished session's
-    bookkeeping must still be pruned because the prune happens up front in
-    ``_spawn_from_recycle_or_id``, before any later branch can short-circuit.
-    """
+    """If ``_build_session_for_trace`` cannot resolve the next trace (metadata missing in the lookup) the spawn returns early. The finished session's bookkeeping must still be pruned because the prune happens up front in ``_spawn_from_recycle_or_id``, before any later branch can short-circuit."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     run = _make_run(target=CacheBustTarget.SYSTEM_PREFIX)
     strategy, issuer, _, src = _make_strategy(
@@ -245,10 +237,7 @@ async def test_session_marker_dict_pruned_on_metadata_miss_recycle():
 
 
 def test_marker_propagates_through_from_previous_credit_within_session():
-    """``TurnToSend.from_previous_credit`` carries cache_bust_marker /
-    cache_bust_target verbatim from the previous credit to the next-turn
-    descriptor — this is the strategy-side seam that keeps the same marker
-    on every turn of a session."""
+    """``TurnToSend.from_previous_credit`` carries cache_bust_marker / cache_bust_target verbatim from the previous credit to the next-turn descriptor — this is the strategy-side seam that keeps the same marker on every turn of a session."""
     credit = _make_credit(
         conversation_id="trace_0",
         x_correlation_id="xc-0",
@@ -267,9 +256,7 @@ def test_marker_propagates_through_from_previous_credit_within_session():
 
 
 def test_subagent_fork_inherits_parent_marker_via_from_previous_credit():
-    """A DAG fork is constructed from a parent credit through the same
-    ``from_previous_credit`` seam: the child credit's marker matches the
-    parent's marker, and ``parent_correlation_id`` is preserved."""
+    """A DAG fork is constructed from a parent credit through the same ``from_previous_credit`` seam: the child credit's marker matches the parent's marker, and ``parent_correlation_id`` is preserved."""
     parent = _make_credit(
         conversation_id="trace_0",
         x_correlation_id="xc-parent",

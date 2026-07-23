@@ -113,8 +113,7 @@ def _trace(
 
 
 def _fanout_requests(offset: int = 0, **kw: Any) -> list[dict[str, Any]]:
-    """The known-good fan-out shape (mirrors fixtures/weka_traces_fanout):
-    main chain 3 turns, worker fa:000 2 turns, worker fa:001 1 turn."""
+    """The known-good fan-out shape: main chain 3 turns, worker fa:000 2 turns, worker fa:001 1 turn."""
     o = offset
     return [
         _nreq(0.0, [o + 1, o + 2, o + 3], api_time=1.0, **kw),
@@ -145,9 +144,7 @@ def _convert_serial(path: Path, uc, monkeypatch) -> list[Conversation]:
 
 
 def _convert_parallel(path: Path, uc, monkeypatch) -> list[Conversation]:
-    """Full convert_to_conversations through the parallel path, with the pool
-    replaced by an in-process map over _process_task (real task builder and
-    result assembly are exercised)."""
+    """Full convert_to_conversations through the parallel path with the pool replaced by an in-process map over _process_task."""
     monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_WORKERS", 2)
     monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_THRESHOLD", 1)
     loader = WekaTraceLoader(filename=str(path), run=uc)
@@ -271,13 +268,7 @@ def _by_sid(convs: list[Conversation]) -> dict[str, Conversation]:
 
 
 def test_convert_fanout_idle_gap_warp_parallel_byte_identical(tmp_path, monkeypatch):
-    """Spec 5.6: idle-gap warp redistributes the same start set after the split.
-
-    Three compressible gaps, one INSIDE the worker chain (2.5 -> 8.5 across
-    chains, 9 -> 200 on main, 200 -> 210 reaching a worker-chain request whose
-    api_time is unrecorded/None). Warped timestamps and per-chain delays must
-    be byte-identical across paths.
-    """
+    """Idle-gap warp redistributes the same start set after the split with byte-identical timestamps and delays across paths (spec 5.6)."""
     reqs = _fanout_requests()
     reqs[5]["t"] = 200.0  # main turn 3 after a 191s idle gap
     reqs.append(
@@ -306,15 +297,7 @@ def test_convert_fanout_idle_gap_warp_parallel_byte_identical(tmp_path, monkeypa
 def test_convert_nonmonotonic_parent_delay_floored_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """A non-monotonic parent timestamp yields a negative raw inter-turn delay.
-
-    The serial parent loop floors it to 0.0; the parallel parent loop must too,
-    or the module's byte-identical serial/parallel contract breaks (and a
-    negative Turn.delay would tell the load generator to dispatch in the past).
-    All three turns share a growing prefix, so they stay one main chain (no flat
-    split) and exercise the parent path; trace-file order is preserved (the
-    loader does not re-sort parent normals by t).
-    """
+    """A non-monotonic parent timestamp's negative raw delay is floored to 0.0 identically on the serial and parallel parent paths."""
     reqs = [
         _nreq(0.0, [1, 2, 3]),
         _nreq(5.0, [1, 2, 3, 4]),
@@ -336,13 +319,7 @@ def test_convert_nonmonotonic_parent_delay_floored_parallel_byte_identical(
 def test_convert_mixed_split_directory_ordering_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """Spec goal 5 + 5.2: directory where some traces split and others do not.
-
-    Conversation ordering across traces (roots in trace order, then each
-    trace's children grouped) must match across paths. trace_b carries a
-    negative api_time (interval end clamps to zero); trace_c carries a
-    streaming-type worker row and a partial-tail turn 0 (in % block_size != 0).
-    """
+    """A directory mixing split and non-split traces keeps identical conversation ordering across paths (spec goal 5, 5.2)."""
     reqs_c = _fanout_requests(offset=200)
     reqs_c[2]["in"] = 4 * 64 + 17  # partial tail on fa:001 turn 0
     reqs_c[4] = _nreq(8.5, [201, 202, 250, 251, 252], api_time=1.0, typ="s", ttft=0.4)
@@ -398,13 +375,7 @@ def test_convert_mixed_split_directory_ordering_parallel_byte_identical(
 def test_convert_split_trace_with_subagent_children_order_parallel_byte_identical(
     tmp_path, monkeypatch, idle_gap_cap
 ):
-    """Spec 5.3: type:"subagent" handling coexists with flat-chain splitting.
-
-    Children must emit subagent children first, then flat chains, in both
-    paths; subagent SPAWN/JOIN anchors against main-chain turns only. Run
-    with and without the idle-gap warp (warp pulls subagent child starts into
-    the shared per-trace timeline alongside flat-chain requests).
-    """
+    """type:"subagent" handling coexists with flat-chain splitting, emitting subagent children before flat chains identically across paths (spec 5.3)."""
     requests = [
         _nreq(0.0, [1, 2, 3], api_time=1.0),
         {
@@ -462,13 +433,7 @@ def test_convert_split_trace_with_subagent_children_order_parallel_byte_identica
 def test_convert_think_time_only_with_delay_cap_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """Spec 5.6: per-chain delays honor think_time_only and the delay cap.
-
-    Worker-chain request carries think_time=0.25; one main request carries
-    think_time=0.0 (boundary: present-but-zero must be used, not fall back);
-    another has no think_time (falls back to per-chain t-delta, then clamps
-    at the 2s cap). Both paths must agree on every delay.
-    """
+    """Per-chain delays honor think_time_only and the delay cap identically across paths, including the present-but-zero and fallback cases (spec 5.6)."""
     reqs = _fanout_requests()
     reqs[3]["think_time"] = 0.0  # main turn 1: explicit zero
     reqs[4]["think_time"] = 0.25  # fa:000 turn 1
@@ -494,8 +459,7 @@ def test_convert_think_time_only_with_delay_cap_parallel_byte_identical(
 def test_convert_ignore_delays_nulls_all_timing_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """ignore_trace_delays must null timestamp AND delay on every turn of
-    every conversation (root and worker chains) identically in both paths."""
+    """ignore_trace_delays nulls timestamp and delay on every turn of every conversation identically in both paths."""
     serial, parallel = _run_both(
         tmp_path,
         monkeypatch,
@@ -512,16 +476,7 @@ def test_convert_ignore_delays_nulls_all_timing_parallel_byte_identical(
 def test_convert_main_chain_compaction_seam_reset_context_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """Spec 4 phase 2 + 5: a compaction seam spliced INTO the main chain of a
-    split trace must reproduce reset_context=True at the seam turn in both
-    paths.
-
-    M2's tail dies (compaction to [1,2,9] elected as seam); the in-flight
-    sibling fork [1,2,3,40] (temporal veto) stays a spawn, forcing the trace
-    to split so the seam rides the flat-chain code path. Turn 0 carries one
-    unshared user block past the observed prefix so the all-prefix turn-0
-    quirk (see the xfail test below) does not mask the seam semantics.
-    """
+    """A compaction seam spliced into the main chain of a split trace reproduces reset_context=True at the seam turn in both paths (spec 4 phase 2, 5)."""
     requests = [
         _nreq(0.0, [1, 2, 3, 7], api_time=1.0),
         _nreq(2.0, [1, 2, 3, 7, 8], api_time=1.0),
@@ -545,9 +500,7 @@ def test_convert_main_chain_compaction_seam_reset_context_parallel_byte_identica
 
 
 def test_convert_all_prefix_turn0_pure_growth_has_no_reset(tmp_path, monkeypatch):
-    """Spec 4/11 case 1: pure context growth is a chain extension and must
-    not flag reset_context. Here the observed group prefix (3 blocks) covers
-    the main chain's ENTIRE first request, making turn 0 all-system."""
+    """Pure context growth is a chain extension and must not flag reset_context, even when the observed prefix covers turn 0 entirely (spec 4/11 case 1)."""
     requests = [
         _nreq(0.0, [1, 2, 3], api_time=1.0),
         _nreq(2.0, [1, 2, 3, 4, 5], api_time=1.0),
@@ -563,8 +516,7 @@ def test_convert_all_prefix_turn0_pure_growth_has_no_reset(tmp_path, monkeypatch
 
 
 def _poisoned_requests() -> list[dict[str, Any]]:
-    """Nonce-poisoned shape (spec 8): chained block hashes make LCP=0 between
-    ALL requests -> every request founds a zero-depth chain."""
+    """Nonce-poisoned shape: chained block hashes make LCP=0 between all requests so each founds a zero-depth chain (spec 8)."""
     return [
         _nreq(2.0 * i, [9000 + 10 * i, 9001 + 10 * i], api_time=0.5, out=8)
         for i in range(9)
@@ -574,9 +526,7 @@ def _poisoned_requests() -> list[dict[str, Any]]:
 def test_convert_poisoned_trace_alongside_healthy_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """A nonce-poisoned trace and a healthy fan-out trace in one directory:
-    whatever the split decision is, it must be the SAME decision with the
-    same bytes in both paths."""
+    """A nonce-poisoned trace and a healthy fan-out trace in one directory make the same split decision with the same bytes in both paths."""
     traces = [
         _trace("trace_heal", _fanout_requests()),
         _trace("trace_poison", _poisoned_requests()),
@@ -592,9 +542,7 @@ def test_convert_poisoned_trace_alongside_healthy_parallel_byte_identical(
 
 
 def test_convert_disjoint_batch_splits_serial(tmp_path, monkeypatch):
-    """With the nonce-poison guard removed, a fully-disjoint trace splits into
-    independent per-agent chains (root + spawned), retaining every request,
-    instead of collapsing to one linear conversation."""
+    """A fully-disjoint trace splits into independent per-agent chains, retaining every request instead of collapsing to one conversation."""
     path = _write_traces(tmp_path, [_trace("trace_poison", _poisoned_requests())])
     serial = _convert_serial(path, _mk_user_config(), monkeypatch)
     sids = [c.session_id for c in serial]
@@ -605,15 +553,7 @@ def test_convert_disjoint_batch_splits_serial(tmp_path, monkeypatch):
 def test_convert_max_osl_cross_model_batch_rewrite_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """Spec 3/5.4 + 5: cross-model disjoint-namespace worker batch (the Haiku
-    workers under an Opus main shape) with --max-osl capping and model
-    rewriting to endpoint.model_names.
-
-    max_tokens of flat-chain children must honor max-osl in BOTH paths (the
-    parallel path ships capped_output_length in the child payload); with 0/0
-    declared, both the worker group and the singleton main group keep their
-    shared prefixes inside user content (no fabricated system role).
-    """
+    """A cross-model disjoint-namespace worker batch with --max-osl capping and model rewriting keeps prefixes in user content identically across paths (spec 3/5.4, 5)."""
     requests = [
         _nreq(0.0, [1, 2, 3], model="opus", api_time=1.0, out=10),
         _nreq(1.5, [100, 101, 110], model="haiku", api_time=3.0, out=10),
@@ -647,10 +587,7 @@ def test_convert_max_osl_cross_model_batch_rewrite_parallel_byte_identical(
 def test_convert_zero_declared_fanout_all_user_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """The system role is never fabricated: a 0/0-declared fan-out keeps the
-    observed namespace-group prefix inside the user content for the parent
-    AND every worker chain, byte-identical across paths (no turn-0 override
-    keys ship in the parallel payload)."""
+    """A 0/0-declared fan-out keeps the observed prefix inside user content for the parent and every worker chain, byte-identical across paths."""
     serial, parallel = _run_both(
         tmp_path, monkeypatch, [_trace("trace_obs", _fanout_requests())]
     )
@@ -669,10 +606,7 @@ def test_convert_zero_declared_fanout_all_user_parallel_byte_identical(
 def test_convert_declared_prefix_wins_main_observed_for_workers_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """Declared tool/system tokens (3 blocks) emit the root's system segment
-    (recorded truth). Worker chains do NOT share the declared-prefix blocks
-    ([1,2,50..] vs [1,2,3..] diverge at block 2), so their turn 0 is honest
-    user content -- the system role is never fabricated for them."""
+    """Declared tool/system tokens emit the root's system segment, but workers that don't share those blocks keep honest user-content turn 0."""
     requests = [
         _nreq(0.0, [1, 2, 3, 4], api_time=1.0),  # 4 blocks: covers declared 3
         _nreq(2.0, [1, 2, 50, 51], api_time=6.0),
@@ -700,13 +634,7 @@ def test_convert_declared_prefix_wins_main_observed_for_workers_parallel_byte_id
 def test_convert_empty_hash_first_request_split_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """Spec 8 edge: an empty-hash request must stay on the main chain and
-    never found a chain or witness a fork — even as the FIRST retained
-    request. The first hash-bearing request after leading empty rows IS the
-    main agent (it must not be exiled to a worker chain). Both paths must
-    agree byte-for-byte, every request must appear exactly once, and
-    orchestrator-v1 validation (run inside convert) must pass.
-    """
+    """A leading empty-hash request stays on the main chain and never founds one, so the first hash-bearing request remains the main agent (spec 8)."""
     requests = [
         _nreq(0.0, [], api_time=0.5, in_tokens=100),  # empty hash turn 0
         _nreq(1.0, [1, 2, 3], api_time=1.0),
@@ -733,11 +661,7 @@ def test_convert_empty_hash_first_request_split_parallel_byte_identical(
 def test_convert_exact_equality_join_boundary_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """Spec 5.3 join rule boundary: chain end EXACTLY equals the next main
-    turn's timestamp (t + eps >= end with eps=1e-6 must admit equality), so
-    the chain joins rather than running background — identically in both
-    paths (serial computes the join from plan objects, the worker from
-    shipped flat markers)."""
+    """A chain ending exactly at the next main turn's timestamp joins rather than running background, identically in both paths (spec 5.3 join boundary)."""
     requests = [
         _nreq(0.0, [1, 2, 3], api_time=1.0),
         _nreq(1.5, [1, 2, 70], api_time=2.5),  # ends exactly at 4.0

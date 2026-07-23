@@ -138,9 +138,7 @@ def test_empty_pool_raises():
 
 
 def test_single_turn_trace_skipped_with_warning(caplog):
-    """n=1 traces have no profiling turn after the warmup split; the source
-    skips them with a warning. When only n=1 traces exist, the trajectory
-    pool is empty and EmptyTracePoolError is raised."""
+    """n=1 traces have no profiling turn after the warmup split, so the source skips them with a warning and raises EmptyTracePoolError when only n=1 traces exist."""
     md = _make_dataset_metadata({"only": 1})
     sampler = MagicMock()
     sampler.next_conversation_id.side_effect = ["only"]
@@ -291,13 +289,7 @@ def test_timestamped_snapshot_after_spawning_turn_schedules_future_child_start()
 
 
 def test_next_recycle_conversation_id_uses_sampler_round_robin():
-    """Recycle draws the next root from the dataset sampler.
-
-    A SequentialSampler yields every root in order and wraps indefinitely, so
-    over a whole number of cycles each root is reused exactly equally -- no
-    trace is favored. This replaces the old strategy-side recycle queue, whose
-    copy accumulation favored short, rootless-heavy traces.
-    """
+    """Recycle draws the next root from the dataset sampler, which wraps round-robin so each root is reused exactly equally over a whole number of cycles."""
     from collections import Counter
 
     from aiperf.dataset.dataset_samplers import SequentialSampler
@@ -331,8 +323,7 @@ def test_next_recycle_conversation_id_uses_sampler_round_robin():
 
 
 def test_next_recycle_conversation_id_skips_unspawnable_roots():
-    """Roots with no spawnable session (zero turns) are skipped so recycle never
-    hands back a dead trace; bounded so an all-empty pool returns None."""
+    """Roots with no spawnable session (zero turns) are skipped so recycle never hands back a dead trace, bounded so an all-empty pool returns None."""
     from aiperf.dataset.dataset_samplers import SequentialSampler
 
     dataset = DatasetMetadata(

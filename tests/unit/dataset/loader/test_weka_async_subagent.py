@@ -60,9 +60,7 @@ def _build_trace(trace_id, requests, models=("m",)):
 
 
 def test_subagent_running_past_following_parent_is_background(tmp_path, monkeypatch):
-    """sa.t + duration_ms/1000 > following_parent.t -> branch is_background=True,
-    no SPAWN_JOIN prerequisite.
-    """
+    """A subagent running past the following parent turn is is_background=True with no SPAWN_JOIN prerequisite."""
     data = _build_trace(
         "t_async",
         [
@@ -95,9 +93,7 @@ def test_subagent_running_past_following_parent_is_background(tmp_path, monkeypa
 
 
 def test_subagent_finishing_before_following_parent_keeps_join(tmp_path, monkeypatch):
-    """sa.t + duration_ms/1000 < following_parent.t -> branch has SPAWN_JOIN,
-    is_background=False (current behavior, regression guard).
-    """
+    """A subagent finishing before the following parent turn keeps a SPAWN_JOIN with is_background=False."""
     data = _build_trace(
         "t_sync",
         [
@@ -135,8 +131,7 @@ def test_subagent_finishing_before_following_parent_keeps_join(tmp_path, monkeyp
 
 
 def test_subagent_duration_ms_none_falls_back_to_inner_api_time(tmp_path, monkeypatch):
-    """When duration_ms is None (status='async_launched' style), end-time is
-    inferred from max(inner.t + inner.api_time)."""
+    """When duration_ms is None, end-time is inferred from ``max(inner.t + inner.api_time)``."""
     data = _build_trace(
         "t_no_dur",
         [
@@ -158,14 +153,7 @@ def test_subagent_duration_ms_none_falls_back_to_inner_api_time(tmp_path, monkey
 def test_overlapping_inner_requests_without_hash_evidence_stay_one_child(
     tmp_path, monkeypatch
 ):
-    """Inner requests without hash evidence ride the main chain even when
-    their [t, t+api_time] intervals overlap.
-
-    Nested LCP chain detection only splits on hash-prefix evidence; requests
-    with empty ``hash_ids`` carry none, so they stay one sequential child
-    conversation in time order (the legacy interval packing that split these
-    by overlap alone is gone).
-    """
+    """Inner requests without hash evidence stay one sequential child conversation even when their intervals overlap."""
     data = _build_trace(
         "t_par",
         [
@@ -192,14 +180,7 @@ def test_overlapping_inner_requests_without_hash_evidence_stay_one_child(
 
 
 def test_interleaved_inner_threads_split_into_lineage_chains(tmp_path, monkeypatch):
-    """Interleaved inner context threads split by hash-prefix lineage.
-
-    Two interleaved threads (A: blocks [1, ...], B: blocks [50, ...]) become
-    the main chain (A, founded by the subagent's first request) and one
-    spawned chain (B), each holding its own context lineage — the old
-    time-interval packing would have stitched [A1, A2, B2] into one stream
-    whenever they didn't overlap pairwise.
-    """
+    """Interleaved inner context threads split by hash-prefix lineage into the main chain plus one spawned chain."""
 
     def inner(t, api_time, hash_ids):
         return {
@@ -241,12 +222,7 @@ def test_interleaved_inner_threads_split_into_lineage_chains(tmp_path, monkeypat
 
 
 def test_subagent_one_shot_overflow_is_tagged_aux_sidecar(tmp_path, monkeypatch):
-    """A single disjoint inner call is the subagent's own sidecar.
-
-    Thread B here is one fresh-context request (not the 2-request chain above),
-    so with aux classification on it is the subagent's one-shot sidecar:
-    ::sa:a1:aux:000, not the :fa:000 agent tag.
-    """
+    """A single disjoint inner call is tagged the subagent's one-shot aux sidecar rather than a :fa: agent."""
     monkeypatch.setattr(Environment.DATASET, "WEKA_AUX_MAX_REQUESTS", 1)
 
     def inner(t, api_time, hash_ids):
@@ -290,19 +266,7 @@ def test_subagent_one_shot_overflow_is_tagged_aux_sidecar(tmp_path, monkeypatch)
 def test_nested_subagent_preamble_does_not_contaminate_main_model(
     tmp_path, monkeypatch
 ):
-    """Regression: a leading prefix-disjoint preamble on a DIFFERENT model must
-    not redefine the subagent's classification yardstick.
-
-    Inner stream: a Haiku title-gen preamble (peeled by _split_off_preamble and
-    re-attached to the main chain only for replay), an Opus main chain, and an
-    Opus single-request spawned chain that is large (>= aux ISL floor) with a
-    generative output (>= reduction OSL max). That spawned chain is same-model
-    as the DETECTED main chain and neither small-fresh nor a reduction, so it is
-    a genuine agent (:fa:). Deriving main_model from chains[0] -- which has the
-    re-attached Haiku preamble sorted first -- would make it cross-model vs Haiku
-    and mis-tag it as an :aux: sidecar (the cross-model arm fires regardless of
-    size/output).
-    """
+    """A leading prefix-disjoint preamble on a different model must not redefine the subagent's classification yardstick and mis-tag a genuine same-model agent as :aux:."""
     monkeypatch.setattr(Environment.DATASET, "WEKA_AUX_MAX_REQUESTS", 1)
     monkeypatch.setattr(Environment.DATASET, "WEKA_AUX_CROSS_MODEL", True)
 
@@ -359,9 +323,7 @@ def test_nested_subagent_preamble_does_not_contaminate_main_model(
 def test_subagent_with_sequential_inner_requests_emits_one_child_conversation(
     tmp_path, monkeypatch
 ):
-    """Two non-overlapping inner requests stay in ONE child Conversation as two
-    sequential turns (regression: don't fragment serial inners).
-    """
+    """Two non-overlapping inner requests stay in one child Conversation as two sequential turns."""
     data = _build_trace(
         "t_seq",
         [
@@ -390,13 +352,7 @@ def test_subagent_with_sequential_inner_requests_emits_one_child_conversation(
 
 
 def _install_inproc_pool(monkeypatch, loader):
-    """Replace multiprocessing Pool with synchronous in-process stub.
-
-    Mirrors ``tests/component_integration/test_agentic_replay_e2e.py``'s
-    ``_install_inproc_pool``. Lets unit tests drive ``_reconstruct_parallel``
-    end-to-end without spawning real worker processes (which would re-import
-    a real tokenizer the MagicMock fixtures don't carry).
-    """
+    """Replace the multiprocessing Pool with a synchronous in-process stub so tests drive ``_reconstruct_parallel`` without real workers."""
     from aiperf.dataset.loader import weka_parallel_convert as wpc
 
     pg = loader.prompt_generator
@@ -473,13 +429,7 @@ def test_async_branch_detected_under_parallel_reconstruction(tmp_path, monkeypat
 
 
 def test_parallel_inner_chains_under_parallel_reconstruction(tmp_path, monkeypatch):
-    """Nested chain detection produces identical children under the
-    multiprocessing reconstruction path.
-
-    Two overlapping inner requests forking the same context (shared [1]
-    prefix, second still in flight when the first's continuation cannot
-    extend) become the main chain plus one spawned chain sibling.
-    """
+    """Nested chain detection produces the main chain plus one spawned sibling identically under the multiprocessing path."""
 
     def inner(t, api_time, hash_ids):
         return {
@@ -527,22 +477,7 @@ def test_parallel_inner_chains_under_parallel_reconstruction(tmp_path, monkeypat
 
 
 def test_async_subagent_with_parallel_inner_real_trace(tmp_path, monkeypatch):
-    """End-to-end regression against the real captured trace.
-
-    Trace shape (verified by inspection):
-      - 7 streaming parent turns at t=0, 13.01, 23.89, 32.36, 36.54, 271.10, 280.18
-      - 1 subagent at outer index 4 (t=33.161, duration_ms=246584)
-        with TWO overlapping inner requests (api_time ~237s each)
-
-    Expected loader output:
-      - 1 SPAWN branch with is_background=False because the subagent end
-        joins the later parent turn at t=280.18
-      - 2 sibling child conversations: the main chain
-        '<trace>::sa:codex_subagent_001' plus one spawned chain ':fa:000'
-        (the second inner request forks the shared 548-block prefix while
-        the first is still in flight)
-      - No SPAWN_JOIN prerequisite on the immediate t=36.54 parent turn
-    """
+    """End-to-end regression against the real captured trace: one non-background SPAWN branch, two sibling children, and the join only on the late parent turn."""
     src = FIXTURES / "async_subagent_with_parallel_inner.json"
     assert src.exists(), f"regression fixture missing: {src}"
     # Loader requires a single file path or directory; copy into tmp_path

@@ -120,10 +120,7 @@ def _simple_spawn_metadata(
 
 @pytest.mark.asyncio
 async def test_cancel_during_intercept_releases_parent_lock():
-    """Cancel a task awaiting ``dispatch_first_turn`` inside ``intercept``.
-    The async-with on ``_parent_locks[parent_corr]`` must release the lock so
-    a second intercept on the same parent does not deadlock.
-    """
+    """Cancelling a task awaiting dispatch_first_turn inside intercept releases the parent lock so a second intercept does not deadlock."""
     cs = _mk_source(_simple_spawn_metadata(1))
     issuer = _mk_issuer()
 
@@ -165,15 +162,7 @@ async def test_cancel_during_intercept_releases_parent_lock():
 
 @pytest.mark.asyncio
 async def test_cancel_during_satisfy_prerequisite_keeps_state_consistent():
-    """``_satisfy_prerequisite`` itself has no awaits between the
-    ``completed.add`` and the gate-satisfied check; cancelling at the only
-    boundary (entering the coroutine) is a no-op. Verify that cancelling the
-    ``on_child_leaf_reached`` task right at the await of
-    ``_release_blocked_join`` leaves the gate in a coherent state — the
-    child IS recorded as completed, the gate IS popped from _active_joins,
-    but the issuer call may or may not have happened. Either way no partial
-    re-fire is possible because ``is_blocked`` was set to False by the pop.
-    """
+    """Cancelling on_child_leaf_reached at the _release_blocked_join await leaves the gate coherent: child completed, gate popped, and no partial re-fire possible."""
     cs = _mk_source(_simple_spawn_metadata(1))
     issuer = _mk_issuer()
 
@@ -215,11 +204,7 @@ async def test_cancel_during_satisfy_prerequisite_keeps_state_consistent():
 
 @pytest.mark.asyncio
 async def test_cancel_during_gather_partial_dispatch_rolls_back_consistently():
-    """One child raises a generic exception (return_exceptions=True ⇒ caught
-    inline; siblings finish). Verify per-child rollback fires for the
-    exception child but NOT for the successful siblings, and the gate's
-    expected counter reflects only the survivors.
-    """
+    """One child raising rolls back only that child, leaving surviving siblings tracked and the gate's expected counter reflecting the survivors."""
     cs = _mk_source(_simple_spawn_metadata(3))
     issuer = _mk_issuer()
 
@@ -248,9 +233,7 @@ async def test_cancel_during_gather_partial_dispatch_rolls_back_consistently():
 
 @pytest.mark.asyncio
 async def test_cancel_during_pre_session_loop_partial_pre_dispatched_set():
-    """Three pre-session branches; the second blocks, gets cancelled. Only
-    the first should be in ``_pre_dispatched_branches`` after cancellation.
-    """
+    """With three pre-session branches where the second blocks and is cancelled, only the first remains in _pre_dispatched_branches."""
     branches = [
         ConversationBranchInfo(
             branch_id=f"root:pre{i}",
@@ -308,9 +291,7 @@ async def test_cancel_during_pre_session_loop_partial_pre_dispatched_set():
 
 @pytest.mark.asyncio
 async def test_100_concurrent_intercepts_independent_parents_isolated_state():
-    """Each parent's gates / joins are independent. No cross-talk via the
-    ``_parent_locks`` defaultdict.
-    """
+    """100 concurrent intercepts on independent parents keep each parent's gates and joins isolated."""
     N = 100
     convs: list[ConversationMetadata] = []
     for i in range(N):
@@ -337,12 +318,7 @@ async def test_100_concurrent_intercepts_independent_parents_isolated_state():
 
 @pytest.mark.asyncio
 async def test_100_concurrent_intercepts_same_parent_serialized():
-    """Single parent receives 100 intercept calls at distinct turn_indexes
-    in arbitrary order; per-parent lock must serialize them. The exact
-    final state depends on the (arbitrary) interleaving of which turn was
-    "last" — but the orchestrator must not crash, and counters must reflect
-    one spawn for the only spawning turn (turn 0).
-    """
+    """100 intercept calls on a single parent are serialized by the per-parent lock without crashing or corrupting state."""
     cs = _mk_source(_simple_spawn_metadata(2))
     issuer = _mk_issuer()
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
@@ -362,9 +338,7 @@ async def test_100_concurrent_intercepts_same_parent_serialized():
 
 @pytest.mark.asyncio
 async def test_race_parent_return_and_last_child_completion_gate_fires_once():
-    """Two orderings — child-first then parent, parent-first then child —
-    both must end in exactly one ``dispatch_join_turn`` call.
-    """
+    """Both orderings of parent return and last-child completion end in exactly one dispatch_join_turn call."""
     # Ordering A: child completes first (T=1 future gate is satisfied,
     # popped silently). Parent's intercept on T=0 return then sees
     # next_idx=1 satisfied -> returns False, no dispatch.
@@ -423,13 +397,7 @@ async def test_race_parent_return_and_last_child_completion_gate_fires_once():
 
 @pytest.mark.asyncio
 async def test_cleanup_mid_pre_session_dispatch_no_state_leak():
-    """``cleanup()`` is synchronous — it cannot interrupt an awaiting
-    coroutine. But once the loop's first iteration completes, a second
-    iteration that re-enters checks ``_cleaning_up`` only at the very top.
-    The pre-session loop does NOT recheck after the first await. Verify the
-    actual behavior: cleanup mid-flight does NOT abort the loop, but state
-    is cleared after both finish.
-    """
+    """cleanup() mid-flight does not abort the pre-session loop, but state is cleared after it finishes."""
     branches = [
         ConversationBranchInfo(
             branch_id=f"root:pre{i}",
@@ -481,10 +449,7 @@ async def test_cleanup_mid_pre_session_dispatch_no_state_leak():
 
 @pytest.mark.asyncio
 async def test_stop_flips_during_release_increments_joins_suppressed_only_once():
-    """``dispatch_join_turn`` returns False (simulating stop). Verify
-    ``joins_suppressed`` increments exactly once and no double-dispatch
-    occurs even if the same satisfy is somehow re-entered.
-    """
+    """When dispatch_join_turn returns False, joins_suppressed increments exactly once with no double-dispatch on re-delivery."""
     cs = _mk_source(_simple_spawn_metadata(1))
     issuer = _mk_issuer()
     issuer.dispatch_join_turn = AsyncMock(return_value=False)
@@ -505,11 +470,7 @@ async def test_stop_flips_during_release_increments_joins_suppressed_only_once()
 async def test_fail_fast_two_simultaneous_child_errors_aborts_parent_once(
     monkeypatch, force_fail_fast
 ):
-    """Under fail-fast, two children of the same parent fire
-    ``on_child_errored`` concurrently via ``asyncio.gather``. The parent
-    should be aborted exactly once (or at most once per orchestrator
-    semantics). Sibling cascades must not double-abort the parent.
-    """
+    """Under fail-fast, two concurrent child errors on the same parent cascade to exactly one parent abort."""
 
     force_fail_fast(True)
     cs = _mk_source(_simple_spawn_metadata(3))
@@ -541,9 +502,7 @@ async def test_fail_fast_two_simultaneous_child_errors_aborts_parent_once(
 
 @pytest.mark.asyncio
 async def test_wait_for_zero_timeout_cancels_intercept_lock_released():
-    """Force a TimeoutError -> CancelledError propagation into intercept.
-    The parent lock must be released afterwards.
-    """
+    """A TimeoutError cancelling intercept releases the parent lock afterwards."""
     cs = _mk_source(_simple_spawn_metadata(1))
     issuer = _mk_issuer()
 
@@ -571,11 +530,7 @@ async def test_wait_for_zero_timeout_cancels_intercept_lock_released():
 
 @pytest.mark.asyncio
 async def test_release_blocked_join_does_not_recurse_into_intercept():
-    """If ``dispatch_join_turn`` synchronously triggered another intercept
-    on the same parent_corr, the per-parent lock would deadlock (re-entrant
-    asyncio.Lock acquisition on the same task hangs). Verify by spying:
-    intercept is never called from within ``dispatch_join_turn``.
-    """
+    """dispatch_join_turn never synchronously re-enters intercept on the same parent_corr, which would deadlock the per-parent lock."""
     cs = _mk_source(_simple_spawn_metadata(1))
     issuer = _mk_issuer()
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
@@ -611,10 +566,7 @@ async def test_release_blocked_join_does_not_recurse_into_intercept():
 
 @pytest.mark.asyncio
 async def test_leaf_and_errored_for_same_child_one_wins():
-    """Concurrent leaf + errored for same child. ``_child_to_join.pop``
-    inside ``_handle_child_done`` (or the fail-fast path) makes the second
-    invocation a no-op via ``entries`` being None / empty.
-    """
+    """Concurrent leaf and errored for the same child let one win, the other no-oping via the drained _child_to_join entry."""
     cs = _mk_source(_simple_spawn_metadata(2))
     issuer = _mk_issuer()
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
@@ -638,18 +590,7 @@ async def test_leaf_and_errored_for_same_child_one_wins():
 
 
 def test_stop_condition_applies_to_dag_children_truth_table():
-    """Children honor: cancellation (DagLifecycle), Duration, RequestCount.
-    Skip: sending-complete (Lifecycle), SessionCount.
-
-    V2 PORT NOTE: agentx split cancellation/sending-complete into two
-    conditions and bypassed RequestCount for children. V2 folds
-    cancellation+sending-complete into ``LifecycleStopCondition``
-    (``applies_to_dag_children=False``) plus a cancellation-only
-    ``DagLifecycleStopCondition`` (``applies_to_dag_children=True``), and now
-    HONORS ``--request-count`` for children (it is a literal wire cap). Only
-    ``SessionCountStopCondition`` opts out. See ``test_stop_conditions_dag_applies``.
-    """
-    # Cancellation gate for DAG children: honored.
+    """DAG children honor DagLifecycle, Duration, and RequestCount stop conditions and skip Lifecycle and SessionCount."""
     assert DagLifecycleStopCondition.applies_to_dag_children is True
     assert DurationStopCondition.applies_to_dag_children is True
     # Sending-complete (folded into Lifecycle): NOT applied to children.
@@ -661,10 +602,7 @@ def test_stop_condition_applies_to_dag_children_truth_table():
 
 @pytest.mark.asyncio
 async def test_pre_session_dispatch_first_turn_returns_false_counts_truncated():
-    """``issued`` is False ⇒ stop-condition refusal (e.g. ``--request-count``
-    cap), not an error. The orchestrator should tally as
-    ``children_truncated``, matching the semantics already used by
-    ``on_child_stopped``."""
+    """A pre-session dispatch_first_turn returning False is a stop-condition refusal tallied as children_truncated, not an error."""
     pre_branch = ConversationBranchInfo(
         branch_id="root:pre",
         child_conversation_ids=["early"],
@@ -694,11 +632,7 @@ async def test_pre_session_dispatch_first_turn_returns_false_counts_truncated():
 
 @pytest.mark.asyncio
 async def test_many_parents_simultaneous_gate_arrival_no_active_joins_iter_corruption():
-    """50 parents all arrive at their gated turn simultaneously. _active_joins
-    is only mutated via dict[]/pop on a per-parent key — no iteration during
-    normal operation. Verify by stress: gather all parents' arrivals and
-    have all children complete in interleaved order.
-    """
+    """50 parents arriving at their gated turn simultaneously with interleaved child completion never corrupt _active_joins."""
     N = 50
     convs: list[ConversationMetadata] = []
     for i in range(N):
@@ -725,10 +659,7 @@ async def test_many_parents_simultaneous_gate_arrival_no_active_joins_iter_corru
 
 @pytest.mark.asyncio
 async def test_one_of_fifty_children_raises_others_complete_state_consistent():
-    """Inside ``_spawn_children_and_register_gates`` the gather uses
-    ``return_exceptions=True``. Even when one child's dispatch raises, the
-    other 49 land cleanly. Verify counters and state.
-    """
+    """One of fifty children raising leaves the other 49 landing cleanly with consistent counters and state."""
     cs = _mk_source(_simple_spawn_metadata(50))
     issuer = _mk_issuer()
 
@@ -756,13 +687,7 @@ async def test_one_of_fifty_children_raises_others_complete_state_consistent():
 
 @pytest.mark.asyncio
 async def test_cancel_release_blocked_join_before_dispatch_returns_no_double_count():
-    """Mid-await of ``dispatch_join_turn``, cancel the satisfying task. The
-    gate has already been popped; ``parents_resumed`` was not yet
-    incremented (increment happens AFTER the await). Verify that on
-    cancellation neither ``parents_resumed`` nor ``joins_suppressed`` is
-    incremented and the gate is not silently re-firable (no duplicate
-    dispatch on a re-trigger).
-    """
+    """Cancelling the satisfying task mid-dispatch increments neither parents_resumed nor joins_suppressed and leaves the popped gate non-refirable."""
     cs = _mk_source(_simple_spawn_metadata(1))
     issuer = _mk_issuer()
 
@@ -795,9 +720,7 @@ async def test_cancel_release_blocked_join_before_dispatch_returns_no_double_cou
 
 @pytest.mark.asyncio
 async def test_concurrent_intercepts_post_cleanup_all_short_circuit():
-    """After cleanup, every intercept must early-return False without
-    touching state.
-    """
+    """After cleanup, every intercept early-returns False without touching state."""
     cs = _mk_source(_simple_spawn_metadata(2))
     issuer = _mk_issuer()
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
@@ -829,15 +752,7 @@ async def test_intercept_after_cleanup_does_not_repopulate_parent_locks():
 
 @pytest.mark.asyncio
 async def test_cancel_mid_spawn_partial_state_visible_no_corruption():
-    """Cancel the intercept task while ``_spawn_children_and_register_gates``
-    is mid-gather. Some children may have started before the cancel point;
-    the ``_child_to_join`` for them is registered but the rollback loop
-    (which runs after gather completes) never executes.
-
-    This is a known-tradeoff: cancelling intercept mid-flight can leave
-    ``_child_to_join`` with entries whose dispatch_first_turn was cancelled.
-    Document the actual behavior so future regressions surface.
-    """
+    """Cancelling intercept mid-gather leaves registered _child_to_join entries whose rollback never ran, a documented known tradeoff."""
     cs = _mk_source(_simple_spawn_metadata(3))
     issuer = _mk_issuer()
     block = asyncio.Event()
@@ -879,11 +794,7 @@ async def test_cancel_mid_spawn_partial_state_visible_no_corruption():
 
 @pytest.mark.asyncio
 async def test_cleanup_during_satisfy_release_does_not_fire_dispatch():
-    """``cleanup()`` sets ``_cleaning_up=True`` synchronously. A child
-    completion task that was already past the cleaning-up check at
-    ``on_child_leaf_reached`` entry will continue to drive the gate. This
-    documents the known race-window; cleanup is best-effort.
-    """
+    """A child-completion task already past the cleaning-up check continues driving the gate through an in-flight dispatch, a documented best-effort race window."""
     cs = _mk_source(_simple_spawn_metadata(1))
     issuer = _mk_issuer()
     started = asyncio.Event()
@@ -923,10 +834,7 @@ def test_child_join_entry_is_frozen_and_hashable():
 
 
 def test_orchestrator_never_imports_stop_conditions():
-    """Sanity: BranchOrchestrator must not depend on StopCondition state —
-    stop conditions live at the issuer level and the orchestrator only
-    observes ``dispatch_join_turn`` returning False.
-    """
+    """BranchOrchestrator must not depend on StopCondition state; it only observes dispatch_join_turn returning False."""
     import inspect
 
     import aiperf.timing.branch_orchestrator as mod

@@ -93,15 +93,7 @@ def test_init_turn_0_with_tool_and_system_prefix_split():
 
 
 def test_init_turn_0_prefix_block_rounding_overshoot_clamps_to_budget():
-    """Regression: a declared prefix whose BLOCK count exceeds the prompt's own
-    covered-block count must clamp the system segment, not emit a negative
-    block_count / over-budget tokens.
-
-    in=170 (m_full=2), tool=130 -> prefix_blocks=ceil(130/64)=3 > m_full=2, with
-    3 recorded hash blocks so the hash-availability guard does not fire. Without
-    the clamp user_blocks = covered(2) - cursor(3) = -1 and the system segment
-    holds 3*64=192 tokens (> in_tokens), breaking sum == in_tokens.
-    """
+    """A declared prefix whose block count exceeds the prompt's covered-block count clamps the system segment rather than emitting negative/over-budget tokens."""
     r = _make_recon()
     r.init_turn_0(
         hash_ids=[1, 2, 3], in_tokens=170, tool_tokens=130, system_tokens=0, seed="t:0"
@@ -114,13 +106,7 @@ def test_init_turn_0_prefix_block_rounding_overshoot_clamps_to_budget():
 
 
 def test_init_turn_0_prefix_exceeding_input_tokens_clamps_to_budget():
-    """Regression: a prefix that outright exceeds the whole turn-0 input must
-    clamp rather than produce a negative-block_count segment.
-
-    in=100 (m_full=1), tool=130 -> prefix_blocks=ceil(130/64)=3, hash_ids has 3
-    blocks (guard passes). covered_blocks=min(1,3)=1, so the system segment
-    clamps to 1 block and the user tail carries the partial remainder.
-    """
+    """A prefix that exceeds the whole turn-0 input clamps to the covered block budget rather than producing a negative-block_count segment."""
     r = _make_recon()
     r.init_turn_0(
         hash_ids=[1, 2, 3], in_tokens=100, tool_tokens=130, system_tokens=0, seed="t:0"
@@ -156,13 +142,7 @@ def test_init_turn_0_zero_partial_tail_no_tail_marker():
 
 
 def test_init_turn_0_combines_tool_and_system_into_single_system():
-    """tool+system must emit exactly ONE role="system" segment.
-
-    Some serving stacks reject multiple adjacent system messages, so the
-    reconstructor merges trace-level tool_tokens and system_tokens into a
-    single system segment whose hash-block range covers what two separate
-    segments would otherwise cover.
-    """
+    """tool+system merge into exactly one role="system" segment, since some serving stacks reject multiple adjacent system messages."""
     bs = 64
     in_tokens = 1000
     tool_tokens = 200
@@ -346,10 +326,7 @@ def test_truncate_beyond_total_blocks_no_op():
 
 
 def test_truncate_at_boundary_strips_partial_tail():
-    """At a boundary cut, the trailing ``prev_partial_tail`` tokens are
-    stripped. The only trailing tokens past ``block_count * bs`` are the
-    partial tail (block-aligned segments eliminate asst-block-rounding
-    overhead at segment boundaries)."""
+    """At a boundary cut, the trailing ``prev_partial_tail`` tokens past ``block_count * bs`` are stripped."""
     bs = 64
     block_count = 1
     partial_tail = 36  # superseded by next turn's tiling
@@ -434,16 +411,7 @@ def test_advance_pattern_a_clean_append():
 
 
 def test_advance_pattern_b_trailing_block_churn():
-    """LCP == M_prev - 1 (trailing-block recomposition).
-
-    ``curr_hash_ids`` has 5 entries while ``curr_in_tokens=300`` covers only
-    ``300 // 64 = 4`` full blocks -- the 5th hash is a partial last block
-    (300 % 64 = 44 tokens). ``_advance_to_turn`` clamps the new region to the
-    covered-block budget (``min(m_curr, m_curr_full)``), exactly mirroring
-    ``init_turn_0``'s ``covered_blocks = min(m_full, len(hash_ids))``, so the
-    byte-exact invariant ``sum(seg.tokens) == curr_in_tokens`` holds rather
-    than overshooting by ~bs tokens.
-    """
+    """LCP == M_prev - 1 trailing-block recomposition clamps the new region to the covered-block budget so ``sum(seg.tokens) == curr_in_tokens`` holds."""
     r = _make_recon()
     r.init_turn_0(
         hash_ids=[1, 2, 3], in_tokens=180, tool_tokens=0, system_tokens=0, seed="s0"
@@ -521,9 +489,7 @@ def test_advance_pattern_c_pull_back():
 
 
 def test_advance_asst_overflow_pattern_a_template_drift():
-    """new_region < ceil(out[k-1]/bs)*bs: asst clamps to the region, but the
-    final block is reserved for the user so the turn ends with a user
-    segment."""
+    """When new_region < ceil(out[k-1]/bs)*bs, asst clamps to the region but the final block is reserved for the user so the turn ends with a user segment."""
     r = _make_recon()
     r.init_turn_0(
         hash_ids=[1, 2], in_tokens=128, tool_tokens=0, system_tokens=0, seed="s0"
@@ -548,8 +514,7 @@ def test_advance_asst_overflow_pattern_a_template_drift():
 
 
 def test_advance_asst_overflow_pattern_c_deep_compaction():
-    """Pattern C, single-block tail-free region: the lone new block must seed
-    the trailing user segment, so the assistant segment vanishes entirely."""
+    """Pattern C single-block tail-free region: the lone new block seeds the trailing user segment, so the assistant segment vanishes entirely."""
     r = _make_recon()
     r.init_turn_0(
         hash_ids=list(range(1, 11)),
@@ -595,9 +560,7 @@ def test_advance_zero_out_skips_assistant_segment():
 
 
 def test_advance_asst_exactly_fills_region_yields_trailing_user():
-    """When the assistant target exactly equals a tail-free new region, the
-    final block is still reserved for the user so the turn ends with a user
-    segment (here a single-block region, so the assistant segment vanishes)."""
+    """When the assistant target exactly equals a tail-free new region, the final block is still reserved for the user (here vanishing the assistant segment)."""
     r = _make_recon()
     r.init_turn_0(
         hash_ids=[1, 2], in_tokens=128, tool_tokens=0, system_tokens=0, seed="s0"
@@ -618,15 +581,7 @@ def test_advance_asst_exactly_fills_region_yields_trailing_user():
 
 
 def test_advance_boundary_cut_strips_missing_block_overhang():
-    """A boundary cut on the trailing segment strips its ENTIRE overhang past
-    ``block_count * bs`` — missing-block synth tokens AND the partial tail.
-    Stripping only the partial tail leaves stale synth tokens behind, so the
-    rebuilt context exceeds ``curr_in_tokens`` and reset re-emissions drift.
-
-    Shape: a truncated hash recording (hash_ids shorter than
-    ``in_tokens // bs``) puts missing-block synth tokens on the trailing
-    user segment; the next turn's pure-growth LCP cut lands exactly on its
-    covered-block boundary."""
+    """A boundary cut on the trailing segment strips its entire overhang past ``block_count * bs`` — both missing-block synth tokens and the partial tail."""
     r = _make_recon()
     # in=242, hash covers 2 of floor(242/64)=3 blocks -> user seg holds
     # 2*64 block tokens + (64 missing + 50 tail) = 242 tokens.
@@ -649,8 +604,7 @@ def test_advance_boundary_cut_strips_missing_block_overhang():
 
 
 def test_advance_token_level_slicing_asst_user_split():
-    """Block-aligned slicing puts the first asst_blocks*bs tokens in the
-    assistant segment and the remaining new_region tokens in the user segment."""
+    """Block-aligned slicing puts the first asst_blocks*bs tokens in the assistant segment and the remaining new_region tokens in the user segment."""
     r = _make_recon()
     r.init_turn_0(
         hash_ids=[1, 2], in_tokens=128, tool_tokens=0, system_tokens=0, seed="s0"
@@ -671,9 +625,7 @@ def test_advance_token_level_slicing_asst_user_split():
 
 
 def test_byte_exact_sum_matches_recorded_init_turn_0():
-    """sum(len(seg.tokens)) == in_tokens after init_turn_0 across various
-    tool/sys/in combinations including edge cases that previously had
-    block-rounding shortfall."""
+    """sum(len(seg.tokens)) == in_tokens after init_turn_0 across various tool/sys/in combinations including block-rounding edge cases."""
     cases = [
         # (in, tool, sys, expected_sum)
         (200, 0, 0, 200),
@@ -706,8 +658,7 @@ def test_byte_exact_sum_matches_recorded_init_turn_0():
 
 
 def test_byte_exact_sum_matches_recorded_advance_turn():
-    """sum(len(seg.tokens)) == curr_in_tokens after advance_turn under all
-    three structural patterns (clean append, mid-seq replace, pull-back)."""
+    """sum(len(seg.tokens)) == curr_in_tokens after advance_turn under all three structural patterns (clean append, mid-seq replace, pull-back)."""
     # Pattern A: clean append, in[k] = lcp*bs + new_region exactly.
     r = _make_recon()
     r.init_turn_0(
@@ -769,9 +720,7 @@ def test_byte_exact_sum_matches_recorded_advance_turn():
 
 
 def test_hash_content_stability_across_segments():
-    """A given ``hash_id`` decodes to identical tokens across every segment
-    it appears in. There is no BPE-stable terminator stamp on the trailing
-    tokens — each cached block's tokens are emitted unmodified."""
+    """A given ``hash_id`` decodes to identical tokens across every segment it appears in, with no terminator stamp modifying trailing tokens."""
     r = _make_recon()
     # turn 0: hash_ids = [1, 2, 3], block-aligned to 192 tokens (no partial_tail).
     r.init_turn_0(
@@ -797,9 +746,7 @@ def test_hash_content_stability_across_segments():
 
 
 def test_hash_content_stability_terminator_field_unused():
-    """Setting ``bpe_stable_terminator_tokens`` has no effect on emitted
-    segment tokens — the reconstructor algorithm does not consume the field
-    (no terminator stamp is applied; hash-content stability is preserved)."""
+    """Setting ``bpe_stable_terminator_tokens`` has no effect on emitted segment tokens, since the reconstructor does not consume the field."""
     r_no_term = _make_recon(terminator_tokens=[])
     r_no_term.init_turn_0(
         hash_ids=[1, 2, 3], in_tokens=192, tool_tokens=0, system_tokens=0, seed="t:0"
@@ -817,20 +764,12 @@ def test_hash_content_stability_terminator_field_unused():
 
 
 def _snapshot_segments(recon):
-    """Snapshot (role, block_start, tokens copy) for each segment. Identity
-    by (role, block_start) lets us tell a surviving segment apart from a
-    freshly appended one that happens to land at the same list index after
-    upstream segments were dropped."""
+    """Snapshot (role, block_start, tokens copy) per segment so identity by (role, block_start) distinguishes a survivor from a freshly appended segment."""
     return [(seg.role, seg.block_start, list(seg.tokens)) for seg in recon._segments]
 
 
 def _assert_prefix_stable(snapshot, recon):
-    """For every old segment that still exists at the same list index with
-    the same (role, block_start), its tokens must be a strict prefix of the
-    old tokens. Old segments dropped entirely (replaced by freshly appended
-    segments) are skipped — replacement is not prefix mutation, the index
-    just rebinds. The invariant under test: nothing surviving from a prior
-    turn ever has its prefix rewritten."""
+    """Assert every surviving old segment (same index, role, block_start) keeps its tokens as a strict prefix of the old tokens; dropped/rebound segments are skipped."""
     new_segs = recon._segments
     for i, (old_role, old_start, old_tokens) in enumerate(snapshot):
         if i >= len(new_segs):
@@ -877,8 +816,7 @@ def test_prefix_stability_pattern_a_clean_append():
 
 
 def test_prefix_stability_pattern_b_trailing_block_churn():
-    """Pattern B (LCP == M_prev - 1): boundary segment shrinks to drop
-    partial_tail; earlier segments byte-identical; later segments dropped."""
+    """Pattern B (LCP == M_prev - 1): the boundary segment shrinks to drop partial_tail while earlier segments stay byte-identical and later ones drop."""
     r = _make_recon()
     # in=180 -> m_full=2, partial_tail=52. turn-0 user holds 180 tokens,
     # block_count=2.
@@ -905,8 +843,7 @@ def test_prefix_stability_pattern_b_trailing_block_churn():
 
 
 def test_prefix_stability_pattern_c_deep_pull_back():
-    """Pattern C (LCP < M_prev - 1, mid-segment cut): boundary segment
-    suffix-truncated; earlier byte-identical; later dropped."""
+    """Pattern C (LCP < M_prev - 1, mid-segment cut): the boundary segment is suffix-truncated while earlier segments stay byte-identical and later ones drop."""
     r = _make_recon()
     # turn-0: 10 blocks + 44 partial_tail = 620 tokens, all in one user segment.
     r.init_turn_0(
@@ -936,10 +873,7 @@ def test_prefix_stability_pattern_c_deep_pull_back():
 
 
 def test_prefix_stability_sweep_multi_turn():
-    """Chain advances exercising A -> B -> C -> A -> C and assert
-    prefix-stability on every step. Distinct hash_ids per block ensure any
-    prefix mutation surfaces immediately via the hash-keyed token IDs in
-    ``_stub_decode_block_tokens``."""
+    """Chain advances exercising A -> B -> C -> A -> C, asserting prefix-stability on every step via distinct hash-keyed token IDs."""
     r = _make_recon()
 
     # Turn 0: seed with 5 blocks + 32 partial_tail = 352 tokens.
@@ -1025,11 +959,7 @@ def sentinel_count(tokens):
 
 
 def test_init_turn_0_with_truncated_hash_ids_synthesizes_tail():
-    """When len(hash_ids) < floor(in_tokens/bs), the missing region is
-    synthesized as additional partial-tail tokens on the trailing user
-    segment. The reconstructor must NOT raise.
-    Total tokens emitted must equal in_tokens.
-    """
+    """When len(hash_ids) < floor(in_tokens/bs), the missing region is synthesized as trailing user-segment tail tokens without raising, totaling in_tokens."""
     bs = 64
     in_tokens = 1000  # floor(1000/64) = 15 blocks needed, partial tail = 40
     # Provide only 10 hash_ids — short by 5 blocks (320 tokens) of the block tile.
@@ -1080,10 +1010,7 @@ def test_init_turn_0_with_truncated_hash_ids_synthesizes_tail():
 
 
 def test_init_turn_0_with_truncated_hash_ids_and_system_prefix_synthesizes_user_tail():
-    """When tool_tokens + system_tokens consume the first N blocks AND hash_ids
-    is still long enough to cover those, the user segment's synth tail handles
-    only the post-system gap.
-    """
+    """When tool+system consume the first N blocks and hash_ids cover those, the user segment's synth tail handles only the post-system gap."""
     bs = 64
     tool_tokens = 64  # 1 block of system prefix
     system_tokens = 64  # 1 more block of system prefix
@@ -1133,10 +1060,7 @@ def test_init_turn_0_with_truncated_hash_ids_and_system_prefix_synthesizes_user_
 
 
 def test_init_turn_0_system_prefix_exceeding_hash_ids_still_raises():
-    """If even the system+tool prefix can't be filled from hash_ids,
-    the loader should still error — synthesizing the SYSTEM segment from
-    random tokens would silently corrupt the prefix cache.
-    """
+    """If even the system+tool prefix can't be filled from hash_ids, the loader still errors rather than synthesizing the system segment from random tokens."""
     bs = 64
     tool_tokens = 128
     system_tokens = 128  # 4 blocks of system prefix
@@ -1163,11 +1087,7 @@ def test_init_turn_0_system_prefix_exceeding_hash_ids_still_raises():
 
 
 def test_advance_turn_with_truncated_curr_hash_ids_synthesizes_tail():
-    """When ``len(curr_hash_ids) * bs < curr_in_tokens``, advance_turn must
-    synthesize the missing-block region as additional partial-tail tokens
-    so the final synth_buf state has exactly curr_in_tokens tokens (less
-    the prev_out_tokens that went to the assistant segment).
-    """
+    """When ``len(curr_hash_ids) * bs < curr_in_tokens``, advance_turn synthesizes the missing-block region as tail tokens so the state totals curr_in_tokens."""
     bs = 64
     # Turn-0 baseline: 5 hash_ids fully covering in_tokens=320 (5*64=320, no partial tail).
     turn0_hash_ids = list(range(1, 6))
@@ -1235,10 +1155,7 @@ def test_advance_turn_with_truncated_curr_hash_ids_synthesizes_tail():
 
 
 def test_advance_turn_with_full_curr_hash_ids_unchanged():
-    """Regression guard: when curr_hash_ids fully covers curr_in_tokens (no
-    truncation), advance_turn behavior is byte-identical to today's logic —
-    no synth-tail tokens are appended for the missing-block region (because
-    there is none)."""
+    """When curr_hash_ids fully covers curr_in_tokens (no truncation), advance_turn appends no synth-tail tokens for a missing-block region."""
     bs = 64
     turn0_hash_ids = list(range(1, 6))
     turn0_in_tokens = 320
@@ -1281,19 +1198,7 @@ def test_advance_turn_with_full_curr_hash_ids_unchanged():
 
 
 def test_advance_turn_partial_last_hashed_block_clamps_to_budget():
-    """Regression: a hashed-but-partial last block (len(curr_hash_ids) >
-    curr_in_tokens // bs) must clamp to the covered-block budget instead of
-    decoding the partial block as full AND appending the partial tail.
-
-    This mirrors ``init_turn_0``'s ``covered_blocks = min(m_full,
-    len(hash_ids))`` clamp. Before the fix, ``_advance_to_turn`` used
-    ``m_curr = len(curr_hash_ids)`` unclamped, so a turn like in=250 with
-    hash_ids=[..,4] at bs=64 emitted block 4 as a full 64-token block AND an
-    extra ``250 % 64 = 58`` synth tail -- overshooting curr_in_tokens by ~bs
-    and breaking the byte-exact ``sum(seg.tokens) == in_tokens`` contract
-    (this is exactly the shape in tests/fixtures/weka_traces/simple.json
-    turn 1, which the byte-exact ISL drift contract enforces).
-    """
+    """A hashed-but-partial last block clamps to the covered-block budget instead of decoding the partial block as full and appending the partial tail."""
     r = _make_recon()
     # turn 0: in=200, hash_ids=[1,2,3] (3 full blocks + 8 partial tail).
     r.init_turn_0(
@@ -1332,10 +1237,7 @@ def test_advance_turn_partial_last_hashed_block_clamps_to_budget():
 def test_advance_always_ends_with_user_segment(
     prev_out_tokens, curr_hash_ids, curr_in_tokens
 ):
-    """Wire invariant: every turn that adds new content ends with a user
-    segment, even when the assistant target would consume the whole tail-free
-    new region. The final new block is relabeled to the user, never left as a
-    trailing assistant."""
+    """Wire invariant: every turn adding new content ends with a user segment, relabeling the final new block to the user rather than leaving a trailing assistant."""
     r = _make_recon()
     r.init_turn_0(
         hash_ids=[1, 2], in_tokens=128, tool_tokens=0, system_tokens=0, seed="s0"
@@ -1355,11 +1257,7 @@ def test_advance_always_ends_with_user_segment(
 
 
 def test_advance_zero_new_region_records_trailing_non_user_caveat():
-    """The one shape that cannot end with a user: a fully block-aligned
-    pull-back that appends zero new tokens after truncation exposes a trailing
-    assistant. Synthesizing a user block would break the byte-exact ISL
-    invariant, so the turn is recorded on ``_trailing_non_user_turns`` and
-    warned rather than faked."""
+    """A block-aligned pull-back appending zero new tokens exposes a trailing assistant that is recorded on ``_trailing_non_user_turns`` rather than faked."""
     r = _make_recon()
     # turn 0: 2-block user prompt.
     r.init_turn_0(
@@ -1396,9 +1294,7 @@ def test_advance_zero_new_region_records_trailing_non_user_caveat():
 
 
 def test_init_turn_0_system_only_prompt_records_caveat():
-    """A turn-0 prompt entirely consumed by the cached tool/system prefix has
-    no user content to make a trailing user block; the system-only shape is
-    recorded on ``_trailing_non_user_turns`` rather than faked."""
+    """A turn-0 prompt entirely consumed by the tool/system prefix has no user content, so the system-only shape is recorded on ``_trailing_non_user_turns``."""
     r = _make_recon()
     # in=128 == 2 blocks, all tool/system; no user remainder.
     r.init_turn_0(
@@ -1413,8 +1309,7 @@ def test_init_turn_0_system_only_prompt_records_caveat():
 
 
 def test_compute_caps_canonical_degenerate():
-    """The canonical pull-back: turn 2 truncates onto the assistant block that
-    turn 1 created, so turn 1's assistant must be capped to 0."""
+    """Canonical pull-back: turn 2 truncates onto the assistant block turn 1 created, so turn 1's assistant is capped to 0."""
     caps = compute_asst_block_caps(
         [([1, 2], 128), ([1, 2, 3, 4], 256), ([1, 2, 3], 192)],
         64,
@@ -1432,8 +1327,7 @@ def test_compute_caps_clean_append_no_constraints():
 
 
 def test_compute_caps_target_owned_by_turn_0_no_cap():
-    """A pull-back landing on a block created by turn 0 needs no cap (turn 0
-    has no assistant segment to shrink)."""
+    """A pull-back landing on a block created by turn 0 needs no cap, since turn 0 has no assistant segment to shrink."""
     caps = compute_asst_block_caps(
         [([1, 2], 128), ([1, 2, 3, 4], 256), ([1, 2], 128)],
         64,
@@ -1442,8 +1336,7 @@ def test_compute_caps_target_owned_by_turn_0_no_cap():
 
 
 def test_compute_caps_two_targets_same_owner_takes_min():
-    """Two later degenerate pull-backs landing inside the same turn's assistant
-    region collapse to the tightest (min) cap."""
+    """Two later degenerate pull-backs inside the same turn's assistant region collapse to the tightest (min) cap."""
     # turn 1 grows by 4 blocks (blocks 2,3,4,5) with a large prev_out.
     # turn 2 pulls back to 5 blocks (block 4 boundary), turn 3 to 4 blocks
     # (block 3 boundary) -- both inside turn 1's assistant region.
@@ -1463,9 +1356,7 @@ def test_compute_caps_two_targets_same_owner_takes_min():
 
 
 def test_compute_caps_overcovered_prefix_clamps_no_indexerror():
-    """lcp can exceed the current turn's covered-block count when the recorder
-    stored more hash blocks than curr_in_tokens covers; the effective-lcp clamp
-    must keep tile indexing in range."""
+    """When lcp exceeds the current turn's covered-block count, the effective-lcp clamp keeps tile indexing in range (no IndexError)."""
     # turn 1 covers only 2 blocks (in=128) but shares a 4-long hash prefix.
     caps = compute_asst_block_caps(
         [([1, 2, 3, 4], 256), ([1, 2, 3, 4], 128), ([1, 2], 128)],
@@ -1477,8 +1368,7 @@ def test_compute_caps_overcovered_prefix_clamps_no_indexerror():
 
 
 def test_compute_caps_partial_last_hashed_block_uses_covered_budget():
-    """end_k must use min(len(hash_ids), in_tokens // bs): a partial last hashed
-    block contributes to the tail, not the covered tile."""
+    """end_k uses min(len(hash_ids), in_tokens // bs), so a partial last hashed block contributes to the tail, not the covered tile."""
     # turn 1: in=250 -> m_full=3, hash has 4 ids (4th is partial) -> end=3.
     caps = compute_asst_block_caps(
         [([1, 2, 3], 192), ([1, 2, 3, 4], 250)],
@@ -1515,8 +1405,7 @@ def _run_canonical_three_turns(caps):
 
 
 def test_advance_with_cap_eliminates_trailing_assistant():
-    """Applying the planner cap to turn 1 makes the turn-2 pull-back land on a
-    user block: no trailing assistant, no flagged caveat, byte-exact preserved."""
+    """Applying the planner cap to turn 1 makes the turn-2 pull-back land on a user block: no trailing assistant, no flagged caveat, byte-exact preserved."""
     caps = compute_asst_block_caps(
         [([1, 2], 128), ([1, 2, 3, 4], 256), ([1, 2, 3], 192)], 64
     )
@@ -1527,16 +1416,14 @@ def test_advance_with_cap_eliminates_trailing_assistant():
 
 
 def test_advance_without_cap_reproduces_trailing_assistant():
-    """Regression guard: max_asst_blocks=None reproduces the pre-fix degenerate
-    trailing-assistant shape and flags it."""
+    """max_asst_blocks=None reproduces the degenerate trailing-assistant shape and flags it."""
     r = _run_canonical_three_turns([None, None, None])
     assert [s.role for s in r._segments] == ["user", "assistant"]
     assert r._trailing_non_user_turns == [2]
 
 
 def test_advance_cap_larger_than_region_is_noop():
-    """A cap >= new_blocks_count does not shrink the assistant below what the
-    target/region already allow."""
+    """A cap >= new_blocks_count does not shrink the assistant below what the target/region already allow."""
     r = _make_recon()
     r.init_turn_0(
         hash_ids=[1, 2], in_tokens=128, tool_tokens=0, system_tokens=0, seed="s0"
@@ -1566,10 +1453,7 @@ def _make_tool_shaped_recon(bs=64):
 
 
 def test_cap_demotes_unpaired_tool_result_to_plain_user():
-    """When a planner cap removes the assistant a tool-result turn would have
-    paired with, the tool-result user must ship as a PLAIN user message (not a
-    dangling role:tool without a tool_calls partner), and stay plain across a
-    reset re-emission. Without the cap the same turn shapes as role:tool."""
+    """When a planner cap removes the assistant a tool-result turn would pair with, the tool-result user ships as a plain user message and stays plain across resets."""
     # Uncapped: 2-block tool-result region keeps an assistant -> shapes to tool.
     r_uncapped = _make_tool_shaped_recon()
     r_uncapped.init_turn_0(

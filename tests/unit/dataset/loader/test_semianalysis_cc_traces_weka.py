@@ -29,11 +29,7 @@ _NO_SUBAGENTS_HF_DATASET_NAME = "semianalysisai/cc-traces-weka-no-subagents-0518
 
 @pytest.fixture
 def user_config():
-    """A real v2 BenchmarkRun (named ``user_config`` for minimal churn).
-
-    The HF loader and its delegated WekaTraceLoader read config off
-    ``run.cfg.*``; the public weka dataset is a PublicDataset in v2.
-    """
+    """A real v2 BenchmarkRun (named ``user_config`` for minimal churn)."""
     from tests.unit.dataset.loader.conftest import make_weka_run
 
     return make_weka_run(model_names=["test-model"])
@@ -202,8 +198,7 @@ class TestLoadDatasetRowValidation:
 
 @pytest.mark.asyncio
 class TestConvertToConversationsDelegation:
-    """``convert_to_conversations`` MUST delegate to the inner WekaTraceLoader,
-    so file-based and HF-based replay share the exact same backing code."""
+    """``convert_to_conversations`` delegates to the inner WekaTraceLoader so file- and HF-based replay share backing code."""
 
     async def test_delegates_to_inner_weka_convert(
         self, loader: SemiAnalysisCCTracesWekaLoader

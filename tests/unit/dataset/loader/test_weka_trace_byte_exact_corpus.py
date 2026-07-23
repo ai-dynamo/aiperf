@@ -1,27 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Byte-exact replay structural smoke tests over the entire kv-cache-tester corpus.
-
-Marked ``slow`` since it walks 739 trace files. Run via:
-
-    uv run pytest -m slow tests/unit/dataset/loader/test_weka_trace_byte_exact_corpus.py -n auto
-
-Memory shape: traces are processed **one at a time** through a fresh
-single-file ``WekaTraceLoader``. Each iteration asserts in-place and
-explicitly drops + GCs before the next, so peak RSS is bounded by the
-largest single trace's conversation graph (a few MB) regardless of corpus
-size. This avoids the OOM-class 50+ GB RSS the load-all shape would hit
-on the full 739-trace corpus.
-
-The deeper byte-exact ISL drift assertion (with a real tokenizer) is
-exercised in ``test_weka_trace_byte_exact_drift.py`` (component-integration).
-This file only exercises *structural* invariants:
-
-  * every trace parses end-to-end through ``convert_to_conversations``
-  * every non-empty turn carries at least one role segment
-  * for every k>=1 turn with ``prev_out_tokens > 0``, the ``assistant``
-    role is present in ``raw_messages`` (symmetric attribution, §4.4.1)
-"""
+"""Byte-exact replay structural smoke tests (``slow``) that process each kv-cache-tester trace one at a time to bound RSS while checking structural invariants."""
 
 from __future__ import annotations
 
@@ -145,10 +124,7 @@ def test_corpus_every_turn_has_at_least_one_segment():
 
 
 def test_corpus_per_turn_role_structure():
-    """k>=1 turns whose prior turn produced output_tokens must include assistant role.
-
-    Symmetric attribution rule, spec §4.4.1.
-    """
+    """k>=1 turns whose prior turn produced output_tokens must include the assistant role (symmetric attribution, spec §4.4.1)."""
     models = _collect_corpus_models()
     failures: list[str] = []
     for trace_path, blob in _iter_corpus_traces():

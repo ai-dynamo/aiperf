@@ -1,29 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Agentic-replay end-to-end component-integration tests.
-
-Three paths are covered:
-
-1. ``test_agentic_replay_e2e_clean_run_under_scenario`` -- exercise the full
-   agentic_replay pipeline against the small synthetic weka fixture: load
-   traces, build a TrajectorySource, run WARMUP+PROFILING strategies,
-   stamp the validator outcome onto AggregateResult.metadata, export the JSON.
-   Asserts the four spec invariants (warmup barrier, recycle observed, metrics
-   window correct, aggregate JSON ``submission_valid: true`` + scenario stamp).
-2. ``test_agentic_replay_e2e_unsafe_override_stamps_false`` -- the validator
-   path under ``--unsafe-override`` with a duration below the 900s floor:
-   aggregate JSON contains ``submission_valid: false`` with ``unsafe_override``
-   in ``submission_invalid_reasons``.
-3. ``test_agentic_replay_e2e_no_scenario_omits_submission_valid`` -- bare
-   agentic_replay timing mode (no ``--scenario``): aggregate JSON omits the
-   ``submission_valid`` field; the rest of the run still succeeds.
-
-This file pins the loader -> trajectory -> strategy -> aggregate -> exporter
-chain end-to-end at the integration boundary above the
-orchestrator-construction seam. The full ``aiperf profile --scenario`` CLI
-surface (which drives the orchestrator's TrajectorySource construction) is
-covered by ``test_agentic_replay_cli_e2e.py``.
-"""
+"""Agentic-replay end-to-end tests pinning the loader -> trajectory -> strategy -> aggregate -> exporter chain: clean scenario run, unsafe-override stamping ``submission_valid: false``, and bare no-scenario mode omitting the field."""
 
 from __future__ import annotations
 
@@ -53,11 +30,6 @@ pytestmark = pytest.mark.component_integration
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "weka_traces_small"
 
 
-# =============================================================================
-# Helpers
-# =============================================================================
-
-
 @dataclass
 class _DispatchLog:
     """Capture every credit issued through the strategy for ordering checks."""
@@ -73,14 +45,7 @@ class _DispatchLog:
 
 
 class _SequentialSampler:
-    """Deterministic sampler over a fixed conversation_id list (rooted only).
-
-    Wraps around to the start indefinitely, matching the production
-    ``SequentialSampler`` (``dataset_samplers.py``). Recycle now draws roots from
-    this same sampler via ``TrajectorySource.next_recycle_conversation_id``, so
-    it must keep handing ids back past the first pass rather than raising
-    StopIteration.
-    """
+    """Deterministic sampler over a fixed conversation_id list that wraps indefinitely, matching production ``SequentialSampler`` (recycle draws roots from it past the first pass)."""
 
     def __init__(self, conversation_ids: list[str]) -> None:
         self._ids = list(conversation_ids)
@@ -95,11 +60,7 @@ class _SequentialSampler:
 
 
 def _make_weka_run():
-    """Build a real ``BenchmarkRun`` adequate for WekaTraceLoader.
-
-    The shared ``make_weka_run`` helper supplies the trace-replay knobs
-    (tokenizer, models, and no fixed-schedule window).
-    """
+    """Build a real ``BenchmarkRun`` adequate for WekaTraceLoader via the shared ``make_weka_run`` helper."""
     from tests.unit.dataset.loader.conftest import make_weka_run
 
     return make_weka_run(
@@ -109,25 +70,7 @@ def _make_weka_run():
 
 
 def _load_small_weka_dataset(monkeypatch, *, parallel: bool = False) -> DatasetMetadata:
-    """Load the synthetic weka fixture into a DatasetMetadata.
-
-    Stubs the prompt-synthesis path because the test does not need real
-    tokenization -- the inputs/outputs are downstream of trajectory selection
-    and credit dispatch, not the actual prompt content.
-
-    ``parallel=False``: forces serial reconstruction
-    (``WEKA_PARALLEL_WORKERS=1``) and stubs ``_decode_block_tokens`` /
-    ``_decode_tokens_to_text`` directly on the loader so the corpus/tokenizer
-    machinery never runs.
-
-    ``parallel=True``: forces the multi-process reconstruction path
-    (``WEKA_PARALLEL_WORKERS=2``, threshold lowered) but replaces the
-    real ``multiprocessing.Pool`` with an in-process stub that calls
-    ``_init_worker`` + ``_process_task`` synchronously. A small real
-    int-array corpus and a stub tokenizer satisfy
-    ``run_parallel_weka_reconstruction``'s ``SharedMemory`` allocation
-    and the per-worker ``Tokenizer.from_pretrained`` lookup.
-    """
+    """Load the synthetic weka fixture into a DatasetMetadata, stubbing the prompt-synthesis path and forcing either serial or in-process-parallel reconstruction per ``parallel``."""
     from aiperf.common.environment import Environment
 
     run = _make_weka_run()
@@ -193,15 +136,7 @@ def _load_small_weka_dataset(monkeypatch, *, parallel: bool = False) -> DatasetM
 
 
 def _install_inproc_pool(monkeypatch, loader) -> None:
-    """Replace the multiprocessing Pool with a synchronous in-process stub.
-
-    Patches ``get_loader_mp_context`` to return an object whose
-    ``Pool(...)`` is a context-manager fake that runs ``_init_worker``
-    once in-process, then dispatches ``_process_task`` per task on
-    ``imap``. Patches ``Tokenizer.from_pretrained`` to return the
-    loader's stub tokenizer so the worker's tokenizer lookup
-    succeeds without network access.
-    """
+    """Replace the multiprocessing Pool with a synchronous in-process stub and stub ``Tokenizer.from_pretrained`` so worker reconstruction runs without subprocesses or network."""
     from aiperf.dataset.loader import weka_parallel_convert as wpc
 
     pg = loader.prompt_generator
@@ -236,18 +171,7 @@ def _install_inproc_pool(monkeypatch, loader) -> None:
 
 
 def _make_recording_issuer(log: _DispatchLog, current_phase: list[CreditPhase]):
-    """Build an AsyncMock credit issuer that records dispatches into ``log``.
-
-    The current-phase list is a one-element box so the WARMUP and PROFILING
-    strategies (constructed sequentially) can update the recorded phase
-    without re-binding the issuer.
-
-    Also exposes ``cid_to_xcorr`` on the issuer: a mapping from conversation_id
-    to the most recently issued x_correlation_id. Tests use this to send
-    final-turn credit returns whose ``x_correlation_id`` matches what
-    ``setup_phase`` / ``_spawn_from_recycle_or_id`` minted, so the strategy's
-    ``_correlation_to_lane`` invariant holds and recycle proceeds.
-    """
+    """Build an AsyncMock credit issuer that records dispatches into ``log`` and exposes ``cid_to_xcorr`` so tests can send final-turn returns with matching x_correlation_ids."""
     issuer = AsyncMock()
     cid_to_xcorr: dict[str, str] = {}
 
@@ -288,20 +212,7 @@ def _make_credit(
 
 
 def _make_running_scheduler() -> MagicMock:
-    """Build a scheduler mock whose ``schedule_later`` actually runs coroutines.
-
-    Both phase strategies defer dispatches through
-    ``scheduler.schedule_later(delay, coro)`` rather than awaiting them inline:
-    under spread mode (the default) WARMUP fires only the single max-lead credit
-    inline and schedules every earlier-lead credit, and PROFILING fires only a
-    lane whose first post-t* offset is 0 inline and schedules the rest. A bare
-    ``MagicMock`` scheduler swallows those coroutines (they never run and leak as
-    un-awaited warnings), so the recording issuer never sees them.
-
-    This stub schedules each coroutine as a real task on the running loop
-    (delay is irrelevant -- the test fixtures collapse asyncio.sleep) and tracks
-    the tasks so ``_flush_scheduled`` can drain them after ``execute_phase``.
-    """
+    """Build a scheduler mock whose ``schedule_later`` runs each coroutine as a real loop task (a bare MagicMock would swallow the spread-deferred dispatches) and tracks them for ``_flush_scheduled``."""
     scheduler = MagicMock()
     scheduled: list[asyncio.Task] = []
 
@@ -314,12 +225,7 @@ def _make_running_scheduler() -> MagicMock:
 
 
 async def _flush_scheduled(strategy: AgenticReplayStrategy) -> None:
-    """Await every task the strategy's scheduler queued via ``schedule_later``.
-
-    Drains iteratively so a scheduled coroutine that itself schedules more
-    (e.g. a recycle dispatch) is also awaited. Yields the loop a couple times
-    first so freshly ``ensure_future``-d tasks register before draining.
-    """
+    """Iteratively await every task the strategy's scheduler queued via ``schedule_later``, including tasks that schedule further tasks (e.g. recycle dispatches)."""
     scheduled: list[asyncio.Task] = strategy.scheduler._scheduled_tasks
     for _ in range(50):
         await asyncio.sleep(0)
@@ -327,7 +233,6 @@ async def _flush_scheduled(strategy: AgenticReplayStrategy) -> None:
         if not pending:
             break
         await asyncio.gather(*pending)
-    # Surface any exception captured in a completed task.
     for task in scheduled:
         if task.done() and not task.cancelled():
             task.result()
@@ -373,15 +278,7 @@ def _make_aggregate_with_carriers(
     total_responses: int,
     context_overflow_count: int,
 ) -> AggregateResult:
-    """Build an AggregateResult carrying the cli_runner stamps.
-
-    This mirrors the wiring in ``cli_runner/_aggregate.py``: when ``--scenario``
-    is set, the validator outcome flows through these underscore-prefixed
-    metadata keys to the JSON exporter, which pops them and emits the
-    ``submission_valid`` / ``submission_invalid_reasons`` / ``scenario`` fields.
-    When ``--scenario`` is unset (no_scenario test), no carrier keys are stamped
-    so the exporter omits the field entirely.
-    """
+    """Build an AggregateResult carrying (or, when ``scenario_name`` is None, omitting) the underscore-prefixed cli_runner validator stamps that the JSON exporter pops."""
     md: dict = {}
     if scenario_name is not None:
         md["_scenario_name"] = scenario_name
@@ -399,37 +296,12 @@ def _make_aggregate_with_carriers(
     )
 
 
-# =============================================================================
-# Test 1: clean run under --scenario inferencex-agentx-mvp
-# =============================================================================
-
-
 @pytest.mark.parametrize("parallel", [False, True], ids=["serial", "parallel"])
 @pytest.mark.asyncio
 async def test_agentic_replay_e2e_clean_run_under_scenario(
     tmp_path: Path, monkeypatch, parallel: bool
 ) -> None:
-    """Spec section 8.2 #1: clean scenario run.
-
-    End-to-end through the genuine pipeline:
-    1. WekaTraceLoader loads the small synthetic fixture (10 traces, N in [1, 10]).
-    2. TrajectorySource samples a 4-member trajectory with k_i in [0, 0.7*N_i].
-    3. WARMUP strategy dispatches one credit per warmable stream at its
-       warmup_turn_index.
-    4. PROFILING strategy resumes each trajectory at k_i + 1 and processes
-       enough credit-returns to drive at least one full trace recycle.
-    5. cli_runner-style metadata stamping populates carrier keys.
-    6. AggregateConfidenceJsonExporter produces the final JSON.
-
-    Assertions:
-    - Warmup barrier: zero PROFILING dispatches before WARMUP execute_phase
-      finishes.
-    - Recycle: at least one trace_id appears more than once in the dispatch
-      log (trajectory + recycle re-dispatch).
-    - Metrics window: stop_checker.can_start_new_session gating prevents new
-      sessions from being spawned post-stop (verified by toggling the gate).
-    - Aggregate JSON: submission_valid is True; scenario is the locked name.
-    """
+    """Spec 8.2 #1: a clean scenario run through the genuine pipeline holds the warmup barrier, observes recycle, gates post-stop sessions, and stamps ``submission_valid: true``."""
     dataset = _load_small_weka_dataset(monkeypatch, parallel=parallel)
     assert len(dataset.conversations) == 10, (
         "small fixture should produce exactly 10 traces"
@@ -448,7 +320,6 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
     current_phase = [CreditPhase.WARMUP]
     issuer = _make_recording_issuer(log, current_phase)
 
-    # ---- WARMUP ----
     warmup = _build_phase_strategy(
         phase=CreditPhase.WARMUP, source=source, issuer=issuer
     )
@@ -476,12 +347,11 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
     )
     assert len(warmup_dispatched) == source.warmup_credit_count
 
-    # WARMUP BARRIER: no PROFILING dispatch happened during WARMUP.
+    # Warmup barrier: no PROFILING dispatch happened during WARMUP.
     assert log.by_phase(CreditPhase.PROFILING) == [], (
         "Warmup barrier violated: PROFILING dispatched before WARMUP completed"
     )
 
-    # ---- PROFILING ----
     current_phase[0] = CreditPhase.PROFILING
     profiling = _build_phase_strategy(
         phase=CreditPhase.PROFILING, source=source, issuer=issuer
@@ -523,16 +393,9 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
                 "immediate recycle dispatch but none observed"
             )
 
-    # ---- RECYCLE: drive final-turn completions for every trajectory to
-    # exercise recycle. On the snapshot path each lane's root resumes at its
-    # ``next_turn_index`` (its first turn at/after t*), which for these short
-    # fixtures is already the trace's final turn, so its initial PROFILING
-    # dispatch IS the final turn. Returning it final recycles the lane: a fresh
-    # root is drawn from the dataset sampler and dispatched at turn 0. The
-    # recycled roots are then themselves driven to final-turn returns so they
-    # feed back through the sampler. After enough rounds at least one trace_id
-    # must appear more than once in the dispatch log (the canonical recycle
-    # observation).
+    # Recycle: driving every trajectory to its final-turn return draws a fresh
+    # root from the sampler at turn 0; after enough rounds at least one trace_id
+    # must reappear in the dispatch log (the canonical recycle observation).
     pre_recycle_count = len(profiling_dispatched)
 
     def _finalize(cid: str) -> Credit:
@@ -599,10 +462,9 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
         f"dispatch log over {len(full_profiling_ids)} dispatches; ids={full_profiling_ids}"
     )
 
-    # ---- METRICS WINDOW: post-stop gating ----
-    # Once the stop condition fires, can_start_new_session() returns False and
-    # _spawn_from_recycle_or_id is a no-op -- no new sessions begin. Verify
-    # by toggling the gate and triggering a final-turn return.
+    # Metrics window: once the stop condition fires, can_start_new_session()
+    # returns False and _spawn_from_recycle_or_id is a no-op. Verify by toggling
+    # the gate and triggering a final-turn return.
     profiling.stop_checker.can_start_new_session.return_value = False
     pre_post_stop = len(log.by_phase(CreditPhase.PROFILING))
     # Pick an in-flight session (correlation_id present in _correlation_to_lane)
@@ -627,7 +489,6 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
         "Metrics window: handle_credit_return after stop must not spawn new sessions"
     )
 
-    # ---- AGGREGATE JSON STAMPING ----
     aggregate = _make_aggregate_with_carriers(
         scenario_name="inferencex-agentx-mvp",
         validator_valid=True,
@@ -652,25 +513,11 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
         assert key not in md, f"carrier key {key!r} leaked into output"
 
 
-# =============================================================================
-# Test 2: --unsafe-override + duration-below-floor stamps submission_valid: false
-# =============================================================================
-
-
 @pytest.mark.asyncio
 async def test_agentic_replay_e2e_unsafe_override_stamps_false(
     tmp_path: Path,
 ) -> None:
-    """Spec section 8.2 #2: --unsafe-override + violation -> submission_valid: false.
-
-    Models the cli_runner stamping path under ``--unsafe-override`` with a
-    violation (duration below the 900s floor): the validator returns
-    ``submission_valid=False`` with ``["unsafe_override"]`` reasons; cli_runner
-    pipes that through to the aggregate metadata; the JSON exporter emits
-    ``submission_valid: false`` with the reason list.
-
-    This test focuses on the cli_runner -> exporter wire.
-    """
+    """Spec 8.2 #2: on the cli_runner -> exporter wire, ``--unsafe-override`` plus a duration violation emits ``submission_valid: false`` with the ``unsafe_override`` reason."""
     aggregate = _make_aggregate_with_carriers(
         scenario_name="inferencex-agentx-mvp",
         validator_valid=False,
@@ -689,24 +536,12 @@ async def test_agentic_replay_e2e_unsafe_override_stamps_false(
     assert "unsafe_override" in md["submission_invalid_reasons"]
 
 
-# =============================================================================
-# Test 3: bare agentic_replay timing mode (no --scenario) omits the field
-# =============================================================================
-
-
 @pytest.mark.parametrize("parallel", [False, True], ids=["serial", "parallel"])
 @pytest.mark.asyncio
 async def test_agentic_replay_e2e_no_scenario_omits_submission_valid(
     tmp_path: Path, monkeypatch, parallel: bool
 ) -> None:
-    """Spec section 8.2 #3: bare agentic_replay timing mode without scenario.
-
-    Exercises the same loader -> trajectory -> strategy chain to confirm the
-    pipeline runs cleanly when ``--scenario`` is unset, then stamps the
-    aggregate with no carrier keys (mirroring cli_runner's branch where
-    ``scenario is None``). The exporter must omit ``submission_valid`` and
-    ``scenario`` entirely.
-    """
+    """Spec 8.2 #3: bare agentic_replay without ``--scenario`` runs cleanly and stamps no carrier keys, so the exporter omits ``submission_valid`` and ``scenario``."""
     dataset = _load_small_weka_dataset(monkeypatch, parallel=parallel)
     assert len(dataset.conversations) == 10
 

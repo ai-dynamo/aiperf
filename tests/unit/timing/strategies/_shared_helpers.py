@@ -74,13 +74,7 @@ def _make_credit(
 
 
 def _make_run(*, target: CacheBustTarget, benchmark_id: str = "bench-fixed"):
-    """Build a v2 ``BenchmarkRun`` exposing the values the strategy reads.
-
-    V2 PORT NOTE: agentx read ``user_config.input.prompt.cache_bust.target`` and
-    ``user_config.benchmark_id``. The v2 ``AgenticReplayStrategy`` reads
-    ``run.cfg.get_cache_bust_target()`` and ``run.benchmark_id`` instead; the
-    target lives on the synthetic dataset's ``prompts.cache_bust.target``.
-    """
+    """Build a v2 ``BenchmarkRun`` exposing the cache-bust target (on the synthetic dataset's ``prompts.cache_bust.target``) and ``benchmark_id`` the strategy reads."""
     from aiperf.config import BenchmarkConfig, BenchmarkRun
 
     cfg = BenchmarkConfig.model_validate(

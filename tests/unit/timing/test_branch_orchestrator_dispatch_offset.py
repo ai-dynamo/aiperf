@@ -28,11 +28,7 @@ async def _tick(n: int = 3) -> None:
 
 
 class _SleepGate:
-    """Replaces ``BranchOrchestrator._sleep_offset_ms`` for determinism.
-
-    Records every requested offset and holds all sleepers until released,
-    so tests can assert the not-yet-dispatched state without real time.
-    """
+    """Deterministic stand-in for BranchOrchestrator._sleep_offset_ms that records offsets and holds all sleepers until released."""
 
     def __init__(self) -> None:
         self.offsets: list[float] = []
@@ -158,8 +154,7 @@ async def test_offset_child_dispatches_after_sleep_not_during_intercept():
 
 @pytest.mark.asyncio
 async def test_missing_timestamps_keep_immediate_dispatch():
-    """None timestamps (e.g. --ignore-trace-delays) mean offset 0: dispatch
-    happens during intercept exactly as before the offset mechanism."""
+    """None timestamps (e.g. --ignore-trace-delays) mean offset 0, so dispatch happens during intercept as before the offset mechanism."""
     parent = _parent_conv([_spawn_branch("b0", ["kid"], start_timestamp_ms=None)])
     orch, _, issuer = _mk_harness([parent, _child_conv("kid", None)])
     gate = _SleepGate()
@@ -174,9 +169,7 @@ async def test_missing_timestamps_keep_immediate_dispatch():
 
 @pytest.mark.asyncio
 async def test_branch_start_falls_back_to_min_child_turn0():
-    """Without start_timestamp_ms the spawn boundary is the earliest child
-    turn-0 timestamp: that child is immediate, the later sibling is offset
-    by the difference (mirrors trajectory_source._branch_runtimes)."""
+    """Without start_timestamp_ms the spawn boundary is the earliest child turn-0 timestamp, dispatching that child immediately and offsetting the later sibling by the difference."""
     parent = _parent_conv(
         [_spawn_branch("b0", ["early", "late"], start_timestamp_ms=None)]
     )
@@ -199,9 +192,7 @@ async def test_branch_start_falls_back_to_min_child_turn0():
 
 @pytest.mark.asyncio
 async def test_spawn_join_gate_waits_for_sleeping_child():
-    """A SPAWN_JOIN gate registered at spawn time holds while the child
-    sleeps out its offset; the join only satisfies after the child
-    dispatches and reaches its leaf."""
+    """A SPAWN_JOIN gate registered at spawn time holds while the child sleeps out its offset, satisfying only after the child dispatches and reaches its leaf."""
     branch = _spawn_branch("b0", ["kid"], start_timestamp_ms=0.0, is_background=False)
     parent = _parent_conv([branch], gated_turn=2)
     orch, _, issuer = _mk_harness([parent, _child_conv("kid", 7_000.0)])
@@ -227,8 +218,7 @@ async def test_spawn_join_gate_waits_for_sleeping_child():
 
 @pytest.mark.asyncio
 async def test_cleanup_cancels_sleeping_dispatch():
-    """cleanup() during the sleep cancels the task; the child never
-    dispatches and the task set drains."""
+    """cleanup() during the sleep cancels the task so the child never dispatches and the task set drains."""
     parent = _parent_conv([_spawn_branch("b0", ["kid"], start_timestamp_ms=0.0)])
     orch, _, issuer = _mk_harness([parent, _child_conv("kid", 60_000.0)])
     gate = _SleepGate()
@@ -246,8 +236,7 @@ async def test_cleanup_cancels_sleeping_dispatch():
 
 @pytest.mark.asyncio
 async def test_post_sleep_refusal_rolls_back_like_immediate_refusal():
-    """An issuer refusal (False) after the sleep rolls the child back:
-    truncated stat, join tracking released, descendant count drained."""
+    """An issuer refusal after the sleep rolls the child back: truncated stat, join tracking released, descendant count drained."""
     parent = _parent_conv([_spawn_branch("b0", ["kid"], start_timestamp_ms=0.0)])
     orch, _, issuer = _mk_harness(
         [parent, _child_conv("kid", 5_000.0)], dispatch_result=False
@@ -270,8 +259,7 @@ async def test_post_sleep_refusal_rolls_back_like_immediate_refusal():
 
 @pytest.mark.asyncio
 async def test_mixed_branch_immediate_child_unaffected_by_delayed_sibling():
-    """One child at the spawn boundary and one recorded later: the first
-    dispatches during intercept, the second after its offset."""
+    """One child at the spawn boundary dispatches during intercept while a later-recorded sibling dispatches after its offset."""
     parent = _parent_conv(
         [_spawn_branch("b0", ["now", "later"], start_timestamp_ms=2_000.0)]
     )
@@ -296,16 +284,7 @@ async def test_mixed_branch_immediate_child_unaffected_by_delayed_sibling():
 
 @pytest.mark.asyncio
 async def test_delayed_spawn_rollback_after_parent_suspended_dispatches_active_gate():
-    """Bug #4: a delayed SPAWN child whose dispatch is refused AFTER the parent
-    already suspended must still fire the now-satisfied join.
-
-    Sequence: turn-0 spawns a delayed child gated on turn 1; the parent's
-    ``_maybe_suspend_parent`` promotes that gate into ``_active_joins`` (the
-    child is still sleeping, so the gate is unsatisfied). When the sleep
-    releases and the issuer refuses the child, rollback empties the gate's only
-    prereq -> the gate is satisfied but sits in ``_active_joins`` where the
-    future-join drain scan never looks. Without the fix the suspended parent
-    deadlocks until drain-timeout; with it the join turn dispatches."""
+    """Bug #4: a delayed SPAWN child whose dispatch is refused after the parent suspended still fires the now-satisfied active-join gate instead of deadlocking until drain-timeout."""
     parent = _parent_conv(
         [_spawn_branch("b0", ["kid"], start_timestamp_ms=0.0, is_background=False)],
         gated_turn=1,

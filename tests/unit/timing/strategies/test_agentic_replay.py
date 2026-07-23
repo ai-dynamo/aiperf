@@ -40,11 +40,7 @@ def _build_real_trajectory_source(
     trajectories: list[Trajectory],
     dataset: DatasetMetadata | None = None,
 ) -> TrajectorySource:
-    """Build a real TrajectorySource with deterministic trajectories.
-
-    We construct the source via __new__ + manual init so we control the
-    trajectories exactly (avoid randomization in tests).
-    """
+    """Build a real TrajectorySource via __new__ + manual init to control the trajectories exactly and avoid test randomization."""
     ds = dataset if dataset is not None else _make_dataset(num_traces, turns_per_trace)
 
     src = TrajectorySource.__new__(TrajectorySource)
@@ -485,9 +481,7 @@ async def test_warmup_dispatch_uses_start_turn_index():
 
 @pytest.mark.asyncio
 async def test_warmup_warms_every_active_session_including_gated_parent():
-    """Every session mid-flight at t* is warmed at its turn n-1: the
-    mid-flight subagent (turn 0) AND the gated parent (turn 1, priming its
-    join turn). Both count toward the warmup barrier."""
+    """Every session mid-flight at t* is warmed at turn n-1 -- the mid-flight subagent (turn 0) and the gated parent (turn 1) -- both counting toward the warmup barrier."""
     parent_state = ConversationState(
         conversation_id="trace_0",
         x_correlation_id="parent",
@@ -543,15 +537,7 @@ async def test_warmup_warms_every_active_session_including_gated_parent():
 
 @pytest.mark.asyncio
 async def test_warmup_spreads_globally_aligned_on_t_star_by_default():
-    """By default (spread), warmup aligns GLOBALLY across trajectories so every
-    trajectory's t* lands at the same instant.
-
-    Three trajectories, each one mid-flight root whose warmup request fired a
-    different lead before its own t*: 5s, 15s, 10s. The furthest-before-t*
-    (15s) fires immediately at warmup-time 0, the 10s one 5s later, the 5s one
-    10s later -- dispatch offset = max_lead(15s) - lead. Total spread = 10s
-    (15s - 5s). This is the exact example from the design discussion.
-    """
+    """By default (spread), warmup aligns globally so every trajectory's t* lands at the same instant: leads of 5s/15s/10s dispatch at offsets max_lead-lead, giving a 10s total spread."""
 
     # (conversation_id, x_corr, t*, warm_ts) -> lead = t* - warm_ts.
     lanes = [
@@ -645,12 +631,7 @@ async def test_warmup_spreads_globally_aligned_on_t_star_by_default():
 
 @pytest.mark.asyncio
 async def test_warmup_lead_clamped_to_idle_gap_cap():
-    """A per-conversation idle far exceeding the idle-gap cap is clamped so the
-    warmup spread stays bounded by the cap, not the raw multi-hour idle.
-
-    Two lanes: one warmed ~10s before its t*, one idle ~3h before its t*. With
-    a 60s cap, the 3h lead clamps to 60s -> spread = 60 - 10 = 50s, not ~3h.
-    """
+    """A per-conversation idle exceeding the idle-gap cap is clamped so the warmup spread stays bounded by the cap: a 3h lead clamps to a 60s cap, giving 50s spread against a 10s lane, not ~3h."""
     lanes = [
         ("t_near", "near", 10_000.0, 0.0),  # lead 10s
         ("t_idle", "idle", 10_800_000.0, 0.0),  # lead 3h -> clamps to cap
@@ -728,13 +709,7 @@ async def test_warmup_lead_clamped_to_idle_gap_cap():
 
 @pytest.mark.asyncio
 async def test_warmup_skips_pending_start_child():
-    """A child whose recorded first request is after t* is not warmed.
-
-    The server had not seen the stream at the snapshot instant, so warming
-    its turn 0 would both fire it early and let the profiling continuation
-    advance past a single-turn child entirely. ``warmup_credit_count`` must
-    agree with the dispatch loop (the warmup barrier re-anchors to it).
-    """
+    """A child whose recorded first request is after t* is not warmed (the server had not seen the stream at the snapshot instant), and ``warmup_credit_count`` agrees with the dispatch loop."""
     root_state = ConversationState(
         conversation_id="trace_0",
         x_correlation_id="root",
@@ -824,9 +799,7 @@ def test_report_warmup_failures_silent_when_no_failures():
 
 @pytest.mark.asyncio
 async def test_profiling_recycle_cycles_full_root_pool_in_sampler_order():
-    """PROFILING recycle draws roots from the dataset sampler, so it cycles
-    through the FULL root pool (sequential -> dataset order) then wraps -- every
-    root is reused equally instead of a strategy-side queue favoring some."""
+    """PROFILING recycle draws roots from the dataset sampler, cycling the full root pool in dataset order then wrapping, so every root is reused equally."""
     trajectories = [
         Trajectory(conversation_id="trace_0", start_turn_index=0),
         Trajectory(conversation_id="trace_2", start_turn_index=1),
@@ -1004,15 +977,7 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
 
 @pytest.mark.asyncio
 async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
-    """With --burst-phase-starts, profiling anchors the trajectory's earliest
-    post-t* request at time 0 and preserves every other request's recorded
-    relative offset.
-
-    Two pending-start subagent chains spawn after t* under a gated parent.
-    The earlier one (offset 20s from t*) fires immediately; the later one
-    (offset 95s) fires 75s into profiling -- the recorded gap between them.
-    The gated parent is not dispatched (its join fires when children drain).
-    """
+    """With --burst-phase-starts, profiling anchors the earliest post-t* request at time 0 and preserves relative offsets: children at 20s/95s fire immediately and 75s later, while the gated parent is not dispatched."""
     ds = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -1135,15 +1100,7 @@ async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
 
 @pytest.mark.asyncio
 async def test_profiling_idle_trajectory_caps_leading_idle_preserving_subagent_spacing():
-    """A trajectory idle at t* (every stream's first request far past t*) caps
-    only the LEADING idle (t* -> earliest stream) and shifts every stream left
-    by the same amount, preserving recorded subagent spacing.
-
-    Regression for the per-stream ``min(offset, cap)`` clamp, which collapsed
-    every idle subagent onto t=cap. Three children at offsets 100s/130s/220s
-    with a 60s cap: leading idle 100s -> 60s (shift 40s), so they fire at
-    60s/90s/180s -- the recorded 30s and 90s gaps survive, not 60s/60s/60s.
-    """
+    """A trajectory idle at t* caps only the leading idle and shifts every stream left uniformly, preserving subagent spacing: children at 100s/130s/220s with a 60s cap fire at 60s/90s/180s, not collapsed to 60s each."""
     ds = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -1261,14 +1218,7 @@ async def test_profiling_idle_trajectory_caps_leading_idle_preserving_subagent_s
 
 
 def test_profiling_spread_reports_first_request_per_trajectory_not_all_streams():
-    """The logged PROFILING spread is the ramp-in window of each trajectory's
-    FIRST request, not the full span of every stream. A late subagent within a
-    trajectory must not inflate it.
-
-    Two trajectories, each a root firing early plus a subagent ~83 min out. The
-    first-request spread is 10s (root offsets 0 and 10s); the late subagents are
-    excluded -- summing them would report ~8000s instead.
-    """
+    """The logged PROFILING spread is the ramp-in window of each trajectory's FIRST request, not the full span of every stream, so a late subagent (root offsets 0/10s -> 10s spread) does not inflate it."""
 
     def _traj(cid: str, offsets: list[float]) -> Trajectory:
         states = tuple(
@@ -1307,12 +1257,7 @@ def test_profiling_spread_reports_first_request_per_trajectory_not_all_streams()
 
 @pytest.mark.asyncio
 async def test_profiling_preserve_start_gap_delays_first_request_by_default():
-    """By default (spread), a trajectory's first post-t* request waits out its
-    recorded offset from t* instead of firing at 0.
-
-    A lone root resuming 8s after t* is scheduled 8s out -- the leading idle
-    gap is preserved. (--burst-phase-starts would collapse it to fire at 0.)
-    """
+    """By default (spread), a trajectory's first post-t* request waits out its recorded offset instead of firing at 0: a root resuming 8s after t* is scheduled 8s out, preserving the leading idle gap."""
     ds = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -1385,14 +1330,7 @@ async def test_profiling_preserve_start_gap_delays_first_request_by_default():
 
 @pytest.mark.asyncio
 async def test_profiling_gated_parent_not_dispatched_child_profiles():
-    """A parent gated on a child join at t* is not dispatched in PROFILING;
-    its join is seeded and the blocking child profiles its remaining turns.
-
-    The parent's gated turn fires later via the orchestrator when the child
-    drains (no child completes during WARMUP under the new model, so the
-    parent stays gated through the warmup barrier). Covers both a mid-flight
-    child (warmed at n-1, profiles from n) and the gate staying registered.
-    """
+    """A parent gated on a child join at t* is not dispatched in PROFILING: its join is seeded, the blocking child profiles its remaining turns, and the gate stays registered through the warmup barrier."""
     ds = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -1552,14 +1490,7 @@ async def test_profiling_single_turn_root_profiles_its_own_turn_zero():
 
 @pytest.mark.asyncio
 async def test_single_turn_root_snapshot_dispatches_are_concurrent_not_serial():
-    """Regression: profiling startup must burst at t=0, not serialize.
-
-    Commit f47bd5537e once introduced an awaited per-trajectory step in the
-    startup dispatch loop; with N trajectories that blocked the Kth dispatch
-    until the (K-1)th completed, trickling 256 sessions in over ~54 s instead
-    of bursting at t=0 on a real cluster. The per-lane gather must keep all N
-    first dispatches concurrent.
-    """
+    """Profiling startup must burst at t=0, not serialize: the per-lane gather keeps all N first dispatches concurrent rather than blocking the Kth until the (K-1)th completes."""
     N = 3
     # N single-turn traces sampled at t* == turn-0 ts (n == 0): each profiles
     # its own turn 0 immediately (nothing to warm), so all N first dispatches
@@ -1634,12 +1565,7 @@ async def test_single_turn_root_snapshot_dispatches_are_concurrent_not_serial():
 
 @pytest.mark.asyncio
 async def test_plain_trajectory_resumes_are_concurrent_not_serial():
-    """The k_i+1 resume path (timestamp-less trajectories) must burst at t=0.
-
-    Companion to the terminal-root regression test: a refactor that
-    re-serializes only the snapshot-less resume dispatch would otherwise
-    ship green.
-    """
+    """The k_i+1 resume path (timestamp-less trajectories) must burst at t=0, guarding against a refactor that re-serializes only the snapshot-less resume dispatch."""
     N = 3
     trajectories = [
         Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(N)
@@ -1680,17 +1606,7 @@ async def test_plain_trajectory_resumes_are_concurrent_not_serial():
 
 @pytest.mark.asyncio
 async def test_continuing_session_keeps_warmup_marker_across_phase_boundary():
-    """A continued session's cache-bust marker must not rotate at the boundary.
-
-    Under wrap-fill, two lanes share trace_X and both are mid-flight at t*:
-    lane 0's root is gated on a child join, lane 1's root is ready. Both are
-    warmed now (gated parents included), each minting its own marker keyed by
-    x_correlation_id. Positional re-minting (by dispatch order/count rather
-    than identity) would hand the continuing session the wrong digest and make
-    its warmed KV prefix unreachable for the measured turns. The marker minted
-    in WARMUP must be reused verbatim for the same x_correlation_id in
-    PROFILING, and distinct sessions must get distinct markers.
-    """
+    """A continued session's cache-bust marker (keyed by x_correlation_id) is reused verbatim from WARMUP into PROFILING while distinct sessions get distinct markers, so identity-based minting keeps the warmed KV prefix reachable."""
     ds = _make_dataset(num_traces=1, turns_per_trace=3)
     trajectories = [
         Trajectory(
@@ -1778,9 +1694,7 @@ async def test_continuing_session_keeps_warmup_marker_across_phase_boundary():
 
 @pytest.mark.asyncio
 async def test_startup_dispatch_snapshot_root_and_resume():
-    """PROFILING execute dispatches each lane's initial credit: a snapshot
-    root at turn 0 and a plain trajectory resumed at k_i+1. No recycle fires
-    during execute_phase (recycle is driven by credit returns)."""
+    """PROFILING execute dispatches each lane's initial credit (a snapshot root at turn 0 and a plain trajectory resumed at k_i+1) with no recycle firing during execute_phase."""
     conversations = [
         ConversationMetadata(
             conversation_id="trace_0",
@@ -1836,12 +1750,7 @@ async def test_startup_dispatch_snapshot_root_and_resume():
 
 @pytest.mark.asyncio
 async def test_profiling_dispatch_error_waits_for_siblings_and_reraises():
-    """One lane's dispatch failure must not detach the sibling dispatches.
-
-    execute_phase must keep ownership of every sibling lane until it settles,
-    then re-raise the failure. A bare gather would return the exception while
-    the remaining lanes keep issuing credits into a failing phase unsupervised.
-    """
+    """One lane's dispatch failure must not detach the siblings: execute_phase keeps ownership of every sibling lane until it settles, then re-raises the failure."""
     N = 3
     trajectories = [
         Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(N)
@@ -2003,8 +1912,7 @@ async def test_handle_credit_return_honors_delay_ms_via_scheduler():
 
 @pytest.mark.asyncio
 async def test_handle_credit_return_recycles_on_final_turn():
-    """Last turn of a session -> lane recycles into the next root from the
-    sampler (sequential over trace_0..trace_2 -> trace_0 first), at turn 0."""
+    """The last turn of a session recycles the lane into the next sampler root (sequential over trace_0..trace_2, so trace_0 first) at turn 0."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     issued_sessions: list[tuple[str, int]] = []
 
@@ -2074,8 +1982,7 @@ async def test_handle_credit_return_does_not_recycle_final_child_turn():
 
 @pytest.mark.asyncio
 async def test_handle_credit_return_reuses_sole_root_when_pool_is_one():
-    """Single-root dataset: the sampler only ever yields trace_0, so recycle
-    reuses it (at turn 0)."""
+    """Single-root dataset: the sampler only ever yields trace_0, so recycle reuses it at turn 0."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     issued_sessions: list[tuple[str, int]] = []
 
@@ -2109,14 +2016,7 @@ async def test_handle_credit_return_reuses_sole_root_when_pool_is_one():
 
 @pytest.mark.asyncio
 async def test_spawn_from_recycle_prunes_marker_dicts_on_stop_checker_reject():
-    """Early-return paths in _spawn_from_recycle_or_id must still prune marker/lane dicts.
-
-    Regression: previously the pop only happened on the success path, so a finished
-    session whose recycle attempt hit any early return (stop-checker reject, queue
-    empty without a put because _recycle_queue is None, missing metadata) would
-    leak its entry into _session_marker and _correlation_to_lane for the rest of
-    the phase.
-    """
+    """Early-return paths in _spawn_from_recycle_or_id still prune the marker/lane dicts, so a finished session hitting any early return does not leak its bookkeeping entries."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     issuer = AsyncMock()
     strategy, _, _, _ = _make_strategy(
@@ -2183,15 +2083,7 @@ async def test_handle_credit_return_warmup_phase_is_noop_for_final_turn():
 
 @pytest.mark.asyncio
 async def test_warmup_marks_sending_complete():
-    """``_execute_warmup`` signals sending-complete once after dispatching
-    all trajectory credits.
-
-    ``mark_sending_complete`` is a guarded fallback now that PhaseRunner re-anchors
-    ``total_expected_requests`` to the actual trajectory count: when the count-based
-    path wins the race, the strategy's call is skipped via the
-    ``is_sending_complete`` guard. Force the guard to evaluate ``False`` so this
-    legacy behavioral assertion still applies.
-    """
+    """``_execute_warmup`` signals sending-complete once after dispatching all trajectory credits, forcing the ``is_sending_complete`` guard False so the fallback call still applies."""
     trajectories = [
         Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(3)
     ]
@@ -2212,9 +2104,7 @@ async def test_warmup_marks_sending_complete():
 
 @pytest.mark.asyncio
 async def test_warmup_marks_sending_complete_after_dispatch():
-    """``mark_sending_complete`` is called AFTER all credits are issued,
-    not before — otherwise ``SendingCompleteStopCondition`` can fire
-    mid-dispatch."""
+    """``mark_sending_complete`` is called after all credits are issued, not before, otherwise ``SendingCompleteStopCondition`` can fire mid-dispatch."""
     call_order: list[str] = []
 
     async def record_issue(_turn) -> bool:
@@ -2252,16 +2142,7 @@ async def test_warmup_marks_sending_complete_after_dispatch():
 
 @pytest.mark.asyncio
 async def test_warmup_skips_mark_sending_complete_when_already_complete():
-    """When ``CreditCounter.is_final_credit`` already fired (and PhaseRunner's
-    ``CreditIssuer`` already advanced the lifecycle into SENDING_COMPLETE),
-    the strategy must NOT re-call ``mark_sending_complete``. Without this
-    guard the strategy double-transitions the state machine -> ValueError.
-
-    This is the regression guard for the warmup-hang fix: PhaseRunner now
-    re-anchors ``total_expected_requests`` to the actual trajectory count,
-    so the count-based path is the primary signal and the strategy's call
-    becomes a guarded fallback.
-    """
+    """When the count-based path already advanced the lifecycle into SENDING_COMPLETE, the strategy must NOT re-call ``mark_sending_complete`` and double-transition the state machine."""
     trajectories = [
         Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(3)
     ]
@@ -2291,15 +2172,7 @@ _RID_RE = re.compile(r"\[rid:[0-9a-f]{12}\]")
 
 
 def _make_run(*, target: CacheBustTarget, benchmark_id: str = "bench-fixed"):
-    """Build a v2 ``BenchmarkRun`` exposing the two values the strategy reads.
-
-    V2 PORT NOTE: agentx's ``AgenticReplayStrategy`` read
-    ``user_config.input.prompt.cache_bust.target`` and ``user_config.benchmark_id``.
-    The v2 strategy reads ``run.cfg.get_cache_bust_target()`` and
-    ``run.benchmark_id`` instead (see ``AgenticReplayStrategy.__init__``). The
-    cache-bust target lives on the synthetic dataset's
-    ``prompts.cache_bust.target`` (see ``BenchmarkRun.cfg.get_cache_bust_target``).
-    """
+    """Build a v2 ``BenchmarkRun`` exposing the cache-bust target (on the synthetic dataset's ``prompts.cache_bust.target``) and ``benchmark_id`` the strategy reads."""
     from aiperf.config import BenchmarkConfig, BenchmarkRun
 
     cfg = BenchmarkConfig.model_validate(
@@ -2345,10 +2218,7 @@ def _extract_rid(marker: str | None) -> str | None:
 
 @pytest.mark.asyncio
 async def test_warmup_session_marker_reused_in_profile_resume():
-    """Trajectory's warmup turn k_i and profile turn k_i+1 share the same
-    marker (recycle_pass=0, same lane index, same benchmark_id, same
-    trace_id; phase deliberately NOT in the digest tuple per spec
-    warmup-coherence requirement)."""
+    """A trajectory's warmup turn k_i and profile turn k_i+1 share the same marker because the digest tuple (benchmark_id, recycle_pass, lane, trace_id) is phase-agnostic."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=2)]
     run = _make_run(target=CacheBustTarget.SYSTEM_PREFIX)
 
@@ -2409,9 +2279,7 @@ async def test_warmup_session_marker_reused_in_profile_resume():
 
 @pytest.mark.asyncio
 async def test_recycle_increments_pass_and_rotates_marker():
-    """Spawn for traceA, finish, recycle traceA — markers differ because
-    recycle_pass increments. Single-trace dataset so the just-finished
-    trace_id is reused immediately on recycle."""
+    """Spawning, finishing, and recycling traceA rotates the marker because recycle_pass increments (single-trace dataset reuses the trace_id immediately)."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     run = _make_run(target=CacheBustTarget.SYSTEM_PREFIX)
     issued_turns: list = []
@@ -2455,11 +2323,7 @@ async def test_recycle_increments_pass_and_rotates_marker():
 
 @pytest.mark.asyncio
 async def test_two_trajectories_same_starting_trace_get_distinct_markers():
-    """Two trajectories at lane 0 and lane 1 mint different markers because
-    trajectory_index differs. (TrajectorySource itself rejects duplicate
-    trace_ids in trajectories, so we model 'same trace' as recycle reuse:
-    trajectory[0] starts on trace_x; later trajectory[1]'s recycle pulls
-    trace_x. We assert markers differ via the lane component instead.)"""
+    """Two trajectories at lane 0 and lane 1 mint different markers because trajectory_index differs, even at the same benchmark_id and recycle_pass=0."""
     trajectories = [
         Trajectory(conversation_id="trace_0", start_turn_index=0),
         Trajectory(conversation_id="trace_1", start_turn_index=0),
@@ -2496,8 +2360,7 @@ async def test_two_trajectories_same_starting_trace_get_distinct_markers():
 
 @pytest.mark.asyncio
 async def test_target_none_emits_no_marker():
-    """With target=NONE (or no run plumbed), cache_bust_marker is
-    None and cache_bust_target is NONE on every issued turn."""
+    """With target=NONE (or no run plumbed), every issued turn has cache_bust_marker None and cache_bust_target NONE."""
     trajectories = [
         Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(2)
     ]
@@ -2529,19 +2392,7 @@ async def test_target_none_emits_no_marker():
 
 @pytest.mark.asyncio
 async def test_two_traces_at_same_pass_and_lane_get_distinct_markers():
-    """Two different trace_ids landing on the same (recycle_pass, lane) tuple
-    must mint distinct markers. Regression bar for the collision-free fix:
-    the marker tuple now includes ``trace_id`` so cross-trace collisions on
-    the same (pass, lane) are eliminated by construction.
-
-    Setup: single-lane (concurrency=1) PROFILING run starting on trace_A.
-    When trace_A finishes its only profile turn, the empty recycle queue
-    forces FIFO reuse — but we seed a second trajectory by directly
-    inspecting the strategy's marker state via the per-session minting path.
-    Cleaner: drive two sessions on lane 0 explicitly via the mint helper and
-    assert the digests differ. ``recycle_pass`` is per-trace_id so both
-    start at 0; ``trajectory_index`` is fixed at 0; only trace_id differs.
-    """
+    """Two different trace_ids on the same (recycle_pass=0, lane=0) tuple mint distinct markers because the digest tuple includes ``trace_id``, eliminating cross-trace collisions by construction."""
     trajectories = [Trajectory(conversation_id="trace_A", start_turn_index=0)]
     run = _make_run(target=CacheBustTarget.SYSTEM_PREFIX)
 
@@ -2575,8 +2426,7 @@ async def test_two_traces_at_same_pass_and_lane_get_distinct_markers():
 
 
 def test_spawn_from_recycle_or_id_requires_finished_correlation_id() -> None:
-    """``finished_correlation_id`` must be a required keyword-only parameter
-    so the lane bookkeeping pop has a valid key on every code path."""
+    """``finished_correlation_id`` is a required keyword-only parameter so the lane bookkeeping pop has a valid key on every code path."""
     import inspect
 
     sig = inspect.signature(AgenticReplayStrategy._spawn_from_recycle_or_id)
@@ -2587,8 +2437,7 @@ def test_spawn_from_recycle_or_id_requires_finished_correlation_id() -> None:
 
 @pytest.mark.asyncio
 async def test_spawn_from_recycle_or_id_pops_lane_and_marker_for_correlation() -> None:
-    """The finished session's lane and marker entries are popped from the
-    bookkeeping dicts so memory stays bounded by live concurrency."""
+    """The finished session's lane and marker entries are popped from the bookkeeping dicts so memory stays bounded by live concurrency."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     run = _make_run(target=CacheBustTarget.SYSTEM_PREFIX)
     strategy, *_ = _make_strategy(
@@ -2648,9 +2497,7 @@ def _children_dataset() -> DatasetMetadata:
 
 
 def _rootless_trajectory() -> Trajectory:
-    """A snapshot whose root finished before t*: NO root state, only the
-    still-active background ::fa:/::aux: children remain (the rootless case
-    from ``_snapshot_for`` when ``root_next_idx is None``)."""
+    """A snapshot whose root finished before t*: no root state, only the still-active background ::fa:/::aux: children remain (the rootless case)."""
     child_a = ConversationState(
         conversation_id="trace_0::fa:0",
         x_correlation_id="kid_a",
@@ -2678,13 +2525,7 @@ def _rootless_trajectory() -> Trajectory:
 
 @pytest.mark.asyncio
 async def test_rootless_snapshot_acquires_exactly_one_lane_credit():
-    """A rootless lane holds one session credit though it dispatches no root.
-
-    The root's turns are all before t*, so PROFILING dispatches only the
-    background children. The lane must still acquire exactly one session slot
-    (so it counts toward --concurrency); the children acquire none of their
-    own (they are agent_depth > 0).
-    """
+    """A rootless lane acquires exactly one session slot (counting toward --concurrency) though it dispatches only background children, which acquire none of their own."""
     dispatched: list = []
 
     async def capture(turn):
@@ -2750,14 +2591,7 @@ async def test_rooted_snapshot_acquires_no_lane_credit():
 
 @pytest.mark.asyncio
 async def test_rootless_lane_recycles_into_fresh_root_when_children_drain():
-    """When a rootless lane's last background child finishes, the lane releases
-    its credit and recycles into a fresh root (turn 0) on the same lane.
-
-    Until the last child drains, the lane credit is held (the lane is still
-    doing background work). On the final child's terminal return the credit is
-    released exactly once and one fresh depth-0 root is dispatched from the
-    recycle pool, so the lane keeps contributing load instead of going dark.
-    """
+    """When a rootless lane's last background child finishes, the credit is released exactly once and one fresh depth-0 root recycles onto the same lane, so it keeps contributing load."""
     issued: list = []
 
     async def capture(turn):
@@ -2816,16 +2650,7 @@ async def test_rootless_lane_recycles_into_fresh_root_when_children_drain():
 
 @pytest.mark.asyncio
 async def test_gated_parent_lane_acquires_a_lane_credit():
-    """A snapshot-resumed gated parent (waiting on a child join) holds a lane
-    credit, because it dispatches no root credit at PROFILING start.
-
-    The gated root is excluded from the dispatchable set, so without this it
-    holds NO session slot -- yet its join turn later completes and the depth-0
-    final-turn path releases a slot, over-releasing the session limiter and
-    admitting sessions above --concurrency. It must NOT be tracked as rootless:
-    the parent resumes and recycles through the normal depth-0 final-turn path,
-    so a child draining must not release/recycle the lane here.
-    """
+    """A snapshot-resumed gated parent holds a lane credit (dispatching no root at PROFILING start) but is NOT tracked as rootless, so a child draining must not release or recycle its lane."""
     root_state = ConversationState(
         conversation_id="trace_0",
         x_correlation_id="root_corr",
@@ -2888,8 +2713,7 @@ async def test_gated_parent_lane_acquires_a_lane_credit():
 
 @pytest.mark.asyncio
 async def test_profiling_setup_logs_rootless_lane_count(caplog):
-    """PROFILING setup surfaces how many sampled lanes are rootless (root
-    finished before t*) so an under-target run is diagnosable from the log."""
+    """PROFILING setup logs how many sampled lanes are rootless (root finished before t*) so an under-target run is diagnosable from the log."""
     rooted_state = ConversationState(
         conversation_id="trace_1",
         x_correlation_id="r1",

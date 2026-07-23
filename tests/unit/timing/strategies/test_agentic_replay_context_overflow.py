@@ -22,10 +22,6 @@ from tests.unit.timing.strategies._shared_helpers import (
     _make_dataset,
 )
 
-# ---------------------------------------------------------------------------
-# Fixtures (lifted from test_agentic_replay_recycle_adversarial.py for parity)
-# ---------------------------------------------------------------------------
-
 
 def _make_strategy(
     *,
@@ -52,11 +48,6 @@ def _make_strategy(
         lifecycle=MagicMock(),
     )
     return strategy, issuer, stop_checker
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -140,11 +131,7 @@ async def test_tree_drained_prunes_root_to_lane():
 
 @pytest.mark.asyncio
 async def test_non_overflow_error_does_not_recycle():
-    """Non-context-overflow errors (e.g. 500s) should NOT short-circuit.
-
-    The strategy ignores generic errors; the existing flow keeps dispatching.
-    Only the explicit context-overflow signal triggers the early termination.
-    """
+    """Non-context-overflow errors (e.g. 500s) should NOT short-circuit."""
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     ds = _make_dataset(num_traces=2, turns_per_trace=5)
     issued: list[tuple[str, int]] = []
@@ -181,12 +168,7 @@ async def test_non_overflow_error_does_not_recycle():
 
 @pytest.mark.asyncio
 async def test_final_turn_overflow_recycles_normally():
-    """Final-turn overflow takes the same recycle path as any final-turn return.
-
-    No special handling needed — the existing final-turn branch fires, and
-    the overflow short-circuit (which only triggers on non-final turns) is
-    a no-op.
-    """
+    """Final-turn overflow takes the same recycle path as any final-turn return."""
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     ds = _make_dataset(num_traces=2, turns_per_trace=3)
     issued: list[tuple[str, int]] = []

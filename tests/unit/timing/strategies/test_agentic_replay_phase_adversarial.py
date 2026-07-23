@@ -80,14 +80,7 @@ def _make_strategy(
 
 
 def test_warmup_phase_with_non_agentic_timing_mode_pins_current_behavior():
-    """Test 1: ``config.phase = WARMUP`` with ``config.timing_mode != AGENTIC_REPLAY``.
-
-    The constructor today only validates ``config.phase``, not ``config.timing_mode``.
-    This is technically a defensive gap - PhaseRunner builds the config so this
-    should never happen in production. We pin the current behavior here so a
-    future tightening (raise on mismatched timing_mode) flips this test, prompting
-    a docs/CHANGELOG update rather than a silent escape.
-    """
+    """``config.phase = WARMUP`` with ``config.timing_mode != AGENTIC_REPLAY``."""
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     src = _build_real_trajectory_source(1, 2, trajectory)
     cfg = MagicMock()
@@ -123,11 +116,7 @@ async def test_warmup_empty_trajectories_emits_no_credits():
 
 @pytest.mark.asyncio
 async def test_profiling_empty_trajectories_aborts_setup_with_clear_error():
-    """Test 2b: PROFILING phase with empty trajectory raises a clear error.
-
-    The strategy MUST refuse to start PROFILING on an empty trajectory. Otherwise
-    the recycle queue runs from an empty seed and quietly produces zero load.
-    """
+    """PROFILING phase with empty trajectory raises a clear error."""
     strategy, _, _, _ = _make_strategy(phase=CreditPhase.PROFILING, trajectories=[])
     with pytest.raises(RuntimeError) as exc_info:
         await strategy.setup_phase()
@@ -142,10 +131,7 @@ async def test_profiling_empty_trajectories_aborts_setup_with_clear_error():
 
 @pytest.mark.asyncio
 async def test_warmup_terminal_failure_blocks_profiling():
-    """Test 3: ``record_warmup_failure`` accumulates; ``report_warmup_failures``
-    raises ``TrajectoryWarmupFailedError`` so the orchestrator does not advance to
-    PROFILING. We additionally pin that handle_credit_return remains a no-op
-    in WARMUP regardless of failure state (failure routing is the issuer's job)."""
+    """``record_warmup_failure`` accumulates; ``report_warmup_failures`` raises ``TrajectoryWarmupFailedError`` so the orchestrator does not advance to PROFILING. We additionally pin that handle_credit_return remains a no-op in WARMUP regardless of failure state (failure routing is the issuer's job)."""
     trajectory = [
         Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(3)
     ]
@@ -181,15 +167,7 @@ async def test_warmup_terminal_failure_blocks_profiling():
 
 @pytest.mark.asyncio
 async def test_warmup_no_embedded_wallclock_abort():
-    """Test 4: Strategy MUST NOT enforce its own wall-clock timeout.
-
-    Spec §8.4.5: "WARMUP exceeds 5 minutes wall-clock - INFO log fires once;
-    no abort." The 5-minute INFO log lives at the lifecycle layer (or higher);
-    at the strategy layer we pin that ``execute_phase`` returns deterministically
-    after dispatching trajectory credits and does NOT poll a deadline of any kind.
-    Concretely: dispatch happens once and finishes; nothing in the strategy
-    aborts a long-running warmup.
-    """
+    """Strategy MUST NOT enforce its own wall-clock timeout."""
     trajectory = [
         Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(2)
     ]
@@ -210,15 +188,7 @@ async def test_warmup_no_embedded_wallclock_abort():
 
 @pytest.mark.asyncio
 async def test_profiling_without_preceding_warmup_does_not_self_enforce():
-    """Test 5: PROFILING with a populated trajectory but no recorded WARMUP completion
-    is permitted by the strategy. Ordering enforcement lives at PhaseRunner /
-    config build time (the 'no warmup config' error is a config concern). The
-    strategy itself is operator-trusting on phase ordering; we pin that here
-    so the responsibility split is documented in tests.
-
-    A degenerate case where PROFILING starts on an empty trajectory is the
-    *signal* that something is wrong - that case is covered by Test 2b.
-    """
+    """PROFILING with a populated trajectory but no recorded WARMUP completion is permitted by the strategy. Ordering enforcement lives at PhaseRunner / config build time (the 'no warmup config' error is a config concern). The strategy itself is operator-trusting on phase ordering; we pin that here so the responsibility split is documented in tests."""
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     strategy, issuer, _, src = _make_strategy(
         phase=CreditPhase.PROFILING,
@@ -242,12 +212,7 @@ async def test_profiling_without_preceding_warmup_does_not_self_enforce():
 
 @pytest.mark.asyncio
 async def test_profiling_credit_return_after_stop_dispatches_next_turn():
-    """Test 6: When ``DurationStopCondition`` has fired, an in-flight trajectory
-    member returning mid-session still triggers ``handle_credit_return`` -> next
-    turn issuance. The strategy does NOT short-circuit on its own; whether the
-    issuer ultimately admits or rejects the new credit (because sending is
-    complete) is an issuer/lifecycle concern. This pins the existing aiperf
-    semantic that an in-flight request's response is *included* in metrics."""
+    """When ``DurationStopCondition`` has fired, an in-flight trajectory member returning mid-session still triggers ``handle_credit_return`` -> next turn issuance. The strategy does NOT short-circuit on its own; whether the issuer ultimately admits or rejects the new credit (because sending is complete) is an issuer/lifecycle concern. This pins the existing aiperf semantic that an in-flight request's response is *included* in metrics."""
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     issuer = AsyncMock()
     strategy, _, _, _ = _make_strategy(
@@ -281,17 +246,7 @@ async def test_profiling_credit_return_after_stop_dispatches_next_turn():
 
 @pytest.mark.asyncio
 async def test_warmup_credit_return_does_not_self_spawn_subagents():
-    """Test 7: When a trajectory warmup turn ``k_i`` happens to be a turn flagged for
-    SPAWN, the spawn is dispatched by ``BranchOrchestrator`` (independent of
-    strategy). The strategy's own ``handle_credit_return`` is a no-op in WARMUP
-    so it MUST NOT issue any follow-up credit, even when the returning credit
-    carries SPAWN-relevant flags (``has_forks=True``,
-    ``branch_mode=SPAWN``). The spawned credit's phase tagging and barrier
-    accounting is the orchestrator + issuer's responsibility.
-
-    Pin: a WARMUP credit returning with ``has_forks=True`` + branch_mode=SPAWN
-    yields zero strategy-level dispatches.
-    """
+    """When a trajectory warmup turn ``k_i`` happens to be a turn flagged for SPAWN, the spawn is dispatched by ``BranchOrchestrator`` (independent of strategy). The strategy's own ``handle_credit_return`` is a no-op in WARMUP so it MUST NOT issue any follow-up credit, even when the returning credit carries SPAWN-relevant flags (``has_forks=True``, ``branch_mode=SPAWN``). The spawned credit's phase tagging and barrier accounting is the orchestrator + issuer's responsibility."""
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     issuer = AsyncMock()
     strategy, _, _, _ = _make_strategy(
@@ -324,17 +279,7 @@ async def test_warmup_credit_return_does_not_self_spawn_subagents():
 
 
 def test_strategy_constructed_multiple_times_within_one_phase_is_independent():
-    """Test 8: PhaseRunner is contractually expected to construct the strategy
-    exactly once per phase, but the strategy class today does NOT enforce a
-    singleton - each construction yields a fresh, independent instance that
-    shares the trajectory source state.
-
-    We pin: two AgenticReplayStrategy instances built for the same PROFILING
-    phase against the same trajectory source share trajectory + metadata state but have
-    independent recycle queues and independent failure accumulators. A future
-    commit that adds a class-level construction guard will flip this assertion
-    and prompt a CHANGELOG entry.
-    """
+    """PhaseRunner is contractually expected to construct the strategy exactly once per phase, but the strategy class today does NOT enforce a singleton - each construction yields a fresh, independent instance that shares the trajectory source state."""
     trajectory = [
         Trajectory(conversation_id="trace_0", start_turn_index=0),
         Trajectory(conversation_id="trace_1", start_turn_index=1),
@@ -371,10 +316,7 @@ def test_strategy_constructed_multiple_times_within_one_phase_is_independent():
 
 @pytest.mark.asyncio
 async def test_strategy_setup_twice_within_one_phase_is_idempotent():
-    """Calling ``setup_phase`` twice on the same instance MUST be safe (no
-    error, recycle still works). Recycle state now lives in the shared dataset
-    sampler, not a per-setup queue, so there is nothing to leak or duplicate.
-    """
+    """Calling ``setup_phase`` twice on the same instance MUST be safe (no error, recycle still works). Recycle state now lives in the shared dataset sampler, not a per-setup queue, so there is nothing to leak or duplicate."""
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     strategy, _, _, _ = _make_strategy(
         phase=CreditPhase.PROFILING,
@@ -397,9 +339,7 @@ async def test_strategy_setup_twice_within_one_phase_is_idempotent():
 
 @pytest.mark.asyncio
 async def test_warmup_execute_does_not_emit_per_credit_long_warmup_log(caplog):
-    """The strategy's WARMUP execute path must not emit a long-warmup INFO log
-    per trajectory credit. (Spec §8.4.5: log fires once - if at all - and not from
-    inside the dispatch loop.)"""
+    """The strategy's WARMUP execute path must not emit a long-warmup INFO log per trajectory credit. (Spec §8.4.5: log fires once - if at all - and not from inside the dispatch loop.)"""
     trajectory = [
         Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(5)
     ]

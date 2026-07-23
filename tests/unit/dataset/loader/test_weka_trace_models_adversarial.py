@@ -69,8 +69,7 @@ def test_discriminator_invalid_type_rejected(req: dict):
 
 
 def test_discriminator_nested_subagent_rejected():
-    """Pin: WekaSubagentEntry.requests is list[WekaNormalRequest]; a nested
-    subagent must be rejected (no tagged union at the inner level)."""
+    """Pin: WekaSubagentEntry.requests is list[WekaNormalRequest], so a nested subagent is rejected (no tagged union at the inner level)."""
     inner_subagent = {
         "t": 0.0,
         "type": "subagent",
@@ -86,8 +85,7 @@ def test_discriminator_nested_subagent_rejected():
 
 
 def test_discriminator_streaming_inside_subagent_rejected():
-    """Pin: inner list accepts only WekaNormalRequest; a streaming request
-    with type='s' must be rejected (Literal['n'] mismatch)."""
+    """Pin: the inner list accepts only WekaNormalRequest, so a type='s' streaming request is rejected on the Literal['n'] mismatch."""
     inner_streaming = {
         "t": 0.0,
         "type": "s",
@@ -102,8 +100,7 @@ def test_discriminator_streaming_inside_subagent_rejected():
 
 
 def test_discriminator_ttft_on_normal_request_rejected():
-    """Pin: WekaNormalRequest has extra='forbid'; ttft is streaming-only
-    and must be rejected on a normal request."""
+    """Pin: WekaNormalRequest has extra='forbid', so the streaming-only ttft field is rejected on a normal request."""
     bad = _trace_with_request(
         {"t": 0.0, "type": "n", "model": "m", "in": 10, "out": 1, "ttft": 0.2}
     )
@@ -175,8 +172,7 @@ def test_normal_request_string_input_coerced_to_int():
 
 
 def test_normal_request_float_input_rejected():
-    """Pin: non-whole float input (10.5) is rejected by pydantic v2 lax
-    int coercion; only whole-valued floats coerce."""
+    """Pin: a non-whole float input (10.5) is rejected by pydantic v2 lax int coercion, which only coerces whole-valued floats."""
     with pytest.raises(ValidationError):
         WekaNormalRequest.model_validate(
             {"t": 0.0, "type": "n", "model": "m", "in": 10.5, "out": 1}
@@ -222,12 +218,7 @@ def test_weka_trace_missing_required_field_rejected(field: str):
 
 @pytest.mark.parametrize("block_size", [0, -1, -64])
 def test_weka_trace_non_positive_block_size_rejected(block_size: int):
-    """Pin: block_size must be > 0. Zero reaches token-tiling divisors
-    (weka_trace.py _chain_init_tokens; weka_synth_buf.py init_turn_0/
-    advance_turn) as a ZeroDivisionError, and negatives silently corrupt
-    tiling — the gt=0 constraint converts both into a parse-time
-    ValidationError that _load_single_file wraps as DatasetLoaderError.
-    """
+    """Pin: block_size must be > 0, so the gt=0 constraint turns tiling-divisor zeros and corrupting negatives into a parse-time ValidationError."""
     bad = dict(_VALID)
     bad["block_size"] = block_size
     with pytest.raises(ValidationError):
@@ -235,12 +226,7 @@ def test_weka_trace_non_positive_block_size_rejected(block_size: int):
 
 
 def test_weka_trace_hash_id_scope_global_rejected_by_schema():
-    """'global' hash_id_scope is rejected at schema level: v1 loader only
-    implements local-scope synthesis (hashes scoped per-trace). Accepting
-    'global' at the schema would let misconfigured traces load and silently
-    misbehave — global-scope support is a future feature, and until it is
-    implemented, the schema rejects.
-    """
+    """A 'global' hash_id_scope is rejected at schema level since the v1 loader only implements per-trace local-scope synthesis."""
     d = dict(_VALID)
     d["hash_id_scope"] = "global"
     with pytest.raises(ValidationError):

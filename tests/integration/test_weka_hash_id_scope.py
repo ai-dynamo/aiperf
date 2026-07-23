@@ -1,38 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""End-to-end benchmark that stress-tests the Weka ``hash_id_scope: "local"``
-contract on the wire.
-
-A Weka trace declares one hash_id namespace per trace FILE: the same hash_id
-must decode to identical tokens across the parent conversation and every
-subagent (spawn-mode child) conversation of that trace. This is what lets
-replay reproduce the cross-agent shared prefixes a real inference server serves
-from KV cache.
-
-The crafted trace below has a parent turn and TWO sibling subagents whose inner
-requests reference the EXACT same hash_id blocks as the parent's first turn
-(``[10, 11, 12]``), with ``tool_tokens == system_tokens == 0`` and
-``in == n*block_size`` so each first-turn prompt is purely the decoded blocks.
-Under the correct (shared) scope, all three first-turn requests render to
-byte-identical prompt text on the wire. A per-child decode scope (the bug this
-guards against) would decode the shared blocks under different seeds, so the
-sibling payloads -- and the parent vs child payloads -- would diverge.
-
-We run the real ``aiperf profile`` subprocess against the mock server, export
-raw records (``--export-level raw``), and assert on the ACTUAL request payloads.
-
-PORT NOTE (v2): the v1 stop condition ``--request-count 1`` starves this
-DAG-shaped subagent trace -- the ``--request-count``/``--conversation-num``
-counters count only top-level credits, so the phase declares "sending complete"
-after the root's turn 0 and then waits forever for the spawn children and the
-join-triggering later parent turn that were never counted as targets (the run
-hangs at ``in_flight=1`` until the harness timeout). ``--benchmark-duration`` is
-the only DAG-safe stop condition (see ``tests/integration/test_weka_flat_split_e2e.py``),
-so this test drives a duration-bounded run and asserts the scope invariant
-*per play* (one root ``x_correlation_id`` plus the two subagent children linked
-via ``parent_correlation_id``); the join-triggering final parent turn is moved
-close to the subagents so a full play completes well inside the window.
-"""
+"""End-to-end benchmark verifying the Weka ``hash_id_scope: "local"`` contract on the wire: a parent and two sibling subagents referencing identical hash_id blocks must render byte-identical prompts, asserted per play over a duration-bounded run."""
 
 from __future__ import annotations
 

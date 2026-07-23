@@ -512,17 +512,7 @@ def test_shared_spawn_fanout_emits_worker_group_ids(tmp_path, monkeypatch):
 
 
 def _enable_production_classification(monkeypatch) -> None:
-    """Restore aux / reduction / worker-group classification to their real
-    shipped defaults, undoing the loader suite's autouse disable.
-
-    The loader-suite autouse fixture zeroes WEKA_AUX_MAX_REQUESTS /
-    WEKA_AUX_REDUCTION_OSL_MAX / WEKA_WORKER_GROUP_MIN to keep mechanics tests on
-    ``::fa:``. Here we re-read each one's pydantic model-field default (the value
-    a real run uses) rather than hardcoding, so these e2e classifications track
-    the shipped config. WEKA_AUX_CROSS_MODEL / ISL_FLOOR / ISL_RATIO /
-    REDUCTION_RATIO are not zeroed by the fixture, so they already hold their
-    production defaults.
-    """
+    """Restore aux / reduction / worker-group classification to their real shipped model-field defaults, undoing the loader suite's autouse disable."""
     ds = Environment.DATASET
     fields = type(ds).model_fields
     for name in (
@@ -536,11 +526,7 @@ def _enable_production_classification(monkeypatch) -> None:
 def test_production_defaults_agent_and_cross_model_sidecar_coexist(
     tmp_path, monkeypatch
 ):
-    """At the shipped defaults, one trace with a multi-request same-model agent
-    AND a cross-model one-shot emits both real tags together: a genuine ``::fa:``
-    agent and an ``::aux:`` sidecar. This is the headline agent-vs-sidecar split
-    the aux feature exists to produce, asserted end-to-end at production config.
-    """
+    """At shipped defaults, a multi-request same-model agent and a cross-model one-shot emit both a genuine ``::fa:`` agent and an ``::aux:`` sidecar together."""
     _enable_production_classification(monkeypatch)
     reqs = [
         _row(t=0.0, hash_ids=[1, 2, 3]),  # main chain, model "m"
@@ -561,18 +547,7 @@ def test_production_defaults_agent_and_cross_model_sidecar_coexist(
 
 
 def test_production_defaults_shared_spawn_fanout_is_worker_group(tmp_path, monkeypatch):
-    """At the shipped defaults, workers that fork from the still-open main
-    request AND run with OVERLAPPING intervals are one concurrent fan-out ->
-    ``::wg:`` (the corpus's dominant agent population), not generic ``::fa:``.
-
-    Worker-group now requires a shared fork point AND temporal overlap
-    (overlapping ``[t, t+api_time)`` intervals). Each worker here is a single
-    request with a large fresh context (>= WEKA_AUX_ISL_FLOOR) and a generative
-    output (>= WEKA_AUX_REDUCTION_OSL_MAX) so it escapes BOTH aux arms (aux is
-    classified before worker-group): a small single-request fork would be an
-    ``::aux:`` size sidecar at these defaults, not ``::wg:``. The long api_time
-    makes the three intervals overlap into one group.
-    """
+    """At shipped defaults, workers forking from the still-open main request with overlapping intervals are one concurrent fan-out tagged ``::wg:``, not ``::fa:``."""
     _enable_production_classification(monkeypatch)
     reqs = [
         _row(t=0.0, hash_ids=[1, 2, 3, 4, 5, 6, 7, 8], api_time=100.0),  # deep, open

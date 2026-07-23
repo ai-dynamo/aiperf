@@ -45,8 +45,7 @@ def test_root_only_tree_releases_on_root_terminal(cm, registry):
 
 
 def test_descendant_holds_slot_until_it_drains(cm, registry):
-    """The slot is held while a descendant is in flight, then released when it
-    completes after the root has gone terminal."""
+    """The slot is held while a descendant is in flight, then released when it completes after the root has gone terminal."""
     registry.open_tree("root-a", PROFILING, root_pending=True)
     registry.register_descendants("root-a", 1)
 
@@ -63,8 +62,7 @@ def test_descendant_holds_slot_until_it_drains(cm, registry):
 
 
 def test_descendant_completing_before_root_does_not_release(cm, registry):
-    """If every descendant finishes before the root's terminal turn, the slot is
-    held until the root itself goes terminal."""
+    """If every descendant finishes before the root's terminal turn, the slot is held until the root itself goes terminal."""
     registry.open_tree("root-a", PROFILING, root_pending=True)
     registry.register_descendants("root-a", 2)
 
@@ -78,8 +76,7 @@ def test_descendant_completing_before_root_does_not_release(cm, registry):
 
 
 def test_rootless_tree_releases_when_last_descendant_drains(cm, registry):
-    """A rootless lane (no root credit ever) drains purely on descendant
-    completion -- root_pending=False from the start."""
+    """A rootless lane (no root credit ever) drains purely on descendant completion, with root_pending=False from the start."""
     registry.open_tree("lane-root", PROFILING, root_pending=False)
     registry.register_descendants("lane-root", 3)
 
@@ -92,11 +89,7 @@ def test_rootless_tree_releases_when_last_descendant_drains(cm, registry):
 
 
 def test_descendants_registered_before_open_are_counted(cm, registry):
-    """Snapshot regression: a lane's subagents register BEFORE the lane slot is
-    acquired (seed_snapshot precedes acquire_lane_credit). They must be buffered
-    and folded into the tree at open_tree -- otherwise the tree opens at
-    outstanding=0 and drains on the FIRST child completion while siblings still
-    run (premature drain -> recycle overlap -> swim-lane lane overshoot)."""
+    """Snapshot regression: subagents registered before the lane slot is acquired must be buffered and folded into the tree at open_tree, else the tree opens at outstanding=0 and drains prematurely on the first child completion."""
     registry.register_descendants("lane-root", 3)  # tree not open yet
     assert registry.open_count() == 0
     registry.open_tree("lane-root", PROFILING, root_pending=False)  # rootless lane
@@ -111,11 +104,7 @@ def test_descendants_registered_before_open_are_counted(cm, registry):
 
 
 def test_descendant_completing_before_open_does_not_leak_slot(cm, registry):
-    """H3 regression: a subagent at offset 0 can complete BEFORE the lane's root
-    (scheduled later) opens the tree. The pre-open completion must decrement the
-    pending buffer; otherwise open_tree folds in the stale full count and the
-    tree never drains (a descendant that already completed can't complete again),
-    leaking the session slot until teardown -> concurrency under-fill mid-run."""
+    """H3 regression: a subagent completing before the lane's root opens the tree must decrement the pending buffer, else open_tree folds in a stale full count and the tree never drains, leaking the session slot until teardown."""
     registry.register_descendants("lane-root", 2)  # 2 subagents seeded pre-open
     registry.on_descendant_done("lane-root")  # one completes BEFORE open_tree
     registry.open_tree("lane-root", PROFILING, root_pending=False)  # rootless lane
@@ -170,8 +159,7 @@ def test_descendant_done_clamps_at_zero(cm, registry):
 
 
 def test_drain_callback_fires_on_release(cm, registry):
-    """The drain callback fires exactly once per tree, on release, with the
-    root id + phase, so the strategy can recycle the freed lane."""
+    """The drain callback fires exactly once per tree, on release, with the root id and phase, so the strategy can recycle the freed lane."""
     drained: list[tuple[str, CreditPhase]] = []
     registry.set_drain_callback(lambda root, phase: drained.append((root, phase)))
 
@@ -184,8 +172,7 @@ def test_drain_callback_fires_on_release(cm, registry):
 
 
 def test_release_all_releases_open_trees_for_phase_without_drain_callback(cm, registry):
-    """Teardown releases every still-open tree's slot for the phase and does NOT
-    fire the drain callback (no recycle at teardown)."""
+    """Teardown releases every still-open tree's slot for the phase and does NOT fire the drain callback (no recycle at teardown)."""
     drained: list[str] = []
     registry.set_drain_callback(lambda root, phase: drained.append(root))
 
@@ -211,8 +198,7 @@ def test_open_count_by_phase(registry):
 
 
 def test_release_uses_the_trees_own_phase(cm, registry):
-    """A tree releases against the phase it was opened with, even if drained
-    via a descendant-done call that carries no phase."""
+    """A tree releases against the phase it was opened with, even if drained via a descendant-done call that carries no phase."""
     registry.open_tree("w-root", WARMUP, root_pending=False)
     registry.register_descendants("w-root", 1)
     registry.on_descendant_done("w-root")

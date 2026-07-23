@@ -72,11 +72,7 @@ def test_hit_rate_clamped_when_hit_blocks_exceeds_total() -> None:
 
 
 def test_rate_preserved_across_repeated_replays() -> None:
-    """Characterization: replaying the same (conversation, turn) N times keeps
-    the *rate* stable (numerator and denominator both scale), even though the
-    absolute block counts inflate. Confirms the metric is replay-count
-    invariant, the property agentic recycle relies on.
-    """
+    """Characterization: replaying the same (conversation, turn) N times keeps the rate stable even as absolute block counts inflate (the replay-count invariance agentic recycle relies on)."""
 
     async def body() -> tuple[float, int, int]:
         acc = _accumulator()

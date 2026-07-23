@@ -119,8 +119,6 @@ def test_no_main_model_skips_cross_model_arm():
     assert is_aux_chain(_chain(200_000), MAIN_PEAK, **PARAMS) is False
 
 
-# --- reduction arm (is_reduction_chain) ---
-
 RED = {"osl_max": 4000, "ratio": 20.0, "isl_floor": 16384}
 
 
@@ -186,18 +184,10 @@ def test_reduction_empty_chain_is_not_reduction():
     assert is_reduction_chain([], **RED) is False
 
 
-# --- worker-group membership + overlap assignment ---
-
-
 def _worker(
     t: float = 0.0, dur: float = 10.0, fork_depth: int = 100, fork_outer: int = 0
 ) -> AgentChain:
-    """A worker chain forked from shared context (``fork_depth`` blocks) at fork
-    point ``(parent 0, fork_outer)`` whose single request spans the active
-    interval ``[t, t + dur)`` (``api_time=dur``).
-
-    Grouping requires BOTH the same fork point AND temporal overlap; ``hash_ids``
-    are generic since block-0 is not used for grouping."""
+    """A worker chain forked at ``(parent 0, fork_outer)`` with depth ``fork_depth`` whose single request spans ``[t, t + dur)``."""
     return AgentChain(
         requests=[
             (
@@ -314,9 +304,6 @@ def test_worker_group_min_zero_disables():
     assert worker_group_members(r, group_min=0) == set()
 
 
-# --- overlap coordinate assignment (group / member) ---
-
-
 def test_worker_group_assignment_group_and_member():
     # one overlapping component -> group 0, members 0..2 in (t0, outer) order
     r = _result(_worker(0, 100), _worker(1, 100), _worker(2, 100))
@@ -368,9 +355,6 @@ def test_worker_group_members_matches_assignment_keys():
     assert worker_group_members(r, group_min=3) == set(
         worker_group_assignment(r, group_min=3)
     )
-
-
-# --- session-id suffix precedence (_worker_suffix) ---
 
 
 def test_worker_suffix_precedence_and_shape():

@@ -50,7 +50,6 @@ def test_synthetic_coding_with_prefix_prompts_builds_dataset(mock_tokenizer):
     assert isinstance(composer.prompt_generator, CodingContentGenerator)
     conversations = composer.create_dataset()
     assert len(conversations) == 2
-    # First-turn content should include a prefix sample (non-empty text).
     first_turn = conversations[0].turns[0]
     texts = [t for t in first_turn.texts] if first_turn.texts else []
     assert texts

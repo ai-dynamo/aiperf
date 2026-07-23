@@ -1,13 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Cross-process reproducibility test for the weka byte-exact loader.
-
-Spawns two subprocesses with different PYTHONHASHSEED, runs the loader on
-the same fixture trace, and asserts byte-identical outputs. Verifies the
-sha256-keyed determinism contract from spec §4.6 — Python's builtin
-hash() is salted per-process via PYTHONHASHSEED, and any path that
-depends on it would diverge across runs (kv-cache-tester audit H3).
-"""
+"""Cross-process reproducibility for the weka byte-exact loader: same fixture under different PYTHONHASHSEED must yield byte-identical output (spec §4.6)."""
 
 from __future__ import annotations
 
@@ -103,11 +96,7 @@ def _run_with_seed(seed: str | int, fixture_path: Path) -> bytes:
     ["simple.json", "one_subagent.json", "multi_model.json"],
 )
 def test_loader_byte_identical_across_processes(fixture_name: str) -> None:
-    """Run the loader twice with different PYTHONHASHSEEDs; outputs must match.
-
-    Covers parent-only (simple.json), parent + one subagent (one_subagent.json),
-    and multi-model (multi_model.json) fixtures.
-    """
+    """Run the loader under different PYTHONHASHSEEDs across parent-only, one-subagent, and multi-model fixtures; outputs must match."""
     fixture = FIXTURES / fixture_name
     if not fixture.exists():
         pytest.skip(f"Fixture {fixture} not present")

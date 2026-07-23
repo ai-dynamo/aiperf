@@ -31,12 +31,7 @@ def _build_run(
     duration: Any = 1800,
     profiling_overrides: dict[str, Any] | None = None,
 ) -> BenchmarkRun:
-    """Construct a BenchmarkRun for a weka public dataset under the scenario.
-
-    ``dataset`` overrides the default public-weka dataset dict; ``streaming`` /
-    ``extra`` configure the endpoint; ``profiling_overrides`` merge onto the
-    profiling phase.
-    """
+    """Construct a BenchmarkRun for a weka public dataset under the scenario."""
     if dataset is None:
         dataset = {
             "name": "main",
@@ -121,9 +116,7 @@ def test_timing_mode_stamped_on_profiling_phase() -> None:
 def test_explicit_scheduling_phase_conflicts_with_scenario(
     overrides: dict[str, Any],
 ) -> None:
-    """A rate / user-centric / fixed-schedule phase only arises from explicit
-    scheduling flags; the scenario lock must reject it (v1 parity), not
-    silently stamp timing_mode over it."""
+    """An explicitly-scheduled rate/user-centric/fixed-schedule phase is rejected rather than stamped over."""
     run = _build_run(
         streaming=True,
         extra={"ignore_eos": True},
@@ -135,10 +128,7 @@ def test_explicit_scheduling_phase_conflicts_with_scenario(
 
 
 def test_adaptive_scale_phase_conflicts_with_scenario() -> None:
-    """--adaptive-scale keeps the default concurrency phase type and flips a
-    per-phase flag, so the phase-type gate cannot see it; the lock must still
-    reject it rather than letting the stamped timing_mode silently win over
-    ADAPTIVE_SCALE."""
+    """--adaptive-scale flips a per-phase flag the phase-type gate cannot see, and the lock still rejects it."""
     run = _build_run(
         streaming=True,
         extra={"ignore_eos": True},
@@ -161,8 +151,7 @@ def test_adaptive_scale_phase_conflicts_with_scenario() -> None:
 
 
 def test_explicit_scheduling_phase_unsafe_override_keeps_user_mode() -> None:
-    """Under --unsafe-override the conflict downgrades to a warning and the
-    user's scheduling mode is kept (the phase is left un-stamped)."""
+    """Under --unsafe-override the scheduling conflict downgrades to a warning and the user's mode is kept un-stamped."""
     run = _build_run(
         streaming=True,
         unsafe_override=True,
@@ -255,14 +244,7 @@ def test_wrong_public_loader_raises() -> None:
 
 
 def test_synthetic_default_dataset_raises_clean_loader_lock_not_value_error() -> None:
-    """A synthetic (non-trace) default dataset under the AgentX MVP scenario must
-    surface the authoritative ``--input-file (loader)`` ScenarioViolation, not a
-    raw pydantic ValueError from the ``use_end_to_start_delays`` auto-fill.
-
-    ``SyntheticDataset`` is ``extra="forbid"`` and carries no ``use_*`` fields,
-    so the require_use_* auto-fill must early-return (like the cap helpers)
-    instead of crashing before _apply_require_loader collects its violation.
-    """
+    """A synthetic default dataset surfaces the --input-file (loader) ScenarioViolation, not a raw ValueError from the require_use_* auto-fill."""
     run = _build_run(
         streaming=True,
         extra={"ignore_eos": True},
@@ -279,14 +261,7 @@ def test_synthetic_default_dataset_raises_clean_loader_lock_not_value_error() ->
 
 
 def test_synthetic_loader_not_bypassable_via_unsafe_override() -> None:
-    """``--unsafe-override`` must NOT allow AgentX to run on synthetic.
-
-    Without ``--public-dataset`` / ``--input-file``, the CLI defaults to
-    synthetic. Combined with ``--num-dataset-entries 393`` (the Weka corpus
-    size) that looks like a successful Weka load but produces 1-turn
-    Shakespeare sessions that empty the trajectory pool. Explicit wrong
-    loaders (e.g. sharegpt) remain overridable; missing/synthetic is not.
-    """
+    """--unsafe-override cannot bypass a synthetic loader (unlike an explicit wrong loader such as sharegpt)."""
     run = _build_run(
         streaming=True,
         extra={"ignore_eos": True},
@@ -517,9 +492,7 @@ def test_trace_idle_gap_cap_explicit_other_value_raises() -> None:
 
 
 def test_inter_turn_delay_cap_shipped_scenario_does_not_lock() -> None:
-    """The shipped AgentX MVP leaves inter_turn_delay_cap_seconds unset;
-    trace_idle_gap_cap_seconds supersedes the per-turn cap in the weka loader,
-    so an explicit user value must not raise."""
+    """The shipped AgentX MVP leaves inter_turn_delay_cap_seconds unlocked, so an explicit user value must not raise."""
     run = _build_run(
         streaming=True,
         extra={"ignore_eos": True},
@@ -659,8 +632,7 @@ def test_random_seed_explicit_preserved(caplog: pytest.LogCaptureFixture) -> Non
 
 
 def test_random_seed_auto_filled_through_resolver_chain() -> None:
-    """The seed is stamped when running the full resolver chain, not just the
-    bare ``apply_scenario`` call."""
+    """The seed is stamped when running the full resolver chain, not just the bare apply_scenario call."""
     run = _build_run(streaming=True, extra={"ignore_eos": True})
     assert run.random_seed is None
     build_default_resolver_chain().resolve_all(run)

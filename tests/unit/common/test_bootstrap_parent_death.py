@@ -1,16 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the parent-death guard installed in spawned service processes.
-
-The SystemController launches each service as a ``daemon=True`` child (via
-``fork`` on Linux, ``spawn`` on macOS+dashboard). ``daemon`` only reaps children
-when the parent exits *cleanly* through Python's ``atexit`` hook. When the
-controller is SIGKILL'd (agent timeout, OOM, hard kill), that hook never runs
-and the services orphan, reparenting to init/systemd and leaking RAM
-indefinitely. ``_install_parent_death_signal`` installs a kernel-level
-``PR_SET_PDEATHSIG(SIGKILL)`` backstop so the kernel reaps each service the
-instant its controller dies, however it dies.
-"""
+"""The parent-death guard installs a kernel-level PR_SET_PDEATHSIG(SIGKILL) backstop so spawned services die when their controller does."""
 
 import os
 import platform
@@ -56,10 +46,7 @@ def test_install_parent_death_signal_noop_on_non_linux():
 
 
 def test_install_parent_death_signal_exits_if_controller_already_died():
-    """If our live parent is no longer the controller, the controller died in
-    the launch/import window before the guard armed, so the death signal was
-    missed forever — the child must exit itself.
-    """
+    """If our parent is no longer the controller, the controller died before the guard armed, so the child must exit itself."""
     fake_libc = mock.Mock()
     fake_libc.prctl.return_value = 0
     with (
@@ -91,8 +78,7 @@ def test_install_parent_death_signal_no_exit_when_controller_alive():
 
 
 def test_install_parent_death_signal_falls_back_to_getppid_snapshot():
-    """With no controller_pid (e.g. tests), it snapshots getppid() and does not
-    exit when that parent is stable — preserving correctness under fork."""
+    """With no controller_pid it snapshots getppid() and does not exit when that parent is stable."""
     fake_libc = mock.Mock()
     fake_libc.prctl.return_value = 0
     with (
@@ -107,9 +93,7 @@ def test_install_parent_death_signal_falls_back_to_getppid_snapshot():
 
 
 def test_install_parent_death_signal_prctl_failure_returns_early():
-    """A nonzero prctl return means the guard never armed: fall back to
-    daemon=True behavior WITHOUT running the reparent check (an unarmed
-    guard must never exit the process)."""
+    """A nonzero prctl return means the guard never armed, so the reparent check is skipped and the process must not exit."""
     fake_libc = mock.Mock()
     fake_libc.prctl.return_value = -1
     with (
@@ -134,15 +118,14 @@ def test_install_parent_death_signal_prctl_failure_returns_early():
 def test_install_parent_death_signal_libc_failure_returns_early(
     exc_type: type[Exception],
 ):
-    """libc load / prctl symbol failures are non-fatal best-effort: no
-    crash, no exit, plain fallback to daemon=True behavior."""
+    """libc load / prctl symbol failures are non-fatal best-effort: no crash, no exit."""
     with (
         mock.patch("aiperf.common.bootstrap.IS_LINUX", True),
         mock.patch("ctypes.CDLL", side_effect=exc_type("boom")),
         mock.patch.object(os, "getppid", return_value=999),
         mock.patch.object(os, "_exit", side_effect=SystemExit) as exit_mock,
     ):
-        _install_parent_death_signal(controller_pid=1234)  # must not raise
+        _install_parent_death_signal(controller_pid=1234)
 
     exit_mock.assert_not_called()
 
@@ -191,11 +174,7 @@ def _pid_alive(pid: int) -> bool:
 
 @pytest.mark.skipif(not IS_LINUX, reason="PR_SET_PDEATHSIG is Linux-only")
 def test_parent_death_signal_real_kill_reaps_child():
-    """End-to-end: SIGKILL the parent, the armed grandchild must die on its own.
-
-    This is the real proof of the fix — it exercises actual kernel
-    PR_SET_PDEATHSIG delivery (and the getppid mismatch fallback), not a mock.
-    """
+    """End-to-end: SIGKILL the parent and the armed grandchild must die on its own via real kernel PR_SET_PDEATHSIG delivery."""
     parent = subprocess.Popen(
         [sys.executable, "-c", _REAL_KILL_PROG, "parent", _REAL_KILL_PROG],
         stdout=subprocess.PIPE,

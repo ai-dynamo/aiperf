@@ -162,11 +162,7 @@ async def _run_accumulator_skips_missing_metadata_and_errors() -> None:
 
 
 def test_export_results_scopes_to_profiling_phase() -> None:
-    """Warmup must not bleed into the profiling headline hit rate.
-
-    Equal block totals (10 each) make all-phases average 50% while profiling
-    alone is 10% — the bug this guards against.
-    """
+    """Warmup must not bleed into the profiling headline hit rate (equal block totals make all-phases 50% while profiling alone is 10%)."""
     asyncio.run(_run_export_results_scopes_to_profiling_phase())
 
 

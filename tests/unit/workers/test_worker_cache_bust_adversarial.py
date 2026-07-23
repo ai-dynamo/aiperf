@@ -21,11 +21,7 @@ def test_apply_to_system_message_empty_string_marker_is_noop():
 
 
 def test_apply_to_system_message_empty_string_system_with_marker_returns_marker():
-    """An empty-string (NOT None) system_message falls past the early-return guard
-    (``system_message is None``) and reaches the prefix branch, producing
-    marker + "" == marker. Locks the empty-string-vs-None semantic distinction:
-    None forces the caller to use the raw-messages fallback, "" gets prefixed in place.
-    """
+    """An empty-string (not None) system_message passes the ``is None`` guard and gets prefixed in place, producing the marker alone."""
     out = _apply_cache_bust_to_system_message(
         "", "[rid:abc]\n\n", CacheBustTarget.SYSTEM_PREFIX
     )
@@ -33,9 +29,7 @@ def test_apply_to_system_message_empty_string_system_with_marker_returns_marker(
 
 
 def test_apply_to_system_message_unknown_target_is_passthrough():
-    """The helper only handles SYSTEM_PREFIX/SUFFIX/NONE. Any other target
-    (e.g. FIRST_TURN_PREFIX) falls through both branches and returns the input
-    string unchanged — the dispatch lives one level up in ``_apply_cache_bust``."""
+    """A non-SYSTEM target (e.g. FIRST_TURN_PREFIX) falls through both branches and returns the input string unchanged."""
     out = _apply_cache_bust_to_system_message(
         "hello", "marker-x", CacheBustTarget.FIRST_TURN_PREFIX
     )
@@ -43,10 +37,7 @@ def test_apply_to_system_message_unknown_target_is_passthrough():
 
 
 def test_inject_into_raw_messages_multimodal_content_list_injects_text_part():
-    """When the system message's content is a list (multimodal blocks) rather
-    than a plain string, the helper inserts a new ``{"type":"text","text":marker}``
-    part at the start (prefix) of the parts list. Pre-fix this silently bailed;
-    the marker would have been dropped."""
+    """A list (multimodal) system content gets a new ``{"type":"text","text":marker}`` part inserted at the start on prefix."""
     raw: list[dict] = [{"role": "system", "content": [{"type": "text", "text": "hi"}]}]
 
     _inject_marker_into_raw_messages(raw, "MARKER", is_prefix=True)
@@ -63,8 +54,7 @@ def test_inject_into_raw_messages_multimodal_content_list_injects_text_part():
 
 
 def test_inject_into_raw_messages_with_extra_keys_preserves_them():
-    """Locks the spread-then-overwrite pattern (``{**first, "content": ...}``):
-    every key on the original dict survives the rewrite; only ``content`` flips."""
+    """The spread-then-overwrite rewrite preserves every original key; only ``content`` changes."""
     raw: list[dict] = [
         {
             "role": "system",
@@ -83,8 +73,7 @@ def test_inject_into_raw_messages_with_extra_keys_preserves_them():
 
 
 def test_inject_into_raw_messages_first_message_not_dict_is_noop():
-    """If the first element is anything other than a dict (e.g. a stray string
-    from a malformed trace), the helper must skip cleanly without raising."""
+    """A non-dict first element (e.g. a stray string from a malformed trace) is skipped cleanly without raising."""
     raw: list = ["not a dict"]
     snapshot = list(raw)
 
@@ -94,9 +83,7 @@ def test_inject_into_raw_messages_first_message_not_dict_is_noop():
 
 
 def test_inject_into_first_user_turn_only_first_user_mutated():
-    """The helper iterates and mutates the FIRST user-role message, then returns.
-    Subsequent user-role messages must remain untouched — only token-0 of the
-    first user turn affects KV-cache prefix matching."""
+    """Only the FIRST user-role message is mutated; subsequent user-role messages remain untouched."""
     raw: list[dict] = [
         {"role": "system", "content": "s"},
         {"role": "user", "content": "u1"},
@@ -113,8 +100,7 @@ def test_inject_into_first_user_turn_only_first_user_mutated():
 
 
 def test_inject_into_first_user_turn_no_user_role_is_noop():
-    """No user-role message anywhere in the list -> helper iterates and exits
-    without touching anything (system + assistant prefix only)."""
+    """No user-role message anywhere leaves the list untouched (system + assistant only)."""
     raw: list[dict] = [
         {"role": "system", "content": "s"},
         {"role": "assistant", "content": "a"},
@@ -127,9 +113,7 @@ def test_inject_into_first_user_turn_no_user_role_is_noop():
 
 
 def test_inject_into_first_user_turn_multimodal_content_injects_text_part():
-    """Multimodal content list on the first user turn -> inject marker as a new
-    text part (same multimodal handling as the system-message path). Pre-fix
-    this silently bailed and dropped the marker."""
+    """Multimodal content on the first user turn injects the marker as a new text part (same as the system-message path)."""
     raw: list[dict] = [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
 
     _inject_marker_into_first_user_turn(raw, "MARKER", is_prefix=True)

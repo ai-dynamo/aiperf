@@ -52,9 +52,7 @@ def test_child_turn_honors_request_count_cap() -> None:
 
 
 def test_child_turn_still_honors_cancellation() -> None:
-    """Children DO honor cancellation (a user-facing guarantee), unlike the
-    request-count cap. Confirms the bypass is selective, not blanket.
-    """
+    """Children honor cancellation (a user-facing guarantee) even though they bypass the request-count cap, confirming the bypass is selective."""
     config = CreditPhaseConfig(
         phase=CreditPhase.PROFILING,
         timing_mode=TimingMode.AGENTIC_REPLAY,

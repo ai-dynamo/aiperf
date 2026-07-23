@@ -119,12 +119,7 @@ def test_marker_position_does_not_change_digest_with_trace_id():
 
 
 def test_marker_differs_when_only_trace_id_differs():
-    """Same (bid, pass, lane), different trace_id -> different rids.
-
-    This is the entire point of the collision-free fix: two different traces
-    landing on the same (recycle_pass, lane) tuple must produce distinct
-    markers so submission compliance can rely on per-session uniqueness.
-    """
+    """Same (bid, pass, lane) but different trace_id yields different rids, so two traces on the same (recycle_pass, lane) tuple stay per-session unique."""
     a = build_cache_bust_marker(
         "bench", 0, 0, "trace_a", target=CacheBustTarget.SYSTEM_PREFIX
     )

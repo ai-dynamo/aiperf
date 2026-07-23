@@ -46,13 +46,7 @@ def _turn(
 
 
 class TestMidTraceRootSessionAccounting:
-    """A root resumed mid-trace is counted as a session on its first credit.
-
-    The strategy flags the resume credit ``is_session_start=True`` (via
-    ``SampledSession.build_turn_at_index``), so the resumed root bumps
-    ``sent_sessions`` even at ``turn_index > 0`` -- keeping
-    ``completed_sessions <= sent_sessions`` and ``in_flight_sessions >= 0``.
-    """
+    """A root resumed mid-trace is counted as a session on its first credit (flagged ``is_session_start=True``), keeping ``completed_sessions <= sent_sessions`` and ``in_flight_sessions >= 0``."""
 
     def test_completed_sessions_never_exceeds_sent_sessions(self) -> None:
         c = CreditCounter(_cfg())
@@ -79,12 +73,7 @@ class TestMidTraceRootSessionAccounting:
         assert c.in_flight_sessions >= 0
 
     def test_recycled_session_started_at_turn_zero_is_balanced(self) -> None:
-        """Contrast: a recycled session (start_turn_index=0) is balanced.
-
-        This is the path that DOES bump sent_sessions, so completed never
-        exceeds sent. Demonstrates the asymmetry is specific to mid-trace
-        resume, not multi-turn sessions in general.
-        """
+        """A recycled session (start_turn_index=0) is balanced, showing the resume asymmetry is specific to mid-trace resume, not multi-turn sessions in general."""
         c = CreditCounter(_cfg())
         c.increment_sent(_turn(idx=0, num=2))  # turn 0 -> sent_sessions=1
         c.increment_sent(_turn(idx=1, num=2))
@@ -96,12 +85,7 @@ class TestMidTraceRootSessionAccounting:
 
 
 class TestGatedParentLaneSessionAccounting:
-    """A gated parent admitted via ``acquire_lane_credit`` (turn 0 before t*, so
-    it never dispatches a session-start root credit) must be counted in
-    ``sent_sessions`` via :meth:`CreditCounter.account_lane_session`. Its join
-    turn reaches a terminal turn that bumps ``completed_sessions``; without the
-    symmetric ``sent`` bump ``in_flight_sessions`` goes negative.
-    """
+    """A gated parent admitted via ``acquire_lane_credit`` must be counted in ``sent_sessions`` via :meth:`CreditCounter.account_lane_session`, else its terminal join turn drives ``in_flight_sessions`` negative."""
 
     def test_account_lane_session_keeps_in_flight_non_negative(self) -> None:
         c = CreditCounter(_cfg())
@@ -124,9 +108,7 @@ class TestGatedParentLaneSessionAccounting:
         assert c.in_flight_sessions == 0
 
     def test_total_session_turns_stays_consistent_with_root_sent(self) -> None:
-        """account_lane_session adds the gated parent's remaining turns to
-        total_session_turns so the can_send_any_turn turns-arm
-        (root_requests_sent vs total_session_turns) is not biased early."""
+        """account_lane_session adds the gated parent's remaining turns to total_session_turns so the can_send_any_turn turns-arm is not biased early."""
         c = CreditCounter(_cfg())
         c.account_lane_session(session_turns=2)
         assert c.total_session_turns == 2

@@ -13,13 +13,7 @@ from aiperf.dataset.loader import weka_parallel_convert as wpc
 
 
 def _run(drive_side_effect):
-    """Invoke the driver with pool internals stubbed and the shm pre-unlinked.
-
-    ``_drive_reconstruction_pool`` is patched so that, by the time it runs, the
-    shared-memory segment has been unlinked out from under the orchestrator.
-    This forces the ``finally`` block's ``shm.unlink()`` to hit a missing
-    segment, exercising the ``suppress(FileNotFoundError)`` guard.
-    """
+    """Invoke the driver with pool internals stubbed and the shm pre-unlinked so the finally block's unlink hits a missing segment."""
     captured: dict[str, object] = {}
 
     real_shm_cls = wpc.shared_memory.SharedMemory

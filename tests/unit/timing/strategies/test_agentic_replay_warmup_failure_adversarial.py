@@ -147,12 +147,7 @@ async def test_warmup_handle_credit_return_is_noop() -> None:
 
 @pytest.mark.asyncio
 async def test_profiling_handle_credit_return_during_cooldown_no_spawn() -> None:
-    """Cooldown gates the fresh-dispatch step: an in-flight credit returning
-    after the stop condition has fired must not start a new session.
-
-    ``_dispatch_recycled_on_lane`` checks ``can_start_new_session`` before
-    drawing the next root from the sampler, so no fresh credit is issued.
-    """
+    """Cooldown gates the fresh-dispatch step: an in-flight credit returning after the stop condition has fired must not start a new session."""
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     ds = _make_dataset(num_traces=4, turns_per_trace=2)
     issuer = AsyncMock()
@@ -315,16 +310,7 @@ async def test_profiling_setup_raises_when_trajectories_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_warmup_signals_complete_when_no_request_precedes_t_star() -> None:
-    """When every lane's first request is at/after t* (``warmup_turn_index`` is
-    None for all states), ``_execute_warmup`` prepares zero credits. The count
-    path that normally drives completion is triggered by credit dispatch, so
-    with no credits the warmup barrier (sized to concurrency) would hang. The
-    strategy must call ``credit_issuer.signal_sending_complete()`` instead.
-
-    Regression guard for commit 14f7b0e40 (G17): re-introducing the deadlock
-    leaves no automated detection otherwise (grep ``signal_sending_complete``
-    over tests/ was previously empty).
-    """
+    """When every lane's first request is at/after t* (``warmup_turn_index`` is None for all states), ``_execute_warmup`` prepares zero credits. The count path that normally drives completion is triggered by credit dispatch, so with no credits the warmup barrier (sized to concurrency) would hang. The strategy must call ``credit_issuer.signal_sending_complete()`` instead."""
     dataset = _make_dataset(num_traces=1, turns_per_trace=2)
     strategy, issuer, _, _ = _make_strategy(
         phase=CreditPhase.WARMUP, trajectories=[], dataset=dataset

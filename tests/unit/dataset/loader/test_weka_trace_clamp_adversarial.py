@@ -1,11 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial tests for the inter-turn delay clamp (`_clamp_delay_ms`).
-
-Covers spec section 8.4.4 of `2026-04-26-inferencex-agentx-mvp-scenario.md`:
-boundary, sign, NaN/Inf, zero-cap, None-cap, parent vs subagent code path,
-and clamp interaction with `--use-think-time-only`.
-"""
+"""Adversarial tests for the inter-turn delay clamp (`_clamp_delay_ms`): boundary, sign, NaN/Inf, zero/None cap, parent vs subagent paths, think-time-only (spec 8.4.4)."""
 
 from __future__ import annotations
 
@@ -157,13 +152,7 @@ def _make_subagent_trace_with_two_child_turns(
     child_second_t: float,
     child_second_think_time: float | None = 0.0,
 ) -> dict:
-    """Parent has one normal request + one subagent block; the subagent has two
-    child requests so the child path computes a delay for child turn 1.
-
-    The subagent marker sits at t=0.0 so both inner requests are absolute on
-    the root timeline (an inner ``t`` before the marker would be treated as
-    spawn-relative by ``_subagent_request_absolute_t`` and shift the delay).
-    """
+    """Parent normal request plus a t=0.0 subagent block with two child requests, so the child path computes a delay on absolute root-timeline timestamps."""
     return {
         "id": "trace_clamp_child",
         "models": ["claude-opus-4-5-20251101", "claude-haiku-4-5-20251001"],
@@ -279,9 +268,7 @@ def test_parent_turn_delay_clamp_matrix(
 def test_subagent_child_turn_delay_clamp_matrix(
     tmp_path, monkeypatch, cap_seconds, second_t, expected_delay_ms
 ):
-    """Subagent child path (`weka_trace.py:~527`) clamps with the same
-    `cap_seconds` as the parent path. Same matrix, different code site.
-    """
+    """Subagent child path (`weka_trace.py:~527`) clamps with the same `cap_seconds` matrix as the parent path."""
     uc = _mk_user_config(cap_seconds=cap_seconds)
     trace = _make_subagent_trace_with_two_child_turns(child_second_t=second_t)
     loader = _build_loader(tmp_path, trace, uc, monkeypatch)
@@ -297,10 +284,7 @@ def test_subagent_child_turn_delay_clamp_matrix(
 def test_think_time_only_path_also_clamps_when_think_time_exceeds_cap(
     tmp_path, monkeypatch
 ):
-    """When `use_think_time_only=True` AND a request's `think_time > cap`, the
-    think_time-derived `delay_ms` must also be clamped (cap applies to whichever
-    delay source is active).
-    """
+    """With `use_think_time_only=True` and `think_time > cap`, the think_time-derived `delay_ms` is also clamped (cap applies to the active delay source)."""
     uc = _mk_user_config(cap_seconds=60.0, think_time_only=True)
     # Wall-clock delta would be 1s, but think_time=120s drives the delay.
     trace = _make_two_turn_parent_trace(

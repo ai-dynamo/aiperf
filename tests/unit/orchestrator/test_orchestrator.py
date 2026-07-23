@@ -55,15 +55,7 @@ def _make_plan(
     duration: Any = 1800,
     unsafe_override: bool = False,
 ) -> BenchmarkPlan:
-    """Build a REAL BenchmarkPlan whose configs[0] carries a weka scenario.
-
-    Mirrors the clean-weka-public-dataset shape from
-    tests/unit/common/scenario/test_scenario_validator.py so ``apply_scenario``
-    (invoked inside ``_stamp_scenario_submission_metadata``) produces
-    ``submission_valid=True`` for the happy path. ``unsafe_override`` + explicit
-    ``streaming=False`` yields a hard violation downgraded to a warning
-    (``submission_valid=False``, reasons ``["unsafe_override"]``).
-    """
+    """Build a real BenchmarkPlan whose configs[0] carries a clean weka scenario (happy path), or a downgraded hard violation when ``unsafe_override`` + explicit ``streaming=False`` are set."""
     if extra is None:
         extra = {"ignore_eos": True}
     endpoint: dict[str, Any] = {
@@ -108,11 +100,7 @@ def _make_aggregate() -> AggregateResult:
 
 
 def test_stamp_scenario_submission_metadata_clean_weka_marks_valid() -> None:
-    """A clean weka scenario stamps name + submission_valid True + empty reasons.
-
-    Builds a real BenchmarkPlan so ``apply_scenario`` re-resolution runs
-    against the actual scenario spec.
-    """
+    """A clean weka scenario stamps name, submission_valid True, and empty reasons via real ``apply_scenario`` re-resolution."""
     from aiperf.cli_runner._aggregate import _stamp_scenario_submission_metadata
 
     plan = _make_plan(scenario="inferencex-agentx-mvp")
@@ -128,8 +116,7 @@ def test_stamp_scenario_submission_metadata_clean_weka_marks_valid() -> None:
 
 
 def test_stamp_scenario_submission_metadata_no_scenario_is_noop() -> None:
-    """No ``--scenario`` -> no scenario carrier keys (dataset provenance is
-    still stamped for public datasets, independent of scenario)."""
+    """No ``--scenario`` yields no scenario carrier keys, though public-dataset provenance is still stamped independently."""
     from aiperf.cli_runner._aggregate import _stamp_scenario_submission_metadata
 
     plan = _make_plan(scenario=None)
@@ -141,7 +128,6 @@ def test_stamp_scenario_submission_metadata_no_scenario_is_noop() -> None:
     assert "_scenario_name" not in aggregate.metadata
     assert "_validator_submission_valid" not in aggregate.metadata
     assert aggregate.metadata["pre_existing"] == "kept"
-    # Public-dataset provenance is stamped even without a scenario.
     assert aggregate.metadata["dataset"]["source_type"] == "public_dataset"
 
 
@@ -169,14 +155,7 @@ def test_stamp_metadata_includes_public_dataset_provenance() -> None:
 
 
 def test_stamp_metadata_omits_num_dataset_entries_when_not_explicit() -> None:
-    """``entries`` derived from --num-conversations / --request-count (not the
-    explicit --num-dataset-entries flag) must NOT surface num_dataset_entries.
-
-    Mirrors cquil's gate on ``num_dataset_entries in model_fields_set`` for the
-    distinct ConversationConfig field that --request-count / --num-conversations
-    never populate. In v2 those flags DO populate ``entries`` (it is the live
-    entry-limit), so provenance keys off ``entries_explicit`` instead.
-    """
+    """``entries`` derived from --num-conversations / --request-count (not explicit --num-dataset-entries) must NOT surface num_dataset_entries, since provenance keys off ``entries_explicit``."""
     from aiperf.cli_runner._aggregate import _stamp_scenario_submission_metadata
 
     plan = _make_plan(scenario=None)
@@ -199,13 +178,7 @@ def test_stamp_metadata_omits_num_dataset_entries_when_not_explicit() -> None:
 
 
 def test_stamp_scenario_submission_metadata_unsafe_override_marks_invalid() -> None:
-    """An unsafe-override violation stamps submission_valid False + reasons.
-
-    Explicit ``--streaming=false`` against a require-streaming scenario is a hard
-    violation; ``unsafe_override`` downgrades it to a warning and
-    ``apply_scenario`` returns ``submission_valid=False`` with the
-    ``unsafe_override`` reason tag.
-    """
+    """An unsafe-override violation (explicit ``--streaming=false`` on a require-streaming scenario) stamps submission_valid False with the ``unsafe_override`` reason."""
     from aiperf.cli_runner._aggregate import _stamp_scenario_submission_metadata
 
     plan = _make_plan(
@@ -228,12 +201,7 @@ def test_stamp_scenario_submission_metadata_unsafe_override_marks_invalid() -> N
 def test_stamp_scenario_submission_metadata_reresolve_failure_marks_invalid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Re-resolve exceptions fail closed with ``scenario_reresolve_failed``.
-
-    Aggregation must still stamp carrier keys; an optimistic
-    ``submission_valid=True`` would under-report lock failures when
-    ``apply_scenario`` cannot be re-run for environmental reasons.
-    """
+    """Re-resolve exceptions fail closed: carrier keys are still stamped with submission_valid False and reason ``scenario_reresolve_failed``."""
     import aiperf.cli_runner as cli_runner_pkg
     from aiperf.cli_runner._aggregate import _stamp_scenario_submission_metadata
 
@@ -264,14 +232,7 @@ def test_stamp_scenario_submission_metadata_reresolve_failure_marks_invalid(
 def test_stamp_scenario_submission_metadata_carries_was_cancelled(
     per_run_cancelled: list[bool], expected: bool
 ) -> None:
-    """Any cancelled run in the batch flips the ``_was_cancelled`` carrier key.
-
-    The per-run flag rides on ``RunResult.was_cancelled`` (populated by
-    LocalSubprocessExecutor from the run's profile export); the aggregate stamp
-    is ``any(r.was_cancelled for r in results)`` and is consumed by
-    AggregateConfidenceJsonExporter to mark ``submission_valid=False`` with
-    reason ``run_cancelled``.
-    """
+    """Any cancelled run in the batch flips the ``_was_cancelled`` carrier key via ``any(r.was_cancelled for r in results)``."""
     from aiperf.cli_runner._aggregate import _stamp_scenario_submission_metadata
     from aiperf.orchestrator.models import RunResult
 

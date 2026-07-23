@@ -1,16 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for ``is_context_overflow_response``.
-
-Coverage:
-- Case-insensitive substring match against raw body text.
-- OpenAI-style nested ``{"error": {"message": "..."}}`` extraction.
-- vLLM-style flat ``{"detail": "..."}`` body (raw body matches even though
-  the ``error`` field doesn't exist).
-- Raw body matches but JSON ``error`` doesn't, and vice versa.
-- Empty / None body, empty substring list, no-match cases.
-- Custom substring override knob.
-"""
+"""``is_context_overflow_response`` classifies overflow responses from raw body text and JSON error shapes."""
 
 import pytest
 
@@ -72,8 +62,7 @@ def test_is_context_overflow_response_empty_substring_list_disables_detection() 
 
 
 def test_is_context_overflow_response_classifies_purely_from_body() -> None:
-    """The classifier's verdict comes entirely from the body; callers
-    pre-filter to error responses upstream (e.g. parser checks ``has_error``)."""
+    """The classifier's verdict comes entirely from the body, not any status code."""
     assert is_context_overflow_response(body="context length too big") is True
     assert is_context_overflow_response(body="other error") is False
 
@@ -96,11 +85,6 @@ def test_is_context_overflow_response_invalid_json_uses_raw_match_only() -> None
     assert is_context_overflow_response(body=body) is True
 
 
-# ---------------------------------------------------------------------------
-# Signature lock: classifier accepts ``body`` and ``substrings`` only.
-# Status-code gating belongs at the call site (the parser pre-filters to
-# error records).
-# ---------------------------------------------------------------------------
 def test_is_context_overflow_response_signature_excludes_status_code() -> None:
     import inspect
 
@@ -109,8 +93,7 @@ def test_is_context_overflow_response_signature_excludes_status_code() -> None:
 
 
 def test_is_context_overflow_response_unknown_kwargs_raise_typeerror() -> None:
-    """Passing an unsupported kwarg fails loud rather than silently
-    accepted via ``**kwargs``."""
+    """Passing an unsupported kwarg fails loud rather than being silently accepted."""
     with pytest.raises(TypeError):
         is_context_overflow_response(  # type: ignore[call-arg]
             body="context length too big",

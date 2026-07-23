@@ -1,32 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial tests for the v2 scenario resolver (``apply_scenario``).
-
-Rebased from the v1 ``validate_scenario(MagicMock UserConfig)`` suite onto the
-v2 ``apply_scenario(run)`` resolver. Every test builds a REAL
-``BenchmarkConfig`` + ``BenchmarkRun`` (no MagicMock) so attribute-path drift
-fails loudly. Each test attacks a specific edge case in the AgentX scenario
-lock.
-
-DROP/PORT NOTES (v1 behaviors with no v2 analog):
-* ``_extract_extra_inputs`` fallback chain (parsed -> extra -> dict(raw)) is
-  gone: v2 reads ``endpoint.extra`` (a real dict) directly. The coercion
-  semantics themselves are still asserted via the ignore_eos value tests below.
-* random_seed auto-set: v2 ``apply_scenario`` stamps a fresh
-  ``secrets.randbits(63)`` onto ``run.random_seed`` (the operative per-run seed
-  field) when the user left it unset, mirroring the v1 ``validate_scenario``
-  auto-fill. See ``test_random_seed_unset_auto_filled`` /
-  ``test_random_seed_explicit_preserved`` in ``test_scenario_validator.py``.
-  The v1 ``random_seed=0 not-injected`` edge does not apply: v2 keys on
-  ``run.random_seed is None`` (an explicit 0 is preserved), and v2 has no
-  ``input.random_seed`` whose falsy-0 ambiguity the v1 test guarded against.
-* list-concurrency sweep rejection: ``phase.concurrency`` is a scalar ``int``
-  that rejects lists at config-build time, and the sweep-vs-scenario
-  interaction moved to the sweep layer (see the concurrency-sweep PORT-NOTE at
-  the bottom of ``src/aiperf/common/scenario/validator.py``). The validator no
-  longer checks concurrency, so the two list-concurrency tests are dropped; a
-  rebased scalar-concurrency clean-run test is kept.
-"""
+"""Adversarial edge cases for the v2 scenario resolver ``apply_scenario`` against real BenchmarkConfig/BenchmarkRun objects."""
 
 from __future__ import annotations
 
@@ -57,13 +31,7 @@ def _build_run(
     concurrency: int = 8,
     profiling_overrides: dict[str, Any] | None = None,
 ) -> BenchmarkRun:
-    """Construct a BenchmarkRun for a weka public dataset under the scenario.
-
-    Mirrors the canonical ``_build_run`` in ``test_scenario_validator.py``.
-    ``dataset`` overrides the default public-weka dataset dict; ``streaming`` /
-    ``extra`` configure the endpoint; ``profiling_overrides`` merge onto the
-    profiling phase.
-    """
+    """Construct a BenchmarkRun for a weka public dataset under the scenario."""
     if dataset is None:
         dataset = {
             "name": "main",
@@ -112,12 +80,7 @@ def _file_dataset_run(
     synthesis: dict[str, Any] | None = None,
     detected_loader: str | None = "weka_trace",
 ) -> BenchmarkRun:
-    """Build a clean FileDataset (mooncake_trace) run under the scenario.
-
-    The FileDataset resolves to ``detected_loader`` via
-    ``run.resolved.dataset_types`` so the require_loader check passes and the
-    only violation that can fire is ``--synthesis-max-isl``.
-    """
+    """Build a clean FileDataset (mooncake_trace) run under the scenario resolving to detected_loader."""
     dataset: dict[str, Any] = {
         "name": "main",
         "type": "file",
@@ -135,21 +98,15 @@ def _file_dataset_run(
     return run
 
 
-# ---------------------------------------------------------------------------
-# Test 1: --scenario resolved value pins to a clean outcome.
-# The "resolved value" / config-file precedence concept is upstream of the v2
-# resolver; here we just pin that a clean run lands submission_valid=True.
-# ---------------------------------------------------------------------------
 def test_scenario_set_twice_validator_uses_resolved_value() -> None:
+    """A clean run under the scenario lands submission_valid=True."""
     run = _build_run(streaming=True, extra={"ignore_eos": True})
     outcome = apply_scenario(run)
     assert outcome.submission_valid is True
 
 
-# ---------------------------------------------------------------------------
-# Test 2: unsafe_override without a scenario is a no-op.
-# ---------------------------------------------------------------------------
 def test_unsafe_override_without_scenario_is_noop() -> None:
+    """unsafe_override without a scenario is a no-op."""
     run = _build_run(scenario=None, unsafe_override=True)
     outcome = apply_scenario(run)
     assert outcome.violations == []
@@ -157,10 +114,8 @@ def test_unsafe_override_without_scenario_is_noop() -> None:
     assert outcome.submission_invalid_reasons == []
 
 
-# ---------------------------------------------------------------------------
-# Test 3: Unknown scenario name raises UnknownScenarioError listing valid set.
-# ---------------------------------------------------------------------------
 def test_unknown_scenario_name_raises_unknown_scenario_error() -> None:
+    """An unknown scenario name raises UnknownScenarioError listing the valid set."""
     run = _build_run(
         scenario="not-a-real-scenario", streaming=True, extra={"ignore_eos": True}
     )
@@ -171,20 +126,16 @@ def test_unknown_scenario_name_raises_unknown_scenario_error() -> None:
     assert "inferencex-agentx-mvp" in msg
 
 
-# ---------------------------------------------------------------------------
-# Test 4a: ignore_eos string "true" treated as truthy (clean).
-# ---------------------------------------------------------------------------
 def test_ignore_eos_string_true_treated_as_truthy() -> None:
+    """ignore_eos string "true" is treated as truthy (clean)."""
     run = _build_run(streaming=True, extra={"ignore_eos": "true"})
     outcome = apply_scenario(run)
     assert outcome.violations == []
     assert outcome.submission_valid is True
 
 
-# ---------------------------------------------------------------------------
-# Test 4b: ignore_eos string "false" treated as falsy (violation).
-# ---------------------------------------------------------------------------
 def test_ignore_eos_string_false_treated_as_falsy_violation() -> None:
+    """ignore_eos string "false" is treated as falsy (violation)."""
     run = _build_run(streaming=True, extra={"ignore_eos": "false"})
     with pytest.raises(ScenarioLockError) as exc:
         apply_scenario(run)
@@ -194,37 +145,30 @@ def test_ignore_eos_string_false_treated_as_falsy_violation() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Test 5: ignore_eos numeric / null coercion behavior.
-# 1 -> truthy (clean); 0 -> falsy (violation); None/absent -> injected to True.
-# ---------------------------------------------------------------------------
 def test_ignore_eos_int_one_treated_as_truthy() -> None:
+    """ignore_eos int 1 is treated as truthy (clean)."""
     run = _build_run(streaming=True, extra={"ignore_eos": 1})
     outcome = apply_scenario(run)
     assert outcome.violations == []
 
 
 def test_ignore_eos_int_zero_treated_as_falsy_violation() -> None:
+    """ignore_eos int 0 is treated as falsy (violation)."""
     run = _build_run(streaming=True, extra={"ignore_eos": 0})
     with pytest.raises(ScenarioLockError):
         apply_scenario(run)
 
 
 def test_ignore_eos_none_is_treated_as_absent_and_injected() -> None:
-    # A null ignore_eos is treated as "absent" and auto-injected to True.
+    """A null ignore_eos is treated as absent and auto-injected to True."""
     run = _build_run(streaming=True, extra={"ignore_eos": None})
     outcome = apply_scenario(run)
     assert outcome.violations == []
     assert run.cfg.endpoint.extra["ignore_eos"] is True
 
 
-# ---------------------------------------------------------------------------
-# Test 7: --ignore-trace-delays is REJECTED for AgentX MVP. The scenario
-# replays recorded trace timing; --ignore-trace-delays nulls every per-turn
-# timestamp/delay and dispatches all turns back-to-back, falsifying the
-# workload. The v2 lock gates on spec.forbid_ignore_trace_delays.
-# ---------------------------------------------------------------------------
 def test_ignore_trace_delays_rejected_for_agentx() -> None:
+    """--ignore-trace-delays is rejected for AgentX MVP, which replays recorded trace timing."""
     run = _build_run(
         streaming=True,
         extra={"ignore_eos": True},
@@ -240,6 +184,7 @@ def test_ignore_trace_delays_rejected_for_agentx() -> None:
 
 
 def test_ignore_trace_delays_with_unsafe_override_marks_submission_invalid() -> None:
+    """--ignore-trace-delays under unsafe_override marks the submission invalid rather than raising."""
     run = _build_run(
         streaming=True,
         unsafe_override=True,
@@ -256,13 +201,8 @@ def test_ignore_trace_delays_with_unsafe_override_marks_submission_invalid() -> 
     assert any(v.flag == "--ignore-trace-delays" for v in outcome.violations)
 
 
-# ---------------------------------------------------------------------------
-# Test 8 (lightened): apply_scenario is idempotent across two calls on a clean
-# run. v1 asserted model_post_init re-entry + single injection log; v2
-# apply_scenario is a plain function. Calling it twice must leave the run clean
-# and not corrupt the auto-injected ignore_eos.
-# ---------------------------------------------------------------------------
 def test_validator_idempotent_under_reentry() -> None:
+    """apply_scenario is idempotent: calling it twice on a clean run stays clean and preserves the injected ignore_eos."""
     run = _build_run(streaming=True)  # ignore_eos absent -> injected on first call
     first = apply_scenario(run)
     assert run.cfg.endpoint.extra["ignore_eos"] is True
@@ -273,9 +213,6 @@ def test_validator_idempotent_under_reentry() -> None:
     assert second.submission_valid is True
 
 
-# ---------------------------------------------------------------------------
-# Test 9: --benchmark-duration boundary behavior (lock at 900s floor).
-# ---------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "duration,should_pass",
     [
@@ -285,6 +222,7 @@ def test_validator_idempotent_under_reentry() -> None:
     ],
 )
 def test_benchmark_duration_boundary(duration: float, should_pass: bool) -> None:
+    """--benchmark-duration locks at the 900s floor."""
     run = _build_run(streaming=True, extra={"ignore_eos": True}, duration=duration)
     if should_pass:
         outcome = apply_scenario(run)
@@ -294,45 +232,22 @@ def test_benchmark_duration_boundary(duration: float, should_pass: bool) -> None
             apply_scenario(run)
 
 
-# ---------------------------------------------------------------------------
-# Test 10: --synthesis-max-isl edge values (forbid_input_truncation).
-# v2 moved the floor to SynthesisConfig.max_isl (ge=1), so max_isl=0 is
-# rejected at CONFIG-BUILD time by pydantic, NOT by the scenario lock. A very
-# high value (10**9) is a valid config and is rejected by the scenario lock.
-# This lock only bites on FILE datasets with a synthesis block.
-# ---------------------------------------------------------------------------
 def test_synthesis_max_isl_zero_rejected_under_lock() -> None:
+    """--synthesis-max-isl=0 fails at config-build time via the field constraint (ge=1), before the scenario lock."""
     from pydantic import ValidationError
 
-    # v2: the floor moved to the field constraint (ge=1), so 0 never reaches
-    # the scenario lock -- it fails at BenchmarkConfig construction.
     with pytest.raises(ValidationError):
         _file_dataset_run(synthesis={"max_isl": 0})
 
 
 def test_synthesis_max_isl_very_high_rejected_under_lock() -> None:
+    """A very high --synthesis-max-isl is a valid config rejected by the scenario lock."""
     run = _file_dataset_run(synthesis={"max_isl": 10**9})
     with pytest.raises(ScenarioLockError) as exc:
         apply_scenario(run)
     assert any(v.flag == "--synthesis-max-isl" for v in exc.value.violations)
 
 
-# ---------------------------------------------------------------------------
-# Test 12 (rebased): multiple invariants violated simultaneously under AgentX
-# MVP. The default concurrency phase here accepts the timing_mode stamp
-# (an explicit rate / user-centric / fixed-schedule phase would add a sixth
-# violation — see test_scenario_validator.py::
-# test_explicit_scheduling_phase_conflicts_with_scenario). The
-# simultaneously-firing v2 violations are:
-#   1) streaming=False explicit
-#   2) ignore_eos=False explicit
-#   3) wrong loader (sharegpt)
-#   4) cache_bust=none explicit
-#   5) duration below floor
-# We count what v2 actually emits (5 here) and assert that count; the
-# non-override variant raises ScenarioLockError, mirroring
-# test_scenario_validator.py::test_unsafe_override_converts_errors_to_warnings.
-# ---------------------------------------------------------------------------
 def _multi_violation_run(*, unsafe_override: bool) -> BenchmarkRun:
     return _build_run(
         streaming=False,  # --streaming violation
@@ -349,15 +264,15 @@ def _multi_violation_run(*, unsafe_override: bool) -> BenchmarkRun:
 
 
 def test_all_five_invariants_lock_raises_with_multiple_violations() -> None:
+    """Five simultaneous invariant violations (streaming, ignore_eos, loader, cache_bust, duration) raise ScenarioLockError."""
     run = _multi_violation_run(unsafe_override=False)
     with pytest.raises(ScenarioLockError) as exc:
         apply_scenario(run)
-    # v2 emits 5 simultaneous violations for this config (streaming, ignore_eos,
-    # loader, cache_bust, duration); timing_mode is stamped, not violated.
     assert len(exc.value.violations) == 5
 
 
 def test_all_five_invariants_unsafe_override_warns_and_invalidates() -> None:
+    """Under unsafe_override the five violations invalidate the submission instead of raising."""
     run = _multi_violation_run(unsafe_override=True)
     outcome = apply_scenario(run)
     assert outcome.submission_valid is False
@@ -365,13 +280,8 @@ def test_all_five_invariants_unsafe_override_warns_and_invalidates() -> None:
     assert "unsafe_override" in outcome.submission_invalid_reasons
 
 
-# ---------------------------------------------------------------------------
-# Scalar concurrency passes the lock (rebased from test_int_concurrency).
-# v2 no longer checks concurrency in the scenario lock (see the
-# concurrency-sweep PORT-NOTE in validator.py); a scalar concurrency phase is
-# simply a clean run.
-# ---------------------------------------------------------------------------
 def test_int_concurrency_passes_lock() -> None:
+    """A scalar concurrency phase passes the lock, which no longer checks concurrency."""
     run = _build_run(streaming=True, extra={"ignore_eos": True}, concurrency=10)
     outcome = apply_scenario(run)
     assert outcome.violations == []

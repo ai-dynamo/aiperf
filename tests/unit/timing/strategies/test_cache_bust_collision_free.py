@@ -24,11 +24,7 @@ def _rid(marker: str) -> str:
 
 
 def test_no_collisions_across_10k_distinct_inputs():
-    """Cartesian product of 10 trace_ids x 10 lanes x 100 recycle_passes.
-
-    All 10,000 inputs are distinct under the (recycle_pass, lane, trace_id)
-    tuple, so all 10,000 markers must be distinct.
-    """
+    """Cartesian product of 10 trace_ids x 10 lanes x 100 recycle_passes."""
     markers: set[str] = set()
     expected = 10 * 10 * 100
     for trace_idx in range(10):
@@ -46,12 +42,7 @@ def test_no_collisions_across_10k_distinct_inputs():
 
 
 def test_collision_free_at_same_pass_lane_different_traces():
-    """Pin (pass=0, lane=0); pivot only trace_id across 100 distinct values.
-
-    Regression bar for the fix: pre-fix this collapsed to a single digest
-    because the tuple did not include trace_id. Post-fix, every trace_id
-    must produce its own digest at the same (pass, lane) slot.
-    """
+    """Pin (pass=0, lane=0); pivot only trace_id across 100 distinct values."""
     markers: set[str] = set()
     for i in range(100):
         marker = build_cache_bust_marker(
@@ -73,11 +64,7 @@ def test_same_input_yields_same_marker_across_calls():
 
 
 def test_input_dimensions_each_independently_change_digest():
-    """Holding 3 of 4 inputs constant, flipping the 4th changes the digest.
-
-    Mirrors ``test_marker_changes_per_input_dimension`` but as 4 independent
-    micro-checks so a regression in any one dimension surfaces clearly.
-    """
+    """Holding 3 of 4 inputs constant, flipping the 4th changes the digest."""
     base_args = ("bench", 5, 2, "trace_dim")
     base = build_cache_bust_marker(*base_args, target=_TARGET)
 
@@ -98,12 +85,7 @@ def test_input_dimensions_each_independently_change_digest():
 
 
 def test_trace_id_collision_within_pass_zero_lane_zero():
-    """Locks in the trace_id contribution at the worst-case slot.
-
-    Two traces, same (pass=0, lane=0): the ONLY differentiator is trace_id,
-    so a regression that drops trace_id from the digest input would collapse
-    these two markers. Distinct rids required.
-    """
+    """Locks in the trace_id contribution at the worst-case slot."""
     a = build_cache_bust_marker(_BENCHMARK_ID, 0, 0, "trace_a", target=_TARGET)
     b = build_cache_bust_marker(_BENCHMARK_ID, 0, 0, "trace_b", target=_TARGET)
     assert _rid(a) != _rid(b)
@@ -111,15 +93,7 @@ def test_trace_id_collision_within_pass_zero_lane_zero():
 
 @pytest.mark.parametrize("count", [50_000])
 def test_marker_is_collision_free_under_birthday_paradox_stress(count):
-    """Smoke check that the input is actually being hashed (not truncated).
-
-    Generate a large grid of structured inputs spread across (pass<10000,
-    lane<100, trace_id of 10 chars). 12 hex chars = 48 bits, so for 50k
-    inputs the expected birthday-paradox collision count is
-    ``50000^2 / (2 * 2^48) ~= 0.0044`` -- effectively zero. We allow up to
-    9 collisions before the test fails, which would still indicate a
-    malformed digest input (e.g. truncation, wrong field order).
-    """
+    """Smoke check that the input is actually being hashed (not truncated)."""
     markers: set[str] = set()
     duplicates = 0
     # Deterministic structured space: 100 lanes x 100 traces x 5 passes = 50k

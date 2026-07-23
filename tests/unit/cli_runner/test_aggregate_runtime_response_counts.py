@@ -37,11 +37,7 @@ def _run(
 
 
 def test_sum_does_not_double_count_metric_path_overflow() -> None:
-    """Metric-path overflows already live in error_request_count.
-
-    Adding ``context_overflow_count`` again would inflate the denominator and
-    can incorrectly keep ``submission_valid=True`` near the 1% boundary.
-    """
+    """Metric-path overflows already live in error_request_count, so adding ``context_overflow_count`` again would double-count and inflate the denominator."""
     run = _run(
         success=True,
         request_count=100,

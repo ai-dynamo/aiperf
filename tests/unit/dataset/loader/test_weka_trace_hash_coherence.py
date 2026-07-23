@@ -1,16 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Hash-coherence smoke test over the kv-cache-tester corpus.
-
-Marked ``slow`` since it walks 739 trace files and instantiates the
-PromptGenerator block cache. Run via:
-
-    uv run pytest -m slow tests/unit/dataset/loader/test_weka_trace_hash_coherence.py -n auto
-
-The contract: every recurrence of the same hash_id must produce the
-identical token sequence (otherwise server-side prefix-cache hits during
-replay would diverge from the recorded run's hits).
-"""
+"""Hash-coherence smoke test (``slow``) over the kv-cache-tester corpus: every recurrence of a hash_id must produce the identical token sequence."""
 
 from __future__ import annotations
 
@@ -75,15 +65,7 @@ def _walk_models(reqs: list, models: set[str]) -> None:
 
 
 def test_hash_coherence_within_loader(loader_for_corpus):
-    """Within a single trace scope, every occurrence of the same hash_id
-    decodes to the identical token sequence.
-
-    The cache lifecycle: ``convert_to_conversations`` clears the int-keyed
-    ``_cache`` between scopes (per-trace and per-subagent) and once more in
-    a ``finally`` block, so post-call the cache is empty. Coherence is
-    therefore verified per-scope by reseating the hash-id RNG to a known
-    scope and exercising the decoder twice for each observed hash_id.
-    """
+    """Within a single trace scope, every occurrence of the same hash_id decodes to the identical token sequence."""
     loader = loader_for_corpus
     convs = loader.convert_to_conversations(loader.load_dataset())
 

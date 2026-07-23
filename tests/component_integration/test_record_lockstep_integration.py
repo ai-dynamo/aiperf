@@ -1,19 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Component-integration regression tests for the record/credit lockstep
-invariant.
-
-Every completed (non-cancelled) credit must yield exactly one record forwarded
-to the RecordsManager, even when record parsing or request sending fails. A
-dropped record leaves the RecordsManager completion barrier
-(``success_records + error_records >= final_requests_completed``, which has no
-timeout) permanently short and hangs the run at end-of-phase.
-
-Each test injects a fault at a real seam (the RecordProcessor parser, the
-worker's request send) and asserts the full pipeline still completes with
-lockstep intact, rather than hanging. Pre-fix, the injected fault dropped the
-record and the run never converged.
-"""
+"""Regression tests for the record/credit lockstep invariant: every non-cancelled credit must forward exactly one record even when parsing or request-send faults are injected, so the completion barrier converges instead of hanging."""
 
 from __future__ import annotations
 
@@ -52,13 +39,7 @@ _PROFILE_CMD = """
 
 
 def _assert_lockstep_with_injected_errors(result) -> None:
-    """Assert the lockstep invariant held across the full run.
-
-    Every non-cancelled credit return must have exactly one record forwarded to
-    the RecordsManager, and at least one must be an error -- proving the
-    injected fault was recovered into a record rather than dropped (a drop
-    would either fail this count or hang the run before we got here).
-    """
+    """Assert every non-cancelled credit forwarded exactly one record and at least one is an error, proving the injected fault was recovered rather than dropped."""
     rr = result.runner_result
     credit_returns = rr.messages(CreditReturn, sent=True)
     metric_records = rr.messages(RecordsMessage, sent=True)
@@ -77,12 +58,10 @@ def _assert_lockstep_with_injected_errors(result) -> None:
 
 @pytest.mark.component_integration
 class TestRecordCreditLockstepIntegration:
-    """The full pipeline must not hang when records fail to parse or requests
-    fail before being sent."""
+    """The full pipeline must not hang when records fail to parse or requests fail before being sent."""
 
     def test_record_parse_failure_does_not_hang_run(self, cli: AIPerfCLI, monkeypatch):
-        """RecordProcessor parse failures are forwarded as error records, so the
-        completion barrier converges and the run finishes."""
+        """RecordProcessor parse failures are forwarded as error records, so the completion barrier converges and the run finishes."""
         original = InferenceResultParser.parse_request_record
 
         async def flaky_parse(self, request_record):
@@ -101,8 +80,7 @@ class TestRecordCreditLockstepIntegration:
         _assert_lockstep_with_injected_errors(result)
 
     def test_worker_send_failure_does_not_hang_run(self, cli: AIPerfCLI, monkeypatch):
-        """Worker failures before the request is sent are forwarded as error
-        records, so the completed credit still produces a record."""
+        """Worker failures before the request is sent are forwarded as error records, so the completed credit still produces a record."""
         original = InferenceClient.send_request
 
         async def flaky_send(self, request_info, first_token_callback=None):

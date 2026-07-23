@@ -22,14 +22,7 @@ def _mk_user_config(**overrides):
 
 
 def _stub_prompt_generator_for_reconstructor(loader) -> None:
-    """Wire a MagicMock prompt_generator with the attrs the reconstructor needs.
-
-    Reconstructor calls `_decode_blocks(hash_ids)` -> `_cache` lookup +
-    `_sample_tokens` fallback + `tokenizer.decode`. ``sample_partial_tail`` (the
-    mixin method) needs `_tokenized_corpus` and `_corpus_size`. ``_decode_block_tokens``
-    consumes ``_hash_id_corpus_rng`` so its reseed/randrange surface is stubbed
-    via ``stub_hash_id_corpus_rng``.
-    """
+    """Wire a MagicMock prompt_generator with the cache, corpus, tokenizer, and hash-id RNG surface the reconstructor needs."""
     from tests.unit.dataset.loader.conftest import stub_hash_id_corpus_rng
 
     loader.prompt_generator = MagicMock()
@@ -168,12 +161,7 @@ def test_convert_to_conversations_builds_one_conversation_per_normal_request(
 
 
 def test_convert_to_conversations_emits_alternating_roles(monkeypatch):
-    """Turn 1+ keeps the assistant segment between the surviving user
-    content and the new user_k content (symmetric attribution, spec section
-    4.4.1) — when a user turn survives. simple.json's prefix covers all of
-    turn 0's full blocks, so its turn 1 exercises the CONTEXT-LOSS rule
-    instead (resume at a user turn); the alternation case uses an inline
-    trace whose turn-0 user segment owns real blocks."""
+    """Turn 1+ keeps the assistant segment between surviving user content and new user_k content (symmetric attribution, spec 4.4.1) when a user turn survives."""
     import orjson
 
     uc = _mk_user_config()
@@ -762,16 +750,8 @@ def test_orphaned_subagent_is_dropped_when_preceding_turn_filtered(monkeypatch):
     assert parent.branches == []
 
 
-# --- Hash content scoped per (trace_id, hash_id) ---
-
-
 def _real_pg():
-    """Build a PromptGenerator-shape mock with a real HashIdRandomGenerator.
-
-    We bypass full PromptGenerator init (it loads a tokenizer corpus) and only
-    populate the surface ``_decode_block_tokens`` actually touches: the int-keyed
-    cache, the hash-id rng, and a tiny synthetic tokenized corpus.
-    """
+    """Build a PromptGenerator-shape mock with a real HashIdRandomGenerator and only the cache/rng/corpus surface ``_decode_block_tokens`` touches."""
     from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
     from aiperf.common.random_generator import RandomGenerator
 
@@ -793,13 +773,7 @@ def _real_loader_with_pg(pg):
 
 
 def test_decode_block_tokens_distinct_across_scopes():
-    """Same hash_id under different trace scopes must produce different tokens.
-
-    The kv-cache-tester corpus declares ``hash_id_scope: "local"``; identical
-    ``hash_id`` values in different traces must map to distinct content so
-    the model under test sees the cache MISSES the recording cluster saw,
-    not artificial cross-trace HITS.
-    """
+    """Same hash_id under different trace scopes produces different tokens, so local-scope traces see real cache misses rather than cross-trace hits."""
     pg = _real_pg()
     loader = _real_loader_with_pg(pg)
 
@@ -816,8 +790,7 @@ def test_decode_block_tokens_distinct_across_scopes():
 
 
 def test_decode_block_tokens_deterministic_within_scope():
-    """Same (scope, hash_id) called twice (after cache clear and reseed) is
-    byte-identical — required for cross-process reproducibility."""
+    """Same (scope, hash_id) called twice after cache clear and reseed is byte-identical, as cross-process reproducibility requires."""
     pg = _real_pg()
     loader = _real_loader_with_pg(pg)
 
@@ -833,8 +806,7 @@ def test_decode_block_tokens_deterministic_within_scope():
 
 
 def test_decode_block_tokens_deterministic_across_loaders():
-    """Two freshly built loaders with the same seed produce identical bytes for
-    the same (scope, hash_id) — stand-in for cross-process reproducibility."""
+    """Two freshly built loaders with the same seed produce identical bytes for the same (scope, hash_id)."""
     pg1 = _real_pg()
     loader1 = _real_loader_with_pg(pg1)
     pg1._hash_id_corpus_rng.set_trace_id("trace_x")
@@ -849,9 +821,7 @@ def test_decode_block_tokens_deterministic_across_loaders():
 
 
 def test_ignore_trace_delays_nulls_timestamp_and_delay(monkeypatch):
-    """When ``ignore_trace_delays=True``, parent and child turns must have
-    ``timestamp`` and ``delay`` set to None so concurrency / request-rate
-    timing modes dispatch back-to-back instead of replaying recorded gaps."""
+    """With ``ignore_trace_delays=True``, parent and child turns have ``timestamp`` and ``delay`` None so timing modes dispatch back-to-back."""
     uc = _mk_user_config(ignore_trace_delays=True)
     loader = WekaTraceLoader(filename=str(FIXTURES / "one_subagent.json"), run=uc)
     _stub_prompt_generator_for_reconstructor(loader)
@@ -869,11 +839,7 @@ def test_ignore_trace_delays_nulls_timestamp_and_delay(monkeypatch):
 
 
 def test_use_think_time_only_emits_recorded_think_time_as_delay(monkeypatch, tmp_path):
-    """When ``use_think_time_only=True``, ``Turn.delay`` should equal each
-    request's recorded ``think_time * 1000`` (ms), not the full
-    ``(t_curr - t_prev) * 1000`` inter-request delta. The first turn always has
-    delay=None. Falls back to the full delta if a request's ``think_time`` is
-    None."""
+    """With ``use_think_time_only=True``, ``Turn.delay`` equals recorded ``think_time * 1000`` (falling back to the full delta when think_time is None)."""
     import orjson
 
     trace = {
@@ -947,15 +913,7 @@ def test_use_think_time_only_emits_recorded_think_time_as_delay(monkeypatch, tmp
 
 
 def test_trace_idle_gap_cap_is_per_trace_and_uses_request_starts(tmp_path):
-    """Idle-gap capping uses parent+subagent request starts per root trace.
-
-    Trace A has request starts at t=0, t=20, and t=220. With a 60s idle-gap cap,
-    the 200s request-start gap from t=20 -> t=220 is compressed by 140s, so the
-    second parent request shifts to t=80. The subagent's original api_time is not
-    used for this compression. Trace B has its own request-start gap; if the
-    transform were global across traces, both traces would shift differently.
-    They must not.
-    """
+    """Idle-gap capping uses parent+subagent request starts per root trace, so each trace compresses against its own gaps rather than globally."""
 
     def normal(
         *,
@@ -1068,28 +1026,13 @@ def test_trace_idle_gap_cap_is_per_trace_and_uses_request_starts(tmp_path):
     assert trace_b_turns[1].timestamp == 210_000.0
 
 
-# hash_id_scope: subagents share the parent trace's hash_id namespace.
-#
-# A weka trace declares ``hash_id_scope: "local"`` == one hash_id namespace per
-# trace FILE: the same hash_id must decode to identical tokens across the parent
-# conversation and every subagent/sibling conversation of that trace, so replay
-# reproduces the cross-agent shared prefixes a real server serves from KV cache.
-#
-# NOTE: these tests deliberately wire the REAL, scope-sensitive
-# ``HashIdRandomGenerator`` (seeds from ``sha256(f"{seed}:{trace_id}:{hash_id}")``)
-# instead of ``stub_hash_id_corpus_rng``. The stub ignores ``set_trace_id``, so a
-# given hash_id decodes identically under any scope -- it cannot detect a
-# per-child scope regression.
+# These hash_id_scope tests wire the REAL scope-sensitive HashIdRandomGenerator
+# (not stub_hash_id_corpus_rng, which ignores set_trace_id) so a per-child scope
+# regression is detectable: local scope means one hash_id namespace per trace file.
 
 
 def _wire_real_scope_rng(loader, *, block_size: int, seed: int = 1234) -> None:
-    """Wire a MagicMock prompt_generator backed by the real, scope-sensitive RNG.
-
-    ``tokenizer.decode`` is a token-reflecting string so identical token lists
-    round-trip to identical text and differing token lists to differing text --
-    letting a turn's ``raw_messages`` stand in for "what tokens this block decoded
-    to under the active scope".
-    """
+    """Wire a MagicMock prompt_generator backed by the real scope-sensitive RNG, with a token-reflecting ``tokenizer.decode`` so raw_messages track decoded tokens."""
     pg = MagicMock()
     pg._cache = {}
     pg._tokenized_corpus = list(range(4096))
@@ -1145,9 +1088,7 @@ def _subagent(*, agent_id: str, t: float, in_tokens: int, hash_ids: list[int]):
 
 
 def test_convert_to_conversations_subagent_inherits_parent_hash_id_scope(tmp_path):
-    """A hash_id shared by a parent request and a subagent inner request decodes
-    to identical tokens -- the subagent shares the parent trace's scope, it does
-    NOT get a private per-child decode scope."""
+    """A hash_id shared by a parent request and a subagent inner request decodes identically, since the subagent shares the parent trace's scope."""
     bs = 16
     shared = [100, 101, 102]
     trace = {
@@ -1180,10 +1121,7 @@ def test_convert_to_conversations_subagent_inherits_parent_hash_id_scope(tmp_pat
 
 
 def test_convert_to_conversations_sibling_subagents_share_hash_id_scope(tmp_path):
-    """Two sibling subagents that reference the same hash_id blocks decode them
-    identically -- both share the parent trace's scope, not per-agent scopes.
-    Sibling sharing is the dominant cross-conversation block-reuse mode in real
-    captures, so this is the case a per-child scope regression corrupts most."""
+    """Two sibling subagents referencing the same hash_id blocks decode them identically, since both share the parent trace's scope."""
     bs = 16
     shared = [200, 201]
     trace = {
@@ -1214,8 +1152,7 @@ def test_convert_to_conversations_sibling_subagents_share_hash_id_scope(tmp_path
 
 
 def test_subagent_child_shares_trace_decode_scope():
-    """Same hash_id must decode to identical tokens in parent and child
-    (hash_id_scope: 'local' = one namespace per trace FILE)."""
+    """Same hash_id decodes to identical tokens in parent and child (local scope = one namespace per trace file)."""
     uc = _mk_user_config()
     loader = WekaTraceLoader(filename=str(FIXTURES / "one_subagent.json"), run=uc)
     _stub_prompt_generator_for_reconstructor(loader)
@@ -1232,8 +1169,7 @@ def test_subagent_child_shares_trace_decode_scope():
 
 
 def test_theoretical_metric_values_unchanged_for_disjoint_namespaces():
-    """one_subagent.json has no parent/child hash overlap: the shared
-    seen-set must reproduce the legacy per-conversation values exactly."""
+    """With no parent/child hash overlap, the shared seen-set reproduces the legacy per-conversation values exactly."""
     uc = _mk_user_config()
     loader = WekaTraceLoader(filename=str(FIXTURES / "one_subagent.json"), run=uc)
     _stub_prompt_generator_for_reconstructor(loader)
@@ -1251,8 +1187,7 @@ def test_theoretical_metric_values_unchanged_for_disjoint_namespaces():
 
 
 def test_theoretical_metric_shares_seen_set_with_subagent_children():
-    """A hash block first sent by the parent counts as a hit when the
-    subagent child later sends it (shared per-trace seen-set)."""
+    """A hash block first sent by the parent counts as a hit when the subagent child later sends it (shared per-trace seen-set)."""
     from aiperf.dataset.loader.weka_trace_models import WekaTrace
 
     trace = WekaTrace.model_validate(
@@ -1431,10 +1366,7 @@ def test_flattened_fanout_logs_detection_summary(caplog):
 
 
 def test_flattened_fanout_zero_declared_emits_no_fabricated_system_role():
-    """The system role comes ONLY from declared header counts. The fanout
-    fixture declares tool_tokens=0/system_tokens=0, so no message may carry
-    a fabricated system role; the shared observed prefix lives inside the
-    user content (byte-sharing is content-based, not role-based)."""
+    """The system role comes only from declared header counts, so a fixture with tool_tokens=0/system_tokens=0 fabricates no system role."""
     loader = _fanout_loader()
     convs = {
         c.session_id: c for c in loader.convert_to_conversations(loader.load_dataset())

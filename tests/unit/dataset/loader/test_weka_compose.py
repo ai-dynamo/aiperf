@@ -20,8 +20,7 @@ def _block_stub(hids: list[int]) -> list[int]:
 
 
 def _tail_stub(n: int, seed: str) -> list[int]:
-    """Position-keyed: same (n, seed) -> same bytes; here independent of seed
-    so callers that vary seed still see deterministic tokens."""
+    """Position-keyed stub: same ``n`` yields the same tokens independent of seed."""
     return [99000 + i for i in range(n)]
 
 
@@ -49,13 +48,7 @@ def test_compose_exact_tile_no_tail():
 
 
 def test_compose_last_block_partial_truncates_prefix():
-    """input_length < M * block_size -> truncate the hashed prefix.
-
-    Byte-identical to ``_build_token_sequence``'s last-block-partial path
-    because ``sample_tokens_from_corpus`` calls ``randrange`` exactly once
-    per block regardless of size, so a partial-block sample equals the
-    head of the full-block sample.
-    """
+    """input_length < M * block_size truncates the hashed prefix, byte-identical to ``_build_token_sequence``'s last-block-partial path."""
     out = compose_weka_prompt_tokens(
         hash_ids=[1, 2, 3],
         input_length=130,  # 130 < 3 * 64 = 192
@@ -68,8 +61,7 @@ def test_compose_last_block_partial_truncates_prefix():
 
 
 def test_compose_prefix_only_appends_tail():
-    """input_length > M * block_size -> append sha256-keyed partial tail
-    (the typical weka layout for prefix-only traces)."""
+    """input_length > M * block_size appends a sha256-keyed partial tail (the typical prefix-only weka layout)."""
     out = compose_weka_prompt_tokens(
         hash_ids=[1, 2],
         input_length=200,  # 200 > 2 * 64 = 128
@@ -95,8 +87,7 @@ def test_compose_zero_length_with_empty_hash_ids():
 
 
 def _mixin_with_corpus(size: int = 1000) -> HashIdsPromptSynthesisMixin:
-    """Construct a HashIdsPromptSynthesisMixin instance with a deterministic
-    integer-range corpus, sufficient for sha256-keyed offset slicing."""
+    """Construct a HashIdsPromptSynthesisMixin with a deterministic integer-range corpus for sha256-keyed offset slicing."""
 
     class _Holder(HashIdsPromptSynthesisMixin):
         pass

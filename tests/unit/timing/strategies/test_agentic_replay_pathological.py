@@ -109,12 +109,7 @@ def _rid(marker: str | None) -> str | None:
 
 @pytest.mark.asyncio
 async def test_duplicate_final_turn_for_same_correlation_raises_runtime_error() -> None:
-    """Firing handle_credit_return twice for the same final turn raises.
-
-    The guard keys on x_correlation_id, so even though the first recycle popped
-    the finished correlation_id out of _correlation_to_lane (and the second call
-    falls back to lane 0), the duplicate is still caught by _in_flight_recycled.
-    """
+    """Firing handle_credit_return twice for the same final turn raises."""
     ds = _make_dataset(num_traces=3, turns_per_trace=2)
     strategy, issuer, _, _ = _make_strategy(
         phase=CreditPhase.PROFILING,
@@ -138,15 +133,7 @@ async def test_duplicate_final_turn_for_same_correlation_raises_runtime_error() 
 
 @pytest.mark.asyncio
 async def test_non_final_credit_overstating_num_turns_raises_value_error() -> None:
-    """A non-final credit whose num_turns exceeds the real turn count blows up.
-
-    The strategy trusts credit.num_turns for the is_final_turn decision but
-    fetches the next turn from metadata. If they disagree (turn_index+1 is out
-    of metadata range while is_final_turn is False), get_next_turn_metadata
-    raises an uncaught ValueError. Documents the lack of defensive validation;
-    in production credit.num_turns is sourced from the same metadata so this is
-    a 'garbage in' fragility rather than a normal-flow bug.
-    """
+    """A non-final credit whose num_turns exceeds the real turn count blows up."""
     ds = _make_dataset(num_traces=2, turns_per_trace=3)
     strategy, issuer, _, _ = _make_strategy(
         phase=CreditPhase.PROFILING,
@@ -167,9 +154,7 @@ async def test_non_final_credit_overstating_num_turns_raises_value_error() -> No
 
 @pytest.mark.asyncio
 async def test_child_non_final_overflow_routes_to_orchestrator_and_prunes() -> None:
-    """A non-final CHILD turn with context-overflow stops the child via the
-    BranchOrchestrator and prunes its bookkeeping, without recycling (children
-    are never root-pool members)."""
+    """A non-final CHILD turn with context-overflow stops the child via the BranchOrchestrator and prunes its bookkeeping, without recycling (children are never root-pool members)."""
     ds = _make_dataset(num_traces=2, turns_per_trace=3)
     branch_orchestrator = MagicMock()
     branch_orchestrator.on_child_stopped = AsyncMock()
@@ -206,8 +191,7 @@ async def test_child_non_final_overflow_routes_to_orchestrator_and_prunes() -> N
 
 @pytest.mark.asyncio
 async def test_child_overflow_with_no_orchestrator_still_prunes_bookkeeping() -> None:
-    """branch_orchestrator=None: child overflow short-circuit must still prune
-    the marker/lane dicts (no AttributeError from a None orchestrator)."""
+    """branch_orchestrator=None: child overflow short-circuit must still prune the marker/lane dicts (no AttributeError from a None orchestrator)."""
     ds = _make_dataset(num_traces=2, turns_per_trace=3)
     strategy, issuer, _, _ = _make_strategy(
         phase=CreditPhase.PROFILING,
@@ -241,12 +225,7 @@ async def test_child_overflow_with_no_orchestrator_still_prunes_bookkeeping() ->
 
 @pytest.mark.asyncio
 async def test_recycle_excludes_non_root_children() -> None:
-    """Recycle draws only is_root conversations from the sampler.
-
-    DAG child conversations (is_root=False) must never be spawned as fresh
-    roots; they are reachable only via their parent's branches, and a fresh
-    root session from a child trace_id would replay a partial context.
-    """
+    """Recycle draws only is_root conversations from the sampler."""
     ds = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -283,13 +262,7 @@ async def test_recycle_excludes_non_root_children() -> None:
 
 
 def test_wrap_fill_with_cache_bust_none_warns_about_identical_traffic() -> None:
-    """Wrap-fill (>1 lanes per trace) + cache_bust=NONE warns; non-NONE doesn't.
-
-    Byte-identical per-lane traffic across shared-trace lanes is a real
-    measurement hazard, so the constructor emits a loud heads-up only when the
-    feature is off. A non-NONE target makes per-lane traffic distinct, so the
-    warning must be suppressed.
-    """
+    """Wrap-fill (>1 lanes per trace) + cache_bust=NONE warns; non-NONE doesn't."""
     ds = _make_dataset(num_traces=1, turns_per_trace=3)
     wrap_fill = [
         Trajectory(conversation_id="trace_0", start_turn_index=0),
@@ -340,12 +313,7 @@ def test_wrap_fill_with_cache_bust_none_warns_about_identical_traffic() -> None:
 
 @pytest.mark.asyncio
 async def test_snapshot_single_turn_root_profiles_own_turn_zero_with_marker() -> None:
-    """A single-turn root sampled at t* == its turn-0 timestamp (n == 0) has
-    nothing to warm, so PROFILING measures its own turn 0 rather than
-    recycling at startup. The dispatched credit keeps the snapshot's own
-    correlation id and carries a minted cache-bust marker; recycle (and its
-    marker rotation) happens only later on the turn's completion.
-    """
+    """A single-turn root sampled at t* == its turn-0 timestamp (n == 0) has nothing to warm, so PROFILING measures its own turn 0 rather than recycling at startup. The dispatched credit keeps the snapshot's own correlation id and carries a minted cache-bust marker; recycle (and its marker rotation) happens only later on the turn's completion."""
     ds = DatasetMetadata(
         conversations=[
             ConversationMetadata(

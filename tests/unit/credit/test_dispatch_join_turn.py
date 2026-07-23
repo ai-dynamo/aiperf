@@ -73,12 +73,7 @@ async def test_dispatch_join_turn_suppresses_on_stop():
 
 @pytest.mark.asyncio
 async def test_dispatch_join_turn_blocks_on_prefill_saturation():
-    """Prefill saturation must wait (blocking acquire), not drop the join.
-
-    Non-blocking ``try_issue_credit`` returns ``None`` when prefill slots are
-    full; treating that as success permanently suppressed the join. Joins must
-    use blocking ``acquire_prefill_slot`` like ``dispatch_child_turn``.
-    """
+    """Prefill saturation makes a join wait on blocking acquire rather than dropping it."""
     issuer = _make_issuer()
     pending = PendingBranchJoin(
         parent_x_correlation_id="corr-parent",

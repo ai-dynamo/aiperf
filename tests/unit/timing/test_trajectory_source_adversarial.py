@@ -17,8 +17,7 @@ from tests.unit.timing._shared_helpers import _make_dataset_metadata
 
 
 def _sampler_for(ids: list[str]) -> MagicMock:
-    """A wrapping sampler (like the production SequentialSampler): cycles over
-    ``ids`` indefinitely; raises StopIteration only when the pool is empty."""
+    """A wrapping sampler (like the production SequentialSampler) that cycles over ``ids`` indefinitely and raises StopIteration only when the pool is empty."""
     import itertools
 
     sampler = MagicMock()
@@ -31,9 +30,7 @@ def _sampler_for(ids: list[str]) -> MagicMock:
 
 
 def test_pool_one_concurrency_ten_repeats_single_trace_across_ten_lanes(caplog):
-    """concurrency > pool: the wrapping sampler hands the single trace to all
-    ten lanes; an INFO log records the repeat fanout factor.
-    """
+    """concurrency > pool: the wrapping sampler hands the single trace to all ten lanes, and an INFO log records the repeat fanout factor."""
     md = _make_dataset_metadata({"only": 5})
     sampler = _sampler_for(["only"])
 
@@ -82,8 +79,7 @@ def test_zero_turn_trace_skipped_then_pool_exhaustion_raises():
 
 
 def test_single_turn_trace_skipped_with_warning_deterministically(caplog):
-    """n=1 traces are rejected at trajectory selection (no profile turn after
-    warmup split). When the entire pool is n=1, EmptyTracePoolError is raised."""
+    """n=1 traces are rejected at trajectory selection (no profile turn after warmup split), so an all-n=1 pool raises EmptyTracePoolError."""
     md = _make_dataset_metadata({"only": 1})
     sampler = _sampler_for(["only"])
 
@@ -98,8 +94,7 @@ def test_single_turn_trace_skipped_with_warning_deterministically(caplog):
 
 
 def test_two_turn_trace_k_i_is_zero_for_all_seeds():
-    """N=2 forces k_i=0 unconditionally (only k_i=0 leaves a profile turn at
-    index 1). RNG output is irrelevant; same outcome for every seed."""
+    """N=2 forces k_i=0 unconditionally (only k_i=0 leaves a profile turn at index 1), regardless of RNG output, for every seed."""
     md = _make_dataset_metadata({"t0": 2})
     for seed in (0, 6, 42, 123456789, (2**63) - 1):
         src = TrajectorySource(
@@ -114,10 +109,7 @@ def test_two_turn_trace_k_i_is_zero_for_all_seeds():
 
 
 def test_trajectories_follow_sampler_order_including_repeats():
-    """Trace selection is the sampler's job: trajectories mirror the sampler's
-    output verbatim, repeats included (no dedup). Repeated traces are distinct
-    lanes that snapshot at their own t*.
-    """
+    """Trajectories mirror the sampler's output verbatim, repeats included (no dedup), since repeated traces are distinct lanes that snapshot at their own t*."""
     md = _make_dataset_metadata({"a": 5, "b": 5, "c": 5})
     sampler = _sampler_for(["a", "a", "b", "c"])
 

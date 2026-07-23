@@ -1,56 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Byte-exact ISL drift contract — CI-enforced.
-
-Promotes the manual receipt at ``tools/weka_byte_exact_verify.py`` into a
-component-tier-enforced invariant: load a real ``PromptGenerator`` wired to
-the real Qwen3-0.6B tokenizer, run ``WekaTraceLoader.convert_to_conversations``,
-tokenize each emitted ``raw_messages`` content with Qwen, and verify the
-per-turn drift against the recorded ``in[k]`` is bounded by
-``MAX_TOKENIZER_DIVERGENCE_PER_MSG * n_msgs``.
-
-Drift bound rationale
-=====================
-
-The reconstructor guarantees ``sum(len(seg.tokens)) == in[k]`` exactly per
-turn (block-aligned segment sizes; no terminator stamp). The recorded
-``in[k]`` was measured against Claude's tokenizer + chat template, while
-aiperf re-tokenizes against the user-selected target tokenizer (Qwen3-0.6B
-in this run). Remaining drift sources:
-
-1. **BPE-on-join residual at segment seams** — when aiperf joins
-   ``raw_messages`` with `' '` and re-tokenizes, BPE merges across the
-   seam can add or remove a token vs the per-segment token sum. Bounded
-   by O(n_segments).
-2. **Cross-tokenizer translation residual** — recorded ``in[k]`` came
-   from Claude's tokenizer; aiperf measures against Qwen3-0.6B.
-
-Empirical measurement on the kv-cache-tester corpus: per-msg max 0.96,
-median 0.80; absolute drift n=41 median=6 mean=8.1 max=27. The corpus
-bound (``MAX_TOKENIZER_DIVERGENCE_PER_MSG``) is set to 3 — generous over
-the empirical max of ~1, tight enough that any structural regression which
-re-introduces 5+ token-per-msg drift would trip it.
-
-Tier-1 fixtures use small ``in[k]`` (~200-400) and have intentionally
-inconsistent shapes (e.g. ``multi_model.json`` parent post-subagent
-hash_ids underspecify in[k] by ~64 tokens because the subagent's
-contribution lives in a separate scope). Block-aligning tool/sys/asst
-segments adds up to ``bs-1`` tokens per segment, structurally large at
-this scale. Tier 1 uses a separate, looser bound
-(``FIXTURE_TIER_PER_MSG_BOUND``) so the synthetic-shape noise doesn't
-mask real corpus regressions, but the real correctness bound is
-enforced by tier 2.
-
-Tier 1 — ``test_byte_exact_isl_drift_simple_fixture`` /
-``test_byte_exact_isl_drift_multi_model_fixture``:
-  Run on every PR. Fixtures from ``tests/fixtures/weka_traces/``. Subagent
-  conversations are skipped — see ``_verify_drift_bound``.
-
-Tier 2 — ``test_byte_exact_isl_drift_corpus_subset`` (``@pytest.mark.slow``):
-  Same 8 traces measured during the mock-server replay (see
-  ``docs/tutorials/weka-byte-exact-replay-results.md``). Skips cleanly when
-  ``artifacts/kv-cache-tester/traces/`` is absent.
-"""
+"""CI-enforced byte-exact ISL drift contract: re-tokenize each Weka ``raw_messages`` turn with real Qwen3-0.6B and verify per-turn drift vs recorded ``in[k]`` stays within a per-message bound (tier 1 fixtures every PR, tier 2 corpus subset opt-in via ``slow``)."""
 
 from __future__ import annotations
 
@@ -70,25 +20,13 @@ from aiperf.dataset.loader.weka_trace import WekaTraceLoader
 pytestmark = pytest.mark.component_integration
 
 TOKENIZER_NAME = "Qwen/Qwen3-0.6B"
-"""Matches the tokenizer used in mock-server replay and the manual
-verification CLI; see ``tools/weka_byte_exact_verify.py``."""
+"""Matches the mock-server replay and ``tools/weka_byte_exact_verify.py``."""
 
 MAX_TOKENIZER_DIVERGENCE_PER_MSG = 3
-"""Per-message ISL drift tolerance for the corpus subset (tier 2).
-Must equal the constant in ``tools/weka_byte_exact_verify.py``.
-Empirical: corpus per-msg max 0.96, median 0.80 across 41 turns.
-3 leaves a generous margin without absorbing structural regressions."""
+"""Tier-2 per-message ISL drift tolerance; must equal the constant in ``tools/weka_byte_exact_verify.py`` (empirical corpus per-msg max 0.96)."""
 
 FIXTURE_TIER_PER_MSG_BOUND = 25
-"""Per-message ISL drift tolerance for the synthetic fixtures (tier 1).
-Tier-1 fixtures use small ``in[k]`` (~200-400) and intentionally
-inconsistent shapes (e.g. ``multi_model.json`` parent post-subagent
-hash_ids underspecify in[k] by ~64 tokens because the subagent's
-contribution lives in a separate scope). Block-aligning tool/sys/asst
-segments adds up to ``bs-1`` tokens per segment, which is structurally
-large at this scale. This tier asserts only that the algorithm runs
-end-to-end and stays within an order-of-magnitude of recorded — the
-real correctness bound is enforced by tier 2."""
+"""Looser tier-1 per-message drift tolerance absorbing synthetic-fixture block-alignment noise; the real correctness bound is enforced by tier 2."""
 
 CORPUS_SUBSET = (
     "trace_0012",
@@ -100,8 +38,7 @@ CORPUS_SUBSET = (
     "trace_0187",
     "trace_0546",
 )
-"""Empirically measured against this corpus; preserved here so the bound
-can be re-justified against the same population."""
+"""Preserved so the bound can be re-justified against the same population."""
 
 CORPUS_MODELS = (
     "claude-opus-4-5-20251101",
@@ -113,18 +50,7 @@ CORPUS_MODELS = (
 
 @pytest.fixture(scope="module")
 def real_qwen_tokenizer() -> Tokenizer:
-    """Load the real Qwen3-0.6B tokenizer, bypassing the package-scoped
-    ``mock_tokenizer_from_pretrained`` autouse fixture.
-
-    Cached locally under ``~/.cache/huggingface/hub/``; no network required.
-    Construct the wrapper directly from a HuggingFace ``AutoTokenizer`` so we
-    don't go through the patched ``Tokenizer.from_pretrained`` classmethod.
-
-    Skipped when the tokenizer is not in the local HF cache (e.g. clean CI
-    runners with ``HF_HUB_OFFLINE=1`` set by the package conftest). The
-    byte-exact corpus is meaningful only against the recorded Qwen tokenizer
-    so synthesizing a fake tokenizer would defeat the contract.
-    """
+    """Load the real Qwen3-0.6B tokenizer directly from HuggingFace, bypassing the package-scoped mock autouse fixture, skipping when it is not in the local HF cache."""
     from transformers import AutoTokenizer
 
     try:
@@ -144,24 +70,15 @@ def real_qwen_tokenizer() -> Tokenizer:
 
 @pytest.fixture(scope="module")
 def real_prompt_generator(real_qwen_tokenizer: Tokenizer) -> PromptGenerator:
-    """Build a real ``PromptGenerator`` (with the Shakespeare corpus tokenized
-    by Qwen) so ``raw_messages`` content is decoded via the same tokenizer the
-    drift test counts against.
-    """
-    # PromptGenerator.__init__ calls rng.derive(...). The package-scoped
-    # ``reset_random_generator`` is function-scoped so it has not yet run when
-    # this module-scoped fixture is evaluated. Seed once here to make this
-    # fixture self-contained — the per-test ``reset_random_generator`` will
-    # re-seed before each test runs.
+    """Build a real ``PromptGenerator`` so ``raw_messages`` content decodes via the same Qwen tokenizer the drift test counts against."""
+    # Module-scoped fixture runs before the function-scoped reset_random_generator,
+    # so seed here to make it self-contained; per-test reset re-seeds before each test.
     from aiperf.common import random_generator as rng
 
     rng.reset()
     rng.init(42)
-    # PORT NOTE (v2): PromptConfig is keyword-only and no longer carries
-    # mean/stddev/prefix_prompt -- ISL distribution lives in ``isl`` and the
-    # prefix pool is a separate ``prefix_prompts=`` arg to PromptGenerator. The
-    # weka reconstructor sizes prompts from the trace's recorded ``in``/hash_id
-    # blocks (block_size=64), not from ``isl``, so only block_size matters here.
+    # The weka reconstructor sizes prompts from the trace's recorded in/hash_id
+    # blocks (block_size=64), not from isl, so only block_size matters here.
     prompts = PromptConfig(block_size=64)
     prefix_prompts = PrefixPromptConfig(pool_size=None, length=None)
     return PromptGenerator(
@@ -176,14 +93,7 @@ def _make_real_loader(
     model_names: tuple[str, ...],
     prompt_generator: PromptGenerator,
 ) -> WekaTraceLoader:
-    """Build a real loader off a v2 ``BenchmarkRun``.
-
-    PORT NOTE (v2): the loader reads config off ``run.cfg.*`` -- a MagicMock no
-    longer satisfies its reads, so a real ``BenchmarkRun`` (built via the
-    loader-suite ``make_weka_run`` helper) is required. The real Qwen
-    ``prompt_generator`` is passed through so ``raw_messages`` decode against
-    the same tokenizer the drift test counts.
-    """
+    """Build a real ``WekaTraceLoader`` off a real ``BenchmarkRun``, threading the real Qwen ``prompt_generator`` through."""
     from tests.unit.dataset.loader.conftest import make_weka_run
 
     run = make_weka_run(
@@ -202,14 +112,7 @@ def _make_real_loader(
 
 
 def _tokenize_messages(tokenizer: Tokenizer, messages: list[dict]) -> int:
-    """Sum content-only tokens across all messages, joined with a single space.
-
-    Mirrors aiperf's client-side ISL formula at
-    ``src/aiperf/records/inference_result_parser.py::_compute_token_count``
-    (which joins ``inputs.texts`` with ``" "``). Chat-template overhead is
-    not measured client-side when ``use_server_token_count`` is off — same
-    contract that ``tools/weka_byte_exact_verify.py`` was evaluated under.
-    """
+    """Sum content-only tokens across all messages joined with a single space, mirroring aiperf's client-side ISL formula in ``inference_result_parser._compute_token_count``."""
     if not messages:
         return 0
     joined = " ".join(m["content"] for m in messages)
@@ -222,22 +125,7 @@ def _verify_drift_bound(
     recorded_per_trace: dict[str, list[int]],
     per_msg_bound: int = MAX_TOKENIZER_DIVERGENCE_PER_MSG,
 ) -> tuple[list[str], list[int], list[float]]:
-    """Run ``convert_to_conversations`` and verify the per-turn drift bound.
-
-    Subagent conversations are skipped — they share the parent's hash_id
-    namespace (``hash_id_scope: "local"``) and accurate per-turn lookup
-    requires walking the nested subagent entries; the spec punts on this
-    in §6.2 (matches the manual CLI which keys by ``conversation_id``).
-
-    Weka now emits delta-encoded turns (``DELTAS_WITH_RESPONSES``); per-turn
-    ``raw_messages`` is only the newly appended region. The recorded ISL
-    is the byte length of the FULL chat prefix at that turn, so we
-    accumulate across turns (or reset on ``reset_context``) — this mirrors
-    what ``BaseEndpoint.build_messages`` does at request time.
-
-    Returns ``(failures, abs_drifts, per_msg_drifts)`` so callers can re-
-    summarise the per-message ratio that the bound is set against.
-    """
+    """Run ``convert_to_conversations``, accumulate delta-encoded turns (skipping subagents), and return ``(failures, abs_drifts, per_msg_drifts)`` for the per-turn drift bound."""
     convs = loader.convert_to_conversations(loader.load_dataset())
 
     failures: list[str] = []
@@ -275,26 +163,10 @@ def _verify_drift_bound(
 
 
 def _restore_real_corpus_open():
-    """Undo the package-scoped ``mock_corpus_file`` patch on ``builtins.open``.
-
-    The PromptGenerator reads the bundled Shakespeare corpus to seed token
-    blocks. The package-scoped fixture replaces it with a 10000-token
-    ``token$`` string, which would yield identical tokens for every block —
-    making the drift test degenerate. Currently unused: the
-    ``token$``-derived corpus produces sufficient lexical variance under
-    Qwen's BPE that the bound still holds; if a future tightening of the
-    bound exposes the degeneracy, wrap the ``real_prompt_generator`` fixture
-    in ``with _restore_real_corpus_open():`` to read the real Shakespeare
-    corpus.
-    """
+    """Undo the package-scoped ``mock_corpus_file`` patch on ``builtins.open`` so the real Shakespeare corpus is read (currently unused; kept for future bound tightening)."""
     import builtins
 
     return patch("builtins.open", builtins.__dict__["open"])
-
-
-# ---------------------------------------------------------------------------
-# Tier 1 — fixture-based, runs on every PR
-# ---------------------------------------------------------------------------
 
 
 def test_byte_exact_isl_drift_simple_fixture(
@@ -347,22 +219,8 @@ def test_byte_exact_isl_drift_multi_model_fixture(
     )
 
 
-# ---------------------------------------------------------------------------
-# Tier 2 — corpus subset, opt-in via ``-m slow``
-# ---------------------------------------------------------------------------
-
-
 def _sequential_decode_patch(real_tokenizer: Tokenizer):
-    """Replace ``parallel_decode`` with an in-process sequential decode.
-
-    The corpus subset has >10 token sequences, which trips
-    ``hash_ids_synthesis`` into ``ProcessPoolExecutor.map`` — fork-from-multi-
-    threaded-parent is racy under pytest-xdist (intermittent
-    ``Popen has no attribute 'sentinel'``). Sequential decode is fast enough
-    for 8 traces (<2s end-to-end) and removes the flake without weakening the
-    contract. The real tokenizer object is reused so we don't pay another
-    HuggingFace load.
-    """
+    """Replace ``parallel_decode`` with in-process sequential decode to avoid the fork-from-multithreaded-parent xdist flake, reusing the real tokenizer."""
 
     def _seq_decode(token_sequences, tokenizer_name, **_kwargs):
         return [real_tokenizer.decode(tokens) for tokens in token_sequences]
@@ -379,11 +237,7 @@ def test_byte_exact_isl_drift_corpus_subset(
     real_prompt_generator: PromptGenerator,
     tmp_path: Path,
 ) -> None:
-    """Tier 2: 8-trace kv-cache-tester subset that backed the empirical baseline.
-
-    Asserts the same drift bound holds across 41 turns (the figure measured
-    in ``docs/tutorials/weka-byte-exact-replay-results.md``).
-    """
+    """Tier 2: assert the drift bound holds across the 41 turns of the 8-trace kv-cache-tester subset that backed the empirical baseline."""
     corpus = Path(__file__).parents[3] / "artifacts" / "kv-cache-tester" / "traces"
     if not corpus.exists():
         pytest.skip(f"Corpus not present at {corpus}")

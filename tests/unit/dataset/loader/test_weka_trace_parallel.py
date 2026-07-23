@@ -1,10 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Parallel reconstruction parity + structural tests for WekaTraceLoader.
-
-Drives :func:`weka_parallel_convert._process_task` in-process (no real Pool)
-so xdist-safe.
-"""
+"""Parallel reconstruction parity and structural tests for WekaTraceLoader, driving ``_process_task`` in-process (no real Pool) so it is xdist-safe."""
 
 from __future__ import annotations
 
@@ -39,14 +35,7 @@ def _mk_user_config(model_names=None):
 def _drive_parallel_inproc(
     loader: WekaTraceLoader, parent_plans, child_plans, data
 ) -> list:
-    """Run :func:`_reconstruct_parallel` but with the worker pool replaced by
-    in-process execution of :func:`_process_task`.
-
-    Initializes :data:`weka_parallel_convert._worker_state` once with a real
-    HashIdRandomGenerator (matching the serial path's seed) over a corpus
-    matching the stubbed ``pg._tokenized_corpus``. Restores prior worker
-    state at end so other tests aren't affected.
-    """
+    """Run ``_reconstruct_parallel`` with the worker pool replaced by in-process ``_process_task`` calls, restoring prior worker state at the end."""
     from multiprocessing import shared_memory
 
     pg = loader.prompt_generator
@@ -207,9 +196,7 @@ def _make_stub_pg_with_real_rng(corpus_size: int = 1000):
 
 
 def _build_plans(loader: WekaTraceLoader, data: dict) -> tuple:
-    """Re-derive parent_plans/child_plans/dropped_per_trace the way
-    convert_to_conversations does, since both serial and parallel helpers
-    consume them as inputs."""
+    """Re-derive parent_plans/child_plans/dropped_per_trace the way convert_to_conversations does, since both helpers consume them as inputs."""
     from dataclasses import dataclass
 
     from aiperf.dataset.loader.weka_trace import _expand_subagent_to_child_plans
@@ -252,14 +239,7 @@ def _build_plans(loader: WekaTraceLoader, data: dict) -> tuple:
 
 
 def _stub_loader_real_rng(loader: WekaTraceLoader) -> None:
-    """Like _stub_loader but with a real HashIdRandomGenerator instance.
-
-    The serial path uses ``loader.prompt_generator._hash_id_corpus_rng`` to
-    pick block content via ``set_trace_id`` + ``reseed_for_hash_id``. The
-    parallel path also uses a fresh real RNG seeded from
-    ``pg._hash_id_corpus_rng.seed``. Both must end up at byte-identical
-    outputs when run with the same trace_id scope.
-    """
+    """Like _stub_loader but with a real HashIdRandomGenerator so serial and parallel paths reseed identically and produce byte-identical output."""
     pg = _make_stub_pg_with_real_rng(corpus_size=1000)
     loader.prompt_generator = pg
     loader._tokenizer_name = "test-tok"
@@ -603,12 +583,7 @@ def test_parallel_path_handles_small_trace_counts(tmp_path, n_traces):
 
 
 def test_fanout_split_parallel_byte_identical_to_serial(monkeypatch):
-    """Flat-chain splitting must be byte-identical across both paths.
-
-    Runs the FULL convert_to_conversations twice — serial (workers=1) and
-    parallel (threshold=1, the pool replaced by an in-process map over
-    _process_task) — so the real task builder and assembly are exercised.
-    """
+    """Flat-chain splitting must be byte-identical across both paths, running the full convert_to_conversations serially and in parallel."""
     from multiprocessing import shared_memory
 
     import aiperf.common.environment as env_mod

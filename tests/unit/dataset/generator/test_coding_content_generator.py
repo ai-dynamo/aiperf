@@ -314,14 +314,7 @@ class TestCodingConversation:
 
 
 class TestSeedDeterminism:
-    """Whole-corpus determinism guarantees driven by the global RNG seed.
-
-    Per-hash-id determinism is covered by `test_deterministic_per_hash_id`.
-    These tests cover the broader contract: building a generator twice under
-    the same global seed yields byte-identical pools and outputs, while a
-    different seed produces different pools (so any stray non-derived RNG
-    inside the generator would be caught here).
-    """
+    """Whole-corpus determinism: same global seed yields byte-identical pools and outputs, different seed differs (catching any stray non-derived RNG)."""
 
     @pytest.fixture
     def config(self):

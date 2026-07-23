@@ -176,12 +176,7 @@ def test_max_context_length_includes_requested_output(tmp_path, monkeypatch):
 
 
 def test_max_context_keep_drop_uses_uncapped_subagent_output(tmp_path, monkeypatch):
-    """--max-osl caps parent/flat output (via _cap_output) but NOT subagent-child
-    output, which is emitted at the recorded output_length. The max-context
-    keep/drop peak must therefore use the subagent child's UNCAPPED output, or a
-    trace that fits only under the cap is kept and then 4xx mid-run on the
-    uncapped subagent request.
-    """
+    """The max-context keep/drop peak must use the subagent child's uncapped output, since --max-osl caps parent/flat output but not subagent-child output."""
     # max_context=5000, max_osl=2000.
     #  - parent in=100,out=10 -> capped peak 110 (well under).
     #  - subagent inner in=1000,out=10000:
@@ -236,11 +231,7 @@ def test_max_osl_greater_than_output_preserves_output(monkeypatch):
 
 
 def test_schedule_start_offset_equal_to_request_timestamp_keeps(tmp_path, monkeypatch):
-    """`start == req.t` is KEPT (filter compares `req.t < start`, strict).
-
-    Trace `t` is in seconds; `fixed_schedule_start_offset` is in milliseconds —
-    so a t=5.0s request equals a 5000ms start offset.
-    """
+    """`start == req.t` is kept (strict `req.t < start`); trace `t` is seconds and the start offset is ms, so t=5.0s equals a 5000ms offset."""
     data = _base_trace([_normal(5.0, 50, 10, [1])])
     path = _write_trace(tmp_path, data)
     uc = _mk_user_config()
@@ -270,10 +261,7 @@ def test_schedule_start_greater_than_end_filters_all(monkeypatch):
 
 
 def test_schedule_start_zero_honors_is_none_check(monkeypatch):
-    """`start=0.0` is not falsy-skipped; the `is None` guard keeps it active.
-
-    Both requests in simple.json are at t>=0.0, so both survive.
-    """
+    """`start=0.0` is not falsy-skipped (the `is None` guard keeps it active), so both t>=0.0 requests in simple.json survive."""
     uc = _mk_user_config()
     loader = _make_loader(FIXTURES / "simple.json", uc, monkeypatch, start=0.0)
     convs = loader.convert_to_conversations(loader.load_dataset())
@@ -302,13 +290,7 @@ def test_schedule_negative_end_offset_filters_everything(monkeypatch):
 
 
 def test_filter_kills_following_turn_subagent_becomes_background(monkeypatch):
-    """Filtering the `following` parent turn turns the subagent into a
-    background branch (is_background=True, no SPAWN_JOIN prereq).
-
-    one_subagent.json: parents are in=200 (t=0) and in=400 (t=6) with a
-    subagent at t=2 between them. max_isl=250 drops only the in=400 turn.
-    The preceding turn (in=200) survives; no following turn remains.
-    """
+    """Filtering the following parent turn turns the subagent into a background branch (is_background=True, no SPAWN_JOIN prereq)."""
     uc = _mk_user_config(max_isl=250)
     loader = _make_loader(FIXTURES / "one_subagent.json", uc, monkeypatch)
     convs = loader.convert_to_conversations(loader.load_dataset())
@@ -322,10 +304,7 @@ def test_filter_kills_following_turn_subagent_becomes_background(monkeypatch):
 
 
 def test_filter_kills_middle_parent_subagent_reanchors(tmp_path, monkeypatch):
-    """Filtering a middle parent re-anchors the subagent's preceding turn
-    to the earlier surviving parent; following turn still exists so the
-    branch is NOT background.
-    """
+    """Filtering a middle parent re-anchors the subagent's preceding turn to the earlier surviving parent; a following turn remains so the branch is not background."""
     data = _base_trace(
         [
             _normal(0.0, 50, 10, [1]),
@@ -353,9 +332,7 @@ def test_filter_kills_middle_parent_subagent_reanchors(tmp_path, monkeypatch):
 
 
 def test_subagent_inner_not_filtered_by_max_isl(tmp_path, monkeypatch):
-    """`max_isl` applies only to top-level requests; subagent inner requests
-    pass through regardless of their input_length.
-    """
+    """`max_isl` applies only to top-level requests; subagent inner requests pass through regardless of their input_length."""
     # Inner request has in=500 with bs=64 -> floor(500/64)=7 hash blocks; the
     # reconstructor asserts on this corpus invariant so we tile 7 ids here.
     data = _base_trace(
@@ -377,9 +354,7 @@ def test_subagent_inner_not_filtered_by_max_isl(tmp_path, monkeypatch):
 
 
 def test_subagent_inner_max_tokens_not_capped_by_max_osl(tmp_path, monkeypatch):
-    """`max_osl` only caps top-level turns; subagent inner turns keep their
-    original output_length as max_tokens.
-    """
+    """`max_osl` only caps top-level turns; subagent inner turns keep their original output_length as max_tokens."""
     data = _base_trace(
         [
             _normal(0.0, 50, 10, [1]),
@@ -397,10 +372,7 @@ def test_subagent_inner_max_tokens_not_capped_by_max_osl(tmp_path, monkeypatch):
 
 
 def test_orphan_child_pruned_when_all_parents_filtered(tmp_path, monkeypatch):
-    """When max_isl filters every parent turn, both the branch AND the child
-    conversation must be dropped. Prior to the fix, the child was still emitted
-    without a branch pointing at it.
-    """
+    """When max_isl filters every parent turn, both the branch and the orphaned child conversation are dropped."""
     uc = _mk_user_config(max_isl=50)  # filters both in=200 and in=400
     loader = _make_loader(FIXTURES / "one_subagent.json", uc, monkeypatch)
     convs = loader.convert_to_conversations(loader.load_dataset())

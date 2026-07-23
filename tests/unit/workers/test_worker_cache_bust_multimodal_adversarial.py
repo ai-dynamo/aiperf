@@ -22,8 +22,7 @@ _SUFFIX_PART_TEXT = _SUFFIX_MARKER.strip()
 
 
 def test_inject_marker_into_text_only_multimodal_prefix():
-    """A pure text-multimodal system message + prefix marker -> a new text
-    part is prepended; the original text part survives unchanged at index 1."""
+    """A text-multimodal system message + prefix marker prepends a new text part, leaving the original at index 1."""
     raw: list[dict] = [
         {"role": "system", "content": [{"type": "text", "text": "hello"}]}
     ]
@@ -61,9 +60,7 @@ def test_inject_marker_into_text_only_multimodal_suffix():
 
 
 def test_inject_marker_into_image_first_multimodal_prefix():
-    """When the original content opens with an image_url part (no leading
-    text), the marker still goes at index 0 — token-0 cache-bust semantics
-    require the marker to be the literal first token of the wire payload."""
+    """When content opens with an image_url part (no leading text), the marker still goes at index 0 (token-0 cache-bust semantics)."""
     raw: list[dict] = [
         {
             "role": "system",
@@ -97,12 +94,7 @@ def test_inject_marker_into_image_first_multimodal_prefix():
 def test_inject_marker_into_audio_video_mixed_content(
     is_prefix: bool, expected_marker_index: int
 ):
-    """Mixed audio + image + video + text parts — marker preserves the original
-    parts' order, only adding one new text part at the marker end of the list.
-
-    The helper does NOT inspect part types; it just prepends/appends. Locks
-    that behavior so a future change cannot start dropping non-text parts.
-    """
+    """Mixed audio/image/video/text parts: the marker adds one new text part at the marker end while preserving original parts' order (the helper never inspects part types)."""
     original_parts: list[dict] = [
         {"type": "text", "text": "describe these"},
         {
@@ -140,12 +132,7 @@ def test_inject_marker_into_audio_video_mixed_content(
 
 
 def test_inject_marker_preserves_extra_keys_on_message_dict_multimodal():
-    """The spread-then-overwrite rewrite (``{**first, "content": new_content}``)
-    must preserve every non-content key on the original message dict —
-    metadata, name, tool_call_id, anything. Locks that the multimodal branch
-    of the helper (the ``isinstance(content, list)`` arm) uses the same
-    rewrite shape as the string branch.
-    """
+    """The multimodal branch's spread-then-overwrite rewrite preserves every non-content key (metadata, name, tool_call_id) just like the string branch."""
     raw: list[dict] = [
         {
             "role": "system",

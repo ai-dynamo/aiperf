@@ -1,23 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Opt-in tool-shaped raw_messages for weka trace replay.
-
-Default replay renders every turn's new input as a plain user-role text
-segment whose token structure matches the recording -- byte-exact ISL by
-construction. With ``AIPERF_DATASET_WEKA_TOOL_SHAPED_MESSAGES`` enabled, a
-turn classified TOOL_RESULT instead emits the OpenAI tool-call wire shape:
-the same-delta assistant segment gains a synthetic ``tool_calls`` entry and
-the new-input segment becomes ``{"role": "tool", "tool_call_id": ...}`` with
-identical content text. This exercises the server's tool-message template
-path at the cost of exact ISL fidelity (tool messages tokenize differently
-under chat templates), which is why it is opt-in and excluded from nothing:
-the mmap dataset cache key must include the flag.
-
-Shaping is per-current-turn only and guarded: it requires an assistant
-segment immediately before the final user segment in the same delta, so
-turn 0 (no prior assistant) falls back to the plain user shape
-automatically.
-"""
+"""Opt-in tool-shaped raw_messages for weka trace replay: a TOOL_RESULT turn emits the OpenAI tool-call wire shape when ``AIPERF_DATASET_WEKA_TOOL_SHAPED_MESSAGES`` is enabled."""
 
 from __future__ import annotations
 
@@ -170,8 +153,7 @@ def test_tool_shape_segment_messages_noop_without_preceding_assistant():
 
 
 def test_tool_shape_segment_messages_shapes_every_marked_pair_in_window():
-    """A reset re-emit window carries the whole history: every marked pair
-    must shape, each with its own recorded turn's call id."""
+    """A reset re-emit window carries the whole history, so every marked pair shapes with its own recorded turn's call id."""
     msgs = [
         {"role": "user", "content": "t0"},
         {"role": "assistant", "content": "a1"},
@@ -378,9 +360,7 @@ def test_parallel_tool_shaping_matches_serial(tool_shaped_env, tmp_path):
 
 
 def _reset_trace(trace_id: str) -> dict:
-    """Turn 1 is a shaped tool-result. Turn 3's hash chain diverges INSIDE
-    turn-2's already-emitted region (LCP cut past turn-1's pair -> the pair
-    SURVIVES truncation and must re-emit shaped in the reset full state)."""
+    """Turn 1 is a shaped tool-result; turn 3 diverges inside turn-2's emitted region so turn-1's pair survives truncation and must re-emit shaped."""
     return {
         "id": trace_id,
         "models": [_MODEL, _HAIKU],
@@ -433,11 +413,7 @@ def _mk_recon(tool_shaped: bool = True):
 
 
 def test_unpaired_tool_turn_stays_plain_across_reset_reemit():
-    """A tool-result turn whose pairing assistant was NOT in its first
-    emission window is sent plain. A later reset re-emission must keep it
-    plain: re-sending it as ``role: tool`` (and retroactively injecting
-    ``tool_calls`` into the already-sent assistant) changes the wire shape
-    of previously-sent context across the reset."""
+    """A tool-result turn sent plain (its pairing assistant absent from the first window) must stay plain across a later reset re-emission."""
     bs = 16
     r = _mk_recon()
     r.init_turn_0(
@@ -488,9 +464,7 @@ def test_unpaired_tool_turn_stays_plain_across_reset_reemit():
 
 
 def test_paired_tool_turn_first_emitted_in_reset_window_stays_shaped():
-    """The mirror case: a tool-result turn whose FIRST emission is a reset
-    full window pairs against the surviving assistant directly before it,
-    ships shaped, and must re-emit shaped (same call id) on later resets."""
+    """Mirror case: a tool-result turn first emitted in a reset full window ships shaped and must re-emit shaped with the same call id on later resets."""
     bs = 16
     r = _mk_recon()
     r.init_turn_0(

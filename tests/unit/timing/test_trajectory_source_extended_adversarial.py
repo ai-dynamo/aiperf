@@ -21,8 +21,6 @@ from aiperf.timing.trajectory_source import (
     _seed_for_trace,
 )
 
-# Helpers
-
 
 def _make_dataset(turns_per_trace_by_id: dict[str, int]) -> DatasetMetadata:
     """Build a real DatasetMetadata where each conversation has the given turn count."""
@@ -40,9 +38,7 @@ def _uniform_dataset(num_traces: int, turns_per_trace: int) -> DatasetMetadata:
 
 
 class _Sampler:
-    """Wrapping stub sampler (like the production SequentialSampler): cycles
-    through the provided ids indefinitely; raises StopIteration only when the
-    pool is empty."""
+    """Wrapping stub sampler (like the production SequentialSampler) that cycles through the provided ids indefinitely and raises StopIteration only when the pool is empty."""
 
     def __init__(self, ids: list[str]) -> None:
         self._ids = list(ids)
@@ -56,12 +52,8 @@ class _Sampler:
         return cid
 
 
-# concurrency=0 -> _target_size=0 -> empty trajectories -> EmptyTracePoolError
-
-
 def test_concurrency_zero_yields_empty_trajectories_then_raises() -> None:
-    """concurrency=0 makes ``_target_size`` 0; the build loop never runs and
-    the empty-trajectory guard at the end of ``__init__`` fires."""
+    """concurrency=0 makes ``_target_size`` 0, so the build loop never runs and the empty-trajectory guard at the end of ``__init__`` fires."""
     ds = _uniform_dataset(num_traces=5, turns_per_trace=4)
     sampler = _Sampler([c.conversation_id for c in ds.conversations])
 
@@ -74,16 +66,8 @@ def test_concurrency_zero_yields_empty_trajectories_then_raises() -> None:
         )
 
 
-# Mixed valid + invalid traces: 0-turn ones are skipped, valid ones survive
-
-
 def test_mixed_valid_and_invalid_traces_skips_zero_turn_traces() -> None:
-    """Traces 1 and 3 have 0 turns; the trajectory list must exclude them.
-
-    Concurrency 3 matches the 3 valid traces, so the run is accepted; the
-    zero-turn skip path is exercised inside ``_build_trajectories`` and
-    wrap-fill is not triggered.
-    """
+    """Zero-turn traces are excluded from the trajectory list, with concurrency matching the valid traces so wrap-fill is not triggered."""
     ds = _make_dataset(
         {
             "trace_0": 4,
@@ -109,11 +93,7 @@ def test_mixed_valid_and_invalid_traces_skips_zero_turn_traces() -> None:
 
 
 def test_mixed_valid_and_invalid_traces_concurrency_over_usable_wrap_fills() -> None:
-    """When zero-turn skips push usable trajectories below concurrency,
-    wrap-fill activates so the run still honours ``--concurrency``. Pool=5
-    (3 valid + 2 zero-turn), concurrency=5 -> 3 distinct trajectories
-    fanned out to 5 lanes.
-    """
+    """When zero-turn skips push usable trajectories below concurrency, wrap-fill activates so the run still honours ``--concurrency`` (3 distinct trajectories fanned out to 5 lanes)."""
     ds = _make_dataset(
         {
             "trace_0": 4,
@@ -138,16 +118,8 @@ def test_mixed_valid_and_invalid_traces_concurrency_over_usable_wrap_fills() -> 
     assert len(distinct) < 5  # wrap-fill activated
 
 
-# Seed sensitivity: different seeds drive at least one differing k_i
-
-
 def test_different_seeds_can_yield_different_k_i() -> None:
-    """Different base seeds for the same dataset must drive at least one differing k_i.
-
-    With N=10 -> k_max=7, the k-space has 8 values. Across 5 traces the
-    chance of full collision under two different seeds is vanishingly small;
-    pinning ANY difference is robust.
-    """
+    """Different base seeds for the same dataset must drive at least one differing k_i across the traces."""
     ds = _uniform_dataset(num_traces=5, turns_per_trace=10)
     ids = [c.conversation_id for c in ds.conversations]
 
@@ -173,9 +145,6 @@ def test_different_seeds_can_yield_different_k_i() -> None:
     )
 
 
-# _seed_for_trace independence across distinct trace_ids
-
-
 def test_seed_for_trace_independence_across_traces() -> None:
     """SHA-256-derived per-trace seeds must be distinct across distinct trace_ids."""
     base_seed = 42
@@ -184,9 +153,6 @@ def test_seed_for_trace_independence_across_traces() -> None:
     assert len(set(seeds)) == len(seeds), (
         f"Expected all per-trace seeds distinct; got duplicates in {seeds}"
     )
-
-
-# session_for: persistent trajectory correlation_id when no override
 
 
 def test_session_for_reuses_trajectory_correlation_id_per_call() -> None:
@@ -210,9 +176,6 @@ def test_session_for_reuses_trajectory_correlation_id_per_call() -> None:
     assert s2.start_turn_index == trajectory.start_turn_index
 
 
-# session_for: explicit x_correlation_id used verbatim
-
-
 def test_session_for_accepts_explicit_correlation_id() -> None:
     """Explicit ``x_correlation_id`` is used verbatim, no UUID minting."""
     ds = _make_dataset({"trace_0": 4})
@@ -228,9 +191,6 @@ def test_session_for_accepts_explicit_correlation_id() -> None:
     session = src.session_for(trajectory, x_correlation_id="my-fixed-id")
 
     assert session.x_correlation_id == "my-fixed-id"
-
-
-# SampledSession.build_turn_at_index: negative index rejected
 
 
 def test_build_turn_at_index_negative_raises_index_error() -> None:
@@ -249,9 +209,6 @@ def test_build_turn_at_index_negative_raises_index_error() -> None:
         session.build_turn_at_index(-1)
 
 
-# SampledSession.build_turn_at_index: index at or beyond length rejected
-
-
 def test_build_turn_at_index_at_or_beyond_length_raises() -> None:
     """Indices at len(turns) and beyond must raise."""
     meta = ConversationMetadata(
@@ -268,9 +225,6 @@ def test_build_turn_at_index_at_or_beyond_length_raises() -> None:
         session.build_turn_at_index(3)
     with pytest.raises(IndexError, match="out of range"):
         session.build_turn_at_index(99)
-
-
-# SampledSession.build_turn_at_index: first and last in-range indices succeed
 
 
 def test_build_turn_at_index_first_and_last_succeed() -> None:

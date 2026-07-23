@@ -138,8 +138,7 @@ def _k5_metadata():
 
 
 def _make_real_conversation(cid: str, num_turns: int) -> Conversation:
-    """Build a real ``Conversation`` with sentinel turns so we can detect
-    snapshot semantics (mutating parent's turn_list later must not leak)."""
+    """Build a real ``Conversation`` with sentinel turns so snapshot semantics are detectable (mutating the parent's turn_list later must not leak)."""
     return Conversation(
         session_id=cid,
         turns=[Turn(role="user", model="m") for _ in range(num_turns)],
@@ -154,18 +153,7 @@ def _make_real_conversation(cid: str, num_turns: int) -> Conversation:
 
 
 def test_fork_child_turn_list_snapshot_taken_at_create_time():
-    """A FORK child seeded when the parent has dispatched turns 0..2 must
-    snapshot the parent's CURRENT turn_list. Later parent advances must not
-    leak into the child's turn_list (shallow-copy snapshot semantics).
-
-    V2 PORT NOTE: agentx seeded the child turn_list inline inside
-    ``create_and_store``. V2 extracted the seed into a separate
-    ``seed_from_parent(child_corr, parent_corr)`` step
-    (``session_manager.create_and_store`` docstring: "Seeding is performed
-    separately by ``seed_from_parent``"). The snapshot semantics under test
-    are unchanged -- ``seed_from_parent`` does ``child.turn_list =
-    list(parent.turn_list)`` -- so this rebase performs the explicit seed.
-    """
+    """A FORK child seeded when the parent has dispatched turns 0..2 snapshots the parent's current turn_list, so later parent advances do not leak into the child's turn_list."""
     mgr = UserSessionManager()
     parent_conv = _make_real_conversation("parent", num_turns=6)
     parent = mgr.create_and_store(
@@ -199,9 +187,7 @@ def test_fork_child_turn_list_snapshot_taken_at_create_time():
 
 @pytest.mark.asyncio
 async def test_fork_refcount_decrements_on_child_terminal_not_on_gate_satisfy():
-    """Two FORK branches at T=0 with different gated_turn_index. Each FORK
-    child increments the parent's sticky refcount; decrements occur only
-    when the child reports terminal completion via on_child_leaf_reached."""
+    """Each FORK child increments the parent's sticky refcount, and decrements occur only when the child reports terminal completion via on_child_leaf_reached."""
     branch_a = ConversationBranchInfo(
         branch_id="root:0:A",
         child_conversation_ids=["a"],
@@ -257,9 +243,7 @@ async def test_fork_refcount_decrements_on_child_terminal_not_on_gate_satisfy():
 
 
 def test_sticky_entry_stays_when_child_completes_before_parent_final(benchmark_run):
-    """Child completion decrements ref_count, but the entry must remain in
-    place because parent_final_seen=False (parent hasn't reached its terminal
-    turn yet)."""
+    """Child completion decrements ref_count, but the entry remains in place because parent_final_seen=False (the parent has not reached its terminal turn yet)."""
     router = StickyCreditRouter(run=benchmark_run, service_id="rtr-3")
     router._workers = {"w1": WorkerLoad(worker_id="w1")}
     router._workers_cache = list(router._workers.values())
@@ -277,8 +261,7 @@ def test_sticky_entry_stays_when_child_completes_before_parent_final(benchmark_r
 
 
 def test_sticky_evicts_when_parent_final_then_child_release(benchmark_run):
-    """Order A: parent terminal first -> parent_final_seen=True; child
-    release later drops ref_count to 0 -> evict."""
+    """Order A: parent terminal first sets parent_final_seen=True, and a later child release drops ref_count to 0, triggering eviction."""
     router = StickyCreditRouter(run=benchmark_run, service_id="rtr-4a")
     router._workers = {"w1": WorkerLoad(worker_id="w1", active_sessions=1)}
     router._workers["w1"].active_session_ids.add("parent-corr")
@@ -294,9 +277,7 @@ def test_sticky_evicts_when_parent_final_then_child_release(benchmark_run):
 
 
 def test_sticky_evicts_when_child_release_brings_ref_to_zero_after_final(benchmark_run):
-    """Order B: child completes (ref=1, no final_seen yet); parent terminal
-    later flips parent_final_seen=True and drops ref to 0; entry is evicted
-    by the eviction trigger (ref_count<=0 AND parent_final_seen)."""
+    """Order B: child completes first (ref=1, no final_seen), then parent terminal flips parent_final_seen=True and drops ref to 0, so the eviction trigger (ref_count<=0 AND parent_final_seen) fires."""
     router = StickyCreditRouter(run=benchmark_run, service_id="rtr-4b")
     router._workers = {"w1": WorkerLoad(worker_id="w1", active_sessions=1)}
     router._workers["w1"].active_session_ids.add("parent-corr")
@@ -321,10 +302,7 @@ def test_sticky_evicts_when_child_release_brings_ref_to_zero_after_final(benchma
 
 @pytest.mark.asyncio
 async def test_register_then_dispatch_fail_rolls_back_sticky_refcount():
-    """The orchestrator registers FORK sticky refcount BEFORE
-    dispatch_first_turn. If dispatch returns False, the per-child rollback
-    block must call release_child_routing exactly once. Net-zero invariant:
-    register count == release count."""
+    """The orchestrator registers FORK sticky refcount before dispatch_first_turn, so a False dispatch triggers the per-child rollback to release exactly once (register count == release count)."""
     cs = _mk_source(_k5_metadata())
     issuer = _mk_issuer(dispatch_first=False)
     sticky = MagicMock()
@@ -345,10 +323,7 @@ async def test_register_then_dispatch_fail_rolls_back_sticky_refcount():
 
 @pytest.mark.asyncio
 async def test_all_start_branch_child_failures_evict_unclaimed_sticky(benchmark_run):
-    """Parent final with has_forks retains sticky (ref_count=0,
-    parent_final_seen=True). If every start_branch_child raises before
-    register_child_routing, finalize must force-pop the entry or
-    active_sessions leaks permanently."""
+    """When a parent final with has_forks retains sticky and every start_branch_child raises before register_child_routing, finalize must force-pop the entry or active_sessions leaks permanently."""
     branch = ConversationBranchInfo(
         branch_id="root:0",
         child_conversation_ids=["a", "b"],
@@ -391,8 +366,7 @@ async def test_all_start_branch_child_failures_evict_unclaimed_sticky(benchmark_
 
 
 def test_register_child_routing_with_no_existing_sticky_entry_is_noop(benchmark_run):
-    """register_child_routing on a parent that never had a turn dispatched
-    is a documented no-op. The router does NOT create one."""
+    """register_child_routing on a parent that never had a turn dispatched is a documented no-op; the router does not create an entry."""
     router = StickyCreditRouter(run=benchmark_run, service_id="rtr-6")
     router._workers = {"w1": WorkerLoad(worker_id="w1")}
     router._workers_cache = list(router._workers.values())
@@ -406,8 +380,7 @@ def test_register_child_routing_with_no_existing_sticky_entry_is_noop(benchmark_
 
 @pytest.mark.asyncio
 async def test_dispatch_join_turn_returns_false_increments_joins_suppressed():
-    """When the credit issuer reports the gated turn was suppressed, the
-    orchestrator increments joins_suppressed and does NOT retry."""
+    """When the credit issuer reports the gated turn was suppressed, the orchestrator increments joins_suppressed and does not retry."""
     cs = _mk_source(_k5_metadata())
     issuer = _mk_issuer(dispatch_join=False)
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
@@ -426,8 +399,7 @@ async def test_dispatch_join_turn_returns_false_increments_joins_suppressed():
 
 @pytest.mark.asyncio
 async def test_orchestrator_handles_dispatch_first_turn_returning_falsy():
-    """The orchestrator's _dispatch_first_turn wraps with bool(); both False
-    and None collapse to False, triggering the rollback path."""
+    """The orchestrator's _dispatch_first_turn wraps with bool(), so both False and None collapse to False and trigger the rollback path."""
     cs = _mk_source(_k5_metadata())
     issuer = MagicMock()
     issuer.dispatch_first_turn = AsyncMock(side_effect=[None])
@@ -447,11 +419,7 @@ async def test_orchestrator_handles_dispatch_first_turn_returning_falsy():
 
 @pytest.mark.asyncio
 async def test_orchestrator_handles_dispatch_first_turn_raising():
-    """If dispatch_first_turn raises (e.g. RuntimeError from
-    UserSessionManager when parent session was evicted),
-    asyncio.gather(return_exceptions=True) captures the exception. The
-    orchestrator's per-child for-loop treats any non-True result as failure
-    and rolls back bookkeeping cleanly."""
+    """If dispatch_first_turn raises, asyncio.gather(return_exceptions=True) captures the exception and the orchestrator's per-child loop treats any non-True result as failure, rolling back bookkeeping cleanly."""
     cs = _mk_source(_k5_metadata())
     issuer = MagicMock()
     issuer.dispatch_first_turn = AsyncMock(
@@ -472,9 +440,7 @@ async def test_orchestrator_handles_dispatch_first_turn_raising():
 
 @pytest.mark.asyncio
 async def test_worker_disconnect_mid_dag_cleanup_clears_state(caplog):
-    """A FORK child credit was dispatched but never returned (worker died).
-    cleanup() at phase teardown must clear _child_to_join,
-    _descendant_counts, and active/future joins."""
+    """After a FORK child credit is dispatched but never returns (worker died), cleanup() at phase teardown must clear _child_to_join, _descendant_counts, and active/future joins."""
     import logging as _logging
 
     cs = _mk_source(_k5_metadata())
@@ -501,8 +467,7 @@ async def test_worker_disconnect_mid_dag_cleanup_clears_state(caplog):
 
 @pytest.mark.asyncio
 async def test_fork_siblings_pin_to_parents_worker_via_sticky_routing(benchmark_run):
-    """Two FORK children sharing a parent must route to the same worker
-    because the credit router's routing_key uses parent_correlation_id."""
+    """Two FORK children sharing a parent route to the same worker because the credit router's routing_key uses parent_correlation_id."""
     router = StickyCreditRouter(run=benchmark_run, service_id="rtr-11")
     router._router_client = MagicMock()
     router._router_client.send_to = AsyncMock()
@@ -551,8 +516,7 @@ async def test_fork_siblings_pin_to_parents_worker_via_sticky_routing(benchmark_
 
 @pytest.mark.asyncio
 async def test_spawn_child_does_not_call_register_child_routing():
-    """SPAWN-mode children do not bump sticky refcount; the orchestrator
-    does NOT call ``register_child_routing`` for them."""
+    """SPAWN-mode children do not bump sticky refcount, so the orchestrator does not call ``register_child_routing`` for them."""
     branch = ConversationBranchInfo(
         branch_id="root:0",
         child_conversation_ids=["s0", "s1"],
@@ -594,10 +558,7 @@ async def test_spawn_child_does_not_call_register_child_routing():
 
 
 def test_pre_session_child_routing_key_falls_back_to_own_correlation():
-    """SampledSession.routing_key returns parent_correlation_id when set,
-    else x_correlation_id. Pre-session children have parent_correlation_id=
-    None -> routing_key == x_correlation_id (no sticky pin to a non-existent
-    parent)."""
+    """Pre-session children have parent_correlation_id=None, so routing_key falls back to x_correlation_id (no sticky pin to a non-existent parent)."""
     from aiperf.timing.conversation_source import SampledSession
 
     pre = SampledSession(
@@ -613,11 +574,7 @@ def test_pre_session_child_routing_key_falls_back_to_own_correlation():
 
 @pytest.mark.asyncio
 async def test_pre_session_dispatch_failure_still_records_branch():
-    """If dispatch_first_turn returns False during pre-session dispatch,
-    children_truncated++ (stop-condition refusal, not an error) but the
-    branch is STILL added to _pre_dispatched_branches so the per-turn
-    intercept doesn't try to dispatch it again on the parent's turn-0
-    credit return."""
+    """A False dispatch_first_turn during pre-session dispatch bumps children_truncated but still adds the branch to _pre_dispatched_branches so the per-turn intercept does not re-dispatch it on the parent's turn-0 credit return."""
     pre_branch = ConversationBranchInfo(
         branch_id="root:pre",
         child_conversation_ids=["early"],
@@ -645,8 +602,7 @@ async def test_pre_session_dispatch_failure_still_records_branch():
 
 @pytest.mark.asyncio
 async def test_start_branch_child_raises_for_one_sibling_others_continue():
-    """If start_branch_child raises for child0 but succeeds for child1, the
-    surviving child must still be tracked, dispatched, and counted."""
+    """If start_branch_child raises for one child but succeeds for another, the surviving child is still tracked, dispatched, and counted."""
     branch = ConversationBranchInfo(
         branch_id="root:0",
         child_conversation_ids=["bad", "good"],
@@ -698,9 +654,7 @@ async def test_start_branch_child_raises_for_one_sibling_others_continue():
 
 @pytest.mark.asyncio
 async def test_start_pre_session_child_raises_siblings_continue():
-    """In dispatch_pre_session_branches, an exception from
-    start_pre_session_child is caught per-child and stats are bumped; the
-    next child still attempts to dispatch."""
+    """In dispatch_pre_session_branches, an exception from start_pre_session_child is caught per-child and stats are bumped, and the next child still attempts to dispatch."""
     pre_branch = ConversationBranchInfo(
         branch_id="root:pre",
         child_conversation_ids=["bad", "good"],
@@ -745,10 +699,7 @@ async def test_start_pre_session_child_raises_siblings_continue():
 
 @pytest.mark.asyncio
 async def test_get_metadata_raises_propagates_through_intercept():
-    """ConversationSource.get_metadata raising KeyError on an unknown
-    conversation propagates as an exception out of intercept. The
-    orchestrator does NOT swallow this -- a missing-conversation invariant
-    violation must be loud."""
+    """ConversationSource.get_metadata raising KeyError on an unknown conversation propagates out of intercept, since a missing-conversation invariant violation must be loud rather than swallowed."""
     cs = _mk_source(_k5_metadata())
     cs.get_metadata.side_effect = KeyError("no metadata for conv")
     issuer = _mk_issuer()
@@ -759,10 +710,7 @@ async def test_get_metadata_raises_propagates_through_intercept():
 
 
 def test_spawn_child_with_parent_correlation_routes_to_parent_worker():
-    """SampledSession.routing_key returns parent_correlation_id whenever
-    set, regardless of branch_mode. SPAWN children spawned via
-    start_branch_child DO inherit parent_correlation_id and therefore route
-    to the parent's worker as well."""
+    """SampledSession.routing_key returns parent_correlation_id whenever set, so SPAWN children that inherit it route to the parent's worker regardless of branch_mode."""
     from aiperf.timing.conversation_source import SampledSession
 
     spawn = SampledSession(
@@ -778,9 +726,7 @@ def test_spawn_child_with_parent_correlation_routes_to_parent_worker():
 
 @pytest.mark.asyncio
 async def test_concurrent_register_release_refcount_converges(benchmark_run):
-    """Sticky router runs in single-threaded asyncio; register and release
-    are synchronous. N concurrent tasks each doing register+release leave
-    ref_count at the original value."""
+    """Since the sticky router runs single-threaded with synchronous register/release, N concurrent tasks each doing register+release leave ref_count at the original value."""
     router = StickyCreditRouter(run=benchmark_run, service_id="rtr-19")
     router._workers = {"w1": WorkerLoad(worker_id="w1")}
     router._workers_cache = list(router._workers.values())
@@ -801,9 +747,7 @@ async def test_concurrent_register_release_refcount_converges(benchmark_run):
 async def test_active_sessions_unchanged_when_fork_children_share_parent_sticky(
     benchmark_run,
 ):
-    """When FORK children route via parent_correlation_id, send_credit
-    finds an existing sticky entry and does NOT create a new one; therefore
-    WorkerLoad.active_sessions stays at the parent's count (1 here)."""
+    """When FORK children route via parent_correlation_id, send_credit reuses the existing sticky entry instead of creating a new one, so WorkerLoad.active_sessions stays at the parent's count (1 here)."""
     router = StickyCreditRouter(run=benchmark_run, service_id="rtr-20")
     router._router_client = MagicMock()
     router._router_client.send_to = AsyncMock()

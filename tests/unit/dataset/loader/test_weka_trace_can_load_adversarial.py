@@ -77,16 +77,7 @@ def test_can_load_char_device_path_returns_false():
 def test_can_load_directory_first_json_alphabetically_is_mooncake_returns_false(
     tmp_path: Path,
 ):
-    """Documents the single-probe mis-route gap.
-
-    ``can_load`` grabs ``next(path.glob("*.json"), None)`` without sorting, so
-    glob order is filesystem-insertion-dependent. If the probed file is
-    non-Weka (here, a Mooncake-shaped dict), ``can_load`` returns False even
-    if other files in the same directory would validate — the loader never
-    looks past the first match. We force determinism by placing only one
-    ``*.json`` file in the directory plus a ``*.txt`` sibling that ``glob``
-    ignores.
-    """
+    """Documents the single-probe mis-route gap: an unsorted first-glob probe on a non-Weka JSON returns False even when a sibling would validate."""
     (tmp_path / "a_mooncake.json").write_bytes(
         orjson.dumps({"timestamp": 0, "input_length": 10, "output_length": 5})
     )

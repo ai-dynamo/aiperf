@@ -6,12 +6,7 @@ from aiperf.timing.session_tree import SessionTreeRegistry
 
 
 class _FakeConcurrency:
-    """Minimal stand-in for the concurrency manager the registry releases to.
-
-    ``SessionTreeRegistry`` requires a concurrency manager exposing
-    ``release_session_slot(phase)``; these finality-query tests only exercise
-    the state map, so the release is a no-op.
-    """
+    """Minimal concurrency-manager stand-in whose slot release is a no-op, since these finality-query tests only exercise the state map."""
 
     def release_session_slot(self, phase: CreditPhase) -> None:
         pass
@@ -67,10 +62,7 @@ def test_not_last_when_descendants_outstanding_or_branches_pending():
 
 
 def test_spawn_declaring_final_turn_gated_by_has_branches():
-    """Same registry state that yields True with ``has_branches=False`` must
-    yield False when the turn declares ANY branch: a SPAWN-declaring final turn
-    (``has_forks`` stays False) registers its children only at return-intercept,
-    AFTER this stamp, so it can never be provably-last."""
+    """A final turn declaring ANY branch is never provably-last, because a SPAWN-declaring turn registers its children only at return-intercept, after this stamp."""
     registry = _registry_with_tree(root="root-3")
     assert registry.is_last_tree_request(
         "root-3", is_final_turn=True, is_root_credit=True, has_branches=False
@@ -95,8 +87,7 @@ def test_unknown_tree_is_conservative_false():
 
 
 def test_finality_flows_credit_to_request_info():
-    """REAL structs end-to-end: a Credit stamped with finality must surface
-    on the RequestInfo the worker builds. Catches a missed plumb touch."""
+    """Finality fields stamped on a Credit must also exist on the RequestInfo the worker builds, catching a missed plumb touch."""
     from aiperf.common.models.record_models import RequestInfo
     from aiperf.credit.structs import Credit
 

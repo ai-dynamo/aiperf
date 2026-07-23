@@ -1,19 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for ``AgenticReplayStrategy._dispatch_next_turn`` child routing.
-
-A DAG child continuation (``agent_depth > 0``) must go through the single
-child-issuance chokepoint (``_issue_child_continuation_or_drain``), which calls
-``dispatch_child_turn`` (clean True-iff-on-wire) and, on refusal (e.g. the
-``--request-count`` wire cap), notifies ``BranchOrchestrator.on_child_stopped``
-so the parent's join drains deterministically.
-
-The regression this guards: routing children through the discarded
-``issue_credit`` bool silently swallows a gate refusal, leaving the parent join
-blocked forever on a child whose remaining turns will never be issued
-(deadlock at the ``--request-count`` cutoff for DAG runs). The chokepoint must
-be used on BOTH the immediate and the delayed (``delay_ms``) paths.
-"""
+"""Tests for ``AgenticReplayStrategy._dispatch_next_turn`` child routing."""
 
 from __future__ import annotations
 
@@ -33,15 +20,7 @@ def _make_strategy(
     dispatch_result: bool = True,
     delay_ms: float | None = None,
 ) -> tuple[AgenticReplayStrategy, MagicMock, MagicMock]:
-    """Build a strategy with only the attributes ``_dispatch_next_turn`` reads.
-
-    Bypasses ``__init__`` (which requires a real ``TrajectorySource`` and
-    ``CreditPhaseConfig``) because the routing logic under test touches only
-    ``conversation_source``, ``credit_issuer``, ``scheduler``, and
-    ``branch_orchestrator``.
-
-    Returns ``(strategy, credit_issuer, scheduler)``.
-    """
+    """Build a strategy with only the attributes ``_dispatch_next_turn`` reads."""
     strategy = AgenticReplayStrategy.__new__(AgenticReplayStrategy)
 
     conversation_source = MagicMock()
@@ -143,12 +122,7 @@ async def test_child_at_cap_without_orchestrator_swallows_silently() -> None:
 
 @pytest.mark.asyncio
 async def test_child_delayed_schedules_chokepoint_coro_not_issue_credit() -> None:
-    """The delayed (delay_ms) path must also route children through the chokepoint.
-
-    The refusal would otherwise fire long after the callback handler decided
-    the child could proceed, so the delayed branch must schedule the
-    drain-aware coroutine -- never ``issue_credit``.
-    """
+    """The delayed (delay_ms) path must also route children through the chokepoint."""
     orch = MagicMock()
     orch.on_child_stopped = AsyncMock()
     strategy, issuer, scheduler = _make_strategy(

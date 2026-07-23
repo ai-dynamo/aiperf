@@ -99,15 +99,7 @@ def _retained_request_count(convs: dict) -> int:
 
 
 def test_flat_chain_anchoring_turn_zero_fallback_passes_orchestrator_v1():
-    """A worker chain whose first request's outer_idx is below EVERY main-chain
-    turn's outer_idx must anchor to main turn 0 (spec §5.3 fallback) and pass
-    orchestrator-v1 validation.
-
-    The main chain owns the trace's earliest-``t`` request even though its rows
-    sit at high outer indices (2, 3). The worker (a disjoint-namespace batch)
-    sits at outer indices 0, 1 but starts later in time, so no main turn
-    precedes it by outer_idx -> the loader's ``default=0`` fallback fires.
-    """
+    """A worker whose first outer_idx is below every main-chain turn anchors to main turn 0 (spec §5.3 fallback) and passes orchestrator-v1 validation."""
     requests = [
         _normal(5.0, [900, 901], api_time=0.1, model=_HAIKU),  # worker founder, outer 0
         _normal(6.0, [900, 901, 902], api_time=0.1, model=_HAIKU),  # worker t1, outer 1
@@ -134,8 +126,7 @@ def test_flat_chain_anchoring_turn_zero_fallback_passes_orchestrator_v1():
 
 
 def test_flat_chain_join_at_exact_equality_gates_that_main_turn():
-    """Worker ends at exactly t == a main turn's t. With the +eps slack the
-    join must land on that main turn (SPAWN_JOIN), not be background."""
+    """A worker ending exactly at a main turn's t joins that turn (SPAWN_JOIN) rather than going background."""
     # Main: outer0 t=0 [1,2,3], outer1 t=10 [1,2,3,4]. Worker forks at outer0,
     # one request ending exactly at t=10.0 (t=9.0 + api_time=1.0).
     requests = [
@@ -159,10 +150,7 @@ def test_flat_chain_join_at_exact_equality_gates_that_main_turn():
 
 
 def test_flat_chain_join_within_epsilon_slack_gates_main_turn():
-    """Worker ends a hair (< 1e-6 s) AFTER a main turn's t. The ``+ eps`` slack
-    in the join rule must still gate that turn; without it the strict ``>=``
-    would push the chain to background. Probes the exact 1e-6 epsilon (spec §3
-    eps = 1e-6 s, §5.3 join rule ``t + eps >= end(tail(chain))``)."""
+    """A worker ending within 1e-6s after a main turn's t still gates that turn via the join rule's ``+ eps`` slack (spec §3, §5.3)."""
     # Main turn 1 at t=10.0; worker ends at 10.0 + 5e-7 (inside eps).
     requests = [
         _normal(0.0, [1, 2, 3], api_time=0.5),  # main founder
@@ -178,9 +166,7 @@ def test_flat_chain_join_within_epsilon_slack_gates_main_turn():
 
 
 def test_flat_chain_just_past_last_main_turn_is_background_no_prereq():
-    """A worker whose end is just past (by more than eps) the last main turn's
-    t must become a background branch (is_background=True) with no prereq
-    anywhere (spec §5.3 'None -> is_background=True')."""
+    """A worker ending more than eps past the last main turn becomes a background branch with no prereq anywhere (spec §5.3)."""
     requests = [
         _normal(0.0, [1, 2, 3], api_time=0.5),  # main founder
         _normal(5.0, [1, 2, 3, 4], api_time=0.5),  # main t1 (last main turn t=5)
@@ -203,8 +189,7 @@ def test_flat_chain_just_past_last_main_turn_is_background_no_prereq():
 
 
 def test_two_flat_chains_sharing_spawn_and_join_collapse_to_one_branch():
-    """Two worker chains with identical (preceding=turn0, join=turn1) anchoring
-    must share ONE ConversationBranchInfo carrying both child ids."""
+    """Two worker chains with identical (preceding, join) anchoring share one ConversationBranchInfo carrying both child ids."""
     # Two disjoint-namespace workers both forking off main turn 0 and both
     # ending before main turn 1 (t=20).
     requests = [
@@ -229,9 +214,7 @@ def test_two_flat_chains_sharing_spawn_and_join_collapse_to_one_branch():
 
 
 def test_three_flat_chains_distinct_groups_get_unique_branch_ids():
-    """A third chain that joins a different main turn must land in its own
-    branch with a distinct branch_id; branch_ids stay unique per turn so
-    orchestrator-v1 validation passes."""
+    """A third chain joining a different main turn lands in its own branch with a distinct, per-turn-unique branch_id."""
     requests = [
         _normal(0.0, [1, 2, 3], api_time=0.2),  # main founder, outer 0
         _normal(0.5, [500, 501], api_time=0.2, model=_HAIKU),  # A ends 0.7 -> join t1
@@ -259,8 +242,7 @@ def test_three_flat_chains_distinct_groups_get_unique_branch_ids():
 
 
 def test_subagent_and_flat_branch_coexist_on_same_turn():
-    """A subagent marker and a detected flat chain both spawn off main turn 0;
-    their branch_ids coexist and stay distinct, and validation passes."""
+    """A subagent marker and a detected flat chain both spawn off main turn 0 with distinct coexisting branch_ids."""
     requests = [
         _normal(0.0, [1, 2, 3], api_time=0.5),  # main founder, outer 0
         {
@@ -301,9 +283,7 @@ def test_subagent_and_flat_branch_coexist_on_same_turn():
 
 
 def test_disjoint_batch_splits_into_independent_chains(caplog):
-    """A trace of mutually-disjoint requests (zero LCP between all) splits
-    into independent per-agent chains, retaining every request, and logs no
-    nonce-poison WARNING (the guard was removed)."""
+    """A trace of mutually-disjoint requests splits into independent per-agent chains, retaining every request and logging no nonce-poison warning."""
     # 10 mutually-disjoint single-block requests -> independent founders.
     requests = [_normal(float(i), [1000 + i], api_time=0.01) for i in range(10)]
     loader = _build_loader()
@@ -322,11 +302,7 @@ def test_disjoint_batch_splits_into_independent_chains(caplog):
 
 
 def test_idle_gap_warp_flat_chain_gap_structure_matches_unsplit_run():
-    """With trace_idle_gap_cap_seconds active, the warp collects the SAME
-    request-start set whether or not chains split (spec §5.6 'unchanged
-    inputs'). The main chain's warped timestamps must equal those produced
-    with detection disabled (legacy single stream) over the same starts.
-    """
+    """With an idle-gap cap active, the main chain's warped timestamps match the legacy single-stream run over the same request starts (spec §5.6)."""
     # Main founder at t=0, worker founder at t=20 (disjoint ns), main t2 at
     # t=220. The 20->220 request-start gap (200s) caps to 60s -> 140s shift.
     requests = [
@@ -363,17 +339,7 @@ def test_idle_gap_warp_flat_chain_gap_structure_matches_unsplit_run():
 
 
 def test_idle_gap_warp_flat_branch_start_uses_mapped_time_not_raw():
-    """Regression: a multi-chain flat group whose workers begin AFTER a
-    compressed idle gap must anchor its SPAWN branch on the WARPED first-request
-    time, matching the workers' (also-warped) turn-0 timestamps.
-
-    Using the raw first-request time leaves the branch start on the
-    uncompressed timeline while the child turns live on the compressed one, so
-    branch_orchestrator._child_dispatch_offset_ms (max(0, child_ts -
-    branch_start)) goes negative and clamps to 0 -- silently collapsing the
-    recorded inter-worker dispatch stagger for every flat worker-group fan-out
-    whenever the (default-on for agentx) idle-gap cap is engaged.
-    """
+    """A flat group whose workers begin after a compressed idle gap anchors its SPAWN branch on the warped first-request time, preserving the inter-worker dispatch stagger."""
     # Main founder at t=0; a 1000s idle gap; two disjoint-namespace workers at
     # t=1000 and t=1002 (2s apart); main t1 at t=1003. Sorted request starts
     # [0, 1000, 1002, 1003]: the 0->1000 gap (1000s) caps to 60s (940s excess),
@@ -415,8 +381,7 @@ def test_idle_gap_warp_flat_branch_start_uses_mapped_time_not_raw():
 
 
 def test_flat_chain_delays_are_within_chain_and_nonnegative():
-    """Flat-chain turn delays are computed within the chain only (spec §5.6),
-    never against cross-agent neighbours, and are never negative."""
+    """Flat-chain turn delays are computed within the chain only, never against cross-agent neighbours, and are never negative (spec §5.6)."""
     requests = [
         _normal(0.0, [1, 2, 3], api_time=0.5),  # main
         _normal(3.0, [900, 901], api_time=0.5, model=_HAIKU),  # worker t0
@@ -436,9 +401,7 @@ def test_flat_chain_delays_are_within_chain_and_nonnegative():
 
 
 def test_flat_chain_think_time_only_uses_recorded_think_time():
-    """use_think_time_only=True: flat-chain turn delay equals recorded
-    think_time*1000 (ms), falling back to the full within-chain delta when
-    think_time is None (spec §5.6 'honoring think_time_only')."""
+    """With use_think_time_only, a flat-chain turn delay equals recorded think_time*1000, falling back to the within-chain delta when None (spec §5.6)."""
     requests = [
         # Real 2-turn main thread (shared [1,2,3] prefix) so its founder is not a
         # lone block-disjoint leader -- which would now be peeled as a one-shot
@@ -459,8 +422,7 @@ def test_flat_chain_think_time_only_uses_recorded_think_time():
 
 
 def test_flat_chain_ignore_delays_nulls_timestamp_and_delay():
-    """ignore_trace_delays=True must null timestamp and delay on EVERY
-    conversation including detected flat-chain children."""
+    """ignore_trace_delays nulls timestamp and delay on every conversation, including detected flat-chain children."""
     requests = [
         _normal(0.0, [1, 2, 3], api_time=0.5),
         _normal(3.0, [900, 901], api_time=0.5, model=_HAIKU),
@@ -483,8 +445,7 @@ def test_flat_chain_ignore_delays_nulls_timestamp_and_delay():
 
 
 def test_max_osl_caps_flat_chain_but_not_subagent_child():
-    """--max-osl caps a detected flat chain's max_tokens (it was a top-level
-    row) but leaves a real subagent child's max_tokens uncapped."""
+    """--max-osl caps a detected flat chain's max_tokens but leaves a real subagent child's max_tokens uncapped."""
     requests = [
         _normal(0.0, [1, 2, 3], out=100, api_time=0.5),  # main, out 100
         {
@@ -520,12 +481,7 @@ def test_max_osl_caps_flat_chain_but_not_subagent_child():
 
 
 def test_zero_declared_fanout_keeps_shared_prefix_in_user_content():
-    """The system role is never fabricated: a 0/0-declared fan-out trace
-    keeps its observed shared prefix INSIDE the user content. Byte sharing
-    across the group is content-based, not role-based, so turn 0 of the root
-    and every worker chain is a single user message carrying the request's
-    full token count.
-    """
+    """A 0/0-declared fan-out keeps its observed shared prefix inside the user content, never fabricating a system role."""
     # Main group: main founder [1,2,3] + two workers forking at depth 2 on
     # [1,2,...]. Observed group prefix = LCP over first requests = [1,2] = 2,
     # but with 0/0 declared it must NOT surface as a system segment.
@@ -549,9 +505,7 @@ def test_zero_declared_fanout_keeps_shared_prefix_in_user_content():
 
 
 def test_flat_chain_prefix_blocks_zero_yields_all_user_turn0():
-    """A singleton worker namespace group has P_observed=0 (spec §5.4
-    'singleton group degrades to ... all-user when 0/0'); its turn 0 must be
-    all-user (no system segment)."""
+    """A singleton worker namespace group has P_observed=0, so its turn 0 is all-user with no system segment (spec §5.4)."""
     requests = [
         _normal(0.0, [1, 2, 3], api_time=0.3),  # main
         _normal(1.0, [800, 801], api_time=0.3, model=_HAIKU),  # singleton worker
@@ -569,9 +523,7 @@ def test_flat_chain_prefix_blocks_zero_yields_all_user_turn0():
 
 
 def test_every_retained_request_appears_exactly_once_across_conversations():
-    """Conservation invariant: the total turn count across root + worker
-    children equals the number of retained top-level requests, and outer
-    indices are partitioned (no request emitted twice)."""
+    """Conservation invariant: total turn count across root and workers equals the retained request count, with no request emitted twice."""
     requests = [
         _normal(0.0, [1, 2, 3], api_time=0.5),  # main
         _normal(1.0, [1, 2, 50], api_time=0.5, model=_HAIKU),  # worker A
@@ -593,9 +545,7 @@ def test_every_retained_request_appears_exactly_once_across_conversations():
 
 
 def test_zero_api_time_worker_join_uses_request_start_as_end():
-    """A worker with api_time=0 (or None) has end == start. The first main
-    turn at/after that start (within eps) must gate it (spec §3 end(r) = t +
-    max(api_time or 0, 0))."""
+    """A worker with api_time=0 has end == start, gated by the first main turn at/after that start within eps (spec §3)."""
     requests = [
         _normal(0.0, [1, 2, 3], api_time=0.5),  # main founder
         _normal(2.0, [1, 2, 900], api_time=0.0, model=_HAIKU),  # worker ends t=2.0
@@ -638,9 +588,7 @@ def test_split_disabled_keeps_single_conversation_on_fanout():
 
 
 def test_flat_branch_child_ids_resolve_and_join_targets_not_background():
-    """Every flatspawn branch's child ids must reference real conversations;
-    any branch referenced by a SPAWN_JOIN prereq must be non-background
-    (orchestrator-v1 invariants)."""
+    """Every flatspawn branch's child ids reference real conversations, and any SPAWN_JOIN-referenced branch is non-background (orchestrator-v1 invariants)."""
     requests = [
         _normal(0.0, [1, 2, 3], api_time=0.2),  # main
         _normal(0.5, [500, 501], api_time=0.2, model=_HAIKU),  # joins t1
@@ -676,8 +624,7 @@ def _req(t: float, hash_ids: list[int], out: int):
 
 
 def test_split_off_preamble_small_disjoint_leader_is_split():
-    """A small (out<=64), block-disjoint leading request (title-gen) is set
-    aside; the rest reach detection in outer-index order."""
+    """A small (out<=64), block-disjoint leading request is set aside while the rest reach detection in outer-index order."""
     from aiperf.dataset.loader.weka_trace import _split_off_preamble
 
     normals = [
@@ -691,9 +638,7 @@ def test_split_off_preamble_small_disjoint_leader_is_split():
 
 
 def test_split_off_preamble_large_disjoint_leader_is_split():
-    """A LARGE (out>64) leading request whose blocks are fully disjoint from
-    every other request is still a one-shot preamble and must be set aside, so
-    it cannot hijack main_index. This is the 060826 'disjoint giant' case."""
+    """A large (out>64) leading request fully disjoint from every other request is still a one-shot preamble that is set aside (the 060826 'disjoint giant')."""
     from aiperf.dataset.loader.weka_trace import _split_off_preamble
 
     normals = [
@@ -707,9 +652,7 @@ def test_split_off_preamble_large_disjoint_leader_is_split():
 
 
 def test_split_off_preamble_large_leader_sharing_prefix_is_kept():
-    """A large leading request whose blocks ARE reused by later turns is a
-    genuine conversation root, not a preamble -- it must be kept (61/65 of the
-    060826 out>64 leaders are this case)."""
+    """A large leading request whose blocks are reused by later turns is a genuine conversation root and is kept, not peeled."""
     from aiperf.dataset.loader.weka_trace import _split_off_preamble
 
     normals = [
@@ -723,8 +666,7 @@ def test_split_off_preamble_large_leader_sharing_prefix_is_kept():
 
 
 def test_split_off_preamble_large_leader_partial_overlap_is_kept():
-    """A large leader that shares SOME blocks (LCP>0) with the rest is not a
-    preamble; only a FULLY block-disjoint large leader is set aside."""
+    """A large leader sharing some blocks (LCP>0) is kept; only a fully block-disjoint large leader is set aside."""
     from aiperf.dataset.loader.weka_trace import _split_off_preamble
 
     normals = [
@@ -737,11 +679,7 @@ def test_split_off_preamble_large_leader_partial_overlap_is_kept():
 
 
 def test_large_disjoint_leader_does_not_hijack_main_chain():
-    """End-to-end: a large disjoint leading request must be peeled, not allowed
-    to found a 1-turn main while the real multi-agent session is demoted to
-    worker chains. Without the fix the giant founds a 1-turn root and BOTH real
-    agents become fa:* chains; with it the giant re-attaches to the true main
-    (agent A) and only the genuine second agent (B) is a worker."""
+    """End-to-end: a large disjoint leader is peeled and re-attached to the true main (agent A), leaving only the genuine second agent (B) as a worker."""
     requests = [
         _normal(0.0, [900, 901, 902, 903], out=500, api_time=0.5),  # disjoint giant
         _normal(1.0, [1, 2, 3], api_time=0.5),  # agent A (real main)

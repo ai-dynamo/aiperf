@@ -74,12 +74,7 @@ class TestAgenticReplayWarmupTarget:
     """``PhaseRunner`` warmup-target behavior under AGENTIC_REPLAY."""
 
     async def test_concurrency_above_pool_size_wrap_fills_to_concurrency(self) -> None:
-        """Pool of 6, concurrency=8 -> 8 lanes (wrap-fill activates).
-
-        Replaces the old "rejected at __init__" assertion: silently capping
-        load below the requested concurrency was the bug; wrap-fill keeps the
-        run honouring ``--concurrency`` while reusing trajectories.
-        """
+        """Pool of 6, concurrency=8 -> 8 lanes via wrap-fill, honouring ``--concurrency`` by reusing trajectories rather than capping load."""
         import itertools
 
         md = _make_dataset_metadata({f"t{i}": 5 for i in range(6)})
@@ -113,13 +108,7 @@ class TestAgenticReplayWarmupTarget:
         assert runner._config.total_expected_requests == 4
 
     async def test_short_traces_skipped_below_concurrency_wrap_fills(self) -> None:
-        """Pool of 6 with one 1-turn trace, concurrency=8: wrap-fill to 8 lanes.
-
-        Previously the runner re-anchored target to the 5 usable trajectories
-        and the construction-time guard was a hard rejection; now
-        ``TrajectorySource`` wrap-fills the missing lanes by cycling through
-        the 5 usable trajectories with fresh ``start_turn_index`` salts.
-        """
+        """Pool of 6 with one skipped 1-turn trace, concurrency=8: wrap-fill cycles the 5 usable trajectories to 8 lanes with fresh ``start_turn_index`` salts."""
         import itertools
 
         md = _make_dataset_metadata({"a": 5, "b": 5, "c": 5, "d": 5, "e": 5, "tiny": 1})
@@ -162,12 +151,7 @@ class TestAgenticReplayWarmupTarget:
         assert runner._config.total_expected_requests == 100
 
     async def test_warmup_target_reanchored_to_warmup_credit_count(self) -> None:
-        """Multi-stream lanes: warmup dispatches one credit per warmable stream
-        (warmup_credit_count > concurrency), so the barrier must re-anchor to
-        warmup_credit_count -- otherwise the concurrency-sized barrier cancels
-        the closest-to-t* primers. (Single-stream lanes have
-        warmup_credit_count == concurrency, a no-op -- pinned by the tests above.)
-        """
+        """Multi-stream lanes re-anchor the barrier to warmup_credit_count (> concurrency), else the concurrency-sized barrier cancels the closest-to-t* primers."""
         src = MagicMock()
         src.dataset_metadata = None  # skip the FIXED_SCHEDULE re-anchor
         src.warmup_credit_count = 6
@@ -216,10 +200,7 @@ class TestAgenticReplayWarmupTarget:
 
 
 class TestWarmupFailureAbortGate:
-    """``PhaseRunner._report_warmup_failures`` wiring: agentic WARMUP terminal
-    failures must abort the benchmark before PROFILING starts (the gate the v2
-    runner refactor briefly lost).
-    """
+    """``PhaseRunner._report_warmup_failures`` wiring: agentic WARMUP terminal failures must abort the benchmark before PROFILING starts."""
 
     def _make_warmup_runner(self, strategy_obj) -> PhaseRunner:
         md = _make_dataset_metadata({f"t{i}": 5 for i in range(4)})
@@ -254,10 +235,7 @@ class TestWarmupFailureAbortGate:
         strategy.report_warmup_failures.assert_called_once()
 
     async def test_backstop_skipped_when_live_abort_wired(self) -> None:
-        """When the live early-abort is wired (callback_handler.on_warmup_abort
-        is not None), the teardown backstop must NOT fire -- the first terminal
-        failure already broadcast ProfileCancelCommand, so re-raising here would
-        double-abort."""
+        """When the live early-abort is wired (on_warmup_abort is not None), the teardown backstop must NOT fire and double-abort."""
         strategy = MagicMock()
         strategy.report_warmup_failures = MagicMock()
         runner = self._make_warmup_runner(strategy)
@@ -320,12 +298,7 @@ class TestWarmupFailureAbortGate:
         runner._report_warmup_failures(_NoHook())  # must not raise
 
     async def test_run_invokes_gate_and_aborts_on_warmup_failure(self) -> None:
-        """End-to-end through the real ``run()``/``_run_strategy`` path: a WARMUP
-        strategy with recorded failures must call report_warmup_failures at
-        teardown and propagate the abort. Pins the call-site wiring (commit
-        8caddefb5) -- the helper-only tests above would stay green if the call at
-        the end of _run_strategy were deleted; this would not.
-        """
+        """End-to-end through the real ``run()``/``_run_strategy`` path: a WARMUP strategy with recorded failures calls report_warmup_failures at teardown and propagates the abort, pinning the call-site wiring."""
         from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 
         md = _make_dataset_metadata({f"t{i}": 5 for i in range(2)})
@@ -390,13 +363,7 @@ class TestAgenticReplayWarmupTargetIntegrationWithCounter:
         pool_size: int,
         expected_count: int,
     ) -> None:
-        """After construction, the counter flips ``is_final_credit`` exactly on
-        the last trajectory's credit, which is what unblocks the runner's wait.
-
-        Only in-budget shapes are exercised here; out-of-budget shapes are
-        rejected at ``TrajectorySource.__init__`` and are pinned by
-        ``TestAgenticReplayWarmupTarget`` above.
-        """
+        """The counter flips ``is_final_credit`` exactly on the last (in-budget) trajectory's credit, which is what unblocks the runner's wait."""
         from aiperf.credit.structs import TurnToSend
         from aiperf.timing.phase.credit_counter import CreditCounter
 

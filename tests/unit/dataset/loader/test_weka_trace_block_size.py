@@ -69,9 +69,7 @@ def _trace_with_bs(trace_id, bs, *, in_tokens, hash_ids):
 
 
 def test_trace_block_size_honored_when_user_unset(tmp_path, monkeypatch):
-    """Trace declares block_size=128, user_config has block_size=None.
-    Loader must use 128, NOT the historical default of 64.
-    """
+    """Trace block_size=128 with user override unset: loader must use 128, not the historical default of 64."""
     # Pick in_tokens that DOES tile bs=128 cleanly so this test isolates the
     # block_size resolution from any hash-id truncation concerns.
     # in_tokens=512, bs=128 -> 4 hash_ids needed.
@@ -88,9 +86,7 @@ def test_trace_block_size_honored_when_user_unset(tmp_path, monkeypatch):
 
 
 def test_user_block_size_overrides_trace_block_size(tmp_path, monkeypatch):
-    """User-config block_size takes precedence over trace.block_size.
-    Trace declares 64, user wants 32. Loader must use 32 (the override).
-    """
+    """User-config block_size overrides trace.block_size: trace declares 64, user wants 32, loader must use 32."""
     # in_tokens=128, bs=32 -> 4 hash_ids needed. The trace declares bs=64 but
     # provides only 4 hash_ids; bs=64 would need 2. Either resolution works at
     # turn-0 (since 4 >= 2 and 4 >= 4). What we're really checking is which
@@ -122,11 +118,7 @@ def test_user_block_size_overrides_trace_block_size(tmp_path, monkeypatch):
 
 
 def test_default_64_when_neither_trace_nor_user_set(tmp_path, monkeypatch):
-    """If user_config doesn't override AND somehow the trace has no block_size
-    (defensive fallback), default to 64. The Pydantic schema makes this hard to
-    reach since `block_size` is required - but the fallback should still be present
-    for safety. If schema-required-ness makes this test impossible, document and
-    skip it."""
+    """With neither trace nor user block_size set the fallback default is 64; skipped since the schema makes block_size required."""
     # WekaTrace.block_size is REQUIRED per the schema. So this test can either:
     # (a) construct a dict that bypasses Pydantic to exercise the fallback, or
     # (b) be skipped with a comment that the schema enforces the precondition.

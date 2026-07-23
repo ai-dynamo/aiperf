@@ -1,28 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial end-to-end integration tests for weka flattened-agent LCP splitting.
-
-Spec under test: ``2026-06-10-weka-flattened-agent-lcp-detection-design.md``.
-The WekaTraceLoader must detect untagged parallel agent fan-outs recorded as
-flat top-level requests (hash_id LCP chain analysis), split them into
-per-agent child Conversations (session ids ``<trace>::fa:NNN``) linked to the
-root via SPAWN / SPAWN_JOIN branches, and the runtime BranchOrchestrator must
-reproduce the recorded concurrency. Gated by
-``AIPERF_DATASET_WEKA_SPLIT_FLATTENED_AGENTS`` (default true).
-
-Every test drives the full ``aiperf profile`` subprocess (10 services,
-multiprocess) against the in-repo mock server and asserts on the exported
-per-record metadata (``profile_export.jsonl``), the run logs, and
-``branch_stats`` -- not just "it ran".
-
-Stop-condition note: ``--request-count`` / ``--conversation-num`` counters
-include DAG child requests, which starves multi-turn roots in DAG-shaped weka
-runs (see ``CreditCounter.increment_sent``). All runs here therefore use
-``--benchmark-duration``, the only DAG-safe stop condition, and assertions
-are made per *play* (one root ``x_correlation_id`` plus the children linked
-via ``parent_correlation_id``) so repeated plays within the duration window
-never weaken an assertion.
-"""
+"""Adversarial end-to-end tests for weka flattened-agent LCP splitting: the loader must split untagged flat fan-outs into per-agent ``::fa:`` child conversations and the runtime must reproduce their recorded concurrency, asserted per play over duration-bounded ``aiperf profile`` subprocess runs."""
 
 from __future__ import annotations
 
@@ -51,18 +29,9 @@ BLOCK_SIZE = 64
 TRACE_MODEL = "m"
 SPLIT_ENV_VAR = "AIPERF_DATASET_WEKA_SPLIT_FLATTENED_AGENTS"
 
-# Exact log shapes emitted by WekaTraceLoader (weka_trace.py). Asserting on
-# them pins the spec-mandated observability of the split.
-#
-# PORT NOTE: the v2 detection line carries an aux/worker-group sub-breakdown
-# inserted between "spawned chains" and ", N empty-hash kept on main":
-#   "... C spawned chains [A aux sidecars (R reductions), W worker-group], E
-#    empty-hash kept on main)".
-# The aux/worker-group sub-classification is disabled for these mechanics tests
-# (see ``_run_weka_profile`` env), so the bracketed breakdown is always
-# "[0 aux sidecars (0 reductions), 0 worker-group]" and the captured tuple
-# (trace, agents, seams, spawned chains, empty-hash) is unchanged. The regex
-# non-greedily skips that bracketed segment so the same tuples assert.
+# Exact log shapes emitted by WekaTraceLoader. The regex non-greedily skips the
+# aux/worker-group bracketed breakdown (disabled for these mechanics tests) so
+# the captured (trace, agents, seams, spawned chains, empty-hash) tuple is stable.
 DETECTED_LINE_RE = re.compile(
     r"Trace (\S+): detected (\d+) agents "
     r"\((\d+) seams merged, (\d+) spawned chains"
@@ -94,11 +63,6 @@ LEGACY_EXPECTED_ROOT_TURNS: dict[str, int] = {
 }
 
 
-# =============================================================================
-# Trace fixture builders (modeled on tests/fixtures/weka_traces_fanout/)
-# =============================================================================
-
-
 def _req(
     t: float,
     hash_ids: list[int],
@@ -120,12 +84,7 @@ def _req(
 
 
 def _write_trace(target_dir: Path, trace_id: str, requests: list[dict]) -> None:
-    """Write one weka trace file with its requests sorted by recorded ``t``.
-
-    Time-sorted file order keeps outer indices aligned with time order so the
-    legacy (split-disabled) chaining never produces negative inter-turn
-    delays, and detection (which sorts by ``t`` itself) is unaffected.
-    """
+    """Write one weka trace file with requests sorted by recorded ``t`` so legacy chaining never produces negative inter-turn delays."""
     target_dir.mkdir(parents=True, exist_ok=True)
     trace = {
         "id": trace_id,
@@ -140,13 +99,7 @@ def _write_trace(target_dir: Path, trace_id: str, requests: list[dict]) -> None:
 
 
 def _write_fanout_corpus(target_dir: Path) -> Path:
-    """Three fan-out traces with overlapping same-namespace worker chains.
-
-    Shapes are modeled on ``tests/fixtures/weka_traces_fanout/fanout.json``
-    (main chain + chaining-hash_id workers forking at a shared prefix) with
-    varied timing and topology per trace; see FANOUT_EXPECTED for the
-    spec-derived split structure each trace must produce.
-    """
+    """Three fan-out traces (main chain + chaining-hash_id workers forking at a shared prefix) with varied per-trace timing/topology; see FANOUT_EXPECTED for the split structure."""
     # trace_alpha: main 3 turns; worker A 2 turns (joins main turn 2);
     # worker B 1 turn (joins main turn 1). Workers overlap in recorded time.
     _write_trace(
@@ -190,14 +143,7 @@ def _write_fanout_corpus(target_dir: Path) -> Path:
 
 
 def _write_join_trace(target_dir: Path) -> Path:
-    """One trace where a 5-turn worker chain must gate the second main turn.
-
-    Recorded: worker chain ends at t=0.55 <= main turn 1's t=1.0, so the
-    loader emits SPAWN_JOIN on main turn 1. At runtime the mock server is
-    configured slower than the recorded api_times, so without the gate the
-    main turn would fire (~1.5s) long before the worker chain finishes
-    (~3.5s) -- a broken join fails the ordering assertion by a wide margin.
-    """
+    """One trace whose 5-turn worker chain (ending before main turn 1's recorded t) must gate the second main turn via SPAWN_JOIN, verifiable because the mock server runs slower than recorded."""
     requests = [_req(0.0, [1, 2, 3], api_time=0.05)]
     chain = [1, 2, 9]
     for k in range(5):
@@ -209,13 +155,7 @@ def _write_join_trace(target_dir: Path) -> Path:
 
 
 def _write_background_trace(target_dir: Path) -> Path:
-    """One trace whose worker chain ends after the last main turn.
-
-    Recorded chain end (t=0.70) is past the last main turn (t=0.40), so the
-    loader must emit an ``is_background=True`` branch with no SPAWN_JOIN
-    prerequisite; the runtime must still send the child's requests and drain
-    cleanly at shutdown.
-    """
+    """One trace whose worker chain ends after the last main turn, so the loader emits an ``is_background=True`` branch (no SPAWN_JOIN) the runtime must still send and drain cleanly."""
     _write_trace(
         target_dir,
         "trace_bg",
@@ -230,13 +170,7 @@ def _write_background_trace(target_dir: Path) -> Path:
 
 
 def _write_poisoned_corpus(target_dir: Path) -> Path:
-    """Two traces of 10 mutually disjoint single-block-hash requests each.
-
-    Every request's hash list is a single unique block, so LCP detection
-    treats each as an independent zero-depth founder chain. With no
-    nonce-poison guard, the trace splits into one root plus per-request
-    agent chains (and the run must still complete cleanly).
-    """
+    """Two traces of 10 mutually disjoint single-block-hash requests each, which LCP detection treats as independent zero-depth founder chains."""
     for tid, base in (("trace_poison_a", 1000), ("trace_poison_b", 2000)):
         _write_trace(
             target_dir,
@@ -244,11 +178,6 @@ def _write_poisoned_corpus(target_dir: Path) -> Path:
             [_req(0.05 * i, [base + i], api_time=0.01, out=4) for i in range(10)],
         )
     return target_dir
-
-
-# =============================================================================
-# CLI runner and record/log analysis helpers
-# =============================================================================
 
 
 async def _run_weka_profile(
@@ -263,14 +192,7 @@ async def _run_weka_profile(
     extra_env: dict[str, str] | None = None,
     timeout: float = 200.0,
 ) -> AIPerfResults:
-    """Run one full ``aiperf profile`` subprocess over a weka trace directory.
-
-    A local runner (instead of the ``cli`` fixture) so tests can run twice
-    with distinct artifact dirs (determinism) and pass per-run env vars
-    (split-toggle) without mutating the shared test-process environment.
-    A timeout here is itself a finding: duration-bounded DAG runs that do
-    not exit indicate an orchestration drain deadlock.
-    """
+    """Run one full ``aiperf profile`` subprocess over a weka trace directory with per-run artifact dir and env; a timeout here signals an orchestration drain deadlock."""
     args = [
         "profile",
         "--model",
@@ -322,17 +244,9 @@ async def _run_weka_profile(
         # loader entirely (and across tests the fixture CONTENT can collide,
         # e.g. determinism vs fanout runs), so force a cold loader per run.
         "AIPERF_DATASET_MMAP_CACHE_ENABLED": "false",
-        # PORT NOTE: keep detected worker chains tagged ``::fa:`` (the session
-        # ids these mechanics tests assert on). With v2 defaults the synthetic
-        # fan-out workers -- single-request, ~256-token, same-model -- would be
-        # reclassified to ``::aux:`` (small-fresh-context arm: 256 <
-        # WEKA_AUX_ISL_FLOOR=16384) and shared-spawn fan-out to ``::wg:``,
-        # flipping every ``::fa:`` assertion. These tests cover the split
-        # MECHANICS (detection counts, SPAWN_JOIN gating, background drain) and
-        # are agnostic to aux/worker-group tagging, so disable all three sub-
-        # classifiers -- exactly as the loader unit suite's autouse conftest
-        # does. The classifiers themselves are covered by
-        # ``tests/unit/dataset/loader/test_weka_aux_classification.py``.
+        # Disable the aux/worker-group sub-classifiers so detected chains keep the
+        # ``::fa:`` tags these mechanics tests assert on (v2 defaults would
+        # reclassify the synthetic workers to ``::aux:``/``::wg:``).
         "AIPERF_DATASET_WEKA_AUX_MAX_REQUESTS": "0",
         "AIPERF_DATASET_WEKA_AUX_REDUCTION_OSL_MAX": "0",
         "AIPERF_DATASET_WEKA_WORKER_GROUP_MIN": "0",
@@ -500,18 +414,10 @@ def _sibling_children_overlap(plays: list[_Play]) -> bool:
     return False
 
 
-# =============================================================================
-# 1. Full CLI run over a directory of fan-out traces
-# =============================================================================
-
-
 async def test_fanout_dir_splits_and_replays_recorded_concurrency(
     tmp_path: Path, mock_server_factory: MockServerFactory
 ) -> None:
-    """Spec sections 4/5: a directory of flattened fan-out traces is split into
-    per-agent ::fa: child conversations, the detection log lines appear, every
-    session executes exactly its chain's requests, and sibling workers are
-    actually in flight concurrently (unlike the legacy serialized stream)."""
+    """Spec 4/5: a directory of flattened fan-out traces splits into per-agent ::fa: children that log detection, execute their exact chains, and run siblings concurrently."""
     corpus = _write_fanout_corpus(tmp_path / "traces")
     async with mock_server_factory(ttft=150.0, itl=2.0, workers=4) as server:
         result = await _run_weka_profile(
@@ -572,18 +478,10 @@ async def test_fanout_dir_splits_and_replays_recorded_concurrency(
     assert branch_stats.children_errored == 0, branch_stats
 
 
-# =============================================================================
-# 2. SPAWN_JOIN gating honored at runtime
-# =============================================================================
-
-
 async def test_spawn_join_gates_main_turn_until_worker_chain_completes(
     tmp_path: Path, mock_server_factory: MockServerFactory
 ) -> None:
-    """Spec section 5.3: the gated main turn must not be dispatched until the
-    worker chain's final response has completed. The mock server is slower
-    than the recorded timings, so an ungated replay would fire the main turn
-    ~2s before the worker chain finishes."""
+    """Spec 5.3: the gated main turn is not dispatched until the worker chain's final response completes (verified against a mock server slower than recorded timings)."""
     corpus = _write_join_trace(tmp_path / "traces")
     async with mock_server_factory(ttft=500.0, itl=2.0, workers=2) as server:
         result = await _run_weka_profile(
@@ -640,19 +538,10 @@ async def test_spawn_join_gates_main_turn_until_worker_chain_completes(
     assert branch_stats.children_errored == 0, branch_stats
 
 
-# =============================================================================
-# 3. Background chains (worker outliving the last main turn)
-# =============================================================================
-
-
 async def test_background_worker_chain_runs_after_root_and_drains_cleanly(
     tmp_path: Path, aiperf_mock_server: AIPerfMockServer
 ) -> None:
-    """Spec section 5.3 (background): a chain ending after the last main turn
-    becomes a fire-and-forget background child (is_background=True, no
-    SPAWN_JOIN). The run must complete without hanging at shutdown, the
-    background child's requests must still be sent (spawned at its anchoring
-    turn's return), and the parent must never suspend on it."""
+    """Spec 5.3 (background): a chain outliving the last main turn becomes a fire-and-forget child that still sends, drains cleanly at shutdown, and never suspends the parent."""
     corpus = _write_background_trace(tmp_path / "traces")
     result = await _run_weka_profile(
         input_dir=corpus,
@@ -696,17 +585,10 @@ async def test_background_worker_chain_runs_after_root_and_drains_cleanly(
     )
 
 
-# =============================================================================
-# 4. Env-off comparison
-# =============================================================================
-
-
 async def test_split_disabled_env_restores_legacy_single_stream(
     tmp_path: Path, aiperf_mock_server: AIPerfMockServer
 ) -> None:
-    """Spec section 6: AIPERF_DATASET_WEKA_SPLIT_FLATTENED_AGENTS=false must
-    fully disable detection -- no detection logs, no ::fa: sessions, and every
-    trace replays as one serialized root conversation with all rows."""
+    """Spec 6: ``AIPERF_DATASET_WEKA_SPLIT_FLATTENED_AGENTS=false`` fully disables detection so every trace replays as one serialized root conversation with all rows."""
     corpus = _write_fanout_corpus(tmp_path / "traces")
     result = await _run_weka_profile(
         input_dir=corpus,
@@ -759,18 +641,13 @@ async def test_split_disabled_env_restores_legacy_single_stream(
         assert branch_stats.children_spawned == 0, branch_stats
 
 
-# =============================================================================
-# 5. Poisoned (nonce-hash) traces
-# =============================================================================
-
 _POISON_RATE_ARGS = ["--request-rate", "4", "--arrival-pattern", "constant"]
 
 
 async def test_poisoned_corpus_completes_without_deadlock(
     tmp_path: Path, aiperf_mock_server: AIPerfMockServer
 ) -> None:
-    """Whatever detection decides about nonce-poisoned hashes, the run must
-    complete cleanly and every recorded request must still be replayed."""
+    """Whatever detection decides about nonce-poisoned hashes, the run completes cleanly and every recorded request is still replayed."""
     corpus = _write_poisoned_corpus(tmp_path / "traces")
     # 2 traces x 10 turns at --request-rate 4 needs ~5s of credits; 8s of
     # duration lets BOTH plays finish so the >=10-per-trace assertion below
@@ -823,9 +700,7 @@ async def test_poisoned_corpus_completes_without_deadlock(
 async def test_disjoint_corpus_splits_into_fa_sessions(
     tmp_path: Path, aiperf_mock_server: AIPerfMockServer
 ) -> None:
-    """With the nonce-poison guard removed, a corpus of mutually-disjoint
-    single-block-hash requests splits into per-agent ::fa: sessions and logs
-    no nonce-poison WARNING."""
+    """With the nonce-poison guard removed, a mutually-disjoint single-block-hash corpus splits into per-agent ::fa: sessions and logs no nonce-poison WARNING."""
     corpus = _write_poisoned_corpus(tmp_path / "traces")
     result = await _run_weka_profile(
         input_dir=corpus,
@@ -852,17 +727,10 @@ async def test_disjoint_corpus_splits_into_fa_sessions(
     )
 
 
-# =============================================================================
-# 6. Determinism
-# =============================================================================
-
-
 async def test_two_identical_runs_produce_identical_split_structure(
     tmp_path: Path, aiperf_mock_server: AIPerfMockServer
 ) -> None:
-    """Spec: detection is deterministic. Two identical runs must produce the
-    same per-trace detection results and the same per-play session structure
-    (root/child session ids and per-session turn counts)."""
+    """Detection is deterministic: two identical runs produce the same per-trace detection results and per-play session structure."""
     corpus = _write_fanout_corpus(tmp_path / "traces")
     results: list[AIPerfResults] = []
     for run_idx in (1, 2):

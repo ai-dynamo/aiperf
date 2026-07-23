@@ -1,24 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tool-turn detection for weka trace replay.
-
-Weka traces record, per request, the content-block types of the triggering
-input message (``input_types``: ``["tool_result"]`` for a tool-result
-continuation, ``["text"]`` for genuine user/agent text input) and the
-assistant stop reason (``stop``: ``tool_use`` / ``end_turn``). The loader
-classifies every reconstructed turn from these signals:
-
-  1. Own-turn ``input_types`` wins when present (``tool_result`` membership
-     decides).
-  2. Otherwise the PREVIOUS request's ``stop`` is the API-invariant fallback
-     (a ``tool_use`` stop is always answered by a tool-result turn).
-  3. Legacy traces carrying neither signal classify as ``None``.
-
-The classification is surfaced as ``Turn.input_kind`` and projected through
-``TurnMetadata`` so downstream consumers (timing strategies, metrics,
-exporters) can distinguish machine-paced tool-result turns from human-paced
-input turns.
-"""
+"""Tool-turn detection for weka trace replay: classify each turn's ``input_kind`` from own ``input_types`` then previous-request ``stop`` fallback."""
 
 from __future__ import annotations
 

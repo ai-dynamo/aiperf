@@ -68,11 +68,7 @@ def _make_strategy(
 
 
 def _make_run(*, target: CacheBustTarget, benchmark_id: str = "bench_test"):
-    """Build a v2 ``BenchmarkRun`` exposing the values the strategy reads.
-
-    The cache-bust target lives on the synthetic dataset's
-    ``prompts.cache_bust.target`` (see ``BenchmarkRun.cfg.get_cache_bust_target``).
-    """
+    """Build a v2 ``BenchmarkRun`` exposing the values the strategy reads."""
     from aiperf.config import BenchmarkConfig, BenchmarkRun
 
     cfg = BenchmarkConfig.model_validate(
@@ -149,13 +145,7 @@ async def test_single_trace_concurrency_one_recycles_self():
 
 @pytest.mark.asyncio
 async def test_pool_one_concurrency_two_no_deadlock():
-    """Two trajectories but only one queued trace -> second consumer's recycle
-    just reuses the queued slot. No deadlock; both consumers progress.
-
-    Models a real run with two parallel sessions where the recycle queue at
-    PROFILING start has exactly one entry. After both sessions finish, both
-    push their trace_id and both pop the FIFO head. No blocking await on get().
-    """
+    """Two trajectories but only one queued trace -> second consumer's recycle just reuses the queued slot. No deadlock; both consumers progress."""
     # Two trajectories, three traces total -> queue at PROFILING setup has
     # exactly one trace (trace_2) in it.
     trajectory = [
@@ -220,12 +210,7 @@ async def test_pool_one_concurrency_two_no_deadlock():
 
 @pytest.mark.asyncio
 async def test_burst_of_ten_completions_recycle_in_sampler_order():
-    """10 sessions complete sequentially within the same loop tick.
-
-    Each completion draws the next root from the sequential sampler, so the
-    10 recycled sessions are trace_0..trace_9 in sampler order (the sampler
-    starts at index 0 for this manually-built source).
-    """
+    """10 sessions complete sequentially within the same loop tick."""
     trajectory = [
         Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(10)
     ]
@@ -270,12 +255,7 @@ async def test_burst_of_ten_completions_recycle_in_sampler_order():
 
 @pytest.mark.asyncio
 async def test_concurrent_recycle_serves_distinct_roots_from_pool():
-    """Drive 50 completions concurrently via asyncio.gather.
-
-    Each completion draws one fresh root from the sequential sampler. With a
-    70-root pool and 50 completions (< one full pass), the served roots are
-    distinct and all belong to the root pool -- nothing is lost or duplicated.
-    """
+    """Drive 50 completions concurrently via asyncio.gather."""
     trajectory = [
         Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(50)
     ]
@@ -324,19 +304,7 @@ async def test_concurrent_recycle_serves_distinct_roots_from_pool():
 
 @pytest.mark.asyncio
 async def test_double_recycle_same_trace_raises():
-    """Calling handle_credit_return twice for the same final turn must raise.
-
-    This is a programmer-error guard: each session's final turn must trigger
-    exactly one recycle. Firing handle_credit_return twice with the same
-    correlation_id means the same final turn was reported twice — invariant
-    violation, never legitimate.
-
-    The guard is keyed on x_correlation_id (not trace_id) so that wrap-filled
-    lanes legitimately sharing a trace_id with distinct correlation_ids don't
-    collide. It is unconditional (was previously gated on ``__debug__``, which
-    ``python -O`` strips, silently allowing the duplicate-final-turn corruption
-    to escape into production).
-    """
+    """Calling handle_credit_return twice for the same final turn must raise."""
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     ds = _make_dataset(num_traces=3, turns_per_trace=2)
     issuer = AsyncMock()
@@ -367,12 +335,7 @@ async def test_double_recycle_same_trace_raises():
 
 @pytest.mark.asyncio
 async def test_recycle_during_cooldown_does_not_start_new_sessions():
-    """When DurationStopCondition has fired, in-flight credit returns must not
-    spawn fresh sessions: cooldown is for finishing, not starting.
-
-    Verifies the strategy honors stop_checker.can_start_new_session() in its
-    recycle-spawn path -- no fresh session is dispatched during cooldown.
-    """
+    """When DurationStopCondition has fired, in-flight credit returns must not spawn fresh sessions: cooldown is for finishing, not starting."""
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     ds = _make_dataset(num_traces=5, turns_per_trace=2)
     issuer = AsyncMock()
@@ -404,12 +367,7 @@ async def test_recycle_during_cooldown_does_not_start_new_sessions():
 
 @pytest.mark.asyncio
 async def test_large_pool_every_trace_replayed_deterministic_order():
-    """750 traces, 100 trajectories, run for several recycle generations.
-
-    Every non-trajectory trace must be served at least once. Trajectory traces also
-    get recycled once their initial session ends. Order is deterministic given
-    the trajectory layout because asyncio.Queue FIFO + sequential completion.
-    """
+    """750 traces, 100 trajectories, run for several recycle generations."""
     num_traces = 750
     trajectory_count = 100
     turns_per_trace = 2
@@ -491,11 +449,7 @@ async def test_large_pool_every_trace_replayed_deterministic_order():
 
 @pytest.mark.asyncio
 async def test_trajectory_with_one_turn_recycles_immediately_at_profiling_start():
-    """Trajectory's trace has exactly one turn (k_i = 0 = last turn).
-
-    PROFILING setup must not wait for a steady-state turn that never comes;
-    the strategy must invoke the recycle path during _execute_profiling().
-    """
+    """Trajectory's trace has exactly one turn (k_i = 0 = last turn)."""
     trajectory = [
         # trace_0 has 1 turn; k_i=0 is also the last turn.
         Trajectory(conversation_id="trace_0", start_turn_index=0),
@@ -551,13 +505,7 @@ async def test_trajectory_with_one_turn_recycles_immediately_at_profiling_start(
 
 @pytest.mark.asyncio
 async def test_recycle_missing_correlation_id_logs_warning(caplog):
-    """When _spawn_from_recycle_or_id is called with a finished_correlation_id
-    that isn't tracked in _correlation_to_lane (per-session bookkeeping
-    invariant violated upstream), the strategy logs a warning and falls back
-    to lane 0 so the recycle still progresses (silent skip would wedge the
-    queue head and break the test contract that recycle is unconditional on
-    final-turn return).
-    """
+    """When _spawn_from_recycle_or_id is called with a finished_correlation_id that isn't tracked in _correlation_to_lane (per-session bookkeeping invariant violated upstream), the strategy logs a warning and falls back to lane 0 so the recycle still progresses (silent skip would wedge the queue head and break the test contract that recycle is unconditional on final-turn return)."""
     import logging
 
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
@@ -632,9 +580,7 @@ def _make_child_credit(
 
 @pytest.mark.asyncio
 async def test_child_final_turn_does_not_recycle():
-    """A DAG-child final-turn return must NOT dispatch a fresh session and must
-    NOT add the child's conversation_id to ``_in_flight_recycled``.
-    """
+    """A DAG-child final-turn return must NOT dispatch a fresh session and must NOT add the child's conversation_id to ``_in_flight_recycled``."""
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     ds = _make_dataset(num_traces=3, turns_per_trace=2)
     issuer = AsyncMock()
@@ -663,11 +609,7 @@ async def test_child_final_turn_does_not_recycle():
 
 @pytest.mark.asyncio
 async def test_child_final_turn_repeated_does_not_trigger_double_recycle():
-    """Regression for the production crash: when the parent trace is recycled
-    and re-runs, its subagent child re-completes with the SAME
-    ``conversation_id`` (deterministic ``parent::sa:agent_id``). The strategy
-    must not raise the double-recycle ``RuntimeError`` in this case.
-    """
+    """Regression for the production crash: when the parent trace is recycled and re-runs, its subagent child re-completes with the SAME ``conversation_id`` (deterministic ``parent::sa:agent_id``). The strategy must not raise the double-recycle ``RuntimeError`` in this case."""
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     ds = _make_dataset(num_traces=3, turns_per_trace=2)
     issuer = AsyncMock()
@@ -707,11 +649,7 @@ async def test_child_final_turn_repeated_does_not_trigger_double_recycle():
 
 @pytest.mark.asyncio
 async def test_child_non_final_turn_still_dispatches_next_turn():
-    """Non-final child returns MUST continue to dispatch the next turn — the
-    short-circuit applies only to terminal child returns. This protects the
-    BranchOrchestrator's contract that "child continuation turns dispatch via
-    the strategy's normal path".
-    """
+    """Non-final child returns MUST continue to dispatch the next turn — the short-circuit applies only to terminal child returns. This protects the BranchOrchestrator's contract that "child continuation turns dispatch via the strategy's normal path"."""
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     ds = _make_dataset(num_traces=2, turns_per_trace=2)
 
@@ -756,10 +694,7 @@ async def test_child_non_final_turn_still_dispatches_next_turn():
 
 @pytest.mark.asyncio
 async def test_root_final_turn_still_recycles_after_child_shortcircuit():
-    """Regression baseline: the child-final short-circuit must not affect
-    root final-turn recycling. A root (``agent_depth == 0``) final-turn return
-    must still push to the recycle queue and dispatch the next session.
-    """
+    """Regression baseline: the child-final short-circuit must not affect root final-turn recycling. A root (``agent_depth == 0``) final-turn return must still push to the recycle queue and dispatch the next session."""
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     ds = _make_dataset(num_traces=2, turns_per_trace=2)
     issued: list[str] = []

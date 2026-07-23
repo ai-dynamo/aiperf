@@ -21,22 +21,13 @@ from tests.unit.dataset.loader.conftest import make_weka_run
 
 @pytest.fixture
 def cap_run():
-    """A v2 BenchmarkRun whose FileDataset carries a 1s inter-turn delay cap.
-
-    Replaces the v1 ``UserConfig`` + ``loadgen.inter_turn_delay_cap_seconds``
-    pattern; loaders now read the cap off ``run.cfg``'s active FileDataset.
-    """
+    """A v2 BenchmarkRun whose FileDataset carries a 1s inter-turn delay cap."""
     return make_weka_run(inter_turn_delay_cap_seconds=1.0)  # 1000 ms
 
 
 @pytest.fixture
 def prompt_generator_factory():
-    """Factory producing a deterministic mock prompt_generator.
-
-    Mirrors the inline pattern used by ``test_trace.py`` /
-    ``test_burst_gpt_trace.py`` so this test file does not depend on a
-    shared conftest fixture.
-    """
+    """Factory producing a deterministic mock prompt_generator."""
 
     def _make() -> Mock:
         gen = Mock()
@@ -88,9 +79,7 @@ def test_mooncake_payload_mode_clamps_inter_turn_delay(
     cap_run,
     prompt_generator_factory,
 ) -> None:
-    """Verbatim ``payload`` turns must honor the cap too (not just the
-    synthesized-prompt branch). The payload/messages branches once used the raw
-    recorded delay, silently ignoring --inter-turn-delay-cap-seconds."""
+    """Verbatim ``payload`` turns honor the cap too, not just the synthesized-prompt branch."""
     rows = [
         {"session_id": "s1", "payload": {"prompt": "p0"}},
         {"session_id": "s1", "payload": {"prompt": "p1"}, "delay": 5_000},
@@ -136,14 +125,8 @@ def test_burst_gpt_loader_clamps_inter_turn_delay(
     cap_run,
     prompt_generator_factory,
 ) -> None:
-    """BurstGPT's CSV schema has no ``delay`` column today, but the base
-    loader's ``_build_turn`` is shared with mooncake/bailian and must clamp
-    any ``delay`` attribute that lands on the trace object. This test feeds
-    a synthetic trace through ``_build_turn`` to assert the cap path is
-    wired regardless of how the loader populates ``delay``.
-    """
-    # Empty CSV satisfies BurstGPTTraceDatasetLoader.__init__ requirements
-    # (we exercise _build_turn directly, not the CSV-parse path).
+    """The shared base ``_build_turn`` clamps any ``delay`` attribute on a BurstGPT trace even though its CSV schema has no delay column."""
+    # Empty CSV satisfies __init__; we exercise _build_turn directly.
     csv_path = tmp_path / "burst.csv"
     csv_path.write_text("Timestamp,Request tokens,Response tokens\n")
 
@@ -152,8 +135,7 @@ def test_burst_gpt_loader_clamps_inter_turn_delay(
         prompt_generator=prompt_generator_factory(),
         run=cap_run,
     )
-    # AIPerfBaseModel is configured with ``extra="allow"`` so an extra
-    # ``delay`` attribute is preserved on the trace.
+    # extra="allow" preserves the extra ``delay`` attribute on the trace.
     trace = BurstGPTTrace.model_validate(
         {
             "timestamp": 1.0,
@@ -171,12 +153,7 @@ def test_bailian_loader_clamps_inter_turn_delay(
     cap_run,
     prompt_generator_factory,
 ) -> None:
-    """Bailian's schema also lacks a first-class ``delay`` field; the base
-    loader's ``_build_turn`` reads ``delay`` via ``getattr``. We verify the
-    cap path on the loader's ``_build_turn`` using a Bailian trace that
-    carries ``delay`` as a ``extra="allow"`` attribute.
-    """
-    # Minimal valid file so __init__ + load_dataset can run later if needed.
+    """The base ``_build_turn`` clamps a ``delay`` carried as an extra attribute on a Bailian trace, whose schema lacks a first-class delay field."""
     rows = [
         {
             "chat_id": 1,

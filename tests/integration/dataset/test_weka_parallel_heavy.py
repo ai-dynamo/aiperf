@@ -1,33 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Heavy parity tests for WekaTraceLoader's parallel reconstruction path.
-
-Drives the real :class:`multiprocessing.Pool` (forkserver context, real HF
-tokenizer) end-to-end through :meth:`WekaTraceLoader.convert_to_conversations`.
-The unit-suite parallel tests in
-``tests/unit/dataset/loader/test_weka_trace_parallel.py`` deliberately bypass
-the Pool by calling :func:`weka_parallel_convert._process_task` in-process --
-they cover algorithmic byte-equivalence but cannot catch fork-time bugs,
-worker-init failures, pickle issues, or order-of-emission divergences. This
-suite exists to close that gap.
-
-Marked ``integration`` (not ``component_integration``) because the
-component_integration package autouses a ``FakeTokenizer`` patch on
-``Tokenizer.from_pretrained`` that applies in the parent process but is
-not inherited by forkserver workers, which would silently break byte parity.
-The integration conftest preloads real tokenizers, so the parent and the
-worker subprocesses both go through the same ``Tokenizer.from_pretrained``
-path.
-
-Skipped automatically when the named tokenizer is not in the local HF cache.
-
-PORT NOTE (v2): the loader is constructed with ``run=BenchmarkRun`` (built via
-the loader-suite ``make_weka_run`` helper) instead of the v1
-``user_config=UserConfig`` MagicMock-free wiring. ``default_block_size`` has no
-FileDataset home in v2 and is forwarded to the constructor directly. The real
-``PromptGenerator`` is built with keyword ``prompts=``/``prefix_prompts=`` and
-attached after construction (same shape the v2 unit suite uses).
-"""
+"""Heavy parity tests driving WekaTraceLoader's parallel reconstruction through the real forkserver Pool with a real HF tokenizer, closing the fork-time/pickle/emission-order gap the in-process unit tests cannot catch (skipped when the tokenizer is not in the local HF cache)."""
 
 from __future__ import annotations
 
@@ -70,8 +43,7 @@ pytestmark = [
 
 @pytest.fixture(autouse=True)
 def _rng_init():
-    """Each test starts with a deterministic global RNG seed so the
-    PromptGenerator's derived rngs match across runs / processes."""
+    """Seed the global RNG deterministically so PromptGenerator-derived rngs match across runs and processes."""
     import contextlib
 
     from aiperf.common import random_generator as rng_mod
@@ -108,12 +80,7 @@ def _build_loader(
     workers: int,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Real WekaTraceLoader with real PromptGenerator + tokenizer.
-
-    v2 wiring: config flows off a real ``BenchmarkRun`` (``make_weka_run``);
-    the loader reads ``run.cfg.*``. ``default_block_size`` is forwarded to the
-    constructor (no FileDataset home in v2).
-    """
+    """Build a real WekaTraceLoader with a real PromptGenerator and tokenizer, toggling the parallel path via env thresholds."""
     from aiperf.common import environment as env_mod
     from aiperf.common.tokenizer import Tokenizer
     from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
@@ -173,11 +140,6 @@ def _convert(
     return loader.convert_to_conversations(data)
 
 
-# ---------------------------------------------------------------------------
-# Serial vs parallel byte parity, per fixture layout
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "fixture_name",
     ["simple.json", "one_subagent.json", "terminal_subagent.json", "multi_model.json"],
@@ -186,9 +148,7 @@ def _convert(
 def test_serial_parallel_byte_parity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fixture_name: str
 ):
-    """Serial path and parallel path must produce byte-identical model dumps
-    in identical order across all fixture layouts (no-subagent, mid-subagent,
-    terminal-subagent, multi-model)."""
+    """Serial and parallel paths produce byte-identical model dumps in identical order across all fixture layouts."""
     corpus = _make_corpus_dir(tmp_path, 16, fixture_name)
     serial = _convert(corpus, force_parallel=False, monkeypatch=monkeypatch)
     parallel = _convert(corpus, force_parallel=True, workers=4, monkeypatch=monkeypatch)
@@ -198,8 +158,7 @@ def test_serial_parallel_byte_parity(
 def test_terminal_subagent_emits_background_branch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """``terminal_subagent.json`` has a subagent with no following parent
-    turn -- it must surface as ``is_background=True``."""
+    """A subagent with no following parent turn surfaces as ``is_background=True``."""
     corpus = _make_corpus_dir(tmp_path, 4, "terminal_subagent.json")
     convs = _convert(corpus, force_parallel=True, workers=2, monkeypatch=monkeypatch)
     bg_count = sum(
@@ -211,16 +170,10 @@ def test_terminal_subagent_emits_background_branch(
     assert bg_count > 0
 
 
-# ---------------------------------------------------------------------------
-# Determinism
-# ---------------------------------------------------------------------------
-
-
 def test_parallel_run_twice_is_deterministic(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """Running the parallel path twice in the same process produces identical
-    bytes (no order-of-task dependencies)."""
+    """Running the parallel path twice in one process produces identical bytes (no order-of-task dependencies)."""
     corpus = _make_corpus_dir(tmp_path, 16, "simple.json")
     a = _convert(corpus, force_parallel=True, workers=4, monkeypatch=monkeypatch)
     b = _convert(corpus, force_parallel=True, workers=4, monkeypatch=monkeypatch)
@@ -231,8 +184,7 @@ def test_parallel_run_twice_is_deterministic(
 def test_worker_count_invariance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workers: int
 ):
-    """Output bytes do not depend on worker count: the byte signature for
-    {2, 4, 8, 16} workers all match a fixed 4-worker baseline."""
+    """Output bytes do not depend on worker count: {2,4,8,16}-worker signatures all match a fixed 4-worker baseline."""
     corpus = _make_corpus_dir(tmp_path, 20, "simple.json")
     target = _convs_signature(
         _convert(corpus, force_parallel=True, workers=workers, monkeypatch=monkeypatch)
@@ -246,9 +198,7 @@ def test_worker_count_invariance(
 def test_cross_process_signature_stable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """Running the same conversion in a fresh subprocess produces the same
-    byte signature (catches accidental dependence on parent-process state,
-    PYTHONHASHSEED, or fork timing)."""
+    """The same conversion in a fresh subprocess yields the same byte signature (catches dependence on parent-process state, PYTHONHASHSEED, or fork timing)."""
     corpus = _make_corpus_dir(tmp_path, 8, "simple.json")
     here_sig = _convs_signature(
         _convert(corpus, force_parallel=True, workers=4, monkeypatch=monkeypatch)
@@ -301,17 +251,10 @@ def test_cross_process_signature_stable(
     assert sub_sig == here_sig
 
 
-# ---------------------------------------------------------------------------
-# Invariants
-# ---------------------------------------------------------------------------
-
-
 def test_scope_isolation_same_hash_id_different_traces(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """The ``hash_id_scope:'local'`` invariant: the same hash_id appearing in
-    two different trace files must produce different content. Otherwise
-    cross-trace replay inflates KV-cache hit rates."""
+    """``hash_id_scope:'local'``: the same hash_id in two different trace files must produce different content."""
     corpus = _make_corpus_dir(tmp_path, 2, "simple.json")
     convs = _convert(corpus, force_parallel=True, workers=2, monkeypatch=monkeypatch)
     a = next(
@@ -323,30 +266,20 @@ def test_scope_isolation_same_hash_id_different_traces(
     assert a != b
 
 
-# ---------------------------------------------------------------------------
-# Stress / scale
-# ---------------------------------------------------------------------------
-
-
 def test_stress_500_simple_traces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """500 simple-fixture traces x 16 workers -- exercises full pickle/spawn/
-    return path at scale."""
+    """500 simple-fixture traces across 16 workers exercise the full pickle/spawn/return path at scale."""
     corpus = _make_corpus_dir(tmp_path, 500, "simple.json")
     convs = _convert(corpus, force_parallel=True, workers=16, monkeypatch=monkeypatch)
     assert len(convs) == 500
     for c in convs:
         assert len(c.turns) == 2
         for turn in c.turns:
-            # weka loader populates raw_messages (the chat-shape message array
-            # consumed by ChatEndpoint.build_messages); turn.texts is left
-            # empty because no consumer reads it when raw_messages is set.
             assert turn.raw_messages
             assert all(m.get("content") for m in turn.raw_messages)
 
 
 def test_stress_mixed_fixtures_1000(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """1000 traces drawn from all four fixture layouts in interleaved order;
-    asserts the expected parent+child conversation count."""
+    """1000 interleaved traces from all four fixture layouts yield the expected parent+child conversation count."""
     fixtures = [
         "simple.json",
         "one_subagent.json",
@@ -371,21 +304,14 @@ def test_stress_mixed_fixtures_1000(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 
 def test_oversubscribed_workers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Worker count exceeding cpu_count works without resource contention or
-    deadlock (just slower)."""
+    """Worker count exceeding cpu_count works without contention or deadlock."""
     corpus = _make_corpus_dir(tmp_path, 32, "simple.json")
     convs = _convert(corpus, force_parallel=True, workers=32, monkeypatch=monkeypatch)
     assert len(convs) == 32
 
 
-# ---------------------------------------------------------------------------
-# Forkserver helper lifecycle
-# ---------------------------------------------------------------------------
-
-
 def test_helper_reused_across_calls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Three sequential parallel convert calls reuse the forkserver helper --
-    no dramatic per-call regression (helper persists for process lifetime)."""
+    """Three sequential parallel convert calls reuse the forkserver helper with no dramatic per-call regression."""
     corpus = _make_corpus_dir(tmp_path, 8, "simple.json")
     times: list[float] = []
     for _ in range(3):

@@ -2,12 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from tests.unit.dataset.loader._shared_helpers import _make_loader, _write_trace
 
-"""Tests for WekaTraceLoader model-name rewrite behavior.
-
-The trace's per-request ``model`` field is rewritten to
-``endpoint.model_names`` via a per-trace deterministic mapping. Always-on;
-no flag.
-"""
+"""WekaTraceLoader rewrites each request's ``model`` to ``endpoint.model_names`` via a per-trace deterministic mapping (always-on, no flag)."""
 
 
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
@@ -69,13 +64,7 @@ def _make_trace_obj(requests_dicts, trace_id="tr"):
 
 
 def _bare_loader(*, model_names):
-    """Minimal loader sufficient for _build_model_map (no I/O paths).
-
-    ``_build_model_map`` reads only ``self._configured_model_names`` (resolved
-    off the v2 ``BenchmarkRun`` in ``__init__``), so set it directly here and
-    skip the real constructor. Building a real run for the empty-model-names
-    case is impossible anyway (``ModelsAdvanced.items`` has ``min_length=1``).
-    """
+    """Minimal loader for _build_model_map: sets ``_configured_model_names`` directly and skips the real constructor (no I/O paths)."""
     loader = WekaTraceLoader.__new__(WekaTraceLoader)
     loader._configured_model_names = list(model_names)
     return loader
@@ -152,11 +141,7 @@ def test_build_model_map_more_distinct_than_configured_modulo_wrap():
 
 
 def test_build_model_map_first_appearance_order_in_outer_list():
-    """B appears first (in subagent), then A in second parent normal.
-
-    Main is the FIRST PARENT NORMAL's model, regardless of where subagents
-    sit in the outer list. Then walk-order picks up other distinct models.
-    """
+    """Main is the first parent normal's model regardless of subagent position, then walk-order picks up other distinct models."""
     loader = _bare_loader(model_names=("M0", "M1", "M2"))
     trace = _make_trace_obj(
         [

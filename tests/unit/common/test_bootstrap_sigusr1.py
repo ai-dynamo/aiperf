@@ -1,13 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Coverage for the SIGUSR1 stack-dump diagnostic handler.
-
-``register_sigusr1_faulthandler`` lets ``kill -USR1 <pid>`` dump every thread's
-traceback for hang debugging. It is registered in the SystemController (main)
-process (cli_runner.run_benchmark) and in every spawned service subprocess
-(bootstrap_and_run_service), so the whole process tree is poke-able.
-"""
+"""The SIGUSR1 stack-dump diagnostic handler dumps every thread's traceback for hang debugging."""
 
 from __future__ import annotations
 
@@ -58,15 +52,13 @@ def test_noop_without_sigusr1() -> None:
     ],
 )  # fmt: skip
 def test_registration_errors_are_suppressed(exc_type: type[Exception]) -> None:
-    """A stderr without fileno() (test harnesses) raises on register; the
-    best-effort helper must swallow it (ValueError, RuntimeError, or
-    AttributeError) rather than crash startup."""
+    """The best-effort helper swallows registration errors rather than crash startup."""
     with patch(
         "aiperf.common.bootstrap.faulthandler.register",
         side_effect=exc_type("sys.stderr has no fileno"),
         create=True,
     ):
-        bootstrap.register_sigusr1_faulthandler()  # must not raise
+        bootstrap.register_sigusr1_faulthandler()
 
 
 @pytest.mark.skipif(

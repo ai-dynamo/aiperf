@@ -15,11 +15,7 @@ from aiperf.dataset.loader.weka_agent_chains import (
 
 
 def _all_emitted_outer_indices(result) -> list[int]:
-    """Every retained request as emitted: main chain + every worker chain.
-
-    Spliced (dead) chains are excluded — their requests are owned by the
-    chain they were spliced into, so each request appears exactly once.
-    """
+    """Every retained request across the main and worker chains, excluding spliced (dead) chains so each appears once."""
     out = [oi for oi, _ in result.chains[result.main_index].requests]
     for ci in result.worker_indices:
         out.extend(oi for oi, _ in result.chains[ci].requests)

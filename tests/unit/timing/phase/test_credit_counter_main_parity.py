@@ -80,9 +80,7 @@ class TestErrorAccounting:
         assert c.final_request_errors == 2
 
     def test_child_errored_return_still_bumps_request_errors(self) -> None:
-        """request_errors is request-level, so a DAG child's errored return
-        bumps it too (symmetric with requests_completed ticking for children).
-        """
+        """A DAG child's errored return bumps request-level request_errors, symmetric with requests_completed ticking for children."""
         c = CreditCounter(cfg())
         c.increment_sent(turn(depth=1, parent="root", corr="child"))
         c.increment_returned(
@@ -95,8 +93,7 @@ class TestErrorAccounting:
 
 
 class TestRootOnlySessionPredicate:
-    """``_root_requests_sent`` keeps DAG children from prematurely flipping
-    ``is_final_credit`` on the ``expected_num_sessions`` path."""
+    """``_root_requests_sent`` keeps DAG children from prematurely flipping ``is_final_credit`` on the ``expected_num_sessions`` path."""
 
     def test_child_wire_does_not_prematurely_satisfy_session_predicate(self) -> None:
         # One session expected, a 3-turn root. Children fire between root turns.

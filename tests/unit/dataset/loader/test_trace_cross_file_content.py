@@ -30,17 +30,7 @@ _TEST_BLOCK_SIZE = 4
 
 @pytest.fixture(autouse=True)
 def _mock_parallel_decode_tokenizer(mock_tokenizer_cls):
-    """Route ``parallel_decode``'s tokenizer load to the mock.
-
-    The trace loaders synthesize hash-id prompts via
-    ``HashIdsPromptSynthesisMixin.synthesize_prompts_from_hash_ids`` ->
-    ``parallel_decode``, whose sequential path does
-    ``Tokenizer.from_pretrained(self._tokenizer_name)``. ``_tokenizer_name`` is
-    "test-tok" (from the v2 run), which would hit a real HuggingFace 404. Patch
-    it to the deterministic MockTokenizer so decode is consistent (same tokens ->
-    same string, different tokens -> different string), preserving the cross-file
-    distinctness / within-file determinism the tests assert.
-    """
+    """Route ``parallel_decode``'s tokenizer load to the deterministic MockTokenizer, avoiding a real HuggingFace fetch."""
     with patch(
         "aiperf.common.tokenizer.Tokenizer.from_pretrained",
         lambda name, **kw: mock_tokenizer_cls.from_pretrained(name),
@@ -230,16 +220,7 @@ class TestBailianCrossFileContent:
 
 
 class TestBurstGPTCrossFileContent:
-    """Cross-file collision regression for BurstGPTTraceDatasetLoader.
-
-    BurstGPT rows do not carry hash_ids; prompts are sampled via the corpus
-    RNG path. The trace_id scope still matters because :class:`PromptGenerator`
-    keeps a decoded-string cache keyed only by ``(tuple(hash_ids), num_tokens,
-    block_size)`` — when ``hash_ids`` is empty the path goes through
-    ``generate(...)`` which uses ``_corpus_rng`` directly. This test pins
-    behaviour and verifies that :meth:`_init_trace_scope` clears both caches
-    so the second file does not return stale content from the first.
-    """
+    """Cross-file collision regression for BurstGPTTraceDatasetLoader, verifying ``_init_trace_scope`` clears caches so a second file returns no stale content."""
 
     def _make_loader(
         self, filename: str, pg, user_config

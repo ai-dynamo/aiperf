@@ -246,10 +246,7 @@ def test_turn_delta_case_3_mid_segment_cut_resets_context():
 
 
 def test_truncate_returns_index_when_boundary_cut_drops_segments_past_boundary():
-    """Boundary cut with prev_partial_tail=0 that deletes a following segment
-    must report the first deleted segment index, so turn_delta can detect the
-    disturbance and reset the context. Returning None here would silently lose
-    the deleted segment's content."""
+    """A boundary cut that deletes a following segment must report the first deleted segment index so turn_delta can reset the context."""
     segs = [
         RoleSegment(
             role="user",
@@ -277,8 +274,7 @@ def test_truncate_returns_index_when_boundary_cut_drops_segments_past_boundary()
 
 
 def test_truncate_returns_none_on_clean_boundary_with_no_segments_past():
-    """Boundary cut at the end of the trailing segment, no partial tail and
-    no segments past the cut, is a true no-op and must return None."""
+    """A boundary cut at the end of the trailing segment with no partial tail and nothing past it is a true no-op and returns None."""
     segs = [
         RoleSegment(
             role="user",
@@ -299,8 +295,7 @@ def test_truncate_returns_none_on_clean_boundary_with_no_segments_past():
 
 
 def test_truncate_returns_segment_index_when_cut_lands_at_segment_start():
-    """Truncation lands exactly at the start of segment i and deletes
-    segments[i:] entirely. The earliest disturbed index is i."""
+    """Truncation landing exactly at the start of segment i deletes segments[i:] and reports i as the earliest disturbed index."""
     segs = [
         RoleSegment(
             role="user",
@@ -392,10 +387,7 @@ def test_truncate_returns_segment_index_on_mid_segment_cut():
 
 
 def test_truncate_returns_zero_when_clearing_non_empty_buffer():
-    """target_blocks<=0 with a non-empty buffer clears every segment, which is
-    a disturbance to any previously-emitted segment. Returning None here would
-    cause turn_delta to take the strict-append path with a stale
-    _emitted_segment_count pointing past the now-empty buffer."""
+    """target_blocks<=0 with a non-empty buffer clears every segment and reports the disturbance at index 0."""
     segs = [
         RoleSegment(
             role="user",
@@ -423,9 +415,7 @@ def test_truncate_returns_none_when_zeroes_empty_buffer():
 
 
 def test_turn_delta_resets_when_lcp_zero_after_emitted_turn():
-    """LCP==0 after at least one emitted turn forces target_blocks=0, which
-    clears the synth buffer. turn_delta must report reset_context=True with
-    a non-empty rebuilt message list, not strict-append with a stale count."""
+    """LCP==0 after an emitted turn clears the synth buffer, so turn_delta reports reset_context=True with a non-empty rebuilt message list."""
     r = _make_recon()
     # Turn 0: 2 blocks, block-aligned (no partial tail) so the only
     # disturbance on turn 1 will be the LCP=0 clear, not a tail strip.
@@ -463,9 +453,7 @@ def test_turn_delta_resets_when_lcp_zero_after_emitted_turn():
 
 
 def test_turn_delta_resets_when_boundary_cut_deletes_emitted_segments():
-    """Boundary cut deletes one or more previously-emitted segments without
-    slicing the boundary segment in place. The earliest deleted segment lives
-    in the emitted region, so turn_delta must reset context."""
+    """A boundary cut deleting previously-emitted segments (without slicing the boundary segment) resets context, since the earliest deleted segment was emitted."""
     r = _make_recon()
     # Turn 0: 3 blocks, block-aligned (prev_partial_tail will be 0 on turn 1).
     r.init_turn_0(
@@ -521,9 +509,7 @@ def test_turn_delta_resets_when_boundary_cut_deletes_emitted_segments():
 
 
 def test_turn_delta_strict_append_when_truncation_only_deletes_unemitted_segments():
-    """When truncation only deletes segments past _emitted_segment_count, the
-    deletion does not invalidate any emitted content. turn_delta must take
-    the strict-append path (reset_context=False)."""
+    """When truncation only deletes segments past _emitted_segment_count, no emitted content is invalidated so turn_delta strict-appends (reset_context=False)."""
     r = _make_recon()
     # Turn 0: 2 blocks, block-aligned (no partial tail).
     r.init_turn_0(
@@ -655,16 +641,7 @@ def test_system_only_turn0_next_turn_resumes_with_user_turn():
 
 
 def test_pure_growth_after_tail_only_segment_keeps_block_alignment():
-    """A boundary cut landing on a NON-trailing segment must not strip the
-    previous turn's partial tail from it — the tail tokens live on the
-    trailing (tail-only) segment, which the cut deletes wholesale. Stripping
-    block-aligned tokens from the boundary segment corrupts the hash-content
-    invariant and makes every subsequent reset re-emission unstable.
-
-    Shape (machine-paced tool loop): turn 2 appends a tail-only user segment
-    (tool output smaller than a block, no new hash recorded), so turn 3's
-    pure-growth cut lands on the assistant segment boundary with the
-    tail-only segment past it."""
+    """A boundary cut landing on a non-trailing segment must not strip the previous turn's partial tail from it, preserving the hash-content invariant."""
     r = _make_recon()
     # Turn 0: [user 3b].
     r.init_turn_0(

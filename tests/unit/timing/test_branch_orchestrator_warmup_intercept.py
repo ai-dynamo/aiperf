@@ -75,11 +75,7 @@ async def test_warmup_credit_short_circuits_without_spawning():
 
 @pytest.mark.asyncio
 async def test_profiling_credit_with_same_source_does_process():
-    """The identical fixture at PROFILING DOES spawn the declared children.
-
-    This is the contrast that pins the short-circuit to ``phase`` alone:
-    same conversation source, same turn-0 branch, only the phase changed.
-    """
+    """The identical fixture at PROFILING spawns the declared children, pinning the short-circuit to phase alone."""
     cs = _spawn_declaring_source()
     issuer = MagicMock()
     issuer.dispatch_first_turn = AsyncMock(return_value=True)

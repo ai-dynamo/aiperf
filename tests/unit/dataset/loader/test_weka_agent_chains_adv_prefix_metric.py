@@ -146,13 +146,7 @@ def test_compute_chain_prefix_blocks_member_first_request_is_exact_common_prefix
 
 
 def test_compute_chain_prefix_blocks_declared_win_applies_to_main_only():
-    """Resolved spec ambiguity (5.4): when P_declared beats P_observed, the
-    longer declared boundary applies to the MAIN chain only. Workers only
-    provably share the observed region — their first request may not even
-    contain the declared prefix blocks, so a group-wide declared boundary
-    is physically unrenderable for them. The boundaries diverge only on
-    old declared-token vintages where declared > observed, where byte
-    sharing past the observed region is impossible regardless."""
+    """When P_declared beats P_observed, the longer declared boundary applies to the main chain only; workers keep the observed region (spec 5.4)."""
     r = detect_agent_chains(
         _normals(
             _req(0.0, [1, 2, 3], api_time=0.5),

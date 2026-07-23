@@ -1,23 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial unit tests for DatasetManager inputs.json / payload handling.
-
-Targets three known-fragile surfaces in ``dataset_manager.py``:
-
-- ``_profile_configure_command`` skip-logic for pre-built payloads.
-- ``_generate_input_payloads`` raw-vs-formatted branch (mixed state).
-- ``_preformat_payloads`` all-or-nothing gating plus NotImplementedError escape.
-- ``_generate_inputs_json_file`` OSError swallow, re-raise, ``.tmp`` cleanup.
-
-MOONCAKE_TRACE payload mode is skipped for inputs.json generation.
-
-PORT NOTE: agentx's raw-vs-formatted branch in ``_generate_input_payloads``
-(raw datasets preserved verbatim, non-raw routed through
-``format_conversation_payloads``, mixed raw/non-raw turns raising a
-``ValueError``) was NOT ported onto the v2 ``DatasetManager``. v2 formats
-every turn directly via ``endpoint.format_payload``. The tests that exercise
-that lost branch are marked ``xfail(strict=True)`` and tagged ``PORT GAP``.
-"""
+"""Adversarial unit tests for DatasetManager inputs.json / payload handling: _profile_configure_command skip-logic, _generate_input_payloads raw-vs-formatted branch, _preformat_payloads all-or-nothing gating, and _generate_inputs_json_file error handling / .tmp cleanup."""
 
 from __future__ import annotations
 

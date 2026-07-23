@@ -134,9 +134,7 @@ def test_validator_rejects_event_name():
 
 
 def test_validator_accepts_multiple_prereqs_on_one_turn_distinct_branches():
-    """Phase 3: multi-source gates (one turn gated by multiple branches) are
-    now supported; the orchestrator tracks each prereq independently under
-    the same ``PendingBranchJoin.outstanding`` dict."""
+    """Multi-source gates (one turn gated by multiple branches) are accepted."""
     md = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -168,7 +166,6 @@ def test_validator_accepts_multiple_prereqs_on_one_turn_distinct_branches():
         ],
         sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
     )
-    # Phase 3 accepts this shape.
     validate_for_orchestrator_v1(md)
 
 
@@ -250,5 +247,4 @@ def test_validator_accepts_overlapping_pending_joins_for_parent():
         ],
         sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
     )
-    # No exception — Phase 1 accepts this shape.
     validate_for_orchestrator_v1(md)

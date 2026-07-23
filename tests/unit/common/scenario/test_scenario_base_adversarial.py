@@ -1,21 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial tests for `ScenarioSpec`, the scenario registry, and scenario error types.
-
-Covers edge cases not exercised by `test_scenario_base.py` /
-`test_scenario_registry.py`:
-
-- Frozen-spec attempted mutation surfaces `pydantic.ValidationError` (not AttributeError).
-- `extra="forbid"` on `ScenarioSpec` rejects unknown kwargs.
-- Required-field omission raises `ValidationError`.
-- `ScenarioLockError` message pluralization for 1 vs many violations.
-- `ScenarioLockError.violations` round-trips the input list.
-- `ScenarioViolation.__str__` renders all four fields.
-- `TrajectoryWarmupFailedError` plural/singular phrasing, many ids, non-ASCII safety.
-- `UnknownScenarioError` is a `ValueError` subclass.
-- Registry lookup is case-sensitive and does not strip whitespace.
-- `SCENARIOS` is keyed by `spec.name`.
-"""
+"""Adversarial edge cases for `ScenarioSpec` (frozen/forbid/required), the scenario error types, and registry lookup."""
 
 from __future__ import annotations
 
@@ -58,15 +43,11 @@ def _make_violation(flag: str = "--foo") -> ScenarioViolation:
     )
 
 
-# ---------------------------------------------------------------------------
-# ScenarioSpec frozen / forbid / required-field behavior.
-# ---------------------------------------------------------------------------
 def test_scenario_spec_frozen_raises_validation_error_not_attribute_error() -> None:
     """Pydantic v2 frozen=True surfaces ValidationError on assignment, not AttributeError."""
     spec = ScenarioSpec(**_minimal_spec_kwargs())
     with pytest.raises(ValidationError) as exc_info:
         spec.name = "mutated"
-    # Confirm it's ValidationError (subclass of ValueError), not AttributeError.
     assert not isinstance(exc_info.value, AttributeError)
     assert "frozen" in str(exc_info.value).lower()
 
@@ -87,9 +68,6 @@ def test_scenario_spec_required_field_omitted_raises() -> None:
     assert "name" in str(exc_info.value)
 
 
-# ---------------------------------------------------------------------------
-# ScenarioLockError pluralization + violation round-trip.
-# ---------------------------------------------------------------------------
 def test_scenario_lock_error_singular_pluralization_one_violation() -> None:
     err = ScenarioLockError([_make_violation()])
     assert "(1 conflict):" in str(err)
@@ -114,9 +92,6 @@ def test_scenario_lock_error_zero_violations_uses_plural_form() -> None:
     assert "(0 conflicts):" in str(err)
 
 
-# ---------------------------------------------------------------------------
-# ScenarioViolation __str__ rendering.
-# ---------------------------------------------------------------------------
 def test_scenario_violation_str_renders_all_fields() -> None:
     violation = ScenarioViolation(
         flag="--foo",
@@ -131,9 +106,6 @@ def test_scenario_violation_str_renders_all_fields() -> None:
     assert "bad" in rendered
 
 
-# ---------------------------------------------------------------------------
-# TrajectoryWarmupFailedError formatting edge cases.
-# ---------------------------------------------------------------------------
 def test_trajectory_warmup_failed_error_singular_trace_count() -> None:
     err = TrajectoryWarmupFailedError(["trace_a"])
     msg = str(err)
@@ -159,16 +131,10 @@ def test_trajectory_warmup_failed_error_non_ascii_trace_ids() -> None:
     assert "trace_β" in msg
 
 
-# ---------------------------------------------------------------------------
-# Error type hierarchy.
-# ---------------------------------------------------------------------------
 def test_unknown_scenario_error_is_value_error_subclass() -> None:
     assert issubclass(UnknownScenarioError, ValueError)
 
 
-# ---------------------------------------------------------------------------
-# Registry lookup edge cases.
-# ---------------------------------------------------------------------------
 def test_get_scenario_returns_singleton_identity() -> None:
     """The registry returns the exact INFERENCEX_AGENTX_MVP singleton, not a copy."""
     assert get_scenario("inferencex-agentx-mvp") is INFERENCEX_AGENTX_MVP
