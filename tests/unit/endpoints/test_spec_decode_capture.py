@@ -9,7 +9,7 @@ whose delta is empty (which otherwise carries no data and would be dropped), and
 must not choke on a malformed non-list ``choices``.
 """
 
-from typing import Any
+from typing import Any, TypeVar
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -38,9 +38,12 @@ STATS = {
 }
 
 
+_EndpointT = TypeVar("_EndpointT", bound=BaseEndpoint)
+
+
 def _make_endpoint(
-    endpoint_type: EndpointType, endpoint_cls: type[BaseEndpoint]
-) -> BaseEndpoint:
+    endpoint_type: EndpointType, endpoint_cls: type[_EndpointT]
+) -> _EndpointT:
     model_endpoint = ModelEndpointInfo(
         models=ModelListInfo(
             models=[ModelInfo(name="m")],
