@@ -5,13 +5,14 @@
 Pins current behavior at edge inputs:
 - format_payload accepts/refuses raw_payload variants and always uses the last turn
 - JMESPath compile is robust to non-string and falsy response_field values
-  (b51275159 caught TypeError alongside JMESPathError)
+  (TypeError is caught alongside JMESPathError)
 - parse_response handles empty/invalid bodies and falls back to auto-detect
 """
 
 from __future__ import annotations
 
 import pytest
+from pytest import param
 
 from aiperf.common.models import Turn
 from aiperf.common.models.record_models import TextResponseData
@@ -119,20 +120,32 @@ class TestFormatPayloadEdges:
 
 
 class TestJMESPathCompileEdges:
-    def test_jmespath_compile_with_non_string_response_field_caught(self):
-        """Non-string response_field raises TypeError inside jmespath; mixin must catch.
+    @pytest.mark.parametrize(
+        "response_field",
+        [
+            param(123, id="non_string_typeerror_caught"),
+            param(None, id="none_skips_compile"),
+            param("", id="empty_string_falsy_skips_compile"),
+        ],
+    )  # fmt: skip
+    def test_jmespath_compile_edge_response_field_installs_no_parser(
+        self, response_field
+    ):
+        """Non-string/None/empty response_field never installs a compiled parser.
 
-        Documents the b51275159 fix that added TypeError to the except clause.
+        Non-string values raise TypeError inside jmespath, which the mixin must
+        catch alongside JMESPathError; None and empty string are falsy so the
+        compile step is skipped entirely. All leave ``_compiled_jmespath`` None.
         """
         model_endpoint = create_model_endpoint(
             EndpointType.RAW,
-            extra=[("response_field", 123)],
+            extra=[("response_field", response_field)],
         )
         endpoint = create_endpoint_with_mock_transport(RawEndpoint, model_endpoint)
         assert endpoint._compiled_jmespath is None
 
-    def test_jmespath_compile_with_none_response_field_no_parser_installed(self):
-        """response_field=None skips compile entirely; auto-detect path is used."""
+    def test_jmespath_compile_none_response_field_uses_auto_detect(self):
+        """With no compiled parser, parse_response falls back to auto-detect."""
         model_endpoint = create_model_endpoint(
             EndpointType.RAW,
             extra=[("response_field", None)],
@@ -145,15 +158,6 @@ class TestJMESPathCompileEdges:
         assert parsed is not None
         assert isinstance(parsed.data, TextResponseData)
         assert parsed.data.text == "auto"
-
-    def test_jmespath_compile_with_empty_string_response_field_behavior(self):
-        """Empty-string response_field is falsy -> compile is skipped (no error)."""
-        model_endpoint = create_model_endpoint(
-            EndpointType.RAW,
-            extra=[("response_field", "")],
-        )
-        endpoint = create_endpoint_with_mock_transport(RawEndpoint, model_endpoint)
-        assert endpoint._compiled_jmespath is None
 
 
 class TestParseResponseEdges:
