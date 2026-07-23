@@ -1,6 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Integration tests for DatasetManager mmap cache HIT/MISS pathway."""
+"""Integration tests for DatasetManager mmap cache HIT/MISS pathway.
+
+Verifies that:
+- A second run with byte-identical inputs serves from cache (composer + tokenizer skipped).
+- A first run populates the cache.
+- Tokenizer changes invalidate the cache.
+"""
 
 from __future__ import annotations
 
@@ -111,6 +117,7 @@ class TestDatasetManagerCacheRoundtrip:
         trace = _write_trace(tmp_path)
         run = _make_run(file_path=trace, benchmark_id="run-1")
 
+        # Lookup should MISS before run.
         key = mmap_cache.compute_cache_key_from_run(run)
         assert key is not None
         assert mmap_cache.lookup(key, compressed=False) is None
@@ -118,6 +125,7 @@ class TestDatasetManagerCacheRoundtrip:
         dm = await _run_configure(run)
         await dm.stop()
 
+        # After run, the cache MUST have the entry.
         hit = mmap_cache.lookup(key, compressed=False)
         assert hit is not None
         assert hit.manifest.cache_key == key
@@ -130,18 +138,22 @@ class TestDatasetManagerCacheRoundtrip:
     ) -> None:
         trace = _write_trace(tmp_path)
 
+        # Run 1: populate the cache.
         run1 = _make_run(file_path=trace, benchmark_id="run-1")
         dm1 = await _run_configure(run1)
         await dm1.stop()
         assert mock_tokenizer.call_count >= 1
         first_call_count = mock_tokenizer.call_count
 
+        # Run 2: identical config should HIT and skip the tokenizer entirely.
         run2 = _make_run(file_path=trace, benchmark_id="run-2")
         dm2 = await _run_configure(run2)
 
+        # Tokenizer.from_pretrained must NOT have been called again.
         assert mock_tokenizer.call_count == first_call_count, (
             "Cache HIT must skip tokenizer load"
         )
+        # The HIT path still publishes a DatasetConfiguredNotification.
         from aiperf.common.messages import DatasetConfiguredNotification
 
         published = [c.args[0] for c in dm2.publish.call_args_list]  # type: ignore[union-attr]
@@ -172,6 +184,8 @@ class TestDatasetManagerCacheRoundtrip:
 
         dm = await _run_configure(run)
         await dm.stop()
+        # Even with caching disabled, the run completes successfully.
+        # No populate happens, so the cache dir stays empty.
         cache_root = mmap_cache.cache_dir()
         assert not cache_root.exists() or not any(cache_root.iterdir())
 
@@ -208,7 +222,8 @@ class TestDatasetManagerCacheEdgeCases:
     async def test_hit_under_lock_after_stale_initial_miss(
         self, tmp_path: Path, mock_tokenizer
     ) -> None:
-        """A waiter whose pre-lock lookup missed must re-check under the lock"""
+        """A waiter whose pre-lock lookup missed must re-check under the lock
+        and adopt the entry the winner populated meanwhile."""
         trace = _write_trace(tmp_path)
         run1 = _make_run(file_path=trace, benchmark_id="lock-run-1")
         dm1 = await _run_configure(run1)
@@ -220,6 +235,8 @@ class TestDatasetManagerCacheEdgeCases:
         assert key is not None
 
         def miss_but_keep_key(self: DatasetManager):
+            # Simulate the race: the pre-lock lookup ran before the winner
+            # committed, but the key is retained for the under-lock re-check.
             self._cache_key_for_run = key
             return None
 
@@ -269,7 +286,8 @@ class TestDatasetManagerCacheEdgeCases:
     async def test_try_cache_lookup_lookup_failure_keeps_key(
         self, tmp_path: Path
     ) -> None:
-        """A lookup crash is a MISS, but the key survives so the post-run"""
+        """A lookup crash is a MISS, but the key survives so the post-run
+        populate still writes the entry."""
         trace = _write_trace(tmp_path)
         dm = DatasetManager(
             run=_make_run(file_path=trace, benchmark_id="lookup-fail"),
@@ -287,7 +305,9 @@ class TestDatasetManagerCacheEdgeCases:
     async def test_cache_hit_with_corrupt_metadata_falls_back_to_full_configure(
         self, tmp_path: Path, mock_tokenizer
     ) -> None:
-        """A HIT whose manifest dataset_metadata_json fails validation must be"""
+        """A HIT whose manifest dataset_metadata_json fails validation must be
+        treated as a MISS: restored files removed, poisoned cache entry
+        invalidated, and the full pipeline re-run (so populate can heal)."""
         import orjson
 
         from aiperf.common.models import DatasetMetadata
@@ -312,9 +332,11 @@ class TestDatasetManagerCacheEdgeCases:
         assert mock_tokenizer.call_count > calls_before, (
             "corrupt HIT must fall back to the full tokenize path"
         )
+        # The run still completed: metadata was rebuilt by the full pipeline.
         assert dm2.dataset_metadata is not None
         assert len(dm2.dataset_metadata.conversations) == 2
 
+        # invalidate() dropped the poison; populate rewrote a valid entry.
         healed = mmap_cache.lookup(key, compressed=False)
         assert healed is not None, "post-run populate must heal the invalidated key"
         DatasetMetadata.model_validate_json(healed.manifest.dataset_metadata_json)
@@ -330,9 +352,11 @@ class TestDatasetManagerCacheEdgeCases:
         )
         cache_root = mmap_cache.cache_dir()
 
+        # Guard 1: HIT used -> nothing to write back.
         dm._cache_hit_used = True
         dm._populate_cache_after_run()
 
+        # Guard 2: no key / no backing store.
         dm._cache_hit_used = False
         dm._cache_key_for_run = None
         dm._populate_cache_after_run()
@@ -340,7 +364,8 @@ class TestDatasetManagerCacheEdgeCases:
         dm._backing_store = None
         dm._populate_cache_after_run()
 
-        dm._backing_store = object()
+        # Guard 3: no dataset metadata.
+        dm._backing_store = object()  # never dereferenced past the guard
         dm.dataset_metadata = None
         dm._populate_cache_after_run()
 
@@ -357,8 +382,12 @@ class TestDatasetManagerCacheEdgeCases:
         key = dm._cache_key_for_run
         assert key is not None
 
+        # Stop FIRST so the client store's mmap handles are closed; Windows
+        # refuses to unlink files that still back an open memory map
+        # (PermissionError WinError 32).
         await dm.stop()
 
+        # Wipe the cache AND the run mmap files, then re-run the populate.
         import shutil
 
         shutil.rmtree(mmap_cache.cache_dir())
@@ -393,13 +422,22 @@ class TestDatasetManagerCacheEdgeCases:
 
 
 class TestDatasetManagerCacheThreadOffload:
-    """The multi-GiB cache copyfile paths must run off the event loop."""
+    """The multi-GiB cache copyfile paths must run off the event loop.
+
+    Both the post-run populate and the HIT restore wrap their blocking file
+    copies in ``asyncio.to_thread``; a revert to direct sync calls would block
+    the DatasetManager event loop for the duration of the copy.
+    """
 
     @pytest.fixture
     def to_thread_calls(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> list[Callable[..., Any]]:
-        """Record every callable dispatched through ``asyncio.to_thread``."""
+        """Record every callable dispatched through ``asyncio.to_thread``.
+
+        The wrapper delegates to the real implementation, so the offloaded
+        work still executes and behavior can be asserted alongside dispatch.
+        """
         recorded: list[Callable[..., Any]] = []
         real_to_thread = asyncio.to_thread
 
@@ -431,6 +469,7 @@ class TestDatasetManagerCacheThreadOffload:
             getattr(func, "__func__", None) is DatasetManager._populate_cache_after_run
             for func in to_thread_calls
         ), "_populate_cache_after_run must be dispatched via asyncio.to_thread"
+        # The offloaded populate still ran for real: the entry is in the cache.
         assert mmap_cache.lookup(key, compressed=False) is not None
 
     @pytest.mark.asyncio
@@ -440,6 +479,9 @@ class TestDatasetManagerCacheThreadOffload:
         mock_tokenizer,
         to_thread_calls: list[Callable[..., Any]],
     ) -> None:
+        # Computing the key hashes the entire (multi-GB) input file, so the
+        # lookup must run off the event loop or it blocks the DatasetManager's
+        # heartbeat/command handlers for the full hash during configure.
         trace = _write_trace(tmp_path)
         run = _make_run(file_path=trace, benchmark_id="offload-lookup")
 
@@ -470,6 +512,7 @@ class TestDatasetManagerCacheThreadOffload:
         assert any(func is mmap_cache.restore_to_run_dir for func in to_thread_calls), (
             "restore_to_run_dir must be dispatched via asyncio.to_thread"
         )
+        # The offloaded restore still ran for real: HIT adopted, files restored.
         assert dm2._cache_hit_used is True
         run_data_path, run_index_path = dm2._run_mmap_paths()
         assert run_data_path.exists()

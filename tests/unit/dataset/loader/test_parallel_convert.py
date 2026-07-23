@@ -39,7 +39,13 @@ def _drive_worker_inproc(
     trace_id: str,
     block_size: int,
 ) -> list:
-    """Run ``_init_worker`` + ``_process_batch`` in this process."""
+    """Run ``_init_worker`` + ``_process_batch`` in this process.
+
+    Bypasses the multiprocessing Pool so the test stays fast and xdist-safe,
+    while exercising the exact same per-worker code path. Restores the global
+    ``_worker_state`` after the call so concurrent tests in this module
+    don't see leakage.
+    """
     corpus = pg._tokenized_corpus
     corpus_len = len(corpus)
     shm = shared_memory.SharedMemory(
@@ -59,6 +65,8 @@ def _drive_worker_inproc(
 
     saved_state = pc._worker_state
     try:
+        # Avoid re-loading a real tokenizer; reuse the mock by patching
+        # Tokenizer.from_pretrained to return the mock generator's tokenizer.
         with patch(
             "aiperf.dataset.loader.parallel_convert.Tokenizer.from_pretrained",
             return_value=pg.tokenizer,
@@ -73,7 +81,13 @@ def _drive_worker_inproc(
 
 
 def test_parallel_convert_matches_in_process(real_prompt_generator):
-    """In-process 3-phase output equals worker-batch output, byte-for-byte."""
+    """In-process 3-phase output equals worker-batch output, byte-for-byte.
+
+    Drives :func:`PromptGenerator._build_token_sequence` (in-process) and
+    :func:`parallel_convert._process_batch` (worker path) over the same
+    ``(trace_id, hash_ids, input_length)`` and asserts identical decoded
+    strings.
+    """
     pg = real_prompt_generator
     trace_id = "abcdef0123456789"
     block_size = 4
@@ -81,6 +95,8 @@ def test_parallel_convert_matches_in_process(real_prompt_generator):
     pg._hash_id_corpus_rng.set_trace_id(trace_id)
     pg._cache.clear()
 
+    # Last-block-partial layout: 8 tokens / block_size 4 -> exact-tile.
+    # Use mixed: one exact-tile (8/4) and one last-partial (6 = 4 + 2).
     traces = [
         {
             "hash_ids": [11, 22],
@@ -98,6 +114,7 @@ def test_parallel_convert_matches_in_process(real_prompt_generator):
         },
     ]
 
+    # In-process path: _build_token_sequence + tokenizer.decode.
     in_process_prompts: list[str] = []
     for tr in traces:
         tokens = pg._build_token_sequence(
@@ -107,9 +124,11 @@ def test_parallel_convert_matches_in_process(real_prompt_generator):
             pg.tokenizer.decode(tokens, skip_special_tokens=False)
         )
 
+    # Reset PG state so the worker sees a fresh trace_id scope.
     pg._cache.clear()
     pg._hash_id_corpus_rng.set_trace_id(trace_id)
 
+    # Worker path: _init_worker + _process_batch in-process.
     worker_results = _drive_worker_inproc(
         pg,
         sessions=[("s1", traces)],
@@ -157,7 +176,13 @@ def test_parallel_convert_distinct_across_trace_ids(real_prompt_generator):
 
 
 def test_parallel_convert_hash_ids_overshoot_raises(real_prompt_generator):
-    """Worker path raises ConfigurationError when hash_ids overshoot, like serial."""
+    """Worker path raises ConfigurationError when hash_ids overshoot, like serial.
+
+    Two full blocks (2 * 4 = 8 tokens) but ``input_length`` of 4 implies a
+    final partial block of ``4 - 4 = 0`` tokens. Serial
+    :meth:`PromptGenerator._build_token_sequence` rejects this; the worker
+    path must raise the identical error rather than silently truncating.
+    """
     pg = real_prompt_generator
     block_size = 4
     traces = [
@@ -170,6 +195,7 @@ def test_parallel_convert_hash_ids_overshoot_raises(real_prompt_generator):
         }
     ]
 
+    # Serial raises for the same input.
     pg._hash_id_corpus_rng.set_trace_id("overshoot_trace_id")
     pg._cache.clear()
     with pytest.raises(ConfigurationError):
@@ -177,12 +203,17 @@ def test_parallel_convert_hash_ids_overshoot_raises(real_prompt_generator):
             traces[0]["input_length"], traces[0]["hash_ids"], block_size
         )
 
+    # Worker path must raise the same error, not truncate silently.
     with pytest.raises(ConfigurationError):
         _drive_worker_inproc(pg, [("s1", traces)], "overshoot_trace_id", block_size)
 
 
 def test_parallel_convert_prefix_only_token_count(real_prompt_generator):
-    """Valid prefix-only row (hashed prefix < input_length) yields full length."""
+    """Valid prefix-only row (hashed prefix < input_length) yields full length.
+
+    One hashed block of 4 tokens with ``input_length`` 6 leaves a 2-token
+    un-hashed tail; the worker must produce a 6-token prompt without raising.
+    """
     pg = real_prompt_generator
     block_size = 4
     input_length = 6

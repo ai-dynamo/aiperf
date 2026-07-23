@@ -51,6 +51,8 @@ class TestErrorAccounting:
         c = CreditCounter(cfg())
         c.increment_sent(turn())
         c.increment_returned(is_final_turn=False, cancelled=False, errored=True)
+        # Errored requests still count as "returned" (not "cancelled") to
+        # preserve the all-returned invariant, but ALSO bump the error counter.
         assert c.requests_completed == 1
         assert c.requests_cancelled == 0
         assert c.request_errors == 1
@@ -61,6 +63,7 @@ class TestErrorAccounting:
         c = CreditCounter(cfg())
         c.increment_sent(turn())
         c.increment_returned(is_final_turn=False, cancelled=True, errored=True)
+        # Cancellation is the dominant signal for the cancelled path.
         assert c.requests_cancelled == 1
         assert c.requests_completed == 0
         assert c.request_errors == 0
@@ -77,7 +80,9 @@ class TestErrorAccounting:
         assert c.final_request_errors == 2
 
     def test_child_errored_return_still_bumps_request_errors(self) -> None:
-        """request_errors is request-level, so a DAG child's errored return"""
+        """request_errors is request-level, so a DAG child's errored return
+        bumps it too (symmetric with requests_completed ticking for children).
+        """
         c = CreditCounter(cfg())
         c.increment_sent(turn(depth=1, parent="root", corr="child"))
         c.increment_returned(
@@ -85,18 +90,28 @@ class TestErrorAccounting:
         )
         assert c.request_errors == 1
         assert c.requests_completed == 1
+        # Session-level counters stay root-only for children.
         assert c.completed_sessions == 0
 
 
 class TestRootOnlySessionPredicate:
-    """``_root_requests_sent`` keeps DAG children from prematurely flipping"""
+    """``_root_requests_sent`` keeps DAG children from prematurely flipping
+    ``is_final_credit`` on the ``expected_num_sessions`` path."""
 
     def test_child_wire_does_not_prematurely_satisfy_session_predicate(self) -> None:
+        # One session expected, a 3-turn root. Children fire between root turns.
         c = CreditCounter(cfg(sessions=1))
 
+        # Root turn 0 (session starts; total_session_turns -> 3).
         _, final0 = c.increment_sent(turn(idx=0, num=3, corr="root"))
         assert final0 is False
 
+        # Two DAG children fire (reactive, off the phase target). With the
+        # global-count predicate these would push requests_sent to 3 and
+        # spuriously satisfy ``sent >= total_session_turns`` on the next root
+        # turn. counts_toward_phase_target=False keeps children from flipping
+        # is_final directly; _root_requests_sent keeps them out of the root
+        # session predicate too.
         c.increment_sent(
             TurnToSend(
                 conversation_id="child",
@@ -120,11 +135,14 @@ class TestRootOnlySessionPredicate:
             )
         )
 
+        # Root turn 1: NOT final -- only 2 of 3 root turns sent, regardless of
+        # the 2 child wires inflating requests_sent to 4.
         _, final1 = c.increment_sent(turn(idx=1, num=3, corr="root"))
         assert c.requests_sent == 4
         assert c.root_requests_sent == 2
         assert final1 is False, "child wires must not satisfy the session predicate"
 
+        # Root turn 2: now the session's final root turn -> is_final.
         _, final2 = c.increment_sent(turn(idx=2, num=3, corr="root"))
         assert c.root_requests_sent == 3
         assert final2 is True
@@ -135,9 +153,12 @@ class TestChildSessionCountInvariantRegression:
 
     def test_dag_children_do_not_inflate_completed_sessions(self) -> None:
         c = CreditCounter(cfg())
+        # 1 root (single turn) + 1 DAG child (single turn).
         c.increment_sent(turn(idx=0, num=1, corr="root"))
         c.increment_sent(turn(idx=0, num=1, corr="child", depth=1, parent="root"))
+        # Root final return (real session completion).
         c.increment_returned(is_final_turn=True, cancelled=False, is_child=False)
+        # Child final return -- must NOT bump completed_sessions.
         c.increment_returned(is_final_turn=True, cancelled=False, is_child=True)
 
         assert c.sent_sessions == 1

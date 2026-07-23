@@ -17,6 +17,8 @@ def test_aggregation_delegation_api_is_owned_by_cli_runner() -> None:
         "strategies must not own aggregate export layout"
     )
 
+    # The current aggregation/export home must exist (catches an accidental
+    # delete of the re-homed entry point).
     from aiperf.cli_runner import _aggregate
 
     assert hasattr(_aggregate, "aggregate_and_export")

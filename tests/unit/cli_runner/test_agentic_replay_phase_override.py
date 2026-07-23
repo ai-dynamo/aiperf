@@ -52,7 +52,12 @@ benchmark:
 
 
 def _agentic_yaml(tmp_path: pathlib.Path) -> pathlib.Path:
-    """A YAML whose profiling phase resolves to AGENTIC_REPLAY."""
+    """A YAML whose profiling phase resolves to AGENTIC_REPLAY.
+
+    ``validate_agentic_cache_warmup`` rejects ``--agentic-cache-warmup-duration``
+    on a non-agentic run, so these overlay-mechanics tests need a config that
+    legitimately resolves to the agentic_replay timing mode.
+    """
     path = tmp_path / "agentic_profiling.yaml"
     path.write_text(_AGENTIC_PROFILING_YAML)
     return path
@@ -61,7 +66,11 @@ def _agentic_yaml(tmp_path: pathlib.Path) -> pathlib.Path:
 def test_agentic_cache_warmup_duration_overrides_yaml_profiling_phase(
     tmp_path: pathlib.Path,
 ) -> None:
-    """``--agentic-cache-warmup-duration`` overlays the YAML profiling phase."""
+    """``--agentic-cache-warmup-duration`` overlays the YAML profiling phase.
+
+    This field is NOT in ``LOADGEN_FIELDS``, so the original early-return
+    gate dropped it entirely on the YAML+CLI path.
+    """
     cfg = resolve_config(
         _cli(agentic_cache_warmup_duration=30.0), _agentic_yaml(tmp_path)
     )

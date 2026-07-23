@@ -25,7 +25,7 @@ def sample_records():
         MetricResult(
             tag="time_to_first_token",
             header="Time to First Token",
-            unit="ms",
+            unit="ms",  # Already in display units from summarize()
             avg=123.0,
             min=100.0,
             max=150.0,
@@ -161,12 +161,23 @@ class TestMetricsJsonExporter:
 
             assert data.input_config is not None
             assert isinstance(data.input_config, BenchmarkConfig)
+            # TODO: Uncomment this once we have expanded the output config to include all important fields
+            # assert "output" in data["input_config"]
+            # assert data["input_config"]["output"]["artifact_directory"] == str(
+            #     output_dir
+            # )
 
     @pytest.mark.asyncio
     async def test_json_export_count_sum_per_metric_type(self, mock_cfg):
-        """End-to-end: record metric carries count+sum, derived/aggregate omit count."""
+        """End-to-end: record metric carries count+sum, derived/aggregate omit count.
+
+        Drives the full exporter pipeline (MetricResult -> to_json_result ->
+        JsonExportData -> model_dump_json) so the registry-driven type lookup,
+        the count-strip rule, and the exclude_none serialization are all
+        exercised together. Regression guard for schema 1.1 semantics.
+        """
         records = [
-            MetricResult(
+            MetricResult(  # RECORD: keeps both count and sum
                 tag="request_latency",
                 header="Request Latency",
                 unit="ms",
@@ -179,14 +190,14 @@ class TestMetricsJsonExporter:
                 count=100,
                 sum=5000.0,
             ),
-            MetricResult(
+            MetricResult(  # DERIVED: count must be stripped
                 tag="request_throughput",
                 header="Request Throughput",
                 unit="requests/sec",
                 avg=1.5,
                 count=1,
             ),
-            MetricResult(
+            MetricResult(  # AGGREGATE: count must be stripped
                 tag="request_count",
                 header="Request Count",
                 unit="requests",
@@ -231,16 +242,20 @@ class TestMetricsJsonExporter:
             with open(output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE) as f:
                 raw = json.load(f)
 
+        # Schema bump landed
         assert raw["schema_version"] == JsonExportData.SCHEMA_VERSION
         assert JsonExportData.SCHEMA_VERSION == "1.4"
 
+        # Record metric: count and sum are present
         assert raw["request_latency"]["count"] == 100
         assert raw["request_latency"]["sum"] == 5000.0
 
+        # Derived: count omitted via exclude_none, value lives in avg
         assert "count" not in raw["request_throughput"]
         assert "sum" not in raw["request_throughput"]
         assert raw["request_throughput"]["avg"] == 1.5
 
+        # Aggregate: same rule
         assert "count" not in raw["request_count"]
         assert raw["request_count"]["avg"] == 20.0
 
@@ -363,6 +378,7 @@ class TestMetricsJsonExporter:
 
             exporter = MetricsJsonExporter(exporter_config)
 
+            # Mock the base class export method
             from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
 
             mock_export = AsyncMock()
@@ -370,6 +386,7 @@ class TestMetricsJsonExporter:
             with patch.object(MetricsBaseExporter, "export", mock_export):
                 await exporter.export()
 
+                # Verify base export was called
                 mock_export.assert_called_once()
 
     def test_generate_content_uses_instance_data_members(self, mock_results, mock_cfg):
@@ -388,6 +405,7 @@ class TestMetricsJsonExporter:
 
             content = exporter._generate_content()
 
+            # Should contain data from instance members
             data = json.loads(content)
             assert "input_config" in data
 
@@ -409,6 +427,7 @@ class TestMetricsJsonExporter:
 
             content = exporter._generate_content()
 
+            # Should contain telemetry data
             data = json.loads(content)
             assert "telemetry_data" in data
 
@@ -437,8 +456,10 @@ class TestMetricsJsonExporter:
             ) as mock_generate:
                 await exporter.export()
 
+                # Verify _generate_content was called
                 mock_generate.assert_called_once()
 
+                # Verify file contains the returned content
                 expected_file = (
                     output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
                 )
@@ -475,18 +496,22 @@ class TestMetricsJsonExporterTelemetry:
             with open(expected_file) as f:
                 data = json.load(f)
 
+            # Verify telemetry_data exists
             assert "telemetry_data" in data
             assert data["telemetry_data"] is not None
 
+            # Verify summary section
             assert "summary" in data["telemetry_data"]
             summary = data["telemetry_data"]["summary"]
             assert "endpoints_configured" in summary
             assert "endpoints_successful" in summary
 
+            # Verify endpoints section with GPU data
             assert "endpoints" in data["telemetry_data"]
             endpoints = data["telemetry_data"]["endpoints"]
             assert len(endpoints) > 0
 
+            # Check for GPU metrics in at least one endpoint
             first_endpoint = list(endpoints.values())[0]
             assert "gpus" in first_endpoint
 
@@ -512,6 +537,7 @@ class TestMetricsJsonExporterTelemetry:
             with open(expected_file) as f:
                 data = json.load(f)
 
+            # telemetry_data should not be present or be null
             assert "telemetry_data" not in data or data.get("telemetry_data") is None
 
     @pytest.mark.asyncio
@@ -537,19 +563,24 @@ class TestMetricsJsonExporterTelemetry:
                 data = json.load(f)
 
             endpoints = data["telemetry_data"]["endpoints"]
+            # Get first GPU from first endpoint
             first_endpoint = list(endpoints.values())[0]
             first_gpu = list(first_endpoint["gpus"].values())[0]
 
+            # Verify GPU metadata
             assert "gpu_index" in first_gpu
             assert "gpu_name" in first_gpu
             assert "gpu_uuid" in first_gpu
             assert first_gpu["platform"] == "nvidia"
 
+            # Verify metrics structure
             assert "metrics" in first_gpu
             metrics = first_gpu["metrics"]
 
+            # Check for at least one metric
             assert len(metrics) > 0
 
+            # Check that metrics have statistical data
             first_metric = list(metrics.values())[0]
             assert "avg" in first_metric
             assert "min" in first_metric
@@ -574,6 +605,7 @@ class TestMetricsJsonExporterTelemetry:
             output_dir = Path(temp_dir)
             mock_cfg.artifact_directory = output_dir
 
+            # Create TelemetryExportData with GPU that has no metrics (empty dict)
             telemetry_results = TelemetryExportData(
                 summary=TelemetrySummary(
                     endpoints_configured=["http://localhost:9400/metrics"],
@@ -589,7 +621,7 @@ class TestMetricsJsonExporterTelemetry:
                                 gpu_name="Test GPU",
                                 gpu_uuid="GPU-123",
                                 hostname="test-node",
-                                metrics={},
+                                metrics={},  # No metrics
                             ),
                         }
                     ),
@@ -603,6 +635,7 @@ class TestMetricsJsonExporterTelemetry:
             )
 
             exporter = MetricsJsonExporter(exporter_config)
+            # Should not raise exception despite missing metrics
             await exporter.export()
 
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
@@ -611,6 +644,7 @@ class TestMetricsJsonExporterTelemetry:
             with open(expected_file) as f:
                 data = json.load(f)
 
+            # Should still have telemetry structure even if metrics are empty
             assert "telemetry_data" in data
 
     @pytest.mark.asyncio
@@ -630,6 +664,7 @@ class TestMetricsJsonExporterTelemetry:
             output_dir = Path(temp_dir)
             mock_cfg.artifact_directory = output_dir
 
+            # Create TelemetryExportData with metrics that have None values
             telemetry_results = TelemetryExportData(
                 summary=TelemetrySummary(
                     endpoints_configured=["http://localhost:9400/metrics"],
@@ -646,6 +681,7 @@ class TestMetricsJsonExporterTelemetry:
                                 gpu_uuid="GPU-123",
                                 hostname="test-host",
                                 metrics={
+                                    # Metric with None values for percentiles
                                     "nvidia_power_usage": JsonMetricResult(
                                         unit="W",
                                         avg=100.0,
@@ -676,6 +712,7 @@ class TestMetricsJsonExporterTelemetry:
             with open(expected_file) as f:
                 data = json.load(f)
 
+            # Should handle None values gracefully
             assert "telemetry_data" in data
 
     @pytest.mark.asyncio
@@ -692,6 +729,7 @@ class TestMetricsJsonExporterTelemetry:
             output_dir = Path(temp_dir)
             mock_cfg.artifact_directory = output_dir
 
+            # Empty TelemetryExportData - no endpoints
             telemetry_results = TelemetryExportData(
                 summary=TelemetrySummary(
                     endpoints_configured=[],
@@ -715,6 +753,7 @@ class TestMetricsJsonExporterTelemetry:
             with open(expected_file) as f:
                 data = json.load(f)
 
+            # Should have telemetry_data section but empty
             assert "telemetry_data" in data
             endpoints = data["telemetry_data"]["endpoints"]
             assert endpoints == {}
@@ -738,6 +777,8 @@ class TestMetricsJsonExporterTelemetry:
             output_dir = Path(temp_dir)
             mock_cfg.artifact_directory = output_dir
 
+            # TelemetryExportData already has normalized endpoint keys
+            # (normalization happens during conversion from TelemetryResults)
             telemetry_results = TelemetryExportData(
                 summary=TelemetrySummary(
                     endpoints_configured=["http://node1.example.com:9400/metrics"],
@@ -782,6 +823,7 @@ class TestMetricsJsonExporterTelemetry:
                 data = json.load(f)
 
             endpoints = data["telemetry_data"]["endpoints"]
+            # Check that endpoint was normalized (removed http:// and /metrics)
             assert "node1.example.com:9400" in endpoints
 
     @pytest.mark.asyncio
@@ -801,6 +843,7 @@ class TestMetricsJsonExporterTelemetry:
             output_dir = Path(temp_dir)
             mock_cfg.artifact_directory = output_dir
 
+            # Create TelemetryExportData with two endpoints
             telemetry_results = TelemetryExportData(
                 summary=TelemetrySummary(
                     endpoints_configured=[
@@ -870,9 +913,11 @@ class TestMetricsJsonExporterTelemetry:
                 data = json.load(f)
 
             endpoints = data["telemetry_data"]["endpoints"]
+            # Should have both endpoints
             assert "node1:9400" in endpoints
             assert "node2:9400" in endpoints
 
+            # Check GPU data exists for both
             assert "gpus" in endpoints["node1:9400"]
             assert "gpus" in endpoints["node2:9400"]
 

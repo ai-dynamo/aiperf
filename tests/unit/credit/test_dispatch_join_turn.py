@@ -42,6 +42,8 @@ async def test_dispatch_join_turn_reuses_session_slot():
     )
     result = await issuer.dispatch_join_turn(pending)
     assert result is True
+    # Session slot NOT acquired (turn_index > 0 and agent_depth == 0 means
+    # is_session_start is False -> needs_session_slot is False).
     issuer._concurrency_manager.acquire_session_slot.assert_not_called()
     issuer._concurrency_manager.acquire_prefill_slot.assert_called_once()
     sent: TurnToSend = issuer._issue_credit_internal.call_args.args[0]
@@ -71,7 +73,12 @@ async def test_dispatch_join_turn_suppresses_on_stop():
 
 @pytest.mark.asyncio
 async def test_dispatch_join_turn_blocks_on_prefill_saturation():
-    """Prefill saturation must wait (blocking acquire), not drop the join."""
+    """Prefill saturation must wait (blocking acquire), not drop the join.
+
+    Non-blocking ``try_issue_credit`` returns ``None`` when prefill slots are
+    full; treating that as success permanently suppressed the join. Joins must
+    use blocking ``acquire_prefill_slot`` like ``dispatch_child_turn``.
+    """
     issuer = _make_issuer()
     pending = PendingBranchJoin(
         parent_x_correlation_id="corr-parent",

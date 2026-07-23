@@ -22,7 +22,7 @@ class TestMooncakeTrace:
         data = MooncakeTrace(input_length=100, hash_ids=[123, 456, 789], timestamp=1000)
 
         assert data.input_length == 100
-        assert data.output_length is None
+        assert data.output_length is None  # Optional field
         assert data.text_input is None
         assert data.hash_ids == [123, 456, 789]
         assert data.timestamp == 1000
@@ -34,8 +34,8 @@ class TestMooncakeTrace:
 
         assert data.text_input == "This is test input text"
         assert data.input_length is None
-        assert data.output_length is None
-        assert data.hash_ids is None
+        assert data.output_length is None  # Optional field
+        assert data.hash_ids is None  # Not allowed with text_input
         assert data.timestamp == 1000
 
     def test_create_with_both_input_fields_and_hash_ids(self):
@@ -73,12 +73,14 @@ class TestMooncakeTrace:
         """Test validation errors for MooncakeTrace missing other required fields."""
         from pydantic import ValidationError
 
+        # When hash_ids is provided but no input is provided, should fail with general input validation
         with pytest.raises(
             ValidationError,
             match="Exactly one of",
         ):
             MooncakeTrace(hash_ids=[123], timestamp=1000)
 
+        # text_input does not require hash_ids, so this should work
         data = MooncakeTrace(text_input="test input")
         assert data.text_input == "test input"
         assert data.hash_ids is None
@@ -87,6 +89,7 @@ class TestMooncakeTrace:
         """Test that hash_ids is only allowed with input_length, not text_input."""
         from pydantic import ValidationError
 
+        # Validation prevents text_input + hash_ids combination
         with pytest.raises(
             ValidationError,
             match="'hash_ids' is only allowed when 'input_length' is provided",
@@ -102,7 +105,9 @@ class TestMooncakeTraceDatasetLoader:
         """Create a mock prompt generator for testing."""
         generator = Mock()
         generator.generate.return_value = "Generated prompt text"
+        # Required for convert_to_conversations() to check string cache
         generator._decoded_cache = {}
+        # Mock _build_token_sequence to return a simple token list
         generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
         return generator
 
@@ -118,6 +123,7 @@ class TestMooncakeTraceDatasetLoader:
         file: str | None = None,
     ):
         """Create a CLIConfig for testing."""
+        # Only set fixed_schedule=True when offsets are provided (requires a file)
         has_offsets = start_offset is not None or end_offset is not None
         input_kwargs: dict = {}
         if has_offsets:
@@ -150,8 +156,9 @@ class TestMooncakeTraceDatasetLoader:
         dataset = loader.load_dataset()
 
         assert isinstance(dataset, dict)
-        assert len(dataset) == 2
+        assert len(dataset) == 2  # Two different sessions (auto-generated UUIDs)
 
+        # Check that each session has one trace
         for _, traces in dataset.items():
             assert len(traces) == 1
             assert isinstance(traces[0], MooncakeTrace)
@@ -170,7 +177,9 @@ class TestMooncakeTraceDatasetLoader:
     def test_file_dataset_block_size_overrides_plugin_default(
         self, create_jsonl_file, mock_prompt_generator
     ):
-        """AIP-1016: --isl-block-size on a file dataset routes onto"""
+        """AIP-1016: --isl-block-size on a file dataset routes onto
+        FileDataset.block_size and overrides the loader's default_block_size
+        plugin metadata (needed for e.g. a Mooncake trace recorded at 16)."""
         content = [
             '{"input_length": 48, "output_length": 8, "hash_ids": [1, 2, 3], "timestamp": 1000}',
         ]
@@ -186,7 +195,7 @@ class TestMooncakeTraceDatasetLoader:
             filename=filename,
             run=make_run_from_cli(cli),
             prompt_generator=mock_prompt_generator,
-            default_block_size=512,
+            default_block_size=512,  # mooncake plugin metadata
         )
 
         assert loader._block_size == 16
@@ -194,7 +203,8 @@ class TestMooncakeTraceDatasetLoader:
     def test_block_size_falls_back_to_plugin_default_when_unset(
         self, create_jsonl_file, mock_prompt_generator
     ):
-        """Without --isl-block-size, the loader keeps the default_block_size"""
+        """Without --isl-block-size, the loader keeps the default_block_size
+        plugin metadata (unchanged behavior)."""
         content = [
             '{"input_length": 48, "output_length": 8, "hash_ids": [1, 2, 3], "timestamp": 1000}',
         ]
@@ -217,7 +227,14 @@ class TestMooncakeTraceDatasetLoader:
     def test_block_size_drives_reconstruction_and_default_raises(
         self, mock_tokenizer_cls
     ):
-        """AIP-1016: the block size the loader resolves is what partitions the"""
+        """AIP-1016: the block size the loader resolves is what partitions the
+        recorded input_length in hash-based reconstruction. input_length 48
+        over 3 hash blocks is consistent with block_size 16 (final block 16)
+        but not the mooncake default 512, which raises ConfigurationError.
+
+        This is the real reconstruction math the override fixes; that the
+        loader forwards the configured block size is covered separately by
+        test_file_dataset_block_size_overrides_plugin_default."""
         from aiperf.common.exceptions import ConfigurationError
         from aiperf.dataset.generator import PromptGenerator
 
@@ -279,13 +296,16 @@ class TestMooncakeTraceDatasetLoader:
         assert len(dataset) == 3
         traces = list(dataset.values())
 
+        # First entry: input_length with hash_ids
         assert traces[0][0].input_length == 100
         assert traces[0][0].text_input is None
         assert traces[0][0].hash_ids == [123]
 
+        # Second entry: text_input only
         assert traces[1][0].input_length is None
         assert traces[1][0].text_input == "Mixed input test"
 
+        # Third entry: input_length with output_length
         assert traces[2][0].input_length == 200
         assert traces[2][0].output_length == 50
         assert traces[2][0].text_input is None
@@ -296,7 +316,7 @@ class TestMooncakeTraceDatasetLoader:
         """Test that empty lines are skipped."""
         content = [
             '{"input_length": 100, "output_length": 50, "hash_ids": [123], "timestamp": 1000}',
-            "",
+            "",  # Empty line
             '{"input_length": 200, "output_length": 75, "hash_ids": [456], "timestamp": 2000}',
         ]
         filename = create_jsonl_file(content)
@@ -308,7 +328,7 @@ class TestMooncakeTraceDatasetLoader:
         )
         result = loader.load_dataset()
 
-        assert len(result) == 2
+        assert len(result) == 2  # Should skip empty line
 
     def test_load_dataset_with_timestamps(
         self, create_jsonl_file, mock_prompt_generator, default_cfg
@@ -351,10 +371,10 @@ class TestMooncakeTraceDatasetLoader:
     ):
         """Test dataset loading with start and end offset filtering."""
         content = [
-            '{"input_length": 100, "output_length": 50, "hash_ids": [123], "timestamp": 1000}',
-            '{"input_length": 150, "output_length": 60, "hash_ids": [456], "timestamp": 2000}',
-            '{"input_length": 200, "output_length": 70, "hash_ids": [789], "timestamp": 2500}',
-            '{"input_length": 250, "output_length": 80, "hash_ids": [111], "timestamp": 3000}',
+            '{"input_length": 100, "output_length": 50, "hash_ids": [123], "timestamp": 1000}',  # Before start
+            '{"input_length": 150, "output_length": 60, "hash_ids": [456], "timestamp": 2000}',  # In range
+            '{"input_length": 200, "output_length": 70, "hash_ids": [789], "timestamp": 2500}',  # At end boundary
+            '{"input_length": 250, "output_length": 80, "hash_ids": [111], "timestamp": 3000}',  # After end
         ]  # fmt: skip
         filename = create_jsonl_file(content)
 
@@ -371,8 +391,8 @@ class TestMooncakeTraceDatasetLoader:
     @pytest.mark.parametrize(
         "start_offset,end_offset,expected_skipped",
         [
-            (2500, None, 2),
-            (None, 1500, 2),
+            (2500, None, 2),  # Skip timestamps < 2500 (1000, 2000)
+            (None, 1500, 2),  # Skip timestamps > 1500 (2000, 3000)
         ],
     )  # fmt: skip
     def test_load_dataset_logs_skipped_traces(
@@ -402,6 +422,7 @@ class TestMooncakeTraceDatasetLoader:
         )
         loader.load_dataset()
 
+        # Check that the skipped traces message is logged
         assert f"Skipped {expected_skipped:,} traces" in caplog.text
 
     @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
@@ -409,12 +430,14 @@ class TestMooncakeTraceDatasetLoader:
         self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
         """Test conversion of trace data to conversations."""
+        # Mock parallel_decode to return decoded prompts
         mock_parallel_decode.return_value = [
             "decoded prompt 1",
             "decoded prompt 2",
             "decoded prompt 3",
         ]
 
+        # Setup trace data
         trace_data = {
             "session-1": [
                 MooncakeTrace(
@@ -451,16 +474,19 @@ class TestMooncakeTraceDatasetLoader:
 
         assert len(conversations) == 3
 
+        # Check first conversation
         conv1 = conversations[0]
         assert conv1.session_id == "session-1"
         assert len(conv1.turns) == 1
         assert conv1.turns[0].timestamp == 1000
 
+        # Check second conversation
         conv2 = conversations[1]
         assert conv2.session_id == "session-2"
         assert len(conv2.turns) == 1
         assert conv2.turns[0].timestamp == 2000
 
+        # Check third conversation
         conv3 = conversations[2]
         assert conv3.session_id == "session-3"
         assert len(conv3.turns) == 1
@@ -483,6 +509,7 @@ class TestMooncakeTraceDatasetLoader:
         self, mock_prompt_generator, default_cfg
     ):
         """Test conversion uses text_input when provided - covers 'if trace.text_input is not None' line."""
+        # Create traces with text_input to cover the uncovered line
         trace_data = {
             "session1": [
                 MooncakeTrace(text_input="Hello, how are you?", timestamp=1000),
@@ -497,7 +524,7 @@ class TestMooncakeTraceDatasetLoader:
         )
         conversations = loader.convert_to_conversations(trace_data)
 
-        assert len(conversations) == 1
+        assert len(conversations) == 1  # One conversation with multiple turns
         conversation = conversations[0]
 
         assert len(conversation.turns) == 2
@@ -778,6 +805,7 @@ class TestMooncakeTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
+        # max_isl=100 should only filter the input_length=500 trace
         cli_config = CLIConfig(
             model_names=["test-model"],
             input_file=filename,
@@ -791,6 +819,7 @@ class TestMooncakeTraceDatasetLoader:
         )
         dataset = loader.load_dataset()
 
+        # Should have 2 traces (text_input ones pass, input_length=500 filtered)
         assert len(dataset) == 2
         traces = list(dataset.values())
         assert traces[0][0].text_input == "Hello world"
@@ -822,6 +851,7 @@ class TestMooncakeTraceDatasetLoader:
         )
         loader.load_dataset()
 
+        # Should skip 2 traces (input_length=200 and 300 exceed max_isl=150)
         assert (
             "Skipped 2 traces because input_length exceeded max_isl of 150"
             in caplog.text
@@ -832,10 +862,10 @@ class TestMooncakeTraceDatasetLoader:
     ):
         """Test that max_isl and offset filtering work together."""
         content = [
-            '{"input_length": 100, "output_length": 50, "timestamp": 500}',
-            '{"input_length": 100, "output_length": 50, "timestamp": 1500}',
-            '{"input_length": 300, "output_length": 60, "timestamp": 2000}',
-            '{"input_length": 100, "output_length": 70, "timestamp": 3500}',
+            '{"input_length": 100, "output_length": 50, "timestamp": 500}',   # Before start offset
+            '{"input_length": 100, "output_length": 50, "timestamp": 1500}',  # In range, passes max_isl
+            '{"input_length": 300, "output_length": 60, "timestamp": 2000}',  # In range, exceeds max_isl
+            '{"input_length": 100, "output_length": 70, "timestamp": 3500}',  # After end offset
         ]  # fmt: skip
         filename = create_jsonl_file(content)
 
@@ -855,6 +885,7 @@ class TestMooncakeTraceDatasetLoader:
         )
         dataset = loader.load_dataset()
 
+        # Only one trace should pass: timestamp=1500, input_length=100
         assert len(dataset) == 1
         traces = list(dataset.values())
         assert traces[0][0].input_length == 100
@@ -901,8 +932,10 @@ class TestMooncakeTraceDatasetLoader:
         )
         dataset = loader.load_dataset()
 
+        # All traces should be kept (capping, not filtering)
         assert len(dataset) == 4, f"Failed for {description}"
 
+        # Check output_lengths are capped correctly
         traces = list(dataset.values())
         actual_output_lengths = [t[0].output_length for t in traces]
         assert actual_output_lengths == expected_output_lengths, (
@@ -933,13 +966,17 @@ class TestMooncakeTraceDatasetLoader:
         )
         dataset = loader.load_dataset()
 
+        # All 3 traces should be kept
         assert len(dataset) == 3
         traces = list(dataset.values())
 
+        # First trace: no output_length, should remain None
         assert traces[0][0].output_length is None
 
+        # Second trace: output_length=200 should be capped to 50
         assert traces[1][0].output_length == 50
 
+        # Third trace: text_input, no output_length, should remain None
         assert traces[2][0].output_length is None
 
     def test_load_dataset_max_osl_logs_capped_traces(
@@ -968,6 +1005,7 @@ class TestMooncakeTraceDatasetLoader:
         )
         loader.load_dataset()
 
+        # Should cap 2 traces (output_length=100 and 150 exceed max_osl=75)
         assert "2 traces exceeded max_osl of 75 and were capped to 75" in caplog.text
 
     def test_load_dataset_max_isl_and_max_osl_combined(
@@ -975,10 +1013,10 @@ class TestMooncakeTraceDatasetLoader:
     ):
         """Test that max_isl filtering and max_osl capping work together."""
         content = [
-            '{"input_length": 100, "output_length": 200, "timestamp": 1000}',
-            '{"input_length": 300, "output_length": 50, "timestamp": 2000}',
-            '{"input_length": 150, "output_length": 150, "timestamp": 3000}',
-            '{"input_length": 50, "output_length": 50, "timestamp": 4000}',
+            '{"input_length": 100, "output_length": 200, "timestamp": 1000}',  # Passes max_isl, capped by max_osl
+            '{"input_length": 300, "output_length": 50, "timestamp": 2000}',   # Filtered by max_isl
+            '{"input_length": 150, "output_length": 150, "timestamp": 3000}',  # Passes max_isl, capped by max_osl
+            '{"input_length": 50, "output_length": 50, "timestamp": 4000}',    # Passes both, no capping
         ]  # fmt: skip
         filename = create_jsonl_file(content)
 
@@ -996,21 +1034,29 @@ class TestMooncakeTraceDatasetLoader:
         )
         dataset = loader.load_dataset()
 
+        # 3 traces should remain (one filtered by max_isl)
         assert len(dataset) == 3
 
         traces = list(dataset.values())
+        # First: input_length=100 passes, output_length=200 capped to 100
         assert traces[0][0].input_length == 100
         assert traces[0][0].output_length == 100
 
+        # Second: input_length=150 passes, output_length=150 capped to 100
         assert traces[1][0].input_length == 150
         assert traces[1][0].output_length == 100
 
+        # Third: input_length=50 passes, output_length=50 not capped
         assert traces[2][0].input_length == 50
         assert traces[2][0].output_length == 50
 
 
 class TestMooncakeTraceReproducibility:
-    """Tests for reproducibility of Mooncake trace prompt generation."""
+    """Tests for reproducibility of Mooncake trace prompt generation.
+
+    These tests verify that the two-phase Mooncake flow with parallel_decode
+    yields identical prompts across runs when the RNG is seeded consistently.
+    """
 
     @pytest.fixture
     def mock_prompt_generator(self):
@@ -1035,10 +1081,15 @@ class TestMooncakeTraceReproducibility:
     def test_mooncake_flow_reproducibility_with_same_seed(
         self, mock_parallel_decode, mock_tokenizer_cls, cfg_for_reproducibility
     ):
-        """Verify Mooncake flow produces identical prompts across runs with same seed."""
+        """Verify Mooncake flow produces identical prompts across runs with same seed.
+
+        This guards the reproducibility contract: seeding RNG, running conversion twice,
+        and asserting identical prompts.
+        """
         from aiperf.common import random_generator as rng
         from aiperf.dataset.generator import PromptGenerator
 
+        # Mock parallel_decode to return deterministic results based on input
         def deterministic_decode(token_sequences, tokenizer_name=None, **kwargs):
             return [
                 f"decoded_prompt_{i}_{len(seq)}"
@@ -1047,6 +1098,7 @@ class TestMooncakeTraceReproducibility:
 
         mock_parallel_decode.side_effect = deterministic_decode
 
+        # Create trace data with hash_ids to exercise the two-phase flow
         trace_data = {
             "session-1": [
                 MooncakeTrace(
@@ -1069,6 +1121,7 @@ class TestMooncakeTraceReproducibility:
             ],
         }
 
+        # First run: seed, create generator, convert
         rng.reset()
         rng.init(42)
 
@@ -1091,6 +1144,7 @@ class TestMooncakeTraceReproducibility:
             turn.texts[0].contents[0] for conv in conversations1 for turn in conv.turns
         ]
 
+        # Second run: re-seed with same value, create fresh generator, convert
         rng.reset()
         rng.init(42)
 
@@ -1113,6 +1167,7 @@ class TestMooncakeTraceReproducibility:
             turn.texts[0].contents[0] for conv in conversations2 for turn in conv.turns
         ]
 
+        # Assert identical prompts
         assert len(prompts1) == len(prompts2), "Prompt count mismatch"
         assert prompts1 == prompts2, (
             "Prompts should be identical across runs with the same seed. "
@@ -1123,8 +1178,12 @@ class TestMooncakeTraceReproducibility:
     def test_parallel_decode_length_mismatch_raises(
         self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
-        """Verify that length mismatch between pending_decodes and decoded_prompts raises."""
-        mock_parallel_decode.return_value = ["decoded prompt 1"]
+        """Verify that length mismatch between pending_decodes and decoded_prompts raises.
+
+        This tests the strict=True behavior in zip() that guards against silent data loss.
+        """
+        # Mock parallel_decode to return FEWER results than expected
+        mock_parallel_decode.return_value = ["decoded prompt 1"]  # Only 1, expecting 3
 
         trace_data = {
             "session-1": [
@@ -1144,8 +1203,12 @@ class TestMooncakeTraceReproducibility:
             prompt_generator=mock_prompt_generator,
         )
 
+        # Should raise ValueError due to strict=True in zip
         with pytest.raises(ValueError, match="zip"):
             loader.convert_to_conversations(trace_data)
+
+
+# Synthesis Integration Tests
 
 
 def make_synthesis_config(
@@ -1186,7 +1249,10 @@ class TestMooncakeTraceSynthesisIntegration:
 
     @pytest.fixture
     def sample_trace_data(self) -> dict[str, list[MooncakeTrace]]:
-        """Sample trace data grouped by session."""
+        """Sample trace data grouped by session.
+
+        Note: input_length must be >= len(hash_ids) * block_size (512) for consistency.
+        """
         return {
             "session-1": [
                 MooncakeTrace(input_length=1024, output_length=64, hash_ids=[1, 2]),
@@ -1197,11 +1263,13 @@ class TestMooncakeTraceSynthesisIntegration:
             ],
         }
 
+    # Basic Functionality
+
     def test_synthesis_not_applied_when_disabled(
         self, mock_prompt_generator, sample_trace_data
     ):
         """Test that synthesis is skipped when should_synthesize() returns False."""
-        cli_config = make_synthesis_config()
+        cli_config = make_synthesis_config()  # All defaults, should not synthesize
 
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
@@ -1209,8 +1277,10 @@ class TestMooncakeTraceSynthesisIntegration:
             prompt_generator=mock_prompt_generator,
         )
 
+        # Directly call _apply_synthesis should still work
         result = loader._apply_synthesis(sample_trace_data)
 
+        # Should have same structure
         assert set(result.keys()) == {"session-1", "session-2"}
         assert len(result["session-1"]) == 2
         assert len(result["session-2"]) == 1
@@ -1250,6 +1320,8 @@ class TestMooncakeTraceSynthesisIntegration:
         for traces in result.values():
             for trace in traces:
                 assert isinstance(trace, MooncakeTrace)
+
+    # Synthesis Parameters
 
     def test_speedup_ratio_applied(self, mock_prompt_generator):
         """Test that speedup_ratio scales timestamps."""
@@ -1295,6 +1367,8 @@ class TestMooncakeTraceSynthesisIntegration:
 
     def test_prefix_len_multiplier_extends_hash_ids(self, mock_prompt_generator):
         """Test that prefix_len_multiplier extends hash_ids."""
+        # Need multiple traces with shared prefixes for the algorithm to work
+        # block_size=512, input_length=1024 = 2 blocks, shared prefix [1]
         data = {
             "session-1": [
                 MooncakeTrace(input_length=1024, output_length=64, hash_ids=[1, 2]),
@@ -1311,6 +1385,8 @@ class TestMooncakeTraceSynthesisIntegration:
 
         result = loader._apply_synthesis(data)
 
+        # Shared prefix [1] stretched to 2 blocks + 1 prompt block = 3 blocks
+        # new_prefix_len = 512 * 2 = 1024, new_prompt_len = 512, new_input_len = 1536
         assert len(result["session-1"][0].hash_ids) == 3
         assert len(result["session-1"][1].hash_ids) == 3
         assert result["session-1"][0].input_length == 1536
@@ -1365,6 +1441,8 @@ class TestMooncakeTraceSynthesisIntegration:
 
         assert result["session-1"][0].timestamp == expected_ts
 
+    # Field Preservation
+
     def test_delay_field_preserved(self, mock_prompt_generator):
         """Test that delay field is preserved through synthesis."""
         data = {
@@ -1385,6 +1463,8 @@ class TestMooncakeTraceSynthesisIntegration:
 
         assert result["session-1"][0].delay == 500
         assert result["session-1"][1].delay == 1000
+
+    # Edge Cases
 
     def test_empty_input(self, mock_prompt_generator):
         """Test synthesis with empty input data."""
@@ -1424,12 +1504,15 @@ class TestMooncakeTraceSynthesisIntegration:
 
     def test_block_size_passed_to_synthesis(self, mock_prompt_generator):
         """Test that user-configured block_size is passed to synthesis."""
+        # Need multiple traces with shared prefixes for the algorithm to work
+        # block_size=256, input_length=512 = 2 blocks, shared prefix [1]
         data = {
             "session-1": [
                 MooncakeTrace(input_length=512, output_length=64, hash_ids=[1, 2]),
                 MooncakeTrace(input_length=512, output_length=64, hash_ids=[1, 3]),
             ],
         }
+        # Use non-default block_size (256 instead of default 512)
         cli_config = make_synthesis_config(prefix_len_multiplier=2.0)
 
         loader = MooncakeTraceDatasetLoader(
@@ -1439,10 +1522,15 @@ class TestMooncakeTraceSynthesisIntegration:
             default_block_size=256,
         )
 
+        # Verify block_size is set correctly on loader
         assert loader._block_size == 256
 
+        # Apply synthesis - block_size affects hash_id/input_length calculations
         result = loader._apply_synthesis(data)
 
+        # With block_size=256 and prefix_len_multiplier=2.0:
+        # Shared prefix [1] = 256 tokens, prompt = 256 tokens
+        # new_prefix_len = 256 * 2 = 512, new_prompt_len = 256, new_input_len = 768
         assert len(result["session-1"]) == 2
         assert result["session-1"][0].input_length == 768
         assert result["session-1"][1].input_length == 768
@@ -1491,10 +1579,13 @@ class TestMooncakeTraceSynthesisIntegration:
         assert len(result["only-session"]) == 1
         assert isinstance(result["only-session"][0], MooncakeTrace)
 
+    # End-to-End: load_dataset with synthesis
+
     def test_load_dataset_applies_synthesis(
         self, create_jsonl_file, mock_prompt_generator
     ):
         """Test that load_dataset applies synthesis when configured."""
+        # input_length must be >= len(hash_ids) * block_size (512)
         content = [
             '{"input_length": 1024, "output_length": 64, "hash_ids": [1, 2], "timestamp": 1000}',
             '{"input_length": 1536, "output_length": 128, "hash_ids": [1, 2, 3], "timestamp": 2000}',
@@ -1510,6 +1601,7 @@ class TestMooncakeTraceSynthesisIntegration:
         )
         dataset = loader.load_dataset()
 
+        # Timestamps should be scaled by speedup_ratio
         traces = list(dataset.values())
         assert traces[0][0].timestamp == 500
         assert traces[1][0].timestamp == 1000
@@ -1549,6 +1641,7 @@ class TestMooncakeTraceSynthesisIntegration:
         ]
         filename = create_jsonl_file(content)
 
+        # Default config - synthesis disabled
         cli_config = CLIConfig(model_names=["test-model"])
 
         loader = MooncakeTraceDatasetLoader(
@@ -1558,8 +1651,11 @@ class TestMooncakeTraceSynthesisIntegration:
         )
         dataset = loader.load_dataset()
 
+        # Timestamp should be unchanged
         traces = list(dataset.values())
         assert traces[0][0].timestamp == 1000
+
+    # messages field synthesis
 
     def test_speedup_ratio_applied_to_messages_traces(self, mock_prompt_generator):
         """Test that speedup_ratio scales timestamps for traces with messages."""

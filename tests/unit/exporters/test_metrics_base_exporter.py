@@ -95,7 +95,13 @@ class TestMetricsBaseExporterInitialization:
 
 
 class TestMetricsBaseExporterPrepareMetrics:
-    """Tests for _prepare_metrics() method."""
+    """Tests for _prepare_metrics() method.
+
+    _prepare_metrics() keys metrics by tag AND drops INTERNAL/EXPERIMENTAL
+    metrics (the accumulator summary engine does not pre-filter, so the file
+    exporters must -- mirroring the console exporter's exclude_flags). Tags not
+    in MetricRegistry (dynamically injected) are kept.
+    """
 
     def test_prepare_metrics_returns_dict_keyed_by_tag(self, exporter_config):
         """Verify metrics are returned as a dict keyed by tag."""
@@ -137,7 +143,14 @@ class TestMetricsBaseExporterPrepareMetrics:
         assert result == {}
 
     def test_prepare_metrics_drops_internal_and_experimental(self, exporter_config):
-        """INTERNAL/EXPERIMENTAL metrics must be excluded from file exports"""
+        """INTERNAL/EXPERIMENTAL metrics must be excluded from file exports
+        (default dev flags off); public + unknown-tag metrics are kept.
+
+        Regression guard for the accumulator-summary path: reverting the
+        _prepare_metrics filter would leak internal metrics (e.g.
+        min_request_timestamp, credit_drop_latency) into profile_export_aiperf
+        .json/.csv.
+        """
         exporter = ConcreteExporter(exporter_config)
         metrics = [
             MetricResult(tag="time_to_first_token", header="TTFT", unit="ms", avg=1.0),
@@ -149,11 +162,11 @@ class TestMetricsBaseExporterPrepareMetrics:
 
         result = exporter._prepare_metrics(metrics)
 
-        assert "time_to_first_token" in result
-        assert "injected_custom_tag" in result
-        assert "min_request_timestamp" not in result
-        assert "credit_drop_latency" not in result
-        assert "stream_setup_latency" not in result
+        assert "time_to_first_token" in result  # public -> kept
+        assert "injected_custom_tag" in result  # not in registry -> kept
+        assert "min_request_timestamp" not in result  # INTERNAL -> dropped
+        assert "credit_drop_latency" not in result  # INTERNAL -> dropped
+        assert "stream_setup_latency" not in result  # EXPERIMENTAL -> dropped
 
     def test_prepare_metrics_keeps_internal_when_dev_flag_set(
         self, exporter_config, monkeypatch
@@ -250,6 +263,7 @@ class TestMetricsBaseExporterExport:
 
             exporter = ConcreteExporter(config)
 
+            # Create a dict to track if error was called
             called = {"err": None}
 
             def _err(msg):
@@ -258,6 +272,7 @@ class TestMetricsBaseExporterExport:
             with patch.object(exporter, "error", _err):
                 import aiperf.exporters.metrics_base_exporter as mbe
 
+                # Create a mock that raises when used as async context manager
                 mock_file = MagicMock()
                 mock_file.__aenter__ = AsyncMock(side_effect=OSError("disk full"))
                 mock_file.__aexit__ = AsyncMock(return_value=False)
@@ -293,6 +308,7 @@ class TestMetricsBaseExporterExport:
             with patch.object(exporter, "debug", _debug):
                 await exporter.export()
 
+                # Check that a debug message containing the file path was logged
                 assert any(str(exporter._file_path) in msg for msg in debug_messages), (
                     f"Expected file path in debug messages: {debug_messages}"
                 )

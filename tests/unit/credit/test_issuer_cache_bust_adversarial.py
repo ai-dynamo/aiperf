@@ -15,6 +15,8 @@ from aiperf.common.enums import CacheBustTarget, CreditPhase
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import Credit, TurnToSend
 
+# Fixtures (mirror tests/unit/credit/test_issuer.py)
+
 
 @pytest.fixture
 def mock_stop_checker():
@@ -87,10 +89,16 @@ def credit_issuer(
     )
 
 
+# Cache-bust propagation through issue_credit
+
+
 async def test_issue_credit_propagates_cache_bust_marker_and_target(
     credit_issuer, mock_router
 ):
-    """A TurnToSend carrying both cache_bust_marker and cache_bust_target"""
+    """A TurnToSend carrying both cache_bust_marker and cache_bust_target
+    must surface both fields verbatim on the issued Credit. Without this hop
+    the worker reads None on every credit and the cache-bust feature silently
+    no-ops."""
     turn = TurnToSend(
         conversation_id="conv-x",
         x_correlation_id="corr-x",
@@ -110,7 +118,9 @@ async def test_issue_credit_propagates_cache_bust_marker_and_target(
 async def test_issue_credit_default_cache_bust_when_turn_unset(
     credit_issuer, mock_router
 ):
-    """A TurnToSend that does not set cache_bust_* fields must yield a Credit"""
+    """A TurnToSend that does not set cache_bust_* fields must yield a Credit
+    with marker=None and target=NONE — the safe default that disables injection
+    end-to-end."""
     turn = TurnToSend(
         conversation_id="conv-y",
         x_correlation_id="corr-y",
@@ -128,7 +138,11 @@ async def test_issue_credit_default_cache_bust_when_turn_unset(
 async def test_issue_credit_msgpack_roundtrip_preserves_cache_bust_through_zmq_seam(
     credit_issuer, mock_router
 ):
-    """The Credit struct travels router -> worker over ZMQ as a msgpack-encoded"""
+    """The Credit struct travels router -> worker over ZMQ as a msgpack-encoded
+    msgspec Struct. This roundtrip locks the wire contract: the cache_bust
+    fields must survive encode + decode unchanged. Regression guard for any
+    future change that adds a non-serialized derived attribute or accidentally
+    drops the fields from the tag schema."""
     turn = TurnToSend(
         conversation_id="conv-rt",
         x_correlation_id="corr-rt",

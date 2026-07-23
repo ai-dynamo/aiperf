@@ -34,6 +34,7 @@ def test_tracker_no_cap_passthrough():
     tracker = DelayCapTracker(cap_seconds=None)
     assert tracker.clamp(5_000.0) == 5_000.0
     assert tracker.capped_count == 0
+    # Uncapped delays still update max_observed_ms for log_summary warnings.
     assert tracker.max_observed_ms == 5_000.0
 
 
@@ -70,7 +71,11 @@ def test_tracker_non_finite_maps_to_none_and_counts():
 
 
 def test_parent_floor_after_clamp_skips_none_for_non_finite():
-    """Parent reconstruct floors after clamp; must not ``max(None, 0.0)``."""
+    """Parent reconstruct floors after clamp; must not ``max(None, 0.0)``.
+
+    Mirrors ``weka_trace`` / ``weka_parallel_convert`` parent paths: clamp
+    scrubbed non-finite delays to None, then the floor must be gated.
+    """
     tracker = DelayCapTracker(cap_seconds=60.0)
     delay_ms: float | None = float("nan")
     delay_ms = tracker.clamp(delay_ms)

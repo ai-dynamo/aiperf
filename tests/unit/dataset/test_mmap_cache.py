@@ -1,6 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for the content-addressed mmap dataset cache."""
+"""Unit tests for the content-addressed mmap dataset cache.
+
+Covers:
+- ``compute_cache_key`` stability + collision sensitivity to inputs/settings/tokenizer
+- ``populate`` + ``lookup`` round-trip with manifest version gating
+- HIT / MISS file restoration to run dirs
+- Corrupt and version-mismatched manifests treated as MISS
+"""
 
 from __future__ import annotations
 
@@ -49,6 +56,10 @@ def _stable_tokenizer() -> dict[str, object]:
 
 class TestComputeCacheKey:
     def test_osl_set_produces_a_computable_key(self, tmp_path: Path) -> None:
+        # Regression: --osl puts a SamplingDistribution on dataset.osl. The key
+        # serializes it to a JSON dict; a raw model would TypeError in
+        # orjson.dumps and the dataset manager would silently DISABLE caching for
+        # every --osl trace run. The key must compute AND track the OSL value.
         from aiperf.plugin.enums import CustomDatasetType
 
         trace = _write_input_file(
@@ -66,15 +77,18 @@ class TestComputeCacheKey:
                 )
             )
             payload = mmap_cache._settings_payload_from_run(run)
-            assert isinstance(payload["osl_fallback"], dict)
+            assert isinstance(payload["osl_fallback"], dict)  # serialized, not a model
             return mmap_cache.compute_cache_key_from_run(run)
 
         k64 = _key(64)
         k128 = _key(128)
-        assert k64 is not None and len(k64) == 32
-        assert k64 != k128
+        assert k64 is not None and len(k64) == 32  # computed, caching not disabled
+        assert k64 != k128  # OSL fallback tracked in the key
 
     def test_key_changes_with_synthesis_multipliers(self, tmp_path: Path) -> None:
+        # The full synthesis dump (not just max_isl/max_osl) must enter the key:
+        # speedup_ratio + every *_multiplier rewrite the decoded trace bytes, so
+        # two runs differing only in a multiplier must NOT share a cache entry.
         from aiperf.plugin.enums import CustomDatasetType
 
         trace = _write_input_file(
@@ -105,6 +119,9 @@ class TestComputeCacheKey:
     def test_key_changes_with_preformat_payloads(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # PREFORMAT_PAYLOADS flips the stored mmap FORMAT (conversation vs
+        # payload_bytes); a cache HIT adopts the stored format verbatim, so a
+        # warm entry built with the other setting would serve the wrong format.
         from aiperf.common.environment import Environment
         from aiperf.plugin.enums import CustomDatasetType
 
@@ -129,6 +146,13 @@ class TestComputeCacheKey:
     def test_preformat_endpoint_knobs_change_key_only_when_preformat_on(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # With preformat on, endpoint.format_payload() bakes the stream flag,
+        # the max_tokens-vs-max_completion_tokens field name, and (for streaming
+        # OpenAI-compatible endpoints) stream_options.include_usage from
+        # use_server_token_count into the stored bytes, so runs differing only
+        # in those knobs must NOT share a cache entry (else a HIT serves bytes
+        # the run never asked for). With preformat off the knobs don't touch
+        # the stored mmap, so the key must be stable.
         from aiperf.common.environment import Environment
         from aiperf.plugin.enums import CustomDatasetType
 
@@ -169,6 +193,9 @@ class TestComputeCacheKey:
     def test_inter_turn_delay_cap_changes_key_on_file_dataset(
         self, tmp_path: Path
     ) -> None:
+        # v2 routes ``--inter-turn-delay-cap-seconds`` onto ``FileDataset`` only
+        # (``_apply_inter_turn_delay_cap`` returns early for non-FILE datasets),
+        # so the cap must distinguish the cache key on a file/trace dataset.
         from aiperf.plugin.enums import CustomDatasetType
 
         trace = _write_input_file(
@@ -194,6 +221,8 @@ class TestComputeCacheKey:
         assert base != capped
 
     def test_random_seed_changes_key_on_trace_dataset(self, tmp_path: Path) -> None:
+        # The base seed feeds per-block hash_id token derivation, so two runs
+        # differing only in --random-seed must NOT share a cache entry.
         from aiperf.plugin.enums import CustomDatasetType
 
         trace = _write_input_file(
@@ -218,6 +247,8 @@ class TestComputeCacheKey:
         assert k1 != k2, "random_seed must distinguish the cache key"
 
     def test_settings_payload_includes_seed_corpus_osl(self, tmp_path: Path) -> None:
+        # Regression guard for the wrong-cache-hit findings: random_seed,
+        # prompts.corpus, and the per-record OSL fallback must enter the key.
         from aiperf.common.enums import PromptCorpus
         from aiperf.config.dataset import PromptSelectionConfig
         from aiperf.plugin.enums import CustomDatasetType
@@ -265,6 +296,10 @@ class TestComputeCacheKey:
     def test_key_computes_with_a_pydantic_model_in_the_payload(
         self, tmp_path: Path
     ) -> None:
+        # Defense for the osl_fallback class of bug: a pydantic model leaking
+        # into the settings payload must NOT make orjson.dumps raise (which the
+        # caller catches and silently disables caching) -- _cache_key_default
+        # reduces it to model_dump so the key is always computable.
         from aiperf.config.distributions import NormalDistribution
 
         f = _write_input_file(tmp_path, b"x")
@@ -277,13 +312,14 @@ class TestComputeCacheKey:
             tokenizer_identity=_stable_tokenizer(),
             settings_payload=settings,
         )
-        assert len(key) == 32
+        assert len(key) == 32  # computed, not TypeError'd into a disabled cache
 
     def test_cache_key_default_reduces_models_and_other_objects(self) -> None:
         from aiperf.config.distributions import NormalDistribution
 
         dumped = mmap_cache._cache_key_default(NormalDistribution(mean=64))
         assert isinstance(dumped, dict) and dumped["mean"] == 64
+        # Non-model objects fall back to a deterministic str (coarse but stable).
         assert mmap_cache._cache_key_default(object) == str(object)
 
     def test_key_changes_when_input_bytes_change(self, tmp_path: Path) -> None:
@@ -427,6 +463,7 @@ class TestLookupAndPopulate:
     def test_lookup_corrupt_manifest_returns_none(self, tmp_path: Path) -> None:
         cache_root = mmap_cache.cache_dir()
         _populate_entry(cache_root, cache_key="corrupt")
+        # Overwrite the manifest with garbage.
         (cache_root / "corrupt" / mmap_cache.MANIFEST_FILENAME).write_bytes(
             b"not json at all"
         )
@@ -463,6 +500,7 @@ class TestLookupAndPopulate:
     def test_lookup_compressed_mismatch_returns_none(self, tmp_path: Path) -> None:
         cache_root = mmap_cache.cache_dir()
         _populate_entry(cache_root, cache_key="uncomp", compressed=False)
+        # Same key requested as compressed -> MISS.
         assert mmap_cache.lookup("uncomp", compressed=True) is None
 
     def test_invalidate_removes_entry_so_populate_can_heal(
@@ -476,8 +514,9 @@ class TestLookupAndPopulate:
         assert mmap_cache.invalidate("poison") is True
         assert not entry_dir.exists()
         assert mmap_cache.lookup("poison", compressed=False) is None
-        assert mmap_cache.invalidate("poison") is False
+        assert mmap_cache.invalidate("poison") is False  # already gone
 
+        # populate can rewrite the key after invalidation
         healed = _populate_entry(cache_root, cache_key="poison", data_bytes=b"HEALED")
         hit = mmap_cache.lookup("poison", compressed=False)
         assert hit is not None
@@ -569,7 +608,13 @@ class TestAcquireCacheLock:
 
     @pytest.mark.asyncio
     async def test_serializes_concurrent_acquires(self) -> None:
-        """Five concurrent contenders on the same key never overlap inside."""
+        """Five concurrent contenders on the same key never overlap inside.
+
+        Asserts a LIVE occupancy counter never exceeds 1 rather than reasoning
+        about wall-clock event timestamps: under the autouse ``no_sleep`` fixture
+        (asyncio.sleep -> 0) and ``-n auto`` load, timestamp ties made the
+        sorted-balance check flaky. The ``sleep(0)`` inside the lock yields so a
+        non-serializing implementation WOULD let a second contender in."""
         import asyncio
 
         inside = 0
@@ -580,7 +625,7 @@ class TestAcquireCacheLock:
             async with mmap_cache.acquire_cache_lock("k", timeout=10.0):
                 inside += 1
                 max_inside = max(max_inside, inside)
-                await asyncio.sleep(0)
+                await asyncio.sleep(0)  # yield: a broken lock would overlap here
                 inside -= 1
 
         await asyncio.gather(*(hold() for _ in range(5)))
@@ -588,7 +633,14 @@ class TestAcquireCacheLock:
 
     @pytest.mark.asyncio
     async def test_independent_keys_dont_serialize(self) -> None:
-        """Two contenders on different keys CAN be held simultaneously."""
+        """Two contenders on different keys CAN be held simultaneously.
+
+        Deterministic rendezvous instead of a wall-clock ``elapsed`` bound (which
+        lost all signal once ``no_sleep`` zeroed the dwell and flaked under load):
+        each holder signals that it is inside, then waits for the OTHER to signal
+        it is inside too. Both can only complete if both locks are held at the
+        same time. If distinct keys wrongly shared one lock, the first holder
+        would block the second forever and ``wait_for`` would time out."""
         import asyncio
 
         alpha_in = asyncio.Event()
@@ -607,7 +659,13 @@ class TestAcquireCacheLock:
 
     @pytest.mark.asyncio
     async def test_timeout_degrades_to_unlocked_populate(self) -> None:
-        """Holder beyond timeout lets the waiter proceed unlocked, not raise."""
+        """Holder beyond timeout lets the waiter proceed unlocked, not raise.
+
+        A populator SIGKILLed before completing leaves the lock held (NFS
+        tombstone) with no complete entry, so the cache-complete bypass never
+        fires. Rather than fail the whole run, the waiter degrades to an
+        unlocked populate (safe: populate is atomic). The waiter therefore
+        enters the context body while the holder still holds the lock."""
         import asyncio
 
         holder_acquired = asyncio.Event()
@@ -621,6 +679,7 @@ class TestAcquireCacheLock:
 
         async def waiter() -> None:
             await holder_acquired.wait()
+            # Does NOT raise filelock.Timeout: proceeds unlocked after timeout.
             async with mmap_cache.acquire_cache_lock("k", timeout=0.5):
                 waiter_entered.set()
 
@@ -634,7 +693,11 @@ class TestAcquireCacheLock:
 
 
 class TestTraceVerbatimGate:
-    """Only trace / verbatim datasets are cacheable; everything else"""
+    """Only trace / verbatim datasets are cacheable; everything else
+    bypasses the cache (and emits inputs.json). ``is_trace_or_verbatim_dataset``
+    and the ``compute_cache_key_from_run`` gate keep those two decisions in
+    lockstep.
+    """
 
     @pytest.mark.parametrize(
         "custom_type",
@@ -668,7 +731,8 @@ class TestTraceVerbatimGate:
     def test_compute_cache_key_none_for_non_trace_file_dataset(
         self, tmp_path: Path
     ) -> None:
-        """A non-trace file dataset is not cacheable -> key is None -> miss path"""
+        """A non-trace file dataset is not cacheable -> key is None -> miss path
+        every run (so inputs.json is always re-emitted)."""
         from aiperf.plugin.enums import CustomDatasetType
 
         f = _write_input_file(tmp_path, b'{"text": "hello"}\n')
@@ -703,7 +767,8 @@ class TestTraceVerbatimGate:
 
 
 class TestHashDirContents:
-    """Directory inputs are hashed by relative path + bytes so two corpora"""
+    """Directory inputs are hashed by relative path + bytes so two corpora
+    with the same directory name but different contents get distinct keys."""
 
     def _make_corpus(self, root: Path) -> Path:
         corpus = root / "corpus"
@@ -802,6 +867,7 @@ class TestPopulateEdgeCases:
         )
 
         assert out == cache_root / "winner"
+        # First writer's bytes stay; the second populate is a no-op.
         assert (cache_root / "winner" / "dataset.dat").read_bytes() == b"FIRST"
 
     def test_populate_cleans_leftover_tmp_dir(self, tmp_path: Path) -> None:
@@ -831,6 +897,7 @@ class TestPopulateEdgeCases:
             manifest=_make_manifest("nosrc"),
         )
         assert out is None
+        # The tmp dir must not be left behind.
         assert not any(mmap_cache.cache_dir().glob(".nosrc.tmp.*"))
 
     def test_populate_replace_race_returns_existing_entry(
@@ -843,6 +910,8 @@ class TestPopulateEdgeCases:
         final_dir = cache_root / "race"
 
         def replace_and_lose(src: str | Path, dst: str | Path) -> None:
+            # Simulate the concurrent winner committing first, then our
+            # rename failing (non-empty destination on POSIX).
             final_dir.mkdir(parents=True, exist_ok=True)
             (final_dir / "dataset.dat").write_bytes(b"WINNER")
             raise OSError("Directory not empty")
@@ -938,7 +1007,8 @@ class TestComputeCacheKeyRunGates:
     """Run-level gates that disable caching entirely (key is None)."""
 
     def test_accuracy_mode_disables_caching(self, tmp_path: Path) -> None:
-        """Accuracy mode must gate BEFORE the dataset-source checks: pair it"""
+        """Accuracy mode must gate BEFORE the dataset-source checks: pair it
+        with a trace input file that would otherwise be cacheable."""
         from aiperf.plugin.enums import AccuracyBenchmarkType, CustomDatasetType
 
         trace = _write_input_file(
@@ -974,7 +1044,8 @@ class TestSettingsPayloadFromRun:
         assert "cache_bust" not in payload["prompt"]
 
     def test_use_end_to_start_delays_keys_the_cache(self, tmp_path: Path) -> None:
-        """Load-time delay mode must enter the key: end-to-start vs start-to-start"""
+        """Load-time delay mode must enter the key: end-to-start vs start-to-start
+        bake different Turn.delay bytes into the mmap."""
         from aiperf.plugin.enums import CustomDatasetType
 
         trace = _write_input_file(
@@ -1045,7 +1116,8 @@ class TestAcquireCacheLockBypassAndFallback:
 
     @pytest.mark.asyncio
     async def test_manifest_presence_skips_lock_acquire(self) -> None:
-        """A complete cache entry bypasses the lock entirely (SIGKILLed"""
+        """A complete cache entry bypasses the lock entirely (SIGKILLed
+        populator tombstone must not wedge waiters)."""
         cache_root = mmap_cache.cache_dir()
         entry = cache_root / "prepopulated"
         entry.mkdir(parents=True)
@@ -1110,6 +1182,8 @@ class TestAcquireCacheLockBypassAndFallback:
 
         from aiperf.dataset import mmap_cache_lock
 
+        # Pin the substring we match against filelock's NFS flock message so a
+        # future filelock upgrade that drops/renames it fails this test.
         assert mmap_cache_lock._FLOCK_UNSUPPORTED_HINT == "use SoftFileLock instead"
 
         attempted: list[type] = []
@@ -1127,6 +1201,8 @@ class TestAcquireCacheLockBypassAndFallback:
 
         monkeypatch.setattr(mmap_cache_lock, "_blocking_acquire", flock_then_soft)
 
+        # SoftFileLock's mode= is umask-masked; the post-acquire chmod must still
+        # yield 0o664 under a restrictive cluster umask.
         old_umask = os.umask(0o077)
         try:
             async with mmap_cache.acquire_cache_lock("softlock", timeout=5.0):
@@ -1159,13 +1235,16 @@ class TestAcquireCacheLockBypassAndFallback:
     async def test_release_oserror_is_swallowed(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A release() failing (e.g. lock file unlinked externally) must not"""
+        """A release() failing (e.g. lock file unlinked externally) must not
+        propagate out of the context manager."""
         from filelock import FileLock
 
         real_release = FileLock.release
         raised = False
 
         def bad_release(self, *args, **kwargs):
+            # Raise only on the context-manager release; delegate afterwards so
+            # FileLock.__del__ at GC time doesn't emit an unraisable error.
             nonlocal raised
             if not raised:
                 raised = True

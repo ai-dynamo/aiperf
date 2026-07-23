@@ -12,7 +12,12 @@ from aiperf.timing.session_tree import SessionTreeRegistry
 
 
 class _FakeConcurrency:
-    """Slots always granted; releases are no-ops."""
+    """Slots always granted; releases are no-ops.
+
+    The real ``SessionTreeRegistry`` only needs ``release_session_slot``; the
+    issuer's acquire path needs the two coroutines. Neither the registry nor
+    the emitted ``Credit`` is a mock -- that is the point of this file.
+    """
 
     async def acquire_session_slot(self, phase: CreditPhase, can_proceed) -> bool:
         return True
@@ -41,7 +46,11 @@ def _make_registry() -> SessionTreeRegistry:
 def _make_issuer(
     registry: SessionTreeRegistry | None,
 ) -> tuple[CreditIssuer, _CapturingRouter]:
-    """Minimal real issuer: mocked scalars/lifecycle, REAL registry + router."""
+    """Minimal real issuer: mocked scalars/lifecycle, REAL registry + router.
+
+    ``session_tree_registry_enabled=True`` engages ``registry`` regardless of
+    phase; passing ``None`` for the registry yields the non-agentic path.
+    """
     progress = MagicMock()
     progress.increment_sent = MagicMock(return_value=(1, False))
     progress.freeze_sent_counts = MagicMock()
@@ -97,6 +106,9 @@ def _child_turn(root_id: str = "root-1", child_id: str = "child-1") -> TurnToSen
     )
 
 
+# _finality_for_issue: reads REAL SessionTreeRegistry state
+
+
 def test_finality_root_final_turn_no_descendants_is_tree_final():
     """Scenario 1: root, final turn, no descendants, no forks."""
     registry = _make_registry()
@@ -123,11 +135,12 @@ def test_finality_root_with_outstanding_descendant_not_tree_final():
 
 
 def test_finality_sole_child_after_root_terminal_is_both_final():
-    """Scenario 3: child whose parent is the root; root terminal; sole"""
+    """Scenario 3: child whose parent is the root; root terminal; sole
+    outstanding child on its final turn -> both facts True."""
     registry = _make_registry()
     registry.open_tree("root-1", CreditPhase.PROFILING, root_pending=True)
     registry.register_descendants("root-1", n=1)
-    registry.on_root_terminal("root-1")
+    registry.on_root_terminal("root-1")  # root_pending cleared; tree still live
     issuer, _ = _make_issuer(registry)
 
     is_parent_final, is_tree_final = issuer._finality_for_issue(_child_turn())
@@ -144,7 +157,14 @@ def test_finality_no_registry_is_conservative_none_false():
 
 
 def test_finality_spawning_final_turn_never_tree_final():
-    """Scenario 5 (regression): a final turn declaring ANY branch is never"""
+    """Scenario 5 (regression): a final turn declaring ANY branch is never
+    tree-final, even with nothing outstanding in the registry.
+
+    SPAWN children register only at return-intercept, AFTER this issue-time
+    stamp, so ``has_branches`` (any-mode) must gate the query -- the FORK-only
+    ``has_forks`` flag stays False for a SPAWN-declaring turn and previously
+    produced a wrong ``is_tree_final=True``.
+    """
     registry = _make_registry()
     registry.open_tree("root-1", CreditPhase.PROFILING, root_pending=True)
     issuer, _ = _make_issuer(registry)
@@ -164,7 +184,9 @@ def test_finality_spawning_final_turn_never_tree_final():
 
 
 def test_build_first_turn_stamps_has_branches_and_gates_finality():
-    """End-to-end seam guard: a root whose turn-0 declares a SPAWN branch must"""
+    """End-to-end seam guard: a root whose turn-0 declares a SPAWN branch must
+    build a ``TurnToSend`` with ``has_branches=True`` / ``has_forks=False``
+    and stamp ``is_tree_final=False`` through the real issuer."""
     from aiperf.common.enums import ConversationBranchMode
     from aiperf.common.models import (
         ConversationBranchInfo,
@@ -198,8 +220,17 @@ def test_build_first_turn_stamps_has_branches_and_gates_finality():
     assert issuer._finality_for_issue(turn) == (None, False)
 
 
+# GUARD: the Credit(...) construction site must pass the helper's results through
+
+
 async def test_issue_credit_stamps_finality_onto_emitted_credit():
-    """RED if either ``is_parent_final=`` / ``is_tree_final=`` kwarg is removed"""
+    """RED if either ``is_parent_final=`` / ``is_tree_final=`` kwarg is removed
+    from the ``Credit(...)`` construction in ``_issue_credit_internal``.
+
+    Uses scenario 3 (both facts True) so the stamped values differ from the
+    struct defaults (``None`` / ``False``): a dropped kwarg reverts the emitted
+    ``Credit`` to the default and this assertion fails.
+    """
     registry = _make_registry()
     registry.open_tree("root-1", CreditPhase.PROFILING, root_pending=True)
     registry.register_descendants("root-1", n=1)

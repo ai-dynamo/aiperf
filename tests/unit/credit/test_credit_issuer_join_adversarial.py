@@ -19,7 +19,13 @@ from aiperf.timing.branch_orchestrator import PendingBranchJoin
 
 
 def _make_issuer() -> CreditIssuer:
-    """Build a bare CreditIssuer with mocks sufficient for dispatch_join_turn."""
+    """Build a bare CreditIssuer with mocks sufficient for dispatch_join_turn.
+
+    Only attributes actually read by ``dispatch_join_turn`` and the
+    ``issue_credit`` / ``_issue_credit_ready`` path are filled in; extra
+    attributes can be added per-test if a specific test exercises more of
+    the issuer.
+    """
     issuer = CreditIssuer.__new__(CreditIssuer)
     issuer._phase = CreditPhase.PROFILING
     issuer._phase_index = 0
@@ -95,6 +101,7 @@ async def test_dispatch_join_turn_returns_true_when_issue_credit_returns_true_an
     assert turn.conversation_id == pending.parent_conversation_id
     assert turn.x_correlation_id == pending.parent_x_correlation_id
     assert turn.num_turns == pending.parent_num_turns
+    # Hardcoded "not first turn" semantics (driven by turn_index > 0).
     assert turn.turn_index != 0
     assert turn.has_forks is False
     assert turn.branch_mode == ConversationBranchMode.FORK
@@ -102,7 +109,11 @@ async def test_dispatch_join_turn_returns_true_when_issue_credit_returns_true_an
 
 @pytest.mark.asyncio
 async def test_dispatch_join_turn_hardcodes_branch_mode_fork_even_for_spawn_parent():
-    """PendingBranchJoin carries no original branch_mode; issuer hardcodes FORK."""
+    """PendingBranchJoin carries no original branch_mode; issuer hardcodes FORK.
+
+    Documents current behavior: even if the parent was semantically a SPAWN
+    rejoin, the issuer has no signal to distinguish and always emits FORK.
+    """
     issuer = _make_issuer()
     captured: dict[str, TurnToSend] = {}
 
@@ -124,7 +135,12 @@ async def test_dispatch_join_turn_hardcodes_branch_mode_fork_even_for_spawn_pare
 
 @pytest.mark.asyncio
 async def test_dispatch_join_turn_with_gated_turn_index_zero_edge_behavior():
-    """gated_turn_index=0 passes the assertion and builds turn with turn_index=0."""
+    """gated_turn_index=0 passes the assertion and builds turn with turn_index=0.
+
+    By construction this should not occur in production (Task 7 forbids
+    forward/same-turn prereqs on turn 0), but the issuer has no guard
+    beyond the ``is not None`` assertion. Document the vestigial edge.
+    """
     issuer = _make_issuer()
     captured: dict[str, TurnToSend] = {}
 
@@ -196,9 +212,15 @@ async def test_multiple_parents_dispatch_join_turn_isolated_state():
 
 @pytest.mark.asyncio
 async def test_dispatch_join_turn_graceful_when_issuer_stopped():
-    """When stop_checker rejects, issue_credit returns False and dispatch returns False."""
+    """When stop_checker rejects, issue_credit returns False and dispatch returns False.
+
+    The issuer has no standalone lifecycle; "stopped" manifests as
+    ``can_send_any_turn`` returning False. dispatch_join_turn must not
+    raise — it must propagate False cleanly.
+    """
     issuer = _make_issuer()
     issuer._stop_checker.can_send_any_turn.return_value = False
+    # acquire_prefill_slot returns False when can_proceed_fn is False while waiting.
     issuer._concurrency_manager.acquire_prefill_slot = AsyncMock(return_value=False)
     pending = PendingBranchJoin(
         parent_x_correlation_id="corr-parent",
@@ -212,11 +234,19 @@ async def test_dispatch_join_turn_graceful_when_issuer_stopped():
 
 
 def test_dispatch_join_turn_does_not_own_joins_suppressed_counter():
-    """Structural: ``joins_suppressed`` bookkeeping belongs to BranchOrchestrator."""
+    """Structural: ``joins_suppressed`` bookkeeping belongs to BranchOrchestrator.
+
+    The issuer must not mutate that counter anywhere in
+    ``dispatch_join_turn`` — suppression accounting is the orchestrator's
+    responsibility. Docstring mentions of the counter (referencing the
+    orchestrator contract) are stripped before inspection so we check
+    code, not prose.
+    """
 
     def _strip_docstring_and_comments(src: str) -> str:
         tree = ast.parse(textwrap.dedent(src))
         fn = tree.body[0]
+        # Drop the leading docstring Expr node if present.
         if (
             isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef)
             and fn.body
@@ -234,8 +264,10 @@ def test_dispatch_join_turn_does_not_own_joins_suppressed_counter():
         "dispatch_join_turn code must not touch joins_suppressed; "
         "that counter is owned by BranchOrchestrator."
     )
+    # Sanity: no executable code in the issuer module touches the counter.
     module_tree = ast.parse(inspect.getsource(issuer_module))
     module_code = ast.unparse(module_tree)
+    # Remove all docstrings at module/class/function level.
     for node in ast.walk(module_tree):
         if (
             isinstance(
@@ -267,8 +299,10 @@ async def test_dispatch_join_turn_does_not_acquire_session_slot():
     issuer._concurrency_manager.acquire_session_slot.assert_not_called()
     issuer._concurrency_manager.acquire_prefill_slot.assert_called_once()
 
+    # Structural confirmation: the turn built by dispatch_join_turn uses
+    # gated_turn_index directly, so turn_index > 0 drives is_session_start=False.
     sent: TurnToSend = issuer._issue_credit_internal.call_args.args[0]
-    assert sent.turn_index == 2
+    assert sent.turn_index == 2  # => is_session_start is False in issue_credit
 
 
 @pytest.mark.asyncio

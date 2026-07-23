@@ -22,7 +22,14 @@ def _mk_user_config(**overrides):
 
 
 def _stub_prompt_generator_for_reconstructor(loader) -> None:
-    """Wire a MagicMock prompt_generator with the attrs the reconstructor needs."""
+    """Wire a MagicMock prompt_generator with the attrs the reconstructor needs.
+
+    Reconstructor calls `_decode_blocks(hash_ids)` -> `_cache` lookup +
+    `_sample_tokens` fallback + `tokenizer.decode`. ``sample_partial_tail`` (the
+    mixin method) needs `_tokenized_corpus` and `_corpus_size`. ``_decode_block_tokens``
+    consumes ``_hash_id_corpus_rng`` so its reseed/randrange surface is stubbed
+    via ``stub_hash_id_corpus_rng``.
+    """
     from tests.unit.dataset.loader.conftest import stub_hash_id_corpus_rng
 
     loader.prompt_generator = MagicMock()
@@ -66,12 +73,13 @@ def test_load_dataset_single_file_yields_one_trace():
     )
     data = loader.load_dataset()
     assert set(data.keys()) == {"trace_simple"}
-    assert len(data["trace_simple"]) == 1
+    assert len(data["trace_simple"]) == 1  # one WekaTrace object
 
 
 def test_load_dataset_directory_yields_one_per_file():
     loader = WekaTraceLoader(filename=str(FIXTURES), run=_mk_user_config())
     data = loader.load_dataset()
+    # simple.json, one_subagent.json, terminal_subagent.json, multi_model.json
     assert "trace_simple" in data
     assert "trace_sa" in data
     assert "trace_term" in data
@@ -97,6 +105,7 @@ def test_convert_to_conversations_builds_one_conversation_per_normal_request(
     uc = _mk_user_config()
     loader = WekaTraceLoader(filename=str(FIXTURES / "simple.json"), run=uc)
 
+    # Required attributes set by __init__ (we bypass the real PromptGenerator wiring).
     _stub_prompt_generator_for_reconstructor(loader)
     loader._tokenizer_name = "test-tok"
     loader._trust_remote_code = False
@@ -111,20 +120,40 @@ def test_convert_to_conversations_builds_one_conversation_per_normal_request(
     assert len(conv.turns) == 2
     assert conv.turns[0].model == "claude-opus-4-5-20251101"
     assert conv.turns[0].max_tokens == 30
+    # Trace `t` is in seconds; Turn.timestamp/delay contract is milliseconds.
     assert conv.turns[0].timestamp == 0.0
     assert conv.turns[1].timestamp == 5000.0
     assert conv.turns[1].delay == pytest.approx(5000.0)
+    # weka loader populates only ``Turn.raw_messages`` (the multi-message chat
+    # form consumed by ChatEndpoint.build_messages). ``Turn.texts`` is left
+    # at its default empty list — a separate full-prompt decode previously
+    # populated it but no consumer reads it for chat-shape traces, so the
+    # decode was removed.
     assert conv.turns[0].texts == []
+    # Weka now emits delta-encoded turns. Turn 0 carries the full initial
+    # state (system + user). Turn 1 may either be a strict append (just
+    # asst + user_k) or a full re-emit (reset_context=True) if the LCP
+    # truncate disturbed an emitted segment — both forms are valid; we
+    # assert on the accumulated wire shape instead.
     turn_0_roles = [m["role"] for m in conv.turns[0].raw_messages]
     assert "user" in turn_0_roles
     assert "assistant" not in turn_0_roles
     assert conv.turns[0].reset_context is False
     turn_1_roles = [m["role"] for m in conv.turns[1].raw_messages]
     assert "user" in turn_1_roles
+    # If turn 1 was a strict append, system stays in turn 0 only; if it
+    # was a reset, turn 1 carries the full state including system. Either
+    # is correct under DELTAS_WITH_RESPONSES semantics.
     if conv.turns[1].reset_context:
         assert "system" in turn_1_roles
     else:
         assert "system" not in turn_1_roles
+    # Accumulated state across both turns (mimicking what
+    # BaseEndpoint.build_messages produces at request time): the first
+    # non-system message is ALWAYS user. simple.json's tool+system prefix
+    # covers every full block of turn 0, so the turn-1 LCP boundary strip
+    # deletes turn 0's user tail — a context loss; the context-loss rule
+    # resumes the conversation at a user turn (no fabricated assistant).
     accumulated: list[dict] = []
     for t in conv.turns:
         if t.reset_context:
@@ -139,7 +168,12 @@ def test_convert_to_conversations_builds_one_conversation_per_normal_request(
 
 
 def test_convert_to_conversations_emits_alternating_roles(monkeypatch):
-    """Turn 1+ keeps the assistant segment between the surviving user"""
+    """Turn 1+ keeps the assistant segment between the surviving user
+    content and the new user_k content (symmetric attribution, spec section
+    4.4.1) — when a user turn survives. simple.json's prefix covers all of
+    turn 0's full blocks, so its turn 1 exercises the CONTEXT-LOSS rule
+    instead (resume at a user turn); the alternation case uses an inline
+    trace whose turn-0 user segment owns real blocks."""
     import orjson
 
     uc = _mk_user_config()
@@ -153,13 +187,19 @@ def test_convert_to_conversations_emits_alternating_roles(monkeypatch):
     convs = loader.convert_to_conversations(loader.load_dataset())
     conv = convs[0]
 
+    # Turn 0: just system / user (no asst).
     turn_0_roles = [m["role"] for m in conv.turns[0].raw_messages]
     assert "assistant" not in turn_0_roles
 
+    # simple.json turn 1: context loss (the boundary strip deletes turn 0's
+    # tail-only user segment) -> resume at a user turn, no assistant.
     turn_1_roles = [m["role"] for m in conv.turns[1].raw_messages]
     assert conv.turns[1].reset_context is True
     assert turn_1_roles == ["system", "user"]
 
+    # Alternation case: turn 0's user segment owns a full block (in=448 =
+    # 7 blocks > 3 prefix blocks), so it survives the turn-1 truncation and
+    # the assistant segment is attributed before the new user_k content.
     trace = {
         "id": "trace_alt",
         "models": ["claude-opus-4-5-20251101"],
@@ -218,10 +258,12 @@ def test_subagent_produces_child_conversation_and_branch_plus_prereq(monkeypatch
     loader._block_size = 64
 
     convs = loader.convert_to_conversations(loader.load_dataset())
+    # Parent + one subagent = 2 conversations.
     assert {c.session_id for c in convs} == {"trace_sa", "trace_sa::sa:agent_001"}
     parent = next(c for c in convs if c.session_id == "trace_sa")
     child = next(c for c in convs if c.session_id == "trace_sa::sa:agent_001")
 
+    # Parent root turn declares one SPAWN branch.
     assert len(parent.branches) == 1
     branch = parent.branches[0]
     assert branch.mode == ConversationBranchMode.SPAWN
@@ -229,11 +271,13 @@ def test_subagent_produces_child_conversation_and_branch_plus_prereq(monkeypatch
     assert branch.start_timestamp_ms == pytest.approx(2000.0)
     assert parent.turns[0].branch_ids == [branch.branch_id]
 
+    # Parent's next turn carries a SPAWN_JOIN prereq referencing the branch.
     assert len(parent.turns[1].prerequisites) == 1
     p = parent.turns[1].prerequisites[0]
     assert p.kind == PrerequisiteKind.SPAWN_JOIN
     assert p.branch_id == branch.branch_id
 
+    # Child conversation has one inner turn.
     assert child.is_root is False
     assert child.agent_depth == 1
     assert child.parent_conversation_id == "trace_sa"
@@ -258,6 +302,7 @@ def test_terminal_subagent_becomes_background_branch_no_prereq(monkeypatch):
     branch = parent.branches[0]
     assert branch.is_background is True
     assert branch.mode == ConversationBranchMode.SPAWN
+    # Only one parent turn exists -> no prereq anywhere.
     assert all(not t.prerequisites for t in parent.turns)
 
 
@@ -604,9 +649,9 @@ def test_mixed_duration_subagents_emit_tiered_join_branches(tmp_path, monkeypatc
         "hash_id_scope": "local",
         "requests": [
             normal(0.0, 200, 30, [1, 2, 3]),
-            subagent("agent_a", 1.0, 5000, [10, 11]),
-            subagent("agent_b", 1.5, 11000, [12, 13]),
-            subagent("agent_c", 1.6, 24000, [14, 15]),
+            subagent("agent_a", 1.0, 5000, [10, 11]),  # ends at t=6, joins turn 1
+            subagent("agent_b", 1.5, 11000, [12, 13]),  # ends at t=12.5, joins turn 2
+            subagent("agent_c", 1.6, 24000, [14, 15]),  # ends after all main turns
             normal(6.0, 250, 40, [1, 2, 3, 4]),
             normal(20.0, 300, 50, [1, 2, 3, 4, 5]),
         ],
@@ -661,7 +706,7 @@ def test_mixed_duration_subagents_emit_tiered_join_branches(tmp_path, monkeypatc
 
 
 def test_filters_requests_exceeding_max_isl(monkeypatch):
-    uc = _mk_user_config(max_isl=210)
+    uc = _mk_user_config(max_isl=210)  # simple.json has in=200 and in=250
     loader = WekaTraceLoader(filename=str(FIXTURES / "simple.json"), run=uc)
     _stub_prompt_generator_for_reconstructor(loader)
     loader._tokenizer_name = "t"
@@ -703,6 +748,7 @@ def test_trace_model_rewritten_to_configured_model_zero(monkeypatch):
 
 
 def test_orphaned_subagent_is_dropped_when_preceding_turn_filtered(monkeypatch):
+    # Raise the bar so BOTH parent turns in one_subagent.json get filtered (in=200, in=400).
     uc = _mk_user_config(max_isl=50)
     loader = WekaTraceLoader(filename=str(FIXTURES / "one_subagent.json"), run=uc)
     _stub_prompt_generator_for_reconstructor(loader)
@@ -712,11 +758,20 @@ def test_orphaned_subagent_is_dropped_when_preceding_turn_filtered(monkeypatch):
     loader._block_size = 64
     convs = loader.convert_to_conversations(loader.load_dataset())
     parent = next(c for c in convs if c.session_id == "trace_sa")
+    # No parent turns remain -> subagent branch also dropped.
     assert parent.branches == []
 
 
+# --- Hash content scoped per (trace_id, hash_id) ---
+
+
 def _real_pg():
-    """Build a PromptGenerator-shape mock with a real HashIdRandomGenerator."""
+    """Build a PromptGenerator-shape mock with a real HashIdRandomGenerator.
+
+    We bypass full PromptGenerator init (it loads a tokenizer corpus) and only
+    populate the surface ``_decode_block_tokens`` actually touches: the int-keyed
+    cache, the hash-id rng, and a tiny synthetic tokenized corpus.
+    """
     from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
     from aiperf.common.random_generator import RandomGenerator
 
@@ -738,7 +793,13 @@ def _real_loader_with_pg(pg):
 
 
 def test_decode_block_tokens_distinct_across_scopes():
-    """Same hash_id under different trace scopes must produce different tokens."""
+    """Same hash_id under different trace scopes must produce different tokens.
+
+    The kv-cache-tester corpus declares ``hash_id_scope: "local"``; identical
+    ``hash_id`` values in different traces must map to distinct content so
+    the model under test sees the cache MISSES the recording cluster saw,
+    not artificial cross-trace HITS.
+    """
     pg = _real_pg()
     loader = _real_loader_with_pg(pg)
 
@@ -755,7 +816,8 @@ def test_decode_block_tokens_distinct_across_scopes():
 
 
 def test_decode_block_tokens_deterministic_within_scope():
-    """Same (scope, hash_id) called twice (after cache clear and reseed) is"""
+    """Same (scope, hash_id) called twice (after cache clear and reseed) is
+    byte-identical — required for cross-process reproducibility."""
     pg = _real_pg()
     loader = _real_loader_with_pg(pg)
 
@@ -771,7 +833,8 @@ def test_decode_block_tokens_deterministic_within_scope():
 
 
 def test_decode_block_tokens_deterministic_across_loaders():
-    """Two freshly built loaders with the same seed produce identical bytes for"""
+    """Two freshly built loaders with the same seed produce identical bytes for
+    the same (scope, hash_id) — stand-in for cross-process reproducibility."""
     pg1 = _real_pg()
     loader1 = _real_loader_with_pg(pg1)
     pg1._hash_id_corpus_rng.set_trace_id("trace_x")
@@ -786,7 +849,9 @@ def test_decode_block_tokens_deterministic_across_loaders():
 
 
 def test_ignore_trace_delays_nulls_timestamp_and_delay(monkeypatch):
-    """When ``ignore_trace_delays=True``, parent and child turns must have"""
+    """When ``ignore_trace_delays=True``, parent and child turns must have
+    ``timestamp`` and ``delay`` set to None so concurrency / request-rate
+    timing modes dispatch back-to-back instead of replaying recorded gaps."""
     uc = _mk_user_config(ignore_trace_delays=True)
     loader = WekaTraceLoader(filename=str(FIXTURES / "one_subagent.json"), run=uc)
     _stub_prompt_generator_for_reconstructor(loader)
@@ -796,7 +861,7 @@ def test_ignore_trace_delays_nulls_timestamp_and_delay(monkeypatch):
     loader._block_size = 64
 
     convs = loader.convert_to_conversations(loader.load_dataset())
-    assert len(convs) >= 2
+    assert len(convs) >= 2  # parent + at least one subagent child
     for conv in convs:
         for turn in conv.turns:
             assert turn.timestamp is None
@@ -804,7 +869,11 @@ def test_ignore_trace_delays_nulls_timestamp_and_delay(monkeypatch):
 
 
 def test_use_think_time_only_emits_recorded_think_time_as_delay(monkeypatch, tmp_path):
-    """When ``use_think_time_only=True``, ``Turn.delay`` should equal each"""
+    """When ``use_think_time_only=True``, ``Turn.delay`` should equal each
+    request's recorded ``think_time * 1000`` (ms), not the full
+    ``(t_curr - t_prev) * 1000`` inter-request delta. The first turn always has
+    delay=None. Falls back to the full delta if a request's ``think_time`` is
+    None."""
     import orjson
 
     trace = {
@@ -832,6 +901,7 @@ def test_use_think_time_only_emits_recorded_think_time_as_delay(monkeypatch, tmp
                 "model": "claude-opus-4-5-20251101",
                 "in": 200,
                 "out": 20,
+                # Chains onto [1, 2] so detection keeps one conversation.
                 "hash_ids": [1, 2, 3],
                 "input_types": ["text"],
                 "output_types": ["text"],
@@ -845,12 +915,13 @@ def test_use_think_time_only_emits_recorded_think_time_as_delay(monkeypatch, tmp
                 "model": "claude-opus-4-5-20251101",
                 "in": 300,
                 "out": 30,
+                # Chains onto [1, 2, 3] so detection keeps one conversation.
                 "hash_ids": [1, 2, 3, 4],
                 "input_types": ["text"],
                 "output_types": ["text"],
                 "stop": "end_turn",
                 "api_time": 3.0,
-                "think_time": None,
+                "think_time": None,  # forces fallback to full delta
             },
         ],
     }
@@ -868,13 +939,23 @@ def test_use_think_time_only_emits_recorded_think_time_as_delay(monkeypatch, tmp
     convs = loader.convert_to_conversations(loader.load_dataset())
     turns = convs[0].turns
     assert len(turns) == 3
-    assert turns[0].delay is None
-    assert turns[1].delay == 7000.0
-    assert turns[2].delay == 13000.0
+    assert turns[0].delay is None  # first turn always
+    assert (
+        turns[1].delay == 7000.0
+    )  # think_time=7.0s -> 7000ms (NOT 12000ms full delta)
+    assert turns[2].delay == 13000.0  # think_time=None -> falls back to (25-12)*1000
 
 
 def test_trace_idle_gap_cap_is_per_trace_and_uses_request_starts(tmp_path):
-    """Idle-gap capping uses parent+subagent request starts per root trace."""
+    """Idle-gap capping uses parent+subagent request starts per root trace.
+
+    Trace A has request starts at t=0, t=20, and t=220. With a 60s idle-gap cap,
+    the 200s request-start gap from t=20 -> t=220 is compressed by 140s, so the
+    second parent request shifts to t=80. The subagent's original api_time is not
+    used for this compression. Trace B has its own request-start gap; if the
+    transform were global across traces, both traces would shift differently.
+    They must not.
+    """
 
     def normal(
         *,
@@ -975,16 +1056,40 @@ def test_trace_idle_gap_cap_is_per_trace_and_uses_request_starts(tmp_path):
     trace_a_turns = conv_by_id["trace_idle_a"].turns
     assert trace_a_turns[0].timestamp == 0.0
     assert trace_a_turns[1].timestamp == 80_000.0
+    # The trace-wide idle-gap cap takes precedence over the old per-turn cap,
+    # so this stays 80s rather than being independently clamped to 60s.
     assert trace_a_turns[1].delay == 80_000.0
     assert conv_by_id["trace_idle_a::sa:agent_idle"].turns[0].timestamp == 20_000.0
 
+    # Trace B is compressed against its own request starts only: 150 -> 220
+    # becomes 150 -> 210 after the 70s start gap is capped to 60s.
     trace_b_turns = conv_by_id["trace_idle_b"].turns
     assert trace_b_turns[0].timestamp == 150_000.0
     assert trace_b_turns[1].timestamp == 210_000.0
 
 
+# hash_id_scope: subagents share the parent trace's hash_id namespace.
+#
+# A weka trace declares ``hash_id_scope: "local"`` == one hash_id namespace per
+# trace FILE: the same hash_id must decode to identical tokens across the parent
+# conversation and every subagent/sibling conversation of that trace, so replay
+# reproduces the cross-agent shared prefixes a real server serves from KV cache.
+#
+# NOTE: these tests deliberately wire the REAL, scope-sensitive
+# ``HashIdRandomGenerator`` (seeds from ``sha256(f"{seed}:{trace_id}:{hash_id}")``)
+# instead of ``stub_hash_id_corpus_rng``. The stub ignores ``set_trace_id``, so a
+# given hash_id decodes identically under any scope -- it cannot detect a
+# per-child scope regression.
+
+
 def _wire_real_scope_rng(loader, *, block_size: int, seed: int = 1234) -> None:
-    """Wire a MagicMock prompt_generator backed by the real, scope-sensitive RNG."""
+    """Wire a MagicMock prompt_generator backed by the real, scope-sensitive RNG.
+
+    ``tokenizer.decode`` is a token-reflecting string so identical token lists
+    round-trip to identical text and differing token lists to differing text --
+    letting a turn's ``raw_messages`` stand in for "what tokens this block decoded
+    to under the active scope".
+    """
     pg = MagicMock()
     pg._cache = {}
     pg._tokenized_corpus = list(range(4096))
@@ -1040,7 +1145,9 @@ def _subagent(*, agent_id: str, t: float, in_tokens: int, hash_ids: list[int]):
 
 
 def test_convert_to_conversations_subagent_inherits_parent_hash_id_scope(tmp_path):
-    """A hash_id shared by a parent request and a subagent inner request decodes"""
+    """A hash_id shared by a parent request and a subagent inner request decodes
+    to identical tokens -- the subagent shares the parent trace's scope, it does
+    NOT get a private per-child decode scope."""
     bs = 16
     shared = [100, 101, 102]
     trace = {
@@ -1067,11 +1174,16 @@ def test_convert_to_conversations_subagent_inherits_parent_hash_id_scope(tmp_pat
     parent = next(c for c in convs if c.session_id == "trace_scope")
     child = next(c for c in convs if c.parent_conversation_id == "trace_scope")
 
+    # in == n*bs and tool/system == 0, so turn-0 content is PURELY the decoded
+    # shared blocks (no partial tail, no system segment). Equal iff same scope.
     assert child.turns[0].raw_messages == parent.turns[0].raw_messages
 
 
 def test_convert_to_conversations_sibling_subagents_share_hash_id_scope(tmp_path):
-    """Two sibling subagents that reference the same hash_id blocks decode them"""
+    """Two sibling subagents that reference the same hash_id blocks decode them
+    identically -- both share the parent trace's scope, not per-agent scopes.
+    Sibling sharing is the dominant cross-conversation block-reuse mode in real
+    captures, so this is the case a per-child scope regression corrupts most."""
     bs = 16
     shared = [200, 201]
     trace = {
@@ -1102,7 +1214,8 @@ def test_convert_to_conversations_sibling_subagents_share_hash_id_scope(tmp_path
 
 
 def test_subagent_child_shares_trace_decode_scope():
-    """Same hash_id must decode to identical tokens in parent and child"""
+    """Same hash_id must decode to identical tokens in parent and child
+    (hash_id_scope: 'local' = one namespace per trace FILE)."""
     uc = _mk_user_config()
     loader = WekaTraceLoader(filename=str(FIXTURES / "one_subagent.json"), run=uc)
     _stub_prompt_generator_for_reconstructor(loader)
@@ -1119,7 +1232,8 @@ def test_subagent_child_shares_trace_decode_scope():
 
 
 def test_theoretical_metric_values_unchanged_for_disjoint_namespaces():
-    """one_subagent.json has no parent/child hash overlap: the shared"""
+    """one_subagent.json has no parent/child hash overlap: the shared
+    seen-set must reproduce the legacy per-conversation values exactly."""
     uc = _mk_user_config()
     loader = WekaTraceLoader(filename=str(FIXTURES / "one_subagent.json"), run=uc)
     _stub_prompt_generator_for_reconstructor(loader)
@@ -1137,7 +1251,8 @@ def test_theoretical_metric_values_unchanged_for_disjoint_namespaces():
 
 
 def test_theoretical_metric_shares_seen_set_with_subagent_children():
-    """A hash block first sent by the parent counts as a hit when the"""
+    """A hash block first sent by the parent counts as a hit when the
+    subagent child later sends it (shared per-trace seen-set)."""
     from aiperf.dataset.loader.weka_trace_models import WekaTrace
 
     trace = WekaTrace.model_validate(
@@ -1172,6 +1287,7 @@ def test_theoretical_metric_shares_seen_set_with_subagent_children():
                             "model": "m",
                             "in": 192,
                             "out": 50,
+                            # Child re-sends the parent's [1, 2] prefix.
                             "hash_ids": [1, 2, 99],
                             "api_time": 0.5,
                         }
@@ -1200,9 +1316,12 @@ def test_theoretical_metric_shares_seen_set_with_subagent_children():
         for c in loader.convert_to_conversations({"trace_shared": [trace]})
     }
     child = convs["trace_shared::sa:agent_001"]
+    # Child turn 0 at t=2.5 re-sends [1, 2] already seen from the parent.
     assert child.turns[0].theoretical_prefix_cache_hit_blocks == 2
     assert child.turns[0].theoretical_prefix_cache_total_blocks == 3
     root = convs["trace_shared"]
+    # Root turn 1: [1,2,3,4,99] -> 1,2,3 seen from itself; 4 novel stops the
+    # leading run even though 99 was seen from the child.
     assert root.turns[1].theoretical_prefix_cache_hit_blocks == 3
 
 
@@ -1242,9 +1361,12 @@ def test_flattened_fanout_branch_anchoring_and_joins():
         c.session_id: c for c in loader.convert_to_conversations(loader.load_dataset())
     }
     root = convs["trace_fanout"]
+    # Both workers spawn off turn 0 (last main turn before their first req).
     spawn_branch_ids = root.turns[0].branch_ids
     assert len(spawn_branch_ids) == 2
     branches = {b.branch_id: b for b in root.branches}
+    # Worker 1 (ends t=6.5) gates main turn 1 (t=9); worker 0 (ends t=9.5)
+    # gates main turn 2 (t=12) -> different join turns -> separate branches.
     join_prereqs_t1 = [p.branch_id for p in root.turns[1].prerequisites]
     join_prereqs_t2 = [p.branch_id for p in root.turns[2].prerequisites]
     assert len(join_prereqs_t1) == 1 and len(join_prereqs_t2) == 1
@@ -1265,6 +1387,7 @@ def test_flattened_fanout_per_chain_delays():
     assert w0.turns[0].delay is None
     assert w0.turns[1].delay == pytest.approx((8.5 - 2.0) * 1000.0)
     root = convs["trace_fanout"]
+    # Main delays computed within the main chain only: 9.0-0.0, 12.0-9.0.
     assert root.turns[1].delay == pytest.approx(9000.0)
     assert root.turns[2].delay == pytest.approx(3000.0)
 
@@ -1298,6 +1421,8 @@ def test_flattened_fanout_logs_detection_summary(caplog):
     import logging
 
     loader = _fanout_loader()
+    # The per-trace "detected N agents" summary is emitted at DEBUG; the
+    # split-count summary stays at INFO. Capture at DEBUG to see both.
     with caplog.at_level(logging.DEBUG, logger="aiperf.dataset.loader.weka_trace"):
         loader.convert_to_conversations(loader.load_dataset())
     text = caplog.text
@@ -1306,7 +1431,10 @@ def test_flattened_fanout_logs_detection_summary(caplog):
 
 
 def test_flattened_fanout_zero_declared_emits_no_fabricated_system_role():
-    """The system role comes ONLY from declared header counts. The fanout"""
+    """The system role comes ONLY from declared header counts. The fanout
+    fixture declares tool_tokens=0/system_tokens=0, so no message may carry
+    a fabricated system role; the shared observed prefix lives inside the
+    user content (byte-sharing is content-based, not role-based)."""
     loader = _fanout_loader()
     convs = {
         c.session_id: c for c in loader.convert_to_conversations(loader.load_dataset())
@@ -1315,6 +1443,7 @@ def test_flattened_fanout_zero_declared_emits_no_fabricated_system_role():
         for k, turn in enumerate(conv.turns):
             roles = [m["role"] for m in turn.raw_messages]
             assert "system" not in roles, (sid, k, roles)
+    # Turn 0 of every conversation is one user message with the full input.
     assert [m["role"] for m in convs["trace_fanout"].turns[0].raw_messages] == ["user"]
     assert convs["trace_fanout"].turns[0].raw_messages[0]["content"] == "<dec:192>"
     for wid, total in (("trace_fanout::fa:000", 256), ("trace_fanout::fa:001", 256)):

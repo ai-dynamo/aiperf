@@ -117,7 +117,8 @@ class TestCoreFunctionality:
     def test_multi_turn_raises_for_unsupported_loader(
         self, custom_config, mock_tokenizer
     ):
-        """A loader that doesn't declare multi_turn on its __init__ must not"""
+        """A loader that doesn't declare multi_turn on its __init__ must not
+        silently swallow the kwarg via **kwargs — composer should refuse."""
         from aiperf.plugin.schema.schemas import CustomDatasetLoaderMetadata
 
         composer = CustomDatasetComposer(
@@ -173,6 +174,9 @@ class TestCoreFunctionality:
         self, mock_check_file, mock_parallel_decode, trace_config, mock_tokenizer
     ):
         mock_parallel_decode.return_value = ["decoded 1", "decoded 2", "decoded 3"]
+        # Per-line `output_length` on each trace record always wins over any
+        # global `--osl` (FileDataset.osl) fallback. The trace fixture sets
+        # output_length=52 which is what this test asserts.
 
         composer = CustomDatasetComposer(
             run=make_run(trace_config), tokenizer=mock_tokenizer
@@ -180,6 +184,7 @@ class TestCoreFunctionality:
         conversations = composer.create_dataset()
 
         assert len(conversations) > 0
+        # Per-line output_length (52) sourced from trace data
         for conversation in conversations:
             for turn in conversation.turns:
                 assert turn.max_tokens == 52
@@ -199,6 +204,7 @@ class TestCoreFunctionality:
         conversations = composer.create_dataset()
 
         assert len(conversations) == 3
+        # First two lines have output_length, third falls back to global --osl (200).
         assert conversations[0].turns[0].max_tokens == 50
         assert conversations[1].turns[0].max_tokens == 500
         assert conversations[2].turns[0].max_tokens == 200
@@ -239,6 +245,7 @@ class TestCoreFunctionality:
         assert len(conversations) == 1
         turns = conversations[0].turns
         assert len(turns) == 3
+        # Turn 1 and 3 have output_length, turn 2 falls back to global --osl (200).
         assert turns[0].max_tokens == 100
         assert turns[1].max_tokens == 200
         assert turns[2].max_tokens == 300
@@ -290,6 +297,7 @@ class TestErrorHandling:
         mock_loader = Mock()
         mock_loader.load_dataset.return_value = {}
         mock_loader.convert_to_conversations.return_value = []
+        # Create a mock class that has get_preferred_sampling_strategy and can be instantiated
         mock_loader_class = Mock()
         mock_loader_class.return_value = mock_loader
         mock_loader_class.get_preferred_sampling_strategy.return_value = (
@@ -325,6 +333,7 @@ class TestSynthesisValidation:
             run=make_run(trace_config), tokenizer=mock_tokenizer
         )
 
+        # Should not raise
         composer._validate_synthesis_config(dataset_type)
 
     @pytest.mark.parametrize(
@@ -381,10 +390,12 @@ class TestSynthesisValidation:
         self, custom_config, mock_tokenizer
     ):
         """Test that default synthesis config (no changes) is allowed with any type."""
+        # No synthesis_* fields set: behaves as default identity synthesis.
         composer = CustomDatasetComposer(
             run=make_run(custom_config), tokenizer=mock_tokenizer
         )
 
+        # Should not raise for any type
         for dataset_type in CustomDatasetType:
             composer._validate_synthesis_config(dataset_type)
 
@@ -415,7 +426,15 @@ class TestSynthesisValidation:
 
 
 class TestExplicitCustomDatasetType:
-    """Regression tests for `--custom-dataset-type random-pool` routing."""
+    """Regression tests for `--custom-dataset-type random-pool` routing.
+
+    The user-facing flag converts to ``FileDataset.format`` in v2; the composer
+    must honor that explicit choice rather than re-inferring from the file.
+    A bare JSONL like ``{"text": "...", "max_tokens": ...}`` is structurally
+    valid for both single_turn and random_pool, but only random_pool gives the
+    user random-with-replacement sampling. Inference (the previous default)
+    silently picked single_turn, dropping the user's choice.
+    """
 
     def test_dag_jsonl_routes_to_dag_loader(self, tmp_path, mock_tokenizer):
         from aiperf.dataset.loader.dag_jsonl import DagJsonlLoader
@@ -459,6 +478,8 @@ class TestExplicitCustomDatasetType:
             run=make_run(cli_config), tokenizer=mock_tokenizer
         )
 
+        # The composer should resolve RANDOM_POOL from FileDataset.format,
+        # not silently fall back to SingleTurn via structural inference.
         assert composer._explicit_format() == CustomDatasetType.RANDOM_POOL
 
         conversations = composer.create_dataset()
@@ -466,7 +487,8 @@ class TestExplicitCustomDatasetType:
         assert len(conversations) == 10
 
     def test_random_pool_samples_with_replacement(self, tmp_path, mock_tokenizer):
-        """A 2-prompt pool sampled into 200 conversations should hit each prompt"""
+        """A 2-prompt pool sampled into 200 conversations should hit each prompt
+        many times — silent fallback to single_turn would give exactly 2."""
 
         jsonl = tmp_path / "rp.jsonl"
         jsonl.write_text(
@@ -484,6 +506,8 @@ class TestExplicitCustomDatasetType:
         )
         conversations = composer.create_dataset()
 
+        # 200 conversations from a 2-prompt pool — both prompts must appear
+        # often (binomial 200, p=0.5; deterministic via auto-fixture seed).
         prompts = [
             turn.texts[0].contents[0] for conv in conversations for turn in conv.turns
         ]
@@ -492,13 +516,22 @@ class TestExplicitCustomDatasetType:
             counts[p] = counts.get(p, 0) + 1
         assert len(prompts) == 200
         assert set(counts) == {"alpha", "bravo"}
+        # Each prompt should land between 50 and 150 (well inside the 99.999%
+        # band for binomial(200, 0.5); this is a sampling-with-replacement
+        # signature, NOT the sequential single_turn fallback which would
+        # produce exactly 2 unique prompts in 2 conversations).
         assert 50 < counts["alpha"] < 150
         assert 50 < counts["bravo"] < 150
 
     def test_explicit_format_default_does_not_short_circuit(
         self, tmp_path, mock_tokenizer
     ):
-        """When `--custom-dataset-type` was NOT supplied, ``_explicit_format``"""
+        """When `--custom-dataset-type` was NOT supplied, ``_explicit_format``
+        returns None so structural inference still runs.
+
+        ``FileDataset.format`` defaults to ``SINGLE_TURN``; we must only
+        short-circuit when the user explicitly chose a format.
+        """
 
         jsonl = tmp_path / "no_type.jsonl"
         jsonl.write_text('{"text": "hi", "max_tokens": 4}\n')

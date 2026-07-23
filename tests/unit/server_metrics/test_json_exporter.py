@@ -52,7 +52,12 @@ def mock_profile_results():
 
 @pytest.fixture
 def server_metrics_results_with_summaries():
-    """Create ServerMetricsResults with pre-computed endpoint_summaries."""
+    """Create ServerMetricsResults with pre-computed endpoint_summaries.
+
+    This mimics what records_manager produces after processing raw metrics.
+    Includes all metric types and info metrics to test full export path.
+    """
+    # Create endpoint summaries with all metric types
     endpoint1_summary = ServerMetricsEndpointSummary(
         endpoint_url="http://localhost:8081/metrics",
         info=ServerMetricsEndpointInfo(
@@ -214,7 +219,7 @@ def server_metrics_results_with_summaries():
 
     return ServerMetricsResults(
         benchmark_id="test-benchmark-id",
-        server_metrics_data=None,
+        server_metrics_data=None,  # Not sent over ZMQ
         endpoint_summaries={
             "localhost:8081": endpoint1_summary,
             "localhost:8082": endpoint2_summary,
@@ -396,7 +401,13 @@ class TestServerMetricsJsonExporterGenerateContent:
         mock_cfg,
         mock_profile_results,
     ):
-        """A degenerate profiling window (start_ns == end_ns) must not raise."""
+        """A degenerate profiling window (start_ns == end_ns) must not raise.
+
+        Building a TimeRangeFilter with start >= end raises ValueError, which
+        previously bubbled out of _generate_content and dropped all server
+        metrics. The profiling phase range must be omitted while metrics still
+        export (regression for F13).
+        """
         degenerate_ns = 1_000_000_000_000
         endpoint_summary = ServerMetricsEndpointSummary(
             endpoint_url="http://localhost:8081/metrics",
@@ -427,7 +438,7 @@ class TestServerMetricsJsonExporterGenerateContent:
             benchmark_id="test-benchmark-id",
             endpoint_summaries={"localhost:8081": endpoint_summary},
             start_ns=degenerate_ns,
-            end_ns=degenerate_ns,
+            end_ns=degenerate_ns,  # degenerate: start == end
             endpoints_configured=["http://localhost:8081/metrics"],
             endpoints_successful=["http://localhost:8081/metrics"],
             error_summary=[],
@@ -439,7 +450,7 @@ class TestServerMetricsJsonExporterGenerateContent:
         )
         exporter = ServerMetricsJsonExporter(config)
 
-        content = exporter._generate_content()
+        content = exporter._generate_content()  # must not raise
 
         data = orjson.loads(content)
         assert "metrics" in data
@@ -467,6 +478,8 @@ class TestServerMetricsJsonExporterGenerateContent:
             "start_ns": 1_000_000_000_000,
             "end_ns": 1_300_000_000_000,
         }
+        # phase_time_ranges["warmup"] mirrors ServerMetricsResults.warmup_end_ns
+        # (aggregation window, including any end-of-warmup scrape extension).
         assert data["summary"]["phase_time_ranges"]["warmup"] == {
             "start_ns": 900_000_000_000,
             "end_ns": 999_000_000_000,
@@ -520,6 +533,7 @@ class TestServerMetricsJsonExporterGenerateContent:
         content = exporter._generate_content()
         data = orjson.loads(content)
 
+        # Check summary endpoints are present (full URLs)
         assert (
             "http://localhost:8081/metrics" in data["summary"]["endpoints_configured"]
         )
@@ -546,9 +560,11 @@ class TestServerMetricsJsonExporterGenerateContent:
         assert "endpoint_info" in data["summary"]
         endpoint_info = data["summary"]["endpoint_info"]
 
+        # Check full endpoint URL keys
         assert "http://localhost:8081/metrics" in endpoint_info
         assert "http://localhost:8082/metrics" in endpoint_info
 
+        # Check metadata fields
         info1 = endpoint_info["http://localhost:8081/metrics"]
         assert info1["duration_seconds"] == 300.0
         assert info1["unique_updates"] == 60
@@ -570,10 +586,12 @@ class TestServerMetricsJsonExporterGenerateContent:
         content = exporter._generate_content()
         data = orjson.loads(content)
 
+        # kv_cache_usage_perc exists in both endpoints - metric should have 2 series
         assert "vllm:kv_cache_usage_perc" in data["metrics"]
         kv_metric = data["metrics"]["vllm:kv_cache_usage_perc"]
-        assert len(kv_metric["series"]) == 2
+        assert len(kv_metric["series"]) == 2  # One from each endpoint
 
+        # Each series should have endpoint_url field
         endpoint_urls_in_series = [s["endpoint_url"] for s in kv_metric["series"]]
         assert "http://localhost:8081/metrics" in endpoint_urls_in_series
         assert "http://localhost:8082/metrics" in endpoint_urls_in_series
@@ -596,6 +614,7 @@ class TestServerMetricsJsonExporterGenerateContent:
 
         for metric_name, metric_data in data["metrics"].items():
             for series in metric_data["series"]:
+                # Full endpoint URL
                 assert "endpoint_url" in series, (
                     f"Missing endpoint_url in {metric_name}"
                 )
@@ -622,6 +641,7 @@ class TestServerMetricsJsonExporterGenerateContent:
         http_metric = data["metrics"]["http_requests_total"]
         assert len(http_metric["series"]) == 3
 
+        # Check that labels are preserved
         for series in http_metric["series"]:
             assert "endpoint_url" in series
             assert "labels" in series
@@ -644,6 +664,7 @@ class TestServerMetricsJsonExporterGenerateContent:
         content = exporter._generate_content()
         data = orjson.loads(content)
 
+        # Gauge - type-specific stats fields (type implied by class, not in JSON)
         assert "vllm:kv_cache_usage_perc" in data["metrics"]
         gauge_metric = data["metrics"]["vllm:kv_cache_usage_perc"]
         gauge_series = find_series_by_endpoint_url(
@@ -656,6 +677,7 @@ class TestServerMetricsJsonExporterGenerateContent:
         assert "max" in gauge_series["stats"]
         assert "std" in gauge_series["stats"]
 
+        # Counter - type-specific fields with rate statistics
         assert "vllm:request_success_total" in data["metrics"]
         counter_metric = data["metrics"]["vllm:request_success_total"]
         counter_series = find_series_by_endpoint_url(
@@ -663,13 +685,16 @@ class TestServerMetricsJsonExporterGenerateContent:
         )
         assert counter_series is not None
         assert "stats" in counter_series
-        assert "total" in counter_series["stats"]
-        assert "rate" in counter_series["stats"]
-        assert "rate_avg" in counter_series["stats"]
-        assert "rate_min" in counter_series["stats"]
-        assert "rate_max" in counter_series["stats"]
-        assert "rate_std" in counter_series["stats"]
+        assert (
+            "total" in counter_series["stats"]
+        )  # Total increase over collection period
+        assert "rate" in counter_series["stats"]  # Overall rate (total/duration)
+        assert "rate_avg" in counter_series["stats"]  # Time-weighted average rate
+        assert "rate_min" in counter_series["stats"]  # Minimum point-to-point rate
+        assert "rate_max" in counter_series["stats"]  # Maximum point-to-point rate
+        assert "rate_std" in counter_series["stats"]  # Standard deviation of rates
 
+        # Histogram - type-specific fields
         assert "vllm:time_to_first_token_seconds" in data["metrics"]
         histogram_metric = data["metrics"]["vllm:time_to_first_token_seconds"]
         histogram_series = find_series_by_endpoint_url(
@@ -677,11 +702,11 @@ class TestServerMetricsJsonExporterGenerateContent:
         )
         assert histogram_series is not None
         assert "stats" in histogram_series
-        assert "count" in histogram_series["stats"]
-        assert "count_rate" in histogram_series["stats"]
-        assert "sum" in histogram_series["stats"]
-        assert "buckets" in histogram_series
-        assert "p99_estimate" in histogram_series["stats"]
+        assert "count" in histogram_series["stats"]  # Observation count
+        assert "count_rate" in histogram_series["stats"]  # Observations per second
+        assert "sum" in histogram_series["stats"]  # Total sum delta
+        assert "buckets" in histogram_series  # Histogram-specific field (not in stats)
+        assert "p99_estimate" in histogram_series["stats"]  # Estimated percentile
 
     def test_metrics_are_sorted_alphabetically(
         self,
@@ -699,8 +724,10 @@ class TestServerMetricsJsonExporterGenerateContent:
         content = exporter._generate_content()
         data = orjson.loads(content)
 
+        # Get metric names in order they appear in JSON
         metric_names = list(data["metrics"].keys())
 
+        # Verify they are sorted alphabetically
         assert metric_names == sorted(metric_names)
 
     def test_series_are_sorted_by_endpoint_url_then_labels(
@@ -719,9 +746,11 @@ class TestServerMetricsJsonExporterGenerateContent:
         content = exporter._generate_content()
         data = orjson.loads(content)
 
+        # Check kv_cache metric which has series from both endpoints
         kv_metric = data["metrics"]["vllm:kv_cache_usage_perc"]
         endpoint_urls = [s["endpoint_url"] for s in kv_metric["series"]]
 
+        # :8081 should come before :8082 (alphabetical)
         assert endpoint_urls == sorted(endpoint_urls)
 
     def test_endpoint_info_is_sorted(
@@ -749,6 +778,7 @@ class TestServerMetricsJsonExporterGenerateContent:
         mock_profile_results,
     ):
         """Test that counters with total=0 only include total field."""
+        # Create a fixture with a zero-total counter
         endpoint_summary = ServerMetricsEndpointSummary(
             endpoint_url="http://localhost:8081/metrics",
             info=ServerMetricsEndpointInfo(
@@ -794,6 +824,7 @@ class TestServerMetricsJsonExporterGenerateContent:
         content = exporter._generate_content()
         data = orjson.loads(content)
 
+        # Counter with no change should use value instead of stats
         assert "error_count_total" in data["metrics"]
         counter_metric = data["metrics"]["error_count_total"]
         series_data = counter_metric["series"][0]
@@ -822,6 +853,7 @@ class TestServerMetricsJsonExporterIntegration:
         exporter = ServerMetricsJsonExporter(config)
         await exporter.export()
 
+        # Read and parse the exported file
         output_file = config.cfg.artifacts.server_metrics_export_json_file
         assert output_file.exists()
 
@@ -861,6 +893,7 @@ class TestServerMetricsJsonExporterInputConfig:
         server_metrics_results_with_summaries,
     ):
         """Test that input_config only includes explicitly set values (exclude_unset=True)."""
+        # Create a config with only a few explicitly set values
         cli_config = CLIConfig(
             model_names=["test-model"],
             endpoint_type=EndpointType.CHAT,
@@ -881,12 +914,18 @@ class TestServerMetricsJsonExporterInputConfig:
 
         input_config = data["input_config"]
 
+        # The v1 -> v2 resolver maps loadgen.{request_count,concurrency} into a
+        # profiling phase entry. With exclude_unset=True the phase is emitted.
         assert "endpoint" in input_config
         assert "phases" in input_config
         phase = input_config["phases"][0]
         assert phase["requests"] == 100
         assert phase["concurrency"] == 4
 
+        # The input_config should be a relatively small dict since exclude_unset=True
+        # filters out fields that weren't explicitly set. The v1 -> v2 resolver
+        # populates a fixed set of top-level sections: endpoint, models, datasets,
+        # phases, artifacts, gpu_telemetry, server_metrics, runtime, and logging.
         assert {
             "endpoint",
             "models",

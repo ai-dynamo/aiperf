@@ -44,6 +44,9 @@ def test_metric_returns_zero_when_no_overflow_records() -> None:
     """All five records non-overflow -> count is missing or zero."""
     records = [_make_overflow_record(False) for _ in range(5)]
     results = run_simple_metrics_pipeline(records, ContextOverflowCountMetric.tag)
+    # The aggregate counter only increments when a per-record value flows in.
+    # When _parse_record returns 0, aggregate is still incremented by 0; if no
+    # records contributed at all the tag may be absent. Both shapes mean "0".
     assert results.get(ContextOverflowCountMetric.tag, 0) == 0
 
 

@@ -21,13 +21,19 @@ from aiperf.plugin.enums import (
     PublicDatasetType,
 )
 
+# Fixtures and helpers
+
 
 _NO_SUBAGENTS_HF_DATASET_NAME = "semianalysisai/cc-traces-weka-no-subagents-051826"
 
 
 @pytest.fixture
 def user_config():
-    """A real v2 BenchmarkRun (named ``user_config`` for minimal churn)."""
+    """A real v2 BenchmarkRun (named ``user_config`` for minimal churn).
+
+    The HF loader and its delegated WekaTraceLoader read config off
+    ``run.cfg.*``; the public weka dataset is a PublicDataset in v2.
+    """
     from tests.unit.dataset.loader.conftest import make_weka_run
 
     return make_weka_run(model_names=["test-model"])
@@ -59,6 +65,9 @@ async def loader(user_config) -> SemiAnalysisCCTracesWekaLoader:
         prompt_generator=pg,
         default_block_size=64,
     )
+
+
+# Constructor wiring
 
 
 @pytest.mark.asyncio
@@ -112,6 +121,9 @@ class TestConstructorWiring:
         assert loader.hf_split == "train"
 
 
+# Row validation: load_dataset
+
+
 @pytest.mark.asyncio
 class TestLoadDatasetRowValidation:
     """``load_dataset`` returns ``{trace_id: [WekaTrace]}`` after validating rows."""
@@ -145,7 +157,7 @@ class TestLoadDatasetRowValidation:
     async def test_invalid_row_raises_dataset_loader_error_with_index(
         self, loader: SemiAnalysisCCTracesWekaLoader
     ) -> None:
-        bad_row = {"id": "x"}
+        bad_row = {"id": "x"}  # missing required fields
         rows = [_make_trace_dict("good"), bad_row]
         with (
             patch(
@@ -168,6 +180,7 @@ class TestLoadDatasetRowValidation:
             pytest.raises(DatasetLoaderError) as exc_info,
         ):
             await loader.load_dataset()
+        # Bad row is at index 1.
         assert "Row 1" in str(exc_info.value)
 
     async def test_duplicate_trace_id_raises_dataset_loader_error(
@@ -184,9 +197,13 @@ class TestLoadDatasetRowValidation:
             await loader.load_dataset()
 
 
+# Delegation to WekaTraceLoader
+
+
 @pytest.mark.asyncio
 class TestConvertToConversationsDelegation:
-    """``convert_to_conversations`` MUST delegate to the inner WekaTraceLoader,"""
+    """``convert_to_conversations`` MUST delegate to the inner WekaTraceLoader,
+    so file-based and HF-based replay share the exact same backing code."""
 
     async def test_delegates_to_inner_weka_convert(
         self, loader: SemiAnalysisCCTracesWekaLoader
@@ -201,12 +218,18 @@ class TestConvertToConversationsDelegation:
         loader._weka.convert_to_conversations.assert_called_once_with(data)
 
 
+# Sampling strategy
+
+
 class TestSamplingStrategy:
     def test_preferred_sampling_strategy_is_sequential(self) -> None:
         assert (
             SemiAnalysisCCTracesWekaLoader.get_preferred_sampling_strategy()
             == DatasetSamplingStrategy.SEQUENTIAL
         )
+
+
+# Plugin registry integration
 
 
 class TestPluginRegistry:

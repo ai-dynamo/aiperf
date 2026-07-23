@@ -27,6 +27,8 @@ def _build_source(
     num_traces: int, turns_per_trace: int, concurrency: int
 ) -> TrajectorySource:
     md = _make_metadata(num_traces, turns_per_trace)
+    # Real SequentialSampler: wraps round-robin over the pool, so concurrency >
+    # pool repeats traces across lanes (the production behavior).
     sampler = SequentialSampler([c.conversation_id for c in md.conversations])
     return TrajectorySource(
         dataset_metadata=md,
@@ -178,6 +180,8 @@ def test_init_samples_only_warmup_profile_pairs_with_nonempty_first_payloads():
         start_max_ratio=1.0,
     )
 
+    # k=0 is invalid because profiling would start on empty turn 1.
+    # k=1 is invalid because warmup would start on empty turn 1.
     assert src.trajectories == [
         Trajectory(conversation_id="trace_0", start_turn_index=2)
     ]

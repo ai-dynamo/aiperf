@@ -1,6 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Hostile-input unit tests for ``validate_for_orchestrator_v1``."""
+"""Hostile-input unit tests for ``validate_for_orchestrator_v1``.
+
+These tests construct ``DatasetMetadata`` programmatically — bypassing the
+loaders' safety nets — to attack the v1 orchestrator validator directly.
+Every rejection assertion pins the contract from ``CLAUDE.md``:
+
+    "New validators must follow this shape" -> ``"<loc>: <reason>"``
+
+i.e. each ``NotImplementedError`` (or ``ValueError`` for dup-prereq) must
+embed both the offending conversation_id AND a turn index or branch_id so
+authors can locate the offending construct without grepping.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +29,10 @@ from aiperf.common.models import (
 from aiperf.common.models.branch import ConversationBranchInfo
 from aiperf.common.validators.orchestrator_v1 import validate_for_orchestrator_v1
 from aiperf.plugin.enums import DatasetSamplingStrategy
+
+# ---------------------------------------------------------------------------
+# Builders
+# ---------------------------------------------------------------------------
 
 
 def _dataset(*convs: ConversationMetadata) -> DatasetMetadata:
@@ -77,8 +92,14 @@ def _conv(
     )
 
 
+# ===========================================================================
+# 1. Pre-session branch belt-and-suspenders
+# ===========================================================================
+
+
 def test_pre_session_root_depth0_turn0_accepts():
-    """Canonical pre-session SPAWN: root, agent_depth=0, branch declared on"""
+    """Canonical pre-session SPAWN: root, agent_depth=0, branch declared on
+    turn 0. Should validate cleanly."""
     parent = _conv(
         "root",
         [_turn(branch_ids=["root:pre"])],
@@ -157,7 +178,10 @@ def test_pre_session_both_belts_fail_rejects():
 
 
 def test_pre_session_fork_dispatch_timing_rejects_at_validator():
-    """``ConversationBranchInfo``'s field validator rejects FORK+pre at"""
+    """``ConversationBranchInfo``'s field validator rejects FORK+pre at
+    construction. The orchestrator-validator defense-in-depth path is
+    therefore unreachable from a public constructor — pin the field-level
+    rejection so the contract surface stays visible."""
     with pytest.raises(Exception) as exc:
         ConversationBranchInfo(
             branch_id="b",
@@ -169,7 +193,8 @@ def test_pre_session_fork_dispatch_timing_rejects_at_validator():
 
 
 def test_pre_session_fork_bypass_via_model_construct_rejects():
-    """Bypass the field validator with ``model_construct`` so we can hit the"""
+    """Bypass the field validator with ``model_construct`` so we can hit the
+    validator's FORK-pre defense-in-depth path."""
     bad = ConversationBranchInfo.model_construct(
         branch_id="x:pre",
         child_conversation_ids=["child"],
@@ -194,7 +219,8 @@ def test_pre_session_fork_bypass_via_model_construct_rejects():
 
 
 def test_pre_session_branch_attached_to_turn_3_rejects_with_turn_index():
-    """pre branch must be declared on turn 0; declaring it on turn 3 fails"""
+    """pre branch must be declared on turn 0; declaring it on turn 3 fails
+    with the turn index in the message."""
     parent = _conv(
         "late",
         [
@@ -217,7 +243,8 @@ def test_pre_session_branch_attached_to_turn_3_rejects_with_turn_index():
 
 
 def test_pre_session_branch_not_declared_on_any_turn_rejects():
-    """A pre-session branch in ``branches`` that no turn references must"""
+    """A pre-session branch in ``branches`` that no turn references must
+    fail with a 'not attached to any turn' style message."""
     parent = _conv(
         "orphan",
         [_turn(branch_ids=[]), _turn(branch_ids=[])],
@@ -237,12 +264,18 @@ def test_pre_session_branch_not_declared_on_any_turn_rejects():
     assert "orphan:pre" in msg
 
 
+# ===========================================================================
+# 2. Branch shape
+# ===========================================================================
+
+
 def test_branch_mode_outside_supported_set_rejects():
-    """Bypass enum on a ``ConversationBranchInfo`` via ``model_construct`` to"""
+    """Bypass enum on a ``ConversationBranchInfo`` via ``model_construct`` to
+    smuggle a 'future' mode value past the validator."""
     bad = ConversationBranchInfo.model_construct(
         branch_id="b0",
         child_conversation_ids=["c"],
-        mode="loopback",
+        mode="loopback",  # not in _SUPPORTED_BRANCH_MODES
         dispatch_timing="post",
         is_background=False,
     )
@@ -259,7 +292,9 @@ def test_branch_mode_outside_supported_set_rejects():
 
 
 def test_branch_empty_child_list_accepts():
-    """Empty ``child_conversation_ids`` is structurally legal — the"""
+    """Empty ``child_conversation_ids`` is structurally legal — the
+    validator only checks each entry resolves, so [] passes. Pin current
+    behavior so any future tightening forces an explicit test update."""
     parent = _conv(
         "p",
         [_turn(branch_ids=["b0"])],
@@ -269,7 +304,8 @@ def test_branch_empty_child_list_accepts():
 
 
 def test_branch_child_id_unknown_rejects_naming_bad_id():
-    """A child_conversation_id with no matching conversation must be"""
+    """A child_conversation_id with no matching conversation must be
+    rejected, naming the missing id."""
     parent = _conv(
         "p",
         [_turn(branch_ids=["b0"])],
@@ -284,7 +320,8 @@ def test_branch_child_id_unknown_rejects_naming_bad_id():
 
 
 def test_branch_id_collision_same_turn_rejects_with_turn_index():
-    """Two branches declared on the same turn with the same branch_id must"""
+    """Two branches declared on the same turn with the same branch_id must
+    fail with the turn index in the message."""
     branch_a = _spawn_branch("dup", ["c1"])
     branch_b = _spawn_branch("dup", ["c2"])
     parent = _conv(
@@ -307,7 +344,8 @@ def test_branch_id_collision_same_turn_rejects_with_turn_index():
 
 
 def test_branch_id_empty_string_accepts_currently():
-    """An empty-string branch_id is structurally usable (validator only"""
+    """An empty-string branch_id is structurally usable (validator only
+    checks uniqueness per turn and resolution of children). Pin behavior."""
     parent = _conv(
         "p",
         [_turn(branch_ids=[""])],
@@ -336,8 +374,14 @@ def test_branch_thousand_child_spawn_accepts():
     validate_for_orchestrator_v1(_dataset(parent, *children))
 
 
+# ===========================================================================
+# 3. TurnPrerequisite (SPAWN_JOIN)
+# ===========================================================================
+
+
 def test_prereq_branch_id_not_in_dataset_rejects():
-    """SPAWN_JOIN referencing a non-existent branch_id must reject with the"""
+    """SPAWN_JOIN referencing a non-existent branch_id must reject with the
+    bad id and turn index."""
     prereq = TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="ghost")
     parent = _conv("p", [_turn(), _turn(prereqs=[prereq])])
     with pytest.raises(NotImplementedError) as exc:
@@ -349,7 +393,8 @@ def test_prereq_branch_id_not_in_dataset_rejects():
 
 
 def test_prereq_on_turn_0_with_no_branches_rejects():
-    """Turn 0 cannot have a SPAWN_JOIN prereq — nothing earlier could have"""
+    """Turn 0 cannot have a SPAWN_JOIN prereq — nothing earlier could have
+    spawned. Rejection must mention turn 0 and the missing branch."""
     prereq = TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="x")
     parent = _conv("p", [_turn(prereqs=[prereq])])
     with pytest.raises(NotImplementedError) as exc:
@@ -393,7 +438,8 @@ def test_prereq_kind_barrier_rejects():
 
 
 def test_prereq_no_branches_in_conv_rejects():
-    """SPAWN_JOIN on a conversation that has no branches at all: the"""
+    """SPAWN_JOIN on a conversation that has no branches at all: the
+    referenced branch_id cannot be found."""
     prereq = TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="noexist")
     parent = _conv("p", [_turn(), _turn(prereqs=[prereq])])
     with pytest.raises(NotImplementedError) as exc:
@@ -404,7 +450,9 @@ def test_prereq_no_branches_in_conv_rejects():
 
 
 def test_prereq_pointing_at_fork_branch_accepts():
-    """SPAWN_JOIN pointing at a FORK branch is currently accepted by the"""
+    """SPAWN_JOIN pointing at a FORK branch is currently accepted by the
+    validator (no SPAWN-vs-FORK type check). Pin behavior so any future
+    tightening is visible."""
     branch = _fork_branch("b0", ["c"])
     prereq = TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="b0")
     parent = _conv(
@@ -419,7 +467,8 @@ def test_prereq_pointing_at_fork_branch_accepts():
 
 
 def test_prereq_pointing_at_pre_session_branch_rejects():
-    """Pre-session (fire-and-forget) SPAWN branches cannot be SPAWN_JOIN"""
+    """Pre-session (fire-and-forget) SPAWN branches cannot be SPAWN_JOIN
+    targets."""
     branch = _spawn_branch("pre0", ["c"], dispatch_timing="pre")
     prereq = TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="pre0")
     parent = _conv(
@@ -439,7 +488,8 @@ def test_prereq_pointing_at_pre_session_branch_rejects():
 
 
 def test_prereq_reserved_per_child_field_rejects():
-    """Setting reserved ``child_conversation_ids`` on TurnPrerequisite must"""
+    """Setting reserved ``child_conversation_ids`` on TurnPrerequisite must
+    reject with turn loc."""
     prereq = TurnPrerequisite(
         kind=PrerequisiteKind.SPAWN_JOIN,
         branch_id="b0",
@@ -461,7 +511,8 @@ def test_prereq_reserved_per_child_field_rejects():
 
 
 def test_prereq_same_turn_self_reference_rejects():
-    """Prereq referencing a branch declared on the same turn (not strictly"""
+    """Prereq referencing a branch declared on the same turn (not strictly
+    earlier) must reject."""
     branch = _spawn_branch("b0", ["c"])
     prereq = TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="b0")
     parent = _conv(
@@ -481,7 +532,8 @@ def test_prereq_same_turn_self_reference_rejects():
 
 
 def test_prereq_forward_reference_rejects():
-    """Prereq on turn 0 referencing a branch declared on turn 2: forward"""
+    """Prereq on turn 0 referencing a branch declared on turn 2: forward
+    reference, rejected."""
     branch = _spawn_branch("b0", ["c"])
     prereq = TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="b0")
     parent = _conv(
@@ -505,7 +557,8 @@ def test_prereq_forward_reference_rejects():
 
 
 def test_prereq_duplicate_branch_id_on_same_turn_rejects_valueerror():
-    """Two SPAWN_JOIN prereqs on the same gated turn referencing the same"""
+    """Two SPAWN_JOIN prereqs on the same gated turn referencing the same
+    branch_id: documented to raise ValueError, not NotImplementedError."""
     branch = _spawn_branch("b0", ["c"])
     p1 = TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="b0")
     p2 = TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="b0")
@@ -525,8 +578,15 @@ def test_prereq_duplicate_branch_id_on_same_turn_rejects_valueerror():
     assert "turn 1" in msg
 
 
+# ===========================================================================
+# 4. ConversationMetadata edges
+# ===========================================================================
+
+
 def test_conv_with_branches_but_empty_turns_accepts_currently():
-    """branches declared but turns=[]: branch_declaration_turn is empty."""
+    """branches declared but turns=[]: branch_declaration_turn is empty.
+    Validator currently allows this (branches are unreferenced); pin
+    behavior."""
     parent = _conv(
         "p",
         turns=[],
@@ -539,7 +599,9 @@ def test_conv_with_branches_but_empty_turns_accepts_currently():
 
 
 def test_conv_with_negative_agent_depth_accepts():
-    """agent_depth=-1 is non-sensical but only matters in the pre-session"""
+    """agent_depth=-1 is non-sensical but only matters in the pre-session
+    branch path (where agent_depth > 0 is the failure mode). With no pre
+    branch, the validator does not gate on it. Pin current behavior."""
     parent = _conv(
         "p",
         [_turn(branch_ids=["b0"])],
@@ -569,7 +631,8 @@ def test_conv_with_very_deep_agent_depth_accepts():
 
 
 def test_conv_parent_self_reference_accepts_currently():
-    """parent_conversation_id pointing at self is suspicious but the"""
+    """parent_conversation_id pointing at self is suspicious but the
+    validator does not check parent topology. Pin behavior."""
     parent = _conv(
         "p",
         [_turn()],
@@ -581,10 +644,16 @@ def test_conv_parent_self_reference_accepts_currently():
 
 
 def test_conv_duplicate_conversation_id_in_metadata_accepts_currently():
-    """Same conversation_id appearing twice: validator does not assert"""
+    """Same conversation_id appearing twice: validator does not assert
+    uniqueness. Pin behavior so any future tightening is visible."""
     a = _conv("dup", [_turn()])
     b = _conv("dup", [_turn()])
     validate_for_orchestrator_v1(_dataset(a, b))
+
+
+# ===========================================================================
+# 5. DatasetMetadata edges
+# ===========================================================================
 
 
 def test_empty_dataset_accepts():
@@ -593,7 +662,8 @@ def test_empty_dataset_accepts():
 
 
 def test_ten_thousand_conversations_validates_under_5_seconds():
-    """10k conversations each with a SPAWN branch and one child: validator"""
+    """10k conversations each with a SPAWN branch and one child: validator
+    must complete inside 5 seconds (perf regression guard)."""
     convs: list[ConversationMetadata] = []
     for i in range(10_000):
         root_id = f"r{i}"
@@ -659,8 +729,14 @@ def test_one_hundred_unique_branch_ids_single_turn_accepts():
     validate_for_orchestrator_v1(_dataset(parent, *children))
 
 
+# ===========================================================================
+# 6. Global FORK single-parent check
+# ===========================================================================
+
+
 def test_two_fork_parents_claiming_same_child_rejects():
-    """Two different conversations FORK-claiming the same child must be"""
+    """Two different conversations FORK-claiming the same child must be
+    rejected with both parent ids in the message."""
     p1 = _conv(
         "p1",
         [_turn(branch_ids=["p1:0"])],
@@ -681,7 +757,8 @@ def test_two_fork_parents_claiming_same_child_rejects():
 
 
 def test_two_spawn_parents_claiming_same_child_accepts():
-    """Two SPAWN-parents claiming the same child are NOT rejected — SPAWN"""
+    """Two SPAWN-parents claiming the same child are NOT rejected — SPAWN
+    children get fresh context so multi-parent is fine. Pin behavior."""
     p1 = _conv(
         "p1",
         [_turn(branch_ids=["p1:0"])],

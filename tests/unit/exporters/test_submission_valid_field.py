@@ -81,6 +81,8 @@ def test_cancellation_submission_outcome(
 
 
 def test_cancelled_run_appends_reason_to_existing_reasons() -> None:
+    # 11 / 500 = 2.2% overflow rate already flips submission_valid;
+    # cancellation adds its own reason exactly once.
     valid, reasons = compute_submission_outcome(
         scenario_name="inferencex-agentx-mvp",
         validator_submission_valid=False,
@@ -94,7 +96,12 @@ def test_cancelled_run_appends_reason_to_existing_reasons() -> None:
 
 
 def test_overflow_rate_boundary_without_double_count() -> None:
-    """101 overflows / 10_000 responses must flip submission_valid."""
+    """101 overflows / 10_000 responses must flip submission_valid.
+
+    Regression: counting overflows in both error_request_count and
+    context_overflow_count inflated the denominator to 10_101 and kept
+    rate just under 1% (submission_valid=True). Correct total is 10_000.
+    """
     valid, reasons = compute_submission_outcome(
         scenario_name="inferencex-agentx-mvp",
         validator_submission_valid=True,
@@ -104,6 +111,7 @@ def test_overflow_rate_boundary_without_double_count() -> None:
     assert valid is False
     assert reasons == [CONTEXT_OVERFLOW_REASON]
 
+    # The double-counted denominator incorrectly accepted this run.
     valid_inflated, reasons_inflated = compute_submission_outcome(
         scenario_name="inferencex-agentx-mvp",
         validator_submission_valid=True,

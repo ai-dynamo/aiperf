@@ -19,6 +19,8 @@ from aiperf.common.models import Conversation
 from aiperf.dataset.loader import weka_parallel_convert as wpc
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
 
+# Config / loader helpers (conventions copied from test_weka_trace_parallel.py)
+
 
 def _mk_user_config(
     *,
@@ -57,6 +59,9 @@ def _stub_loader_real_rng(loader: WekaTraceLoader) -> None:
     loader._trust_remote_code = False
     loader._tokenizer_revision = None
     loader._block_size = 64
+
+
+# Trace builders
 
 
 def _nreq(
@@ -108,7 +113,8 @@ def _trace(
 
 
 def _fanout_requests(offset: int = 0, **kw: Any) -> list[dict[str, Any]]:
-    """The known-good fan-out shape (mirrors fixtures/weka_traces_fanout):"""
+    """The known-good fan-out shape (mirrors fixtures/weka_traces_fanout):
+    main chain 3 turns, worker fa:000 2 turns, worker fa:001 1 turn."""
     o = offset
     return [
         _nreq(0.0, [o + 1, o + 2, o + 3], api_time=1.0, **kw),
@@ -128,6 +134,9 @@ def _write_traces(tmp_path: Path, traces: list[dict[str, Any]]) -> Path:
     return d
 
 
+# Serial / in-proc-parallel runners + field-by-field comparator
+
+
 def _convert_serial(path: Path, uc, monkeypatch) -> list[Conversation]:
     monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_WORKERS", 1)
     loader = WekaTraceLoader(filename=str(path), run=uc)
@@ -136,7 +145,9 @@ def _convert_serial(path: Path, uc, monkeypatch) -> list[Conversation]:
 
 
 def _convert_parallel(path: Path, uc, monkeypatch) -> list[Conversation]:
-    """Full convert_to_conversations through the parallel path, with the pool"""
+    """Full convert_to_conversations through the parallel path, with the pool
+    replaced by an in-process map over _process_task (real task builder and
+    result assembly are exercised)."""
     monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_WORKERS", 2)
     monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_THRESHOLD", 1)
     loader = WekaTraceLoader(filename=str(path), run=uc)
@@ -256,11 +267,23 @@ def _by_sid(convs: list[Conversation]) -> dict[str, Conversation]:
     return {c.session_id: c for c in convs}
 
 
+# Tests
+
+
 def test_convert_fanout_idle_gap_warp_parallel_byte_identical(tmp_path, monkeypatch):
-    """Spec 5.6: idle-gap warp redistributes the same start set after the split."""
+    """Spec 5.6: idle-gap warp redistributes the same start set after the split.
+
+    Three compressible gaps, one INSIDE the worker chain (2.5 -> 8.5 across
+    chains, 9 -> 200 on main, 200 -> 210 reaching a worker-chain request whose
+    api_time is unrecorded/None). Warped timestamps and per-chain delays must
+    be byte-identical across paths.
+    """
     reqs = _fanout_requests()
-    reqs[5]["t"] = 200.0
-    reqs.append(_nreq(210.0, [1, 2, 50, 51, 52, 53], api_time=None))
+    reqs[5]["t"] = 200.0  # main turn 3 after a 191s idle gap
+    reqs.append(
+        # third worker-chain request crossing two gaps; api_time absent (None)
+        _nreq(210.0, [1, 2, 50, 51, 52, 53], api_time=None)
+    )
     serial, _parallel = _run_both(
         tmp_path,
         monkeypatch,
@@ -270,6 +293,7 @@ def test_convert_fanout_idle_gap_warp_parallel_byte_identical(tmp_path, monkeypa
 
     convs = _by_sid(serial)
     root = convs["trace_warp"]
+    # Gaps: [2.5, 8.5] excess 1, [9, 200] excess 186, [200, 210] excess 5.
     assert [t.timestamp for t in root.turns] == pytest.approx([0.0, 8000.0, 13000.0])
     assert root.turns[1].delay == pytest.approx(8000.0)
     assert root.turns[2].delay == pytest.approx(5000.0)
@@ -282,28 +306,45 @@ def test_convert_fanout_idle_gap_warp_parallel_byte_identical(tmp_path, monkeypa
 def test_convert_nonmonotonic_parent_delay_floored_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """A non-monotonic parent timestamp yields a negative raw inter-turn delay."""
+    """A non-monotonic parent timestamp yields a negative raw inter-turn delay.
+
+    The serial parent loop floors it to 0.0; the parallel parent loop must too,
+    or the module's byte-identical serial/parallel contract breaks (and a
+    negative Turn.delay would tell the load generator to dispatch in the past).
+    All three turns share a growing prefix, so they stay one main chain (no flat
+    split) and exercise the parent path; trace-file order is preserved (the
+    loader does not re-sort parent normals by t).
+    """
     reqs = [
         _nreq(0.0, [1, 2, 3]),
         _nreq(5.0, [1, 2, 3, 4]),
-        _nreq(3.0, [1, 2, 3, 4, 5]),
+        _nreq(3.0, [1, 2, 3, 4, 5]),  # t=3 < prev t=5 -> raw delay -2000 ms
     ]
     serial, _parallel = _run_both(
         tmp_path, monkeypatch, [_trace("trace_nonmono", reqs)]
     )
+    # _run_both already asserts serial/parallel byte-parity on every field
+    # including delay; an unfloored parallel path (-2000.0) fails there against
+    # the serial path's 0.0.
     root = _by_sid(serial)["trace_nonmono"]
     assert len(root.turns) == 3
     assert root.turns[0].delay is None
     assert root.turns[1].delay == pytest.approx(5000.0)
-    assert root.turns[2].delay == pytest.approx(0.0)
+    assert root.turns[2].delay == pytest.approx(0.0)  # floored, not -2000
 
 
 def test_convert_mixed_split_directory_ordering_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """Spec goal 5 + 5.2: directory where some traces split and others do not."""
+    """Spec goal 5 + 5.2: directory where some traces split and others do not.
+
+    Conversation ordering across traces (roots in trace order, then each
+    trace's children grouped) must match across paths. trace_b carries a
+    negative api_time (interval end clamps to zero); trace_c carries a
+    streaming-type worker row and a partial-tail turn 0 (in % block_size != 0).
+    """
     reqs_c = _fanout_requests(offset=200)
-    reqs_c[2]["in"] = 4 * 64 + 17
+    reqs_c[2]["in"] = 4 * 64 + 17  # partial tail on fa:001 turn 0
     reqs_c[4] = _nreq(8.5, [201, 202, 250, 251, 252], api_time=1.0, typ="s", ttft=0.4)
     traces = [
         _trace("trace_a", _fanout_requests()),
@@ -311,7 +352,7 @@ def test_convert_mixed_split_directory_ordering_parallel_byte_identical(
             "trace_b",
             [
                 _nreq(0.0, [1, 2, 3], api_time=1.0),
-                _nreq(2.0, [1, 2, 3, 4], api_time=-5.0),
+                _nreq(2.0, [1, 2, 3, 4], api_time=-5.0),  # negative end clamp
                 _nreq(3.0, [1, 2, 3, 4, 5], api_time=1.0),
             ],
         ),
@@ -328,6 +369,8 @@ def test_convert_mixed_split_directory_ordering_parallel_byte_identical(
         "trace_c::fa:000",
         "trace_c::fa:001",
     ]
+    # Invariant: every retained request appears in exactly one conversation
+    # exactly once (6 + 3 + 6 requests -> 15 turns).
     assert sum(len(c.turns) for c in serial) == 15
     convs = _by_sid(serial)
     assert [
@@ -355,7 +398,13 @@ def test_convert_mixed_split_directory_ordering_parallel_byte_identical(
 def test_convert_split_trace_with_subagent_children_order_parallel_byte_identical(
     tmp_path, monkeypatch, idle_gap_cap
 ):
-    """Spec 5.3: type:"subagent" handling coexists with flat-chain splitting."""
+    """Spec 5.3: type:"subagent" handling coexists with flat-chain splitting.
+
+    Children must emit subagent children first, then flat chains, in both
+    paths; subagent SPAWN/JOIN anchors against main-chain turns only. Run
+    with and without the idle-gap warp (warp pulls subagent child starts into
+    the shared per-trace timeline alongside flat-chain requests).
+    """
     requests = [
         _nreq(0.0, [1, 2, 3], api_time=1.0),
         {
@@ -397,6 +446,8 @@ def test_convert_split_trace_with_subagent_children_order_parallel_byte_identica
     branch_ids = {b.branch_id for b in root.branches}
     assert "trace_mix:spawn:agent_x" in branch_ids
     assert any(":flatspawn:" in b for b in branch_ids)
+    # All three spawn off main turn 0; subagent + fa:001 join main turn 1,
+    # fa:000 (ends t=9.5) joins main turn 2.
     assert len(root.turns[0].branch_ids) == 3
     t1_joins = {p.branch_id for p in root.turns[1].prerequisites}
     assert "trace_mix:spawn:agent_x" in t1_joins
@@ -411,10 +462,16 @@ def test_convert_split_trace_with_subagent_children_order_parallel_byte_identica
 def test_convert_think_time_only_with_delay_cap_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """Spec 5.6: per-chain delays honor think_time_only and the delay cap."""
+    """Spec 5.6: per-chain delays honor think_time_only and the delay cap.
+
+    Worker-chain request carries think_time=0.25; one main request carries
+    think_time=0.0 (boundary: present-but-zero must be used, not fall back);
+    another has no think_time (falls back to per-chain t-delta, then clamps
+    at the 2s cap). Both paths must agree on every delay.
+    """
     reqs = _fanout_requests()
-    reqs[3]["think_time"] = 0.0
-    reqs[4]["think_time"] = 0.25
+    reqs[3]["think_time"] = 0.0  # main turn 1: explicit zero
+    reqs[4]["think_time"] = 0.25  # fa:000 turn 1
     serial, _parallel = _run_both(
         tmp_path,
         monkeypatch,
@@ -427,6 +484,7 @@ def test_convert_think_time_only_with_delay_cap_parallel_byte_identical(
     root = convs["trace_tt"]
     assert root.turns[0].delay is None
     assert root.turns[1].delay == pytest.approx(0.0)
+    # No think_time on main turn 2 -> falls back to 12.0-9.0=3s, capped to 2s.
     assert root.turns[2].delay == pytest.approx(2000.0)
     w0 = convs["trace_tt::fa:000"]
     assert w0.turns[0].delay is None
@@ -436,7 +494,8 @@ def test_convert_think_time_only_with_delay_cap_parallel_byte_identical(
 def test_convert_ignore_delays_nulls_all_timing_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """ignore_trace_delays must null timestamp AND delay on every turn of"""
+    """ignore_trace_delays must null timestamp AND delay on every turn of
+    every conversation (root and worker chains) identically in both paths."""
     serial, parallel = _run_both(
         tmp_path,
         monkeypatch,
@@ -453,12 +512,21 @@ def test_convert_ignore_delays_nulls_all_timing_parallel_byte_identical(
 def test_convert_main_chain_compaction_seam_reset_context_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """Spec 4 phase 2 + 5: a compaction seam spliced INTO the main chain of a"""
+    """Spec 4 phase 2 + 5: a compaction seam spliced INTO the main chain of a
+    split trace must reproduce reset_context=True at the seam turn in both
+    paths.
+
+    M2's tail dies (compaction to [1,2,9] elected as seam); the in-flight
+    sibling fork [1,2,3,40] (temporal veto) stays a spawn, forcing the trace
+    to split so the seam rides the flat-chain code path. Turn 0 carries one
+    unshared user block past the observed prefix so the all-prefix turn-0
+    quirk (see the xfail test below) does not mask the seam semantics.
+    """
     requests = [
         _nreq(0.0, [1, 2, 3, 7], api_time=1.0),
         _nreq(2.0, [1, 2, 3, 7, 8], api_time=1.0),
-        _nreq(2.5, [1, 2, 3, 40], api_time=10.0),
-        _nreq(4.0, [1, 2, 9], api_time=1.0),
+        _nreq(2.5, [1, 2, 3, 40], api_time=10.0),  # overlaps M2 -> spawn
+        _nreq(4.0, [1, 2, 9], api_time=1.0),  # compaction seam -> main
     ]
     serial, _parallel = _run_both(
         tmp_path, monkeypatch, [_trace("trace_seam", requests)]
@@ -467,29 +535,36 @@ def test_convert_main_chain_compaction_seam_reset_context_parallel_byte_identica
     assert [c.session_id for c in serial] == ["trace_seam", "trace_seam::fa:000"]
     root = serial[0]
     assert len(root.turns) == 3
-    assert root.turns[1].reset_context is False
-    assert root.turns[2].reset_context is True
+    assert root.turns[1].reset_context is False  # pure growth: no reset
+    assert root.turns[2].reset_context is True  # the compaction seam
+    # Worker never joins (ends t=12.5, no later main turn) -> background.
     assert root.branches[0].is_background is True
+    # 0/0 declared -> no fabricated system role: turn 0 is one user message
+    # carrying all 4 blocks (the shared prefix lives inside the user content).
     assert root.turns[0].raw_messages == [{"role": "user", "content": "<dec:256>"}]
 
 
 def test_convert_all_prefix_turn0_pure_growth_has_no_reset(tmp_path, monkeypatch):
-    """Spec 4/11 case 1: pure context growth is a chain extension and must"""
+    """Spec 4/11 case 1: pure context growth is a chain extension and must
+    not flag reset_context. Here the observed group prefix (3 blocks) covers
+    the main chain's ENTIRE first request, making turn 0 all-system."""
     requests = [
         _nreq(0.0, [1, 2, 3], api_time=1.0),
         _nreq(2.0, [1, 2, 3, 4, 5], api_time=1.0),
-        _nreq(2.5, [1, 2, 3, 40], api_time=10.0),
+        _nreq(2.5, [1, 2, 3, 40], api_time=10.0),  # in-flight fork -> spawn
     ]
     path = _write_traces(tmp_path, [_trace("trace_allpfx", requests)])
     serial = _convert_serial(path, _mk_user_config(), monkeypatch)
 
     root = _by_sid(serial)["trace_allpfx"]
     assert len(root.turns) == 2
+    # Turn 1 only grows the context ([1,2,3] -> [1,2,3,4,5]).
     assert root.turns[1].reset_context is False
 
 
 def _poisoned_requests() -> list[dict[str, Any]]:
-    """Nonce-poisoned shape (spec 8): chained block hashes make LCP=0 between"""
+    """Nonce-poisoned shape (spec 8): chained block hashes make LCP=0 between
+    ALL requests -> every request founds a zero-depth chain."""
     return [
         _nreq(2.0 * i, [9000 + 10 * i, 9001 + 10 * i], api_time=0.5, out=8)
         for i in range(9)
@@ -499,13 +574,17 @@ def _poisoned_requests() -> list[dict[str, Any]]:
 def test_convert_poisoned_trace_alongside_healthy_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """A nonce-poisoned trace and a healthy fan-out trace in one directory:"""
+    """A nonce-poisoned trace and a healthy fan-out trace in one directory:
+    whatever the split decision is, it must be the SAME decision with the
+    same bytes in both paths."""
     traces = [
         _trace("trace_heal", _fanout_requests()),
         _trace("trace_poison", _poisoned_requests()),
     ]
     serial, _parallel = _run_both(tmp_path, monkeypatch, traces)
 
+    # Invariant regardless of the (missing) poisoned guard: all 15 retained
+    # requests appear exactly once.
     assert sum(len(c.turns) for c in serial) == 15
     sids = [c.session_id for c in serial]
     assert sids[0] == "trace_heal" and sids[1] == "trace_poison"
@@ -513,7 +592,9 @@ def test_convert_poisoned_trace_alongside_healthy_parallel_byte_identical(
 
 
 def test_convert_disjoint_batch_splits_serial(tmp_path, monkeypatch):
-    """With the nonce-poison guard removed, a fully-disjoint trace splits into"""
+    """With the nonce-poison guard removed, a fully-disjoint trace splits into
+    independent per-agent chains (root + spawned), retaining every request,
+    instead of collapsing to one linear conversation."""
     path = _write_traces(tmp_path, [_trace("trace_poison", _poisoned_requests())])
     serial = _convert_serial(path, _mk_user_config(), monkeypatch)
     sids = [c.session_id for c in serial]
@@ -524,7 +605,15 @@ def test_convert_disjoint_batch_splits_serial(tmp_path, monkeypatch):
 def test_convert_max_osl_cross_model_batch_rewrite_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """Spec 3/5.4 + 5: cross-model disjoint-namespace worker batch (the Haiku"""
+    """Spec 3/5.4 + 5: cross-model disjoint-namespace worker batch (the Haiku
+    workers under an Opus main shape) with --max-osl capping and model
+    rewriting to endpoint.model_names.
+
+    max_tokens of flat-chain children must honor max-osl in BOTH paths (the
+    parallel path ships capped_output_length in the child payload); with 0/0
+    declared, both the worker group and the singleton main group keep their
+    shared prefixes inside user content (no fabricated system role).
+    """
     requests = [
         _nreq(0.0, [1, 2, 3], model="opus", api_time=1.0, out=10),
         _nreq(1.5, [100, 101, 110], model="haiku", api_time=3.0, out=10),
@@ -548,15 +637,20 @@ def test_convert_max_osl_cross_model_batch_rewrite_parallel_byte_identical(
         w = convs[wid]
         assert all(t.model == "served-worker" for t in w.turns), wid
         assert all(t.max_tokens == 5 for t in w.turns), wid
+        # 0/0 declared -> worker turn 0 is one user message with all 3 blocks.
         assert w.turns[0].raw_messages[0]["role"] == "user", wid
         assert w.turns[0].raw_messages[0]["content"] == "<dec:192>", wid
+    # Main group is a singleton with 0/0 declared -> all-user turn 0.
     assert root.turns[0].raw_messages[0]["role"] == "user"
 
 
 def test_convert_zero_declared_fanout_all_user_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """The system role is never fabricated: a 0/0-declared fan-out keeps the"""
+    """The system role is never fabricated: a 0/0-declared fan-out keeps the
+    observed namespace-group prefix inside the user content for the parent
+    AND every worker chain, byte-identical across paths (no turn-0 override
+    keys ship in the parallel payload)."""
     serial, parallel = _run_both(
         tmp_path, monkeypatch, [_trace("trace_obs", _fanout_requests())]
     )
@@ -575,9 +669,12 @@ def test_convert_zero_declared_fanout_all_user_parallel_byte_identical(
 def test_convert_declared_prefix_wins_main_observed_for_workers_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """Declared tool/system tokens (3 blocks) emit the root's system segment"""
+    """Declared tool/system tokens (3 blocks) emit the root's system segment
+    (recorded truth). Worker chains do NOT share the declared-prefix blocks
+    ([1,2,50..] vs [1,2,3..] diverge at block 2), so their turn 0 is honest
+    user content -- the system role is never fabricated for them."""
     requests = [
-        _nreq(0.0, [1, 2, 3, 4], api_time=1.0),
+        _nreq(0.0, [1, 2, 3, 4], api_time=1.0),  # 4 blocks: covers declared 3
         _nreq(2.0, [1, 2, 50, 51], api_time=6.0),
         _nreq(2.5, [1, 2, 60, 61], api_time=4.0),
         _nreq(9.0, [1, 2, 3, 4, 5], api_time=1.0),
@@ -593,19 +690,25 @@ def test_convert_declared_prefix_wins_main_observed_for_workers_parallel_byte_id
     convs = _by_sid(serial)
     root_msgs = convs["trace_decl"].turns[0].raw_messages
     assert root_msgs[0]["role"] == "system"
-    assert root_msgs[0]["content"] == "<dec:192>"
+    assert root_msgs[0]["content"] == "<dec:192>"  # declared 3 blocks wins
     for wid in ("trace_decl::fa:000", "trace_decl::fa:001"):
         w_msgs = convs[wid].turns[0].raw_messages
         assert [m["role"] for m in w_msgs] == ["user"], wid
-        assert w_msgs[0]["content"] == "<dec:256>", wid
+        assert w_msgs[0]["content"] == "<dec:256>", wid  # all 4 blocks, no system
 
 
 def test_convert_empty_hash_first_request_split_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """Spec 8 edge: an empty-hash request must stay on the main chain and"""
+    """Spec 8 edge: an empty-hash request must stay on the main chain and
+    never found a chain or witness a fork — even as the FIRST retained
+    request. The first hash-bearing request after leading empty rows IS the
+    main agent (it must not be exiled to a worker chain). Both paths must
+    agree byte-for-byte, every request must appear exactly once, and
+    orchestrator-v1 validation (run inside convert) must pass.
+    """
     requests = [
-        _nreq(0.0, [], api_time=0.5, in_tokens=100),
+        _nreq(0.0, [], api_time=0.5, in_tokens=100),  # empty hash turn 0
         _nreq(1.0, [1, 2, 3], api_time=1.0),
         _nreq(2.0, [1, 2, 40], api_time=6.0),
         _nreq(9.0, [1, 2, 3, 4], api_time=1.0),
@@ -615,11 +718,14 @@ def test_convert_empty_hash_first_request_split_parallel_byte_identical(
     assert sum(len(c.turns) for c in serial) == 4
     convs = _by_sid(serial)
     root = convs["trace_eh"]
+    # Main = empty row + the chained [1,2,3] -> [1,2,3,4] growth; the
+    # in-flight sibling [1,2,40] (overlaps the live main) is the one spawn.
     assert len(root.turns) == 3
     assert root.turns[0].theoretical_prefix_cache_total_blocks == 0
     assert set(convs) == {"trace_eh", "trace_eh::fa:000"}
     assert len(convs["trace_eh::fa:000"].turns) == 1
     assert len(root.branches) == 1
+    # The worker ends at t=8; main turn at t=9 is at/after it -> gated join.
     assert root.branches[0].is_background is False
     assert root.branches[0].child_conversation_ids == ["trace_eh::fa:000"]
 
@@ -627,10 +733,14 @@ def test_convert_empty_hash_first_request_split_parallel_byte_identical(
 def test_convert_exact_equality_join_boundary_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """Spec 5.3 join rule boundary: chain end EXACTLY equals the next main"""
+    """Spec 5.3 join rule boundary: chain end EXACTLY equals the next main
+    turn's timestamp (t + eps >= end with eps=1e-6 must admit equality), so
+    the chain joins rather than running background — identically in both
+    paths (serial computes the join from plan objects, the worker from
+    shipped flat markers)."""
     requests = [
         _nreq(0.0, [1, 2, 3], api_time=1.0),
-        _nreq(1.5, [1, 2, 70], api_time=2.5),
+        _nreq(1.5, [1, 2, 70], api_time=2.5),  # ends exactly at 4.0
         _nreq(4.0, [1, 2, 3, 4], api_time=1.0),
     ]
     serial, _parallel = _run_both(

@@ -1,6 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial tests for the inter-turn delay clamp (`_clamp_delay_ms`)."""
+"""Adversarial tests for the inter-turn delay clamp (`_clamp_delay_ms`).
+
+Covers spec section 8.4.4 of `2026-04-26-inferencex-agentx-mvp-scenario.md`:
+boundary, sign, NaN/Inf, zero-cap, None-cap, parent vs subagent code path,
+and clamp interaction with `--use-think-time-only`.
+"""
 
 from __future__ import annotations
 
@@ -12,39 +17,56 @@ import pytest
 
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader, _clamp_delay_ms
 
+# Helper-level adversarial cases (operate directly on `_clamp_delay_ms`).
+
 
 def test_clamp_at_cap_is_inclusive_unchanged():
+    # Boundary: exactly at cap is *not* clamped (preserves original float identity
+    # when no rewrite is needed).
     assert _clamp_delay_ms(60_000.0, cap_seconds=60.0) == 60_000.0
 
 
 def test_clamp_one_microsecond_above_cap_clamps():
+    # `60_000.001 ms` is `60s + 1us`; must be clamped down to exactly `cap_ms`.
     assert _clamp_delay_ms(60_000.001, cap_seconds=60.0) == 60_000.0
 
 
 def test_clamp_negative_passes_through_corrupt_trace():
+    # Pinned behavior: clamp only enforces the upper bound. Negative `delay_ms`
+    # (corrupt trace) is intentionally left untouched so other validation layers
+    # can flag it explicitly. Documented in the helper docstring.
     assert _clamp_delay_ms(-100.0, cap_seconds=60.0) == -100.0
 
 
 def test_clamp_nan_maps_to_none():
+    # NaN comparisons are always false, so without an isfinite gate the
+    # `delay_ms > cap_ms` branch never fires. Scrub to None (absent delay).
     assert _clamp_delay_ms(float("nan"), cap_seconds=60.0) is None
     assert _clamp_delay_ms(float("nan"), cap_seconds=None) is None
 
 
 def test_clamp_non_finite_inf_maps_to_none():
+    # ±Inf are non-finite; scrub to None rather than clamping or passing through.
     assert _clamp_delay_ms(float("inf"), cap_seconds=60.0) is None
     assert _clamp_delay_ms(float("-inf"), cap_seconds=60.0) is None
     assert _clamp_delay_ms(float("inf"), cap_seconds=None) is None
 
 
 def test_clamp_zero_cap_clamps_everything_to_zero():
+    # Legal but unusual: cap=0 effectively disables inter-turn delays.
     assert _clamp_delay_ms(1.0, cap_seconds=0.0) == 0.0
     assert _clamp_delay_ms(0.0, cap_seconds=0.0) == 0.0
     assert _clamp_delay_ms(86_400_000.0, cap_seconds=0.0) == 0.0
 
 
 def test_clamp_none_cap_passes_through_24h_delay():
+    # Default: no cap -> even pathologically large delays survive.
     assert _clamp_delay_ms(86_400_000.0, cap_seconds=None) == 86_400_000.0
 
+
+# Parameterized integration tests: parent path (line ~400) and subagent path
+# (line ~527) must clamp identically. Spec 8.4.4 calls for "a parameterized
+# test that runs the same scenarios on both code paths".
 
 FIXTURES = Path(__file__).parents[3] / "fixtures" / "weka_traces"
 
@@ -117,6 +139,8 @@ def _make_two_turn_parent_trace(
                 "model": "claude-opus-4-5-20251101",
                 "in": 200,
                 "out": 20,
+                # Extends turn 0's [1, 2] prefix: consecutive same-agent turns
+                # must chain or flattened-agent detection will split them.
                 "hash_ids": [1, 2, 3],
                 "input_types": ["text"],
                 "output_types": ["text"],
@@ -133,7 +157,13 @@ def _make_subagent_trace_with_two_child_turns(
     child_second_t: float,
     child_second_think_time: float | None = 0.0,
 ) -> dict:
-    """Parent has one normal request + one subagent block; the subagent has two"""
+    """Parent has one normal request + one subagent block; the subagent has two
+    child requests so the child path computes a delay for child turn 1.
+
+    The subagent marker sits at t=0.0 so both inner requests are absolute on
+    the root timeline (an inner ``t`` before the marker would be treated as
+    spawn-relative by ``_subagent_request_absolute_t`` and shift the delay).
+    """
     return {
         "id": "trace_clamp_child",
         "models": ["claude-opus-4-5-20251101", "claude-haiku-4-5-20251001"],
@@ -185,6 +215,10 @@ def _make_subagent_trace_with_two_child_turns(
                         "model": "claude-haiku-4-5-20251001",
                         "in": 150,
                         "out": 40,
+                        # Extends the first request's [10, 11] prefix so LCP
+                        # chain detection keeps both requests in ONE chain
+                        # (a disjoint hash list would split them into two
+                        # one-turn children and there would be no delay).
                         "hash_ids": [10, 11, 12, 13],
                         "input_types": ["text"],
                         "output_types": ["text"],
@@ -211,11 +245,18 @@ def _build_loader(tmp_path, trace: dict, uc, monkeypatch) -> WekaTraceLoader:
     return loader
 
 
+# (cap_seconds, second_turn_t_seconds, expected_delay_ms)
+# Mirrors the helper-level scenarios so each path exercises the same matrix.
 _PARAM_CASES = [
+    # at-cap inclusive: 60s delta -> unchanged
     pytest.param(60.0, 60.0, 60_000.0, id="at_cap_inclusive"),
+    # just over cap: 60.001s -> clamped to 60_000ms
     pytest.param(60.0, 60.001, 60_000.0, id="just_above_cap_clamps"),
+    # well over cap: 24h -> clamped to 60_000ms
     pytest.param(60.0, 86_400.0, 60_000.0, id="huge_delay_clamps"),
+    # zero cap -> any positive delay clamps to 0
     pytest.param(0.0, 5.0, 0.0, id="zero_cap_clamps_to_zero"),
+    # None cap -> 24h passes through
     pytest.param(None, 86_400.0, 86_400_000.0, id="none_cap_24h_passthrough"),
 ]
 
@@ -230,7 +271,7 @@ def test_parent_turn_delay_clamp_matrix(
     loader = _build_loader(tmp_path, trace, uc, monkeypatch)
     convs = loader.convert_to_conversations(loader.load_dataset())
     parent = next(c for c in convs if c.session_id == "trace_clamp_parent")
-    assert parent.turns[0].delay is None
+    assert parent.turns[0].delay is None  # first turn always
     assert parent.turns[1].delay == pytest.approx(expected_delay_ms)
 
 
@@ -238,7 +279,9 @@ def test_parent_turn_delay_clamp_matrix(
 def test_subagent_child_turn_delay_clamp_matrix(
     tmp_path, monkeypatch, cap_seconds, second_t, expected_delay_ms
 ):
-    """Subagent child path (`weka_trace.py:~527`) clamps with the same"""
+    """Subagent child path (`weka_trace.py:~527`) clamps with the same
+    `cap_seconds` as the parent path. Same matrix, different code site.
+    """
     uc = _mk_user_config(cap_seconds=cap_seconds)
     trace = _make_subagent_trace_with_two_child_turns(child_second_t=second_t)
     loader = _build_loader(tmp_path, trace, uc, monkeypatch)
@@ -248,11 +291,18 @@ def test_subagent_child_turn_delay_clamp_matrix(
     assert child.turns[1].delay == pytest.approx(expected_delay_ms)
 
 
+# Cap interaction with `--use-think-time-only` (spec 8.4.4 bullet 8).
+
+
 def test_think_time_only_path_also_clamps_when_think_time_exceeds_cap(
     tmp_path, monkeypatch
 ):
-    """When `use_think_time_only=True` AND a request's `think_time > cap`, the"""
+    """When `use_think_time_only=True` AND a request's `think_time > cap`, the
+    think_time-derived `delay_ms` must also be clamped (cap applies to whichever
+    delay source is active).
+    """
     uc = _mk_user_config(cap_seconds=60.0, think_time_only=True)
+    # Wall-clock delta would be 1s, but think_time=120s drives the delay.
     trace = _make_two_turn_parent_trace(
         second_turn_t=1.0,
         second_turn_think_time=120.0,
@@ -260,6 +310,7 @@ def test_think_time_only_path_also_clamps_when_think_time_exceeds_cap(
     loader = _build_loader(tmp_path, trace, uc, monkeypatch)
     convs = loader.convert_to_conversations(loader.load_dataset())
     parent = next(c for c in convs if c.session_id == "trace_clamp_parent")
+    # think_time=120s -> 120_000ms, clamped to 60_000ms by the cap.
     assert parent.turns[1].delay == pytest.approx(60_000.0)
 
 

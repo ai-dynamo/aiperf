@@ -67,7 +67,8 @@ def _records_manager_for_dispatch(dispatch_result: list) -> MagicMock:
 
 
 class TestOnAccuracyRecords:
-    """Accuracy records ride the generic RecordsMessage envelope and are"""
+    """Accuracy records ride the generic RecordsMessage envelope and are
+    dispatched by ``_on_records`` without any accuracy-specific handler."""
 
     @pytest.mark.asyncio
     async def test_dispatches_each_record(self) -> None:
@@ -148,7 +149,12 @@ class TestPublishAccuracyResults:
 
     @pytest.mark.asyncio
     async def test_no_accumulator_publishes_terminal_none(self) -> None:
-        """No accumulator must still publish exactly one terminal ``results=None``."""
+        """No accumulator must still publish exactly one terminal ``results=None``.
+
+        The SystemController clears ``_should_wait_for_accuracy`` only on this
+        message, so a bare early-return would hang shutdown forever when the
+        accumulator failed to construct while accuracy is config-enabled.
+        """
         mgr = MagicMock()
         mgr.service_id = "rm"
         mgr.publish = AsyncMock()
@@ -166,7 +172,11 @@ class TestPublishAccuracyResults:
 
     @pytest.mark.asyncio
     async def test_export_raises_still_publishes_terminal_none(self) -> None:
-        """An ``export_results`` failure logs and still publishes ``results=None``."""
+        """An ``export_results`` failure logs and still publishes ``results=None``.
+
+        Guarantees the exactly-once terminal message so shutdown never hangs on a
+        summary-computation error.
+        """
         accumulator = MagicMock()
         accumulator.export_results = AsyncMock(side_effect=RuntimeError("boom"))
 

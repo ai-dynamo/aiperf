@@ -64,10 +64,12 @@ def test_dag_jsonl_preferred_sampling_and_context_mode():
             },
             True,
         ),
+        # Raw payload format (no session_id / turns wrapper) must not match.
         (
             {"messages": [{"role": "user", "content": "x"}]},
             False,
         ),
+        # Multi-turn format (session_id + turns but no messages/forks/spawns).
         (
             {
                 "session_id": "s",
@@ -108,5 +110,6 @@ def test_dag_jsonl_load_dataset_and_convert(tmp_path):
     by_id = {c.session_id: c for c in conversations}
     assert by_id["root"].is_root is True
     assert by_id["child"].is_root is False
+    # The metadata projection must preserve is_root so the sampler can filter roots.
     assert by_id["root"].metadata().is_root is True
     assert by_id["child"].metadata().is_root is False

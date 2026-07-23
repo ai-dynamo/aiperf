@@ -43,6 +43,7 @@ _MINIMAL_CONFIG_KWARGS = {
 
 
 def _make_config(**overrides) -> BenchmarkConfig:
+    # random_seed lives on AIPerfConfig envelope post-Task 8; drop legacy kwarg
     overrides.pop("random_seed", None)
     kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
     return BenchmarkConfig(**kwargs)
@@ -59,7 +60,7 @@ class TestFixedTrialsStrategy:
     @pytest.mark.parametrize(
         "results,expected",
         [
-            ([], True),
+            ([], True),  # No results yet
             (
                 [
                     RunResult(
@@ -72,7 +73,7 @@ class TestFixedTrialsStrategy:
                     )
                 ],
                 True,
-            ),
+            ),  # Partial results
             (
                 [
                     RunResult(
@@ -93,7 +94,7 @@ class TestFixedTrialsStrategy:
                     ),
                 ],
                 False,
-            ),
+            ),  # Complete results (num_trials=2)
         ],
     )
     def test_should_continue_returns_expected(self, results, expected):
@@ -168,6 +169,7 @@ class TestFixedTrialsStrategy:
 
         config = _make_config()
 
+        # First run should preserve warmup
         first_config = strategy.get_next_config(config, [])
         assert _has_warmup_phase(first_config)
         assert any(p.name == "warmup" for p in first_config.phases)
@@ -181,10 +183,12 @@ class TestFixedTrialsStrategy:
             )
         ]
 
+        # Second run should have warmup disabled
         second_config = strategy.get_next_config(config, results)
         assert not _has_warmup_phase(second_config)
         assert not any(p.name == "warmup" for p in second_config.phases)
 
+        # Original config should be unchanged
         assert _has_warmup_phase(config)
         assert any(p.name == "warmup" for p in config.phases)
 
@@ -194,6 +198,7 @@ class TestFixedTrialsStrategy:
 
         config = _make_config()
 
+        # First run should preserve warmup
         first_config = strategy.get_next_config(config, [])
         assert _has_warmup_phase(first_config)
         assert any(p.name == "warmup" for p in first_config.phases)
@@ -207,6 +212,7 @@ class TestFixedTrialsStrategy:
             )
         ]
 
+        # Second run should STILL have warmup (not disabled)
         second_config = strategy.get_next_config(config, results)
         assert _has_warmup_phase(second_config)
         assert any(p.name == "warmup" for p in second_config.phases)
@@ -236,7 +242,13 @@ class TestFixedTrialsStrategy:
 
     @pytest.mark.parametrize("trial_count", [2, 3, 5, 10])
     def test_warmup_stripped_on_every_trial_after_first(self, trial_count):
-        """Pin that warmup stripping applies to ALL trials > 1, not just trial 2."""
+        """Pin that warmup stripping applies to ALL trials > 1, not just trial 2.
+
+        The condition at strategies.py:224 is `len(results) > 0`, which holds
+        for trial 2, 3, ..., N. Refactoring to `len(results) == 1` would
+        silently re-introduce warmup on trial 3+ with no test failure under
+        the existing two-trial-only coverage.
+        """
         strategy = FixedTrialsStrategy(
             num_trials=trial_count + 1, disable_warmup_after_first=True
         )
@@ -259,7 +271,14 @@ class TestFixedTrialsStrategy:
         )
 
     def test_warmup_filter_uses_exclude_from_results_flag(self):
-        """The strip predicate is `exclude_from_results`, not a name match."""
+        """The strip predicate is `exclude_from_results`, not a name match.
+
+        Pin the contract that the filter reads the bool flag. If the framework
+        ever expands the allowed phase-name enum (currently `Literal["warmup",
+        "profiling"]`) to include additional excluded phases like
+        `calibration`, a name-string filter would silently leave them in
+        the measurement. This test asserts the predicate at the call site.
+        """
         import inspect
 
         from aiperf.orchestrator.strategies import FixedTrialsStrategy as _FTS
@@ -271,7 +290,16 @@ class TestFixedTrialsStrategy:
         )
 
     def test_disable_warmup_clears_agentic_cache_warmup_duration(self):
-        """Trials 2+ must suppress the synthesized agentic cache-pressure warmup."""
+        """Trials 2+ must suppress the synthesized agentic cache-pressure warmup.
+
+        AGENTIC_REPLAY warmup is not a stored ``exclude_from_results`` phase; it
+        is derived from the surviving profiling phase by
+        ``TimingConfig.from_run`` -> ``_build_agentic_warmup_config``, keyed off
+        the profiling phase's ``agentic_cache_warmup_duration``. Stripping the
+        excluded phases alone leaves that field set, so the accelerated
+        cache-pressure substage would re-run on every trial. Pin that
+        ``_disable_warmup`` zeroes it so trials 2+ run with NO warmup at all.
+        """
         from aiperf.plugin.enums import TimingMode
 
         strategy = FixedTrialsStrategy(num_trials=3, disable_warmup_after_first=True)
@@ -288,6 +316,7 @@ class TestFixedTrialsStrategy:
             ],
         )
 
+        # First trial keeps the cache-pressure warmup on the profiling phase.
         first_config = strategy.get_next_config(config, [])
         assert (
             first_config.get_profiling_phases()[0].agentic_cache_warmup_duration == 30.0
@@ -302,10 +331,12 @@ class TestFixedTrialsStrategy:
             )
         ]
 
+        # Second trial must have the cache-pressure warmup suppressed.
         second_config = strategy.get_next_config(config, results)
         for phase in second_config.get_profiling_phases():
             assert phase.agentic_cache_warmup_duration is None
 
+        # Original config untouched (deep copy).
         assert config.get_profiling_phases()[0].agentic_cache_warmup_duration == 30.0
 
     def test_get_run_path(self):
@@ -340,6 +371,7 @@ class TestFixedTrialsStrategy:
             path = strategy.get_run_path(base_dir, run_index)
 
             assert path.name == label
+            # Use os.sep so the literal works on both POSIX (/) and Windows (\\)
             import os
 
             assert str(path).endswith(f"profile_runs{os.sep}{label}")
@@ -370,6 +402,8 @@ class TestAdaptiveStrategy:
         mock.is_converged.return_value = converged
         return mock
 
+    # -- should_continue: convergence logic --
+
     def test_criterion_true_stops_after_min_runs(self):
         """When criterion reports converged, stop as soon as min_runs is met."""
         criterion = self._make_mock_criterion(converged=True)
@@ -393,7 +427,9 @@ class TestAdaptiveStrategy:
         criterion.is_converged.side_effect = [False, True]
         strategy = AdaptiveStrategy(criterion=criterion, min_runs=3, max_runs=10)
 
+        # Run 3: first convergence check -> False -> continue
         assert strategy.should_continue(self._make_results(3)) is True
+        # Run 4: second convergence check -> True -> stop
         assert strategy.should_continue(self._make_results(4)) is False
 
     def test_min_runs_floor_enforced(self):
@@ -403,6 +439,7 @@ class TestAdaptiveStrategy:
 
         for n in range(1, 5):
             assert strategy.should_continue(self._make_results(n)) is True
+        # Criterion is never called below min_runs
         criterion.is_converged.assert_not_called()
 
     def test_max_runs_cap_enforced(self):
@@ -429,6 +466,8 @@ class TestAdaptiveStrategy:
         assert strategy.should_continue(results) is True
         assert "Convergence criterion raised an error" in caplog.text
 
+    # -- Label parity with FixedTrialsStrategy --
+
     @pytest.mark.parametrize("run_index", [0, 1, 99, 9999])
     def test_label_parity_with_fixed_trials(self, run_index):
         """AdaptiveStrategy labels must match FixedTrialsStrategy labels."""
@@ -437,6 +476,8 @@ class TestAdaptiveStrategy:
         fixed = FixedTrialsStrategy(num_trials=10000)
 
         assert adaptive.get_run_label(run_index) == fixed.get_run_label(run_index)
+
+    # -- Path parity --
 
     @pytest.mark.parametrize("run_index", [0, 1, 99, 9999])
     def test_run_path_parity_with_fixed_trials(self, run_index):
@@ -461,6 +502,8 @@ class TestAdaptiveStrategy:
             base_dir
         )
 
+    # -- Config parity (warmup disabling) --
+
     def test_disable_warmup_after_first_run(self):
         """Warmup disabled for runs after the first."""
         criterion = self._make_mock_criterion()
@@ -470,15 +513,18 @@ class TestAdaptiveStrategy:
 
         config = _make_config()
 
+        # First run: warmup preserved
         first = strategy.get_next_config(config, [])
         assert _has_warmup_phase(first)
         assert any(p.name == "warmup" for p in first.phases)
 
+        # Second run: warmup disabled
         results = self._make_results(1)
         second = strategy.get_next_config(config, results)
         assert not _has_warmup_phase(second)
         assert not any(p.name == "warmup" for p in second.phases)
 
+        # Original unchanged
         assert _has_warmup_phase(config)
         assert any(p.name == "warmup" for p in config.phases)
 
@@ -521,6 +567,8 @@ class TestAdaptiveStrategy:
         assert adaptive_cfg.random_seed == fixed_cfg.random_seed
         assert _has_warmup_phase(adaptive_cfg) == _has_warmup_phase(fixed_cfg)
 
+    # -- Cooldown --
+
     def test_cooldown_seconds_configured(self):
         criterion = self._make_mock_criterion()
         strategy = AdaptiveStrategy(criterion=criterion, cooldown_seconds=2.5)
@@ -530,6 +578,8 @@ class TestAdaptiveStrategy:
         criterion = self._make_mock_criterion()
         strategy = AdaptiveStrategy(criterion=criterion)
         assert strategy.get_cooldown_seconds() == 0.0
+
+    # -- Constructor validation --
 
     def test_invalid_cooldown_raises(self):
         criterion = self._make_mock_criterion()
@@ -545,6 +595,8 @@ class TestAdaptiveStrategy:
         criterion = self._make_mock_criterion()
         with pytest.raises(ValueError, match="Invalid max_runs"):
             AdaptiveStrategy(criterion=criterion, min_runs=5, max_runs=3)
+
+    # -- Cross-endpoint metric names (chat, embeddings, audio) --
 
     @pytest.mark.parametrize(
         "metric_name",

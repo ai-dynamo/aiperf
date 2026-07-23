@@ -22,6 +22,7 @@ def test_clamp_none_cap_passes_through():
 
 
 def test_clamp_negative_passes_through():
+    # Clamp only enforces upper bound; corrupt-trace negatives pass through.
     assert _clamp_delay_ms(-100.0, cap_seconds=60.0) == -100.0
 
 

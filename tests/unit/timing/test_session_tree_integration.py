@@ -61,6 +61,7 @@ def _build_orchestrator_with_background_child(registry):
             return {"root": root_meta, "child": child_meta}[conversation_id]
 
         def start_branch_child(self, **kwargs):
+            # Deterministic child id so the test can drive its completion.
             return SampledSession(
                 conversation_id=kwargs["child_conversation_id"],
                 metadata=child_meta,
@@ -102,20 +103,28 @@ async def test_background_subagent_outliving_root_holds_slot_until_drain():
     registry.set_drain_callback(lambda root, phase: drained.append((root, phase)))
     orch = _build_orchestrator_with_background_child(registry)
 
+    # 1. Issuer admits the root: acquire the physical slot + open the tree.
     assert await cm.acquire_session_slot(PROFILING, lambda: True) is True
     registry.open_tree("root-corr", PROFILING, root_pending=True)
     assert _held(cm) == 1
     assert registry.open_count(PROFILING) == 1
 
+    # 2. Root's (final) turn returns -> orchestrator spawns the background child,
+    #    which registers a descendant against the tree.
     credit = _root_final_turn_credit()
     assert await orch.intercept(credit) is False
     assert registry._trees["root-corr"].outstanding == 1
 
+    # 3. Callback handler marks the root terminal AFTER intercept. The child is
+    #    still in flight, so the slot must be HELD (not released) -- a new root
+    #    must NOT be admittable on its behalf yet.
     assert registry.on_root_terminal("root-corr") is False
     assert _held(cm) == 1, "slot held while a background subagent is still running"
     assert registry.open_count(PROFILING) == 1
     assert drained == []
 
+    # 4. The background subagent finishes -> the tree drains -> the slot is
+    #    released exactly once and the lane recycle is signalled.
     await orch.on_child_leaf_reached("child-corr")
     assert _held(cm) == 0, "slot released only after the whole tree drained"
     assert registry.open_count(PROFILING) == 0
@@ -143,7 +152,9 @@ async def test_root_with_no_descendants_releases_slot_immediately_on_terminal():
 
 @pytest.mark.asyncio
 async def test_seed_snapshot_registers_grandchildren_under_tree_root():
-    """Depth≥2 snapshot children must register against the depth-0 root,"""
+    """Depth≥2 snapshot children must register against the depth-0 root,
+    matching live spawn / ``_tree_descendant_done`` decrement keying.
+    """
     from aiperf.timing.trajectory_source import ConversationState
 
     cm = ConcurrencyManager()
@@ -223,10 +234,11 @@ async def test_seed_snapshot_registers_grandchildren_under_tree_root():
         )
     )
 
+    # Both descendants keyed under the depth-0 root, not mid-corr.
     assert registry._trees["root-corr"].outstanding == 2
     assert "mid-corr" not in registry._trees
     assert orch._child_root["leaf-corr"] == "root-corr"
-    assert orch._descendant_counts["mid-corr"] == 1
+    assert orch._descendant_counts["mid-corr"] == 1  # per-parent drain key
     assert orch._descendant_counts["root-corr"] == 1
 
     await orch.on_child_leaf_reached("leaf-corr")

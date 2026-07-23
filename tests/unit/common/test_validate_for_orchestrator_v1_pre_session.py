@@ -1,6 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 2b validator tests: pre-session dispatch shape restrictions."""
+"""Phase 2b validator tests: pre-session dispatch shape restrictions.
+
+Covers the new rejection paths in ``validate_for_orchestrator_v1``:
+
+- ``dispatch_timing="pre"`` with FORK mode -> NotImplementedError.
+- ``dispatch_timing="pre"`` with ``is_background=False`` -> NotImplementedError.
+- ``dispatch_timing="pre"`` on a non-root conversation -> NotImplementedError.
+- ``dispatch_timing="pre"`` declared on a turn other than turn 0 ->
+  NotImplementedError.
+- A valid pre-session branch shape is accepted.
+"""
 
 from __future__ import annotations
 
@@ -48,7 +58,12 @@ def _metadata(
 
 
 def test_pre_session_with_fork_rejected():
-    """FORK mode + dispatch_timing=pre is rejected (no real parent session)."""
+    """FORK mode + dispatch_timing=pre is rejected (no real parent session).
+
+    v2 moved this rejection to construction-time: the ConversationBranchInfo
+    field validator rejects FORK + dispatch_timing="pre" before the dataset
+    validator ever runs (stricter, not a gap).
+    """
     with pytest.raises(ValidationError, match="reserved for SPAWN"):
         ConversationBranchInfo(
             branch_id="r:pre",
@@ -67,7 +82,12 @@ def test_pre_session_with_fork_rejected():
     "False) pre-session SPAWN now validates with no equivalent rejection.",
 )
 def test_pre_session_with_blocking_rejected():
-    """is_background=False + dispatch_timing=pre rejected (cannot gate"""
+    """is_background=False + dispatch_timing=pre rejected (cannot gate
+    against non-existent parent).
+
+    PORT DEVIATION: v2 dropped this is_background-keyed rejection (the concept
+    was re-keyed onto dispatch_timing='pre'), so the construct now validates.
+    """
     branch = ConversationBranchInfo(
         branch_id="r:pre",
         child_conversation_ids=["c"],
@@ -120,4 +140,5 @@ def test_pre_session_valid_shape_accepted():
         dispatch_timing="pre",
     )
     md = _metadata([branch])
+    # Should not raise.
     validate_for_orchestrator_v1(md)

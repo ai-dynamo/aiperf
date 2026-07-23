@@ -53,6 +53,9 @@ def _subagent(t, agent_id, inner_requests, models=("m",)):
     }
 
 
+# Unit tests for _build_model_map
+
+
 def _make_trace_obj(requests_dicts, trace_id="tr"):
     return WekaTrace.model_validate(
         {
@@ -66,7 +69,13 @@ def _make_trace_obj(requests_dicts, trace_id="tr"):
 
 
 def _bare_loader(*, model_names):
-    """Minimal loader sufficient for _build_model_map (no I/O paths)."""
+    """Minimal loader sufficient for _build_model_map (no I/O paths).
+
+    ``_build_model_map`` reads only ``self._configured_model_names`` (resolved
+    off the v2 ``BenchmarkRun`` in ``__init__``), so set it directly here and
+    skip the real constructor. Building a real run for the empty-model-names
+    case is impossible anyway (``ModelsAdvanced.items`` has ``min_length=1``).
+    """
     loader = WekaTraceLoader.__new__(WekaTraceLoader)
     loader._configured_model_names = list(model_names)
     return loader
@@ -132,6 +141,7 @@ def test_build_model_map_more_distinct_than_configured_modulo_wrap():
             ),
         ]
     )
+    # A→M0, B→M1, C→M0, D→M1, E→M0
     assert loader._build_model_map(trace) == {
         "A": "M0",
         "B": "M1",
@@ -142,11 +152,15 @@ def test_build_model_map_more_distinct_than_configured_modulo_wrap():
 
 
 def test_build_model_map_first_appearance_order_in_outer_list():
-    """B appears first (in subagent), then A in second parent normal."""
+    """B appears first (in subagent), then A in second parent normal.
+
+    Main is the FIRST PARENT NORMAL's model, regardless of where subagents
+    sit in the outer list. Then walk-order picks up other distinct models.
+    """
     loader = _bare_loader(model_names=("M0", "M1", "M2"))
     trace = _make_trace_obj(
         [
-            _normal(t=0.0, model="A"),
+            _normal(t=0.0, model="A"),  # main
             _subagent(
                 t=1.0,
                 agent_id="s",
@@ -156,6 +170,7 @@ def test_build_model_map_first_appearance_order_in_outer_list():
             _normal(t=2.0, model="C"),
         ]
     )
+    # main=A, then walk: A(seen), B(new→M1), C(new→M2)
     assert loader._build_model_map(trace) == {"A": "M0", "B": "M1", "C": "M2"}
 
 
@@ -188,6 +203,9 @@ def test_build_model_map_empty_trace_returns_empty():
     loader = _bare_loader(model_names=("M0",))
     trace = _make_trace_obj([])
     assert loader._build_model_map(trace) == {}
+
+
+# End-to-end loader tests (serial path; parallel path is forced off in conftest)
 
 
 def test_loader_rewrites_parent_turn_model_to_configured_model_zero(
@@ -238,7 +256,7 @@ def test_loader_no_longer_raises_on_unmatched_trace_model(tmp_path, monkeypatch)
         ),
     )
     loader = _make_loader(path, uc, monkeypatch)
-    convs = loader.convert_to_conversations(loader.load_dataset())
+    convs = loader.convert_to_conversations(loader.load_dataset())  # no raise
     parent = next(c for c in convs if c.session_id == "tr")
     assert all(t.model == "ANYTHING" for t in parent.turns)
 
@@ -257,6 +275,9 @@ def test_loader_case_mismatch_still_rewrites(tmp_path, monkeypatch):
 
 def test_loader_empty_model_names_preserves_trace_model(tmp_path, monkeypatch):
     """With empty endpoint.model_names, mapping is empty → trace value passes through."""
+    # A real v2 config cannot carry an empty models list (ModelsAdvanced.items
+    # has min_length=1), so build the loader normally and clear the resolved
+    # _configured_model_names directly -- the empty-config behavior under test.
     uc = _mk_user_config(model_names=("placeholder",))
     path = _write_trace(tmp_path, _trace("tr", [_normal(model="trace-m")]))
     loader = _make_loader(path, uc, monkeypatch)

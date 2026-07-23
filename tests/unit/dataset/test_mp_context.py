@@ -27,6 +27,7 @@ def _stub_forkserver(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     fake_ctx = MagicMock(name="loader-mp-ctx")
     monkeypatch.setattr(mpc.multiprocessing, "get_context", lambda method: fake_ctx)
     monkeypatch.setattr(mpc, "_eagerly_start_forkserver", lambda: None)
+    # Force the Linux forkserver path regardless of host OS.
     monkeypatch.setattr(mpc, "IS_LINUX", True)
     return fake_ctx
 

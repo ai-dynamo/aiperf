@@ -1,6 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tool-turn detection for weka trace replay."""
+"""Tool-turn detection for weka trace replay.
+
+Weka traces record, per request, the content-block types of the triggering
+input message (``input_types``: ``["tool_result"]`` for a tool-result
+continuation, ``["text"]`` for genuine user/agent text input) and the
+assistant stop reason (``stop``: ``tool_use`` / ``end_turn``). The loader
+classifies every reconstructed turn from these signals:
+
+  1. Own-turn ``input_types`` wins when present (``tool_result`` membership
+     decides).
+  2. Otherwise the PREVIOUS request's ``stop`` is the API-invariant fallback
+     (a ``tool_use`` stop is always answered by a tool-result turn).
+  3. Legacy traces carrying neither signal classify as ``None``.
+
+The classification is surfaced as ``Turn.input_kind`` and projected through
+``TurnMetadata`` so downstream consumers (timing strategies, metrics,
+exporters) can distinguish machine-paced tool-result turns from human-paced
+input turns.
+"""
 
 from __future__ import annotations
 
@@ -74,6 +92,9 @@ def _write_trace(tmp_path: Path, trace: dict) -> str:
     return str(p)
 
 
+# _classify_turn_input
+
+
 @pytest.mark.parametrize(
     ("input_types", "prev_stop", "expected"),
     [
@@ -114,6 +135,9 @@ def test_classify_turn_input_first_turn_no_prev_with_own_types():
     )
 
 
+# Turn model plumbing
+
+
 def test_turn_input_kind_defaults_to_none():
     assert Turn().input_kind is None
 
@@ -121,6 +145,9 @@ def test_turn_input_kind_defaults_to_none():
 def test_turn_input_kind_projects_into_metadata():
     turn = Turn(input_kind=TurnInputKind.TOOL_RESULT)
     assert turn.metadata().input_kind == TurnInputKind.TOOL_RESULT
+
+
+# Serial reconstruction
 
 
 def _scope_trace(trace_id: str) -> dict:
@@ -142,7 +169,7 @@ def _scope_trace(trace_id: str) -> dict:
                 stop="tool_use",
                 model=_HAIKU,
             ),
-            _req(t=1.0, hash_ids=[50, 51, 52], model=_HAIKU),
+            _req(t=1.0, hash_ids=[50, 51, 52], model=_HAIKU),  # no own signal
         ],
         "models": [_HAIKU],
         "tool_tokens": 0,
@@ -156,8 +183,10 @@ def _scope_trace(trace_id: str) -> dict:
                 t=1.0, hash_ids=[1, 2, 3], input_types=["tool_result"], stop="tool_use"
             ),
             sub,
-            _req(t=5.0, hash_ids=[1, 2, 3, 4], stop="end_turn"),
-            _req(t=6.0, hash_ids=[1, 2, 3, 4, 5]),
+            _req(
+                t=5.0, hash_ids=[1, 2, 3, 4], stop="end_turn"
+            ),  # fallback: prev tool_use
+            _req(t=6.0, hash_ids=[1, 2, 3, 4, 5]),  # fallback: prev end_turn
         ],
     )
 
@@ -174,15 +203,15 @@ def test_convert_to_conversations_sets_input_kind_serial(tmp_path):
 
     main = convs["trace_tk"]
     assert [t.input_kind for t in main.turns] == [
-        TurnInputKind.USER_INPUT,
-        TurnInputKind.TOOL_RESULT,
-        TurnInputKind.TOOL_RESULT,
-        TurnInputKind.USER_INPUT,
+        TurnInputKind.USER_INPUT,  # own ["text"]
+        TurnInputKind.TOOL_RESULT,  # own ["tool_result"]
+        TurnInputKind.TOOL_RESULT,  # fallback: prev stop tool_use
+        TurnInputKind.USER_INPUT,  # fallback: prev stop end_turn
     ]
     child = convs["trace_tk::sa:agent_001"]
     assert [t.input_kind for t in child.turns] == [
-        TurnInputKind.USER_INPUT,
-        TurnInputKind.TOOL_RESULT,
+        TurnInputKind.USER_INPUT,  # own ["text"]
+        TurnInputKind.TOOL_RESULT,  # fallback: prev stop tool_use
     ]
 
 
@@ -200,6 +229,10 @@ def test_convert_to_conversations_legacy_trace_input_kind_none(tmp_path):
     _stub_loader(loader)
     convs = loader.convert_to_conversations(loader.load_dataset())
     assert all(t.input_kind is None for c in convs for t in c.turns)
+
+
+# Parallel parity: the REAL _reconstruct_parallel (pool run in-process) must
+# emit the same input_kind per turn as the serial path.
 
 
 def _run_pool_inproc(tasks, *, corpus, base_seed, block_size, **_kwargs):

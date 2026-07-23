@@ -93,6 +93,7 @@ def test_k_i_within_bounds_for_each_trajectory():
         random_seed=7,
     )
     for trajectory in src.trajectories:
+        # defaults: floor(0.25 * 10) = 2, floor(0.75 * 10) = 7
         assert 2 <= trajectory.start_turn_index <= 7
 
 
@@ -137,7 +138,9 @@ def test_empty_pool_raises():
 
 
 def test_single_turn_trace_skipped_with_warning(caplog):
-    """n=1 traces have no profiling turn after the warmup split; the source"""
+    """n=1 traces have no profiling turn after the warmup split; the source
+    skips them with a warning. When only n=1 traces exist, the trajectory
+    pool is empty and EmptyTracePoolError is raised."""
     md = _make_dataset_metadata({"only": 1})
     sampler = MagicMock()
     sampler.next_conversation_id.side_effect = ["only"]
@@ -188,6 +191,9 @@ def test_timestamped_snapshot_includes_inflight_subagent_and_gated_parent():
     assert child.branch_mode == ConversationBranchMode.SPAWN
     assert child.next_dispatch_offset_ms == pytest.approx(500.0)
     assert resume_boundaries == {"trace": 2, "trace::sa:agent_0": 1}
+    # Both active-at-t* sessions are warmed: the mid-flight child (turn 0) and
+    # the gated parent (turn 1, priming its join turn). Gated parents are no
+    # longer excluded from warmup.
     assert src.warmup_credit_count == 2
 
 
@@ -285,7 +291,13 @@ def test_timestamped_snapshot_after_spawning_turn_schedules_future_child_start()
 
 
 def test_next_recycle_conversation_id_uses_sampler_round_robin():
-    """Recycle draws the next root from the dataset sampler."""
+    """Recycle draws the next root from the dataset sampler.
+
+    A SequentialSampler yields every root in order and wraps indefinitely, so
+    over a whole number of cycles each root is reused exactly equally -- no
+    trace is favored. This replaces the old strategy-side recycle queue, whose
+    copy accumulation favored short, rootless-heavy traces.
+    """
     from collections import Counter
 
     from aiperf.dataset.dataset_samplers import SequentialSampler
@@ -319,7 +331,8 @@ def test_next_recycle_conversation_id_uses_sampler_round_robin():
 
 
 def test_next_recycle_conversation_id_skips_unspawnable_roots():
-    """Roots with no spawnable session (zero turns) are skipped so recycle never"""
+    """Roots with no spawnable session (zero turns) are skipped so recycle never
+    hands back a dead trace; bounded so an all-empty pool returns None."""
     from aiperf.dataset.dataset_samplers import SequentialSampler
 
     dataset = DatasetMetadata(

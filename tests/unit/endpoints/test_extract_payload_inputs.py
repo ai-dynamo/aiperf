@@ -1,6 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for ``BaseEndpoint.extract_payload_inputs`` and its overrides."""
+"""Unit tests for ``BaseEndpoint.extract_payload_inputs`` and its overrides.
+
+Covers the single-pass walk that feeds ISL tokenisation
+(``ExtractedPayload.texts``) and per-record ``MediaCounts``
+(``image_count``/``audio_count``/``video_count``) from the wire-ready
+JSON payload. Endpoints may extend this walk by setting ``PART_TYPES``
+(chat-shape content-part type names) or overriding
+``extract_payload_inputs`` directly.
+"""
 
 from __future__ import annotations
 
@@ -115,11 +123,13 @@ class TestChatShapeDispatch:
 
 
 class TestItemsArrayDisambiguation:
-    """The base walker disambiguates Responses/chat ``input``/``messages``"""
+    """The base walker disambiguates Responses/chat ``input``/``messages``
+    (dicts with ``role``) from embeddings ``input: [str, ...]``."""
 
     def test_flat_input_strings_falls_through_to_flat_shape(self):
         payload = {"input": ["a", "b", "c"]}
         result = _chat().extract_payload_inputs(payload)
+        # Embeddings shape — flat-field walker handles it.
         assert result.texts == ["a", "b", "c"]
         assert result.image_count == 0
 
@@ -130,7 +140,11 @@ class TestItemsArrayDisambiguation:
 
 
 class TestFlatFieldFallbacks:
-    """Completions / embeddings / rankings / HuggingFace flat shapes."""
+    """Completions / embeddings / rankings / HuggingFace flat shapes.
+
+    Each shape early-returns so a plugin that accidentally emits two
+    shapes doesn't silently double-count.
+    """
 
     def test_completions_prompt_string(self):
         result = _chat().extract_payload_inputs({"prompt": "one shot"})
@@ -158,7 +172,8 @@ class TestFlatFieldFallbacks:
         assert result.texts == ["hf text"]
 
     def test_prompt_wins_over_later_shapes(self):
-        """Regression: if a plugin erroneously emits both ``prompt`` and"""
+        """Regression: if a plugin erroneously emits both ``prompt`` and
+        ``input`` (flat), the walker must not double-count."""
         result = _chat().extract_payload_inputs(
             {"prompt": "P", "input": "I", "inputs": "HF"}
         )
@@ -172,7 +187,12 @@ class TestFlatFieldFallbacks:
 
 
 class TestResponsesEndpointOverride:
-    """The Responses override prepends the top-level ``instructions`` field."""
+    """The Responses override prepends the top-level ``instructions`` field.
+
+    ``instructions`` is the Responses-API system-prompt equivalent; the
+    base walker does not know about it, so the override's job is to
+    prepend it once.
+    """
 
     def test_instructions_prepended(self):
         payload = {
@@ -189,7 +209,9 @@ class TestResponsesEndpointOverride:
         assert result.texts == ["hi"]
 
     def test_responses_part_types_dispatch(self):
-        """Responses overrides ``PART_TYPES`` with ``input_text`` /"""
+        """Responses overrides ``PART_TYPES`` with ``input_text`` /
+        ``input_image`` / ``input_audio``; the inherited walker dispatches
+        those instead of chat's ``text`` / ``image_url`` / ``input_audio``."""
         payload = {
             "input": [
                 {
@@ -208,7 +230,8 @@ class TestResponsesEndpointOverride:
         assert result.audio_count == 1
 
     def test_assistant_output_text_counted_in_multiturn_payload(self):
-        """Replayed assistant history uses ``output_text`` parts; ISL must"""
+        """Replayed assistant history uses ``output_text`` parts; ISL must
+        count those alongside user ``input_text`` turns."""
         payload = {
             "input": [
                 {
@@ -229,7 +252,9 @@ class TestResponsesEndpointOverride:
         assert result.texts == ["first question", "first answer", "follow up"]
 
     def test_chat_style_part_types_not_counted_by_responses(self):
-        """Responses' ``PART_TYPES`` doesn't include chat's ``image_url``"""
+        """Responses' ``PART_TYPES`` doesn't include chat's ``image_url``
+        type name — chat-shape parts in a Responses payload should NOT
+        be counted as images."""
         payload = {
             "input": [
                 {
@@ -243,7 +268,8 @@ class TestResponsesEndpointOverride:
 
 
 class TestImageRetrievalOverride:
-    """NIM image retrieval overrides ``extract_payload_inputs`` to handle"""
+    """NIM image retrieval overrides ``extract_payload_inputs`` to handle
+    its flat ``input: [...]`` list of parts with no role wrapper."""
 
     def test_image_retrieval_counts_images(self):
         payload = {
@@ -287,7 +313,10 @@ class TestBaseExtractionDefaults:
 
 
 class TestChatMessagesField:
-    """``ExtractedPayload.messages`` carries the chat-shape role/content"""
+    """``ExtractedPayload.messages`` carries the chat-shape role/content
+    view used by the record processor's ``apply_chat_template`` path.
+    Populated only for chat/Responses message arrays; ``None`` for flat
+    completions/embeddings/rankings/HF shapes (templating doesn't apply)."""
 
     def test_chat_string_content_populates_messages(self):
         payload = {
@@ -342,7 +371,13 @@ class TestChatMessagesField:
         ]
 
     def test_extract_payload_inputs_message_tool_calls_excluded_from_tool_texts(self):
-        """tool_calls riding in ``messages`` are excluded from ``tool_texts``."""
+        """tool_calls riding in ``messages`` are excluded from ``tool_texts``.
+
+        The chat-template ISL path renders ``messages`` (tool_calls included)
+        and tokenises ``tool_texts`` on top; keeping the same call text in both
+        would count it twice. It must still appear in ``texts`` for the
+        bare-text path.
+        """
         payload = {
             "messages": [
                 {"role": "user", "content": "weather?"},
@@ -367,7 +402,9 @@ class TestChatMessagesField:
         assert '{"city": "SF"}' in result.texts
 
     def test_extract_payload_inputs_responses_function_call_in_tool_texts(self):
-        """Responses ``function_call`` items have no role, so they are absent"""
+        """Responses ``function_call`` items have no role, so they are absent
+        from ``messages`` and must remain in ``tool_texts`` for the
+        chat-template path to account for them."""
         payload = {
             "input": [
                 {"role": "user", "content": "weather?"},

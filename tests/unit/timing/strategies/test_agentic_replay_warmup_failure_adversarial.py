@@ -24,6 +24,8 @@ from tests.unit.timing.strategies._shared_helpers import (
     _make_dataset,
 )
 
+# Helpers (duplicated from sibling adversarial tests for self-containment)
+
 
 def _make_strategy(
     *,
@@ -54,6 +56,9 @@ def _make_strategy(
     return strategy, issuer, scheduler, stop_checker
 
 
+# Test 1: record_warmup_failure preserves call order including duplicates
+
+
 def test_record_warmup_failure_accumulates_in_call_order() -> None:
     """Duplicates and order matter: report_warmup_failures must emit them as recorded."""
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
@@ -69,6 +74,9 @@ def test_record_warmup_failure_accumulates_in_call_order() -> None:
     assert strategy._failed_warmup_traces == ["a", "b", "a"]
 
 
+# Test 2: report_warmup_failures with no failures is a noop
+
+
 def test_report_warmup_failures_empty_is_noop() -> None:
     """Fresh strategy: report_warmup_failures returns None and does not raise."""
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
@@ -79,6 +87,9 @@ def test_report_warmup_failures_empty_is_noop() -> None:
 
     result = strategy.report_warmup_failures()
     assert result is None
+
+
+# Test 3: report_warmup_failures raises with the recorded ids in order
 
 
 def test_report_warmup_failures_raises_with_failed_trace_ids() -> None:
@@ -98,6 +109,9 @@ def test_report_warmup_failures_raises_with_failed_trace_ids() -> None:
     with pytest.raises(TrajectoryWarmupFailedError) as exc_info:
         strategy.report_warmup_failures()
     assert exc_info.value.failed_trace_ids == ["trace_1", "trace_0"]
+
+
+# Test 4: WARMUP handle_credit_return is a strategy-level no-op
 
 
 @pytest.mark.asyncio
@@ -128,9 +142,17 @@ async def test_warmup_handle_credit_return_is_noop() -> None:
     scheduler.schedule_later.assert_not_called()
 
 
+# Test 5: PROFILING credit return during cooldown does not spawn or push
+
+
 @pytest.mark.asyncio
 async def test_profiling_handle_credit_return_during_cooldown_no_spawn() -> None:
-    """Cooldown gates the fresh-dispatch step: an in-flight credit returning"""
+    """Cooldown gates the fresh-dispatch step: an in-flight credit returning
+    after the stop condition has fired must not start a new session.
+
+    ``_dispatch_recycled_on_lane`` checks ``can_start_new_session`` before
+    drawing the next root from the sampler, so no fresh credit is issued.
+    """
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     ds = _make_dataset(num_traces=4, turns_per_trace=2)
     issuer = AsyncMock()
@@ -149,7 +171,11 @@ async def test_profiling_handle_credit_return_during_cooldown_no_spawn() -> None
     final = _make_credit(conversation_id="trace_0", turn_index=1, num_turns=2)
     await strategy.handle_credit_return(final)
 
+    # Cooldown gates the fresh spawn: no new credit issued.
     assert issuer.issue_credit.await_count == 0
+
+
+# Test 6: _dispatch_next_turn with delay_ms=0 issues immediately
 
 
 @pytest.mark.asyncio
@@ -180,6 +206,9 @@ async def test_dispatch_next_turn_with_zero_delay_issues_immediately() -> None:
     scheduler.schedule_later.assert_not_called()
 
 
+# Test 7: _dispatch_next_turn with positive delay routes through scheduler
+
+
 @pytest.mark.asyncio
 async def test_dispatch_next_turn_with_positive_delay_routes_through_scheduler() -> (
     None
@@ -207,6 +236,9 @@ async def test_dispatch_next_turn_with_positive_delay_routes_through_scheduler()
     try:
         await strategy.handle_credit_return(credit)
     finally:
+        # Production hands a coroutine to scheduler.schedule_later but the
+        # MagicMock never awaits it; close it to avoid the "coroutine was
+        # never awaited" RuntimeWarning on test teardown.
         if scheduler.schedule_later.call_args is not None:
             coro_arg = scheduler.schedule_later.call_args.args[1]
             if hasattr(coro_arg, "close"):
@@ -215,8 +247,14 @@ async def test_dispatch_next_turn_with_positive_delay_routes_through_scheduler()
     scheduler.schedule_later.assert_called_once()
     delay_arg, coro_arg = scheduler.schedule_later.call_args.args
     assert delay_arg == 1.5
+    # Second arg is the issue_credit(turn) coroutine handed to the scheduler.
     assert hasattr(coro_arg, "send") and hasattr(coro_arg, "throw")
+    # issue_credit was NOT awaited directly by the strategy - the scheduler
+    # owns the coroutine now.
     assert issuer.issue_credit.await_count == 0
+
+
+# Test 8: _dispatch_next_turn with delay_ms=None issues immediately
 
 
 @pytest.mark.asyncio
@@ -247,12 +285,15 @@ async def test_dispatch_next_turn_with_none_delay_issues_immediately() -> None:
     scheduler.schedule_later.assert_not_called()
 
 
+# Test 10: PROFILING setup with empty trajectories raises with the canonical message
+
+
 @pytest.mark.asyncio
 async def test_profiling_setup_raises_when_trajectories_empty() -> None:
     """Empty trajectories at PROFILING setup is a degraded WARMUP signal."""
     ds = _make_dataset(num_traces=3, turns_per_trace=2)
     src = _build_real_trajectory_source(dataset=ds, trajectories=[])
-    src.trajectories = []
+    src.trajectories = []  # belt-and-suspenders explicit
     cfg = MagicMock()
     cfg.phase = CreditPhase.PROFILING
     cfg.concurrency = 1
@@ -269,13 +310,26 @@ async def test_profiling_setup_raises_when_trajectories_empty() -> None:
     assert "WARMUP must complete" in str(exc_info.value)
 
 
+# G17: empty-warmup unblock (signal_sending_complete when nothing precedes t*)
+
+
 @pytest.mark.asyncio
 async def test_warmup_signals_complete_when_no_request_precedes_t_star() -> None:
-    """When every lane's first request is at/after t* (``warmup_turn_index`` is"""
+    """When every lane's first request is at/after t* (``warmup_turn_index`` is
+    None for all states), ``_execute_warmup`` prepares zero credits. The count
+    path that normally drives completion is triggered by credit dispatch, so
+    with no credits the warmup barrier (sized to concurrency) would hang. The
+    strategy must call ``credit_issuer.signal_sending_complete()`` instead.
+
+    Regression guard for commit 14f7b0e40 (G17): re-introducing the deadlock
+    leaves no automated detection otherwise (grep ``signal_sending_complete``
+    over tests/ was previously empty).
+    """
     dataset = _make_dataset(num_traces=1, turns_per_trace=2)
     strategy, issuer, _, _ = _make_strategy(
         phase=CreditPhase.WARMUP, trajectories=[], dataset=dataset
     )
+    # One lane whose snapshot states all start at/after t* -> nothing to warm.
     src = MagicMock()
     src.warmup_credit_count = 0
     traj = MagicMock()
@@ -286,7 +340,7 @@ async def test_warmup_signals_complete_when_no_request_precedes_t_star() -> None
     traj.snapshot.states = [state]
     src.trajectories = [traj]
     strategy.conversation_source = src
-    strategy._burst_phase_starts = False
+    strategy._burst_phase_starts = False  # spread mode
 
     await strategy._execute_warmup()
 

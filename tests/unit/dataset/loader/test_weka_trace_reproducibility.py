@@ -1,6 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Cross-process reproducibility test for the weka byte-exact loader."""
+"""Cross-process reproducibility test for the weka byte-exact loader.
+
+Spawns two subprocesses with different PYTHONHASHSEED, runs the loader on
+the same fixture trace, and asserts byte-identical outputs. Verifies the
+sha256-keyed determinism contract from spec §4.6 — Python's builtin
+hash() is salted per-process via PYTHONHASHSEED, and any path that
+depends on it would diverge across runs (kv-cache-tester audit H3).
+"""
 
 from __future__ import annotations
 
@@ -16,6 +23,10 @@ import pytest
 FIXTURES = Path(__file__).parents[3] / "fixtures" / "weka_traces"
 
 
+# Inline runner script used in the subprocess. Walks one Weka trace through
+# the loader, dumps a deterministic representation of every emitted Turn's
+# raw_messages to stdout (sorted JSON). The hash of stdout is then compared
+# across PYTHONHASHSEED variants to detect any per-process nondeterminism.
 RUNNER = textwrap.dedent("""
     import json
     import sys
@@ -92,7 +103,11 @@ def _run_with_seed(seed: str | int, fixture_path: Path) -> bytes:
     ["simple.json", "one_subagent.json", "multi_model.json"],
 )
 def test_loader_byte_identical_across_processes(fixture_name: str) -> None:
-    """Run the loader twice with different PYTHONHASHSEEDs; outputs must match."""
+    """Run the loader twice with different PYTHONHASHSEEDs; outputs must match.
+
+    Covers parent-only (simple.json), parent + one subagent (one_subagent.json),
+    and multi-model (multi_model.json) fixtures.
+    """
     fixture = FIXTURES / fixture_name
     if not fixture.exists():
         pytest.skip(f"Fixture {fixture} not present")
@@ -111,4 +126,6 @@ def test_loader_byte_identical_across_processes(fixture_name: str) -> None:
     assert sha_a == sha_c, (
         f"PYTHONHASHSEED=0 vs 'random' diverged for {fixture_name}: {sha_a} != {sha_c}"
     )
+    # Sanity: non-empty output (catches silent skips where the loader
+    # produced nothing and every seed produced the same empty string).
     assert len(a) > 2, f"Loader produced empty output for {fixture_name}"

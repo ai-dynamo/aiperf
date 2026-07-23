@@ -12,6 +12,8 @@ from aiperf.dataset.loader.bailian_trace import BailianTraceDatasetLoader
 from aiperf.dataset.loader.models import BailianTrace
 from tests.unit.conftest import make_run_from_cli
 
+# BailianTrace Model Tests
+
 
 class TestBailianTrace:
     """Validation and construction tests for the BailianTrace model."""
@@ -70,6 +72,9 @@ class TestBailianTrace:
     def test_missing_required_field(self, kwargs, match):
         with pytest.raises(ValidationError, match=match):
             BailianTrace(**kwargs)
+
+
+# BailianTraceDatasetLoader Tests
 
 
 class TestBailianTraceDatasetLoader:
@@ -182,6 +187,7 @@ class TestBailianTraceDatasetLoader:
         )
         dataset = loader.load_dataset()
 
+        # All three should be in one session rooted at chat_id=100
         assert len(dataset) == 1
         session = list(dataset.values())[0]
         assert len(session) == 3
@@ -359,7 +365,7 @@ class TestBailianTraceDatasetLoader:
         [
             ({"chat_id": 1, "timestamp": 1.0, "input_length": 10, "output_length": 5}, True),
             ({"chat_id": 1, "timestamp": 1.0, "input_length": 10, "output_length": 5, "type": "chat", "turn": 2, "hash_ids": [1]}, True),
-            ({"input_length": 10, "hash_ids": [1]}, False),
+            ({"input_length": 10, "hash_ids": [1]}, False),  # Mooncake, not Bailian
             ({"text": "hello"}, False),
             (None, False),
         ],
@@ -442,7 +448,8 @@ class TestBailianTraceDatasetLoader:
     def test_stray_request_body_key_does_not_replace_extra(
         self, create_jsonl_file, mock_prompt_generator, default_cfg
     ):
-        """extra="allow" lets a stray "request_body" JSONL key become a trace"""
+        """extra="allow" lets a stray "request_body" JSONL key become a trace
+        attribute; only the documented "extra" dict may reach Turn.extra_body."""
         content = [
             '{"chat_id": 1, "timestamp": 1.0, "input_length": 10, "output_length": 5,'
             ' "extra": {"nvext": {"priority": 1}}, "request_body": {"rogue": true}}',
@@ -463,7 +470,7 @@ class TestBailianTraceDatasetLoader:
         self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
         """strict=True in zip guards against silent data loss."""
-        mock_parallel_decode.return_value = ["only one"]
+        mock_parallel_decode.return_value = ["only one"]  # expecting 2
 
         trace_data = {
             "1": [
@@ -549,6 +556,9 @@ class TestBailianTraceDatasetLoader:
         assert conv.turns[0].timestamp == 1000.0
         assert conv.turns[1].timestamp == 2000.0
         assert conv.turns[2].timestamp == 3000.0
+
+
+# Synthesis Integration Tests
 
 
 def _make_synthesis_config(
@@ -691,5 +701,6 @@ class TestBailianTraceSynthesisIntegration:
         dataset = loader.load_dataset()
 
         traces = [t for ts in dataset.values() for t in ts]
+        # Timestamps: 1.0s → 1000ms, 2.0s → 2000ms, then /2 = 500ms, 1000ms
         assert traces[0].timestamp == 500.0
         assert traces[1].timestamp == 1000.0

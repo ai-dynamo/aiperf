@@ -72,7 +72,11 @@ def test_hit_rate_clamped_when_hit_blocks_exceeds_total() -> None:
 
 
 def test_rate_preserved_across_repeated_replays() -> None:
-    """Characterization: replaying the same (conversation, turn) N times keeps"""
+    """Characterization: replaying the same (conversation, turn) N times keeps
+    the *rate* stable (numerator and denominator both scale), even though the
+    absolute block counts inflate. Confirms the metric is replay-count
+    invariant, the property agentic recycle relies on.
+    """
 
     async def body() -> tuple[float, int, int]:
         acc = _accumulator()
@@ -99,5 +103,5 @@ def test_rate_preserved_across_repeated_replays() -> None:
 
     current, total_hits, total_blocks = asyncio.run(body())
     assert current == pytest.approx(75.0)
-    assert total_hits == 30
-    assert total_blocks == 40
+    assert total_hits == 30  # 3 * 10 replays
+    assert total_blocks == 40  # 4 * 10 replays

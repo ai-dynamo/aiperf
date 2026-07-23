@@ -54,6 +54,9 @@ def test_prefill_ttft_curve_allows_default_streaming():
     assert out.sweep_parameters is not None
 
 
+# ---- Adversarial cases ----
+
+
 @pytest.mark.parametrize(
     ("overrides", "match"),
     [
@@ -68,6 +71,9 @@ def test_prefill_ttft_curve_invalid_grid_raises(overrides, match):
 
 
 def test_prefill_ttft_curve_concurrency_overrides_silently_ignored():
+    # The recipe pins concurrency to [1] and intentionally does NOT consult
+    # sweep_overrides for concurrency_min/max/steps. Pin this so a future
+    # "make it configurable" change has to update this test on purpose.
     out = PrefillTTFTCurve().expand(
         make_ctx(concurrency_min=4, concurrency_max=64, concurrency_steps=3)
     )
@@ -135,6 +141,7 @@ def test_prefill_ttft_curve_isl_grid_strictly_ascending_and_unique():
 
 
 def test_prefill_ttft_curve_two_steps_is_minimum_valid_input():
+    # `_logspace_int_steps` requires steps >= 2; pin the boundary.
     out = PrefillTTFTCurve().expand(make_ctx(isl_steps=2))
     isl_values = out.sweep_parameters["datasets.main.prompts.isl"]
     assert isl_values == [256, 32768]

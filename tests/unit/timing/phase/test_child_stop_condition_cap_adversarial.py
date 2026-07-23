@@ -30,6 +30,8 @@ def test_child_turn_honors_request_count_cap() -> None:
         expected_duration_sec=None,
     )
     counter = CreditCounter(config)
+    # Drive requests_sent well past the cap (roots + their DAG offspring all
+    # bump requests_sent for observability).
     for _ in range(5):
         counter.increment_sent(
             TurnToSend(
@@ -41,12 +43,18 @@ def test_child_turn_honors_request_count_cap() -> None:
         )
     checker = _checker(counter, config)
 
+    # Root issuance IS gated by the cap...
     assert checker.can_send_any_turn() is False
+    # ...and in v2 a DAG child continuation is gated too -- --request-count is
+    # a literal wire cap that children honor (RequestCountStopCondition
+    # applies_to_dag_children is True). Only SessionCountStopCondition opts out.
     assert checker.can_send_child_turn() is False
 
 
 def test_child_turn_still_honors_cancellation() -> None:
-    """Children DO honor cancellation (a user-facing guarantee), unlike the"""
+    """Children DO honor cancellation (a user-facing guarantee), unlike the
+    request-count cap. Confirms the bypass is selective, not blanket.
+    """
     config = CreditPhaseConfig(
         phase=CreditPhase.PROFILING,
         timing_mode=TimingMode.AGENTIC_REPLAY,

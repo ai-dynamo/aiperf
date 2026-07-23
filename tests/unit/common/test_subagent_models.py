@@ -90,6 +90,12 @@ def test_conversation_branch_mode_is_case_insensitive():
 
 
 def test_branch_info_allows_background_on_fork():
+    # PORT-DEVIATION (intentional, documented in branch.py): agentx's
+    # _validate_background rejected is_background=True on FORK branches
+    # (is_background was SPAWN-only there). On v2 the merged field unifies both
+    # semantics because main's dag_jsonl loader (#891) legitimately sets
+    # is_background=True on FORK branches (background-fork = parent keeps
+    # running), so that FORK-reject validator is intentionally NOT ported.
     s = ConversationBranchInfo(
         branch_id="x:0",
         child_conversation_ids=["y"],

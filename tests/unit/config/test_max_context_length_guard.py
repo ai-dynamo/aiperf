@@ -1,7 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""``--max-context-length`` is Weka-only (recorded peak filter-then-cap)."""
+"""``--max-context-length`` is Weka-only (recorded peak filter-then-cap).
+
+Docs previously claimed DatasetManager tokenizes and drops oversized
+conversations for all formats. Only Weka loaders consume the field; reject
+loudly on unsupported datasets so the flag cannot silently no-op.
+"""
 
 from __future__ import annotations
 

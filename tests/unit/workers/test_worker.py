@@ -106,8 +106,18 @@ async def mock_worker(
     await worker.stop()
 
 
+# --- FirstToken Callback Test Helpers ---
+
+
 def create_first_token_callback(worker: Worker):
-    """Create a first token callback that mirrors Worker implementation."""
+    """Create a first token callback that mirrors Worker implementation.
+
+    This callback uses endpoint.parse_response to check if an SSE message
+    contains meaningful content.
+
+    Returns:
+        Async callback function (ttft_ns, message) -> bool
+    """
 
     async def first_token_callback(ttft_ns: int, message: SSEMessage) -> bool:
         parsed = worker.inference_client.endpoint.parse_response(message)
@@ -117,13 +127,19 @@ def create_first_token_callback(worker: Worker):
 
 
 def setup_mock_endpoint(worker: Worker, monkeypatch, parse_response_return):
-    """Setup mock endpoint with specified parse_response return value."""
+    """Setup mock endpoint with specified parse_response return value.
+
+    Args:
+        worker: MockWorker instance
+        monkeypatch: pytest monkeypatch fixture
+        parse_response_return: Return value or side_effect for parse_response
+    """
     mock_endpoint = Mock()
     if isinstance(parse_response_return, list):
         mock_endpoint.parse_response = Mock(side_effect=parse_response_return)
     else:
         mock_endpoint.parse_response = Mock(return_value=parse_response_return)
-    mock_endpoint.extract_response_data = Mock()
+    mock_endpoint.extract_response_data = Mock()  # Should NOT be called
     monkeypatch.setattr(worker.inference_client, "endpoint", mock_endpoint)
     return mock_endpoint
 
@@ -135,6 +151,7 @@ class TestWorkerFirstTokenCallback:
     @pytest.mark.parametrize(
         "parse_return,expected_result,description",
         [
+            # Meaningful content - should return True
             pytest.param(
                 ParsedResponse(
                     perf_ns=100_000_000, data=TextResponseData(text="Hello")
@@ -143,12 +160,14 @@ class TestWorkerFirstTokenCallback:
                 "meaningful text content",
                 id="meaningful_content",
             ),
+            # None response - should return False
             pytest.param(
                 None,
                 False,
                 "parse_response returns None",
                 id="none_response",
             ),
+            # ParsedResponse with data=None (usage only) - should return False
             pytest.param(
                 ParsedResponse(
                     perf_ns=100_000_000,
@@ -178,9 +197,9 @@ class TestWorkerFirstTokenCallback:
     ):
         """Test callback correctly identifies first meaningful content after junk messages."""
         parse_returns = [
-            None,
-            ParsedResponse(perf_ns=200_000_000, data=None),
-            ParsedResponse(
+            None,  # First: junk
+            ParsedResponse(perf_ns=200_000_000, data=None),  # Second: usage only
+            ParsedResponse(  # Third: actual content
                 perf_ns=300_000_000,
                 data=TextResponseData(text="Finally some content!"),
             ),
@@ -421,6 +440,8 @@ class TestCreateRequestInfo:
         assert original.max_tokens == 4096
 
     async def test_create_request_info_plumbs_finality_from_credit(self, mock_worker):
+        # Real Credit struct (not a MagicMock, which would auto-create the
+        # attributes and mask a missed plumb) carrying both finality facts.
         credit_context = CreditContext(
             credit=Credit(
                 id=1,
@@ -511,6 +532,9 @@ class TestEmitCreditFailureRecord:
         assert record.request_info.phase_kind == "profiling"
 
 
+# --- Fixture for CreditContext ---
+
+
 @pytest.fixture
 def sample_credit_context() -> CreditContext:
     """Create a sample CreditContext for testing."""
@@ -527,6 +551,9 @@ def sample_credit_context() -> CreditContext:
         ),
         drop_perf_ns=2000000,
     )
+
+
+# --- RetrieveConversation Tests ---
 
 
 @pytest.mark.asyncio
@@ -583,6 +610,9 @@ class TestRetrieveConversation:
         mock_fallback.assert_called_once_with("test-conv-123", sample_credit_context)
 
 
+# --- Terminal Eviction Tests ---
+
+
 @pytest.mark.asyncio
 class TestReleaseAndEvictForTerminal:
     """Test suite for Worker's _release_and_evict_for_terminal method."""
@@ -590,7 +620,8 @@ class TestReleaseAndEvictForTerminal:
     async def test_release_and_evict_for_terminal_evicts_session(
         self, mock_worker, sample_credit_context
     ):
-        """A terminal eviction removes the (non-fork) session from the session"""
+        """A terminal eviction removes the (non-fork) session from the session
+        manager."""
         credit = sample_credit_context.credit
         mock_worker.session_manager = MagicMock()
         mock_worker.session_manager.get.return_value = None
@@ -606,7 +637,10 @@ _OVERFLOW_BODY = "This model's maximum context length is 8192 tokens"
 
 
 class TestTerminalContextOverflowClassifier:
-    """``_is_terminal_context_overflow``: a context-overflow error on a"""
+    """``_is_terminal_context_overflow``: a context-overflow error on a
+    non-final, non-cancelled turn is terminal (agentic_replay recycles the lane
+    and sends no final/cancel credit). Final-turn / cancelled returns go through
+    the normal eviction path and must NOT be classified as overflow-terminal."""
 
     @pytest.mark.parametrize(
         "is_final, cancelled, error, expected",
@@ -625,7 +659,9 @@ class TestTerminalContextOverflowClassifier:
 
 
 class TestTerminalDisposition:
-    """Every terminal disposition (final turn, cancellation, terminal context"""
+    """Every terminal disposition (final turn, cancellation, terminal context
+    overflow) routes to ``_release_and_evict_for_terminal`` so the session is
+    evicted; a non-final plain error does not."""
 
     def _dispatch_terminal(
         self, *, is_final: bool, cancelled: bool, error
@@ -657,6 +693,9 @@ class TestTerminalDisposition:
             is_final=False, cancelled=False, error="connection reset by peer"
         )
         worker._release_and_evict_for_terminal.assert_not_called()
+
+
+# --- Payload Bytes Fast Path Tests ---
 
 
 @pytest.mark.asyncio
@@ -749,6 +788,7 @@ class TestPayloadBytesFastPath:
         )
         sent_request_info = mock_worker.inference_client.send_request.call_args.args[0]
         assert sent_request_info.payload_bytes == b'{"p": 1}'
+        # The fast path handled the credit; the session path never ran.
         mock_worker._process_credit_with_session.assert_not_awaited()
 
     async def test_successful_fast_path_sets_record_emitted(
@@ -786,7 +826,13 @@ class TestPayloadBytesFastPath:
     async def test_fast_path_turn_carries_max_tokens_and_timestamp(
         self, mock_worker, sample_credit_context
     ):
-        """PAYLOAD_BYTES fast path must hoist turn scalars for metric enrichment."""
+        """PAYLOAD_BYTES fast path must hoist turn scalars for metric enrichment.
+
+        Bare ``Turn(role="user")`` left ``request_info.max_tokens`` /
+        ``scheduled_send_ms`` None after ``_finalize_request_record``, silencing
+        OSL-mismatch and schedule-lag metrics even though the wire JSON body
+        still had max_tokens.
+        """
         mock_worker._is_payload_bytes = True
         mock_worker._dataset_client = AsyncMock()
         payload = b'{"messages":[{"role":"user","content":"hi"}],"max_tokens":64}'
@@ -842,6 +888,9 @@ class TestPayloadBytesFastPath:
             "max_completion_tokens": 32,
             "messages": [],
         }
+
+
+# --- First Token Callback Factory Tests ---
 
 
 @pytest.mark.asyncio

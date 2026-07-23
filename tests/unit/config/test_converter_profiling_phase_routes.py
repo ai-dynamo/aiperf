@@ -1,7 +1,22 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Regression tests for phase-specific route gating in build_profiling."""
+"""Regression tests for phase-specific route gating in build_profiling.
+
+Covers former bugs in ``aiperf.config.flags._converter_profiling``:
+
+1. ``--arrival-smoothness`` outside ``--arrival-pattern gamma`` previously
+   silently routed ``smoothness`` onto a non-Gamma phase config and crashed
+   v2 ``PhaseConfig`` with ``extra_forbidden``. Should raise a clear error.
+2. ``--fixed-schedule-{auto,start,end}-offset`` without ``--fixed-schedule``
+   previously either silently dropped or crashed with ``extra_forbidden``.
+   Should raise a clear error.
+3. ``--benchmark-grace-period`` without ``--benchmark-duration`` previously
+   silently dropped the user's flag. Should raise.
+4. ``--num-users`` without ``--user-centric-rate`` and
+   ``--request-rate-ramp-duration`` without ``--request-rate`` previously
+   surfaced as generic Pydantic ``extra_forbidden`` errors.
+"""
 
 from __future__ import annotations
 
@@ -28,9 +43,17 @@ def _make_user(
     return CLIConfig(**endpoint.model_dump(exclude_unset=True), **extra, **inp_extra)
 
 
+# ---------------------------------------------------------------------------
+# BUG 1 — --arrival-smoothness outside gamma must error
+# ---------------------------------------------------------------------------
+
+
 class TestArrivalSmoothnessGating:
     def test_smoothness_without_explicit_pattern_auto_promotes_to_gamma(self):
-        """v1 parity: --request-rate + --arrival-smoothness (or --vllm-burstiness)"""
+        """v1 parity: --request-rate + --arrival-smoothness (or --vllm-burstiness)
+        with NO explicit --arrival-pattern auto-promotes to gamma instead of
+        falling through to poisson and being hard-rejected. The cutover dropped
+        this auto-promote, making --vllm-burstiness unusable on its own."""
         loadgen = CLIConfig(
             request_rate=100.0,
             arrival_smoothness=1.5,
@@ -43,7 +66,8 @@ class TestArrivalSmoothnessGating:
         assert prof["rate"] == 100.0
 
     def test_explicit_poisson_pattern_with_smoothness_raises(self):
-        """An EXPLICIT non-gamma pattern + smoothness still errors clearly (the"""
+        """An EXPLICIT non-gamma pattern + smoothness still errors clearly (the
+        auto-promote only fires when the pattern was not user-supplied)."""
         loadgen = CLIConfig(
             request_rate=100.0,
             arrival_pattern=ArrivalPattern.POISSON,
@@ -92,7 +116,8 @@ class TestArrivalSmoothnessGating:
         assert prof["rate"] == 100.0
 
     def test_gamma_without_smoothness_succeeds(self) -> None:
-        """--arrival-pattern gamma without --arrival-smoothness is allowed"""
+        """--arrival-pattern gamma without --arrival-smoothness is allowed
+        (smoothness is optional on GammaPhase)."""
         loadgen = CLIConfig(
             request_rate=100.0,
             arrival_pattern=ArrivalPattern.GAMMA,
@@ -102,6 +127,11 @@ class TestArrivalSmoothnessGating:
         prof = build_profiling(user)
         assert prof["type"] == PhaseType.GAMMA
         assert "smoothness" not in prof
+
+
+# ---------------------------------------------------------------------------
+# BUG 2 — --fixed-schedule-*-offset without --fixed-schedule must error
+# ---------------------------------------------------------------------------
 
 
 class TestFixedScheduleOffsetGating:
@@ -148,6 +178,7 @@ class TestFixedScheduleOffsetGating:
         assert prof["type"] == PhaseType.FIXED_SCHEDULE
         assert prof["start_offset"] == 100
         assert prof["end_offset"] == 5000
+        # Existing convention: start_offset present => auto_offset defaults False.
         assert prof["auto_offset"] is False
 
     def test_fixed_schedule_without_offsets_succeeds(self) -> None:
@@ -159,6 +190,11 @@ class TestFixedScheduleOffsetGating:
         assert prof["type"] == PhaseType.FIXED_SCHEDULE
         assert "start_offset" not in prof
         assert "end_offset" not in prof
+
+
+# ---------------------------------------------------------------------------
+# BUG 3 — --benchmark-grace-period without --benchmark-duration
+# ---------------------------------------------------------------------------
 
 
 class TestGracePeriodRequiresDuration:
@@ -178,6 +214,11 @@ class TestGracePeriodRequiresDuration:
         prof = build_profiling(user)
         assert prof["duration"] == 60.0
         assert prof["grace_period"] == 30
+
+
+# ---------------------------------------------------------------------------
+# BUG 4a — --num-users without --user-centric-rate
+# ---------------------------------------------------------------------------
 
 
 class TestNumUsersRequiresUserCentric:
@@ -211,6 +252,11 @@ class TestNumUsersRequiresUserCentric:
         assert prof["users"] == 5
 
 
+# ---------------------------------------------------------------------------
+# BUG 4b — --request-rate-ramp-duration without --request-rate
+# ---------------------------------------------------------------------------
+
+
 class TestRateRampRequiresRequestRate:
     def test_rate_ramp_with_concurrency_mode_raises(self) -> None:
         loadgen = CLIConfig(
@@ -231,9 +277,17 @@ class TestRateRampRequiresRequestRate:
         assert prof.get("rate_ramp") == {"duration": 30}
 
 
+# ---------------------------------------------------------------------------
+# AGENTIC_REPLAY auto-warmup grace routing
+# ---------------------------------------------------------------------------
+
+
 class TestAgenticWarmupGracePeriodRouting:
     def test_agentic_warmup_grace_routes_onto_profiling_phase(self):
-        """--agentic-warmup-grace-period is an AGENTIC_REPLAY route: it lands on"""
+        """--agentic-warmup-grace-period is an AGENTIC_REPLAY route: it lands on
+        the profiling phase dict (the agentic auto-warmup reads it from there),
+        unlike --warmup-grace-period which feeds the user-declared warmup phase
+        and requires --warmup-duration."""
         loadgen = CLIConfig(
             concurrency=8,
             request_count=10,
@@ -244,14 +298,17 @@ class TestAgenticWarmupGracePeriodRouting:
         assert prof["agentic_warmup_grace_period"] == 30.0
 
     def test_agentic_warmup_grace_absent_when_unset(self):
-        """Unset --agentic-warmup-grace-period leaves the profiling phase dict"""
+        """Unset --agentic-warmup-grace-period leaves the profiling phase dict
+        without the key (so the warmup barrier defaults to infinite)."""
         loadgen = CLIConfig(concurrency=8, request_count=10)
         user = _make_user(loadgen=loadgen)
         prof = build_profiling(user)
         assert "agentic_warmup_grace_period" not in prof
 
     def test_agentic_warmup_grace_does_not_require_duration(self):
-        """Unlike grace_period (the profiling tail), the agentic warmup grace is"""
+        """Unlike grace_period (the profiling tail), the agentic warmup grace is
+        not duration-gated -- it applies to a CONCURRENCY_BURST warmup with no
+        duration, so it must route without a duration set."""
         loadgen = CLIConfig(
             concurrency=8,
             request_count=10,

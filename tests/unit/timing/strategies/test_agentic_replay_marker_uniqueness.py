@@ -15,6 +15,9 @@ from tests.unit.timing.strategies._shared_helpers import _make_dataset
 _RID_RE = re.compile(r"\[rid:[0-9a-f]{12}\]")
 
 
+# Harness (mirrors test_agentic_replay.py)
+
+
 def _build_real_trajectory_source(
     num_traces: int,
     turns_per_trace: int,
@@ -32,7 +35,13 @@ def _build_real_trajectory_source(
 
 
 def _make_run(*, target: CacheBustTarget, benchmark_id: str = "bench-uniqueness"):
-    """Build a v2 ``BenchmarkRun`` exposing the values the strategy reads."""
+    """Build a v2 ``BenchmarkRun`` exposing the values the strategy reads.
+
+    V2 PORT NOTE: agentx read ``user_config.input.prompt.cache_bust.target`` and
+    ``user_config.benchmark_id``. The v2 ``AgenticReplayStrategy`` reads
+    ``run.cfg.get_cache_bust_target()`` and ``run.benchmark_id`` instead; the
+    target lives on the synthetic dataset's ``prompts.cache_bust.target``.
+    """
     from aiperf.config import BenchmarkConfig, BenchmarkRun
 
     cfg = BenchmarkConfig.model_validate(
@@ -99,8 +108,18 @@ def _extract_rid(marker: str | None) -> str | None:
     return m.group(0) if m else None
 
 
+# Tests
+
+
 def test_mint_produces_unique_markers_across_many_recycles():
-    """20 lanes warmup + 50 recycles per trace => 1020 unique markers."""
+    """20 lanes warmup + 50 recycles per trace => 1020 unique markers.
+
+    Drives ``_mint_marker_for_session`` directly. Each call simulates either
+    (a) a fresh warmup mint at lane L for trace_L (recycle_pass implicitly
+    starts at 0), or (b) a recycle of trace_L into the same lane (the
+    strategy's own recycle path keeps lane stable; recycle_pass increments
+    via the helper's internal dict).
+    """
     num_lanes = 20
     num_recycles = 50
     run = _make_run(target=CacheBustTarget.SYSTEM_PREFIX)
@@ -118,6 +137,7 @@ def test_mint_produces_unique_markers_across_many_recycles():
 
     rids: list[str] = []
 
+    # (a) WARMUP-equivalent mint per lane.
     for lane in range(num_lanes):
         marker = strategy._mint_marker_for_session(
             root_correlation_id=f"warmup_{lane}",
@@ -128,6 +148,7 @@ def test_mint_produces_unique_markers_across_many_recycles():
         assert rid is not None
         rids.append(rid)
 
+    # (b) Recycle each trace 50 times into the same lane.
     for lane in range(num_lanes):
         for recycle in range(num_recycles):
             marker = strategy._mint_marker_for_session(
@@ -139,7 +160,7 @@ def test_mint_produces_unique_markers_across_many_recycles():
             assert rid is not None
             rids.append(rid)
 
-    expected = num_lanes + num_lanes * num_recycles
+    expected = num_lanes + num_lanes * num_recycles  # 20 + 1000
     assert len(rids) == expected
     assert len(set(rids)) == expected, (
         f"Expected {expected} distinct rids across {num_lanes} lanes x "
@@ -149,7 +170,12 @@ def test_mint_produces_unique_markers_across_many_recycles():
 
 
 def test_recycle_continuity_within_trace_after_trace_id_addition():
-    """Same trace, same lane, 100 sequential recycles -> 100 distinct rids."""
+    """Same trace, same lane, 100 sequential recycles -> 100 distinct rids.
+
+    The fix added trace_id to the digest tuple; this test verifies it did
+    NOT break the existing recycle-rotation contract: recycle_pass still
+    differs across passes for one trace, so digests still rotate.
+    """
     run = _make_run(target=CacheBustTarget.SYSTEM_PREFIX)
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     strategy = _make_strategy(
@@ -177,7 +203,14 @@ def test_recycle_continuity_within_trace_after_trace_id_addition():
 
 
 def test_warmup_marker_matches_first_profile_marker_after_fix():
-    """Intra-session continuity invariant survives the trace_id addition."""
+    """Intra-session continuity invariant survives the trace_id addition.
+
+    A trajectory's WARMUP turn (k_i) and its first PROFILING turn (k_i+1)
+    must read the same minted marker -- both phases store the same trace_id
+    + lane + recycle_pass=0 + benchmark_id, so their digests must equal.
+    Different strategy instances (PhaseRunner constructs fresh per phase)
+    but the same inputs must reproduce the same digest.
+    """
     run = _make_run(target=CacheBustTarget.SYSTEM_PREFIX)
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=2)]
 
@@ -215,7 +248,13 @@ def test_warmup_marker_matches_first_profile_marker_after_fix():
 
 
 def test_target_none_no_minting_at_scale():
-    """At target=NONE, 1000 mint calls yield no real markers and bounded state."""
+    """At target=NONE, 1000 mint calls yield no real markers and bounded state.
+
+    The strategy's contract under NONE is that ``_session_marker[xcorr]``
+    is set to None (so callers can unconditionally look it up) but no
+    digest computation happens. ``_recycle_pass`` is left untouched
+    (no dict writes).
+    """
     run = _make_run(target=CacheBustTarget.NONE)
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     strategy = _make_strategy(
@@ -233,13 +272,18 @@ def test_target_none_no_minting_at_scale():
         )
         assert result is None
 
+    # _session_marker carries one None entry per xcorr, never a real digest.
     assert len(strategy._session_marker) == 1000
     assert all(v is None for v in strategy._session_marker.values())
+    # _recycle_pass is bounded at 0 (no dict writes under NONE).
     assert strategy._recycle_pass == {}
 
 
 def test_descendant_turn_build_reads_marker_by_root():
-    """Regression (found on a live run): the turn-builder must read the cache-bust"""
+    """Regression (found on a live run): the turn-builder must read the cache-bust
+    marker by the session's TREE ROOT (root_correlation_id), not its own
+    x_correlation_id. A descendant session whose root marker is in the ledger
+    must carry that marker -- not None."""
     from aiperf.timing.conversation_source import SampledSession
 
     run = _make_run(target=CacheBustTarget.FIRST_TURN_PREFIX)

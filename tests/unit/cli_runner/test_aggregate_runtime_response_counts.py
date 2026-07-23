@@ -37,7 +37,11 @@ def _run(
 
 
 def test_sum_does_not_double_count_metric_path_overflow() -> None:
-    """Metric-path overflows already live in error_request_count."""
+    """Metric-path overflows already live in error_request_count.
+
+    Adding ``context_overflow_count`` again would inflate the denominator and
+    can incorrectly keep ``submission_valid=True`` near the 1% boundary.
+    """
     run = _run(
         success=True,
         request_count=100,
@@ -83,6 +87,7 @@ def test_sum_across_multiple_successful_runs() -> None:
 
     total_responses, overflow = _sum_runtime_response_counts(runs)
 
+    # (10+1+0) + (20+2+4) = 37 ; overflow = 0 + 4
     assert total_responses == 37
     assert overflow == 4
 
@@ -115,7 +120,9 @@ def test_empty_results_returns_zero() -> None:
 def test_missing_metrics_contribute_zero() -> None:
     """Absent metric tags and avg=None both coerce to 0 gracefully."""
     runs = [
+        # success run with no summary metrics at all
         _run(success=True, label="bare"),
+        # success run whose metrics exist but carry avg=None
         RunResult(
             label="none-avg",
             success=True,
@@ -144,6 +151,7 @@ def test_avg_truncated_to_int() -> None:
 
     total_responses, overflow = _sum_runtime_response_counts([run])
 
+    # int(10.9) + int(0.0) + int(2.7) = 10 + 0 + 2 = 12 ; overflow = int(2.7) = 2
     assert total_responses == 12
     assert overflow == 2
 

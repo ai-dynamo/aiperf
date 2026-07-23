@@ -25,6 +25,9 @@ from aiperf.dataset.loader.weka_trace_models import (
 FIXTURES = Path(__file__).parents[3] / "fixtures" / "weka_traces"
 
 
+# Shared harness (mirrors test_weka_trace.py / *_filters_adversarial.py)
+
+
 def _mk_user_config(**overrides):
     from tests.unit.dataset.loader.conftest import make_weka_run
 
@@ -152,12 +155,24 @@ def _inner_request(**overrides) -> WekaNormalRequest:
     return WekaNormalRequest.model_validate(base)
 
 
+# Regression: idle-gap-mapped subagent spawn time (fixed)
+
+
 def test_idle_gap_branch_start_timestamp_uses_mapped_time_not_raw(tmp_path):
-    """SPAWN ``start_timestamp_ms`` must live on the same (mapped) timeline as"""
+    """SPAWN ``start_timestamp_ms`` must live on the same (mapped) timeline as
+    every other turn timestamp on the conversation.
+
+    With ``--trace-idle-gap-cap-seconds`` active, parent turns and child turns
+    are rewritten onto the compressed timeline, but the branch's recorded
+    ``start_timestamp_ms`` keeps the raw spawn seconds, so it can land far past
+    the parent conversation's last turn (and past the child's own first
+    request). The branch's start time should never exceed the maximum mapped
+    turn timestamp in the trace.
+    """
     trace = _base_trace(
         [
             _normal(0.0, [1]),
-            _normal(1000.0, [1, 2]),
+            _normal(1000.0, [1, 2]),  # 1000s start-gap -> compressed
             _subagent(1005.0, "a", inner_hash_ids=[8]),
             _normal(1006.0, [1, 2, 3]),
         ],
@@ -174,12 +189,22 @@ def test_idle_gap_branch_start_timestamp_uses_mapped_time_not_raw(tmp_path):
 
     max_mapped_ms = max(t.timestamp for t in root.turns)
     branch = root.branches[0]
+    # The branch entered the timeline when the subagent spawned; on the mapped
+    # timeline that is the child's first-request timestamp, never ~940s later.
     assert branch.start_timestamp_ms <= max_mapped_ms
     assert branch.start_timestamp_ms == child.turns[0].timestamp
 
 
 def test_parallel_subagent_payload_carries_mapped_spawn_time(tmp_path):
-    """The parallel marker payload must carry the mapped spawn time."""
+    """The parallel marker payload must carry the mapped spawn time.
+
+    ``_WekaSubagentMarkerPayload`` declares an ``effective_t`` field and
+    ``_process_task`` reads ``e.get("effective_t", e["t"])`` for
+    ``start_timestamp``. But ``_parallel_subagents`` only populates
+    ``effective_sa_end_seconds``, never ``effective_t`` -- so the parallel
+    branch start time silently reverts to raw seconds whenever an idle-gap
+    warp shifts the timeline.
+    """
     trace = _base_trace(
         [
             _normal(0.0, [1]),
@@ -213,29 +238,47 @@ def test_parallel_subagent_payload_carries_mapped_spawn_time(tmp_path):
         metric_values_by_trace=metric_values,
     )
     _, marker = tasks[0].parent["subagents"][0]
+    # The mapped end time is plumbed through; the mapped spawn time must be too.
     assert "effective_t" in marker
     assert marker["effective_t"] != marker["t"]
 
 
 def test_sa_end_seconds_negative_duration_not_before_spawn():
-    """A subagent's recorded end time can never precede its own spawn."""
+    """A subagent's recorded end time can never precede its own spawn.
+
+    ``_sa_end_seconds`` returns ``entry.t + duration_ms/1000`` with no floor,
+    so a corrupt negative ``duration_ms`` produces an end time strictly before
+    the spawn timestamp -- a subagent that finished before it started.
+    """
     entry = _make_subagent_entry(t=10.0, duration_ms=-5000)
     assert _sa_end_seconds(entry) >= entry.t
 
 
 def test_sa_end_seconds_nan_inner_api_time_is_finite():
-    """A NaN inner ``api_time`` must not poison the subagent end time."""
+    """A NaN inner ``api_time`` must not poison the subagent end time.
+
+    When ``duration_ms`` is None the end falls back to
+    ``max(inner.t + inner.api_time)``. A NaN ``api_time`` makes that NaN, which
+    then flows into the ``parent.t >= sa_end`` join comparison where every
+    comparison is False -- silently forcing the subagent to a background branch.
+    """
     entry = _make_subagent_entry(
         t=10.0,
         duration_ms=None,
         requests=[_inner_request(t=20.0, api_time=float("nan"))],
     )
     end = _sa_end_seconds(entry)
-    assert end == end
+    assert end == end  # not NaN  # noqa: PLR0124
 
 
 def test_think_time_only_negative_think_time_not_negative_delay(tmp_path):
-    """A recorded negative ``think_time`` must not become a negative delay."""
+    """A recorded negative ``think_time`` must not become a negative delay.
+
+    In ``--use-think-time-only`` mode ``Turn.delay`` is set to
+    ``think_time * 1000`` directly with no lower bound, so a corrupt negative
+    recorded think_time yields a negative inter-turn delay -- a request the
+    load generator would be told to dispatch in the past.
+    """
     trace = _base_trace(
         [
             _normal(0.0, [1], think_time=0.0),
@@ -252,25 +295,45 @@ def test_think_time_only_negative_think_time_not_negative_delay(tmp_path):
     assert convs[0].turns[1].delay >= 0.0
 
 
+# PASSING CHARACTERIZATIONS (surprising but intended / not invariant-breaking)
+
+
 def test_idle_gap_exactly_equal_to_cap_is_not_compressed():
-    """A request-start gap exactly equal to the cap is left untouched."""
+    """A request-start gap exactly equal to the cap is left untouched.
+
+    ``_IdleGapTimeWarp`` compresses only gaps with ``gap_seconds > cap_seconds``
+    (strict ``>``), so a gap of exactly the cap maps through unchanged. This is
+    the inclusive-boundary mirror of the clamp's ``> cap_ms`` semantics.
+    """
     warp = _IdleGapTimeWarp([0.0, 60.0], cap_seconds=60.0)
     assert warp.map(60.0) == 60.0
+    # One microsecond over the cap does get compressed back to the boundary.
     warp_over = _IdleGapTimeWarp([0.0, 60.001], cap_seconds=60.0)
     assert warp_over.map(60.001) == pytest.approx(60.0)
 
 
 def test_idle_gap_collapsed_tail_event_maps_to_cap_boundary():
-    """A non-request event inside a collapsed gap tail maps to the boundary."""
+    """A non-request event inside a collapsed gap tail maps to the boundary.
+
+    A subagent end marker that falls in the collapsed region of a long
+    request-start gap is intentionally pinned to ``raw_start + cap`` so a join
+    cannot wait past the next shifted request. Probe the documented behavior
+    for a gap [20, 220] with cap 60.
+    """
     warp = _IdleGapTimeWarp([0.0, 20.0, 220.0], cap_seconds=60.0)
-    assert warp.map(80.0) == pytest.approx(80.0)
-    assert warp.map(150.0) == pytest.approx(80.0)
-    assert warp.map(220.0) == pytest.approx(80.0)
-    assert warp.map(300.0) == pytest.approx(160.0)
+    assert warp.map(80.0) == pytest.approx(80.0)  # at the boundary
+    assert warp.map(150.0) == pytest.approx(80.0)  # deep in the collapsed tail
+    assert warp.map(220.0) == pytest.approx(80.0)  # the gap end
+    assert warp.map(300.0) == pytest.approx(160.0)  # after: shifted left by excess
 
 
 def test_nested_chain_nan_api_time_treated_as_zero_duration():
-    """A NaN inner ``api_time`` is clamped to zero duration in chain detection."""
+    """A NaN inner ``api_time`` is clamped to zero duration in chain detection.
+
+    ``weka_agent_chains._req_end`` treats non-finite durations as zero, so a
+    same-context continuation can still extend the chain (a NaN tail end
+    would otherwise make the temporal-feasibility comparison unreliable).
+    """
     entry = _make_subagent_entry(
         t=0.0,
         requests=[
@@ -288,7 +351,12 @@ def test_nested_chain_nan_api_time_treated_as_zero_duration():
 
 
 def test_nested_chain_infinite_api_time_does_not_block_extension():
-    """A +inf inner ``api_time`` must not permanently occupy a chain tail."""
+    """A +inf inner ``api_time`` must not permanently occupy a chain tail.
+
+    Without the finite clamp in ``weka_agent_chains._req_end`` an infinite
+    tail end blocks every same-context extension forever, exploding an
+    N-request subagent into N sibling one-turn children.
+    """
     entry = _make_subagent_entry(
         t=0.0,
         requests=[
@@ -309,7 +377,15 @@ def test_nested_chain_infinite_api_time_does_not_block_extension():
 
 
 def test_nested_chain_equal_t_disjoint_requests_split_deterministically():
-    """Equal-``t`` context-disjoint inner requests split deterministically."""
+    """Equal-``t`` context-disjoint inner requests split deterministically.
+
+    Three zero-duration requests share an instant and no hash prefix. The
+    stable ``(t, index)`` order makes the first recorded request the
+    preamble-eligible leader (fully block-disjoint, so it re-attaches to the
+    main chain), the second founds the main chain's identity, and the third
+    becomes the one spawned chain. Pinned for reproducibility, not as deep
+    semantics: disjoint one-shots are independent sessions either way.
+    """
     entry = _make_subagent_entry(
         t=5.0,
         requests=[
@@ -331,7 +407,15 @@ def test_nested_chain_equal_t_disjoint_requests_split_deterministically():
 
 
 def test_nested_chain_detection_uses_root_trace_timeline():
-    """Mixed relative/absolute inner timestamps chain on the normalized"""
+    """Mixed relative/absolute inner timestamps chain on the normalized
+    root-trace timeline, not raw ``t``.
+
+    The relative first request ([110, 160) after normalization) is still in
+    flight when the absolute second request starts at t=150, so the prefix
+    continuation cannot extend the chain and forks into a spawned sibling.
+    On the raw timeline ([10, 60) vs [150, 151)) it would have extended into
+    one chain — detection must agree with turn timing and metric ordering.
+    """
     entry = _make_subagent_entry(
         t=100.0,
         requests=[
@@ -345,14 +429,25 @@ def test_nested_chain_detection_uses_root_trace_timeline():
     )
     plans = _expand_subagent_to_child_plans("tr", 0, 0, entry, 64)
     assert [p.session_id for p in plans] == ["tr::sa:a", "tr::sa:a:fa:000"]
+    # Normalized coordinates carried on the plan requests themselves.
     assert plans[0].requests[0].t == pytest.approx(110.0)
     assert plans[1].requests[0].t == pytest.approx(150.0)
 
 
 def test_spawned_chain_inherits_declared_prefix_only_when_proven():
-    """Spawned-chain turn-0 tool/system attribution requires hash proof."""
+    """Spawned-chain turn-0 tool/system attribution requires hash proof.
+
+    The subagent's declared prefix is attributed to a spawned chain's first
+    turn only when that chain's first hash-bearing request starts with the
+    same declared-prefix blocks as the main chain (mirroring the flat-chain
+    rule: the system role is never fabricated). The main chain always keeps
+    the entry's declared counts.
+    """
 
     def entry_with(worker_hash: list[int]) -> WekaSubagentEntry:
+        # Main thread = r0 + r2 (r2 extends r0's prefix, anchoring the main
+        # chain so the preamble rule cannot peel r0); the worker chain forks
+        # off at t=1 with ``worker_hash``.
         return _make_subagent_entry(
             t=0.0,
             tool_tokens=128,
@@ -370,6 +465,8 @@ def test_spawned_chain_inherits_declared_prefix_only_when_proven():
             ],
         )
 
+    # declared_blocks = ceil((128 + 64) / 64) = 3; [1, 2, 3] matches the main
+    # chain's first request, so the fork provably carries the declared prefix.
     proven = _expand_subagent_to_child_plans("tr", 0, 0, entry_with([1, 2, 3, 9]), 64)
     assert [p.session_id for p in proven] == ["tr::sa:a", "tr::sa:a:fa:000"]
     assert (proven[0].init_tool_tokens, proven[0].init_system_tokens) == (128, 64)
@@ -384,7 +481,8 @@ def test_spawned_chain_inherits_declared_prefix_only_when_proven():
 
 
 def test_split_chains_disabled_emits_one_sequential_child():
-    """``split_chains=False`` (WEKA_SPLIT_FLATTENED_AGENTS escape hatch) skips"""
+    """``split_chains=False`` (WEKA_SPLIT_FLATTENED_AGENTS escape hatch) skips
+    nested detection: one child with every inner request in time order."""
     entry = _make_subagent_entry(
         t=0.0,
         requests=[
@@ -402,7 +500,15 @@ def test_split_chains_disabled_emits_one_sequential_child():
 
 
 def test_relative_inner_timestamps_emit_root_timeline_child_turns(tmp_path):
-    """Child Turn timestamps live in root-trace coordinates even when the"""
+    """Child Turn timestamps live in root-trace coordinates even when the
+    capture recorded inner ``t`` relative to the spawn marker.
+
+    The trajectory snapshot logic compares child turn timestamps against the
+    root timeline, so a relative-shape capture (inner ``t`` before the spawn
+    marker) must shift by ``entry.t`` at emission, exactly like the warp
+    path, metric ordering, and stream packing already do. Delays are
+    shift-invariant and stay the recorded inter-request gaps.
+    """
     sa = {
         "t": 10.0,
         "type": "subagent",
@@ -412,6 +518,8 @@ def test_relative_inner_timestamps_emit_root_timeline_child_turns(tmp_path):
         "total_tokens": 10,
         "tool_use_count": 1,
         "status": "completed",
+        # Relative inner timestamps: 0.0 and 5.0 seconds after the spawn
+        # marker at t=10 -> root-trace 10.0 and 15.0.
         "requests": [
             _inner_request(t=0.0, api_time=1.0, hash_ids=[8]).model_dump(by_alias=True),
             _inner_request(t=5.0, api_time=1.0, hash_ids=[8, 9]).model_dump(
@@ -438,7 +546,14 @@ def test_relative_inner_timestamps_emit_root_timeline_child_turns(tmp_path):
 
 
 def test_duplicate_subagent_agent_id_in_one_trace_raises(tmp_path):
-    """Two RETAINED subagent entries sharing an ``agent_id`` are rejected."""
+    """Two RETAINED subagent entries sharing an ``agent_id`` are rejected.
+
+    Child session ids (``{trace}::sa:{agent_id}``) and SPAWN branch ids
+    (``{trace}:spawn:{agent_id}``) are derived from ``agent_id``; a duplicate
+    would silently cross-wire two subagents' conversations and joins. A
+    duplicate involving only orphaned (dropped) subagents stays legal -- see
+    ``test_duplicate_agent_id_orphan_does_not_drop_later_valid_subagent``.
+    """
     trace = _base_trace(
         [
             _normal(0.0, [1]),
@@ -457,7 +572,14 @@ def test_duplicate_subagent_agent_id_in_one_trace_raises(tmp_path):
 
 
 def test_duplicate_hash_ids_in_request_inflate_theoretical_hit_to_full(tmp_path):
-    """Duplicate hash-ids within one request drive theoretical hits to 100%."""
+    """Duplicate hash-ids within one request drive theoretical hits to 100%.
+
+    ``_count_seen_prefix_blocks`` counts every leading hash-id present in the
+    seen set, with no per-request de-duplication. A request that repeats its
+    own already-seen blocks reports a hit count equal to its (also-inflated)
+    total -- a theoretical 100% prefix-cache hit rate for what is physically
+    only two distinct blocks. The hit<=total invariant still holds.
+    """
     trace = _base_trace(
         [
             _normal(0.0, [1, 2], in_tokens=128),
@@ -494,7 +616,12 @@ def test_empty_requests_trace_reconstructs_empty_conversation(tmp_path):
 
 
 def test_zero_duration_subagent_joins_first_following_turn(tmp_path):
-    """A duration_ms=0 subagent (end == spawn) joins the first later parent turn."""
+    """A duration_ms=0 subagent (end == spawn) joins the first later parent turn.
+
+    With ``_sa_end_seconds`` equal to the spawn time, the join condition
+    ``parent.t + epsilon >= sa_end`` is satisfied by the very next parent turn,
+    producing a SPAWN_JOIN prereq rather than a background branch.
+    """
     trace = _base_trace(
         [
             _normal(0.0, [1]),

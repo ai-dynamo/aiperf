@@ -29,6 +29,13 @@ from aiperf.timing.branch_orchestrator import (
 )
 from tests.unit.timing._shared_helpers import _mk_conv, _mk_source
 
+# -- shared harness helpers (mirrors test_branch_orchestrator_join.py) -------
+
+
+# ============================================================
+# 1-3. _prereq_index construction adversarial cases
+# ============================================================
+
 
 def test_orchestrator_index_empty_on_empty_dataset_metadata():
     """Empty DatasetMetadata.conversations -> empty _prereq_index."""
@@ -42,12 +49,14 @@ def test_orchestrator_index_empty_on_empty_dataset_metadata():
 
 
 def test_orchestrator_index_ignores_branches_not_consumed_by_any_prereq():
-    """A declared branch with no SPAWN_JOIN prereq consuming it is absent"""
+    """A declared branch with no SPAWN_JOIN prereq consuming it is absent
+    from ``_prereq_index``. Only consumed branches appear."""
     branch = ConversationBranchInfo(
         branch_id="r:0",
         child_conversation_ids=["c"],
         mode=ConversationBranchMode.FORK,
     )
+    # Turn 0 declares the branch; turn 1 has no SPAWN_JOIN prereq referencing it.
     conv = _mk_conv(
         "r",
         [TurnMetadata(branch_ids=["r:0"]), TurnMetadata()],
@@ -59,7 +68,9 @@ def test_orchestrator_index_ignores_branches_not_consumed_by_any_prereq():
 
 
 def test_orchestrator_index_keys_by_conv_id_plus_spawning_turn_no_cross_collision():
-    """Two conversations may each declare a branch called 'b:0'; both"""
+    """Two conversations may each declare a branch called 'b:0'; both
+    entries must coexist in ``_prereq_index`` keyed by
+    ``(conv_id, spawning_turn_idx)`` without cross-collision."""
     b1 = ConversationBranchInfo(
         branch_id="b:0",
         child_conversation_ids=["x"],
@@ -97,15 +108,24 @@ def test_orchestrator_index_keys_by_conv_id_plus_spawning_turn_no_cross_collisio
     )
     cs = _mk_source([conv1, conv2])
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=MagicMock())
+    # conv-A: spawn on turn 0, gate on turn 1.
     conv_a_entries = orch._prereq_index.get(("conv-A", 0), [])
     assert [(b, g) for b, g, _ in conv_a_entries] == [("b:0", 1)]
+    # conv-B: spawn on turn 0, gate on turn 2.
     conv_b_entries = orch._prereq_index.get(("conv-B", 0), [])
     assert [(b, g) for b, g, _ in conv_b_entries] == [("b:0", 2)]
 
 
+# ============================================================
+# 4. intercept without a consumer prereq: no suspension
+# ============================================================
+
+
 @pytest.mark.asyncio
 async def test_intercept_spawns_without_gate_when_branch_has_no_consumer_prereq():
-    """When a turn declares a branch but no later turn has a SPAWN_JOIN"""
+    """When a turn declares a branch but no later turn has a SPAWN_JOIN
+    prereq for it, intercept() must still spawn children but return False
+    (no gate -> parent may continue)."""
     cs = MagicMock()
     parent_meta = MagicMock()
     parent_meta.branches = [
@@ -127,6 +147,7 @@ async def test_intercept_spawns_without_gate_when_branch_has_no_consumer_prereq(
     issuer.dispatch_first_turn = AsyncMock(return_value=True)
 
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+    # _prereq_index is empty -> no gate.
     assert orch._prereq_index == {}
     credit = MagicMock(
         x_correlation_id="root",
@@ -137,13 +158,20 @@ async def test_intercept_spawns_without_gate_when_branch_has_no_consumer_prereq(
     )
     assert await orch.intercept(credit) is False
     assert cs.start_branch_child.call_count == 1
+    # No active/future join entries because no gate.
     assert orch._active_joins == {}
     assert orch._future_joins == {}
 
 
+# ============================================================
+# 5. intercept serializes per-parent via _parent_locks
+# ============================================================
+
+
 @pytest.mark.asyncio
 async def test_intercept_concurrent_on_same_parent_corr_serializes_via_parent_lock():
-    """Two concurrent intercept() calls for the same parent_corr must be"""
+    """Two concurrent intercept() calls for the same parent_corr must be
+    serialized by ``_parent_locks[parent_corr]``."""
     cs = MagicMock()
     parent_meta = MagicMock()
     parent_meta.branches = [
@@ -208,6 +236,11 @@ async def test_intercept_concurrent_on_same_parent_corr_serializes_via_parent_lo
     assert order[2].startswith("second-")
 
 
+# ============================================================
+# 6. intercept short-circuits during cleanup
+# ============================================================
+
+
 @pytest.mark.asyncio
 async def test_intercept_short_circuits_when_cleaning_up():
     cs = MagicMock()
@@ -223,6 +256,11 @@ async def test_intercept_short_circuits_when_cleaning_up():
     )
     assert await orch.intercept(credit) is False
     cs.start_branch_child.assert_not_called()
+
+
+# ============================================================
+# 7. start_branch_child raises: no sticky / descendant updates for failed child
+# ============================================================
 
 
 @pytest.mark.asyncio
@@ -258,6 +296,7 @@ async def test_start_branch_child_raise_rolls_back_sticky_refcount_unchanged():
         agent_depth=0,
         parent_correlation_id=None,
     )
+    # No gate -> returns False, and all children failed -> no state.
     assert await orch.intercept(credit) is False
 
     assert orch.stats.children_errored == 1
@@ -266,6 +305,11 @@ async def test_start_branch_child_raise_rolls_back_sticky_refcount_unchanged():
     sticky_router.evict_unclaimed_sticky.assert_called_once_with("root")
     assert orch._descendant_counts == baseline_descendant_counts
     assert orch._child_to_join == {}
+
+
+# ============================================================
+# 8. on_child_leaf_reached unknown child is a noop
+# ============================================================
 
 
 @pytest.mark.asyncio
@@ -278,9 +322,15 @@ async def test_on_child_leaf_reached_unknown_parent_corr_logs_and_noops():
     assert orch._active_joins == {}
 
 
+# ============================================================
+# 9-10. AIPERF_DAG_FAIL_FAST env behaviour
+# ============================================================
+
+
 @pytest.mark.asyncio
 async def test_on_child_errored_fail_fast_env_terminates(monkeypatch):
-    """With ``AIPERF_DAG_FAIL_FAST=true`` set BEFORE construction, the"""
+    """With ``AIPERF_DAG_FAIL_FAST=true`` set BEFORE construction, the
+    fail-fast branch runs: active join is popped, abort_session awaited."""
     from aiperf.common.environment import Environment
 
     monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
@@ -375,6 +425,11 @@ async def test_on_child_errored_non_fail_fast_continues(monkeypatch):
     assert orch.stats.parents_failed_due_to_child_error == 0
 
 
+# ============================================================
+# 11. Join closes only after ALL N children complete
+# ============================================================
+
+
 @pytest.mark.asyncio
 async def test_gate_closes_only_after_all_hundred_children_complete():
     issuer = MagicMock()
@@ -416,6 +471,11 @@ async def test_gate_closes_only_after_all_hundred_children_complete():
     assert "p" not in orch._active_joins
 
 
+# ============================================================
+# 12. Partial child-dispatch failure does not block siblings
+# ============================================================
+
+
 @pytest.mark.asyncio
 async def test_intercept_gather_exception_in_one_child_does_not_block_siblings():
     cs = MagicMock()
@@ -450,14 +510,21 @@ async def test_intercept_gather_exception_in_one_child_does_not_block_siblings()
         agent_depth=0,
         parent_correlation_id=None,
     )
+    # No gate -> intercept returns False.
     assert await orch.intercept(credit) is False
 
+    # The two successful children were dispatched.
     assert orch.stats.children_spawned == 2
     assert orch.stats.children_errored == 1
     assert "child-a" in orch._child_to_join
     assert "child-c" in orch._child_to_join
     assert "child-b" not in orch._child_to_join
     assert issuer.dispatch_first_turn.await_count == 2
+
+
+# ============================================================
+# 13. Cleanup logs a leak warning when pending joins remain
+# ============================================================
 
 
 def test_cleanup_with_pending_joins_logs_leak_warning(caplog):
@@ -486,9 +553,15 @@ def test_cleanup_with_pending_joins_logs_leak_warning(caplog):
     assert "leaky" in abandoned_records[0].getMessage()
 
 
+# ============================================================
+# 14. Re-entry after a completed intercept/join cycle
+# ============================================================
+
+
 @pytest.mark.asyncio
 async def test_intercept_reentry_for_same_parent_after_join_starts_new_gate():
-    """After one intercept cycle for parent P completes, a second"""
+    """After one intercept cycle for parent P completes, a second
+    intercept on a subsequent turn of P must install fresh state cleanly."""
     cs = MagicMock()
 
     parent_meta = MagicMock()
@@ -528,6 +601,7 @@ async def test_intercept_reentry_for_same_parent_after_join_starts_new_gate():
         agent_depth=0,
         parent_correlation_id=None,
     )
+    # No gate in metadata -> returns False. Child was spawned.
     assert await orch.intercept(credit0) is False
     assert "child-a" in orch._child_to_join
     await orch.on_child_leaf_reached("child-a")

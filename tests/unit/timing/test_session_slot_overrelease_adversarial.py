@@ -24,11 +24,11 @@ def _profiling_config() -> CreditPhaseConfig:
     return CreditPhaseConfig(
         phase=CreditPhase.PROFILING,
         timing_mode=TimingMode.AGENTIC_REPLAY,
-        total_expected_requests=1000,
+        total_expected_requests=1000,  # large: never the gating factor here
         expected_num_sessions=None,
         expected_duration_sec=None,
         concurrency=_LIMIT,
-        prefill_concurrency=None,
+        prefill_concurrency=None,  # prefill limiting disabled (agentic default)
     )
 
 
@@ -85,8 +85,10 @@ def test_recycled_session_started_at_turn_zero_is_slot_balanced() -> None:
     async def body() -> int:
         issuer, cm = _build_issuer_with_real_concurrency()
         assert _session_effective_slots(cm) == _LIMIT
+        # Recycled session starts at turn 0 -> acquires a session slot.
         await issuer.issue_credit(_turn(0, corr="recycled"))
         assert _session_effective_slots(cm) == _LIMIT - 1
+        # Final turn return releases it (callback_handler path, agent_depth==0).
         cm.release_session_slot(CreditPhase.PROFILING)
         return _session_effective_slots(cm)
 
@@ -94,15 +96,25 @@ def test_recycled_session_started_at_turn_zero_is_slot_balanced() -> None:
 
 
 def test_mid_trace_root_acquires_and_releases_session_slot_balanced() -> None:
-    """A mid-trace resume (turn_index > 0, is_session_start) acquires a session"""
+    """A mid-trace resume (turn_index > 0, is_session_start) acquires a session
+    slot on its first credit and releases it on its final turn -- balanced, so
+    it can never over-release and admit a session above --concurrency.
+
+    The resume credit carries is_session_start=True (set by
+    SampledSession.build_turn_at_index); the strategy only emits these at a
+    phase's initial dispatch, so the acquisition always finds a free slot.
+    """
 
     async def body() -> tuple[int, int]:
         issuer, cm = _build_issuer_with_real_concurrency()
-        before = _session_effective_slots(cm)
+        before = _session_effective_slots(cm)  # == _LIMIT
 
+        # Resumed trajectory at phase start: first credit is turn 3 (k_i+1) but
+        # is a session start -> must acquire a session slot.
         await issuer.issue_credit(_turn(3, corr="resumed-root", session_start=True))
         held = before - _session_effective_slots(cm)
 
+        # Final-turn return releases the slot (callback handler, agent_depth==0).
         cm.release_session_slot(CreditPhase.PROFILING)
         return held, _session_effective_slots(cm)
 
@@ -112,11 +124,18 @@ def test_mid_trace_root_acquires_and_releases_session_slot_balanced() -> None:
 
 
 def test_lane_credit_acquires_and_releases_one_session_slot_balanced() -> None:
-    """A rootless/gated lane holds its session slot via the lane-credit path --"""
+    """A rootless/gated lane holds its session slot via the lane-credit path --
+    the SAME session semaphore as root credits -- and releasing is balanced.
+
+    A rootless snapshot (root finished before t*) and a gated parent dispatch
+    no slot-acquiring root credit at PROFILING start; ``acquire_lane_credit``
+    lets the lane hold one slot so it still counts toward --concurrency, while
+    its subagents/sidecars acquire none.
+    """
 
     async def body() -> tuple[int, int, int]:
         issuer, cm = _build_issuer_with_real_concurrency()
-        before = _session_effective_slots(cm)
+        before = _session_effective_slots(cm)  # == _LIMIT
         acquired = await issuer.acquire_lane_credit("lane-root", root_pending=False)
         held = before - _session_effective_slots(cm)
         issuer.release_lane_credit()
@@ -129,7 +148,15 @@ def test_lane_credit_acquires_and_releases_one_session_slot_balanced() -> None:
 
 
 def test_gated_parent_lane_accounts_session_via_tracker() -> None:
-    """A gated parent lane (root_pending=True, session_turns>0) routes session"""
+    """A gated parent lane (root_pending=True, session_turns>0) routes session
+    accounting through ``PhaseProgressTracker.account_lane_session`` -- the
+    issuer holds a ``PhaseProgressTracker`` (not a ``CreditCounter``), so the
+    delegation must exist or ``acquire_lane_credit`` raises ``AttributeError``.
+
+    The gated parent's join turn later bumps ``completed_sessions``; counting it
+    in ``sent_sessions`` here keeps ``in_flight_sessions`` non-negative once the
+    terminal turn returns. A rootless lane (root_pending=False) bumps neither.
+    """
 
     async def body() -> tuple[int, int, int]:
         issuer, _cm = _build_issuer_with_real_concurrency()
@@ -150,7 +177,9 @@ def test_gated_parent_lane_accounts_session_via_tracker() -> None:
 
 
 def test_gated_parent_lane_keeps_in_flight_sessions_non_negative() -> None:
-    """End-to-end through the issuer: a gated parent lane that accounts its"""
+    """End-to-end through the issuer: a gated parent lane that accounts its
+    session via the tracker, then has its terminal turn return, leaves
+    ``in_flight_sessions`` at zero (not negative)."""
 
     async def body() -> int:
         issuer, _cm = _build_issuer_with_real_concurrency()
@@ -158,6 +187,7 @@ def test_gated_parent_lane_keeps_in_flight_sessions_non_negative() -> None:
         await issuer.acquire_lane_credit(
             "gated-root", root_pending=True, session_turns=2
         )
+        # The gated parent's join/terminal turn returns -> bumps completed.
         counter.increment_returned(is_final_turn=True, cancelled=False)
         return counter.in_flight_sessions
 
@@ -165,7 +195,8 @@ def test_gated_parent_lane_keeps_in_flight_sessions_non_negative() -> None:
 
 
 def test_lane_credit_counts_against_the_session_concurrency_limit() -> None:
-    """Lane credits draw from the same budget as root credits: with LIMIT=2,"""
+    """Lane credits draw from the same budget as root credits: with LIMIT=2,
+    two lane credits exhaust it (so rootless/gated lanes cannot oversubscribe)."""
 
     async def body() -> tuple[bool, bool, int]:
         issuer, cm = _build_issuer_with_real_concurrency()

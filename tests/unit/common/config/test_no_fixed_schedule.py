@@ -1,7 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Trace-dataset auto-promotion to fixed_schedule and --no-fixed-schedule."""
+"""Trace-dataset auto-promotion to fixed_schedule and --no-fixed-schedule.
+
+When a CLI invocation supplies a trace ``--custom-dataset-type`` whose
+first record carries a ``timestamp`` field, the CLI->YAML converter
+promotes the profiling phase to ``fixed_schedule`` and fills
+``phase.requests`` from the dataset record count. ``--no-fixed-schedule``
+suppresses the promotion.
+"""
 
 from __future__ import annotations
 
@@ -54,6 +61,7 @@ class TestTraceAutoPromotion:
         prof = build_profiling(cli)
 
         assert prof["type"] == PhaseType.FIXED_SCHEDULE
+        # records=3 -> requests autofills to 3
         assert prof.get("requests") == 3
 
     def test_no_fixed_schedule_flag_suppresses_promotion(self, tmp_path):
@@ -74,10 +82,13 @@ class TestTraceAutoPromotion:
         prof = build_profiling(cli)
 
         assert prof["type"] != PhaseType.FIXED_SCHEDULE
+        # Falls back to the generic 10-requests default for unbounded runs.
         assert prof.get("requests") == 10
 
     def test_scenario_suppresses_promotion(self, tmp_path):
-        """A --scenario locks its own timing_mode; the auto-derived"""
+        """A --scenario locks its own timing_mode; the auto-derived
+        FIXED_SCHEDULE promotion is skipped so the phase keeps its default
+        shape (only an EXPLICIT --fixed-schedule conflicts with a scenario)."""
         trace = _write_trace_file(
             tmp_path,
             [
@@ -171,7 +182,13 @@ class TestTraceAutoPromotion:
 
 
 class TestSweepIncompatibleWithFixedSchedule:
-    """Parameter sweeps + fixed_schedule (explicit or auto-promoted) must error."""
+    """Parameter sweeps + fixed_schedule (explicit or auto-promoted) must error.
+
+    Ports v1 ``validate_sweep_incompatibilities``. Fixed schedule replays
+    a single timing pattern, so a magic-list sweep across concurrency /
+    request_rate / etc. is meaningless — refuse loudly rather than
+    silently running variation 0 only.
+    """
 
     def test_explicit_fixed_schedule_plus_magic_list_concurrency_raises(self, tmp_path):
         trace = _write_trace_file(tmp_path, [{"timestamp": 0}, {"timestamp": 100}])
@@ -185,7 +202,12 @@ class TestSweepIncompatibleWithFixedSchedule:
             build_profiling(cli)
 
     def test_auto_promoted_trace_plus_magic_list_concurrency_raises(self, tmp_path):
-        """Auto-promoted trace + sweep is the silent failure mode v1 errored on."""
+        """Auto-promoted trace + sweep is the silent failure mode v1 errored on.
+
+        ``--concurrency`` is on BasePhaseConfig so it survives the
+        rate/users/smoothness conflict check inside the auto-promote
+        block — the sweep guard is what catches this combo.
+        """
         trace = _write_trace_file(
             tmp_path,
             [
@@ -202,7 +224,9 @@ class TestSweepIncompatibleWithFixedSchedule:
             build_profiling(cli)
 
     def test_request_rate_sweep_against_trace_errors_via_conflict_guard(self, tmp_path):
-        """A magic-list request_rate trips the earlier rate/users/smoothness"""
+        """A magic-list request_rate trips the earlier rate/users/smoothness
+        conflict guard inside the auto-promote block (separate from the
+        sweep guard but the same end result: user gets a clear error)."""
         trace = _write_trace_file(
             tmp_path,
             [{"timestamp": 0}, {"timestamp": 100}],

@@ -30,6 +30,8 @@ from aiperf.timing.branch_orchestrator import (
 from aiperf.timing.trajectory_source import ConversationState
 from tests.unit.timing._shared_helpers import _mk_issuer
 
+# Shared helpers (mirror the style of test_branch_orchestrator_adversarial_full)
+
 
 def _mk_conv(
     cid: str,
@@ -46,7 +48,13 @@ def _mk_conv(
 
 
 def _mk_source(conversations: list[ConversationMetadata], *, unique_children=False):
-    """Build a MagicMock conversation source."""
+    """Build a MagicMock conversation source.
+
+    ``unique_children`` mints a fresh correlation id on every
+    ``start_branch_child`` call (mirrors the real ConversationSource's uuid4),
+    so duplicate dispatch produces two distinct tracked children rather than
+    silently colliding on one id.
+    """
     cs = MagicMock()
     cs.dataset_metadata = DatasetMetadata(
         conversations=conversations,
@@ -151,25 +159,44 @@ def _seed_fork_conv():
     return _Source(), branch_id
 
 
+# 1. CONFIRMED BUG: all-children-fail-to-start on a delayed (K>1) gate
+#    dispatches the gated turn out of order.
+
+
 @pytest.mark.asyncio
 async def test_delayed_join_all_children_raise_does_not_dispatch_gate_early():
-    """The branch spawns on turn 0; the join is gated on turn 3. Every"""
+    """The branch spawns on turn 0; the join is gated on turn 3. Every
+    ``start_branch_child`` raises, so the gate becomes vacuously satisfied.
+
+    Correct behavior: the parent has NOT reached the turn before the gate, so
+    no join turn should fire yet — the gate must be popped silently and the
+    parent should advance turns 1, 2 normally before reaching turn 3. The
+    orchestrator instead dispatches turn 3 immediately, out of order.
+    """
     cs = _mk_source([_delayed_join_root(), _mk_conv("c1", [TurnMetadata()], [])])
     cs.start_branch_child = MagicMock(side_effect=RuntimeError("start failed"))
     issuer = _mk_issuer()
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
     suspended = await orch.intercept(_mk_credit("root", "corr-root", 0))
+    # Parent's next turn (idx 1) is NOT the gate; it must not suspend.
     assert suspended is False
+    # INVARIANT: the gated turn (idx 3) must not be dispatched before the
+    # parent reaches it.
     issuer.dispatch_join_turn.assert_not_called()
+
+
+# 2. CONFIRMED BUG: same as (1) but via the dispatch-refused (gather-False)
+#    rollback path rather than an exception.
 
 
 @pytest.mark.asyncio
 async def test_delayed_join_all_children_refused_does_not_dispatch_gate_early():
-    """Identical ordering invariant to test 1, exercised through the"""
+    """Identical ordering invariant to test 1, exercised through the
+    rollback (gather returns False) branch instead of the exception branch."""
     cs = _mk_source([_delayed_join_root(), _mk_conv("c1", [TurnMetadata()], [])])
     issuer = _mk_issuer()
-    issuer.dispatch_first_turn = AsyncMock(return_value=False)
+    issuer.dispatch_first_turn = AsyncMock(return_value=False)  # refused
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
     suspended = await orch.intercept(_mk_credit("root", "corr-root", 0))
@@ -177,9 +204,14 @@ async def test_delayed_join_all_children_refused_does_not_dispatch_gate_early():
     issuer.dispatch_join_turn.assert_not_called()
 
 
+# 3. CONFIRMED BUG: seed_snapshot FORK child -> sticky refcount underflow.
+
+
 @pytest.mark.asyncio
 async def test_seed_snapshot_fork_child_sticky_release_is_balanced():
-    """A snapshot-replayed FORK child must have balanced sticky refcount"""
+    """A snapshot-replayed FORK child must have balanced sticky refcount
+    operations: register count == release count. seed_snapshot omits the
+    register, so the leaf release underflows by one."""
     source, branch_id = _seed_fork_conv()
     issuer = _mk_issuer()
     sticky = MagicMock()
@@ -209,15 +241,23 @@ async def test_seed_snapshot_fork_child_sticky_release_is_balanced():
 
     await orch.on_child_leaf_reached("child-corr")
 
+    # INVARIANT: balanced refcount accounting for the FORK child.
     assert (
         sticky.release_child_routing.call_count
         == sticky.register_child_routing.call_count
     )
 
 
+# 4. CHARACTERIZATION: duplicate spawning-turn credit double-dispatches.
+
+
 @pytest.mark.asyncio
 async def test_duplicate_spawning_turn_credit_double_dispatches_children():
-    """The orchestrator has no per-turn idempotency guard: delivering the"""
+    """The orchestrator has no per-turn idempotency guard: delivering the
+    SAME spawning-turn credit twice spawns the branch's children twice. With
+    realistic fresh-uuid children each dispatch is a distinct session, so the
+    branch fans out 2x. Documented as current behavior (upstream is expected
+    to deliver each credit return exactly once)."""
     branch = ConversationBranchInfo(
         branch_id="root:0",
         child_conversation_ids=["c1"],
@@ -244,14 +284,20 @@ async def test_duplicate_spawning_turn_credit_double_dispatches_children():
     await orch.intercept(_mk_credit("root", "corr-root", 0))
     await orch.intercept(_mk_credit("root", "corr-root", 0))
 
+    # Two distinct child dispatches for one logical branch (no de-dup).
     assert cs.start_branch_child.call_count == 2
     assert issuer.dispatch_first_turn.await_count == 2
     assert len(orch._child_to_join) == 2
 
 
+# 5. CHARACTERIZATION: full rollback of a background branch leaves no leak.
+
+
 @pytest.mark.asyncio
 async def test_background_branch_all_children_refused_drains_clean():
-    """A background (ungated) branch whose children are ALL refused dispatch"""
+    """A background (ungated) branch whose children are ALL refused dispatch
+    must fully roll back: children_spawned back to 0, children_truncated
+    tallied, and no leaked descendant/child-tracking state."""
     branch = ConversationBranchInfo(
         branch_id="root:0",
         child_conversation_ids=["c1", "c2"],
@@ -284,9 +330,15 @@ async def test_background_branch_all_children_refused_drains_clean():
     assert orch.has_pending_branch_work() is False
 
 
+# 6. CHARACTERIZATION: _notify_drain fires on the last child's drain.
+
+
 @pytest.mark.asyncio
 async def test_drain_observer_fires_when_last_ungated_child_drains():
-    """The drain observer is the race-closing hook the callback handler relies"""
+    """The drain observer is the race-closing hook the callback handler relies
+    on. Verify it fires on the child-completion that empties the orchestrator,
+    and that ``has_pending_branch_work`` is False at that moment (so the
+    deferred all-credits-returned event can latch)."""
     orch = BranchOrchestrator(
         conversation_source=MagicMock(), credit_issuer=MagicMock()
     )
@@ -299,18 +351,26 @@ async def test_drain_observer_fires_when_last_ungated_child_drains():
         )
     ]
     orch._child_modes = {"cA": ConversationBranchMode.SPAWN}
-    orch._descendant_counts["parent"] = 1
+    orch._descendant_counts["parent"] = 1  # only the one ungated child
 
     await orch.on_child_leaf_reached("cA")
 
+    # Observer was invoked, and by the time it ran the orchestrator had drained.
     assert observed, "drain observer must fire on the draining completion"
     assert observed[-1] is False
     assert orch.has_pending_branch_work() is False
 
 
+# 7. CHARACTERIZATION: leaf-then-error double delivery counts once.
+
+
 @pytest.mark.asyncio
 async def test_leaf_then_error_double_delivery_counts_child_once(force_fail_fast):
-    """A worker that delivers BOTH a leaf and an error for the same child must"""
+    """A worker that delivers BOTH a leaf and an error for the same child must
+    not double-count or re-run cleanup. The first hook pops _child_to_join; the
+    second finds nothing and is a no-op. So children_completed==1 and
+    children_errored==0, and no fail-fast cascade fires on the stale second
+    delivery."""
     force_fail_fast(True)
     issuer = _mk_issuer()
     sticky = MagicMock()
@@ -337,18 +397,25 @@ async def test_leaf_then_error_double_delivery_counts_child_once(force_fail_fast
     orch._descendant_counts["p"] = 1
 
     await orch.on_child_leaf_reached("cA")
-    await orch.on_child_errored("cA")
+    await orch.on_child_errored("cA")  # stale duplicate
 
     assert orch.stats.children_completed == 1
     assert orch.stats.children_errored == 0
+    # No fail-fast abort on the stale second delivery.
     issuer.abort_session.assert_not_awaited()
     assert orch.stats.parents_failed_due_to_child_error == 0
+    # Join fired exactly once on the first (leaf) delivery.
     assert issuer.dispatch_join_turn.await_count == 1
+
+
+# 8. CHARACTERIZATION: stopped-then-error double delivery counts once.
 
 
 @pytest.mark.asyncio
 async def test_stopped_then_error_double_delivery_counts_child_once():
-    """A child first cap-stopped (truncated) then later erroring must be"""
+    """A child first cap-stopped (truncated) then later erroring must be
+    counted once: children_truncated==1, children_errored==0 (the error hook
+    finds an already-drained child)."""
     issuer = _mk_issuer()
     orch = BranchOrchestrator(conversation_source=MagicMock(), credit_issuer=issuer)
     orch._child_to_join["cA"] = [
@@ -360,15 +427,21 @@ async def test_stopped_then_error_double_delivery_counts_child_once():
     orch._descendant_counts["p"] = 1
 
     await orch.on_child_stopped("cA")
-    await orch.on_child_errored("cA")
+    await orch.on_child_errored("cA")  # stale
 
     assert orch.stats.children_truncated == 1
     assert orch.stats.children_errored == 0
 
 
+# 9. CHARACTERIZATION: seeded child with no parent state is ungated + drains.
+
+
 @pytest.mark.asyncio
 async def test_seed_snapshot_orphan_child_without_parent_state_drains_clean():
-    """When a snapshot includes a child whose parent state is absent (parent"""
+    """When a snapshot includes a child whose parent state is absent (parent
+    already finished before t*), the child is tracked as an ungated descendant
+    (gated_turn_index=None) and decrements cleanly on leaf with no join
+    dispatch and no leaked descendant count."""
     child_meta = ConversationMetadata(
         conversation_id="child",
         turns=[TurnMetadata(), TurnMetadata()],
@@ -389,6 +462,7 @@ async def test_seed_snapshot_orphan_child_without_parent_state_drains_clean():
     issuer = _mk_issuer()
     orch = BranchOrchestrator(conversation_source=_Source(), credit_issuer=issuer)
     states = (
+        # No state for "parent-corr" at all.
         ConversationState(
             conversation_id="child",
             x_correlation_id="child-corr",
@@ -402,6 +476,7 @@ async def test_seed_snapshot_orphan_child_without_parent_state_drains_clean():
     )
     orch.seed_snapshot(states)
 
+    # Tracked as ungated (no parent_state -> prereq_key None).
     entries = orch._child_to_join["child-corr"]
     assert len(entries) == 1
     assert entries[0].prereq_key is None
@@ -415,27 +490,44 @@ async def test_seed_snapshot_orphan_child_without_parent_state_drains_clean():
     assert orch.has_pending_branch_work() is False
 
 
+# 10. CHARACTERIZATION: over-completed prereq never reports negative
+#     total_outstanding.
+
+
 @pytest.mark.asyncio
 async def test_over_completed_prereq_total_outstanding_clamped_non_negative():
-    """If more distinct children report against a prereq than its ``expected``"""
+    """If more distinct children report against a prereq than its ``expected``
+    counter (rollback shrank ``expected`` after a sibling already completed),
+    ``total_outstanding`` must clamp at 0, never go negative, and the gate is
+    considered done. Probes the max(0, ...) guard in
+    ``PendingBranchJoin.total_outstanding`` and the >= comparison in
+    ``PrereqState.is_done``."""
     pending = PendingBranchJoin(
         parent_x_correlation_id="p",
         parent_conversation_id="c",
         parent_num_turns=2,
         gated_turn_index=1,
     )
+    # expected=1 but two distinct children landed (over-completed).
     pending.outstanding["SPAWN_JOIN:b"] = PrereqState(
         expected=1, completed={"cA", "cB"}, registered=True
     )
 
-    assert pending.total_outstanding == 0
+    assert pending.total_outstanding == 0  # clamped, not -1
     assert pending.outstanding["SPAWN_JOIN:b"].is_done is True
     assert pending.is_satisfied is True
 
 
+# 11. CHARACTERIZATION: cleanup mid-drain leaves has_pending_branch_work False
+#     and a late child completion is a no-op.
+
+
 @pytest.mark.asyncio
 async def test_cleanup_mid_drain_then_late_child_is_noop():
-    """Cleanup is called while children are still tracked (DAG abandoned, e.g."""
+    """Cleanup is called while children are still tracked (DAG abandoned, e.g.
+    worker crash / cancellation). The orchestrator clears state, reports no
+    pending work, and a late child-leaf delivery after cleanup is a silent
+    no-op (does not resurrect tracking or bump stats)."""
     issuer = _mk_issuer()
     orch = BranchOrchestrator(conversation_source=MagicMock(), credit_issuer=issuer)
     pending = PendingBranchJoin(
@@ -464,11 +556,18 @@ async def test_cleanup_mid_drain_then_late_child_is_noop():
     assert orch.stats.children_completed == 0
 
 
+# 12. CHARACTERIZATION: non-fail-fast child error on a multi-consumer branch
+#     fires every satisfied gate but counts the error once.
+
+
 @pytest.mark.asyncio
 async def test_non_fail_fast_error_on_sole_child_fires_all_gates_once(
     force_fail_fast,
 ):
-    """A single SPAWN child feeds three gated turns (1, 2, 3). The child errors"""
+    """A single SPAWN child feeds three gated turns (1, 2, 3). The child errors
+    (non-fail-fast), which is treated as leaf-reached: the nearest gate (active
+    at turn 1) dispatches, the future gates at 2/3 are popped as satisfied, and
+    children_errored increments exactly once."""
     force_fail_fast(False)
     branch = ConversationBranchInfo(
         branch_id="root:0",
@@ -515,6 +614,7 @@ async def test_non_fail_fast_error_on_sole_child_fires_all_gates_once(
     await orch.on_child_errored("corr-c1")
 
     assert orch.stats.children_errored == 1
+    # Active gate fired once; the future gates were popped (satisfied early).
     assert issuer.dispatch_join_turn.await_count == 1
     assert "corr-root" not in orch._active_joins
     assert orch._future_joins.get("corr-root", {}) == {}

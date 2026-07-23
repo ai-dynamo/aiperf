@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Agentic / WEKA hot-path invariants."""
+"""Agentic / WEKA hot-path invariants.
+
+Each test fails if the corresponding production behavior is reverted.
+"""
 
 from __future__ import annotations
 
@@ -31,6 +34,10 @@ from aiperf.records.records_manager_processing import load_accumulators
 from aiperf.timing.session_tree import SessionTreeRegistry
 from aiperf.timing.strategies.cache_bust import build_cache_bust_marker
 from aiperf.workers.worker import _inject_marker_into_first_user_text
+
+# ---------------------------------------------------------------------------
+# theoretical_prefix_cache accumulator registration
+# ---------------------------------------------------------------------------
 
 
 def test_theoretical_prefix_cache_registered_as_accumulator_plugin() -> None:
@@ -70,6 +77,11 @@ def test_load_accumulators_constructs_theoretical_prefix_cache(
         TheoreticalPrefixCacheAccumulator,
     )
     host.error.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# WARMUP failure accounting survives gated intercept early-return
+# ---------------------------------------------------------------------------
 
 
 def _make_warmup_credit() -> Credit:
@@ -198,6 +210,11 @@ async def test_non_overflow_warmup_gated_intercept_fires_live_abort() -> None:
     on_abort.assert_awaited_once()
 
 
+# ---------------------------------------------------------------------------
+# SPAWN sticky co-location while parent entry is live
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_spawn_colocates_on_live_parent_sticky_not_least_loaded(
     benchmark_run,
@@ -207,6 +224,7 @@ async def test_spawn_colocates_on_live_parent_sticky_not_least_loaded(
     router._router_client.send_to = AsyncMock()
     router._register_worker("worker-A")
     router._register_worker("worker-B")
+    # Bias B as least-loaded so a non-sticky pick would choose B.
     router._workers["worker-A"].active_sessions = 5
     router._workers["worker-A"].virtual_sent_credits = 100
     router._workers["worker-B"].active_sessions = 0
@@ -236,6 +254,11 @@ async def test_spawn_colocates_on_live_parent_sticky_not_least_loaded(
         "SPAWN with live parent sticky must co-locate on "
         f"worker-A, got {target!r} (least-loaded would be worker-B)"
     )
+
+
+# ---------------------------------------------------------------------------
+# empty synthetic cache-bust seed idempotency
+# ---------------------------------------------------------------------------
 
 
 def test_empty_texts_cache_bust_seed_is_idempotent() -> None:
@@ -271,6 +294,11 @@ def test_empty_contents_cache_bust_seed_is_idempotent() -> None:
         f"got {turn.texts[0].contents[0]!r}"
     )
     assert turn.texts[0].contents[0].count("[rid:") == 1
+
+
+# ---------------------------------------------------------------------------
+# runtime PhaseRuntimeKey for agentic session slots
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -321,6 +349,11 @@ async def test_phase_keys_lane_credit_uses_runtime_index_not_enum() -> None:
         f"(got {released}); enum-keyed trees would miss index {phase_index}"
     )
     assert concurrency.release_session_slot.call_args.args[0] == phase_index
+
+
+# ---------------------------------------------------------------------------
+# parent floor after clamp skips None (production path)
+# ---------------------------------------------------------------------------
 
 
 def test_parent_floor_process_task_nan_delay_stays_none() -> None:
@@ -409,6 +442,11 @@ def test_parent_floor_process_task_nan_delay_stays_none() -> None:
         shm.unlink()
 
 
+# ---------------------------------------------------------------------------
+# no redundant _apply_file_block_size in build_dataset
+# ---------------------------------------------------------------------------
+
+
 def test_build_dataset_does_not_call_apply_file_block_size(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -438,6 +476,11 @@ def test_build_dataset_does_not_call_apply_file_block_size(
     assert calls == [], (
         f"build_dataset must not call _apply_file_block_size (got calls={calls!r})"
     )
+
+
+# ---------------------------------------------------------------------------
+# loader mp context fail-loud on tokenizer preload mismatch
+# ---------------------------------------------------------------------------
 
 
 def test_loader_mp_context_rejects_tokenizer_preload_switch(

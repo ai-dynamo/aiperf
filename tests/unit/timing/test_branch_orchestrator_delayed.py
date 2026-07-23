@@ -64,7 +64,9 @@ def _k5_metadata() -> list[ConversationMetadata]:
 
 @pytest.mark.asyncio
 async def test_delayed_join_k5_parent_progresses():
-    """Spawn at T=0, gate at T=5. Parent returns from turns 0..3 without"""
+    """Spawn at T=0, gate at T=5. Parent returns from turns 0..3 without
+    suspension; only turn 4's return (which would dispatch turn 5) triggers
+    suspension."""
     cs = _mk_source(_k5_metadata())
 
     def _start(
@@ -82,19 +84,23 @@ async def test_delayed_join_k5_parent_progresses():
 
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
+    # Turn 0 return: spawns children; next turn is 1 (not gated) -> False.
     assert await orch.intercept(_mk_credit("root", "corr-root", 0)) is False
     assert "corr-root" in orch._future_joins
     assert 5 in orch._future_joins["corr-root"]
     assert orch.stats.parents_suspended == 0
 
+    # Turns 1..3 return: no spawns, not next-to-gate, intercept returns False.
     for t in range(1, 4):
         assert await orch.intercept(_mk_credit("root", "corr-root", t)) is False
     assert orch.stats.parents_suspended == 0
 
+    # Turn 4 return: NEXT turn = 5 = gated -> suspend.
     assert await orch.intercept(_mk_credit("root", "corr-root", 4)) is True
     assert "corr-root" in orch._active_joins
     assert orch.stats.parents_suspended == 1
 
+    # Children complete -> join fires.
     await orch.on_child_leaf_reached("corr-c0")
     issuer.dispatch_join_turn.assert_not_called()
     await orch.on_child_leaf_reached("corr-c1")
@@ -104,7 +110,9 @@ async def test_delayed_join_k5_parent_progresses():
 
 @pytest.mark.asyncio
 async def test_delayed_join_children_finish_before_parent_arrives():
-    """Children complete before the parent returns from turn 4. When the"""
+    """Children complete before the parent returns from turn 4. When the
+    parent reaches turn 4's return (about to dispatch turn 5), the future
+    gate is already satisfied -> popped -> intercept returns False."""
     cs = _mk_source(_k5_metadata())
 
     def _start(
@@ -122,21 +130,27 @@ async def test_delayed_join_children_finish_before_parent_arrives():
 
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
+    # Turn 0 spawns.
     await orch.intercept(_mk_credit("root", "corr-root", 0))
 
+    # Both children complete before parent returns from turn 4.
     await orch.on_child_leaf_reached("corr-c0")
     await orch.on_child_leaf_reached("corr-c1")
 
+    # Parent now returns from turn 4 -> gate already satisfied -> no suspension.
     assert await orch.intercept(_mk_credit("root", "corr-root", 4)) is False
     assert "corr-root" not in orch._active_joins
     assert "corr-root" not in orch._future_joins
     assert orch.stats.parents_suspended == 0
+    # Join never dispatched (children finished on their own path, parent
+    # breezes through naturally into turn 5).
     issuer.dispatch_join_turn.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_delayed_join_k1_regression_via_new_architecture():
-    """K=1 auto-desugared case: spawn on turn 0, gate on turn 1. Parent's"""
+    """K=1 auto-desugared case: spawn on turn 0, gate on turn 1. Parent's
+    turn 0 return finds next_idx=1 as gated -> suspends immediately."""
     branch = ConversationBranchInfo(
         branch_id="root:0",
         child_conversation_ids=["c0"],
@@ -174,9 +188,11 @@ async def test_delayed_join_k1_regression_via_new_architecture():
 
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
+    # Turn 0 return: spawns child + next turn is 1 (gated) -> True.
     assert await orch.intercept(_mk_credit("root", "corr-root", 0)) is True
     assert orch.stats.parents_suspended == 1
 
+    # Child finishes -> join fires.
     await orch.on_child_leaf_reached("corr-c0")
     issuer.dispatch_join_turn.assert_awaited_once()
     assert orch.stats.parents_resumed == 1
@@ -236,7 +252,10 @@ async def test_overlap_branch_dispatches_from_parent_start_not_return() -> None:
 
 @pytest.mark.asyncio
 async def test_overlap_dispatch_skips_fork_branches() -> None:
-    """FORK branches must not dispatch at credit-issue even when their"""
+    """FORK branches must not dispatch at credit-issue even when their
+    start_timestamp overlaps the parent turn; they sticky-clone parent
+    context that is only complete after the declaring turn returns.
+    """
     branch = ConversationBranchInfo(
         branch_id="root:fork-overlap",
         child_conversation_ids=["child"],
@@ -275,7 +294,9 @@ async def test_overlap_dispatch_skips_fork_branches() -> None:
 
 @pytest.mark.asyncio
 async def test_delayed_join_stop_condition_fires_during_gap_suppresses_join():
-    """If the issuer reports ``dispatch_join_turn`` returned False (stop"""
+    """If the issuer reports ``dispatch_join_turn`` returned False (stop
+    fired), the orchestrator increments ``joins_suppressed`` instead of
+    ``parents_resumed``."""
     cs = _mk_source(_k5_metadata())
 
     def _start(
@@ -289,12 +310,13 @@ async def test_delayed_join_stop_condition_fires_during_gap_suppresses_join():
 
     issuer = MagicMock()
     issuer.dispatch_first_turn = AsyncMock(return_value=True)
+    # Stop condition suppresses dispatch_join_turn.
     issuer.dispatch_join_turn = AsyncMock(return_value=False)
 
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
     await orch.intercept(_mk_credit("root", "corr-root", 0))
-    await orch.intercept(_mk_credit("root", "corr-root", 4))
+    await orch.intercept(_mk_credit("root", "corr-root", 4))  # suspend
 
     await orch.on_child_leaf_reached("corr-c0")
     await orch.on_child_leaf_reached("corr-c1")
@@ -305,7 +327,8 @@ async def test_delayed_join_stop_condition_fires_during_gap_suppresses_join():
 
 @pytest.mark.asyncio
 async def test_delayed_join_fail_fast_aborts_siblings_mid_gap(monkeypatch):
-    """With ``AIPERF_DAG_FAIL_FAST=true`` and a child erroring during the"""
+    """With ``AIPERF_DAG_FAIL_FAST=true`` and a child erroring during the
+    gap, the parent and every orphan sibling are aborted immediately."""
     from aiperf.common.environment import Environment
 
     monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
@@ -328,8 +351,10 @@ async def test_delayed_join_fail_fast_aborts_siblings_mid_gap(monkeypatch):
 
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
+    # Parent spawns on turn 0 and moves into gap (does NOT suspend yet).
     await orch.intercept(_mk_credit("root", "corr-root", 0))
 
+    # Mid-gap, child c0 errors. Parent + orphan sibling aborted.
     await orch.on_child_errored("corr-c0")
     assert orch.stats.parents_failed_due_to_child_error == 1
     issuer.abort_session.assert_any_await("corr-root")
@@ -340,7 +365,10 @@ async def test_delayed_join_fail_fast_aborts_siblings_mid_gap(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_delayed_join_multiple_branches_different_k_values_accepted_phase2():
-    """Phase 2: declaring two gated branches on the same spawning turn with"""
+    """Phase 2: declaring two gated branches on the same spawning turn with
+    distinct gated_turn_index values is now accepted. The runtime is
+    exercised in tests/unit/timing/test_branch_orchestrator_multi_gate.py;
+    here we just assert the validator no longer rejects the shape."""
     from aiperf.common.validators.orchestrator_v1 import (
         validate_for_orchestrator_v1,
     )
