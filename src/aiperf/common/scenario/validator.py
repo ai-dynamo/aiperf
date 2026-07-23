@@ -19,10 +19,10 @@ validator that mutated a v1 ``UserConfig``. It is invoked from the
 
 from __future__ import annotations
 
-import logging
 import secrets
 from typing import TYPE_CHECKING, Any
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.scenario.base import (
     ScenarioLockError,
     ScenarioOutcome,
@@ -35,7 +35,7 @@ from aiperf.plugin.enums import PhaseType, TimingMode
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
-_logger = logging.getLogger(__name__)
+_logger = AIPerfLogger(__name__)
 
 _AGENTX_SCENARIO = "inferencex-agentx-mvp"
 

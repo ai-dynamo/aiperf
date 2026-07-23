@@ -5,18 +5,19 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import math
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from aiperf.common.aiperf_logger import AIPerfLogger
+
 if TYPE_CHECKING:
     from aiperf.common.models import DatasetMetadata
     from aiperf.credit.structs import Credit, TurnToSend
 
-_logger = logging.getLogger(__name__)
+_logger = AIPerfLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True, order=True)

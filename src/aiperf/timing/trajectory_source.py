@@ -17,13 +17,13 @@ aiperf's existing ``User`` class in ``user_centric_rate.py``.
 from __future__ import annotations
 
 import hashlib
-import logging
 import math
 import uuid
 from dataclasses import dataclass, field
 
 import numpy as np
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import (
     ConversationBranchMode,
     ConversationContextMode,
@@ -35,7 +35,7 @@ from aiperf.dataset.protocols import DatasetSamplingStrategyProtocol
 from aiperf.timing.conversation_source import ConversationSource, SampledSession
 from aiperf.timing.replay_dependencies import ReplayResumeBoundary
 
-_logger = logging.getLogger(__name__)
+_logger = AIPerfLogger(__name__)
 
 
 @dataclass(slots=True, frozen=True)
