@@ -960,6 +960,13 @@ class _ServiceSettings(BaseSettings):
         default=2.0,
         description="Interval in seconds between credit progress report messages",
     )
+    WARMUP_PROGRESS_LOG_INTERVAL: float = Field(
+        ge=0.0,
+        le=100000.0,
+        default=30.0,
+        description="Interval in seconds between warmup progress heartbeat log messages. "
+        "Set to 0 to disable.",
+    )
     DISABLE_UVLOOP: bool = Field(
         default=False,
         description="Disable uvloop and use default asyncio event loop instead",
