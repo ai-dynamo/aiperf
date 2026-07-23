@@ -155,6 +155,8 @@ class PhaseRunner(TaskManagerMixin):
         self._return_wait_task: asyncio.Task | None = None
         self._was_cancelled = False
         self._rampers: list[RateControllerProtocol] = []
+        self._baseline_start_ns: int | None = None
+        self._baseline_end_ns: int | None = None
 
     def _build_credit_issuer(
         self, url_selection_strategy: URLSelectionStrategyProtocol | None
@@ -321,7 +323,7 @@ class PhaseRunner(TaskManagerMixin):
             )
         except Exception as exc:
             self.warning(
-                f"Failed to publish {kind.value} phase baseline request for "
+                f"Failed to publish {kind} phase baseline request for "
                 f"phase {self._config.phase}: {exc}"
             )
 
@@ -406,8 +408,8 @@ class PhaseRunner(TaskManagerMixin):
         lifecycle state) lives in the caller's ``except``.
         """
         phase_id = uuid.uuid4().hex
-        self._baseline_start_ns: int | None = None
-        self._baseline_end_ns: int | None = None
+        self._baseline_start_ns = None
+        self._baseline_end_ns = None
 
         self._concurrency_manager.configure_for_phase(
             self._phase_key,
@@ -694,6 +696,24 @@ class PhaseRunner(TaskManagerMixin):
             parts.append("was_cancelled=True")
         return " | ".join(parts)
 
+    @staticmethod
+    def _format_warmup_progress(stats: CreditPhaseStats) -> str:
+        """Format a periodic warmup heartbeat for non-interactive logs."""
+        returned = stats.requests_completed + stats.requests_cancelled
+        target = stats.final_requests_sent or stats.total_expected_requests
+        returned_desc = (
+            f"returned={returned:,}/{target:,}" if target else f"returned={returned:,}"
+        )
+        parts = [
+            f"Phase {stats.phase} progress",
+            returned_desc,
+            f"sent={stats.requests_sent:,}",
+            f"in_flight={stats.in_flight_requests:,}",
+            f"errors={stats.request_errors:,}",
+            f"elapsed={stats.requests_elapsed_time:.1f}s",
+        ]
+        return " | ".join(parts)
+
     async def _wait_for_sending_complete(self) -> None:
         """Wait for phase to send all credits (with timeout).
 
@@ -774,6 +794,14 @@ class PhaseRunner(TaskManagerMixin):
                     f"Waiting for all cancelled credits to be returned for "
                     f"phase {self._config.phase}. Need {need} more credits."
                 )
+                if need <= 0:
+                    # Forced-completion path: DAG children are being cancelled
+                    # too, so don't defer on pending branch work here.
+                    self.info(
+                        f"All credits already returned after cancel for phase "
+                        f"{self._config.phase}. Skipping drain wait."
+                    )
+                    self._progress.all_credits_returned_event.set()
                 # Wait with timeout to avoid hanging indefinitely
                 drain_timeout = Environment.TIMING.CANCEL_DRAIN_TIMEOUT
                 try:
@@ -882,13 +910,25 @@ class PhaseRunner(TaskManagerMixin):
 
         Runs as a background task until the phase is complete.
         Publishes progress at CREDIT_PROGRESS_REPORT_INTERVAL intervals.
+        During warmup, also emits a throttled INFO heartbeat so headless runs
+        remain observable when no interactive UI consumes progress messages.
         """
         self.debug(f"Starting progress reporting loop for phase {self._config.phase}")
+        warmup_log_interval = Environment.SERVICE.WARMUP_PROGRESS_LOG_INTERVAL
+        next_warmup_log_at = time.monotonic() + warmup_log_interval
         try:
             while True:
                 try:
                     stats = self._progress.create_stats(self._lifecycle)
                     await self._phase_publisher.publish_progress(stats)
+                    now = time.monotonic()
+                    if (
+                        self._config.phase == CreditPhase.WARMUP
+                        and warmup_log_interval > 0
+                        and now >= next_warmup_log_at
+                    ):
+                        self.info(lambda s=stats: self._format_warmup_progress(s))
+                        next_warmup_log_at = now + warmup_log_interval
                 except Exception as e:
                     self.error(
                         f"Error publishing progress for phase {self._config.phase}: {e!r}"
