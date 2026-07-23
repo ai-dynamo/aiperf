@@ -14,6 +14,9 @@ multithreaded-fork hang. See issue #1145.
 
 from __future__ import annotations
 
+import multiprocessing as mp
+import os
+import sys
 from collections.abc import Callable
 from typing import Any, BinaryIO
 
@@ -85,3 +88,32 @@ def run_worker_loop(
             resp = handle_request(req, codegen_fn)
         out.write(orjson.dumps(resp) + b"\n")
         out.flush()
+
+
+def _force_fork() -> None:
+    """Force the fork start method so lighteval's nested-function Process target
+    works. Safe here: this is a fresh single-threaded interpreter, so there is no
+    restore dance and no sibling thread can hold a lock across the fork."""
+    if "fork" in mp.get_all_start_methods():
+        mp.set_start_method("fork", force=True)
+
+
+def _install_stdout_guard() -> BinaryIO:
+    """Return a private binary stream that writes to the real stdout, then point
+    fd 1 at fd 2 so any library writes to stdout land on stderr instead of
+    corrupting the protocol stream."""
+    protocol_fd = os.dup(1)
+    os.dup2(2, 1)
+    return os.fdopen(protocol_fd, "wb", buffering=0)
+
+
+def main() -> None:
+    protocol_out = _install_stdout_guard()
+    _force_fork()
+    from lighteval.tasks.tasks.lcb.codegen_metrics import codegen_metrics
+
+    run_worker_loop(sys.stdin.buffer, protocol_out, codegen_metrics)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import io
+import multiprocessing as mp
+import subprocess
+import sys
+import textwrap
 from typing import Any
 
 import orjson
+import pytest
 
 from aiperf.accuracy.graders import _codegen_worker as worker
+
+_FORK_AVAILABLE = "fork" in mp.get_all_start_methods()
 
 
 def _fake_codegen_ok(*_args: Any, **_kwargs: Any) -> tuple[dict[str, Any], Any]:
@@ -74,3 +81,41 @@ class TestRunWorkerLoop:
         assert len(resps) == 1
         assert resps[0]["ok"] is False
         assert resps[0]["id"] is None
+
+
+class TestForceFork:
+    @pytest.mark.skipif(not _FORK_AVAILABLE, reason="fork unavailable")
+    def test_sets_fork_start_method(self) -> None:
+        original = mp.get_start_method(allow_none=True)
+        try:
+            mp.set_start_method("spawn", force=True)
+            worker._force_fork()
+            assert mp.get_start_method() == "fork"
+        finally:
+            if original is not None:
+                mp.set_start_method(original, force=True)
+
+
+class TestStdoutGuardSubprocess:
+    def test_only_protocol_frames_reach_stdout(self, tmp_path) -> None:
+        # A tiny program that installs the guard, prints junk to stdout, then
+        # writes one protocol frame. Only the frame may appear on real stdout.
+        script = tmp_path / "guard_probe.py"
+        script.write_text(
+            textwrap.dedent(
+                """
+                import sys
+                from aiperf.accuracy.graders import _codegen_worker as w
+                proto = w._install_stdout_guard()
+                print("LIBRARY NOISE TO STDOUT")
+                sys.stdout.flush()
+                proto.write(b'{"frame": 1}\\n')
+                proto.flush()
+                """
+            )
+        )
+        result = subprocess.run(
+            [sys.executable, str(script)], capture_output=True, timeout=30
+        )
+        assert result.stdout == b'{"frame": 1}\n'
+        assert b"LIBRARY NOISE" in result.stderr
