@@ -91,7 +91,7 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
         self._cleanup_fragments(fragment_files)
 
     async def _read_fragments(self, fragment_files: list[Path]) -> list[JsonObject]:
-        """Read all fragment JSONL files, skipping any unparseable lines.
+        """Read all fragment JSONL files, skipping any unparsable lines.
 
         A crashed processor can leave a half-written trailing line; one bad line
         must not sink the whole export, so decode errors and non-object lines are
@@ -108,7 +108,7 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
                         fragment = orjson.loads(line)
                     except orjson.JSONDecodeError as e:
                         self.warning(
-                            f"Skipping unparseable fragment line in {file}: {e}"
+                            f"Skipping unparsable fragment line in {file}: {e}"
                         )
                         continue
                     if not isinstance(fragment, dict):
