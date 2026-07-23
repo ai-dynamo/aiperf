@@ -1034,6 +1034,22 @@ class TestWarmupProgressHeartbeat:
         assert "errors=1" in msg
         assert "elapsed=" in msg
 
+    def test_format_warmup_progress_prefers_final_requests_sent(self):
+        # When both are populated, final_requests_sent is the primary target;
+        # total_expected_requests is only the fallback. Guards a regression
+        # that would silently prefer the fallback.
+        stats = CreditPhaseStats(
+            phase=CreditPhase.WARMUP,
+            requests_sent=40,
+            requests_completed=30,
+            requests_cancelled=2,
+            final_requests_sent=42,
+            total_expected_requests=50,
+        )
+        msg = PhaseRunner._format_warmup_progress(stats)
+        assert "returned=32/42" in msg  # completed + cancelled / final_requests_sent
+        assert "/50" not in msg
+
     def test_format_warmup_progress_without_target(self):
         stats = CreditPhaseStats(
             phase=CreditPhase.WARMUP,
