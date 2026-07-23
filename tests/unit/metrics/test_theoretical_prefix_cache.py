@@ -162,11 +162,7 @@ async def _run_accumulator_skips_missing_metadata_and_errors() -> None:
 
 
 def test_export_results_scopes_to_profiling_phase() -> None:
-    """Warmup must not bleed into the profiling headline hit rate.
-
-    Equal block totals (10 each) make all-phases average 50% while profiling
-    alone is 10% — the bug this guards against.
-    """
+    """Warmup must not bleed into the profiling headline hit rate."""
     asyncio.run(_run_export_results_scopes_to_profiling_phase())
 
 
@@ -180,12 +176,10 @@ async def _run_export_results_scopes_to_profiling_phase() -> None:
                 ConversationMetadata(
                     conversation_id="trace-a",
                     turns=[
-                        # Warmup: 9/10 = 90%
                         TurnMetadata(
                             theoretical_prefix_cache_hit_blocks=9,
                             theoretical_prefix_cache_total_blocks=10,
                         ),
-                        # Profiling: 1/10 = 10%
                         TurnMetadata(
                             theoretical_prefix_cache_hit_blocks=1,
                             theoretical_prefix_cache_total_blocks=10,
@@ -223,7 +217,6 @@ async def _run_export_results_scopes_to_profiling_phase() -> None:
     [warmup] = await acc.export_results(ExportContext(phase=CreditPhase.WARMUP))
     assert warmup.current == pytest.approx(90.0)
 
-    # summarize() remains phase-agnostic for callers that still use it.
     [all_phases] = await acc.summarize()
     assert all_phases.current == pytest.approx(50.0)
 

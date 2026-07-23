@@ -1,14 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Integration tests for BurstGPT trace custom dataset type.
-
-Regression coverage for the resolver bug where ``--fixed-schedule`` was
-rejected with "dataset has no timing data" because the pre-bootstrap
-resolver tried to JSON-parse BurstGPT's CSV header. The format is the
-only CSV-shaped loader in the tree, so its happy path needs to be pinned
-down explicitly.
-"""
+"""Integration tests for BurstGPT trace custom dataset type."""
 
 from pathlib import Path
 
@@ -20,15 +13,7 @@ from tests.integration.utils import create_burst_gpt_csv_file
 
 
 def _sample_rows() -> list[dict]:
-    """A trimmed BurstGPT-shaped CSV with sub-second timestamps.
-
-    The upstream BurstGPT dataset uses integer-seconds timestamps
-    (5, 45, 118, ...), but the loader converts seconds to milliseconds
-    via ``_preprocess_trace``. Using realistic seconds would stretch
-    the fixed_schedule timeline past the integration-test timeout, so
-    the fixture compresses the spacing while keeping the column shape
-    identical to the real format.
-    """
+    """A trimmed BurstGPT-shaped CSV with sub-second timestamps."""
     return [
         {"Timestamp": 0.0, "Model": "ChatGPT", "Request tokens": 472, "Response tokens": 18, "Total tokens": 490, "Log Type": "Conversation log"},
         {"Timestamp": 0.1, "Model": "ChatGPT", "Request tokens": 1087, "Response tokens": 230, "Total tokens": 1317, "Log Type": "Conversation log"},
@@ -49,12 +34,7 @@ class TestBurstGPTTraceIntegration:
         aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ) -> None:
-        """``--custom-dataset-type burst_gpt_trace --fixed-schedule`` runs end-to-end.
-
-        Regresses the resolver bug where ``_check_timing_data`` JSON-parsed
-        the CSV header, returned False, and made fixed_schedule reject the
-        phase before the loader ever ran.
-        """
+        """``--custom-dataset-type burst_gpt_trace --fixed-schedule`` runs end-to-end."""
         rows = _sample_rows()
         csv_file = create_burst_gpt_csv_file(tmp_path, rows)
 
@@ -85,11 +65,7 @@ class TestBurstGPTTraceIntegration:
         aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ) -> None:
-        """No ``--custom-dataset-type`` flag — the loader's ``can_load``
-        recognizes the BurstGPT CSV header on its own. Regresses the
-        ``_detect_type`` bug where a ValueError from JSON-parsing the CSV
-        header short-circuited structural detection.
-        """
+        """No ``--custom-dataset-type`` flag — the loader's ``can_load``"""
         rows = _sample_rows()
         csv_file = create_burst_gpt_csv_file(tmp_path, rows)
 

@@ -63,23 +63,17 @@ async def test_warmup_credit_short_circuits_without_spawning():
     result = await orch.intercept(_credit(CreditPhase.WARMUP))
 
     assert result is False
-    # Short-circuit fires before any conversation-source / spawn work.
     cs.get_metadata.assert_not_called()
     cs.start_branch_child.assert_not_called()
     issuer.dispatch_first_turn.assert_not_awaited()
     sticky_router.register_child_routing.assert_not_called()
-    # No descendant-count leak -> all_credits_returned_event cannot wedge.
     assert orch._descendant_counts == {}
     assert orch.stats.children_spawned == 0
 
 
 @pytest.mark.asyncio
 async def test_profiling_credit_with_same_source_does_process():
-    """The identical fixture at PROFILING DOES spawn the declared children.
-
-    This is the contrast that pins the short-circuit to ``phase`` alone:
-    same conversation source, same turn-0 branch, only the phase changed.
-    """
+    """The identical fixture at PROFILING DOES spawn the declared children."""
     cs = _spawn_declaring_source()
     issuer = MagicMock()
     issuer.dispatch_first_turn = AsyncMock(return_value=True)
@@ -93,7 +87,6 @@ async def test_profiling_credit_with_same_source_does_process():
 
     result = await orch.intercept(_credit(CreditPhase.PROFILING))
 
-    # No gate on the next turn -> intercept returns False, but it DID spawn.
     assert result is False
     cs.get_metadata.assert_called()
     assert cs.start_branch_child.call_count == 2

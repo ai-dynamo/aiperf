@@ -67,7 +67,7 @@ def _nested_pending_join() -> PendingBranchJoin:
         parent_x_correlation_id="child-parent",
         parent_conversation_id="trace::sa:agent_0",
         parent_num_turns=6,
-        parent_agent_depth=1,  # <-- nested: this parent is a DAG child
+        parent_agent_depth=1,
         parent_parent_correlation_id="root",
         gated_turn_index=3,
     )
@@ -82,11 +82,11 @@ def test_dispatch_child_turn_strips_target_membership(issuer: CreditIssuer) -> N
         num_turns=4,
         agent_depth=1,
         parent_correlation_id="root",
-        counts_toward_phase_target=True,  # caller passed True...
+        counts_toward_phase_target=True,
     )
     asyncio.run(issuer.dispatch_child_turn(turn))
     credit = issuer._credit_router.send_credit.call_args.kwargs["credit"]
-    assert credit.counts_toward_phase_target is False  # ...issuer strips it
+    assert credit.counts_toward_phase_target is False
 
 
 def test_nested_join_turn_does_not_count_toward_target(issuer: CreditIssuer) -> None:

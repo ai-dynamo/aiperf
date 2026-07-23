@@ -95,14 +95,7 @@ def _pre_session_metadata() -> list[ConversationMetadata]:
 
 @pytest.mark.asyncio
 async def test_pre_session_background_spawn_dispatches_before_turn_0():
-    """Pre-session dispatch fires the child BEFORE any parent credit is issued.
-
-    Asserts:
-    - ``start_pre_session_child`` is invoked once per child_conversation_id.
-    - ``dispatch_first_turn`` is called with that session.
-    - Stats record a spawn.
-    - The (conv, branch) tuple is recorded in ``_pre_dispatched_branches``.
-    """
+    """Pre-session dispatch fires the child BEFORE any parent credit is issued."""
     cs = _mk_source(_pre_session_metadata())
     issuer = MagicMock()
     issuer.dispatch_first_turn = AsyncMock(return_value=True)
@@ -115,7 +108,6 @@ async def test_pre_session_background_spawn_dispatches_before_turn_0():
         "early", cache_bust_marker=None, cache_bust_target=CacheBustTarget.NONE
     )
     issuer.dispatch_first_turn.assert_awaited_once()
-    # Parent has NOT had any credit; no branch_child dispatch happened.
     cs.start_branch_child.assert_not_called()
     assert orch.stats.children_spawned == 1
     assert ("root", "root:pre") in orch._pre_dispatched_branches
@@ -123,8 +115,7 @@ async def test_pre_session_background_spawn_dispatches_before_turn_0():
 
 @pytest.mark.asyncio
 async def test_intercept_skips_pre_dispatched_on_turn_0_credit():
-    """On parent turn-0 credit return, intercept must NOT re-dispatch the
-    pre-dispatched branch's children."""
+    """On parent turn-0 credit return, intercept must NOT re-dispatch the"""
     cs = _mk_source(_pre_session_metadata())
     issuer = MagicMock()
     issuer.dispatch_first_turn = AsyncMock(return_value=True)
@@ -136,22 +127,15 @@ async def test_intercept_skips_pre_dispatched_on_turn_0_credit():
     assert cs.start_pre_session_child.call_count == 1
     assert issuer.dispatch_first_turn.await_count == 1
 
-    # Parent's turn 0 returns — branch_ids=["root:pre"], but it's already
-    # in _pre_dispatched_branches so no new dispatch happens.
     result = await orch.intercept(_mk_credit("root", "corr-root", 0))
-    # next turn (T=1) is not gated, so intercept returns False.
     assert result is False
-    # No additional start_branch_child calls for the pre-dispatched branch.
     cs.start_branch_child.assert_not_called()
-    # dispatch_first_turn count unchanged.
     assert issuer.dispatch_first_turn.await_count == 1
 
 
 @pytest.mark.asyncio
 async def test_mixed_pre_and_post_branches_on_turn_0_no_double_dispatch():
-    """Turn 0 declares both a pre-session branch and a normal post-turn
-    background SPAWN. Pre-dispatch fires only the pre branch; on turn-0
-    credit return, intercept fires only the post branch."""
+    """Turn 0 declares both a pre-session branch and a normal post-turn"""
     pre_branch = ConversationBranchInfo(
         branch_id="root:pre",
         child_conversation_ids=["early"],
@@ -162,7 +146,6 @@ async def test_mixed_pre_and_post_branches_on_turn_0_no_double_dispatch():
         branch_id="root:0:spawn",
         child_conversation_ids=["post_child"],
         mode=ConversationBranchMode.SPAWN,
-        # dispatch_timing defaults to "post"
     )
     root = _mk_conv(
         "root",
@@ -182,7 +165,6 @@ async def test_mixed_pre_and_post_branches_on_turn_0_no_double_dispatch():
 
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
-    # Pre-session dispatch: only "early" should start.
     await orch.dispatch_pre_session_branches()
     assert cs.start_pre_session_child.call_count == 1
     cs.start_pre_session_child.assert_called_once_with(
@@ -190,10 +172,7 @@ async def test_mixed_pre_and_post_branches_on_turn_0_no_double_dispatch():
     )
     assert issuer.dispatch_first_turn.await_count == 1
 
-    # Parent's turn 0 returns. intercept should fire post_child via
-    # start_branch_child exactly once, and skip the pre branch.
     result = await orch.intercept(_mk_credit("root", "corr-root", 0))
-    # No gate on T=1; not suspended.
     assert result is False
     cs.start_branch_child.assert_called_once()
     kwargs = cs.start_branch_child.call_args.kwargs
@@ -240,19 +219,13 @@ async def test_cleanup_clears_pre_dispatched_set():
 
 @pytest.mark.asyncio
 async def test_pre_session_skips_spawn_children_with_is_root_false():
-    """SPAWN children intentionally keep ``agent_depth == 0`` while carrying
-    ``is_root=False``. The dispatch path must filter on ``is_root`` so a
-    SPAWN child's own pre-session branches are NOT fired at phase start as
-    if the child were an independent root (which would add unauthored
-    requests and break trace topology).
-    """
+    """SPAWN children intentionally keep ``agent_depth == 0`` while carrying"""
     pre_branch = ConversationBranchInfo(
         branch_id="spawn_child:pre",
         child_conversation_ids=["grandchild"],
         mode=ConversationBranchMode.SPAWN,
         dispatch_timing="pre",
     )
-    # SPAWN child: keeps agent_depth=0 but is_root=False.
     spawn_child = _mk_conv(
         "spawn_child",
         [TurnMetadata(branch_ids=["spawn_child:pre"]), TurnMetadata()],

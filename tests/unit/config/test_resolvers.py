@@ -32,10 +32,6 @@ from aiperf.config.resolution.resolvers import (
 from aiperf.config.tokenizer import TokenizerConfig
 from aiperf.plugin.enums import PhaseType
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 
 def _make_run(config: object, *, artifact_dir: Path | None = None) -> BenchmarkRun:
     """Build a minimal BenchmarkRun wrapping a config."""
@@ -78,19 +74,9 @@ def run_with_config(minimal_config, tmp_path):
     return _make_run(minimal_config, artifact_dir=tmp_path / "artifacts")
 
 
-# ---------------------------------------------------------------------------
-# Resolved runtime state
-# ---------------------------------------------------------------------------
-
-
 def test_resolved_config_rejects_negative_dataset_root_count() -> None:
     with pytest.raises(ValidationError, match="dataset_root_count"):
         ResolvedConfig(dataset_root_count={"profiling": -1})
-
-
-# ---------------------------------------------------------------------------
-# Protocol compliance
-# ---------------------------------------------------------------------------
 
 
 class TestConfigResolverProtocol:
@@ -111,11 +97,6 @@ class TestConfigResolverProtocol:
                 pass
 
         assert isinstance(MyResolver(), ConfigResolver)
-
-
-# ---------------------------------------------------------------------------
-# ConfigResolverChain
-# ---------------------------------------------------------------------------
 
 
 class TestConfigResolverChain:
@@ -153,11 +134,6 @@ class TestConfigResolverChain:
             chain.resolve_all(run_with_config)
 
 
-# ---------------------------------------------------------------------------
-# ArtifactDirResolver
-# ---------------------------------------------------------------------------
-
-
 class TestArtifactDirResolver:
     def test_creates_directory(self, minimal_config, tmp_path):
         target = tmp_path / "nested" / "artifacts"
@@ -188,14 +164,7 @@ class TestArtifactDirResolver:
         assert run.resolved.artifact_dir_created is True
 
     def test_resolve_for_probe_skips_user_files_materialization(self, tmp_path):
-        """Probe runs must NOT materialize user_files (they re-run per variation).
-
-        ``cli_runner._estimate_and_log_duration`` clones the user's first config
-        into a probe run only to estimate duration. After Task 6 the resolver
-        also wrote user_files; that produced a stray artifact tree before the
-        actual benchmark and could bake in template values (e.g. ``epoch``)
-        that don't match the per-variation runs.
-        """
+        """Probe runs must NOT materialize user_files (they re-run per variation)."""
         from aiperf.config.loader import load_config_from_string
 
         yaml_str = """
@@ -224,7 +193,6 @@ class TestArtifactDirResolver:
                   requests: 10
                   concurrency: 1
         """
-        # Probe run: target dir gets created, but user_files MUST NOT exist.
         probe_dir = tmp_path / "probe"
         probe_cfg = load_config_from_string(yaml_str)
         probe_cfg.benchmark.artifacts.dir = probe_dir
@@ -233,7 +201,6 @@ class TestArtifactDirResolver:
         assert probe_dir.is_dir()
         assert not (probe_dir / "input_config.json").exists()
 
-        # Real per-variation run (default for_probe=False) DOES materialize.
         real_dir = tmp_path / "real"
         real_cfg = load_config_from_string(yaml_str)
         real_cfg.benchmark.artifacts.dir = real_dir
@@ -307,17 +274,9 @@ class TestArtifactDirResolver:
         assert stale.exists()
 
 
-# ---------------------------------------------------------------------------
-# TokenizerResolver
-# ---------------------------------------------------------------------------
-
-
 class TestTokenizerResolver:
     def test_runs_validator_even_when_tokenizer_unset(self, run_with_config):
-        """Resolver always invokes the validator so fake-model detection fires
-        even when the user passed no `--tokenizer*` flags (and v1 left
-        ``cfg.benchmark.tokenizer`` as None).
-        """
+        """Resolver always invokes the validator so fake-model detection fires"""
         run_with_config.cfg = run_with_config.cfg.model_copy(update={"tokenizer": None})
 
         with patch(
@@ -343,11 +302,6 @@ class TestTokenizerResolver:
 
         assert run.resolved.tokenizer_names == {"test-model": "resolved-tok"}
         mock_validate.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# GpuMetricsResolver
-# ---------------------------------------------------------------------------
 
 
 class TestGpuMetricsResolver:
@@ -398,11 +352,6 @@ class TestGpuMetricsResolver:
             pytest.raises(ValueError, match="bad csv"),
         ):
             GpuMetricsResolver().resolve(run)
-
-
-# ---------------------------------------------------------------------------
-# DatasetResolver
-# ---------------------------------------------------------------------------
 
 
 class TestDatasetResolver:
@@ -465,12 +414,7 @@ class TestDatasetResolver:
         )
 
     def test_counts_dag_roots_for_dag_jsonl(self, tmp_path):
-        """Forking datasets (dag_jsonl) should populate dataset_root_count.
-
-        File: s1 (root), s2 (child of s1.forks), s3 (child of s2.spawns),
-        s4 (root, referenced by no one). Roots = {s1, s4} -> count=2.
-        Non-roots = {s2, s3}.
-        """
+        """Forking datasets (dag_jsonl) should populate dataset_root_count."""
         import json
 
         dataset_file = tmp_path / "dag.jsonl"
@@ -538,13 +482,7 @@ class TestDatasetResolver:
         assert run.resolved.dataset_root_count is None
 
     def test_burst_gpt_csv_reports_timing_data(self, tmp_path):
-        """BurstGPT CSVs always carry a ``Timestamp`` column; the resolver
-        must report ``has_timing=True`` so ``--fixed-schedule`` is accepted.
-
-        Regression: the JSONL-only first-record probe in ``_check_timing_data``
-        could not parse a CSV header and silently returned False, blocking
-        the BurstGPT tutorial's ``aiperf profile … --fixed-schedule`` run.
-        """
+        """BurstGPT CSVs always carry a ``Timestamp`` column; the resolver"""
         dataset_file = tmp_path / "burst_gpt.csv"
         dataset_file.write_text(
             "Timestamp,Model,Request tokens,Response tokens,Total tokens,Log Type\n"
@@ -575,13 +513,7 @@ class TestDatasetResolver:
         DatasetResolver().resolve(run)
 
         assert run.resolved.dataset_has_timing_data == {"main": True}
-        # Pair with TimingResolver to confirm fixed_schedule validation passes.
         TimingResolver().resolve(run)
-
-
-# ---------------------------------------------------------------------------
-# TimingResolver
-# ---------------------------------------------------------------------------
 
 
 class TestTimingResolver:
@@ -758,11 +690,6 @@ class TestTimingResolver:
         assert run_with_config.resolved.total_expected_duration == 60.0
 
 
-# ---------------------------------------------------------------------------
-# build_default_resolver_chain
-# ---------------------------------------------------------------------------
-
-
 class TestBuildDefaultResolverChain:
     def test_returns_chain_with_all_resolvers(self):
         chain = build_default_resolver_chain()
@@ -772,9 +699,6 @@ class TestBuildDefaultResolverChain:
     def test_resolver_order(self):
         chain = build_default_resolver_chain()
         types = [type(r) for r in chain._resolvers]
-        # ScenarioResolver sits AFTER DatasetResolver (needs resolved
-        # dataset_types for the loader-identity check) and BEFORE TimingResolver
-        # (locks per-phase timing_mode / duration before the duration sum).
         assert types == [
             ArtifactDirResolver,
             TokenizerResolver,
@@ -794,18 +718,8 @@ class TestBuildDefaultResolverChain:
         assert run_with_config.resolved.total_expected_duration == 60.0
 
 
-# ---------------------------------------------------------------------------
-# _derive_run_meta — operator vs local layout detection
-# ---------------------------------------------------------------------------
-
-
 class TestDeriveRunMeta:
-    """Cover the EPOCH_RE-gated branch in ``_derive_run_meta``.
-
-    Operator layout is ``<base>/<ns>/<name>/<epoch>``; an epoch-shaped leaf
-    (matched by ``aiperf.operator.results_layout.EPOCH_RE``) means the parent
-    is the AIPerfJob name. A non-epoch leaf is treated as a local-CLI run.
-    """
+    """Cover the EPOCH_RE-gated branch in ``_derive_run_meta``."""
 
     @pytest.fixture
     def _clear_namespace_env(self, monkeypatch):
@@ -835,10 +749,8 @@ class TestDeriveRunMeta:
         """A local path like /tmp/bench/42 must NOT be misread as operator layout."""
         from aiperf.config.resolution.resolvers import _derive_run_meta
 
-        # 42 is too short to match EPOCH_RE (^\d{9,11}$|^legacy$).
         meta = _derive_run_meta(Path("/tmp/bench/42"))
-        assert meta.job_name == "42"  # leaf used as job_name, NOT parent.
-        # epoch is wall-clock seconds, not "42".
+        assert meta.job_name == "42"
         assert meta.epoch.isdigit() and len(meta.epoch) >= 9
 
     def test_legacy_epoch_match(self, _clear_namespace_env):
@@ -865,9 +777,7 @@ class TestDeriveRunMeta:
 
 
 class TestRatePhaseDescriptor:
-    """The artifact-dir descriptor for rate phases (poisson/gamma/constant) must
-    read the v2 phase field `rate` (NOT the v1 `request_rate`, which v2 renamed),
-    or the `request_rate{N}` slug token is silently dropped from the run dir."""
+    """The artifact-dir descriptor for rate phases (poisson/gamma/constant) must"""
 
     def _rate_phase(self, request_rate: float = 25.0):
         from aiperf.config.flags.cli_config import CLIConfig
@@ -888,9 +798,7 @@ class TestRatePhaseDescriptor:
         assert "request_rate25.0" in _describe_phase(phase)
 
     def test_describe_rate_phase_stray_rate_attr_on_non_rate_phase_omits_rate(self):
-        """The descriptor must delegate to get_phase_rate (isinstance-gated):
-        a rate-shaped attribute on a non-rate phase type must not render a
-        request_rate slug token, as raw getattr probing would."""
+        """The descriptor must delegate to get_phase_rate (isinstance-gated):"""
         phase = ConcurrencyPhase(
             name="profiling", type=PhaseType.CONCURRENCY, concurrency=4, requests=10
         )

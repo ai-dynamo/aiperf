@@ -53,9 +53,6 @@ def test_concurrency_ramp_does_not_require_streaming():
     assert out.sweep_parameters is not None
 
 
-# ---- Adversarial cases ----
-
-
 @pytest.mark.parametrize(
     ("overrides", "match"),
     [
@@ -80,8 +77,6 @@ def test_concurrency_ramp_invalid_grid_raises(overrides, match):
 
 
 def test_concurrency_ramp_unknown_override_keys_silently_ignored():
-    # Recipe reads only the keys it knows; extras don't break expansion. Lets the
-    # click+assemble layer evolve sweep_overrides without per-recipe coupling.
     out = ConcurrencyRamp().expand(
         make_ctx(unrecognized_knob=42, another_extra="ignored")
     )
@@ -89,8 +84,6 @@ def test_concurrency_ramp_unknown_override_keys_silently_ignored():
 
 
 def test_concurrency_ramp_ignores_sla_targets():
-    # ConcurrencyRamp is grid-only; sla_targets is a recipe input the BO recipes
-    # consume. Passing one must not affect the recipe's output.
     out = ConcurrencyRamp().expand(make_ctx(sla_targets={"ttft_sla_ms": 250.0}))
     assert out.sla_filters == []
 
@@ -111,7 +104,6 @@ def test_concurrency_ramp_unparseable_string_override_raises():
 
 
 def test_concurrency_ramp_output_is_deterministic():
-    # Same inputs -> identical sweep_parameters; no hidden RNG / global state.
     a = ConcurrencyRamp().expand(make_ctx())
     b = ConcurrencyRamp().expand(make_ctx())
     assert a.sweep_parameters == b.sweep_parameters
@@ -130,9 +122,6 @@ def test_concurrency_ramp_resolves_through_plugin_registry():
 
 
 def test_concurrency_ramp_sweep_parameters_only_no_adaptive_search():
-    # Mutual-exclusivity invariant: SearchRecipeOutput requires exactly one
-    # branch set. Pin the grid branch so a future BO refactor of this recipe
-    # surfaces here loudly.
     out = ConcurrencyRamp().expand(make_ctx())
     assert out.adaptive_search is None
     assert out.sweep_parameters is not None
@@ -140,7 +129,6 @@ def test_concurrency_ramp_sweep_parameters_only_no_adaptive_search():
 
 
 def test_concurrency_ramp_high_range_does_not_overflow():
-    # Pin behavior at the upper end of the int domain; logspace must cope.
     out = ConcurrencyRamp().expand(
         make_ctx(concurrency_min=1, concurrency_max=10_000_000, concurrency_steps=4)
     )
@@ -150,18 +138,12 @@ def test_concurrency_ramp_high_range_does_not_overflow():
 
 
 def test_concurrency_ramp_two_steps_is_minimum_valid_input():
-    # `_logspace_int_steps` requires steps >= 2; pin the boundary.
     out = ConcurrencyRamp().expand(make_ctx(concurrency_steps=2))
     values = out.sweep_parameters["phases.profiling.concurrency"]
     assert values == [1, 1000]
 
 
-# ---- Post-process metric/stat overrides (#16) ----
-
-
 def test_concurrency_ramp_default_post_process_metric_and_stat():
-    # Defaults: request_latency / p99. Pinned so a future ergonomic refactor of
-    # the recipe params surfaces here loudly.
     out = ConcurrencyRamp().expand(make_ctx())
     assert out.post_process.params["metric_tag"] == "request_latency"
     assert out.post_process.params["stat"] == "p99"
@@ -172,14 +154,12 @@ def test_concurrency_ramp_metric_tag_override_flows_to_post_process():
         make_ctx(degradation_metric_tag="time_to_first_token")
     )
     assert out.post_process.params["metric_tag"] == "time_to_first_token"
-    # Stat untouched by metric-tag-only override.
     assert out.post_process.params["stat"] == "p99"
 
 
 def test_concurrency_ramp_stat_override_flows_to_post_process():
     out = ConcurrencyRamp().expand(make_ctx(degradation_stat="p95"))
     assert out.post_process.params["stat"] == "p95"
-    # Metric tag untouched by stat-only override.
     assert out.post_process.params["metric_tag"] == "request_latency"
 
 

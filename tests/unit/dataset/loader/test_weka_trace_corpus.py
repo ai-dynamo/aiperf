@@ -1,10 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Validate every shipped kv-cache-tester trace parses + has expected invariants.
-
-Opt-in via ``pytest -m slow`` -- 739 files takes several seconds and the
-directory may not exist in CI runners without the artifacts submodule.
-"""
+"""Validate every shipped kv-cache-tester trace parses + has expected invariants."""
 
 from pathlib import Path
 
@@ -47,13 +43,10 @@ def test_corpus_invariants():
         for req in t.requests:
             if isinstance(req, WekaSubagentEntry):
                 for inner in req.requests:
-                    # Subagent inner requests are always non-streaming in this corpus.
                     assert isinstance(inner, WekaNormalRequest)
-                    # Subagent inner request's model should be in the subagent's models list.
                     assert inner.model in req.models, (
                         f"{path.name}: subagent inner model {inner.model} not in "
                         f"declared models {req.models}"
                     )
             else:
-                # Top-level requests are normal OR streaming.
                 assert isinstance(req, WekaNormalRequest | WekaStreamingRequest)

@@ -13,13 +13,7 @@ from aiperf.dataset.loader import weka_parallel_convert as wpc
 
 
 def _run(drive_side_effect):
-    """Invoke the driver with pool internals stubbed and the shm pre-unlinked.
-
-    ``_drive_reconstruction_pool`` is patched so that, by the time it runs, the
-    shared-memory segment has been unlinked out from under the orchestrator.
-    This forces the ``finally`` block's ``shm.unlink()`` to hit a missing
-    segment, exercising the ``suppress(FileNotFoundError)`` guard.
-    """
+    """Invoke the driver with pool internals stubbed and the shm pre-unlinked."""
     captured: dict[str, object] = {}
 
     real_shm_cls = wpc.shared_memory.SharedMemory
@@ -30,8 +24,6 @@ def _run(drive_side_effect):
         return shm
 
     def _drive(pool, tasks):
-        # Reclaim the segment before the orchestrator's finally runs, so the
-        # subsequent shm.unlink() in the driver sees a missing segment.
         captured["shm"].unlink()
         return drive_side_effect(pool, tasks)
 
@@ -76,8 +68,6 @@ def test_run_parallel_weka_reconstruction_unlinked_shm_does_not_mask_real_error(
     def _raise(pool, tasks):
         raise boom
 
-    # The original reconstruction error must propagate, not be replaced by a
-    # FileNotFoundError from the cleanup unlink.
     with pytest.raises(RuntimeError) as exc_info:
         _run(_raise)
     assert exc_info.value is boom

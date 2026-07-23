@@ -1,13 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Coverage for the SIGUSR1 stack-dump diagnostic handler.
-
-``register_sigusr1_faulthandler`` lets ``kill -USR1 <pid>`` dump every thread's
-traceback for hang debugging. It is registered in the SystemController (main)
-process (cli_runner.run_benchmark) and in every spawned service subprocess
-(bootstrap_and_run_service), so the whole process tree is poke-able.
-"""
+"""Coverage for the SIGUSR1 stack-dump diagnostic handler."""
 
 from __future__ import annotations
 
@@ -33,9 +27,7 @@ def test_registers_sigusr1_handler() -> None:
 
 def test_noop_without_sigusr1() -> None:
     """No SIGUSR1 (e.g. Windows): the handler must not be registered."""
-    fake_signal = MagicMock(
-        spec=[]
-    )  # no attributes -> hasattr(..., "SIGUSR1") is False
+    fake_signal = MagicMock(spec=[])
     with (
         patch("aiperf.common.bootstrap.signal", fake_signal),
         patch(
@@ -58,15 +50,13 @@ def test_noop_without_sigusr1() -> None:
     ],
 )  # fmt: skip
 def test_registration_errors_are_suppressed(exc_type: type[Exception]) -> None:
-    """A stderr without fileno() (test harnesses) raises on register; the
-    best-effort helper must swallow it (ValueError, RuntimeError, or
-    AttributeError) rather than crash startup."""
+    """A stderr without fileno() (test harnesses) raises on register; the"""
     with patch(
         "aiperf.common.bootstrap.faulthandler.register",
         side_effect=exc_type("sys.stderr has no fileno"),
         create=True,
     ):
-        bootstrap.register_sigusr1_faulthandler()  # must not raise
+        bootstrap.register_sigusr1_faulthandler()
 
 
 @pytest.mark.skipif(
@@ -79,7 +69,6 @@ def test_real_registration_installs_handler() -> None:
     faulthandler.unregister(signal.SIGUSR1)
     try:
         bootstrap.register_sigusr1_faulthandler()
-        # unregister() returns True iff a handler was installed for the signal.
         assert faulthandler.unregister(signal.SIGUSR1) is True
     finally:
         faulthandler.unregister(signal.SIGUSR1)

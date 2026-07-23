@@ -1,23 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Default-value contract for dataset content configs.
-
-Pins the explicit default field values of the synthetic-dataset content
-configs (Image / Audio / Video / VideoAudio / Prompt / PrefixPrompt /
-CacheBust / Rankings) and the conversation/turn shape carried by
-``SyntheticDataset``. The config model structures these classes as follows:
-
-  * They live under ``aiperf.config.dataset.content`` and
-    ``aiperf.config.dataset.video``.
-  * Image/Audio width/height/length are now ``SamplingDistribution`` fields
-    (``FixedDistribution`` by default) rather than mean/stddev sub-configs, so
-    the default is asserted via ``.expected_value``.
-  * The stale ``aiperf.config.dataset.defaults`` ``*Defaults`` dataclasses do
-    not match these field defaults, so this test asserts the values read from
-    the live config classes.
-  * The conversation/turn contract uses the ``turns`` / ``turn_delay`` /
-    ``turn_delay_ratio`` fields on ``SyntheticDataset``.
-"""
+"""Default-value contract for dataset content configs."""
 
 from __future__ import annotations
 
@@ -45,25 +28,17 @@ from aiperf.config.dataset.content import (
 from aiperf.config.dataset.video import VideoAudioConfig, VideoConfig
 from aiperf.config.distributions import FixedDistribution, NormalDistribution
 
-# =============================================================================
-# ImageConfig
-# =============================================================================
-
 
 def test_image_config_defaults():
     """The default values of ImageConfig match the v2 field defaults."""
     config = ImageConfig()
-    # Disabled by default (v1 default was 1; v2 disables images unless opted in).
     assert config.batch_size == 0
-    # width/height are FixedDistribution(512) by default.
     assert isinstance(config.width, FixedDistribution)
     assert config.width.expected_value == 512.0
     assert isinstance(config.height, FixedDistribution)
     assert config.height.expected_value == 512.0
-    # v2 default format is JPEG (v1 default was PNG).
     assert config.format == ImageFormat.JPEG
     assert config.source == ImageSource.NOISE
-    # Disabled images_enabled() at default batch_size=0.
     assert config.images_enabled() is False
 
 
@@ -82,15 +57,9 @@ def test_image_config_custom_values():
     assert config.images_enabled() is True
 
 
-# =============================================================================
-# AudioConfig
-# =============================================================================
-
-
 def test_audio_config_defaults():
     """The default values of AudioConfig match the v2 field defaults."""
     config = AudioConfig()
-    # Disabled by default (v1 default was 1; v2 disables audio unless opted in).
     assert config.batch_size == 0
     assert isinstance(config.length, FixedDistribution)
     assert config.length.expected_value == 10.0
@@ -116,11 +85,6 @@ def test_audio_config_custom_values():
     assert config.depths == [16, 24]
     assert config.sample_rates == [44.1, 48.0]
     assert config.channels == 2
-
-
-# =============================================================================
-# VideoAudioConfig
-# =============================================================================
 
 
 class TestVideoAudioConfigDefaults:
@@ -200,20 +164,13 @@ class TestVideoAudioConfigDefaults:
         assert config.codec == VideoAudioCodec.AAC
 
 
-# =============================================================================
-# VideoConfig
-# =============================================================================
-
-
 class TestVideoConfigDefaults:
     """VideoConfig default values + nested audio contract."""
 
     def test_video_config_defaults(self):
         """Default values match the v2 field defaults."""
         config = VideoConfig()
-        # Disabled by default (v1 default was 1; v2 disables video unless opted in).
         assert config.batch_size == 0
-        # v2 default duration is 1.0 (v1 default was 5.0).
         assert config.duration == 1.0
         assert config.fps == 4
         assert config.width is None
@@ -234,11 +191,6 @@ class TestVideoConfigDefaults:
         config = VideoConfig(audio=audio)
         assert config.audio.sample_rate == 48.0
         assert config.audio.channels == 2
-
-
-# =============================================================================
-# PromptConfig / PrefixPromptConfig / CacheBustConfig
-# =============================================================================
 
 
 def test_prompt_config_defaults():
@@ -304,22 +256,12 @@ def test_prompt_config_exposes_cache_bust():
     assert pc.cache_bust.target == CacheBustTarget.NONE
 
 
-# =============================================================================
-# RankingsConfig
-# =============================================================================
-
-
 def test_rankings_config_defaults():
     """The default values of RankingsConfig match the v2 field defaults."""
     config = RankingsConfig()
     assert config.passages.expected_value == 10.0
     assert config.passage_tokens.expected_value == 128.0
     assert config.query_tokens.expected_value == 32.0
-
-
-# =============================================================================
-# Conversation / turn contract (v1 ConversationConfig -> v2 SyntheticDataset)
-# =============================================================================
 
 
 def _synthetic(**overrides) -> SyntheticDataset:
@@ -330,11 +272,7 @@ def _synthetic(**overrides) -> SyntheticDataset:
 
 
 def test_synthetic_dataset_conversation_turn_defaults():
-    """The v2 SyntheticDataset carries the conversation/turn contract.
-
-    v1 ConversationConfig/TurnConfig no longer exist; turns/turn_delay default
-    to None (single-turn, no inter-turn delay) and turn_delay_ratio to 1.0.
-    """
+    """The v2 SyntheticDataset carries the conversation/turn contract."""
     config = _synthetic()
     assert config.turns is None
     assert config.turn_delay is None

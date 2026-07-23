@@ -1,12 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 3 validator coverage: fan-in acceptance + regression rejections.
-
-Covers:
-- Multi-source gates accepted (previously rejected by Phase 1/2 validators).
-- One branch_id consumed by multiple gated turns accepted (Phase 2/2b rejection).
-- Strictly-prior, background-not-gated, non-SPAWN_JOIN kinds etc. STILL rejected.
-"""
+"""Phase 3 validator coverage: fan-in acceptance + regression rejections."""
 
 from __future__ import annotations
 
@@ -28,12 +22,8 @@ def _mk_child(cid: str) -> ConversationMetadata:
     return ConversationMetadata(conversation_id=cid, turns=[TurnMetadata()])
 
 
-# --- Acceptance: multi-source gates -----------------------------------------
-
-
 def test_fan_in_multi_source_gate_accepted():
-    """A single gated turn with prereqs from two distinct branches (spawned
-    on different earlier turns) is accepted."""
+    """A single gated turn with prereqs from two distinct branches (spawned"""
     conv = ConversationMetadata(
         conversation_id="r",
         turns=[
@@ -72,8 +62,7 @@ def test_fan_in_multi_source_gate_accepted():
 
 
 def test_fan_in_multi_source_gate_on_same_spawning_turn_accepted():
-    """Two branches declared on the SAME spawning turn both gating the SAME
-    later turn is accepted."""
+    """Two branches declared on the SAME spawning turn both gating the SAME"""
     conv = ConversationMetadata(
         conversation_id="r",
         turns=[
@@ -109,12 +98,8 @@ def test_fan_in_multi_source_gate_on_same_spawning_turn_accepted():
     validate_for_orchestrator_v1(md)
 
 
-# --- Acceptance: multi-consumer branch --------------------------------------
-
-
 def test_fan_in_branch_consumed_by_multiple_gates_accepted():
-    """One branch_id referenced by prereqs on multiple distinct gated turns
-    is accepted."""
+    """One branch_id referenced by prereqs on multiple distinct gated turns"""
     conv = ConversationMetadata(
         conversation_id="r",
         turns=[
@@ -145,9 +130,6 @@ def test_fan_in_branch_consumed_by_multiple_gates_accepted():
     validate_for_orchestrator_v1(md)
 
 
-# --- Regression: still-rejected patterns ------------------------------------
-
-
 def test_fan_in_does_not_lift_strictly_prior_rejection():
     """Fan-in doesn't excuse a forward prereq reference."""
     conv = ConversationMetadata(
@@ -172,23 +154,12 @@ def test_fan_in_does_not_lift_strictly_prior_rejection():
         conversations=[conv, _mk_child("c")],
         sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
     )
-    # v2 message-text drift: the forward-reference rejection now reads
-    # "not strictly earlier than this turn".
     with pytest.raises(NotImplementedError, match="not strictly earlier"):
         validate_for_orchestrator_v1(md)
 
 
 def test_fan_in_does_not_lift_background_not_gated_rejection():
-    """A fire-and-forget branch referenced by a SPAWN_JOIN prereq on any gated
-    turn is still rejected.
-
-    v2 re-keys fire-and-forget from ``is_background`` to
-    ``dispatch_timing='pre'`` (see the PORT-DEVIATION note in
-    ``src/aiperf/common/models/branch.py``): a pre-session SPAWN cannot be
-    SPAWN_JOIN-gated because no parent session exists at dispatch time. The
-    test's intent (a fire-and-forget branch cannot be gated by a fan-in join)
-    is preserved by rebasing the offending branch to a pre-session SPAWN.
-    """
+    """A fire-and-forget branch referenced by a SPAWN_JOIN prereq on any gated"""
     conv = ConversationMetadata(
         conversation_id="r",
         turns=[
@@ -228,12 +199,7 @@ def test_fan_in_does_not_lift_background_not_gated_rejection():
 
 
 def test_fan_in_does_not_lift_non_spawn_join_rejection():
-    """Non-SPAWN_JOIN prereq kinds are still rejected even on a multi-prereq
-    turn.
-
-    The two prereqs use DISTINCT branch_ids so the duplicate-prereq ValueError
-    short-circuit does not fire before the BARRIER NotImplementedError path.
-    """
+    """Non-SPAWN_JOIN prereq kinds are still rejected even on a multi-prereq"""
     conv = ConversationMetadata(
         conversation_id="r",
         turns=[

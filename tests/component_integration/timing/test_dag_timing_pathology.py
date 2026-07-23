@@ -1,22 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial pathology tests targeting timing-strategy ↔ DAG-orchestrator
-interactions.
-
-Sibling to ``test_dag_adversarial_timing_modes.py``: that suite parametrizes
-strategy-agnostic orchestrator invariants over the three TimingMode shapes.
-This suite drills into strategy-specific timestamp / rate / slot pathologies
-that the orchestrator alone does not see — out-of-order timestamps,
-extreme magnitudes, rate-limit ↔ fan-out interaction, slot exhaustion under
-fan-out, very wide / very deep DAGs, cancellation during scheduled delays,
-zero-child branches.
-
-Where a strategy is exercised end-to-end, we use the strategy class directly
-with mocked dependencies (scheduler, credit_issuer, lifecycle) so each test
-runs in <100ms and avoids the full PhaseRunner spin-up. Orchestrator-level
-behavior is exercised through ``BranchOrchestrator.intercept`` directly
-(same pattern as the sibling suite).
-"""
+"""Adversarial pathology tests targeting timing-strategy ↔ DAG-orchestrator"""
 
 from __future__ import annotations
 
@@ -50,11 +34,6 @@ from aiperf.timing.strategies.fixed_schedule import FixedScheduleStrategy
 from aiperf.timing.strategies.request_rate import RequestRateStrategy
 
 pytestmark = pytest.mark.component_integration
-
-
-# =============================================================================
-# Helpers (mirror the patterns in test_dag_adversarial_timing_modes.py)
-# =============================================================================
 
 
 def _mk_credit(
@@ -145,20 +124,10 @@ def _make_branch(
     )
 
 
-# =============================================================================
-# FixedSchedule: timestamp pathologies
-# =============================================================================
-
-
 @pytest.mark.asyncio
 async def test_fixed_schedule_out_of_order_timestamps_within_conversation() -> None:
-    """Turn 5 has timestamp_ms < turn 4 within the same conversation. The
-    strategy's handle_credit_return pipes ``next_meta.timestamp_ms`` through
-    ``schedule_at_perf_sec`` directly, computing a NEGATIVE perf-sec offset.
-    Document: the scheduler is told to dispatch in the past — likely fires
-    immediately, but no validation rejects this at load time. Flagged as a
-    fidelity concern for trace replay."""
-    timestamps = [0, 1000, 2000, 3000, 5000, 4000]  # turn 5 < turn 4
+    """Turn 5 has timestamp_ms < turn 4 within the same conversation. The"""
+    timestamps = [0, 1000, 2000, 3000, 5000, 4000]
     turns = [TurnMetadata(timestamp_ms=ts) for ts in timestamps]
     conv = ConversationMetadata(conversation_id="c1", turns=turns)
     ds = DatasetMetadata(
@@ -191,14 +160,9 @@ async def test_fixed_schedule_out_of_order_timestamps_within_conversation() -> N
     )
     strategy._schedule_zero_ms = 0.0
 
-    # Drive return on turn 4 -> next is turn 5 with backwards timestamp.
     credit = _mk_credit("c1", "x", turn_index=4, num_turns=6)
     await strategy.handle_credit_return(credit)
 
-    # Strategy passes the timestamp through without validation. Compute the
-    # expected perf-sec the scheduler was told to fire at: started_at_perf_sec
-    # + (4000 - 0)/1000 = 1.0 + 4.0 = 5.0 — *earlier* than the previous turn's
-    # would-be 6.0. The scheduler will fire it immediately.
     scheduler.schedule_at_perf_sec.assert_called_once()
     target_perf, _ = scheduler.schedule_at_perf_sec.call_args.args
     assert target_perf == pytest.approx(5.0), (
@@ -208,25 +172,14 @@ async def test_fixed_schedule_out_of_order_timestamps_within_conversation() -> N
 
 @pytest.mark.asyncio
 async def test_fixed_schedule_negative_timestamp_no_validation() -> None:
-    """Pydantic accepts negative timestamps (no min check). Document for
-    flagging: trace replay with a negative timestamp_ms produces a negative
-    target perf-sec and the scheduler fires immediately. No load-time
-    rejection."""
-    # Pydantic accepts this — flag if/when validation is added.
+    """Pydantic accepts negative timestamps (no min check). Document for"""
     tm = TurnMetadata(timestamp_ms=-1000)
     assert tm.timestamp_ms == -1000
 
 
 @pytest.mark.asyncio
 async def test_fixed_schedule_very_large_timestamp_no_overflow() -> None:
-    """timestamp_ms = 2^53 (boundary of float-safe-integer).
-
-    Verify the strategy's float arithmetic for ``_timestamp_to_perf_sec``
-    survives without raising. The math: (2^53 - 0)/1000 + offset_sec.
-    Pydantic accepts ints of arbitrary size, but the strategy converts to
-    float in ``_timestamp_to_perf_sec`` — at 2^53 we are at the boundary
-    where consecutive integers stop being representable, but the test only
-    verifies we do not crash."""
+    """timestamp_ms = 2^53 (boundary of float-safe-integer)."""
     ts = 2**53
     turns = [
         TurnMetadata(timestamp_ms=0),
@@ -268,14 +221,12 @@ async def test_fixed_schedule_very_large_timestamp_no_overflow() -> None:
 
     scheduler.schedule_at_perf_sec.assert_called_once()
     target_perf, _ = scheduler.schedule_at_perf_sec.call_args.args
-    assert target_perf > 0  # Did not overflow / wrap.
+    assert target_perf > 0
 
 
 @pytest.mark.asyncio
 async def test_fixed_schedule_setup_sorts_identical_timestamps_stably() -> None:
-    """Three sibling conversations all with timestamp_ms=0 — the schedule
-    sort is stable (Python list.sort is Timsort), so dispatch order matches
-    the conversation iteration order from dataset_metadata."""
+    """Three sibling conversations all with timestamp_ms=0 — the schedule"""
     convs = [
         ConversationMetadata(
             conversation_id=f"c{i}", turns=[TurnMetadata(timestamp_ms=0)]
@@ -311,7 +262,6 @@ async def test_fixed_schedule_setup_sorts_identical_timestamps_stably() -> None:
     )
 
     await strategy.setup_phase()
-    # Order is preserved among equal-timestamp entries (stable sort).
     cids = [entry.turn.conversation_id for entry in strategy._absolute_schedule]
     assert cids == ["c0", "c1", "c2"]
 
@@ -357,11 +307,6 @@ async def test_fixed_schedule_zero_timestamp_fires_at_perf_start() -> None:
     assert target_perf == pytest.approx(7.0)
 
 
-# =============================================================================
-# RequestRate: rate generator validation
-# =============================================================================
-
-
 def test_request_rate_validates_zero_rate_at_interval_config() -> None:
     """Rate=0 must be rejected by ``IntervalGeneratorConfig`` (``gt=0``)."""
     from pydantic import ValidationError
@@ -394,10 +339,7 @@ def test_request_rate_set_rate_rejects_zero() -> None:
 
 
 def test_request_rate_infinity_passes_validation_but_yields_zero_period() -> None:
-    """rate=inf passes the > 0 check; ConstantIntervalGenerator returns 1/inf=0.
-
-    Document: the validator accepts inf even though it is conceptually the
-    same as concurrency-burst. Not a bug per se but worth noting."""
+    """rate=inf passes the > 0 check; ConstantIntervalGenerator returns 1/inf=0."""
     cfg = IntervalGeneratorConfig(
         arrival_pattern=ArrivalPattern.CONSTANT, request_rate=float("inf")
     )
@@ -407,11 +349,6 @@ def test_request_rate_infinity_passes_validation_but_yields_zero_period() -> Non
     assert gen.next_interval() == 0.0
 
 
-# =============================================================================
-# RequestRate: handle_credit_return for DAG children
-# =============================================================================
-
-
 @pytest.mark.asyncio
 @pytest.mark.skip(
     reason="Depends on a dispatch_child_turn API that CreditIssuer does not implement."
@@ -419,12 +356,7 @@ def test_request_rate_infinity_passes_validation_but_yields_zero_period() -> Non
 async def test_request_rate_dag_child_continuation_bypasses_continuation_queue() -> (
     None
 ):
-    """RequestRate.handle_credit_return path for a credit with agent_depth>0
-    must bypass the rate-limited ``_continuation_turns`` queue and dispatch
-    via the credit issuer directly (immediate dispatch).
-
-    Children dispatch directly rather than queueing because the main rate loop
-    may have already exited by the time their continuation turns arrive."""
+    """RequestRate.handle_credit_return path for a credit with agent_depth>0"""
     turns = [TurnMetadata(), TurnMetadata()]
     conv = ConversationMetadata(conversation_id="child", turns=turns)
     ds = DatasetMetadata(
@@ -457,8 +389,6 @@ async def test_request_rate_dag_child_continuation_bypasses_continuation_queue()
         lifecycle=lifecycle,
     )
 
-    # Drive a child credit (agent_depth=1): must call issue_credit directly,
-    # NOT queue.
     child_credit = _mk_credit(
         "child",
         "child-x",
@@ -477,8 +407,7 @@ async def test_request_rate_dag_child_continuation_bypasses_continuation_queue()
 
 @pytest.mark.asyncio
 async def test_request_rate_dag_child_with_delay_uses_scheduler() -> None:
-    """If the child's next-turn metadata has delay_ms, the rate strategy
-    routes via scheduler.schedule_later, NOT via the rate-limited queue."""
+    """If the child's next-turn metadata has delay_ms, the rate strategy"""
     turns = [TurnMetadata(), TurnMetadata(delay_ms=500.0)]
     conv = ConversationMetadata(conversation_id="child", turns=turns)
     ds = DatasetMetadata(
@@ -521,16 +450,9 @@ async def test_request_rate_dag_child_with_delay_uses_scheduler() -> None:
     assert strategy._continuation_turns.empty()
 
 
-# =============================================================================
-# Orchestrator under wide and deep DAGs
-# =============================================================================
-
-
 @pytest.mark.asyncio
 async def test_orchestrator_very_wide_fan_out_1000_children() -> None:
-    """Single branch with 1000 children — orchestrator must dispatch each,
-    register the gate accumulating expected=1000, and not OOM. Scaled to
-    a manageable size for CI; the data-structure stress is the same."""
+    """Single branch with 1000 children — orchestrator must dispatch each,"""
     N = 1000
     child_ids = [f"c{i}" for i in range(N)]
     branch = _make_branch("root:0", child_ids)
@@ -564,7 +486,6 @@ async def test_orchestrator_very_wide_fan_out_1000_children() -> None:
     assert state.expected == N
     assert state.registered is True
 
-    # Drain all children — gate fires exactly once.
     for child_corr in list(orch._child_to_join.keys()):
         await orch.on_child_leaf_reached(child_corr)
     issuer.dispatch_join_turn.assert_awaited_once()
@@ -574,9 +495,7 @@ async def test_orchestrator_very_wide_fan_out_1000_children() -> None:
 @pytest.mark.stress
 @pytest.mark.asyncio
 async def test_orchestrator_high_k_10000_intermediate_turns_no_suspension() -> None:
-    """K=10000: parent has 10000 turns between spawn (0) and gate. Children
-    finish before parent reaches the gate; ``parents_suspended`` stays at 0
-    and ``_future_joins[parent]`` dict size never exceeds 1 entry."""
+    """K=10000: parent has 10000 turns between spawn (0) and gate. Children"""
     K = 10000
     branch = _make_branch("root:0", ["c1"])
     parent_turns = [TurnMetadata(branch_ids=["root:0"])]
@@ -596,17 +515,13 @@ async def test_orchestrator_high_k_10000_intermediate_turns_no_suspension() -> N
     issuer = _mk_issuer()
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
-    # Spawn turn 0 -> registers single future-gate.
     await orch.intercept(_mk_credit("root", "p", turn_index=0, num_turns=K + 1))
     assert len(orch._future_joins["p"]) == 1
 
-    # Child finishes early.
     [child_corr] = list(orch._child_to_join.keys())
     await orch.on_child_leaf_reached(child_corr)
-    # Future gate auto-popped.
     assert "p" not in orch._future_joins or not orch._future_joins["p"]
 
-    # Walk parent through all 10001 turns; never suspends.
     for t in range(1, K + 1):
         s = await orch.intercept(_mk_credit("root", "p", turn_index=t, num_turns=K + 1))
         assert s is False, f"turn {t} must not suspend"
@@ -615,21 +530,10 @@ async def test_orchestrator_high_k_10000_intermediate_turns_no_suspension() -> N
 
 @pytest.mark.asyncio
 async def test_orchestrator_zero_child_branch_via_direct_construction() -> None:
-    """Pydantic does NOT reject ConversationBranchInfo with empty children
-    today (``child_conversation_ids`` has no min-length validator). Direct
-    construction yields a branch the orchestrator must handle without hang.
-
-    The validator (orchestrator_v1) is what would reject this at load time;
-    when the orchestrator is fed a zero-child branch directly, the spawn
-    loop iterates zero children, the gate is created with an empty
-    outstanding dict (no prereqs declared on the spawning turn), and the
-    parent must NOT suspend at the next turn since no prereq exists for
-    that gated_idx."""
-    # Branch with zero children. No prereq references it, so no gate is
-    # registered for the parent's next turn either.
+    """Pydantic does NOT reject ConversationBranchInfo with empty children"""
     branch = ConversationBranchInfo(
         branch_id="root:0",
-        child_conversation_ids=[],  # zero children
+        child_conversation_ids=[],
         mode=ConversationBranchMode.SPAWN,
     )
     root = ConversationMetadata(
@@ -645,8 +549,6 @@ async def test_orchestrator_zero_child_branch_via_direct_construction() -> None:
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
     s = await orch.intercept(_mk_credit("root", "p", turn_index=0, num_turns=2))
-    # No children spawned; no gate registered (no prereq references "root:0");
-    # parent must NOT suspend.
     assert s is False
     assert orch.stats.children_spawned == 0
     assert "p" not in orch._active_joins
@@ -655,18 +557,10 @@ async def test_orchestrator_zero_child_branch_via_direct_construction() -> None:
 
 @pytest.mark.asyncio
 async def test_orchestrator_zero_child_branch_with_gate_does_not_hang() -> None:
-    """Branch with zero children but the parent's next turn declares a
-    SPAWN_JOIN against it. The orchestrator's expected_gates path creates a
-    future-join with an unregistered PrereqState seed (from
-    _gated_turn_prereq_keys) AND marks it registered with expected=0 — so it is
-    vacuously satisfied. Because the gate sits at the parent's IMMEDIATE-NEXT
-    turn, it is popped SILENTLY: intercept returns False and the strategy's
-    normal continuation dispatches the now-ungated turn exactly once. The
-    orchestrator must NOT dispatch the join turn here too (that double-dispatches
-    the same turn_index, since intercept returned False)."""
+    """Branch with zero children but the parent's next turn declares a"""
     branch = ConversationBranchInfo(
         branch_id="root:0",
-        child_conversation_ids=[],  # zero children
+        child_conversation_ids=[],
         mode=ConversationBranchMode.SPAWN,
     )
     root = ConversationMetadata(
@@ -688,31 +582,17 @@ async def test_orchestrator_zero_child_branch_with_gate_does_not_hang() -> None:
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
     s = await orch.intercept(_mk_credit("root", "p", turn_index=0, num_turns=2))
-    # No children -> the gate is vacuously satisfied and popped silently; the
-    # parent is NOT suspended, so by the time intercept returns the strategy's
-    # normal continuation (not the orchestrator) will dispatch the next turn.
     assert s is False, "zero-child branch must not deadlock parent at next turn"
     issuer.dispatch_join_turn.assert_not_awaited()
     assert "p" not in orch._active_joins
     assert not orch._future_joins.get("p")
-    # parents_resumed counts orchestrator-driven resumes (_release_blocked_join);
-    # here the parent resumes via the normal continuation, so it is not counted
-    # (matches v1, which also pops this immediate-next gate silently).
     assert orch.stats.parents_resumed == 0
     assert orch.stats.parents_suspended == 0
 
 
-# =============================================================================
-# Phase replay state isolation
-# =============================================================================
-
-
 @pytest.mark.asyncio
 async def test_phase_replay_active_joins_do_not_leak() -> None:
-    """Run a complete spawn → suspend → drain cycle on phase 1, cleanup, then
-    a fresh orchestrator for phase 2 must see empty state across
-    ``_active_joins``, ``_future_joins``, ``_child_to_join``, and
-    ``_descendant_counts``."""
+    """Run a complete spawn → suspend → drain cycle on phase 1, cleanup, then"""
     branch = _make_branch("root:0", ["c1"])
     root = ConversationMetadata(
         conversation_id="root",
@@ -732,7 +612,6 @@ async def test_phase_replay_active_joins_do_not_leak() -> None:
     cs = _mk_source([root, child])
     issuer = _mk_issuer()
 
-    # Phase 1.
     warmup = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
     await warmup.intercept(_mk_credit("root", "p1", turn_index=0, num_turns=2))
     [child_corr] = list(warmup._child_to_join.keys())
@@ -743,7 +622,6 @@ async def test_phase_replay_active_joins_do_not_leak() -> None:
     assert not warmup._child_to_join
     assert not warmup._descendant_counts
 
-    # Phase 2: fresh state.
     measurement = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
     assert not measurement._active_joins
     assert not measurement._future_joins
@@ -752,16 +630,9 @@ async def test_phase_replay_active_joins_do_not_leak() -> None:
     assert measurement.stats.children_spawned == 0
 
 
-# =============================================================================
-# Phase shutdown with stuck child
-# =============================================================================
-
-
 @pytest.mark.asyncio
 async def test_phase_shutdown_with_stuck_child_fail_fast(monkeypatch) -> None:
-    """One child errors -> fail-fast aborts the parent and any orphan siblings.
-    The parent's pending join is dropped, ``has_pending_branch_work`` returns
-    False once orphans are aborted, and shutdown can complete."""
+    """One child errors -> fail-fast aborts the parent and any orphan siblings."""
     branch = _make_branch("root:0", ["c1", "c2"])
     root = ConversationMetadata(
         conversation_id="root",
@@ -789,22 +660,18 @@ async def test_phase_shutdown_with_stuck_child_fail_fast(monkeypatch) -> None:
     await orch.intercept(_mk_credit("root", "p", turn_index=0, num_turns=2))
     assert orch.has_pending_branch_work()
 
-    # Stuck child errors -> fail-fast aborts parent and orphan sibling.
     [c1, c2] = list(orch._child_to_join.keys())
     await orch.on_child_errored(c1)
 
-    # Parent and orphan abort_session called.
     assert issuer.abort_session.await_count >= 1
     assert "p" not in orch._active_joins
     assert "p" not in orch._future_joins
-    # Orphan should have been cleared from _child_to_join too.
     assert c2 not in orch._child_to_join
 
 
 @pytest.mark.asyncio
 async def test_phase_shutdown_cleanup_idempotent_under_late_returns() -> None:
-    """After cleanup, a late ``intercept`` call must short-circuit (return
-    False) without raising — even if the credit looks like a fresh spawn."""
+    """After cleanup, a late ``intercept`` call must short-circuit (return"""
     branch = _make_branch("root:0", ["c1"])
     root = ConversationMetadata(
         conversation_id="root",
@@ -826,32 +693,16 @@ async def test_phase_shutdown_cleanup_idempotent_under_late_returns() -> None:
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
     orch.cleanup()
-    # Second cleanup is idempotent.
     orch.cleanup()
 
     s = await orch.intercept(_mk_credit("root", "p", turn_index=0, num_turns=2))
     assert s is False
-    # No children dispatched — the cleanup short-circuit fires before the
-    # spawn path is reached.
     issuer.dispatch_first_turn.assert_not_called()
-
-
-# =============================================================================
-# Pre-session: nested branches in a pre-session child are NOT pre-dispatched
-# =============================================================================
 
 
 @pytest.mark.asyncio
 async def test_pre_session_child_with_own_dag_does_not_recurse_pre_dispatch() -> None:
-    """A pre-session child has its own DAG metadata with a 'pre' branch on
-    turn 0. ``dispatch_pre_session_branches`` only iterates root conversations
-    (``agent_depth == 0``); a child conversation, even if it has dispatch_timing
-    'pre' branches in metadata, is NOT pre-dispatched recursively.
-
-    This is current behaviour. Documented as a fidelity concern: trace
-    replay where a captured pre-session child itself has nested pre-session
-    spawns would NOT honour the nesting.
-    """
+    """A pre-session child has its own DAG metadata with a 'pre' branch on"""
     pre_branch_root = _make_branch(
         "root:0",
         ["pre_child"],
@@ -889,28 +740,14 @@ async def test_pre_session_child_with_own_dag_does_not_recurse_pre_dispatch() ->
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
     await orch.dispatch_pre_session_branches()
-    # Only one pre-dispatched: pre_child. nested is NOT recursively
-    # pre-dispatched even though pre_child's metadata declares a pre-branch.
     assert orch.stats.children_spawned == 1
     assert ("root", "root:0") in orch._pre_dispatched_branches
     assert ("pre_child", "pre_child:0") not in orch._pre_dispatched_branches
 
 
-# =============================================================================
-# delay_ms after a delayed-join gap (Fixed Schedule)
-# =============================================================================
-
-
 @pytest.mark.asyncio
 async def test_fixed_schedule_resumed_gated_turn_uses_authored_timestamp() -> None:
-    """When a parent's gated turn dispatches via ``CreditIssuer.dispatch_join_turn``,
-    that path ignores the ``delay_ms`` and ``timestamp_ms`` of the gated turn —
-    the orchestrator builds a TurnToSend directly from PendingBranchJoin and
-    issues it immediately (no scheduler.schedule_at_perf_sec).
-
-    Verify by inspecting that ``dispatch_join_turn`` is what fires (not
-    ``handle_credit_return``); scheduler.schedule_at_perf_sec is untouched
-    for the gated turn."""
+    """When a parent's gated turn dispatches via ``CreditIssuer.dispatch_join_turn``,"""
     branch = _make_branch("root:0", ["c1"])
     root = ConversationMetadata(
         conversation_id="root",
@@ -922,8 +759,6 @@ async def test_fixed_schedule_resumed_gated_turn_uses_authored_timestamp() -> No
                         kind=PrerequisiteKind.SPAWN_JOIN, branch_id="root:0"
                     )
                 ],
-                # Authored delay AND timestamp on the gated turn — both ignored
-                # because the orchestrator dispatches directly via dispatch_join_turn.
                 delay_ms=100.0,
                 timestamp_ms=5000,
             ),
@@ -939,27 +774,16 @@ async def test_fixed_schedule_resumed_gated_turn_uses_authored_timestamp() -> No
     [child_corr] = list(orch._child_to_join.keys())
     await orch.on_child_leaf_reached(child_corr)
 
-    # Gated turn dispatched via the join path — bypasses any delay_ms /
-    # timestamp_ms scheduling on the gated TurnMetadata.
     issuer.dispatch_join_turn.assert_awaited_once()
     sent_pending = issuer.dispatch_join_turn.call_args.args[0]
     assert sent_pending.gated_turn_index == 1
-    # No fields propagating delay_ms / timestamp_ms exist on PendingBranchJoin —
-    # documents the contract.
     assert not hasattr(sent_pending, "delay_ms")
     assert not hasattr(sent_pending, "timestamp_ms")
 
 
-# =============================================================================
-# Cancellation surface during async dispatch
-# =============================================================================
-
-
 @pytest.mark.asyncio
 async def test_intercept_cancellation_surfaces_cleanly() -> None:
-    """If ``dispatch_first_turn`` is cancelled mid-spawn, the CancelledError
-    propagates out of ``intercept``. Verify no orphan _child_to_join entries
-    remain for the cancelled child path."""
+    """If ``dispatch_first_turn`` is cancelled mid-spawn, the CancelledError"""
     branch = _make_branch("root:0", ["c1", "c2"])
     root = ConversationMetadata(
         conversation_id="root",
@@ -995,30 +819,16 @@ async def test_intercept_cancellation_surfaces_cleanly() -> None:
 
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
-    # asyncio.gather(return_exceptions=True) absorbs the CancelledError.
-    # Verify that the rollback path runs for the cancelled child.
     await orch.intercept(_mk_credit("root", "p", turn_index=0, num_turns=2))
 
-    # One child landed (returned True), one was cancelled (rolled back).
     assert orch.stats.children_spawned == 1
     assert orch.stats.children_errored == 1
-    # The successful child is still tracked.
     assert len(orch._child_to_join) == 1
-
-
-# =============================================================================
-# Rate-limit ↔ DAG: child agent_depth=1 bypasses session-slot but still goes
-# through credit_issuer.dispatch_first_turn.
-# =============================================================================
 
 
 @pytest.mark.asyncio
 async def test_dag_child_dispatch_path_decoupled_from_main_rate_loop() -> None:
-    """Child dispatch goes through ``credit_issuer.dispatch_first_turn`` (the
-    DAG path), not ``credit_issuer.try_issue_credit`` (the rate-limited
-    new-session path). Confirms children are NOT subject to the rate
-    interval-generator's pacing — they fire as soon as the orchestrator
-    schedules them."""
+    """Child dispatch goes through ``credit_issuer.dispatch_first_turn`` (the"""
     branch = _make_branch("root:0", ["c1", "c2", "c3"])
     root = ConversationMetadata(
         conversation_id="root",
@@ -1040,12 +850,10 @@ async def test_dag_child_dispatch_path_decoupled_from_main_rate_loop() -> None:
     ]
     cs = _mk_source([root, *children])
     issuer = _mk_issuer()
-    # try_issue_credit is the rate-paced path; never called for children.
     issuer.try_issue_credit = AsyncMock(return_value=True)
 
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
     await orch.intercept(_mk_credit("root", "p", turn_index=0, num_turns=2))
 
-    # Children went through dispatch_first_turn (DAG path), not try_issue_credit.
     assert issuer.dispatch_first_turn.await_count == 3
     issuer.try_issue_credit.assert_not_called()

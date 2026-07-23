@@ -15,8 +15,6 @@ from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import Trajectory, TrajectorySource
 from tests.unit.timing.strategies._shared_helpers import _make_dataset, _make_run
 
-# Helpers (mirror test_agentic_replay.py)
-
 
 def _build_real_trajectory_source(
     num_traces: int,
@@ -96,12 +94,8 @@ def _make_credit(
     )
 
 
-# Cache-bust disabled (user_config is None)
-
-
 def test_cache_bust_disabled_when_user_config_is_none():
-    """No user_config -> target defaults to NONE and benchmark_id to "unknown".
-    Construction stays cheap (no marker minting at __init__)."""
+    """No user_config -> target defaults to NONE and benchmark_id to "unknown"."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     strategy, *_ = _make_strategy(
         phase=CreditPhase.WARMUP,
@@ -111,17 +105,12 @@ def test_cache_bust_disabled_when_user_config_is_none():
 
     assert strategy._cache_bust_target == CacheBustTarget.NONE
     assert strategy._benchmark_id == "unknown"
-    # No sessions seeded yet -> marker dict is empty.
     assert strategy._session_marker == {}
-
-
-# _recycle_pass dict bounded by pool size
 
 
 @pytest.mark.asyncio
 async def test_recycle_pass_dict_grows_only_to_pool_size():
-    """Recycling N traces twice each must NOT inflate _recycle_pass beyond
-    the pool size — the dict is keyed by trace_id, not by recycle event."""
+    """Recycling N traces twice each must NOT inflate _recycle_pass beyond"""
     n = 3
     trajectories = [
         Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(n)
@@ -140,7 +129,7 @@ async def test_recycle_pass_dict_grows_only_to_pool_size():
     strategy, _, _, _ = _make_strategy(
         phase=CreditPhase.PROFILING,
         trajectories=trajectories,
-        num_traces=n,  # all trajectories consume the pool
+        num_traces=n,
         turns_per_trace=2,
         issuer=issuer,
         run=run,
@@ -148,11 +137,6 @@ async def test_recycle_pass_dict_grows_only_to_pool_size():
     await strategy.setup_phase()
     await strategy.execute_phase()
 
-    # Each trace ends -> recycled via the sampler. Drive two full passes.
-    # Only finalize turns we have not yet finalized: every recycle spawns a
-    # NEW credit with a fresh correlation_id, and the double-recycle guard
-    # (Task 5: keyed on correlation_id) raises if we replay an already-final
-    # correlation_id.
     finalized: set[str] = set()
     for _round in range(2):
         pending = [t for t in issued_turns if t.x_correlation_id not in finalized]
@@ -166,20 +150,13 @@ async def test_recycle_pass_dict_grows_only_to_pool_size():
             await strategy.handle_credit_return(final_credit)
             finalized.add(turn.x_correlation_id)
 
-    # _recycle_pass entries are bounded by the trace pool (one entry per
-    # trace_id), regardless of how many recycle events fired.
     assert len(strategy._recycle_pass) <= n
     assert set(strategy._recycle_pass.keys()) <= {f"trace_{i}" for i in range(n)}
 
 
-# Marker dict pruned on queue-empty recycle (complement to stop-checker test)
-
-
 @pytest.mark.asyncio
 async def test_session_marker_dict_pruned_on_recycle():
-    """``_spawn_from_recycle_or_id`` prunes the finished session's bookkeeping
-    up front, before any later branch (cooldown, empty pool) can short-circuit.
-    """
+    """``_spawn_from_recycle_or_id`` prunes the finished session's bookkeeping"""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     run = _make_run(target=CacheBustTarget.SYSTEM_PREFIX)
     strategy, _, _, _ = _make_strategy(
@@ -190,7 +167,6 @@ async def test_session_marker_dict_pruned_on_recycle():
     )
     await strategy.setup_phase()
 
-    # Seed in-flight bookkeeping for a finished session.
     finished_corr = "xcorr-finished"
     strategy._correlation_to_lane[finished_corr] = 0
     strategy._session_marker[finished_corr] = "[rid:dummy]"
@@ -199,18 +175,13 @@ async def test_session_marker_dict_pruned_on_recycle():
         "trace_0", finished_correlation_id=finished_corr
     )
 
-    # Pruning fires before the queue-None early return.
     assert finished_corr not in strategy._session_marker
     assert finished_corr not in strategy._correlation_to_lane
 
 
 @pytest.mark.asyncio
 async def test_session_marker_dict_pruned_on_metadata_miss_recycle():
-    """If ``_build_session_for_trace`` cannot resolve the next trace (metadata
-    missing in the lookup) the spawn returns early. The finished session's
-    bookkeeping must still be pruned because the prune happens up front in
-    ``_spawn_from_recycle_or_id``, before any later branch can short-circuit.
-    """
+    """If ``_build_session_for_trace`` cannot resolve the next trace (metadata"""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     run = _make_run(target=CacheBustTarget.SYSTEM_PREFIX)
     strategy, issuer, _, src = _make_strategy(
@@ -222,7 +193,6 @@ async def test_session_marker_dict_pruned_on_metadata_miss_recycle():
     )
     await strategy.setup_phase()
 
-    # Force a metadata-lookup miss for every recycled trace_id.
     src._metadata_lookup = {}
 
     finished_corr = "xcorr-finished"
@@ -234,21 +204,13 @@ async def test_session_marker_dict_pruned_on_metadata_miss_recycle():
         "trace_0", finished_correlation_id=finished_corr
     )
 
-    # No new credit dispatched (metadata miss returns early after pop).
     assert issuer.issue_credit.await_count == 0
-    # But pruning fired before the early return.
     assert finished_corr not in strategy._session_marker
     assert finished_corr not in strategy._correlation_to_lane
 
 
-# from_previous_credit cache-bust propagation
-
-
 def test_marker_propagates_through_from_previous_credit_within_session():
-    """``TurnToSend.from_previous_credit`` carries cache_bust_marker /
-    cache_bust_target verbatim from the previous credit to the next-turn
-    descriptor — this is the strategy-side seam that keeps the same marker
-    on every turn of a session."""
+    """``TurnToSend.from_previous_credit`` carries cache_bust_marker /"""
     credit = _make_credit(
         conversation_id="trace_0",
         x_correlation_id="xc-0",
@@ -267,9 +229,7 @@ def test_marker_propagates_through_from_previous_credit_within_session():
 
 
 def test_subagent_fork_inherits_parent_marker_via_from_previous_credit():
-    """A DAG fork is constructed from a parent credit through the same
-    ``from_previous_credit`` seam: the child credit's marker matches the
-    parent's marker, and ``parent_correlation_id`` is preserved."""
+    """A DAG fork is constructed from a parent credit through the same"""
     parent = _make_credit(
         conversation_id="trace_0",
         x_correlation_id="xc-parent",

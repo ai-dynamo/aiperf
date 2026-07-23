@@ -1,16 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for AIPerfConfig sweep cross-field validators.
-
-Post-redesign, the only envelope-level cross-field validator that remains
-on AIPerfConfig is ``validate_sweep_no_dashboard_ui``; the ex-parameter
-sweep field validators (same-seed-needs-seed, cooldown-non-neg,
-flags-require-sweep) all moved when their fields moved off MultiRunConfig
-onto SweepConfig sub-objects, where Pydantic's per-field constraints
-(``ge=0``) and the discriminated SweepConfig union enforce them
-structurally.
-"""
+"""Tests for AIPerfConfig sweep cross-field validators."""
 
 from __future__ import annotations
 
@@ -44,11 +35,6 @@ def _make(**overrides) -> AIPerfConfig:
     return AIPerfConfig(benchmark=body, **env_kwargs)
 
 
-# ---------------------------------------------------------------------------
-# validate_sweep_no_dashboard_ui — only AIPerfConfig-scope validator left
-# ---------------------------------------------------------------------------
-
-
 def test_sweep_with_dashboard_ui_rejected() -> None:
     with pytest.raises(ValueError, match="Dashboard UI is incompatible"):
         _make(
@@ -69,16 +55,6 @@ def test_sweep_with_simple_ui_accepted() -> None:
         runtime={"ui": "simple"},
     )
     assert cfg.sweep is not None
-
-
-# ---------------------------------------------------------------------------
-# _reject_scenario_with_sweep — a fixed-spec scenario lock forbids sweeps.
-# A scenario locks ONE configuration; a sweep would fan it into N diverging
-# variations, each individually satisfying the lock (the falsification the v1
-# list-shaped --concurrency rejection prevented). In v2 magic-list flags are
-# hoisted to a sweep block before the config is built, so the rejection lives
-# here at the envelope level.
-# ---------------------------------------------------------------------------
 
 
 def test_scenario_with_sweep_rejected() -> None:
@@ -132,15 +108,8 @@ def test_scenario_with_sweep_unsafe_override_warns_only(
     )
 
 
-# ---------------------------------------------------------------------------
-# Cooldown / same_seed / iteration_order moved to GridSweep — verified
-# structurally there. AIPerfConfig no longer enforces these.
-# ---------------------------------------------------------------------------
-
-
 def test_grid_sweep_negative_cooldown_rejected_by_field_constraint() -> None:
-    """``GridSweep.cooldown_seconds`` carries ``ge=0``; bare AIPerfConfig
-    construction surfaces the Pydantic field error directly."""
+    """``GridSweep.cooldown_seconds`` carries ``ge=0``; bare AIPerfConfig"""
     with pytest.raises(ValueError, match="greater than or equal to 0"):
         _make(
             sweep={
@@ -191,18 +160,6 @@ def test_grid_sweep_same_seed_field_round_trips() -> None:
     assert cfg.sweep.same_seed is True
 
 
-# ---------------------------------------------------------------------------
-# validate_agentic_cache_warmup — ``--agentic-cache-warmup-duration`` is
-# consumed only on the AGENTIC_REPLAY path. On any other run the value is
-# silently dropped, so the guard hard-raises rather than accept a no-op flag.
-# A scenario governs the timing_mode (stamped post-construction by
-# apply_scenario, which never re-runs this gate), so the validator resolves the
-# scenario's declared timing_mode from its ScenarioSpec and rejects the flag
-# when the scenario is not agentic_replay. A no-scenario config is final and
-# resolved from the phases directly.
-# ---------------------------------------------------------------------------
-
-
 def _agentic_phase(**phase_overrides) -> list[dict]:
     return [
         {
@@ -232,12 +189,7 @@ def test_agentic_cache_warmup_with_agentic_scenario_accepted() -> None:
 def test_agentic_cache_warmup_with_non_agentic_scenario_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A non-agentic scenario must reject the flag, not silently drop it.
-
-    The validator resolves the scenario's declared timing_mode rather than
-    deferring; ``apply_scenario`` stamps the mode post-construction and never
-    re-runs this gate, so a blanket deferral would let a no-op flag through.
-    """
+    """A non-agentic scenario must reject the flag, not silently drop it."""
     from aiperf.common.scenario import registry
     from aiperf.plugin.enums import TimingMode
 

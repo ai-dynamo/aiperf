@@ -105,8 +105,6 @@ class TestStartBranchChild:
             branch_mode=ConversationBranchMode.SPAWN,
         )
         assert child.branch_mode == ConversationBranchMode.SPAWN
-        # SPAWN still sticky-pins via parent_correlation_id; the router
-        # co-locates while the parent sticky entry is live (no SPAWN refcount).
         assert child.routing_key == "parent-corr"
 
     def test_unknown_child_conversation_raises(self, src: ConversationSource):

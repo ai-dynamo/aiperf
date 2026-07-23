@@ -25,8 +25,7 @@ _SUFFIX_MARKER = "\n\n[rid:abc123def456]"
 def _make_session(
     raw_messages: list[dict] | None, *, num_turns: int = 1
 ) -> UserSession:
-    """Build a UserSession whose ``turn_list[-1].raw_messages`` is the given
-    list, simulating the post-``advance_turn`` state on the dispatch path."""
+    """Build a UserSession whose ``turn_list[-1].raw_messages`` is the given"""
     turn = Turn(raw_messages=raw_messages)
     conversation = Conversation(session_id="conv_test", turns=[turn] * num_turns)
     session = UserSession(
@@ -122,8 +121,7 @@ def test_inject_marker_into_raw_messages_suffix():
     ],
 )  # fmt: skip
 def test_inject_marker_into_raw_messages_idempotent(marker, is_prefix, expected):
-    """In DELTAS mode turn_list[0] is a single shared object re-visited every
-    credit; re-injecting the same marker must NOT stack it."""
+    """In DELTAS mode turn_list[0] is a single shared object re-visited every"""
     raw = [{"role": "system", "content": "you are helpful"}]
     _inject_marker_into_raw_messages(raw, marker, is_prefix=is_prefix)
     _inject_marker_into_raw_messages(raw, marker, is_prefix=is_prefix)
@@ -147,8 +145,7 @@ def test_inject_marker_no_system_role_is_noop():
 
 
 def test_inject_first_user_turn_idempotent_prefix():
-    """Injection is unconditional per credit (seeded resume marks turn 0 every
-    credit); the helper must not stack the marker on repeated calls."""
+    """Injection is unconditional per credit (seeded resume marks turn 0 every"""
     raw = [{"role": "user", "content": "hi"}]
     _inject_marker_into_first_user_turn(raw, _PREFIX_MARKER, is_prefix=True)
     _inject_marker_into_first_user_turn(raw, _PREFIX_MARKER, is_prefix=True)
@@ -205,13 +202,6 @@ def test_inject_first_user_turn_empty_raw_is_noop():
     assert raw == []
 
 
-# =============================================================================
-# Dispatch tests for _apply_cache_bust — covers the SYSTEM_*-fallback-to-
-# FIRST_TURN_* path that fixes the silent-drop bug for traces lacking a
-# system message.
-# =============================================================================
-
-
 def test_system_prefix_falls_back_to_first_user_turn_when_no_system():
     raw = [{"role": "user", "content": "hi"}]
     session = _make_session(raw)
@@ -253,13 +243,11 @@ def test_system_prefix_uses_existing_raw_system_role_when_no_conversation_system
     assert out is None
     msgs = session.turn_list[-1].raw_messages
     assert msgs[0]["content"] == _PREFIX_MARKER + "sys"
-    # User turn must be untouched.
     assert msgs[1]["content"] == "hi"
 
 
 def test_system_prefix_fallback_marks_first_user_on_turn_index_gt_zero():
-    """SYSTEM_PREFIX with no system anywhere falls back to the first user turn,
-    and now injects every credit (seeded-resume fix) rather than only turn 0."""
+    """SYSTEM_PREFIX with no system anywhere falls back to the first user turn,"""
     raw = [{"role": "user", "content": "hi"}]
     session = _make_session(raw, num_turns=2)
     credit = _make_credit(
@@ -284,9 +272,7 @@ def test_first_turn_prefix_unaffected_by_system_message_presence():
 
     out = _apply_cache_bust(session, credit, system_message="sys")
 
-    # System message returned unchanged.
     assert out == "sys"
-    # First user turn carries the marker.
     assert session.turn_list[-1].raw_messages[0]["content"] == _PREFIX_MARKER + "hi"
 
 
@@ -311,13 +297,7 @@ def test_system_prefix_with_conversation_system_message_returns_modified_string(
     out = _apply_cache_bust(session, credit, system_message="sys")
 
     assert out == _PREFIX_MARKER + "sys"
-    # Raw messages must NOT be mutated when conversation system_message exists.
     assert session.turn_list[-1].raw_messages[0]["content"] == "hi"
-
-
-# =============================================================================
-# Synthetic-Turn (raw_messages=None) injection — _inject_marker_into_first_user_text
-# =============================================================================
 
 
 def _make_synthetic_session(turn: Turn, *, num_turns: int = 1) -> UserSession:
@@ -437,14 +417,6 @@ def test_system_prefix_fallback_to_synthetic_text_when_no_raw_and_no_system_mess
     assert session.turn_list[-1].texts[0].contents[0] == _PREFIX_MARKER + "hi"
 
 
-# =============================================================================
-# Multimodal raw_messages content (list-of-parts)
-# =============================================================================
-# OpenAI multimodal shape: content=[{"type":"text","text":"..."}, {"type":"image_url",...}].
-# Marker becomes a new {"type":"text","text":marker} part at the start (prefix)
-# or end (suffix). Pre-fix this silently bailed and dropped the marker.
-
-
 def test_inject_into_raw_messages_multimodal_prefix():
     raw = [
         {"role": "system", "content": [{"type": "text", "text": "hi"}]},
@@ -542,22 +514,8 @@ def test_inject_into_first_user_turn_unexpected_content_type_logs_and_bails(capl
     assert any("cache-bust" in rec.message for rec in caplog.records)
 
 
-# =============================================================================
-# Delta-mode (DELTAS_WITH_RESPONSES) helper + dispatch coverage
-# =============================================================================
-# Under DELTAS_WITH_RESPONSES the session_manager appends each turn's delta
-# to ``turn_list``. The system role lives in ``turn_list[0].raw_messages[0]``;
-# subsequent turns' raw_messages start with the prior assistant response and
-# the new user prompt. The lookup must walk forward, NOT index ``[-1]``.
-
-
 def _make_delta_session(turns_raw: list[list[dict] | None]) -> UserSession:
-    """Build a UserSession whose ``turn_list`` is an accumulating delta list.
-
-    Each entry in ``turns_raw`` becomes a Turn's raw_messages. The conversation
-    declares ``num_turns == len(turns_raw)`` so this represents the post-
-    ``advance_turn`` state at the final turn under DELTAS_WITH_RESPONSES.
-    """
+    """Build a UserSession whose ``turn_list`` is an accumulating delta list."""
     turns = [Turn(raw_messages=raw) for raw in turns_raw]
     conversation = Conversation(session_id="conv_test", turns=list(turns))
     return UserSession(
@@ -623,8 +581,7 @@ def test_find_first_user_turn_picks_turn_with_user_role():
 
 
 def test_apply_system_prefix_under_deltas_injects_into_turn_0_not_last():
-    """The bug we are fixing: under deltas, system_prefix must mutate turn_list[0],
-    NOT turn_list[-1] (whose raw_messages start with an assistant role)."""
+    """The bug we are fixing: under deltas, system_prefix must mutate turn_list[0],"""
     turn_0 = [
         {"role": "system", "content": "rules"},
         {"role": "user", "content": "hi"},
@@ -644,9 +601,7 @@ def test_apply_system_prefix_under_deltas_injects_into_turn_0_not_last():
     out = _apply_cache_bust(session, credit, system_message=None)
 
     assert out is None
-    # System message in turn_list[0] is mutated, not turn_list[-1].
     assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "rules"
-    # Turn 1's delta is untouched (still starts with assistant, no marker).
     assert session.turn_list[1].raw_messages[0]["role"] == "assistant"
     assert session.turn_list[1].raw_messages[0]["content"] == "hello"
 
@@ -674,8 +629,7 @@ def test_apply_system_suffix_under_deltas_injects_into_turn_0_system():
 
 
 def test_apply_first_turn_prefix_under_deltas_injects_into_turn_0_user_role():
-    """FIRST_TURN_PREFIX with turn_index==0 must target turn_list[0]'s user role,
-    not the latest delta's user role."""
+    """FIRST_TURN_PREFIX with turn_index==0 must target turn_list[0]'s user role,"""
     turn_0 = [
         {"role": "system", "content": "rules"},
         {"role": "user", "content": "hi"},
@@ -694,17 +648,12 @@ def test_apply_first_turn_prefix_under_deltas_injects_into_turn_0_user_role():
 
     _apply_cache_bust(session, credit, system_message=None)
 
-    # First user message in turn 0 mutated; turn 1's user is untouched.
     assert session.turn_list[0].raw_messages[1]["content"] == _PREFIX_MARKER + "hi"
     assert session.turn_list[1].raw_messages[1]["content"] == "follow up"
 
 
 def test_apply_first_turn_prefix_under_deltas_mid_turn_marks_seeded_turn_0_once():
-    """Agentic replay can start at turn_index>0 after seeding turns 0..k-1.
-
-    FIRST_TURN_PREFIX must still attach to the seeded first user turn. Repeated
-    calls on the same mutable session should not duplicate the marker.
-    """
+    """Agentic replay can start at turn_index>0 after seeding turns 0..k-1."""
     turn_0 = [
         {"role": "system", "content": "rules"},
         {"role": "user", "content": "hi"},
@@ -749,17 +698,6 @@ def test_apply_system_prefix_no_system_under_deltas_falls_back_to_turn_0_user():
     assert session.turn_list[1].raw_messages[1]["content"] == "follow up"
 
 
-# =============================================================================
-# reset_context re-injection (FIRST_TURN_*)
-# =============================================================================
-# A turn carrying ``reset_context=True`` makes the endpoint's build_messages
-# discard every accumulated prior turn and start the wire payload fresh from
-# that turn's raw_messages. The turn-0 marker is no longer in the effective
-# prefix, so the marker must be RE-APPLIED to the reset turn — otherwise every
-# recycled play of the trace replays a byte-identical post-reset prefix and the
-# server's prefix cache warms across plays (the exact thing cache-bust prevents).
-
-
 def _make_delta_session_with_resets(
     turns_raw: list[list[dict] | None], reset_flags: list[bool]
 ) -> UserSession:
@@ -778,13 +716,11 @@ def _make_delta_session_with_resets(
 
 
 def test_first_turn_prefix_reapplied_on_reset_context_turn():
-    """FIRST_TURN_PREFIX at turn_index > 0 must inject into the reset turn (the
-    new wire prefix), not be skipped as it is for ordinary later turns."""
+    """FIRST_TURN_PREFIX at turn_index > 0 must inject into the reset turn (the"""
     turn_0 = [
         {"role": "system", "content": "rules"},
         {"role": "user", "content": "hi"},
     ]
-    # Reset turn: build_messages discards turn 0 and starts here.
     turn_1_reset = [
         {"role": "system", "content": "fresh rules"},
         {"role": "user", "content": "new prefix"},
@@ -801,11 +737,9 @@ def test_first_turn_prefix_reapplied_on_reset_context_turn():
 
     _apply_cache_bust(session, credit, system_message=None)
 
-    # The reset turn's first user message carries the marker.
     assert (
         session.turn_list[1].raw_messages[1]["content"] == _PREFIX_MARKER + "new prefix"
     )
-    # Turn 0 (discarded from the wire) is left untouched.
     assert session.turn_list[0].raw_messages[1]["content"] == "hi"
 
 
@@ -830,8 +764,7 @@ def test_first_turn_suffix_reapplied_on_reset_context_turn():
 
 
 def test_first_turn_prefix_marks_prefix_turn_on_ordinary_later_turn():
-    """A non-reset turn at index > 0 re-marks the shared turn-0 prefix
-    (idempotent) and leaves the later turn's own user content untouched."""
+    """A non-reset turn at index > 0 re-marks the shared turn-0 prefix"""
     turn_0 = [{"role": "user", "content": "hi"}]
     turn_1 = [
         {"role": "assistant", "content": "ok"},
@@ -854,8 +787,7 @@ def test_first_turn_prefix_marks_prefix_turn_on_ordinary_later_turn():
 
 
 def test_first_turn_prefix_reset_on_turn_zero_uses_turn_zero_path_once():
-    """A reset flag on turn 0 still resolves through the turn-0 path and injects
-    exactly once (no double application)."""
+    """A reset flag on turn 0 still resolves through the turn-0 path and injects"""
     turn_0_reset = [{"role": "user", "content": "hi"}]
     session = _make_delta_session_with_resets([turn_0_reset], reset_flags=[True])
     credit = _make_credit(
@@ -870,18 +802,8 @@ def test_first_turn_prefix_reset_on_turn_zero_uses_turn_zero_path_once():
     assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "hi"
 
 
-# =============================================================================
-# Seeded mid-trajectory resume (FIRST_TURN_* / SYSTEM_* sub-path 3)
-# =============================================================================
-# Agentic replay can resume a trajectory at turn k_i > 0. The worker's
-# advance_turn back-fills turns 0..k_i into turn_list, so turn 0 (the real wire
-# prefix) is present even though credit.turn_index > 0. The turn-0 gate missed
-# it; injection now runs every credit and is idempotent.
-
-
 def test_first_turn_prefix_marks_seeded_turn_zero_on_resume():
-    """FIRST_TURN_PREFIX at turn_index > 0 with no reset must mark the seeded
-    turn 0 (the conversation's opening prefix), not be skipped."""
+    """FIRST_TURN_PREFIX at turn_index > 0 with no reset must mark the seeded"""
     turn_0 = [{"role": "user", "content": "u0"}]
     turn_1 = [
         {"role": "assistant", "content": "a0"},
@@ -904,13 +826,11 @@ def test_first_turn_prefix_marks_seeded_turn_zero_on_resume():
     _apply_cache_bust(session, credit, system_message=None)
 
     assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "u0"
-    # Later seeded turns' user messages are untouched.
     assert session.turn_list[2].raw_messages[1]["content"] == "u2"
 
 
 def test_first_turn_prefix_resume_then_next_turn_no_stacking():
-    """The seeded turn 0 is shared across the session's turns; processing the
-    resume credit then the next turn must mark it exactly once."""
+    """The seeded turn 0 is shared across the session's turns; processing the"""
     turn_0 = [{"role": "user", "content": "u0"}]
     turn_1 = [
         {"role": "assistant", "content": "a0"},
@@ -932,7 +852,6 @@ def test_first_turn_prefix_resume_then_next_turn_no_stacking():
     )
     assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "u0"
 
-    # Next turn on the same session re-runs injection; idempotent -> no stack.
     _apply_cache_bust(
         session,
         _make_credit(
@@ -947,8 +866,7 @@ def test_first_turn_prefix_resume_then_next_turn_no_stacking():
 
 
 def test_system_prefix_subpath3_marks_seeded_turn_zero_on_resume():
-    """SYSTEM_PREFIX with no system anywhere falls back to first-user; under a
-    seeded resume it must still mark the seeded turn 0."""
+    """SYSTEM_PREFIX with no system anywhere falls back to first-user; under a"""
     turn_0 = [{"role": "user", "content": "u0"}]
     turn_1 = [
         {"role": "assistant", "content": "a0"},
@@ -969,16 +887,6 @@ def test_system_prefix_subpath3_marks_seeded_turn_zero_on_resume():
     assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "u0"
 
 
-# =============================================================================
-# FORK children: inherit the parent's prefix, never bust
-# =============================================================================
-# A FORK child seeds turn_list = list(parent.turn_list) (SHARED Turn objects,
-# same worker). It shares the parent's KV cache by design, so cache-bust must be
-# a complete no-op: the child inherits the parent's already-injected marker via
-# the shared object and must NOT re-bust it (which would diverge the prefix from
-# the parent -> cache miss -> and corrupt the parent's shared Turn).
-
-
 def _make_fork_child_session(
     turns: list[Turn], *, num_turns: int | None = None
 ) -> UserSession:
@@ -994,8 +902,6 @@ def _make_fork_child_session(
 
 
 def test_fork_child_first_turn_is_noop_inherits_parent_marker():
-    # The shared turn 0 already carries the PARENT's marker (injected by the
-    # parent's session). The child must leave it untouched.
     parent_marked_t0 = Turn(
         raw_messages=[{"role": "user", "content": "[rid:PARENT00000]\n\nu0"}],
         reset_context=False,
@@ -1018,7 +924,6 @@ def test_fork_child_first_turn_is_noop_inherits_parent_marker():
     out = _apply_cache_bust(session, credit, system_message=None)
 
     assert out is None
-    # Parent's marker preserved verbatim; the child's marker is NOT added.
     assert session.turn_list[0].raw_messages[0]["content"] == "[rid:PARENT00000]\n\nu0"
 
 
@@ -1051,8 +956,7 @@ def test_fork_child_system_target_is_noop():
 
 
 def test_spawn_child_is_busted_normally():
-    """SPAWN children start fresh (no shared parent turns), so they are busted
-    like a root session."""
+    """SPAWN children start fresh (no shared parent turns), so they are busted"""
     t0 = Turn(raw_messages=[{"role": "user", "content": "u0"}], reset_context=False)
     conversation = Conversation(session_id="spawn", turns=[t0])
     session = UserSession(
@@ -1073,15 +977,6 @@ def test_spawn_child_is_busted_normally():
     _apply_cache_bust(session, credit, system_message=None)
 
     assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "u0"
-
-
-# =============================================================================
-# Buried reset_context (reset turn is NOT the current turn)
-# =============================================================================
-# build_messages restarts the wire array at every reset_context turn, so the
-# effective prefix is the LAST reset turn in turn_list. That turn may sit
-# mid-history (seeded on a resume, never dispatched as the current turn), so
-# inspecting only turn_list[-1] would mark the discarded turn 0 instead.
 
 
 def test_first_turn_prefix_marks_buried_reset_turn_not_discarded_turn_zero():
@@ -1106,7 +1001,6 @@ def test_first_turn_prefix_marks_buried_reset_turn_not_discarded_turn_zero():
 
     _apply_cache_bust(session, credit, system_message=None)
 
-    # Marker lands on the buried reset turn (the real wire prefix), not turn 0.
     assert session.turn_list[1].raw_messages[1]["content"] == _PREFIX_MARKER + "u1"
     assert session.turn_list[0].raw_messages[0]["content"] == "u0"
     assert session.turn_list[2].raw_messages[1]["content"] == "u2"
@@ -1138,7 +1032,6 @@ def test_system_prefix_marks_buried_reset_turn_system():
     _apply_cache_bust(session, credit, system_message=None)
 
     assert session.turn_list[1].raw_messages[0]["content"] == _PREFIX_MARKER + "S1"
-    # Discarded turn 0 system left untouched.
     assert session.turn_list[0].raw_messages[0]["content"] == "S0"
 
 
@@ -1166,20 +1059,8 @@ def test_first_turn_prefix_marks_only_last_of_multiple_resets():
     assert session.turn_list[0].raw_messages[0]["content"] == "u0"
 
 
-# =============================================================================
-# reset_context re-injection (SYSTEM_*)
-# =============================================================================
-# Same defect as FIRST_TURN_*, but for the SYSTEM_* sub-paths that mutate a
-# turn's raw_messages. Sub-path 1 (Conversation-level system_message) is safe
-# because the marker rides on RequestInfo.system_message and is re-emitted every
-# turn independent of build_messages' reset. Sub-paths 2 (raw role=="system" in
-# a turn) and 3 (no system -> first-user fallback) marked the discarded turn 0
-# instead of the reset turn's fresh prefix; these tests pin the fix.
-
-
 def test_system_prefix_reapplied_on_reset_turn_with_own_system():
-    """Sub-path 2 under reset: the reset turn's own system message (the new wire
-    prefix), not the discarded turn 0 system, must carry the marker."""
+    """Sub-path 2 under reset: the reset turn's own system message (the new wire"""
     turn_0 = [
         {"role": "system", "content": "S0"},
         {"role": "user", "content": "u0"},
@@ -1202,7 +1083,6 @@ def test_system_prefix_reapplied_on_reset_turn_with_own_system():
 
     assert out is None
     assert session.turn_list[1].raw_messages[0]["content"] == _PREFIX_MARKER + "S1"
-    # Discarded turn 0 system left untouched on this credit.
     assert session.turn_list[0].raw_messages[0]["content"] == "S0"
 
 
@@ -1229,8 +1109,7 @@ def test_system_suffix_reapplied_on_reset_turn_with_own_system():
 
 
 def test_system_prefix_reset_no_system_falls_back_to_reset_turn_user():
-    """Sub-path 3 under reset: no system anywhere, so the marker falls back to
-    the reset turn's first user message (its new prefix), not turn 0's."""
+    """Sub-path 3 under reset: no system anywhere, so the marker falls back to"""
     turn_0 = [{"role": "user", "content": "u0"}]
     turn_1_reset = [{"role": "user", "content": "u1"}]
     session = _make_delta_session_with_resets(
@@ -1250,9 +1129,7 @@ def test_system_prefix_reset_no_system_falls_back_to_reset_turn_user():
 
 
 def test_system_prefix_subpath2_no_stacking_across_delta_turns():
-    """Sub-path 2 dispatch: under DELTAS the shared turn_list[0] system is
-    re-visited on every credit. The marker must be injected once and not stack
-    turn-over-turn (the original 'inject every turn' design stacked here)."""
+    """Sub-path 2 dispatch: under DELTAS the shared turn_list[0] system is"""
     turn_0 = [
         {"role": "system", "content": "S0"},
         {"role": "user", "content": "u0"},
@@ -1287,14 +1164,11 @@ def test_system_prefix_subpath2_no_stacking_across_delta_turns():
         ),
         system_message=None,
     )
-    # Still exactly one marker, not stacked.
     assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "S0"
 
 
 def test_system_prefix_conversation_message_safe_under_reset():
-    """Sub-path 1 regression: a Conversation-level system_message is re-marked
-    every turn and rides on RequestInfo, so reset never strips it. The returned
-    string carries the marker and the raw turns stay untouched."""
+    """Sub-path 1 regression: a Conversation-level system_message is re-marked"""
     turns = [
         Turn(
             raw_messages=[{"role": "user", "content": "u0"}],
@@ -1327,14 +1201,6 @@ def test_system_prefix_conversation_message_safe_under_reset():
     assert session.turn_list[1].raw_messages[0]["content"] == "u1"
 
 
-# =============================================================================
-# Extensive matrix: session-type x target x prefix-scenario interactions
-# =============================================================================
-# These lock the full interaction surface that bit us repeatedly: FORK (shared,
-# inherit-don't-bust) vs SPAWN/root (own prefix, bust) crossed with all four
-# targets, multi-turn persistence, idempotency, and reset/seeded-resume combos.
-
-
 _ALL_TARGETS = [
     CacheBustTarget.FIRST_TURN_PREFIX,
     CacheBustTarget.FIRST_TURN_SUFFIX,
@@ -1344,8 +1210,7 @@ _ALL_TARGETS = [
 
 
 def _marker_for(target: CacheBustTarget) -> str:
-    """Prefix targets need a trailing-newline marker; suffix targets a leading one
-    (mirrors build_cache_bust_marker's placement)."""
+    """Prefix targets need a trailing-newline marker; suffix targets a leading one"""
     return (
         _SUFFIX_MARKER
         if target in (CacheBustTarget.FIRST_TURN_SUFFIX, CacheBustTarget.SYSTEM_SUFFIX)
@@ -1353,13 +1218,9 @@ def _marker_for(target: CacheBustTarget) -> str:
     )
 
 
-# ---- FORK is a no-op for every target -------------------------------------
-
-
 @pytest.mark.parametrize("target", _ALL_TARGETS)
 def test_fork_child_is_noop_for_all_targets(target: CacheBustTarget):
-    """A FORK child must never re-bust its inherited prefix, regardless of target.
-    The shared turn carries only the parent's marker; the child adds nothing."""
+    """A FORK child must never re-bust its inherited prefix, regardless of target."""
     parent_marked = Turn(
         raw_messages=[
             {"role": "system", "content": "[rid:PARENT00000]\n\nS0"},
@@ -1388,9 +1249,7 @@ def test_fork_child_is_noop_for_all_targets(target: CacheBustTarget):
 
 
 def test_fork_child_noop_even_when_conversation_system_message_present():
-    """SYSTEM sub-path 1 (Conversation-level system_message) is also skipped for
-    a FORK child: the child returns it unchanged rather than applying its own
-    marker (which would diverge from the parent's system prefix)."""
+    """SYSTEM sub-path 1 (Conversation-level system_message) is also skipped for"""
     parent_marked = Turn(
         raw_messages=[{"role": "user", "content": "u0"}], reset_context=False
     )
@@ -1411,7 +1270,6 @@ def test_fork_child_noop_even_when_conversation_system_message_present():
 
     out = _apply_cache_bust(session, credit, system_message="CONV")
 
-    # Returned unchanged (NOT marker + "CONV").
     assert out == "CONV"
 
 
@@ -1444,9 +1302,7 @@ def test_fork_child_multi_turn_prefix_stays_single_marked():
 
 
 def test_fork_child_with_own_reset_is_still_noop():
-    """A FORK child carrying its OWN reset_context turn is still a no-op: FORK
-    never busts. (Documents current behavior — a child-introduced reset prefix
-    is not independently busted; revisit if that workload appears.)"""
+    """A FORK child carrying its OWN reset_context turn is still a no-op: FORK"""
     shared_t0 = Turn(
         raw_messages=[{"role": "user", "content": "[rid:PARENT00000]\n\nu0"}],
         reset_context=False,
@@ -1469,14 +1325,8 @@ def test_fork_child_with_own_reset_is_still_noop():
     assert session.turn_list[0].raw_messages[0]["content"] == "[rid:PARENT00000]\n\nu0"
 
 
-# ---- Realistic FORK lifecycle through UserSessionManager seeding -----------
-
-
 def test_fork_lifecycle_child_inherits_parents_marked_turn_object():
-    """End-to-end at the session layer: a parent marks turn 0 in place, a FORK
-    child is seeded from the parent via create_and_store (sharing the SAME Turn
-    object), and the child's cache-bust is a no-op — so the child sends the
-    parent's exact marked prefix (byte-identical => prefix-cache hit)."""
+    """End-to-end at the session layer: a parent marks turn 0 in place, a FORK"""
     mgr = UserSessionManager()
     t0 = Turn(raw_messages=[{"role": "user", "content": "u0"}], reset_context=False)
     parent_conv = Conversation(session_id="root", turns=[t0])
@@ -1494,9 +1344,6 @@ def test_fork_lifecycle_child_inherits_parents_marked_turn_object():
     )
     assert parent.turn_list[0].raw_messages[0]["content"] == "[rid:PARENT00000]\n\nu0"
 
-    # FORK child seeds turn_list from the parent (shallow copy -> shared Turn).
-    # The worker drives this as create_and_store(...) then seed_from_parent(...)
-    # (see Worker._seed_from_parent_if_fork_child).
     child = mgr.create_and_store(
         "C",
         parent_conv,
@@ -1505,7 +1352,6 @@ def test_fork_lifecycle_child_inherits_parents_marked_turn_object():
         branch_mode=ConversationBranchMode.FORK,
     )
     mgr.seed_from_parent("C", "P")
-    # The child shares the parent's marked turn-0 object by identity.
     assert child.turn_list[0] is parent.turn_list[0]
 
     _apply_cache_bust(
@@ -1519,12 +1365,8 @@ def test_fork_lifecycle_child_inherits_parents_marked_turn_object():
         system_message=None,
     )
 
-    # No-op: still exactly the parent's marker, no child marker, no stacking.
     assert child.turn_list[0].raw_messages[0]["content"] == "[rid:PARENT00000]\n\nu0"
     assert parent.turn_list[0].raw_messages[0]["content"] == "[rid:PARENT00000]\n\nu0"
-
-
-# ---- SPAWN children and root sessions ARE busted (across targets) ----------
 
 
 @pytest.mark.parametrize("target", _ALL_TARGETS)
@@ -1553,18 +1395,14 @@ def test_spawn_child_is_busted_for_all_targets(target: CacheBustTarget):
 
     msgs = session.turn_list[0].raw_messages
     if target in (CacheBustTarget.SYSTEM_PREFIX, CacheBustTarget.SYSTEM_SUFFIX):
-        carrier = msgs[0]["content"]  # system
+        carrier = msgs[0]["content"]
     else:
-        carrier = msgs[1]["content"]  # first user
+        carrier = msgs[1]["content"]
     assert _PREFIX_MARKER.strip() in carrier
 
 
-# ---- Idempotency stress: one session, many credits, single marker ----------
-
-
 def test_within_session_many_credits_single_marker_prefix():
-    """A root session re-processed across many credits keeps exactly one marker
-    on the shared turn-0 object (idempotency holds turn-over-turn)."""
+    """A root session re-processed across many credits keeps exactly one marker"""
     t0_raw = [{"role": "user", "content": "u0"}]
     rest_raw = [
         [
@@ -1608,12 +1446,8 @@ def test_within_session_many_credits_single_marker_suffix():
     assert session.turn_list[0].raw_messages[0]["content"] == "u0" + _SUFFIX_MARKER
 
 
-# ---- Seeded-resume x reset combinations (suffix coverage) ------------------
-
-
 def test_seeded_resume_with_buried_reset_suffix():
-    """Buried reset + suffix target on a seeded resume: marker suffixes the reset
-    turn's first user (the effective prefix), not the discarded turn 0."""
+    """Buried reset + suffix target on a seeded resume: marker suffixes the reset"""
     turn_0 = [{"role": "user", "content": "u0"}]
     turn_1_reset = [{"role": "user", "content": "u1"}]
     turn_2 = [

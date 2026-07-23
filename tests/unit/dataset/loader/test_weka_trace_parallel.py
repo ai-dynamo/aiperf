@@ -1,10 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Parallel reconstruction parity + structural tests for WekaTraceLoader.
-
-Drives :func:`weka_parallel_convert._process_task` in-process (no real Pool)
-so xdist-safe.
-"""
+"""Parallel reconstruction parity + structural tests for WekaTraceLoader."""
 
 from __future__ import annotations
 
@@ -39,14 +35,7 @@ def _mk_user_config(model_names=None):
 def _drive_parallel_inproc(
     loader: WekaTraceLoader, parent_plans, child_plans, data
 ) -> list:
-    """Run :func:`_reconstruct_parallel` but with the worker pool replaced by
-    in-process execution of :func:`_process_task`.
-
-    Initializes :data:`weka_parallel_convert._worker_state` once with a real
-    HashIdRandomGenerator (matching the serial path's seed) over a corpus
-    matching the stubbed ``pg._tokenized_corpus``. Restores prior worker
-    state at end so other tests aren't affected.
-    """
+    """Run :func:`_reconstruct_parallel` but with the worker pool replaced by"""
     from multiprocessing import shared_memory
 
     pg = loader.prompt_generator
@@ -73,8 +62,6 @@ def _drive_parallel_inproc(
             )
             wpc._init_worker(args)
 
-        # Build tasks via the same helper code _reconstruct_parallel uses,
-        # then call _process_task on each.
         ignore_delays = loader._ignore_trace_delays
         think_time_only = loader._use_think_time_only
         cap_seconds = loader._inter_turn_delay_cap_seconds
@@ -97,8 +84,6 @@ def _drive_parallel_inproc(
                     "model": creq.model,
                     "t": creq.t,
                     "think_time": getattr(creq, "think_time", None),
-                    # Dropped children have no pre-pass entry; they are
-                    # skipped by _process_task so the fallback is unused.
                     "theoretical_hit_blocks": child_metric_values.get(
                         (cp.session_id, k), (0, 0)
                     )[0],
@@ -207,9 +192,7 @@ def _make_stub_pg_with_real_rng(corpus_size: int = 1000):
 
 
 def _build_plans(loader: WekaTraceLoader, data: dict) -> tuple:
-    """Re-derive parent_plans/child_plans/dropped_per_trace the way
-    convert_to_conversations does, since both serial and parallel helpers
-    consume them as inputs."""
+    """Re-derive parent_plans/child_plans/dropped_per_trace the way"""
     from dataclasses import dataclass
 
     from aiperf.dataset.loader.weka_trace import _expand_subagent_to_child_plans
@@ -252,14 +235,7 @@ def _build_plans(loader: WekaTraceLoader, data: dict) -> tuple:
 
 
 def _stub_loader_real_rng(loader: WekaTraceLoader) -> None:
-    """Like _stub_loader but with a real HashIdRandomGenerator instance.
-
-    The serial path uses ``loader.prompt_generator._hash_id_corpus_rng`` to
-    pick block content via ``set_trace_id`` + ``reseed_for_hash_id``. The
-    parallel path also uses a fresh real RNG seeded from
-    ``pg._hash_id_corpus_rng.seed``. Both must end up at byte-identical
-    outputs when run with the same trace_id scope.
-    """
+    """Like _stub_loader but with a real HashIdRandomGenerator instance."""
     pg = _make_stub_pg_with_real_rng(corpus_size=1000)
     loader.prompt_generator = pg
     loader._tokenizer_name = "test-tok"
@@ -270,7 +246,6 @@ def _stub_loader_real_rng(loader: WekaTraceLoader) -> None:
 
 def test_parallel_byte_equivalence_simple_fixture(tmp_path):
     """Parallel raw_messages == serial raw_messages on the simple fixture."""
-    # Load + parse once per loader since the file traversal is non-pure.
     serial_loader = WekaTraceLoader(
         filename=str(FIXTURES / "simple.json"), run=_mk_user_config()
     )
@@ -309,13 +284,10 @@ def test_parallel_byte_equivalence_simple_fixture(tmp_path):
         ),
     )
 
-    # Parallel path: drive _process_task in-process to get reconstruction
-    # results, then assemble Conversations the same way _reconstruct_parallel does.
     parallel_results = _drive_parallel_inproc(
         serial_loader, parent_plans, child_plans, data
     )
 
-    # Reassemble into Conversation list (mirroring _reconstruct_parallel tail).
     parallel_convs = []
     for result in parallel_results:
         trace_id = result["trace_id"]
@@ -421,8 +393,6 @@ def test_parallel_byte_equivalence_with_subagent(tmp_path):
         serial_loader, parent_plans, child_plans, data
     )
 
-    # Quick sanity: subagent fixture has parent + child conversation = 2 results,
-    # parallel results contains 1 parent result with 1 child embedded.
     serial_session_ids = {c.session_id for c in serial_convs}
     parallel_session_ids = set()
     for r in parallel_results:
@@ -431,7 +401,6 @@ def test_parallel_byte_equivalence_with_subagent(tmp_path):
             parallel_session_ids.add(ch["session_id"])
     assert serial_session_ids == parallel_session_ids
 
-    # Parent raw_messages parity
     serial_by_sid = {c.session_id: c for c in serial_convs}
     for result in parallel_results:
         sc = serial_by_sid[result["trace_id"]]
@@ -518,7 +487,6 @@ def test_worker_scope_helpers_deterministic_per_trace_id(tmp_path):
             "different scopes must produce different content for the same hash_id"
         )
 
-        # Determinism: re-running with same scope yields identical content.
         decode_a2, _, _ = wpc._make_scope_helpers("scope-a", 64)
         toks_a2 = decode_a2([42])
         assert toks_a == toks_a2
@@ -603,12 +571,7 @@ def test_parallel_path_handles_small_trace_counts(tmp_path, n_traces):
 
 
 def test_fanout_split_parallel_byte_identical_to_serial(monkeypatch):
-    """Flat-chain splitting must be byte-identical across both paths.
-
-    Runs the FULL convert_to_conversations twice — serial (workers=1) and
-    parallel (threshold=1, the pool replaced by an in-process map over
-    _process_task) — so the real task builder and assembly are exercised.
-    """
+    """Flat-chain splitting must be byte-identical across both paths."""
     from multiprocessing import shared_memory
 
     import aiperf.common.environment as env_mod

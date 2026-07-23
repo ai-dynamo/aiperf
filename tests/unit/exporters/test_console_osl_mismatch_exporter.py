@@ -117,7 +117,7 @@ class TestConsoleOSLMismatchExporter:
             assert "Output Sequence Length Mismatch Warning" in output
             assert "25 of 100 requests" in output
             assert "(25.0%)" in output
-            assert "20%" in output  # threshold
+            assert "20%" in output
 
     async def test_warning_includes_recommended_actions(self, mock_cfg):
         """Test that warning includes recommended actions."""
@@ -132,15 +132,12 @@ class TestConsoleOSLMismatchExporter:
                 )
             )
             output = await self._get_export_output(exporter)
-            # Check for explanation
             assert "Why:" in output
             assert "EOS token" in output
-            # Check for fix options
             assert "Fix Options:" in output
             assert "ignore_eos:true" in output
             assert "min_tokens" in output
             assert "--use-server-token-count" in output
-            # Check for diagnostics
             assert "Diagnostics:" in output
             assert "profile_export.jsonl" in output
             assert "osl_mismatch_diff_pct" in output
@@ -159,7 +156,7 @@ class TestConsoleOSLMismatchExporter:
                 )
             )
             output = await self._get_export_output(exporter)
-            assert "15%" in output  # custom threshold
+            assert "15%" in output
             assert "AIPERF_METRICS_OSL_MISMATCH_PCT_THRESHOLD=15" in output
 
     async def test_high_mismatch_percentage(self, mock_cfg):
@@ -217,19 +214,7 @@ class TestConsoleOSLMismatchExporter:
             assert "(25.0%)" in output
 
     async def test_warning_content_is_cp1252_encodable(self, mock_cfg):
-        """Regression: warning content must encode in Windows cp1252.
-
-        When aiperf is launched as a subprocess with PIPE'd stdout on Windows,
-        sys.stdout's encoding is cp1252 (not utf-8). A non-cp1252 char in this
-        panel previously raised UnicodeEncodeError, which aborted
-        SystemController._stop_system_controller and hung the parent until
-        pytest's 450s timeout (U+2192 -> at line 107).
-
-        Checks the warning text *content* only. Rich's panel border falls
-        back to ASCII when rendering to a non-terminal stream (which is the
-        production case for aiperf parent stdout under subprocess.PIPE),
-        so the border is not what we control here.
-        """
+        """Regression: warning content must encode in Windows cp1252."""
         with patch(
             "aiperf.exporters.console_osl_mismatch_exporter.Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD",
             20.0,
@@ -246,6 +231,4 @@ class TestConsoleOSLMismatchExporter:
                 percentage=25.0,
                 avg_diff=66.7,
             )
-            # `strict` matches Windows' default behavior; `replace` would mask
-            # the very failure mode this test exists to catch.
             warning_text.encode("cp1252", errors="strict")

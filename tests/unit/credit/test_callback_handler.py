@@ -13,8 +13,6 @@ from aiperf.credit.callback_handler import CreditCallbackHandler
 from aiperf.credit.messages import CreditReturn, FirstToken
 from aiperf.credit.structs import Credit
 
-# Test Fixtures
-
 
 @pytest.fixture
 def mock_concurrency():
@@ -29,7 +27,7 @@ def mock_concurrency():
 def mock_progress():
     """Mock progress tracker."""
     mock = MagicMock()
-    mock.increment_returned = MagicMock(return_value=False)  # Not final return
+    mock.increment_returned = MagicMock(return_value=False)
     mock.increment_prefill_released = MagicMock()
     mock.all_credits_returned_event = asyncio.Event()
     mock.in_flight_sessions = 0
@@ -131,9 +129,6 @@ def make_credit_return(
     )
 
 
-# Test: Phase Registration
-
-
 class TestPhaseRegistration:
     """Tests for phase registration."""
 
@@ -205,9 +200,6 @@ class TestPhaseRegistration:
         mock_concurrency.release_prefill_slot.assert_called_once_with(1)
 
 
-# Test: Credit Return - Basic Flow
-
-
 class TestCreditReturnBasicFlow:
     """Tests for basic credit return handling."""
 
@@ -222,9 +214,9 @@ class TestCreditReturnBasicFlow:
 
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
-            False,  # cancelled=False
+            False,
             errored=False,
-            is_child=False,  # agent_depth=0 root credit
+            is_child=False,
         )
 
     async def test_on_credit_return_tracks_cancelled_status(
@@ -238,9 +230,9 @@ class TestCreditReturnBasicFlow:
 
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
-            True,  # cancelled=True
+            True,
             errored=False,
-            is_child=False,  # agent_depth=0 root credit
+            is_child=False,
         )
 
     async def test_on_credit_return_notifies_result_aware_strategy(
@@ -288,7 +280,7 @@ class TestCreditReturnBasicFlow:
         self, registered_handler, mock_concurrency
     ):
         """Should release session slot when final turn returns."""
-        credit = make_credit(turn_index=2, num_turns=3)  # Final turn
+        credit = make_credit(turn_index=2, num_turns=3)
         credit_return = make_credit_return(credit)
 
         await registered_handler.on_credit_return("worker-1", credit_return)
@@ -301,15 +293,12 @@ class TestCreditReturnBasicFlow:
         self, registered_handler, mock_concurrency
     ):
         """Should NOT release session slot on non-final turn."""
-        credit = make_credit(turn_index=0, num_turns=3)  # Not final
+        credit = make_credit(turn_index=0, num_turns=3)
         credit_return = make_credit_return(credit)
 
         await registered_handler.on_credit_return("worker-1", credit_return)
 
         mock_concurrency.release_session_slot.assert_not_called()
-
-
-# Test: Credit Return - TTFT Handling
 
 
 class TestCreditReturnTTFTHandling:
@@ -319,7 +308,6 @@ class TestCreditReturnTTFTHandling:
         self, registered_handler, mock_progress, mock_concurrency
     ):
         """Prefill slot released when first_token_sent is False, not when True."""
-        # No TTFT case
         credit_no_ttft = make_credit()
         credit_return_no_ttft = make_credit_return(
             credit_no_ttft, first_token_sent=False
@@ -329,11 +317,9 @@ class TestCreditReturnTTFTHandling:
         mock_progress.increment_prefill_released.assert_called_once()
         mock_concurrency.release_prefill_slot.assert_called_once()
 
-        # Reset mocks
         mock_progress.reset_mock()
         mock_concurrency.reset_mock()
 
-        # With TTFT case
         credit_with_ttft = make_credit(credit_id=2)
         credit_return_with_ttft = make_credit_return(
             credit_with_ttft, first_token_sent=True
@@ -342,9 +328,6 @@ class TestCreditReturnTTFTHandling:
 
         mock_progress.increment_prefill_released.assert_not_called()
         mock_concurrency.release_prefill_slot.assert_not_called()
-
-
-# Test: Credit Return - Final Return Handling
 
 
 class TestCreditReturnFinalHandling:
@@ -356,7 +339,7 @@ class TestCreditReturnFinalHandling:
         """Final return sets event and releases in-flight session slots."""
         progress = MagicMock()
         progress.all_credits_returned_event = asyncio.Event()
-        progress.increment_returned = MagicMock(return_value=True)  # Final return
+        progress.increment_returned = MagicMock(return_value=True)
         progress.increment_prefill_released = MagicMock()
         progress.in_flight_sessions = 2
 
@@ -368,17 +351,13 @@ class TestCreditReturnFinalHandling:
             strategy=MagicMock(handle_credit_return=AsyncMock()),
         )
 
-        credit = make_credit(turn_index=0, num_turns=1)  # Final turn
+        credit = make_credit(turn_index=0, num_turns=1)
         credit_return = make_credit_return(credit)
 
         await callback_handler.on_credit_return("worker-1", credit_return)
 
         assert progress.all_credits_returned_event.is_set()
-        # Should release 2 in-flight session slots + 1 for final turn
         assert mock_concurrency.release_session_slot.call_count == 3
-
-
-# Test: Credit Return - Next Turn Dispatch
 
 
 class TestNextTurnDispatch:
@@ -388,13 +367,11 @@ class TestNextTurnDispatch:
         self, registered_handler, mock_strategy, mock_stop_checker
     ):
         """Dispatches to strategy when can_send_any_turn, skips when stopped."""
-        # Can send case
         credit = make_credit(turn_index=0, num_turns=3)
         credit_return = make_credit_return(credit)
         await registered_handler.on_credit_return("worker-1", credit_return)
         mock_strategy.handle_credit_return.assert_called_once_with(credit, error=None)
 
-        # Stop condition reached
         mock_strategy.reset_mock()
         mock_stop_checker.can_send_any_turn.return_value = False
         credit2 = make_credit(credit_id=2, turn_index=0, num_turns=3)
@@ -440,12 +417,7 @@ async def test_root_context_overflow_calls_registry_on_root_terminal(
     mock_stop_checker,
     mock_strategy,
 ):
-    """Non-final root context-overflow must clear root_pending via registry.
-
-    Agentic replay early-returns under the tree registry expecting the
-    callback handler to have already called ``on_root_terminal``; gating that
-    call on ``is_final_turn`` alone leaks the session slot forever.
-    """
+    """Non-final root context-overflow must clear root_pending via registry."""
     registry = MagicMock()
     registry.has_tree.return_value = True
     handler = CreditCallbackHandler(mock_concurrency, session_tree_registry=registry)
@@ -456,7 +428,7 @@ async def test_root_context_overflow_calls_registry_on_root_terminal(
         stop_checker=mock_stop_checker,
         strategy=mock_strategy,
     )
-    credit = make_credit(turn_index=1, num_turns=5)  # non-final
+    credit = make_credit(turn_index=1, num_turns=5)
     await handler.on_credit_return(
         "worker-1",
         make_credit_return(
@@ -512,13 +484,7 @@ async def test_overflow_skips_intercept_and_runs_terminal_path(
     mock_strategy,
     mock_branch_orchestrator,
 ):
-    """Overflow terminal must not honor gated-suspend early-return (R1).
-
-    Even when ``intercept`` would return True (gated next turn), a
-    context-overflow root return must still call ``on_root_terminal``,
-    ``strategy.handle_credit_return`` (overflow recycle), and skip calling
-    intercept entirely.
-    """
+    """Overflow terminal must not honor gated-suspend early-return (R1)."""
     registry = MagicMock()
     registry.has_tree.return_value = True
     mock_branch_orchestrator.intercept = AsyncMock(return_value=True)
@@ -535,7 +501,7 @@ async def test_overflow_skips_intercept_and_runs_terminal_path(
         stop_checker=mock_stop_checker,
         strategy=mock_strategy,
     )
-    credit = make_credit(turn_index=1, num_turns=5)  # non-final
+    credit = make_credit(turn_index=1, num_turns=5)
     assert not credit.is_final_turn
 
     await handler.on_credit_return(
@@ -601,12 +567,7 @@ async def test_non_overflow_warmup_gated_intercept_still_records_warmup_failure(
     mock_stop_checker,
     mock_branch_orchestrator,
 ):
-    """Non-overflow WARMUP + gated intercept must still record warmup failure.
-
-    Accelerated cache-pressure warmup enables DAG intercept during WARMUP.
-    A plain HTTP error on a gated root must not early-return past
-    ``record_warmup_failure`` / live abort (overflow already skips intercept).
-    """
+    """Non-overflow WARMUP + gated intercept must still record warmup failure."""
     registry = MagicMock()
     registry.has_tree.return_value = True
     mock_branch_orchestrator.intercept = AsyncMock(return_value=True)
@@ -687,8 +648,7 @@ async def test_cache_warmup_handoff_allows_paused_dag_work(
     mock_strategy,
     mock_branch_orchestrator,
 ):
-    """A drained accelerated-warmup phase completes on in_flight==0 even with
-    the orchestrator still holding paused (handoff) branch work."""
+    """A drained accelerated-warmup phase completes on in_flight==0 even with"""
     mock_progress.increment_returned = MagicMock(return_value=True)
     mock_progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
     mock_progress.in_flight = 0
@@ -716,9 +676,6 @@ async def test_cache_warmup_handoff_allows_paused_dag_work(
     mock_branch_orchestrator.has_pending_branch_work.assert_called_once_with()
 
 
-# Test: Credit Return - Unregistered/Complete Phase
-
-
 class TestUnregisteredAndCompletePhaseHandling:
     """Tests for handling credits from unregistered or complete phases."""
 
@@ -726,7 +683,6 @@ class TestUnregisteredAndCompletePhaseHandling:
         """Silently ignores returns for unregistered phases."""
         credit = make_credit(phase=CreditPhase.WARMUP)
         credit_return = make_credit_return(credit)
-        # Should not raise
         await callback_handler.on_credit_return("worker-1", credit_return)
 
     async def test_ignores_complete_phase(
@@ -738,9 +694,6 @@ class TestUnregisteredAndCompletePhaseHandling:
         credit_return = make_credit_return(credit)
         await registered_handler.on_credit_return("worker-1", credit_return)
         mock_progress.increment_returned.assert_not_called()
-
-
-# Test: First Token (TTFT) Handling
 
 
 class TestFirstTokenHandling:
@@ -791,15 +744,12 @@ class TestFirstTokenHandling:
         mock_strategy.handle_first_token.assert_awaited_once_with(first_token)
 
 
-# Test: Edge Cases
-
-
 class TestEdgeCases:
     """Tests for edge cases and boundary conditions."""
 
     @pytest.mark.parametrize(
         "cancelled,first_token_sent",
-        [(False, True), (True, False)],  # Sample: normal and cancelled-before-ttft
+        [(False, True), (True, False)],
     )  # fmt: skip
     async def test_return_state_combinations(
         self,
@@ -827,14 +777,7 @@ class TestEdgeCases:
 
 
 class TestDagWorkPending:
-    """Pin the contract on ``_dag_work_pending``.
-
-    ``intercept`` runs at every ``agent_depth``, so the branch-id lookup
-    must run at every depth too — restricting it to ``agent_depth == 0``
-    let nested grandchildren be truncated when the final outstanding
-    credit at signal time happened to be a child whose own intercept was
-    about to spawn more work.
-    """
+    """Pin the contract on ``_dag_work_pending``."""
 
     def test_returns_true_when_pending_work_in_flight(
         self, callback_handler, mock_branch_orchestrator
@@ -856,10 +799,7 @@ class TestDagWorkPending:
     def test_returns_true_for_child_credit_with_branch_ids(
         self, callback_handler, mock_branch_orchestrator
     ):
-        """Regression for the nested-DAG race: a child credit (agent_depth>0)
-        whose own turn declares branches must defer the all-credits-returned
-        event so ``intercept`` can spawn the grandchildren first.
-        """
+        """Regression for the nested-DAG race: a child credit (agent_depth>0)"""
         mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
         mock_branch_orchestrator.get_branch_ids = MagicMock(return_value=["b1"])
         callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
@@ -877,28 +817,17 @@ class TestDagWorkPending:
 
 
 class TestDagWorkPendingAdversarial:
-    """Hostile-input cases for ``_dag_work_pending``.
-
-    ``_count_and_release`` reaches this helper inside the no-await counter
-    section, so any exception or wrong answer here either deadlocks the
-    phase (false-positive defer that never resolves) or truncates DAG
-    work (false-negative signal that lets teardown win the race).
-    """
+    """Hostile-input cases for ``_dag_work_pending``."""
 
     def test_returns_false_when_no_orchestrator_registered(self, callback_handler):
-        """Plain non-DAG runs never attach an orchestrator. The predictor
-        must short-circuit to False rather than dereferencing None — a
-        crash here would propagate through ``_count_and_release`` and
-        abort the credit-return callback for every credit."""
+        """Plain non-DAG runs never attach an orchestrator. The predictor"""
         assert callback_handler._branch_orchestrator is None
         assert not callback_handler._dag_work_pending(make_credit())
 
     def test_pending_work_dominates_empty_branch_ids_at_any_depth(
         self, callback_handler, mock_branch_orchestrator
     ):
-        """``has_pending_branch_work=True`` is the in-flight signal. Even
-        if the current credit's own turn declares no branches, other
-        children are still draining — the event must defer."""
+        """``has_pending_branch_work=True`` is the in-flight signal. Even"""
         mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=True)
         mock_branch_orchestrator.get_branch_ids = MagicMock(return_value=[])
         callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
@@ -909,11 +838,7 @@ class TestDagWorkPendingAdversarial:
     def test_returns_false_when_get_branch_ids_raises(
         self, callback_handler, mock_branch_orchestrator
     ):
-        """``get_branch_ids`` walks orchestrator state that may be missing
-        for a credit issued on a transient session (e.g. a child whose
-        metadata was already cleaned up). A raise here MUST become a
-        False return, not a propagated exception — the credit-return
-        callback must keep running for every credit."""
+        """``get_branch_ids`` walks orchestrator state that may be missing"""
         mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
         mock_branch_orchestrator.get_branch_ids = MagicMock(
             side_effect=KeyError("missing conv")
@@ -925,9 +850,7 @@ class TestDagWorkPendingAdversarial:
     def test_returns_true_for_very_deep_credit_with_branch_ids(
         self, callback_handler, mock_branch_orchestrator
     ):
-        """Depth has no semantic ceiling in the predictor — a credit at
-        ``agent_depth=42`` whose own turn declares branches still defers
-        signal. The old root-only guard would silently truncate this."""
+        """Depth has no semantic ceiling in the predictor — a credit at"""
         mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
         mock_branch_orchestrator.get_branch_ids = MagicMock(return_value=["deep"])
         callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
@@ -937,9 +860,7 @@ class TestDagWorkPendingAdversarial:
     def test_pending_work_short_circuits_before_get_branch_ids(
         self, callback_handler, mock_branch_orchestrator
     ):
-        """When the orchestrator already has work in flight, the
-        predictor must not bother walking ``get_branch_ids`` — that lookup
-        can be expensive on hot paths. Wired by short-circuit ordering."""
+        """When the orchestrator already has work in flight, the"""
         mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=True)
         mock_branch_orchestrator.get_branch_ids = MagicMock(
             side_effect=AssertionError("must not be called")
@@ -951,23 +872,10 @@ class TestDagWorkPendingAdversarial:
 
 
 class TestDrainObserverWiring:
-    """Regression for the concurrency>=2 race fixed in commit 7cd4180b7.
-
-    The orchestrator's last drain step (``_handle_child_done`` decrement,
-    ``dispatch_join_turn`` returning False under cap, all-children-rolled-
-    back path) can land BETWEEN concurrent ``on_credit_return`` callbacks.
-    Without the drain-observer hook, ``all_credits_returned_event`` is
-    never set from the callback path and the phase runner blocks forever
-    (or, post-`f6fb1ae29`, takes the slow drain-timeout path).
-
-    These tests pin the wiring contract on
-    ``CreditCallbackHandler.set_branch_orchestrator`` and the closure
-    registered via ``BranchOrchestrator.set_drain_observer``.
-    """
+    """Regression for the concurrency>=2 race fixed in commit 7cd4180b7."""
 
     def test_set_branch_orchestrator_registers_drain_observer(self, callback_handler):
-        """Attaching an orchestrator must register a drain callback;
-        detaching (set None) must clear it."""
+        """Attaching an orchestrator must register a drain callback;"""
         orchestrator = MagicMock()
         orchestrator.set_drain_observer = MagicMock()
 
@@ -981,8 +889,7 @@ class TestDrainObserverWiring:
     def test_drain_observer_sets_event_when_predicate_satisfied(
         self, registered_handler, mock_progress, mock_branch_orchestrator
     ):
-        """Race-closing path: callback fires AND counters say all returned
-        AND orchestrator predicate clean -> event MUST set."""
+        """Race-closing path: callback fires AND counters say all returned"""
         mock_progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
         mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
         assert not mock_progress.all_credits_returned_event.is_set()
@@ -996,8 +903,7 @@ class TestDrainObserverWiring:
     def test_drain_observer_no_op_when_pending_work_remains(
         self, registered_handler, mock_progress, mock_branch_orchestrator
     ):
-        """has_pending_branch_work=True must keep the event deferred —
-        firing now would declare phase complete with children in flight."""
+        """has_pending_branch_work=True must keep the event deferred —"""
         mock_progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
         mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=True)
 
@@ -1010,8 +916,7 @@ class TestDrainObserverWiring:
     def test_drain_observer_no_op_when_counters_disagree(
         self, registered_handler, mock_progress, mock_branch_orchestrator
     ):
-        """check_all_returned_or_cancelled=False must keep the event
-        deferred — sending isn't actually complete yet."""
+        """check_all_returned_or_cancelled=False must keep the event"""
         mock_progress.check_all_returned_or_cancelled = MagicMock(return_value=False)
         mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
 
@@ -1028,9 +933,7 @@ class TestDrainObserverWiring:
         mock_lifecycle,
         mock_branch_orchestrator,
     ):
-        """A phase whose lifecycle is already complete must be skipped —
-        its event was already finalized by the normal end-of-phase path
-        and re-setting from here would be racy."""
+        """A phase whose lifecycle is already complete must be skipped —"""
         mock_lifecycle.is_complete = True
         mock_progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
         mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
@@ -1044,10 +947,7 @@ class TestDrainObserverWiring:
     def test_drain_observer_idempotent_on_already_set_event(
         self, registered_handler, mock_progress, mock_branch_orchestrator
     ):
-        """Multiple callback invocations after the event is already set
-        must remain a no-op. The observer can fire several times in rapid
-        succession (``_handle_child_done`` + ``_handle_child_errored_fail_fast``
-        + ``_drain_vestigial_gates`` all call ``_notify_drain``)."""
+        """Multiple callback invocations after the event is already set"""
         mock_progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
         mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
         mock_progress.all_credits_returned_event.set()
@@ -1062,17 +962,10 @@ class TestDrainObserverWiring:
 
 
 class TestAbortObserverWiring:
-    """``AIPERF_DAG_FAIL_FAST=true`` fires an abort observer from the
-    orchestrator's fail-fast handler; the callback handler must cancel
-    every active phase lifecycle so the strategy loop stops issuing new
-    wire credits. Without this, only the parent of the errored child was
-    aborted while unrelated roots kept firing — the budget ran out as
-    if FAIL_FAST were disabled.
-    """
+    """``AIPERF_DAG_FAIL_FAST=true`` fires an abort observer from the"""
 
     def test_set_branch_orchestrator_registers_abort_observer(self, callback_handler):
-        """Attaching an orchestrator must register an abort callback;
-        detaching (set None) must clear it."""
+        """Attaching an orchestrator must register an abort callback;"""
         orchestrator = MagicMock()
         orchestrator.set_drain_observer = MagicMock()
         orchestrator.set_abort_observer = MagicMock()
@@ -1091,12 +984,7 @@ class TestAbortObserverWiring:
         mock_lifecycle,
         mock_branch_orchestrator,
     ):
-        """Fail-fast fires the abort observer; the callback handler must
-        cancel the active phase's lifecycle (so LifecycleStopCondition
-        gates further issuance) and set ``all_credits_returned_event`` so
-        the phase runner unblocks rather than waiting for credits that
-        will never be issued.
-        """
+        """Fail-fast fires the abort observer; the callback handler must"""
         mock_lifecycle.is_complete = False
         mock_lifecycle.cancel = MagicMock()
 
@@ -1114,9 +1002,7 @@ class TestAbortObserverWiring:
         mock_lifecycle,
         mock_branch_orchestrator,
     ):
-        """A phase whose lifecycle is already complete must be skipped —
-        re-cancelling it would be wrong (the phase has already finalized).
-        """
+        """A phase whose lifecycle is already complete must be skipped —"""
         mock_lifecycle.is_complete = True
         mock_lifecycle.cancel = MagicMock()
 
@@ -1127,19 +1013,8 @@ class TestAbortObserverWiring:
         mock_lifecycle.cancel.assert_not_called()
 
 
-# Test: WARMUP Terminal-Failure Accumulation + Live Early-Abort
-
-
 class TestWarmupFailureRecording:
-    """A terminal WARMUP root failure must be recorded via the strategy hook.
-
-    A WARMUP credit primes turn k_i (the last request before t*); PROFILING
-    resumes the same trajectory at k_i+1, so a warmed turn for a session active
-    at t* is NEVER the trajectory's final turn (is_final_turn is False). The
-    gate must therefore fire on a NON-final WARMUP root credit that returns with
-    a terminal error/cancellation; gating it on is_final_turn made the whole
-    safety mechanism dead.
-    """
+    """A terminal WARMUP root failure must be recorded via the strategy hook."""
 
     @pytest.fixture
     def warmup_strategy(self):
@@ -1170,10 +1045,9 @@ class TestWarmupFailureRecording:
     async def test_non_final_warmup_credit_error_records_failure(
         self, warmup_handler, warmup_strategy
     ):
-        """A NON-final WARMUP root credit returning with an error MUST record a
-        warmup failure (the gate must not require is_final_turn)."""
+        """A NON-final WARMUP root credit returning with an error MUST record a"""
         credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
-        assert not credit.is_final_turn  # the case the old gate silently dropped
+        assert not credit.is_final_turn
         credit_return = CreditReturn(
             credit=credit, cancelled=False, first_token_sent=False, error="server 500"
         )
@@ -1213,8 +1087,7 @@ class TestWarmupFailureRecording:
     async def test_warmup_child_failure_does_not_record(
         self, warmup_handler, warmup_strategy
     ):
-        """The gate is root-only (agent_depth == 0): a failed WARMUP child does
-        not count toward trajectory warmup failure."""
+        """The gate is root-only (agent_depth == 0): a failed WARMUP child does"""
         credit = make_credit(
             turn_index=0, num_turns=2, agent_depth=1, phase=CreditPhase.WARMUP
         )
@@ -1228,13 +1101,7 @@ class TestWarmupFailureRecording:
 
 
 class TestWarmupEarlyAbort:
-    """Live early-abort: the first terminal WARMUP failure fires on_warmup_abort.
-
-    A single terminal warmup failure means PROFILING must not start, so the
-    handler broadcasts ProfileCancelCommand (via the injected callback) on the
-    FIRST failure rather than waiting for the full warmup drain + teardown
-    ``report_warmup_failures`` raise. The callback fires at most once per run.
-    """
+    """Live early-abort: the first terminal WARMUP failure fires on_warmup_abort."""
 
     @pytest.fixture
     def abort_cb(self):
@@ -1317,8 +1184,7 @@ class TestWarmupEarlyAbort:
     async def test_publish_failure_resets_trigger_flag(
         self, mock_concurrency, mock_progress, mock_lifecycle, mock_stop_checker
     ):
-        """If the abort broadcast raises, the flag resets so a later return retries
-        and the teardown backstop can still fire."""
+        """If the abort broadcast raises, the flag resets so a later return retries"""
         failing_cb = AsyncMock(side_effect=RuntimeError("bus down"))
         strategy = MagicMock()
         strategy.handle_credit_return = AsyncMock()
@@ -1360,8 +1226,7 @@ class TestWarmupEarlyAbort:
         mock_lifecycle,
         mock_stop_checker,
     ):
-        """With no on_warmup_abort wired, the failure still records (the teardown
-        backstop remains the only abort path)."""
+        """With no on_warmup_abort wired, the failure still records (the teardown"""
         handler = CreditCallbackHandler(mock_concurrency)
         handler.register_phase(
             phase=CreditPhase.WARMUP,

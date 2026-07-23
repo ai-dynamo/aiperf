@@ -1,11 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""
-Shared fixtures for testing AIPerf services.
-
-This file contains fixtures that are automatically discovered by pytest
-and made available to test functions in the same directory and subdirectories.
-"""
+"""Shared fixtures for testing AIPerf services."""
 
 import asyncio
 import os
@@ -42,15 +37,8 @@ from tests.harness.fake_tokenizer import FakeTokenizer
 from tests.harness.optional_deps import collect_ignore_for_unavailable_deps
 from tests.harness.time_traveler import TimeTraveler
 
-# Skip (at collection time) any unit-test module whose top-level imports need a
-# native dependency with no Windows-on-ARM build (pyarrow, datasets,
-# soundfile/libsndfile, trustme->cryptography). Without this, collection itself
-# crashes on win-arm before any test runs. The set is discovered by statically
-# scanning each module's top-level imports (see optional_deps.py) -- new tests
-# self-gate with no edits here. Empty on every platform where the deps exist.
 collect_ignore: list[str] = collect_ignore_for_unavailable_deps(Path(__file__).parent)
 
-# Shared test constants for request/response records
 DEFAULT_START_TIME_NS = 1_000_000
 DEFAULT_FIRST_RESPONSE_NS = 1_050_000
 DEFAULT_LAST_RESPONSE_NS = 1_100_000
@@ -62,15 +50,7 @@ _REAL_SLEEP = asyncio.sleep
 
 @pytest.fixture(scope="session", autouse=True)
 def _hf_offline_mode():
-    """Never load a real tokenizer over the network in unit tests.
-
-    Both HF_HUB_OFFLINE and TRANSFORMERS_OFFLINE are set: the loader's
-    forkserver tokenizer preload (``aiperf.dataset._tokenizer_preload``) and the
-    tokenizer validator's prefetch path spawn subprocesses that inherit this env
-    and bypass any in-process ``Tokenizer.from_pretrained`` patch. Mirrors the
-    integration / component_integration suites. tiktoken builtins are local and
-    unaffected; a real HF load fails fast offline instead of downloading.
-    """
+    """Never load a real tokenizer over the network in unit tests."""
     keys = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
     prev = {k: os.environ.get(k) for k in keys}
     for k in keys:
@@ -85,12 +65,7 @@ def _hf_offline_mode():
 
 @pytest.fixture(autouse=True)
 def no_sleep(monkeypatch, request):
-    """Patch asyncio.sleep to do nothing, unless test uses time_traveler fixture.
-
-    Tests using time_traveler (or time_traveler_no_patch_sleep) need looptime
-    to handle asyncio.sleep for virtual time advancement, so we skip patching.
-    """
-    # Check if test uses time_traveler fixtures (which need looptime to work)
+    """Patch asyncio.sleep to do nothing, unless test uses time_traveler fixture."""
     fixture_names = request.fixturenames
     uses_time_traveler = (
         "time_traveler" in fixture_names
@@ -103,32 +78,17 @@ def no_sleep(monkeypatch, request):
 
 @pytest.fixture
 async def enable_looptime(request):
-    """Enable looptime (virtual time).
-
-    This fixture enables looptime on the event loop, making asyncio.sleep/wait_for
-    run instantly in virtual time.
-
-    Note: When @pytest.mark.looptime is used, the looptime plugin already enables
-    looptime via its context manager. This fixture detects that and becomes a no-op
-    to avoid the "already enabled" error.
-    """
-    # Check if @pytest.mark.looptime is used - if so, looptime plugin handles enabling
+    """Enable looptime (virtual time)."""
     looptime_marker = request.node.get_closest_marker("looptime")
     if looptime_marker is not None:
-        # Looptime is already enabled by the plugin's context manager
         yield
         return
 
-    # No marker - try to enable programmatically (fallback for tests without marker)
     try:
         loop = asyncio.get_running_loop()
-        # Check if loop is looptime-patched and enable it if not already enabled
         if hasattr(loop, "looptime_on") and not loop.looptime_on:
-            # Use the name-mangled private attribute to enable looptime
-            # This is the internal flag that looptime checks to decide if it's enabled
             loop._LoopTimeEventLoop__enabled = True
     except RuntimeError:
-        # No running loop yet - that's okay, looptime will be enabled when loop starts
         pass
 
     yield
@@ -136,25 +96,7 @@ async def enable_looptime(request):
 
 @pytest.fixture
 async def time_traveler(enable_looptime):
-    """
-    TimeTraveler fixture for virtual time testing.
-
-    Provides:
-    - Virtual time tracking (time.time(), time.perf_counter(), etc. return virtual time)
-    - Timing assertion utilities (sleeps_for, sleeps_at_least, etc.)
-    - Works with looptime
-
-    Usage:
-        async def test_timing(time_traveler):
-            start = time_traveler.time()
-            await asyncio.sleep(10.0)  # Instant in real time!
-            elapsed = time_traveler.time() - start
-            assert elapsed >= 10.0
-
-        async def test_with_assertion(time_traveler):
-            async with time_traveler.sleeps_for(5.0):
-                await asyncio.sleep(5.0)
-    """
+    """TimeTraveler fixture for virtual time testing."""
     traveler = TimeTraveler()
     traveler.start_traveling()
     yield traveler
@@ -163,25 +105,7 @@ async def time_traveler(enable_looptime):
 
 @pytest.fixture
 async def time_traveler_no_patch_sleep(enable_looptime):
-    """
-    TimeTraveler fixture for virtual time testing with real asyncio.sleep.
-
-    Provides:
-    - Virtual time tracking (time.time(), time.perf_counter(), etc. return virtual time)
-    - Timing assertion utilities (sleeps_for, sleeps_at_least, etc.)
-    - Works with looptime
-
-    Usage:
-        async def test_timing(time_traveler):
-            start = time_traveler.time()
-            await asyncio.sleep(10.0)  # Instant in real time!
-            elapsed = time_traveler.time() - start
-            assert elapsed >= 10.0
-
-        async def test_with_assertion(time_traveler):
-            async with time_traveler.sleeps_for(5.0):
-                await asyncio.sleep(5.0)
-    """
+    """TimeTraveler fixture for virtual time testing with real asyncio.sleep."""
     traveler = TimeTraveler(patch_sleep=False)
     traveler.start_traveling()
     yield traveler
@@ -207,17 +131,7 @@ def skip_service_registration():
 
 @dataclass
 class MockZmqFixture:
-    """
-    Container for mock ZMQ components with send capture and receive queues.
-
-    Attributes:
-        context: Mock ZMQ context returned by Context.instance().
-        socket: Mock ZMQ socket created by context.socket().
-        sent: List capturing all data passed to socket.send().
-        sent_multipart: List capturing all parts passed to socket.send_multipart().
-        recv_queue: Queue for injecting messages returned by socket.recv().
-        recv_multipart_queue: Queue for injecting messages returned by socket.recv_multipart().
-    """
+    """Container for mock ZMQ components with send capture and receive queues."""
 
     context: MagicMock
     socket: AsyncMock
@@ -229,25 +143,7 @@ class MockZmqFixture:
 
 @pytest.fixture
 def mock_zmq(monkeypatch) -> MockZmqFixture:
-    """
-    Mock ZMQ to prevent real socket/context creation and enable message inspection.
-
-    Prevents ZMQ from creating real sockets and contexts which could cause
-    resource leaks, port conflicts, and test failures.
-
-    Send operations are captured in lists. Receive operations pull from queues,
-    blocking forever when empty (safe for tests that don't need to receive).
-
-    Example:
-    ```python
-        async def test_zmq_echo(mock_zmq):
-            mock_zmq.recv_queue.put_nowait(b"ping")
-            # ... run code that receives and sends ...
-            assert mock_zmq.sent == [b"pong"]
-    ```
-    Note:
-        Tests in tests/zmq/ use their own specific mocking from tests/zmq/conftest.py.
-    """
+    """Mock ZMQ to prevent real socket/context creation and enable message inspection."""
     mock_socket = AsyncMock(spec=zmq.asyncio.Socket)
     mock_socket.bind = Mock()
     mock_socket.connect = Mock()
@@ -292,40 +188,20 @@ def mock_zmq(monkeypatch) -> MockZmqFixture:
 
 @pytest.fixture(autouse=True)
 def reset_random_generator() -> Generator[None, None, None]:
-    """Reset and seed the global random generator for each test.
-
-    This fixture is automatically used for all tests and ensures that:
-    1. Each test starts with a fresh random generator state
-    2. The random generator is seeded with a fixed value for reproducibility
-    3. The state is cleaned up after each test to prevent leakage
-
-    This ensures all tests have consistent, reproducible random behavior.
-    """
-    # Reset and seed before each test
+    """Reset and seed the global random generator for each test."""
     rng.reset()
-    rng.init(42)  # Use a fixed seed for test reproducibility
+    rng.init(42)
 
-    yield  # Run the test
+    yield
 
-    # Reset after each test to ensure clean state
     rng.reset()
 
 
 @pytest.fixture(autouse=True)
 def reset_singleton_factories():
-    """Reset singleton factory instances between tests to prevent state leakage.
+    """Reset singleton factory instances between tests to prevent state leakage."""
+    yield
 
-    This fixture runs automatically for every test and clears the singleton
-    instances managed by the Singleton metaclass. This prevents tests from interfering
-    with each other when they create services that use singleton communication instances.
-
-    The error "Communication clients must be created before the ZMQIPCCommunication
-    class is initialized" occurs when a singleton instance from a previous test
-    is reused in an invalid state.
-    """
-    yield  # Run the test first
-
-    # Clean up after test completes - clear per-process singleton instances
     from aiperf.common.singleton import SingletonMeta
 
     SingletonMeta._instances.clear()
@@ -333,45 +209,20 @@ def reset_singleton_factories():
 
 @pytest.fixture
 def temporary_registry() -> Generator[PluginRegistry, None, None]:
-    """Fixture for isolated plugin registry testing.
-
-    Creates a temporary registry for the duration of the test,
-    then restores the original registry on exit.
-
-    Yields:
-        Fresh PluginRegistry instance
-
-    Example:
-        def test_custom_plugin(temporary_registry):
-            temporary_registry.load_builtin_registry(test_registry_path)
-            cls = temporary_registry.get('endpoint', 'test')
-            # Original registry restored after test
-    """
-    # Save the current singleton instance
+    """Fixture for isolated plugin registry testing."""
     old_instance = PluginRegistry._instance
 
-    # Create a fresh singleton
     PluginRegistry._reset_singleton()
     fresh_registry = PluginRegistry()
 
     yield fresh_registry
 
-    # Restore the original singleton
     PluginRegistry._instance = old_instance
 
 
 @pytest.fixture
 def mock_tokenizer_cls() -> type[Tokenizer]:
-    """Mock our Tokenizer class to avoid HTTP requests during testing.
-
-    This fixture patches AutoTokenizer.from_pretrained and provides a realistic
-    mock tokenizer that can encode, decode, and handle special tokens.
-
-    Usage in tests:
-        def test_something(mock_tokenizer_cls):
-            tokenizer = mock_tokenizer_cls.from_pretrained("any-model-name")
-            # tokenizer is now mocked and won't make HTTP requests
-    """
+    """Mock our Tokenizer class to avoid HTTP requests during testing."""
 
     class MockTokenizer(Tokenizer):
         """A thin mocked wrapper around AIPerf Tokenizer for testing."""
@@ -380,7 +231,6 @@ def mock_tokenizer_cls() -> type[Tokenizer]:
             super().__init__()
             self._tokenizer = mock_tokenizer
 
-            # Create MagicMock methods that you can assert on
             self.encode = MagicMock(side_effect=self._mock_encode)
             self.decode = MagicMock(side_effect=self._mock_decode)
 
@@ -388,7 +238,6 @@ def mock_tokenizer_cls() -> type[Tokenizer]:
         def from_pretrained(
             cls, name: str, trust_remote_code: bool = False, revision: str = "main"
         ):
-            # Create a mock tokenizer around HF AutoTokenizer
             mock_tokenizer = MagicMock()
             mock_tokenizer.bos_token_id = 1
             mock_tokenizer.eos_token_id = 2
@@ -412,23 +261,14 @@ def mock_tokenizer_cls() -> type[Tokenizer]:
 
 @pytest.fixture
 def cli_config() -> CLIConfig:
-    """Unified CLIConfig fixture combining benchmark + service-runtime fields.
-
-    Replaces the pre-rename ``cfg`` and ``service_config`` fixtures.
-    """
+    """Unified CLIConfig fixture combining benchmark + service-runtime fields."""
     return CLIConfig(model_names=["test-model"])
 
 
 def make_run_from_cli(
     cli_config: CLIConfig,
 ):
-    """Build a v2 ``BenchmarkRun`` from a :class:`CLIConfig` input DTO.
-
-    Test-only helper. Flows the CLI config through the v2 resolver
-    (:func:`aiperf.config.flags.resolver.resolve_config`) to produce an
-    :class:`AIPerfConfig`, then wraps the benchmark section in a
-    :class:`BenchmarkRun` the production constructors require.
-    """
+    """Build a v2 ``BenchmarkRun`` from a :class:`CLIConfig` input DTO."""
     from aiperf.config import BenchmarkRun
     from aiperf.config.flags.resolver import resolve_config
 
@@ -450,14 +290,7 @@ def make_benchmark_run(
     accuracy: dict | None = None,
     extra: dict | None = None,
 ):
-    """Build a v2 ``BenchmarkRun`` directly without round-tripping through v1.
-
-    Construct the minimal native ``BenchmarkConfig`` accuracy/post-processor
-    tests need, then wrap it in a ``BenchmarkRun`` with a freshly generated
-    ``benchmark_id``. ``extra`` is merged into the top-level dict so callers
-    can override or extend nested sections (e.g. ``{"mlflow": {...}}``) without
-    needing to rebuild the whole config payload.
-    """
+    """Build a v2 ``BenchmarkRun`` directly without round-tripping through v1."""
     from aiperf.config import BenchmarkConfig, BenchmarkRun
 
     payload: dict = {
@@ -494,11 +327,7 @@ def make_benchmark_run(
 
 @pytest.fixture
 def benchmark_run(cli_config: CLIConfig):
-    """Build a v2 ``BenchmarkRun`` from the existing v1 fixture.
-
-    Tests migrating off ``cli_config`` constructors should depend on this
-    fixture instead.
-    """
+    """Build a v2 ``BenchmarkRun`` from the existing v1 fixture."""
     return make_run_from_cli(cli_config)
 
 
@@ -551,21 +380,9 @@ def create_mooncake_trace_file():
     filenames = []
 
     def _create_file(entries_or_count, include_timestamps=None):
-        """Create a mooncake trace file.
-
-        Args:
-            entries_or_count: Either a list of JSON string entries, or an integer count
-            include_timestamps: Only used when entries_or_count is an integer.
-                               If True, adds timestamps to generated entries.
-                               If False, omits timestamps.
-                               If None, entries are used as-is.
-
-        Returns:
-            str: Path to the created temporary file
-        """
+        """Create a mooncake trace file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
             if isinstance(entries_or_count, int):
-                # Generate entries based on count
                 entry_count = entries_or_count
                 for i in range(entry_count):
                     if include_timestamps is True:
@@ -573,11 +390,9 @@ def create_mooncake_trace_file():
                     elif include_timestamps is False:
                         entry = f'{{"input_length": {100 + i * 50}, "hash_ids": [{i}]}}'
                     else:
-                        # Default behavior when include_timestamps is None
                         entry = f'{{"input_length": {100 + i * 50}, "hash_ids": [{i}]}}'
                     f.write(f"{entry}\n")
             else:
-                # Use provided entries list
                 for entry in entries_or_count:
                     f.write(f"{entry}\n")
 
@@ -587,7 +402,6 @@ def create_mooncake_trace_file():
 
     yield _create_file
 
-    # Cleanup all created files
     for filename in filenames:
         Path(filename).unlink(missing_ok=True)
 
@@ -703,22 +517,7 @@ def sample_parsed_record(sample_request_record: RequestRecord) -> ParsedResponse
 
 @pytest.fixture
 def mock_aiofiles_stringio():
-    """Mock aiofiles.open to write to a BytesIO buffer instead of a file.
-
-    Automatically patches aiofiles.open for the duration of the test.
-
-    Returns:
-        BytesIO: Buffer that captures all writes
-
-    Example:
-        def test_something(mock_aiofiles_stringio):
-            # aiofiles.open is already patched
-            # ... test code that writes to files ...
-
-            # Verify contents
-            contents = mock_aiofiles_stringio.getvalue()
-            assert b"expected" in contents
-    """
+    """Mock aiofiles.open to write to a BytesIO buffer instead of a file."""
     string_buffer = BytesIO()
 
     mock_file = AsyncMock()
@@ -748,13 +547,7 @@ def mock_platform_system():
 
 
 def _patch_platform_constants(*, is_windows: bool, is_macos: bool, is_linux: bool):
-    """Patch IS_WINDOWS/IS_MACOS/IS_LINUX in the source module and every consumer.
-
-    Modules using `from aiperf.common.constants import IS_*` bind the value at
-    import time, so patching the source alone does not propagate. Each consumer
-    must be patched at its local name. Functions that re-import inside the body
-    (e.g. cli_runner) are covered by patching the source.
-    """
+    """Patch IS_WINDOWS/IS_MACOS/IS_LINUX in the source module and every consumer."""
     from contextlib import ExitStack
 
     targets = [
@@ -857,14 +650,7 @@ def make_cfg_from_v1(
     cli_config: CLIConfig,
     artifact_directory: Path | None = None,
 ):
-    """Build a v2 ``BenchmarkConfig`` from a v1 ``CLIConfig``.
-
-    Wrapper around ``make_run_from_cli`` that returns just the ``cfg`` for tests
-    that need a BenchmarkConfig (e.g. ``ExporterConfig(cfg=...)``) without
-    needing the full BenchmarkRun. If ``artifact_directory`` is provided, the
-    cfg's ``artifacts.dir`` is overridden so exporter tests can write to a
-    tempdir.
-    """
+    """Build a v2 ``BenchmarkConfig`` from a v1 ``CLIConfig``."""
     cfg = make_run_from_cli(cli_config).cfg
     if artifact_directory is not None:
         cfg.artifacts.dir = Path(artifact_directory)
@@ -878,11 +664,7 @@ def create_exporter_config(
     server_metrics_results=None,
     verbose=True,
 ):
-    """Helper to create ExporterConfig with common defaults.
-
-    Accepts either a v1 ``CLIConfig`` (legacy) or a v2 ``BenchmarkConfig``
-    directly. v1 inputs are converted via ``make_cfg_from_v1``.
-    """
+    """Helper to create ExporterConfig with common defaults."""
     from aiperf.config.config import BenchmarkConfig
 
     if isinstance(cli_config, BenchmarkConfig):

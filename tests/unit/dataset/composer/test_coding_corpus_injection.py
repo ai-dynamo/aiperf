@@ -1,12 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Byte-critical: trace loaders whose plugin metadata declares
-``default_prompt_corpus: coding`` (e.g. weka_trace) must decode hash_ids
-against the coding corpus, not the default Shakespeare/sonnet corpus.
-
-Using the wrong corpus produces different request bytes, ISL token counts, and
-prefix-cache-hit metrics for the weka MVP path, so this is a regression guard.
-"""
+"""Byte-critical: trace loaders whose plugin metadata declares"""
 
 from __future__ import annotations
 
@@ -38,20 +32,16 @@ class TestCodingCorpusInjection:
         """weka_trace -> CodingContentGenerator (coding corpus), not PromptGenerator."""
         composer = CustomDatasetComposer(run=weka_run, tokenizer=mock_tokenizer)
 
-        # The base composer always builds the default sonnet PromptGenerator.
         assert isinstance(composer.prompt_generator, PromptGenerator)
         assert not isinstance(composer.prompt_generator, CodingContentGenerator)
 
         composer.create_dataset()
 
-        # The loader gets a CodingContentGenerator injected because weka_trace
-        # registers default_prompt_corpus: coding in plugins.yaml.
         assert composer.detected_dataset_type == CustomDatasetType.WEKA_TRACE
         loader_gen = composer.loader.prompt_generator
         assert isinstance(loader_gen, CodingContentGenerator), (
             f"weka must replay against the coding corpus; got {type(loader_gen).__name__}"
         )
-        # The coding generator exposes its tool_pool as _tokenized_corpus.
         assert len(loader_gen._tokenized_corpus) > 0
 
     def test_explicit_prompt_corpus_overrides_loader_default(

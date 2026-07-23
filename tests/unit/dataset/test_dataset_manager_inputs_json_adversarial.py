@@ -1,23 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial unit tests for DatasetManager inputs.json / payload handling.
-
-Targets three known-fragile surfaces in ``dataset_manager.py``:
-
-- ``_profile_configure_command`` skip-logic for pre-built payloads.
-- ``_generate_input_payloads`` raw-vs-formatted branch (mixed state).
-- ``_preformat_payloads`` all-or-nothing gating plus NotImplementedError escape.
-- ``_generate_inputs_json_file`` OSError swallow, re-raise, ``.tmp`` cleanup.
-
-MOONCAKE_TRACE payload mode is skipped for inputs.json generation.
-
-PORT NOTE: agentx's raw-vs-formatted branch in ``_generate_input_payloads``
-(raw datasets preserved verbatim, non-raw routed through
-``format_conversation_payloads``, mixed raw/non-raw turns raising a
-``ValueError``) was NOT ported onto the v2 ``DatasetManager``. v2 formats
-every turn directly via ``endpoint.format_payload``. The tests that exercise
-that lost branch are marked ``xfail(strict=True)`` and tagged ``PORT GAP``.
-"""
+"""Adversarial unit tests for DatasetManager inputs.json / payload handling."""
 
 from __future__ import annotations
 
@@ -45,8 +28,6 @@ from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.plugin.enums import CustomDatasetType, EndpointType
 from tests.unit.conftest import make_run_from_cli
-
-# Helpers
 
 
 def _raw() -> dict[str, Any]:
@@ -77,7 +58,6 @@ def _stub_manager(dataset: dict[str, Conversation]) -> DatasetManager:
     """Cheap DatasetManager stub for methods that only touch ``self.dataset``."""
     mgr = object.__new__(DatasetManager)
     mgr.dataset = dataset
-    # v2 _generate_input_payloads emits a self.debug(lambda: ...) line.
     mgr.debug = Mock()
     return mgr
 
@@ -110,9 +90,6 @@ def _full_manager(
         run=run,
         service_id="test_dm",
     )
-
-
-# _generate_input_payloads: raw vs formatted branch
 
 
 class TestGenerateInputPayloadsAdversarial:
@@ -184,7 +161,6 @@ class TestGenerateInputPayloadsAdversarial:
 
         inputs = mgr._generate_input_payloads(_raw_endpoint())
         by_session = {s.session_id: s.payloads for s in inputs.data}
-        # non_raw conversation contributes nothing because it has no raw_payload
         assert "raw" in by_session
         assert "non_raw" not in by_session
 
@@ -217,28 +193,17 @@ class TestGenerateInputPayloadsAdversarial:
         assert inputs.data[0].payloads == [{"f": 0}, {"f": 1}]
 
 
-# _preformat_payloads: all-or-nothing + NotImplementedError escape
-
-
 class TestPreformatPayloadsAdversarial:
     @pytest.fixture(autouse=True)
     def _enable_preformat(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # _preformat_payloads is gated behind Environment.DATASET.PREFORMAT_PAYLOADS
-        # (default off so structured/synthetic datasets keep the CONVERSATION
-        # path and their input-tokenization metrics). This class exercises the
-        # formatting path itself, so opt in.
         from aiperf.common.environment import Environment
 
         monkeypatch.setattr(Environment.DATASET, "PREFORMAT_PAYLOADS", True)
 
     def _make_mgr(self, convs: list[Conversation]) -> DatasetManager:
         mgr = object.__new__(DatasetManager)
-        # v2 reads self.run.cfg.get_cache_bust_target(); stub it to NONE so the
-        # preformat path runs (the cache-bust early-return bails whenever the
-        # target != NONE).
         mgr.run = Mock()
         mgr.run.cfg.get_cache_bust_target.return_value = CacheBustTarget.NONE
-        # Stub the logger mixin attrs that _preformat_payloads uses.
         mgr.info = Mock()
         return mgr
 
@@ -335,15 +300,10 @@ class TestPreformatPayloadsAdversarial:
         ):
             mgr._preformat_payloads(convs)
 
-        # Partial state IS left behind -- s0 and s1 got payloads before the throw.
-        # This pins current behavior (swallow, no rollback).
         assert convs[0].turns[0].raw_payload == {"p": 0}
         assert convs[1].turns[0].raw_payload == {"p": 1}
         assert convs[2].turns[0].raw_payload is None
         assert convs[3].turns[0].raw_payload is None
-
-
-# Skip-logic in _profile_configure_command
 
 
 class TestSkipInputsJsonAdversarial:
@@ -355,9 +315,6 @@ class TestSkipInputsJsonAdversarial:
         mgr._configure_dataset = AsyncMock()
         mgr._configure_tokenizer = AsyncMock()
         mgr._configure_dataset_client_and_free_memory = AsyncMock()
-        # v2 keys the inputs.json skip off ``_detected_dataset_type`` (set by the
-        # composer during _configure_dataset, which is mocked here), so set it to
-        # the value the composer would have resolved.
         mgr._detected_dataset_type = CustomDatasetType.RAW_PAYLOAD
         mgr._try_cache_lookup = Mock(return_value=None)
 
@@ -385,9 +342,6 @@ class TestSkipInputsJsonAdversarial:
             mock_gen.assert_not_called()
 
 
-# _generate_inputs_json_file: error handling + cleanup
-
-
 class TestGenerateInputsJsonFileAdversarial:
     def _mgr(self, tmp_path: Path) -> DatasetManager:
         mgr = _full_manager(tmp_path)
@@ -410,11 +364,9 @@ class TestGenerateInputsJsonFileAdversarial:
             raise OSError("disk full")
 
         with patch.object(Path, "replace", boom):
-            # Must not raise: OSError branch is swallowed.
             await mgr._generate_inputs_json_file()
 
-        # Untouched call is allowed elsewhere; sanity-check module still usable.
-        assert True  # type-check noop
+        assert True
 
         assert any(
             "Error generating inputs.json file" in rec.message for rec in caplog.records
@@ -448,12 +400,10 @@ class TestGenerateInputsJsonFileAdversarial:
         mgr = self._mgr(tmp_path)
         tmp_file = tmp_path / "inputs.tmp"
 
-        # Success path: no .tmp lingers after atomic replace.
         await mgr._generate_inputs_json_file()
         assert not tmp_file.exists()
         assert (tmp_path / "inputs.json").exists()
 
-        # Failure path: .tmp written but replace raises -> finally unlink removes it.
         (tmp_path / "inputs.json").unlink()
 
         def boom_replace(self: Path, target: Any) -> Any:
@@ -462,11 +412,7 @@ class TestGenerateInputsJsonFileAdversarial:
         with patch.object(Path, "replace", boom_replace):
             await mgr._generate_inputs_json_file()
 
-        # finally: if a .tmp was written it should be gone now.
         assert not tmp_file.exists()
-
-
-# Wave-2 fix targets (xfail strict)
 
 
 class TestWave2FixTargets:
@@ -480,7 +426,6 @@ class TestWave2FixTargets:
         mgr._configure_dataset_client_and_free_memory = AsyncMock()
         mgr._try_cache_lookup = Mock(return_value=None)
 
-        # Simulate Mooncake loader having built raw_payload-backed turns.
         mgr.dataset = {
             "s1": Conversation(
                 session_id="s1",
@@ -488,11 +433,6 @@ class TestWave2FixTargets:
                 turns=[Turn(role="user", raw_payload=_raw())],
             ),
         }
-        # _configure_dataset is mocked out, so set the source-payload flag and
-        # the detected dataset type it would normally compute before
-        # _preformat_payloads ran. v2 gates the mooncake-payload skip on
-        # (_detected_dataset_type == MOONCAKE_TRACE and
-        # _all_turns_source_loaded_payloads).
         mgr._all_turns_source_loaded_payloads = True
         mgr._detected_dataset_type = CustomDatasetType.MOONCAKE_TRACE
 
@@ -514,8 +454,5 @@ class TestWave2FixTargets:
         )
         mgr = _stub_manager({"s1": conv})
 
-        # Expectation: either the call raises a ValueError mentioning mixed
-        # raw_payload, or it returns all turns (2 payloads). CURRENT: silently
-        # returns 1 payload.
         with pytest.raises(ValueError, match="mixed raw_payload"):
             mgr._generate_input_payloads(_raw_endpoint())

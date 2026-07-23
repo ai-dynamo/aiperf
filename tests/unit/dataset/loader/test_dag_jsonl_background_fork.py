@@ -32,9 +32,7 @@ def _branch(loader: DagJsonlLoader, sid: str, branch_id: str):
 
 
 class TestBareStringForkUnchanged:
-    """Bare-string ``forks: ["c"]`` continues to mean foreground FORK
-    (parent terminates after the fork). Existing fixtures must parse
-    identically to pre-DagFork behavior."""
+    """Bare-string ``forks: ["c"]`` continues to mean foreground FORK"""
 
     def test_bare_string_emits_fg_fork_branch(self) -> None:
         path = _write_jsonl("""
@@ -48,9 +46,7 @@ class TestBareStringForkUnchanged:
         assert b.child_conversation_ids == ["c"]
 
     def test_bare_string_on_non_final_turn_rejected(self) -> None:
-        """The historical fail-fast behavior: foreground FORK on a non-
-        final turn is rejected (would terminate the parent before its
-        next turn could fire)."""
+        """The historical fail-fast behavior: foreground FORK on a non-"""
         path = _write_jsonl("""
 {"session_id":"r","turns":[{"messages":[{"role":"user","content":"t0"}],"forks":["c"]},{"messages":[{"role":"user","content":"t1"}]}]}
 {"session_id":"c","turns":[{"messages":[{"role":"user","content":"child"}]}]}
@@ -60,9 +56,7 @@ class TestBareStringForkUnchanged:
 
 
 class TestObjectFormForkBackground:
-    """Object-form ``forks: [{child, background: true}]`` opts into
-    fork-and-continue. Parent runs its remaining turns while the child
-    fans out with inherited context."""
+    """Object-form ``forks: [{child, background: true}]`` opts into"""
 
     def test_object_form_bg_true_emits_bg_branch(self) -> None:
         path = _write_jsonl("""
@@ -76,8 +70,7 @@ class TestObjectFormForkBackground:
         assert b.child_conversation_ids == ["c"]
 
     def test_object_form_bg_false_equivalent_to_bare_string(self) -> None:
-        """Explicit ``background: false`` should parse identically to
-        bare-string and trip the same must-be-last-turn rule."""
+        """Explicit ``background: false`` should parse identically to"""
         path = _write_jsonl("""
 {"session_id":"r","turns":[{"messages":[{"role":"user","content":"t0"}],"forks":[{"child":"c","background":false}]},{"messages":[{"role":"user","content":"t1"}]}]}
 {"session_id":"c","turns":[{"messages":[{"role":"user","content":"child"}]}]}
@@ -86,8 +79,7 @@ class TestObjectFormForkBackground:
             DagJsonlLoader(filename=path).load()
 
     def test_multiple_bg_entries_collapse_to_one_branch(self) -> None:
-        """All BG forks on a turn share scheduling semantics, so they
-        collapse into a single ConversationBranchInfo with all children."""
+        """All BG forks on a turn share scheduling semantics, so they"""
         path = _write_jsonl("""
 {"session_id":"r","turns":[{"messages":[{"role":"user","content":"t0"}],"forks":[{"child":"c1","background":true},{"child":"c2","background":true}]},{"messages":[{"role":"user","content":"t1"}]}]}
 {"session_id":"c1","turns":[{"messages":[{"role":"user","content":"c1"}]}]}
@@ -99,8 +91,7 @@ class TestObjectFormForkBackground:
         assert b.child_conversation_ids == ["c1", "c2"]
 
     def test_bg_forks_on_multiple_non_final_turns(self) -> None:
-        """A parent may BG-fork on every turn; each turn gets its own
-        per-turn branch_id (no collision with neighbors)."""
+        """A parent may BG-fork on every turn; each turn gets its own"""
         path = _write_jsonl("""
 {"session_id":"r","turns":[{"messages":[{"role":"user","content":"t0"}],"forks":[{"child":"c1","background":true}]},{"messages":[{"role":"user","content":"t1"}],"forks":[{"child":"c2","background":true}]},{"messages":[{"role":"user","content":"t2"}]}]}
 {"session_id":"c1","turns":[{"messages":[{"role":"user","content":"c1"}]}]}
@@ -114,10 +105,7 @@ class TestObjectFormForkBackground:
 
 
 class TestMixedForegroundAndBackground:
-    """When a turn has both FG and BG fork entries, the loader emits two
-    ConversationBranchInfo entries with disambiguating ``:fork`` /
-    ``:bg_fork`` suffixes (mirroring the ``:fork``/``:spawn`` suffixes
-    used when fork+spawn coexist on a turn)."""
+    """When a turn has both FG and BG fork entries, the loader emits two"""
 
     def test_mixed_on_final_turn_emits_two_branches(self) -> None:
         path = _write_jsonl("""
@@ -132,9 +120,7 @@ class TestMixedForegroundAndBackground:
         assert bg.is_background is True and bg.child_conversation_ids == ["c2"]
 
     def test_mixed_on_non_final_turn_rejects_fg_with_clear_error(self) -> None:
-        """FG fork would terminate the parent before its next turn fires,
-        but BG fork on the same turn implies the parent should continue.
-        The pair is contradictory authoring; reject with a clear message."""
+        """FG fork would terminate the parent before its next turn fires,"""
         path = _write_jsonl("""
 {"session_id":"r","turns":[{"messages":[{"role":"user","content":"t0"}],"forks":["c1",{"child":"c2","background":true}]},{"messages":[{"role":"user","content":"t1"}]}]}
 {"session_id":"c1","turns":[{"messages":[{"role":"user","content":"c1"}]}]}
@@ -145,10 +131,7 @@ class TestMixedForegroundAndBackground:
 
 
 class TestDuplicateChildAcrossForkBackgroundFlags:
-    """Same child appearing in both FG and BG fork entries on the same
-    turn is rejected — even though the branch_ids differ, the orchestrator
-    would still dispatch the child twice with ambiguous parent-completion
-    semantics."""
+    """Same child appearing in both FG and BG fork entries on the same"""
 
     def test_duplicate_across_fg_bg_rejected(self) -> None:
         path = _write_jsonl("""
@@ -160,10 +143,7 @@ class TestDuplicateChildAcrossForkBackgroundFlags:
 
 
 class TestMultiParentForkRejectionAcrossBgFg:
-    """A single child reached by both an FG fork (one parent) and a BG
-    fork (different parent) violates the FORK single-parent constraint
-    (context-inheritance ambiguity). The validator rejects regardless of
-    the background flag combination."""
+    """A single child reached by both an FG fork (one parent) and a BG"""
 
     def test_fg_and_bg_parents_of_same_child_rejected(self) -> None:
         path = _write_jsonl("""

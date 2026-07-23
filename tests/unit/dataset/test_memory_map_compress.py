@@ -64,7 +64,6 @@ class TestCompressOnlyRoundTrip:
         assert metadata.compressed_size_bytes > 0
 
         dctx = zstandard.ZstdDecompressor()
-        # Stream-compressed data doesn't include content size; use stream_reader
         with (
             open(metadata.compressed_data_file_path, "rb") as fh,
             dctx.stream_reader(fh) as reader,

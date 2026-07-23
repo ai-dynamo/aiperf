@@ -204,21 +204,7 @@ def create_orchestrator_harness(mock_zmq, time_traveler):
 
 @pytest.fixture
 def force_fail_fast(monkeypatch: pytest.MonkeyPatch):
-    """Robustly force ``Environment.DAG.FAIL_FAST`` for the duration of one test.
-
-    Belt-and-suspenders against an observed one-shot xdist flake where
-    the bare ``monkeypatch.setattr(Environment.DAG, "FAIL_FAST", X)``
-    pattern occasionally landed but didn't stick by the time the
-    BranchOrchestrator constructor read it. The fixture also sets the
-    underlying env var so any Pydantic re-validation triggered between
-    the override and the read can't drop the value, and sanity-checks
-    immediately after the override so a flake surfaces at the override
-    site rather than 5 lines later in the orchestrator.
-
-    Use as ``def test_x(force_fail_fast): force_fail_fast(True)`` --
-    ``monkeypatch`` is wired in by the fixture; tests don't need to
-    request it separately for this purpose.
-    """
+    """Robustly force ``Environment.DAG.FAIL_FAST`` for the duration of one test."""
 
     def _set(value: bool) -> None:
         from aiperf.common.environment import Environment

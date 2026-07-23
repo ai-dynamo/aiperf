@@ -1,19 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for DatasetManager payload-bytes pathways.
-
-Covers:
-- Fallback conversation serving from a PAYLOAD_BYTES store (workers whose
-  local mmap client is not ready fall back to the DatasetManager; that path
-  must reconstruct turns from per-turn payload bytes instead of crashing with
-  MemoryMapSerializationError).
-- ``_preformat_payloads`` gating (opt-in env, self-contained-only, endpoint
-  NotImplementedError skip).
-- ``_select_mmap_format`` (PAYLOAD_BYTES only when all turns have raw_payload;
-  global mix falls back to CONVERSATION; per-conversation mix raises).
-- ``_generate_input_payloads`` verbatim export for raw-payload datasets.
-- ``_run_mmap_paths`` compressed (Kubernetes) variants.
-"""
+"""Unit tests for DatasetManager payload-bytes pathways."""
 
 from __future__ import annotations
 
@@ -87,14 +74,7 @@ async def _configure_manager(run: BenchmarkRun) -> DatasetManager:
 
 
 class TestPayloadBytesFallbackServing:
-    """The DM fallback request path must serve PAYLOAD_BYTES datasets.
-
-    Regression for the worker-misses-DatasetConfiguredNotification race: with
-    the mmap cache HIT making dataset configure nearly instant, a slow-starting
-    worker can subscribe after the broadcast, keep ``_dataset_client=None``,
-    and fall back to the DM conversation request. That request used to crash
-    with MemoryMapSerializationError on PAYLOAD_BYTES stores, failing the run.
-    """
+    """The DM fallback request path must serve PAYLOAD_BYTES datasets."""
 
     @pytest.mark.asyncio
     async def test_conversation_request_reconstructs_from_payload_bytes(
@@ -104,8 +84,6 @@ class TestPayloadBytesFallbackServing:
         assert dm.dataset_metadata is not None
         conversation_id = dm.dataset_metadata.conversations[0].conversation_id
 
-        # Precondition: the store really is PAYLOAD_BYTES, so the plain
-        # get_conversation path raises and the handler MUST reconstruct.
         assert dm._dataset_client is not None
         with pytest.raises(MemoryMapSerializationError):
             await dm._dataset_client.get_conversation(conversation_id)
@@ -120,7 +98,6 @@ class TestPayloadBytesFallbackServing:
         assert conversation.session_id == conversation_id
         assert len(conversation.turns) == 1
         assert conversation.turns[0].raw_payload == RAW_PAYLOAD
-        # Wire JSON max_tokens must be restored onto the Turn for OSL metrics.
         assert conversation.turns[0].max_tokens == 7
         await dm.stop()
 
@@ -181,7 +158,7 @@ class TestPayloadBytesFallbackServing:
         self, tmp_path: Path
     ) -> None:
         dm = DatasetManager(run=_make_raw_payload_run(tmp_path), service_id="dm-test")
-        dm._dataset_client = object()  # no get_payload_bytes attribute
+        dm._dataset_client = object()
         assert await dm._conversation_from_payload_bytes("any") is None
 
 
@@ -233,8 +210,7 @@ class TestPreformatPayloads:
     def test_multi_turn_delta_conversation_skips_entire_batch(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """One non-self-contained multi-turn conversation disqualifies ALL
-        conversations (mixed raw_payload state is rejected downstream)."""
+        """One non-self-contained multi-turn conversation disqualifies ALL"""
         monkeypatch.setattr(Environment.DATASET, "PREFORMAT_PAYLOADS", True)
         dm = self._manager()
         single = _single_turn_conversation()

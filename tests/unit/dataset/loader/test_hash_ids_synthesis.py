@@ -10,11 +10,7 @@ from aiperf.dataset.loader.hash_ids_synthesis import (
 
 
 def test_mixin_decodes_via_parallel_decode_for_hash_id_requests():
-    """Non-empty hash_ids requests build a token sequence then go through
-    ``parallel_decode``. There is no per-process decoded-string cache in
-    this path — real-workload hit rate was effectively zero and a cache
-    would leak memory.
-    """
+    """Non-empty hash_ids requests build a token sequence then go through"""
     pg = MagicMock()
     pg.tokenizer.resolved_name = "test-tok"
     pg._build_token_sequence.return_value = [10, 20, 30]
@@ -67,10 +63,9 @@ class _Loader(HashIdsPromptSynthesisMixin):
 
 
 def _make_mixin_with_corpus():
-    """Build a mixin instance with a 1000-token mock corpus + a stub tokenizer
-    whose .decode(tokens) returns a deterministic string keyed on the token slice."""
+    """Build a mixin instance with a 1000-token mock corpus + a stub tokenizer"""
     pg = MagicMock()
-    pg._tokenized_corpus = list(range(10000, 11000))  # 1000 tokens
+    pg._tokenized_corpus = list(range(10000, 11000))
     pg._corpus_size = 1000
     pg.tokenizer.decode.side_effect = lambda toks: "|".join(str(t) for t in toks)
 
@@ -103,9 +98,7 @@ def test_sample_partial_tail_zero_tokens_returns_empty():
 
 
 def test_sample_partial_tail_uses_sha256_keyed_offset_not_python_hash():
-    """sha256 is stable across processes (PYTHONHASHSEED-independent); Python's
-    builtin hash() is not. Verify the offset comes from sha256 by computing it
-    explicitly and asserting the corpus slice matches."""
+    """sha256 is stable across processes (PYTHONHASHSEED-independent); Python's"""
     loader = _make_mixin_with_corpus()
     seed = "deterministic_seed_test"
     digest = hashlib.sha256(seed.encode()).digest()
@@ -123,9 +116,6 @@ def test_sample_partial_tail_uses_sha256_keyed_offset_not_python_hash():
 
 def test_sample_partial_tail_handles_corpus_smaller_than_request():
     loader = _make_mixin_with_corpus()
-    # Request more tokens than corpus has — implementation should still return
-    # a deterministic result (truncated or wrapped); spec leaves the policy
-    # underspecified so just verify deterministic + nonempty.
     a = loader.sample_partial_tail(2000, "seed_x")
     b = loader.sample_partial_tail(2000, "seed_x")
     assert a == b
@@ -146,9 +136,7 @@ def test_sample_partial_tail_tokens_zero_returns_empty_list():
 
 
 def test_sample_partial_tail_tokens_matches_text_variant():
-    """The text variant must equal ``decode(token_variant)`` — the two helpers
-    are required to share the same offset / corpus slice so byte-exact
-    callers can swap freely."""
+    """The text variant must equal ``decode(token_variant)`` — the two helpers"""
     loader = _make_mixin_with_corpus()
     seed = "trace_t1:turn_3:partial_tail"
     tokens = loader.sample_partial_tail_tokens(20, seed)

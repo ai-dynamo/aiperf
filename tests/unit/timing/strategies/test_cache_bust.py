@@ -74,7 +74,6 @@ def test_marker_changes_per_input_dimension():
         )
         != base
     )
-    # trace_id is part of the digest tuple — changing it must change the digest.
     assert (
         build_cache_bust_marker(
             "bench", 0, 0, "trace_b", target=CacheBustTarget.SYSTEM_PREFIX
@@ -119,12 +118,7 @@ def test_marker_position_does_not_change_digest_with_trace_id():
 
 
 def test_marker_differs_when_only_trace_id_differs():
-    """Same (bid, pass, lane), different trace_id -> different rids.
-
-    This is the entire point of the collision-free fix: two different traces
-    landing on the same (recycle_pass, lane) tuple must produce distinct
-    markers so submission compliance can rely on per-session uniqueness.
-    """
+    """Same (bid, pass, lane), different trace_id -> different rids."""
     a = build_cache_bust_marker(
         "bench", 0, 0, "trace_a", target=CacheBustTarget.SYSTEM_PREFIX
     )
@@ -164,7 +158,6 @@ def test_estimate_marker_token_cost_none_returns_zero():
 )
 def test_estimate_marker_token_cost_positive_for_active_targets(target):
     cost = estimate_marker_token_cost(target, _FakeTokenizer())
-    # Marker is 20 chars; fake tokenizer gives ceil(20/4) = 5 tokens.
     assert cost == 5
 
 
@@ -193,7 +186,6 @@ def test_estimate_marker_token_cost_rounds_to_int():
 
         def encode(self, text: str, **_kwargs):
             self.n += 1
-            # Returns 5,6,5,6,5,6,5,6 -> mean 5.5 -> rounds to 6 (banker's rounding).
             return [0] * (5 if self.n % 2 else 6)
 
     cost = estimate_marker_token_cost(

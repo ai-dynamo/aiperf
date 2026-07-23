@@ -17,8 +17,7 @@ from tests.unit.timing._shared_helpers import _make_dataset_metadata
 
 
 def _sampler_for(ids: list[str]) -> MagicMock:
-    """A wrapping sampler (like the production SequentialSampler): cycles over
-    ``ids`` indefinitely; raises StopIteration only when the pool is empty."""
+    """A wrapping sampler (like the production SequentialSampler): cycles over"""
     import itertools
 
     sampler = MagicMock()
@@ -31,9 +30,7 @@ def _sampler_for(ids: list[str]) -> MagicMock:
 
 
 def test_pool_one_concurrency_ten_repeats_single_trace_across_ten_lanes(caplog):
-    """concurrency > pool: the wrapping sampler hands the single trace to all
-    ten lanes; an INFO log records the repeat fanout factor.
-    """
+    """concurrency > pool: the wrapping sampler hands the single trace to all"""
     md = _make_dataset_metadata({"only": 5})
     sampler = _sampler_for(["only"])
 
@@ -68,7 +65,6 @@ def test_empty_pool_raises_at_construction():
 
 
 def test_zero_turn_trace_skipped_then_pool_exhaustion_raises():
-    # Every trace has N=0, so trajectories end up empty -> EmptyTracePoolError.
     md = _make_dataset_metadata({"empty_a": 0, "empty_b": 0, "empty_c": 0})
     sampler = _sampler_for(["empty_a", "empty_b", "empty_c"])
 
@@ -82,8 +78,7 @@ def test_zero_turn_trace_skipped_then_pool_exhaustion_raises():
 
 
 def test_single_turn_trace_skipped_with_warning_deterministically(caplog):
-    """n=1 traces are rejected at trajectory selection (no profile turn after
-    warmup split). When the entire pool is n=1, EmptyTracePoolError is raised."""
+    """n=1 traces are rejected at trajectory selection (no profile turn after"""
     md = _make_dataset_metadata({"only": 1})
     sampler = _sampler_for(["only"])
 
@@ -98,8 +93,7 @@ def test_single_turn_trace_skipped_with_warning_deterministically(caplog):
 
 
 def test_two_turn_trace_k_i_is_zero_for_all_seeds():
-    """N=2 forces k_i=0 unconditionally (only k_i=0 leaves a profile turn at
-    index 1). RNG output is irrelevant; same outcome for every seed."""
+    """N=2 forces k_i=0 unconditionally (only k_i=0 leaves a profile turn at"""
     md = _make_dataset_metadata({"t0": 2})
     for seed in (0, 6, 42, 123456789, (2**63) - 1):
         src = TrajectorySource(
@@ -114,10 +108,7 @@ def test_two_turn_trace_k_i_is_zero_for_all_seeds():
 
 
 def test_trajectories_follow_sampler_order_including_repeats():
-    """Trace selection is the sampler's job: trajectories mirror the sampler's
-    output verbatim, repeats included (no dedup). Repeated traces are distinct
-    lanes that snapshot at their own t*.
-    """
+    """Trace selection is the sampler's job: trajectories mirror the sampler's"""
     md = _make_dataset_metadata({"a": 5, "b": 5, "c": 5})
     sampler = _sampler_for(["a", "a", "b", "c"])
 
@@ -200,9 +191,7 @@ def test_seed_max_int64_is_accepted_and_deterministic():
 
 
 def test_per_trace_salting_yields_different_k_for_different_trace_ids():
-    # Same seed, same N across traces -> per-trace salting must produce at
-    # least two distinct k_i values across the trajectories (not all the same).
-    n = 20  # k_max = 14, integers in [0,15] -> wide enough to diverge.
+    n = 20
     md = _make_dataset_metadata({f"t{i}": n for i in range(6)})
     ids = [f"t{i}" for i in range(6)]
 

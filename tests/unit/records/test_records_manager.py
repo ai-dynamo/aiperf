@@ -52,8 +52,6 @@ from aiperf.records.records_manager_processing import LoadedAnalyzer
 from aiperf.records.records_tracker import RecordsTracker
 from aiperf.timing.config import CreditPhaseConfig
 
-# Helper functions
-
 
 def test_orphan_phase_tracker_does_not_block_aggregate_completion() -> None:
     tracker = RecordsTracker()
@@ -194,8 +192,7 @@ class TestRecordsManagerTelemetry:
 
 
 class TestRecordsManagerMetricRecordDispatchErrors:
-    """Metric-handler failures must surface in the phase error summary rather
-    than being silently dropped while the record is marked processed."""
+    """Metric-handler failures must surface in the phase error summary rather"""
 
     def _make_manager(self) -> RecordsManager:
         manager = RecordsManager.__new__(RecordsManager)
@@ -233,7 +230,6 @@ class TestRecordsManagerMetricRecordDispatchErrors:
 
         await manager._on_records(self._records_message())
 
-        # Record is still counted, but the handler failure is not swallowed.
         manager._records_tracker.update_from_request.assert_called_once()
         summary = manager._error_tracker.get_error_summary_for_phase(
             CreditPhase.PROFILING
@@ -276,9 +272,7 @@ class TestRecordsManagerMetricRecordDispatchErrors:
 
     @pytest.mark.asyncio
     async def test_context_overflow_skip_counts_as_success_not_error(self) -> None:
-        """AGENTIC_REPLAY overflow skips must advance the success counter and
-        must NOT inflate error_records (which would trip --failed-request-threshold).
-        """
+        """AGENTIC_REPLAY overflow skips must advance the success counter and"""
         manager = self._make_manager()
         manager._dispatch_record = AsyncMock(return_value=[])
         record = create_metric_record_data(1_000, 2_000)
@@ -1208,8 +1202,7 @@ class TestRecordsManagerTimingDispatch:
 
 
 class TestRecordsManagerAnalyzerMetrics:
-    """Pin the invariant that `completed` counts request-derived records only,
-    and that analyzer-injected metrics are merged after the snapshot."""
+    """Pin the invariant that `completed` counts request-derived records only,"""
 
     @pytest.mark.asyncio
     async def test_completed_excludes_analyzer_metrics(self) -> None:
@@ -1245,8 +1238,6 @@ class TestRecordsManagerAnalyzerMetrics:
         manager._gpu_telemetry_accumulator = None
         manager._server_metrics_accumulator = None
 
-        # An analyzer contributes derived aggregates that must NOT inflate
-        # `completed` (which counts request-derived records only).
         analyzer_metrics = [
             MetricResult(tag="total_gpu_power", header="h", unit="W", avg=200.0),
             MetricResult(tag="total_gpu_energy", header="h", unit="J", avg=1000.0),
@@ -1434,7 +1425,6 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         manager._kill.assert_awaited_once()
         published = manager.publish.await_args.args[0]
         assert isinstance(published, BaseServiceErrorMessage)
-        # ... and the record is not processed.
         manager._dispatch_record.assert_not_called()
 
 

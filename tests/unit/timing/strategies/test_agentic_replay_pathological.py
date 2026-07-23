@@ -34,7 +34,6 @@ from tests.unit.timing.strategies._shared_helpers import (
     _make_run,
 )
 
-# Helpers (mirrors the sibling adversarial suites for parity)
 
 _RID_RE = re.compile(r"\[rid:[0-9a-f]{12}\]")
 
@@ -104,17 +103,9 @@ def _rid(marker: str | None) -> str | None:
     return m.group(0) if m else None
 
 
-# Characterization: double-recycle guard + lane-0 fallback interaction
-
-
 @pytest.mark.asyncio
 async def test_duplicate_final_turn_for_same_correlation_raises_runtime_error() -> None:
-    """Firing handle_credit_return twice for the same final turn raises.
-
-    The guard keys on x_correlation_id, so even though the first recycle popped
-    the finished correlation_id out of _correlation_to_lane (and the second call
-    falls back to lane 0), the duplicate is still caught by _in_flight_recycled.
-    """
+    """Firing handle_credit_return twice for the same final turn raises."""
     ds = _make_dataset(num_traces=3, turns_per_trace=2)
     strategy, issuer, _, _ = _make_strategy(
         phase=CreditPhase.PROFILING,
@@ -133,20 +124,9 @@ async def test_duplicate_final_turn_for_same_correlation_raises_runtime_error() 
         await strategy.handle_credit_return(final)
 
 
-# Characterization: num_turns / metadata mismatch fragility
-
-
 @pytest.mark.asyncio
 async def test_non_final_credit_overstating_num_turns_raises_value_error() -> None:
-    """A non-final credit whose num_turns exceeds the real turn count blows up.
-
-    The strategy trusts credit.num_turns for the is_final_turn decision but
-    fetches the next turn from metadata. If they disagree (turn_index+1 is out
-    of metadata range while is_final_turn is False), get_next_turn_metadata
-    raises an uncaught ValueError. Documents the lack of defensive validation;
-    in production credit.num_turns is sourced from the same metadata so this is
-    a 'garbage in' fragility rather than a normal-flow bug.
-    """
+    """A non-final credit whose num_turns exceeds the real turn count blows up."""
     ds = _make_dataset(num_traces=2, turns_per_trace=3)
     strategy, issuer, _, _ = _make_strategy(
         phase=CreditPhase.PROFILING,
@@ -156,20 +136,14 @@ async def test_non_final_credit_overstating_num_turns_raises_value_error() -> No
     await strategy.setup_phase()
     issuer.issue_credit.reset_mock()
 
-    # turn_index=2, num_turns=5 -> not final; but metadata only has 3 turns.
     bogus = _make_credit(conversation_id="trace_0", turn_index=2, num_turns=5)
     with pytest.raises(ValueError, match="No turn 3"):
         await strategy.handle_credit_return(bogus)
 
 
-# Characterization: context-overflow short-circuit on a CHILD turn
-
-
 @pytest.mark.asyncio
 async def test_child_non_final_overflow_routes_to_orchestrator_and_prunes() -> None:
-    """A non-final CHILD turn with context-overflow stops the child via the
-    BranchOrchestrator and prunes its bookkeeping, without recycling (children
-    are never root-pool members)."""
+    """A non-final CHILD turn with context-overflow stops the child via the"""
     ds = _make_dataset(num_traces=2, turns_per_trace=3)
     branch_orchestrator = MagicMock()
     branch_orchestrator.on_child_stopped = AsyncMock()
@@ -186,7 +160,7 @@ async def test_child_non_final_overflow_routes_to_orchestrator_and_prunes() -> N
 
     child = _make_credit(
         conversation_id="trace_0::sa:0",
-        turn_index=1,  # non-final of 3
+        turn_index=1,
         num_turns=3,
         x_correlation_id="child-corr",
         agent_depth=1,
@@ -200,14 +174,12 @@ async def test_child_non_final_overflow_routes_to_orchestrator_and_prunes() -> N
     branch_orchestrator.on_child_stopped.assert_awaited_once_with("child-corr")
     assert "child-corr" not in strategy._session_marker
     assert "child-corr" not in strategy._correlation_to_lane
-    # No recycle: the child trace_id must not enter the root recycle pool.
     assert issuer.issue_credit.await_count == 0
 
 
 @pytest.mark.asyncio
 async def test_child_overflow_with_no_orchestrator_still_prunes_bookkeeping() -> None:
-    """branch_orchestrator=None: child overflow short-circuit must still prune
-    the marker/lane dicts (no AttributeError from a None orchestrator)."""
+    """branch_orchestrator=None: child overflow short-circuit must still prune"""
     ds = _make_dataset(num_traces=2, turns_per_trace=3)
     strategy, issuer, _, _ = _make_strategy(
         phase=CreditPhase.PROFILING,
@@ -236,17 +208,9 @@ async def test_child_overflow_with_no_orchestrator_still_prunes_bookkeeping() ->
     assert "child-corr" not in strategy._correlation_to_lane
 
 
-# Characterization: recycle pool excludes non-root (DAG child) conversations
-
-
 @pytest.mark.asyncio
 async def test_recycle_excludes_non_root_children() -> None:
-    """Recycle draws only is_root conversations from the sampler.
-
-    DAG child conversations (is_root=False) must never be spawned as fresh
-    roots; they are reachable only via their parent's branches, and a fresh
-    root session from a child trace_id would replay a partial context.
-    """
+    """Recycle draws only is_root conversations from the sampler."""
     ds = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -279,17 +243,8 @@ async def test_recycle_excludes_non_root_children() -> None:
     assert "root_0::sa" not in seen
 
 
-# Characterization: wrap-fill + cache_bust=NONE warning coherence
-
-
 def test_wrap_fill_with_cache_bust_none_warns_about_identical_traffic() -> None:
-    """Wrap-fill (>1 lanes per trace) + cache_bust=NONE warns; non-NONE doesn't.
-
-    Byte-identical per-lane traffic across shared-trace lanes is a real
-    measurement hazard, so the constructor emits a loud heads-up only when the
-    feature is off. A non-NONE target makes per-lane traffic distinct, so the
-    warning must be suppressed.
-    """
+    """Wrap-fill (>1 lanes per trace) + cache_bust=NONE warns; non-NONE doesn't."""
     ds = _make_dataset(num_traces=1, turns_per_trace=3)
     wrap_fill = [
         Trajectory(conversation_id="trace_0", start_turn_index=0),
@@ -335,17 +290,9 @@ def test_wrap_fill_with_cache_bust_none_warns_about_identical_traffic() -> None:
     assert nonnone_calls == [], "non-NONE target must suppress the wrap-fill warning"
 
 
-# Characterization: snapshot terminal-root immediate recycle rotates marker
-
-
 @pytest.mark.asyncio
 async def test_snapshot_single_turn_root_profiles_own_turn_zero_with_marker() -> None:
-    """A single-turn root sampled at t* == its turn-0 timestamp (n == 0) has
-    nothing to warm, so PROFILING measures its own turn 0 rather than
-    recycling at startup. The dispatched credit keeps the snapshot's own
-    correlation id and carries a minted cache-bust marker; recycle (and its
-    marker rotation) happens only later on the turn's completion.
-    """
+    """A single-turn root sampled at t* == its turn-0 timestamp (n == 0) has"""
     ds = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -385,9 +332,7 @@ async def test_snapshot_single_turn_root_profiles_own_turn_zero_with_marker() ->
 
     assert len(issued) == 1
     profiled = issued[0]
-    # The snapshot's own session profiles turn 0 (no startup recycle).
     assert profiled.x_correlation_id == "snap-root"
     assert profiled.turn_index == 0
-    # No recycle yet -> pass counter has not advanced for a fresh session.
     assert strategy._recycle_pass.get("trace_0", 0) == 0
     assert _rid(profiled.cache_bust_marker) is not None

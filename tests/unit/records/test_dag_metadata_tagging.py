@@ -184,7 +184,6 @@ class TestBranchStatsExport:
     def test_profile_results_omits_branch_stats_when_none(self):
         results = ProfileResults(records=[], completed=0, start_ns=1, end_ns=2)
         assert results.branch_stats is None
-        # None-by-default survives a JSON roundtrip.
         restored = ProfileResults.model_validate_json(results.model_dump_json())
         assert restored.branch_stats is None
 
@@ -243,8 +242,6 @@ class TestRecordsManagerOnCreditPhaseComplete:
         mgr._records_tracker = MagicMock()
         mgr._records_tracker.check_and_set_all_records_received_for_phase.return_value = False
 
-        # Use WARMUP to skip the PROFILING-only logging branch that relies on
-        # real phase_stats fields.
         phase_stats = self._make_phase_stats(CreditPhase.WARMUP)
         stats = BranchStats(children_spawned=4, parents_resumed=1)
         message = CreditPhaseCompleteMessage(

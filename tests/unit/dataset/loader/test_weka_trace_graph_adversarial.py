@@ -75,11 +75,7 @@ def _build_trace(trace_id, requests, models=("m",)):
 def test_terminal_subagent_at_trace_start_with_no_parents_dropped(
     tmp_path, monkeypatch
 ):
-    """A trace with only a single subagent and no parent normals drops the
-    branch (preceding and following both None). The parent conversation is
-    empty AND the orphan child conversation is pruned (post-Task-7 fix), so
-    only the empty parent remains.
-    """
+    """A trace with only a single subagent and no parent normals drops the"""
     data = _build_trace("t1", [_subagent("a1", t=0.0)])
     path = _write_trace(tmp_path, data)
     uc = _mk_user_config()
@@ -94,11 +90,7 @@ def test_terminal_subagent_at_trace_start_with_no_parents_dropped(
 def test_three_subagents_between_same_parent_turn_pair_collapse_to_one_multi_child_branch(
     tmp_path, monkeypatch
 ):
-    """Three subagents sandwiched between the same preceding/following parent
-    turn pair collapse into a single SPAWN branch with three
-    child_conversation_ids and a single SPAWN_JOIN prereq on the following
-    turn, so the v1 orchestrator validator accepts the topology.
-    """
+    """Three subagents sandwiched between the same preceding/following parent"""
     requests = [
         _normal(t=0.0),
         _subagent("a1", t=1.0),
@@ -132,10 +124,7 @@ def test_three_subagents_between_same_parent_turn_pair_collapse_to_one_multi_chi
 def test_multiple_terminal_subagents_collapse_to_one_background_branch(
     tmp_path, monkeypatch
 ):
-    """Two terminal subagents after the final parent turn share the same
-    (preceding, following=None) anchor pair and collapse into ONE background
-    branch with two child_conversation_ids. No prereqs are emitted.
-    """
+    """Two terminal subagents after the final parent turn share the same"""
     requests = [
         _normal(t=0.0),
         _subagent("a1", t=1.0),
@@ -156,10 +145,7 @@ def test_multiple_terminal_subagents_collapse_to_one_background_branch(
 def test_subagent_with_empty_inner_requests_emits_empty_child_conversation(
     tmp_path, monkeypatch
 ):
-    """A subagent with an empty ``requests`` list currently produces a child
-    conversation with zero turns. Documents current behavior (a downstream
-    orchestrator consuming zero-turn children would be notable).
-    """
+    """A subagent with an empty ``requests`` list currently produces a child"""
     requests = [
         _normal(t=0.0),
         _subagent("a1", t=1.0, inner=()),
@@ -173,11 +159,7 @@ def test_subagent_with_empty_inner_requests_emits_empty_child_conversation(
 
 
 def test_parent_has_only_subagents_no_normals_emits_no_turns(tmp_path, monkeypatch):
-    """A trace consisting exclusively of subagent entries (no parent normals)
-    yields a parent conversation with empty turns and empty branches (both
-    anchors None -> dropped). Post-Task-7 fix, the orphan child conversations
-    are also pruned, so only the empty parent remains.
-    """
+    """A trace consisting exclusively of subagent entries (no parent normals)"""
     requests = [
         _subagent("a1", t=1.0),
         _subagent("a2", t=2.0),
@@ -195,11 +177,7 @@ def test_parent_has_only_subagents_no_normals_emits_no_turns(tmp_path, monkeypat
 def test_subagent_status_async_launched_with_null_telemetry_parses_and_converts(
     tmp_path, monkeypatch
 ):
-    """A subagent with ``status='async_launched'`` and ``duration_ms``,
-    ``total_tokens``, ``tool_use_count`` all None (telemetry not captured)
-    plus an empty inner-requests list parses successfully and still emits a
-    SPAWN branch on the parent conversation.
-    """
+    """A subagent with ``status='async_launched'`` and ``duration_ms``,"""
     requests = [
         _normal(t=0.0),
         _subagent(
@@ -224,12 +202,7 @@ def test_subagent_status_async_launched_with_null_telemetry_parses_and_converts(
 def test_subagent_inner_decreasing_timestamps_produce_negative_delay(
     tmp_path, monkeypatch
 ):
-    """A subagent whose inner requests appear in the trace with decreasing
-    ``t`` (5.0 then 3.0) is sorted by ``t`` during stream-packing, so the
-    child turns end up in monotonic order with a positive +2s delay
-    (5.0 - 3.0). Documents the post-stream-packing contract: inner requests
-    are reordered by ``t`` rather than preserved in raw insertion order.
-    """
+    """A subagent whose inner requests appear in the trace with decreasing"""
     requests = [
         _normal(t=0.0),
         _subagent(
@@ -247,10 +220,7 @@ def test_subagent_inner_decreasing_timestamps_produce_negative_delay(
 
 
 def test_subagent_inner_models_mismatch_declared_models_no_error(tmp_path, monkeypatch):
-    """A subagent's declared ``models`` list is not cross-checked against the
-    model field of its inner requests. Both models appear in the endpoint
-    allow-list so validation succeeds. Documents the lack of cross-check.
-    """
+    """A subagent's declared ``models`` list is not cross-checked against the"""
     requests = [
         _normal(t=0.0),
         _subagent(
@@ -270,9 +240,7 @@ def test_subagent_inner_models_mismatch_declared_models_no_error(tmp_path, monke
 
 
 def test_subagent_with_hundred_inner_turns_scales(tmp_path, monkeypatch):
-    """A subagent with 100 inner normal requests produces a child
-    conversation with exactly 100 turns. Smoke test for large inner fanout.
-    """
+    """A subagent with 100 inner normal requests produces a child"""
     inner = tuple(("n", float(i), 10, 1) for i in range(100))
     requests = [
         _normal(t=0.0),
@@ -287,11 +255,7 @@ def test_subagent_with_hundred_inner_turns_scales(tmp_path, monkeypatch):
 
 
 def test_trace_with_hundred_subagents_collapse_to_single_branch(tmp_path, monkeypatch):
-    """100 subagents sandwiched between two parent turns all share the same
-    (preceding, following) anchor pair and collapse into a single SPAWN
-    branch with 100 child_conversation_ids and ONE prereq on the following
-    turn, so the v1 orchestrator validator accepts the topology.
-    """
+    """100 subagents sandwiched between two parent turns all share the same"""
     subagents = [_subagent(f"a{i}", t=float(i + 1)) for i in range(100)]
     requests = [_normal(t=0.0), *subagents, _normal(t=200.0)]
     path = _write_trace(tmp_path, _build_trace("t1", requests))
@@ -309,11 +273,7 @@ def test_trace_with_hundred_subagents_collapse_to_single_branch(tmp_path, monkey
 def test_subagent_duration_tokens_tool_count_all_none_non_async_accepted(
     tmp_path, monkeypatch
 ):
-    """A subagent with status='completed' (non-async) but all three
-    telemetry fields (duration_ms, total_tokens, tool_use_count) set to None
-    parses and converts without error. Documents that the model does not
-    enforce non-null telemetry for non-async subagents.
-    """
+    """A subagent with status='completed' (non-async) but all three"""
     requests = [
         _normal(t=0.0),
         _subagent(
@@ -336,11 +296,7 @@ def test_subagent_duration_tokens_tool_count_all_none_non_async_accepted(
 def test_subagent_requests_ordering_preserved_in_child_conversation(
     tmp_path, monkeypatch
 ):
-    """Inner request ordering is preserved, with timestamps on the root
-    timeline: the spawn-relative inner ``t`` values 0.0, 1.0, 2.0 shift by
-    the marker's t=5.0 (see ``_subagent_request_absolute_t``) but keep the
-    inner-list order.
-    """
+    """Inner request ordering is preserved, with timestamps on the root"""
     requests = [
         _normal(t=0.0),
         _subagent(
@@ -360,14 +316,11 @@ def test_subagent_requests_ordering_preserved_in_child_conversation(
 def test_terminal_subagent_after_filter_killed_final_turn_reanchors_to_earlier(
     tmp_path, monkeypatch
 ):
-    """When max_isl filters out what was originally the subagent's following
-    parent turn, and no later parent turn exists, the subagent still anchors
-    to the earlier surviving parent and becomes a background branch.
-    """
+    """When max_isl filters out what was originally the subagent's following"""
     requests = [
         _normal(t=0.0, in_=10),
-        _normal(t=1.0, in_=500),  # filtered out by max_isl=100
-        _subagent("a1", t=2.0),  # originally terminal; still terminal after filter
+        _normal(t=1.0, in_=500),
+        _subagent("a1", t=2.0),
     ]
     path = _write_trace(tmp_path, _build_trace("t1", requests))
     uc = _mk_user_config(max_isl=100)
@@ -384,17 +337,13 @@ def test_terminal_subagent_after_filter_killed_final_turn_reanchors_to_earlier(
 def test_two_subagents_around_filter_killed_middle_parent_both_reanchor(
     tmp_path, monkeypatch
 ):
-    """With p0, p1(killed by max_isl), p2 and a subagent on each side of p1,
-    both subagents re-anchor to the survivors with the same (preceding=p0,
-    following=p2) pair, so they collapse into ONE branch with two
-    child_conversation_ids and one SPAWN_JOIN prereq on p2.
-    """
+    """With p0, p1(killed by max_isl), p2 and a subagent on each side of p1,"""
     requests = [
-        _normal(t=0.0, in_=50),  # p0: outer 0
-        _subagent("a1", t=0.5),  # outer 1
-        _normal(t=1.0, in_=500),  # p1: outer 2, filtered
-        _subagent("a2", t=1.5),  # outer 3
-        _normal(t=2.0, in_=50),  # p2: outer 4
+        _normal(t=0.0, in_=50),
+        _subagent("a1", t=0.5),
+        _normal(t=1.0, in_=500),
+        _subagent("a2", t=1.5),
+        _normal(t=2.0, in_=50),
     ]
     path = _write_trace(tmp_path, _build_trace("t1", requests))
     uc = _mk_user_config(max_isl=100)
@@ -413,10 +362,7 @@ def test_two_subagents_around_filter_killed_middle_parent_both_reanchor(
 def test_subagent_inner_hash_id_collision_with_parent_does_not_raise(
     tmp_path, monkeypatch
 ):
-    """Hash-id overlap between parent requests (hash_ids=[1,2,3]) and a
-    subagent's inner request (hash_ids=[1,2]) does not raise; both parent
-    and child conversations are emitted.
-    """
+    """Hash-id overlap between parent requests (hash_ids=[1,2,3]) and a"""
     requests = [
         {
             "t": 0.0,
@@ -456,9 +402,7 @@ def test_subagent_inner_hash_id_collision_with_parent_does_not_raise(
 
 
 def test_orphan_child_pruned_when_parent_has_only_subagent(tmp_path, monkeypatch):
-    """Parent with zero normal requests and one subagent: subagent drops,
-    child conversation must also drop.
-    """
+    """Parent with zero normal requests and one subagent: subagent drops,"""
     data = _build_trace(
         "only_sa",
         [
@@ -475,10 +419,7 @@ def test_orphan_child_pruned_when_parent_has_only_subagent(tmp_path, monkeypatch
 def test_subagent_at_trace_index_zero_dropped_with_info_log(
     tmp_path, monkeypatch, caplog
 ):
-    """Subagent with no preceding parent turn is dropped, matching the symmetry
-    of terminal-first subagents. Prior to the fix, a branch was created but no
-    turn declared it in branch_ids, producing an orphan branch.
-    """
+    """Subagent with no preceding parent turn is dropped, matching the symmetry"""
     import logging
 
     data = _build_trace(
@@ -493,7 +434,6 @@ def test_subagent_at_trace_index_zero_dropped_with_info_log(
     loader = _make_loader(p, uc, monkeypatch)
     with caplog.at_level(logging.INFO):
         convs = loader.convert_to_conversations(loader.load_dataset())
-    # Only parent with its single surviving turn; no child, no branch.
     assert {c.session_id for c in convs} == {"sa_first"}
     parent = convs[0]
     assert len(parent.turns) == 1
@@ -505,10 +445,7 @@ def test_subagent_at_trace_index_zero_dropped_with_info_log(
 def test_three_adjacent_subagents_collapse_into_one_multi_child_branch(
     tmp_path, monkeypatch
 ):
-    """3 back-to-back subagents between the same parent-turn pair must emit
-    ONE branch with 3 child_conversation_ids and ONE SPAWN_JOIN prereq, so the
-    topology passes validate_for_orchestrator_v1.
-    """
+    """3 back-to-back subagents between the same parent-turn pair must emit"""
     data = _build_trace(
         "collapse",
         [

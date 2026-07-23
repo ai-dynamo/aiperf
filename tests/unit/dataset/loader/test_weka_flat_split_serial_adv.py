@@ -93,55 +93,30 @@ def _retained_request_count(convs: dict) -> int:
     return sum(len(c.turns) for c in convs.values())
 
 
-# Branch anchoring: turn-0 fallback when filters drop the main chain's
-# earliest turns so a worker's first outer_idx precedes every retained main
-# outer_idx (spec §5.3 "Fallback ... anchor to main turn 0").
-
-
 def test_flat_chain_anchoring_turn_zero_fallback_passes_orchestrator_v1():
-    """A worker chain whose first request's outer_idx is below EVERY main-chain
-    turn's outer_idx must anchor to main turn 0 (spec §5.3 fallback) and pass
-    orchestrator-v1 validation.
-
-    The main chain owns the trace's earliest-``t`` request even though its rows
-    sit at high outer indices (2, 3). The worker (a disjoint-namespace batch)
-    sits at outer indices 0, 1 but starts later in time, so no main turn
-    precedes it by outer_idx -> the loader's ``default=0`` fallback fires.
-    """
+    """A worker chain whose first request's outer_idx is below EVERY main-chain"""
     requests = [
-        _normal(5.0, [900, 901], api_time=0.1, model=_HAIKU),  # worker founder, outer 0
-        _normal(6.0, [900, 901, 902], api_time=0.1, model=_HAIKU),  # worker t1, outer 1
-        _normal(0.0, [1, 2, 3], api_time=0.1),  # main founder (earliest t), outer 2
-        _normal(1.0, [1, 2, 3, 4], api_time=0.1),  # main t1, outer 3
+        _normal(5.0, [900, 901], api_time=0.1, model=_HAIKU),
+        _normal(6.0, [900, 901, 902], api_time=0.1, model=_HAIKU),
+        _normal(0.0, [1, 2, 3], api_time=0.1),
+        _normal(1.0, [1, 2, 3, 4], api_time=0.1),
     ]
     loader = _build_loader()
     convs = _convert(loader, _trace("flt_fb2", requests))
 
     root = convs["flt_fb2"]
-    # Main chain = the [1,2,3...] rows (earliest t); worker = the [900,...] rows.
     assert "flt_fb2::fa:000" in convs
-    # Worker's first outer_idx (0) is below both main outer indices (2, 3) ->
-    # no preceding main turn by outer_idx -> fallback anchors to main turn 0.
     flat_branch = next(b for b in root.branches if ":flatspawn:" in b.branch_id)
     assert flat_branch.branch_id in root.turns[0].branch_ids
-    # convert_to_conversations ran validate_for_orchestrator_v1 internally;
-    # reaching here means it passed. Conserve retained-request count.
-    assert _retained_request_count(convs) == 4  # 2 main + 2 worker
-
-
-# Join boundary epsilon: chain end EXACTLY equal to a main turn's t joins
-# within 1e-6 (spec §5.3 "first main turn with t + eps >= end(tail(chain))").
+    assert _retained_request_count(convs) == 4
 
 
 def test_flat_chain_join_at_exact_equality_gates_that_main_turn():
-    """Worker ends at exactly t == a main turn's t. With the +eps slack the
-    join must land on that main turn (SPAWN_JOIN), not be background."""
-    # Main: outer0 t=0 [1,2,3], outer1 t=10 [1,2,3,4]. Worker forks at outer0,
-    # one request ending exactly at t=10.0 (t=9.0 + api_time=1.0).
+    """Worker ends at exactly t == a main turn's t. With the +eps slack the"""
     requests = [
-        _normal(0.0, [1, 2, 3], api_time=0.5),  # main founder
-        _normal(9.0, [1, 2, 700], api_time=1.0, model=_HAIKU),  # worker, ends t=10.0
-        _normal(10.0, [1, 2, 3, 4], api_time=0.5),  # main t1 at exactly worker end
+        _normal(0.0, [1, 2, 3], api_time=0.5),
+        _normal(9.0, [1, 2, 700], api_time=1.0, model=_HAIKU),
+        _normal(10.0, [1, 2, 3, 4], api_time=0.5),
     ]
     loader = _build_loader()
     convs = _convert(loader, _trace("flt_join_eq", requests))
@@ -159,15 +134,11 @@ def test_flat_chain_join_at_exact_equality_gates_that_main_turn():
 
 
 def test_flat_chain_join_within_epsilon_slack_gates_main_turn():
-    """Worker ends a hair (< 1e-6 s) AFTER a main turn's t. The ``+ eps`` slack
-    in the join rule must still gate that turn; without it the strict ``>=``
-    would push the chain to background. Probes the exact 1e-6 epsilon (spec §3
-    eps = 1e-6 s, §5.3 join rule ``t + eps >= end(tail(chain))``)."""
-    # Main turn 1 at t=10.0; worker ends at 10.0 + 5e-7 (inside eps).
+    """Worker ends a hair (< 1e-6 s) AFTER a main turn's t. The ``+ eps`` slack"""
     requests = [
-        _normal(0.0, [1, 2, 3], api_time=0.5),  # main founder
-        _normal(9.0, [1, 2, 701], api_time=1.0 + 5e-7, model=_HAIKU),  # ends 10.0+5e-7
-        _normal(10.0, [1, 2, 3, 4], api_time=0.5),  # main t1 at t=10.0 (< worker end)
+        _normal(0.0, [1, 2, 3], api_time=0.5),
+        _normal(9.0, [1, 2, 701], api_time=1.0 + 5e-7, model=_HAIKU),
+        _normal(10.0, [1, 2, 3, 4], api_time=0.5),
     ]
     loader = _build_loader()
     convs = _convert(loader, _trace("flt_join_eps", requests))
@@ -178,13 +149,11 @@ def test_flat_chain_join_within_epsilon_slack_gates_main_turn():
 
 
 def test_flat_chain_just_past_last_main_turn_is_background_no_prereq():
-    """A worker whose end is just past (by more than eps) the last main turn's
-    t must become a background branch (is_background=True) with no prereq
-    anywhere (spec §5.3 'None -> is_background=True')."""
+    """A worker whose end is just past (by more than eps) the last main turn's"""
     requests = [
-        _normal(0.0, [1, 2, 3], api_time=0.5),  # main founder
-        _normal(5.0, [1, 2, 3, 4], api_time=0.5),  # main t1 (last main turn t=5)
-        _normal(1.0, [1, 2, 800], api_time=4.001, model=_HAIKU),  # worker ends t=5.001
+        _normal(0.0, [1, 2, 3], api_time=0.5),
+        _normal(5.0, [1, 2, 3, 4], api_time=0.5),
+        _normal(1.0, [1, 2, 800], api_time=4.001, model=_HAIKU),
     ]
     loader = _build_loader()
     convs = _convert(loader, _trace("flt_bg", requests))
@@ -197,21 +166,13 @@ def test_flat_chain_just_past_last_main_turn_is_background_no_prereq():
     }
 
 
-# Grouping: two chains sharing (preceding, join) collapse into one branch with
-# both child ids; a third chain in a different group gets its own branch_id
-# (spec §5.3 "Grouping ... branch_id = ...:flatspawn:{first_chain_index}").
-
-
 def test_two_flat_chains_sharing_spawn_and_join_collapse_to_one_branch():
-    """Two worker chains with identical (preceding=turn0, join=turn1) anchoring
-    must share ONE ConversationBranchInfo carrying both child ids."""
-    # Two disjoint-namespace workers both forking off main turn 0 and both
-    # ending before main turn 1 (t=20).
+    """Two worker chains with identical (preceding=turn0, join=turn1) anchoring"""
     requests = [
-        _normal(0.0, [1, 2, 3], api_time=0.5),  # main founder, outer 0
-        _normal(1.0, [500, 501], api_time=0.5, model=_HAIKU),  # worker A, ends 1.5
-        _normal(2.0, [600, 601], api_time=0.5, model=_HAIKU),  # worker B, ends 2.5
-        _normal(20.0, [1, 2, 3, 4], api_time=0.5),  # main t1
+        _normal(0.0, [1, 2, 3], api_time=0.5),
+        _normal(1.0, [500, 501], api_time=0.5, model=_HAIKU),
+        _normal(2.0, [600, 601], api_time=0.5, model=_HAIKU),
+        _normal(20.0, [1, 2, 3, 4], api_time=0.5),
     ]
     loader = _build_loader()
     convs = _convert(loader, _trace("flt_group", requests))
@@ -222,47 +183,36 @@ def test_two_flat_chains_sharing_spawn_and_join_collapse_to_one_branch():
         "flt_group::fa:000",
         "flt_group::fa:001",
     }
-    # One join prereq on turn 1 referencing that single branch.
     assert [p.branch_id for p in root.turns[1].prerequisites] == [
         flatspawn[0].branch_id
     ]
 
 
 def test_three_flat_chains_distinct_groups_get_unique_branch_ids():
-    """A third chain that joins a different main turn must land in its own
-    branch with a distinct branch_id; branch_ids stay unique per turn so
-    orchestrator-v1 validation passes."""
+    """A third chain that joins a different main turn must land in its own"""
     requests = [
-        _normal(0.0, [1, 2, 3], api_time=0.2),  # main founder, outer 0
-        _normal(0.5, [500, 501], api_time=0.2, model=_HAIKU),  # A ends 0.7 -> join t1
-        _normal(0.6, [600, 601], api_time=0.2, model=_HAIKU),  # B ends 0.8 -> join t1
-        _normal(10.0, [1, 2, 3, 4], api_time=0.2),  # main t1 (t=10)
-        _normal(11.0, [700, 701], api_time=0.2, model=_HAIKU),  # C ends 11.2 -> join t2
-        _normal(20.0, [1, 2, 3, 4, 5], api_time=0.2),  # main t2 (t=20)
+        _normal(0.0, [1, 2, 3], api_time=0.2),
+        _normal(0.5, [500, 501], api_time=0.2, model=_HAIKU),
+        _normal(0.6, [600, 601], api_time=0.2, model=_HAIKU),
+        _normal(10.0, [1, 2, 3, 4], api_time=0.2),
+        _normal(11.0, [700, 701], api_time=0.2, model=_HAIKU),
+        _normal(20.0, [1, 2, 3, 4, 5], api_time=0.2),
     ]
     loader = _build_loader()
     convs = _convert(loader, _trace("flt_3", requests))
     root = convs["flt_3"]
     flatspawn = [b for b in root.branches if "flatspawn" in b.branch_id]
-    # A+B share (turn0, turn1); C is (turn1, turn2) -> 2 branches.
     assert len(flatspawn) == 2
     ids = [b.branch_id for b in flatspawn]
     assert len(set(ids)) == 2, "branch_ids must be unique"
-    # No turn declares the same branch_id twice (validator guardrail).
     for turn in root.turns:
         assert len(turn.branch_ids) == len(set(turn.branch_ids))
 
 
-# Interaction: real type:"subagent" entries coexist with flat-chain split.
-# Subagent anchoring must use main-chain turns only; both branch kinds may
-# share one turn (spec §5.3).
-
-
 def test_subagent_and_flat_branch_coexist_on_same_turn():
-    """A subagent marker and a detected flat chain both spawn off main turn 0;
-    their branch_ids coexist and stay distinct, and validation passes."""
+    """A subagent marker and a detected flat chain both spawn off main turn 0;"""
     requests = [
-        _normal(0.0, [1, 2, 3], api_time=0.5),  # main founder, outer 0
+        _normal(0.0, [1, 2, 3], api_time=0.5),
         {
             "t": 0.5,
             "type": "subagent",
@@ -276,9 +226,9 @@ def test_subagent_and_flat_branch_coexist_on_same_turn():
             "models": [_HAIKU],
             "tool_tokens": 0,
             "system_tokens": 0,
-        },  # subagent marker, outer 1, ends ~1.0
-        _normal(1.0, [777, 778], api_time=0.3, model=_HAIKU),  # flat worker, outer 2
-        _normal(10.0, [1, 2, 3, 4], api_time=0.5),  # main t1, outer 3
+        },
+        _normal(1.0, [777, 778], api_time=0.3, model=_HAIKU),
+        _normal(10.0, [1, 2, 3, 4], api_time=0.5),
     ]
     loader = _build_loader()
     convs = _convert(loader, _trace("flt_coexist", requests))
@@ -287,24 +237,14 @@ def test_subagent_and_flat_branch_coexist_on_same_turn():
     flat_ids = [b.branch_id for b in root.branches if ":flatspawn:" in b.branch_id]
     assert len(spawn_ids) == 1, "subagent SPAWN branch present"
     assert len(flat_ids) == 1, "flat-chain SPAWN branch present"
-    # Both anchored to turn 0; branch_ids on turn 0 unique.
     assert set(spawn_ids + flat_ids).issubset(set(root.turns[0].branch_ids))
     assert len(root.turns[0].branch_ids) == len(set(root.turns[0].branch_ids))
-    # Child conversations exist for both.
     assert "flt_coexist::sa:agent_x" in convs
     assert "flt_coexist::fa:000" in convs
 
 
-# Disjoint-batch path: with no nonce-poison guard, a trace of mutually-
-# disjoint requests is an independent-agent batch and splits into per-agent
-# chains rather than being skipped.
-
-
 def test_disjoint_batch_splits_into_independent_chains(caplog):
-    """A trace of mutually-disjoint requests (zero LCP between all) splits
-    into independent per-agent chains, retaining every request, and logs no
-    nonce-poison WARNING (the guard was removed)."""
-    # 10 mutually-disjoint single-block requests -> independent founders.
+    """A trace of mutually-disjoint requests (zero LCP between all) splits"""
     requests = [_normal(float(i), [1000 + i], api_time=0.01) for i in range(10)]
     loader = _build_loader()
     with caplog.at_level(logging.WARNING):
@@ -317,22 +257,12 @@ def test_disjoint_batch_splits_into_independent_chains(caplog):
     ), "the nonce-poison guard was removed; no such warning should be logged"
 
 
-# Idle-gap warp interaction (spec §5.6): flat-chain warped timestamps/delays
-# and the warp gap structure must match the unsplit trace shifted equivalently.
-
-
 def test_idle_gap_warp_flat_chain_gap_structure_matches_unsplit_run():
-    """With trace_idle_gap_cap_seconds active, the warp collects the SAME
-    request-start set whether or not chains split (spec §5.6 'unchanged
-    inputs'). The main chain's warped timestamps must equal those produced
-    with detection disabled (legacy single stream) over the same starts.
-    """
-    # Main founder at t=0, worker founder at t=20 (disjoint ns), main t2 at
-    # t=220. The 20->220 request-start gap (200s) caps to 60s -> 140s shift.
+    """With trace_idle_gap_cap_seconds active, the warp collects the SAME"""
     requests = [
-        _normal(0.0, [1, 2, 3], api_time=1.0),  # main, t=0
-        _normal(20.0, [900, 901], api_time=1.0, model=_HAIKU),  # worker, t=20
-        _normal(220.0, [1, 2, 3, 4], api_time=1.0),  # main t2 -> warps to t=80
+        _normal(0.0, [1, 2, 3], api_time=1.0),
+        _normal(20.0, [900, 901], api_time=1.0, model=_HAIKU),
+        _normal(220.0, [1, 2, 3, 4], api_time=1.0),
     ]
     uc = _mk_user_config(trace_idle_gap_cap_seconds=60.0)
     loader_split = _build_loader(uc)
@@ -347,43 +277,21 @@ def test_idle_gap_warp_flat_chain_gap_structure_matches_unsplit_run():
 
     root_split = convs_split["flt_warp"]
     legacy = convs_legacy["flt_warp"]
-    # Main founder unwarped (gap is after it).
     assert root_split.turns[0].timestamp == 0.0
-    # Worker request start (t=20) is also <= cap boundary so it is unwarped;
-    # the legacy single stream sees it at t=20 too. The 200s gap 20->220
-    # collapses to 60s, shifting t=220 -> t=80 in BOTH runs.
     assert root_split.turns[1].timestamp == pytest.approx(80_000.0)
-    # Legacy keeps all 3 as one conversation; its turn at t=220 also warps to
-    # 80s. The main chain's warped end timestamp must agree across runs.
     legacy_220 = next(t for t in legacy.turns if t.timestamp == pytest.approx(80_000.0))
     assert legacy_220.timestamp == pytest.approx(root_split.turns[1].timestamp)
-    # Worker conversation's single turn warps to t=20 (20_000 ms).
     worker = convs_split["flt_warp::fa:000"]
     assert worker.turns[0].timestamp == pytest.approx(20_000.0)
 
 
 def test_idle_gap_warp_flat_branch_start_uses_mapped_time_not_raw():
-    """Regression: a multi-chain flat group whose workers begin AFTER a
-    compressed idle gap must anchor its SPAWN branch on the WARPED first-request
-    time, matching the workers' (also-warped) turn-0 timestamps.
-
-    Using the raw first-request time leaves the branch start on the
-    uncompressed timeline while the child turns live on the compressed one, so
-    branch_orchestrator._child_dispatch_offset_ms (max(0, child_ts -
-    branch_start)) goes negative and clamps to 0 -- silently collapsing the
-    recorded inter-worker dispatch stagger for every flat worker-group fan-out
-    whenever the (default-on for agentx) idle-gap cap is engaged.
-    """
-    # Main founder at t=0; a 1000s idle gap; two disjoint-namespace workers at
-    # t=1000 and t=1002 (2s apart); main t1 at t=1003. Sorted request starts
-    # [0, 1000, 1002, 1003]: the 0->1000 gap (1000s) caps to 60s (940s excess),
-    # shifting everything at/after the gap left by 940s:
-    #   worker A 1000 -> 60s, worker B 1002 -> 62s, main t1 1003 -> 63s.
+    """Regression: a multi-chain flat group whose workers begin AFTER a"""
     requests = [
-        _normal(0.0, [1, 2, 3], api_time=0.5),  # main founder, outer 0
-        _normal(1000.0, [900, 901], api_time=0.5, model=_HAIKU),  # worker A
-        _normal(1002.0, [910, 911], api_time=0.5, model=_HAIKU),  # worker B
-        _normal(1003.0, [1, 2, 3, 4], api_time=0.5),  # main t1
+        _normal(0.0, [1, 2, 3], api_time=0.5),
+        _normal(1000.0, [900, 901], api_time=0.5, model=_HAIKU),
+        _normal(1002.0, [910, 911], api_time=0.5, model=_HAIKU),
+        _normal(1003.0, [1, 2, 3, 4], api_time=0.5),
     ]
     uc = _mk_user_config(trace_idle_gap_cap_seconds=60.0)
     loader = _build_loader(uc)
@@ -395,12 +303,8 @@ def test_idle_gap_warp_flat_branch_start_uses_mapped_time_not_raw():
     branch = flatspawn[0]
     assert len(branch.child_conversation_ids) == 2
 
-    # Branch start is the WARPED min worker start (60s), NOT the raw 1000s.
     assert branch.start_timestamp_ms == pytest.approx(60_000.0)
 
-    # Worker turn-0 timestamps are warped (60s, 62s); the per-worker dispatch
-    # offset from the branch start stays non-negative AND preserves the recorded
-    # 2s stagger instead of collapsing both to 0.
     child_ts = sorted(
         convs[sid].turns[0].timestamp for sid in branch.child_conversation_ids
     )
@@ -410,24 +314,18 @@ def test_idle_gap_warp_flat_branch_start_uses_mapped_time_not_raw():
     assert offsets[1] == pytest.approx(2_000.0)
 
 
-# Timing: per-chain delays, think_time_only and ignore_delays on flat-chain
-# turns (spec §5.6). Delays never negative.
-
-
 def test_flat_chain_delays_are_within_chain_and_nonnegative():
-    """Flat-chain turn delays are computed within the chain only (spec §5.6),
-    never against cross-agent neighbours, and are never negative."""
+    """Flat-chain turn delays are computed within the chain only (spec §5.6),"""
     requests = [
-        _normal(0.0, [1, 2, 3], api_time=0.5),  # main
-        _normal(3.0, [900, 901], api_time=0.5, model=_HAIKU),  # worker t0
-        _normal(4.0, [1, 2, 3, 4], api_time=0.5),  # main t1 interleaved
-        _normal(8.0, [900, 901, 902], api_time=0.5, model=_HAIKU),  # worker t1
+        _normal(0.0, [1, 2, 3], api_time=0.5),
+        _normal(3.0, [900, 901], api_time=0.5, model=_HAIKU),
+        _normal(4.0, [1, 2, 3, 4], api_time=0.5),
+        _normal(8.0, [900, 901, 902], api_time=0.5, model=_HAIKU),
     ]
     loader = _build_loader()
     convs = _convert(loader, _trace("flt_delay", requests))
     worker = convs["flt_delay::fa:000"]
-    assert worker.turns[0].delay is None  # turn 0 always None
-    # Within-chain delta: 8.0 - 3.0 = 5.0s -> 5000ms (NOT 8.0 - 4.0 cross-agent).
+    assert worker.turns[0].delay is None
     assert worker.turns[1].delay == pytest.approx(5000.0)
     for c in convs.values():
         for turn in c.turns:
@@ -436,31 +334,23 @@ def test_flat_chain_delays_are_within_chain_and_nonnegative():
 
 
 def test_flat_chain_think_time_only_uses_recorded_think_time():
-    """use_think_time_only=True: flat-chain turn delay equals recorded
-    think_time*1000 (ms), falling back to the full within-chain delta when
-    think_time is None (spec §5.6 'honoring think_time_only')."""
+    """use_think_time_only=True: flat-chain turn delay equals recorded"""
     requests = [
-        # Real 2-turn main thread (shared [1,2,3] prefix) so its founder is not a
-        # lone block-disjoint leader -- which would now be peeled as a one-shot
-        # preamble. The [900,...] rows are then detected as the worker chain.
-        _normal(0.0, [1, 2, 3], api_time=0.5),  # main t0
-        _normal(3.0, [900, 901], api_time=0.5, model=_HAIKU, think_time=0.0),  # w t0
-        _normal(4.0, [1, 2, 3, 4], api_time=0.5),  # main t1 (shares prefix)
-        _normal(
-            8.0, [900, 901, 902], api_time=0.5, model=_HAIKU, think_time=2.0
-        ),  # w t1
+        _normal(0.0, [1, 2, 3], api_time=0.5),
+        _normal(3.0, [900, 901], api_time=0.5, model=_HAIKU, think_time=0.0),
+        _normal(4.0, [1, 2, 3, 4], api_time=0.5),
+        _normal(8.0, [900, 901, 902], api_time=0.5, model=_HAIKU, think_time=2.0),
     ]
     uc = _mk_user_config(use_think_time_only=True)
     loader = _build_loader(uc)
     convs = _convert(loader, _trace("flt_tt", requests))
     worker = convs["flt_tt::fa:000"]
     assert worker.turns[0].delay is None
-    assert worker.turns[1].delay == pytest.approx(2000.0)  # think_time, not (8-3)*1000
+    assert worker.turns[1].delay == pytest.approx(2000.0)
 
 
 def test_flat_chain_ignore_delays_nulls_timestamp_and_delay():
-    """ignore_trace_delays=True must null timestamp and delay on EVERY
-    conversation including detected flat-chain children."""
+    """ignore_trace_delays=True must null timestamp and delay on EVERY"""
     requests = [
         _normal(0.0, [1, 2, 3], api_time=0.5),
         _normal(3.0, [900, 901], api_time=0.5, model=_HAIKU),
@@ -477,16 +367,10 @@ def test_flat_chain_ignore_delays_nulls_timestamp_and_delay():
             assert turn.delay is None
 
 
-# --max-osl caps flat-chain max_tokens but NOT subagent children (spec §5.4
-# diff: "max_tokens honors --max-osl like the top-level requests these rows
-# used to be"; subagent children keep their own output_length).
-
-
 def test_max_osl_caps_flat_chain_but_not_subagent_child():
-    """--max-osl caps a detected flat chain's max_tokens (it was a top-level
-    row) but leaves a real subagent child's max_tokens uncapped."""
+    """--max-osl caps a detected flat chain's max_tokens (it was a top-level"""
     requests = [
-        _normal(0.0, [1, 2, 3], out=100, api_time=0.5),  # main, out 100
+        _normal(0.0, [1, 2, 3], out=100, api_time=0.5),
         {
             "t": 0.5,
             "type": "subagent",
@@ -501,8 +385,8 @@ def test_max_osl_caps_flat_chain_but_not_subagent_child():
             "tool_tokens": 0,
             "system_tokens": 0,
         },
-        _normal(1.0, [900, 901], out=100, api_time=0.3, model=_HAIKU),  # flat worker
-        _normal(10.0, [1, 2, 3, 4], out=100, api_time=0.5),  # main t1
+        _normal(1.0, [900, 901], out=100, api_time=0.3, model=_HAIKU),
+        _normal(10.0, [1, 2, 3, 4], out=100, api_time=0.5),
     ]
     uc = _mk_user_config(max_osl=25)
     loader = _build_loader(uc)
@@ -515,25 +399,13 @@ def test_max_osl_caps_flat_chain_but_not_subagent_child():
     assert child.turns[0].max_tokens == 100, "subagent child max_tokens NOT capped"
 
 
-# Effective-prefix length guard (spec §5.4): observed > declared but turn-0
-# hash list SHORTER than observed -> declared used, no crash.
-
-
 def test_zero_declared_fanout_keeps_shared_prefix_in_user_content():
-    """The system role is never fabricated: a 0/0-declared fan-out trace
-    keeps its observed shared prefix INSIDE the user content. Byte sharing
-    across the group is content-based, not role-based, so turn 0 of the root
-    and every worker chain is a single user message carrying the request's
-    full token count.
-    """
-    # Main group: main founder [1,2,3] + two workers forking at depth 2 on
-    # [1,2,...]. Observed group prefix = LCP over first requests = [1,2] = 2,
-    # but with 0/0 declared it must NOT surface as a system segment.
+    """The system role is never fabricated: a 0/0-declared fan-out trace"""
     requests = [
-        _normal(0.0, [1, 2, 3], api_time=1.0),  # main founder
-        _normal(2.0, [1, 2, 50, 51], api_time=2.0, model=_HAIKU),  # worker A
-        _normal(2.5, [1, 2, 60, 61], api_time=2.0, model=_HAIKU),  # worker B
-        _normal(9.0, [1, 2, 3, 4], api_time=1.0),  # main t1
+        _normal(0.0, [1, 2, 3], api_time=1.0),
+        _normal(2.0, [1, 2, 50, 51], api_time=2.0, model=_HAIKU),
+        _normal(2.5, [1, 2, 60, 61], api_time=2.0, model=_HAIKU),
+        _normal(9.0, [1, 2, 3, 4], api_time=1.0),
     ]
     loader = _build_loader()
     convs = _convert(loader, _trace("flt_obs", requests))
@@ -549,13 +421,11 @@ def test_zero_declared_fanout_keeps_shared_prefix_in_user_content():
 
 
 def test_flat_chain_prefix_blocks_zero_yields_all_user_turn0():
-    """A singleton worker namespace group has P_observed=0 (spec §5.4
-    'singleton group degrades to ... all-user when 0/0'); its turn 0 must be
-    all-user (no system segment)."""
+    """A singleton worker namespace group has P_observed=0 (spec §5.4"""
     requests = [
-        _normal(0.0, [1, 2, 3], api_time=0.3),  # main
-        _normal(1.0, [800, 801], api_time=0.3, model=_HAIKU),  # singleton worker
-        _normal(10.0, [1, 2, 3, 4], api_time=0.3),  # main t1
+        _normal(0.0, [1, 2, 3], api_time=0.3),
+        _normal(1.0, [800, 801], api_time=0.3, model=_HAIKU),
+        _normal(10.0, [1, 2, 3, 4], api_time=0.3),
     ]
     loader = _build_loader()
     convs = _convert(loader, _trace("flt_zero_prefix", requests))
@@ -564,42 +434,28 @@ def test_flat_chain_prefix_blocks_zero_yields_all_user_turn0():
     assert "system" not in roles0, "singleton-group worker turn 0 must be all-user"
 
 
-# Invariant: every retained request appears in exactly one conversation
-# exactly once (no duplication, no loss) across a fan-out split.
-
-
 def test_every_retained_request_appears_exactly_once_across_conversations():
-    """Conservation invariant: the total turn count across root + worker
-    children equals the number of retained top-level requests, and outer
-    indices are partitioned (no request emitted twice)."""
+    """Conservation invariant: the total turn count across root + worker"""
     requests = [
-        _normal(0.0, [1, 2, 3], api_time=0.5),  # main
-        _normal(1.0, [1, 2, 50], api_time=0.5, model=_HAIKU),  # worker A
-        _normal(2.0, [1, 2, 60], api_time=0.5, model=_HAIKU),  # worker B
-        _normal(9.0, [1, 2, 3, 4], api_time=0.5),  # main t1
-        _normal(8.5, [1, 2, 50, 51], api_time=0.5, model=_HAIKU),  # worker A t1
-        _normal(12.0, [1, 2, 3, 4, 5], api_time=0.5),  # main t2
+        _normal(0.0, [1, 2, 3], api_time=0.5),
+        _normal(1.0, [1, 2, 50], api_time=0.5, model=_HAIKU),
+        _normal(2.0, [1, 2, 60], api_time=0.5, model=_HAIKU),
+        _normal(9.0, [1, 2, 3, 4], api_time=0.5),
+        _normal(8.5, [1, 2, 50, 51], api_time=0.5, model=_HAIKU),
+        _normal(12.0, [1, 2, 3, 4, 5], api_time=0.5),
     ]
     loader = _build_loader()
     convs = _convert(loader, _trace("flt_conserve", requests))
-    # 6 retained requests -> 6 turns total across all conversations.
     assert _retained_request_count(convs) == 6
-    # Root + 2 workers.
     assert sum(1 for sid in convs if "::fa:" in sid) == 2
 
 
-# Zero api_time boundary: a worker whose requests all have api_time=0 has end
-# == start; join derivation uses end so a same-t main turn still joins.
-
-
 def test_zero_api_time_worker_join_uses_request_start_as_end():
-    """A worker with api_time=0 (or None) has end == start. The first main
-    turn at/after that start (within eps) must gate it (spec §3 end(r) = t +
-    max(api_time or 0, 0))."""
+    """A worker with api_time=0 (or None) has end == start. The first main"""
     requests = [
-        _normal(0.0, [1, 2, 3], api_time=0.5),  # main founder
-        _normal(2.0, [1, 2, 900], api_time=0.0, model=_HAIKU),  # worker ends t=2.0
-        _normal(2.0, [1, 2, 3, 4], api_time=0.5),  # main t1 at exactly t=2.0
+        _normal(0.0, [1, 2, 3], api_time=0.5),
+        _normal(2.0, [1, 2, 900], api_time=0.0, model=_HAIKU),
+        _normal(2.0, [1, 2, 3, 4], api_time=0.5),
     ]
     loader = _build_loader()
     convs = _convert(loader, _trace("flt_zero_api", requests))
@@ -610,10 +466,6 @@ def test_zero_api_time_worker_join_uses_request_start_as_end():
     assert [p.branch_id for p in root.turns[1].prerequisites] == [
         flatspawn[0].branch_id
     ]
-
-
-# Env gating: split disabled restores legacy single-stream on a fan-out trace
-# (spec §6). All requests stay in one conversation.
 
 
 def test_split_disabled_keeps_single_conversation_on_fanout():
@@ -633,19 +485,13 @@ def test_split_disabled_keeps_single_conversation_on_fanout():
     assert len(convs["flt_disabled"].turns) == 4
 
 
-# Branch invariant: every flat-chain branch's child_conversation_ids resolve
-# to emitted conversations, and SPAWN_JOIN targets are never background.
-
-
 def test_flat_branch_child_ids_resolve_and_join_targets_not_background():
-    """Every flatspawn branch's child ids must reference real conversations;
-    any branch referenced by a SPAWN_JOIN prereq must be non-background
-    (orchestrator-v1 invariants)."""
+    """Every flatspawn branch's child ids must reference real conversations;"""
     requests = [
-        _normal(0.0, [1, 2, 3], api_time=0.2),  # main
-        _normal(0.5, [500, 501], api_time=0.2, model=_HAIKU),  # joins t1
-        _normal(0.6, [600, 601], api_time=0.2, model=_HAIKU),  # background
-        _normal(5.0, [1, 2, 3, 4], api_time=0.2),  # main t1
+        _normal(0.0, [1, 2, 3], api_time=0.2),
+        _normal(0.5, [500, 501], api_time=0.2, model=_HAIKU),
+        _normal(0.6, [600, 601], api_time=0.2, model=_HAIKU),
+        _normal(5.0, [1, 2, 3, 4], api_time=0.2),
     ]
     loader = _build_loader()
     convs = _convert(loader, _trace("flt_inv", requests))
@@ -662,13 +508,6 @@ def test_flat_branch_child_ids_resolve_and_join_targets_not_background():
             assert branches_by_id[p.branch_id].mode == ConversationBranchMode.SPAWN
 
 
-# Preamble split: a leading request that shares NO blocks with the rest of the
-# trace is a one-shot preamble and must not found the main chain. Small ones
-# (Claude Code title generation) and large fully-disjoint ones (observed on 4
-# real 060826 traces: a 25-31k-token disjoint giant hijacked main_index into a
-# 1-turn "main" while the real session split into dozens of fa:* chains).
-
-
 def _req(t: float, hash_ids: list[int], out: int):
     from aiperf.dataset.loader.weka_trace_models import WekaNormalRequest
 
@@ -676,12 +515,11 @@ def _req(t: float, hash_ids: list[int], out: int):
 
 
 def test_split_off_preamble_small_disjoint_leader_is_split():
-    """A small (out<=64), block-disjoint leading request (title-gen) is set
-    aside; the rest reach detection in outer-index order."""
+    """A small (out<=64), block-disjoint leading request (title-gen) is set"""
     from aiperf.dataset.loader.weka_trace import _split_off_preamble
 
     normals = [
-        (0, _req(0.0, [900, 901], out=20)),  # title-gen: small, disjoint
+        (0, _req(0.0, [900, 901], out=20)),
         (1, _req(1.0, [1, 2, 3], out=200)),
         (2, _req(2.0, [1, 2, 3, 4], out=200)),
     ]
@@ -691,13 +529,11 @@ def test_split_off_preamble_small_disjoint_leader_is_split():
 
 
 def test_split_off_preamble_large_disjoint_leader_is_split():
-    """A LARGE (out>64) leading request whose blocks are fully disjoint from
-    every other request is still a one-shot preamble and must be set aside, so
-    it cannot hijack main_index. This is the 060826 'disjoint giant' case."""
+    """A LARGE (out>64) leading request whose blocks are fully disjoint from"""
     from aiperf.dataset.loader.weka_trace import _split_off_preamble
 
     normals = [
-        (0, _req(0.0, [900, 901, 902, 903], out=500)),  # disjoint giant
+        (0, _req(0.0, [900, 901, 902, 903], out=500)),
         (1, _req(1.0, [1, 2, 3], out=10)),
         (2, _req(2.0, [1, 2, 3, 4], out=10)),
     ]
@@ -707,13 +543,11 @@ def test_split_off_preamble_large_disjoint_leader_is_split():
 
 
 def test_split_off_preamble_large_leader_sharing_prefix_is_kept():
-    """A large leading request whose blocks ARE reused by later turns is a
-    genuine conversation root, not a preamble -- it must be kept (61/65 of the
-    060826 out>64 leaders are this case)."""
+    """A large leading request whose blocks ARE reused by later turns is a"""
     from aiperf.dataset.loader.weka_trace import _split_off_preamble
 
     normals = [
-        (0, _req(0.0, [1, 2, 3], out=500)),  # real root: prefix reused below
+        (0, _req(0.0, [1, 2, 3], out=500)),
         (1, _req(1.0, [1, 2, 3, 4], out=10)),
         (2, _req(2.0, [1, 2, 3, 4, 5], out=10)),
     ]
@@ -723,12 +557,11 @@ def test_split_off_preamble_large_leader_sharing_prefix_is_kept():
 
 
 def test_split_off_preamble_large_leader_partial_overlap_is_kept():
-    """A large leader that shares SOME blocks (LCP>0) with the rest is not a
-    preamble; only a FULLY block-disjoint large leader is set aside."""
+    """A large leader that shares SOME blocks (LCP>0) with the rest is not a"""
     from aiperf.dataset.loader.weka_trace import _split_off_preamble
 
     normals = [
-        (0, _req(0.0, [1, 2, 900], out=500)),  # shares prefix [1,2] with below
+        (0, _req(0.0, [1, 2, 900], out=500)),
         (1, _req(1.0, [1, 2, 3], out=10)),
         (2, _req(2.0, [1, 2, 3, 4], out=10)),
     ]
@@ -737,22 +570,18 @@ def test_split_off_preamble_large_leader_partial_overlap_is_kept():
 
 
 def test_large_disjoint_leader_does_not_hijack_main_chain():
-    """End-to-end: a large disjoint leading request must be peeled, not allowed
-    to found a 1-turn main while the real multi-agent session is demoted to
-    worker chains. Without the fix the giant founds a 1-turn root and BOTH real
-    agents become fa:* chains; with it the giant re-attaches to the true main
-    (agent A) and only the genuine second agent (B) is a worker."""
+    """End-to-end: a large disjoint leading request must be peeled, not allowed"""
     requests = [
-        _normal(0.0, [900, 901, 902, 903], out=500, api_time=0.5),  # disjoint giant
-        _normal(1.0, [1, 2, 3], api_time=0.5),  # agent A (real main)
+        _normal(0.0, [900, 901, 902, 903], out=500, api_time=0.5),
+        _normal(1.0, [1, 2, 3], api_time=0.5),
         _normal(2.0, [1, 2, 3, 4], api_time=0.5),
         _normal(3.0, [1, 2, 3, 4, 5], api_time=0.5),
-        _normal(4.0, [50, 51, 52], api_time=0.5, model=_HAIKU),  # agent B (worker)
+        _normal(4.0, [50, 51, 52], api_time=0.5, model=_HAIKU),
         _normal(5.0, [50, 51, 52, 53], api_time=0.5, model=_HAIKU),
     ]
     loader = _build_loader()
     convs = _convert(loader, _trace("flt_big_pre", requests))
     root = convs["flt_big_pre"]
     fa_chains = [sid for sid in convs if "::fa:" in sid]
-    assert len(root.turns) == 4  # giant (re-attached preamble) + agent A's 3 turns
-    assert len(fa_chains) == 1  # only agent B remains a worker
+    assert len(root.turns) == 4
+    assert len(fa_chains) == 1

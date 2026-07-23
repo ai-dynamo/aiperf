@@ -67,12 +67,7 @@ async def test_realtime_snapshot_suppresses_single_sample_counter_deltas() -> No
 
 @pytest.mark.asyncio
 async def test_realtime_snapshot_uses_sglang_retracted_total_counter() -> None:
-    """SGLang ``num_retracted_reqs_total`` (counter) feeds ``num_preemptions``.
-
-    ``prometheus_client.parser`` strips ``_total`` so the family is stored as
-    ``sglang:num_retracted_reqs``; the COUNTER-type filter in ``_counter_delta``
-    keeps a same-named gauge from contaminating the lookup.
-    """
+    """SGLang ``num_retracted_reqs_total`` (counter) feeds ``num_preemptions``."""
     acc = _accumulator()
     for timestamp_ns, counter_value in (
         (1_000_000_000, 10.0),
@@ -99,13 +94,7 @@ async def test_realtime_snapshot_uses_sglang_retracted_total_counter() -> None:
 
 @pytest.mark.asyncio
 async def test_realtime_snapshot_handles_parser_stripped_total_suffix() -> None:
-    """Counter throughput resolves when families are named by the real parser.
-
-    Regression for the ``_total`` parser-stripping bug: the data collector
-    stores ``vllm:prompt_tokens_total`` as ``vllm:prompt_tokens``, and the
-    snapshot must look it up under the stripped name. Without the fix the
-    throughput rows silently vanished at runtime.
-    """
+    """Counter throughput resolves when families are named by the real parser."""
     from prometheus_client.parser import text_string_to_metric_families
 
     text_t1 = """\
@@ -155,7 +144,6 @@ vllm:generation_tokens_total{model_name="m"} 5000.0
 
     snapshot = acc.realtime_snapshot()
 
-    # Rates over a 1-second window between samples.
     assert snapshot["input_token_throughput_srv"] == pytest.approx(1_000_000.0)
     assert snapshot["output_token_throughput_srv"] == pytest.approx(5_000.0)
 
@@ -164,12 +152,7 @@ vllm:generation_tokens_total{model_name="m"} 5000.0
 async def test_export_results_extends_parquet_filter_to_endpoint_last_update(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Parquet export uses the same final-collection end window as summaries.
-
-    ``export_results`` widens the export window to
-    ``max(end_ns, last_update_ns)`` so a scrape landing after the profiling
-    end still appears in the Parquet file.
-    """
+    """Parquet export uses the same final-collection end window as summaries."""
     acc = _accumulator()
     exported_filters = []
 
@@ -203,7 +186,6 @@ async def test_export_results_extends_parquet_filter_to_endpoint_last_update(
     assert result is not None
     assert len(exported_filters) == 1
     assert exported_filters[0].start_ns == 1_000_000_000
-    # end_ns widened from the 2e9 profiling end to the 3e9 last collection.
     assert exported_filters[0].end_ns == 3_000_000_000
 
 
@@ -211,11 +193,7 @@ async def test_export_results_extends_parquet_filter_to_endpoint_last_update(
 async def test_phase_scoped_export_does_not_write_parquet(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Parquet is a single whole-run artifact. A phase-scoped export
-    (``phase_index`` set) must NOT write it, or per-phase windows would
-    overwrite the whole-run file in a multi-phase run. Guards the multi-phase
-    fix carried over from main (#1150).
-    """
+    """Parquet is a single whole-run artifact. A phase-scoped export"""
     acc = _accumulator()
     exported_filters = []
 

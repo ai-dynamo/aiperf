@@ -1,23 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""--isl-block-size routing for trace datasets.
-
-``block_size`` is fundamentally a TRACE field: the hash-id trace loaders
-(mooncake_trace, bailian_trace, burst_gpt_trace, sagemaker_data_capture) decode
-each ``hash_id`` into a cached block of this many tokens (default 512 / 16 from
-plugin metadata). v1 routed ``--isl-block-size`` onto
-``input.prompt.input_tokens.block_size`` which those loaders read; the v2 cutover
-strips the ``prompts`` subtable for FILE datasets, so the value must be re-routed
-onto the flat ``FileDataset.block_size`` field (``_apply_block_size``).
-
-A prior over-broad rejection blocked ``--isl-block-size`` on ALL non-synthetic
-datasets -- breaking the #1 consumer (trace replay). It is now:
-  - ACCEPTED for hash-id trace formats -> FileDataset.block_size,
-  - REJECTED for weka (weka carries its own inline per-block sizes),
-  - REJECTED for other non-hash-id datasets (no block decoding),
-  - unchanged for synthetic (-> prompts.block_size).
-"""
+"""--isl-block-size routing for trace datasets."""
 
 from __future__ import annotations
 
@@ -58,7 +42,6 @@ def test_block_size_routed_onto_filedataset_for_hash_id_traces(
     )
     assert out["type"] == "file"
     assert out["block_size"] == 256
-    # Not leaked back onto a prompts subtable (stripped for file datasets).
     assert "prompts" not in out
 
 
@@ -95,8 +78,7 @@ def test_weka_public_rejects_block_size() -> None:
 def test_non_hash_id_file_dataset_rejects_block_size(
     trace_file: Path, fmt: str
 ) -> None:
-    """Datasets that do not decode hash-id token blocks reject the flag with a
-    clear message (rather than silently no-op)."""
+    """Datasets that do not decode hash-id token blocks reject the flag with a"""
     with pytest.raises(ValueError, match="hash-id token blocks"):
         build_dataset(
             CLIConfig(
@@ -122,8 +104,7 @@ def test_synthetic_block_size_still_routes_to_prompts() -> None:
 
 
 def test_loader_consumes_routed_block_size(trace_file: Path) -> None:
-    """End-to-end: the routed FileDataset.block_size becomes the loader's
-    hash-id decode block size (user override beats the plugin default)."""
+    """End-to-end: the routed FileDataset.block_size becomes the loader's"""
     from unittest.mock import Mock
 
     from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
@@ -148,4 +129,4 @@ def test_loader_consumes_routed_block_size(trace_file: Path) -> None:
         prompt_generator=pg,
         default_block_size=512,
     )
-    assert loader._block_size == 256  # user override beats plugin default 512
+    assert loader._block_size == 256

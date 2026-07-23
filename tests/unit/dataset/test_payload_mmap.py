@@ -46,7 +46,6 @@ async def test_payload_mmap_round_trip(tmp_path, monkeypatch):
         metadata.index_file_path,
     )
 
-    # Check payload bytes for conv-1
     pb0 = client.get_payload_bytes("conv-1", 0)
     assert pb0 is not None
     assert orjson.loads(pb0) == payload_1
@@ -55,10 +54,8 @@ async def test_payload_mmap_round_trip(tmp_path, monkeypatch):
     assert pb1 is not None
     assert orjson.loads(pb1) == payload_2
 
-    # Out of range
     assert client.get_payload_bytes("conv-1", 99) is None
 
-    # Non-existent conversation
     assert client.get_payload_bytes("conv-999", 0) is None
 
     client.close()
@@ -86,7 +83,6 @@ async def test_conversation_format_returns_none_for_payload_bytes(
     )
 
     assert client.get_payload_bytes("conv-1", 0) is None
-    # Conversation format still works
     conversation = client.get_conversation("conv-1")
     assert conversation.session_id == "conv-1"
 
@@ -205,7 +201,6 @@ async def test_client_store_get_payload_bytes_requires_initialize(
     client_store = MemoryMapDatasetClientStore(
         client_metadata=store.get_client_metadata()
     )
-    # initialize() intentionally NOT called.
     with pytest.raises(RuntimeError, match="not initialized"):
         await client_store.get_payload_bytes("conv-1", 0)
 
@@ -276,12 +271,7 @@ async def test_adopt_existing_files_compress_only_missing_zst_raises(
 
 @pytest.mark.asyncio
 async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
-    """PAYLOAD_BYTES index must round-trip max_tokens and timestamp.
-
-    Turn scalars live outside the wire body for some loaders (e.g. mooncake
-    ``output_length`` / ``timestamp``). Persisting them on PayloadOffset keeps
-    OSL-mismatch and schedule-lag metrics alive on the verbatim path.
-    """
+    """PAYLOAD_BYTES index must round-trip max_tokens and timestamp."""
     from aiperf.dataset.memory_map_utils import (
         PayloadOffset,
         max_tokens_from_wire_payload,
@@ -295,7 +285,6 @@ async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
     )
     await store.initialize()
 
-    # Wire body omits max_tokens; scalar comes only from Turn.max_tokens.
     payload = {"messages": [{"role": "user", "content": "hi"}], "model": "m"}
     conv = Conversation(
         session_id="conv-1",
@@ -328,8 +317,6 @@ async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
     assert turn.timestamp == 42.5
     assert turn.raw_payload == payload
 
-    # Wire-JSON fallback recovers max_tokens when index scalars are absent
-    # (legacy PayloadOffset with only offset/size).
     legacy = PayloadOffset(offset=0, size=0)
     assert legacy.max_tokens is None
     assert (

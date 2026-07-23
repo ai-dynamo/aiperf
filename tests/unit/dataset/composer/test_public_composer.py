@@ -19,9 +19,6 @@ from tests.unit.dataset.composer.conftest import make_run
 
 @pytest.fixture
 def cli_config() -> CLIConfig:
-    # Public datasets do not accept synthetic prompt config in v2; keep input
-    # minimal so the v1->v2 resolver doesn't try to attach prompts to a
-    # PublicDataset.
     return CLIConfig(
         model_names=["test-model"],
         conversation_num_dataset_entries=5,
@@ -107,8 +104,7 @@ class TestBuildLoaderKwargs:
         assert kwargs["multi_turn"] is True
 
     def test_multi_turn_raises_for_unsupported_loader(self, aimo_config):
-        """A loader that doesn't declare multi_turn on its __init__ must not
-        silently swallow the kwarg via **kwargs; composer should refuse."""
+        """A loader that doesn't declare multi_turn on its __init__ must not"""
         from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
 
         composer = PublicDatasetComposer(run=make_run(aimo_config), tokenizer=None)
@@ -173,16 +169,11 @@ class TestCreateDatasetAsync:
 
         assert len(result) == 3
         assert all(isinstance(c, Conversation) for c in result)
-        # _finalize_turn sets model name on each turn
         for conv in result:
             for turn in conv.turns:
                 assert turn.model == "test-model"
 
     async def test_sets_sampling_strategy_from_loader(self, aimo_config):
-        # The composer no longer mutates the v1 cli_config sampling strategy;
-        # this assertion was a v1 reverse-flow artifact. Verify instead that
-        # create_dataset_async runs to completion when the user did not
-        # configure a sampling strategy.
         conversations = _make_conversations(1)
         mock_loader = AsyncMock()
         mock_loader.load_dataset = AsyncMock(return_value={"dataset": []})

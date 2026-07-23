@@ -34,8 +34,6 @@ def test_equal_hash_retry_is_zero_growth_extension():
 
 
 def test_in_flight_full_prefix_sibling_forks():
-    # M1 runs t=[10, 30]; r starts t=15 with M1's full hash list as prefix.
-    # A single agent cannot overlap itself -> r must be a separate chain.
     r = detect_agent_chains(
         _normals(
             _req(10.0, [1, 2, 3], api_time=20.0),
@@ -62,7 +60,7 @@ def test_empty_hash_ids_stays_on_main_and_is_invisible():
         _normals(
             _req(0.0, [1, 2, 3]),
             _req(2.0, []),
-            _req(4.0, [1, 2, 3, 4]),  # extends turn 0, not the empty req
+            _req(4.0, [1, 2, 3, 4]),
         )
     )
     assert r.worker_indices == []
@@ -71,12 +69,10 @@ def test_empty_hash_ids_stays_on_main_and_is_invisible():
 
 
 def test_deepest_tail_wins_extension_tiebreak():
-    # Two chains: main grows to [1,2,3,4]; sibling forked at [1,2]+[8].
-    # A new request [1,2,3,4,5] fully extends main only.
     r = detect_agent_chains(
         _normals(
             _req(0.0, [1, 2, 3, 4]),
-            _req(0.5, [1, 2, 8], api_time=0.1),  # overlaps main -> fork
+            _req(0.5, [1, 2, 8], api_time=0.1),
             _req(3.0, [1, 2, 3, 4, 5]),
         )
     )
@@ -90,8 +86,6 @@ def test_empty_input_returns_empty_result():
 
 
 def test_compaction_shrink_with_dead_longer_state_is_join_seam():
-    # M1 grows to 6 blocks and ends; M2 keeps only the 2-block prefix.
-    # Nothing ever returns to the longer state -> same agent (seam).
     r = detect_agent_chains(
         _normals(
             _req(0.0, [1, 2, 3, 4, 5, 6]),
@@ -104,12 +98,11 @@ def test_compaction_shrink_with_dead_longer_state_is_join_seam():
 
 
 def test_shrink_with_live_longer_state_is_spawn():
-    # Same shrink shape, but a later request extends the longer state.
     r = detect_agent_chains(
         _normals(
             _req(0.0, [1, 2, 3, 4, 5, 6]),
             _req(2.0, [1, 2, 90, 91]),
-            _req(4.0, [1, 2, 3, 4, 5, 6, 7]),  # pullback: M1's state lives
+            _req(4.0, [1, 2, 3, 4, 5, 6, 7]),
         )
     )
     assert r.seams_merged == 0
@@ -119,12 +112,11 @@ def test_shrink_with_live_longer_state_is_spawn():
 
 
 def test_election_deepest_fork_wins_seam_shallower_stays_spawn():
-    # Two forks off the same dead tail: depth 2 and depth 4.
     r = detect_agent_chains(
         _normals(
             _req(0.0, [1, 2, 3, 4, 5, 6]),
-            _req(2.0, [1, 2, 90]),  # shallow fork (depth 2)
-            _req(3.0, [1, 2, 3, 4, 80, 81]),  # deep fork (depth 4)
+            _req(2.0, [1, 2, 90]),
+            _req(3.0, [1, 2, 3, 4, 80, 81]),
         )
     )
     assert r.seams_merged == 1
@@ -134,12 +126,10 @@ def test_election_deepest_fork_wins_seam_shallower_stays_spawn():
 
 
 def test_temporal_overlap_vetoes_seam():
-    # Shrink that starts before the tail's interval ends: cannot be the
-    # same agent even though the longer state is dead.
     r = detect_agent_chains(
         _normals(
-            _req(0.0, [1, 2, 3, 4, 5, 6], api_time=10.0),  # ends t=10
-            _req(2.0, [1, 2, 90, 91]),  # starts t=2
+            _req(0.0, [1, 2, 3, 4, 5, 6], api_time=10.0),
+            _req(2.0, [1, 2, 90, 91]),
         )
     )
     assert r.seams_merged == 0
@@ -147,7 +137,6 @@ def test_temporal_overlap_vetoes_seam():
 
 
 def test_cascaded_compactions_stay_one_chain():
-    # Compact twice; both seams splice into one chain.
     r = detect_agent_chains(
         _normals(
             _req(0.0, [1, 2, 3, 4, 5, 6]),
@@ -161,14 +150,13 @@ def test_cascaded_compactions_stay_one_chain():
 
 
 def test_fanout_with_continuing_main_yields_worker_chains():
-    # Main keeps growing; two overlapping workers fork at the shared prefix.
     r = detect_agent_chains(
         _normals(
             _req(0.0, [1, 2, 3], api_time=1.0),
-            _req(2.0, [1, 2, 50, 51], api_time=5.0),  # worker A
-            _req(2.5, [1, 2, 60, 61], api_time=5.0),  # worker B (overlaps A)
-            _req(9.0, [1, 2, 3, 4, 5], api_time=1.0),  # main turn 2
-            _req(8.0, [1, 2, 50, 51, 52], api_time=1.0),  # worker A turn 2
+            _req(2.0, [1, 2, 50, 51], api_time=5.0),
+            _req(2.5, [1, 2, 60, 61], api_time=5.0),
+            _req(9.0, [1, 2, 3, 4, 5], api_time=1.0),
+            _req(8.0, [1, 2, 50, 51, 52], api_time=1.0),
         )
     )
     assert r.seams_merged == 0
@@ -181,7 +169,6 @@ def test_fanout_with_continuing_main_yields_worker_chains():
 
 
 def test_observed_prefix_recovers_zero_declared_boundary():
-    # 0/0-declared trace: main + one worker sharing blocks [1, 2].
     r = detect_agent_chains(
         _normals(
             _req(0.0, [1, 2, 3], api_time=1.0),
@@ -203,12 +190,11 @@ def test_declared_wins_when_longer_for_main_chain_only():
         )
     )
     prefixes = compute_chain_prefix_blocks(r, declared_prefix_blocks=3)
-    assert prefixes[r.main_index] == 3  # keep the longer one
-    assert prefixes[r.worker_indices[0]] == 2  # workers only prove observed
+    assert prefixes[r.main_index] == 3
+    assert prefixes[r.worker_indices[0]] == 2
 
 
 def test_disjoint_group_gets_own_observed_prefix():
-    # Main namespace plus a disjoint 2-worker batch sharing [100, 101].
     r = detect_agent_chains(
         _normals(
             _req(0.0, [1, 2, 3], api_time=0.5),
@@ -217,7 +203,7 @@ def test_disjoint_group_gets_own_observed_prefix():
         )
     )
     prefixes = compute_chain_prefix_blocks(r, declared_prefix_blocks=0)
-    assert prefixes[r.main_index] == 0  # singleton group -> declared (0)
+    assert prefixes[r.main_index] == 0
     disjoint = [prefixes[i] for i in r.worker_indices]
     assert disjoint == [2, 2]
 
@@ -237,19 +223,16 @@ def test_shared_seen_set_counts_cross_conversation_hits_in_time_order():
         MetricRecord(
             sort_key=(2.0, 3, 0, 0), session_id="root", k=1, hash_ids=[1, 2, 3, 4]
         ),
-        # Same t as the w0 row above: stable tiebreak by position.
         MetricRecord(sort_key=(1.0, 1, 0, 0), session_id="sa", k=0, hash_ids=[1, 5]),
     ]
     out = compute_shared_prefix_cache_metrics(records)
     assert out[("root", 0)] == (0, 3)
-    assert out[("sa", 0)] == (1, 2)  # processed before w0 (position 1 < 2)
+    assert out[("sa", 0)] == (1, 2)
     assert out[("w0", 0)] == (2, 3)
-    assert out[("root", 1)] == (3, 4)  # block 4 is globally novel
+    assert out[("root", 1)] == (3, 4)
 
 
 def test_cross_model_full_prefix_extension_is_spawn():
-    # haiku request fully extends the opus tail after it ended — the
-    # same-model rule still forces a fork (cross-model = different agent).
     r = detect_agent_chains(
         _normals(
             _req(0.0, [1, 2, 3], model="opus"),
@@ -257,12 +240,10 @@ def test_cross_model_full_prefix_extension_is_spawn():
         )
     )
     assert len(r.worker_indices) == 1
-    assert r.seams_merged == 0  # and phase 2 must not splice it back
+    assert r.seams_merged == 0
 
 
 def test_cross_model_shrink_never_seams():
-    # Dead longer state, temporally feasible — but the continuation
-    # candidate is a different model, so it stays a spawn.
     r = detect_agent_chains(
         _normals(
             _req(0.0, [1, 2, 3, 4, 5, 6], model="opus"),
@@ -274,13 +255,11 @@ def test_cross_model_shrink_never_seams():
 
 
 def test_same_model_fork_elected_over_deeper_cross_model_fork():
-    # Deeper fork is cross-model (excluded); shallower same-model fork
-    # is elected as the seam continuation.
     r = detect_agent_chains(
         _normals(
             _req(0.0, [1, 2, 3, 4, 5, 6], model="opus"),
-            _req(2.0, [1, 2, 3, 4, 80, 81], model="haiku"),  # deep, wrong model
-            _req(3.0, [1, 2, 90], model="opus"),  # shallow, same model
+            _req(2.0, [1, 2, 3, 4, 80, 81], model="haiku"),
+            _req(3.0, [1, 2, 90], model="opus"),
         )
     )
     assert r.seams_merged == 1

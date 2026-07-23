@@ -36,10 +36,7 @@ async def test_lanes_per_trace_reflects_wrap_fill_distribution():
 
 @pytest.mark.asyncio
 async def test_double_recycle_guard_keys_on_correlation_id():
-    """Two lanes share trace_0. Lane A and lane B independently complete
-    final turns with DISTINCT correlation_ids. Neither should trip the
-    double-recycle RuntimeError.
-    """
+    """Two lanes share trace_0. Lane A and lane B independently complete"""
     trajectories = [
         Trajectory(conversation_id="trace_0", start_turn_index=0),
         Trajectory(conversation_id="trace_0", start_turn_index=1),
@@ -107,13 +104,7 @@ async def test_double_recycle_guard_still_fires_on_repeated_correlation_id():
 
 @pytest.mark.asyncio
 async def test_recycle_guard_window_is_bounded_fifo():
-    """The double-recycle guard set is FIFO-bounded by RECYCLE_GUARD_MAX_WINDOW.
-
-    Without a bound it retains one entry per recycled session for the entire
-    PROFILING phase (a memory leak on long, high-throughput runs). Once the
-    window is full the oldest recycled correlation_id is evicted; a duplicate
-    still within the window must still raise.
-    """
+    """The double-recycle guard set is FIFO-bounded by RECYCLE_GUARD_MAX_WINDOW."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     ds = _make_dataset(num_traces=8, turns_per_trace=2)
     issuer = AsyncMock()
@@ -134,14 +125,12 @@ async def test_recycle_guard_window_is_bounded_fifo():
             "trace_0", finished_correlation_id=corr
         )
 
-    # Bounded to the window: oldest two evicted, newest two retained.
     assert len(strategy._in_flight_recycled) == 2
     assert "xcorr_0" not in strategy._in_flight_recycled
     assert "xcorr_1" not in strategy._in_flight_recycled
     assert "xcorr_2" in strategy._in_flight_recycled
     assert "xcorr_3" in strategy._in_flight_recycled
 
-    # A duplicate still within the window still raises (guard preserved).
     strategy._correlation_to_lane["xcorr_3"] = 0
     with pytest.raises(RuntimeError, match="Double recycle"):
         await strategy._spawn_from_recycle_or_id(
@@ -199,9 +188,7 @@ async def test_no_warning_when_wrap_fill_and_cache_bust_set(caplog):
 
 @pytest.mark.asyncio
 async def test_no_warning_when_no_wrap_fill_and_cache_bust_none(caplog):
-    """Warning is about wrap-fill creating identical traffic, not about
-    cache-bust being off in general.
-    """
+    """Warning is about wrap-fill creating identical traffic, not about"""
     import logging
 
     from aiperf.common.enums import CacheBustTarget

@@ -1,13 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Regression coverage for entry-count resolution in the v1 -> v2 dataset converter.
-
-Specifically: when the user passes both ``--num-conversations N`` and
-``--request-count M`` (with M != N), the materialized synthetic dataset must
-contain exactly N unique conversations. The PhaseRunner separately recycles
-those N conversations to fill M total requests.
-"""
+"""Regression coverage for entry-count resolution in the v1 -> v2 dataset converter."""
 
 from __future__ import annotations
 
@@ -37,12 +31,7 @@ def _user(*, num_conversations: int | None, request_count: int | None) -> CLICon
 
 
 def test_num_conversations_wins_over_request_count() -> None:
-    """``--num-conversations N`` must beat ``--request-count M`` when both set.
-
-    Regression: the prior precedence resolved to ``request_count`` first, so
-    ``--num-conversations 10 --request-count 20`` materialized 20
-    conversations instead of 10.
-    """
+    """``--num-conversations N`` must beat ``--request-count M`` when both set."""
     user = _user(num_conversations=10, request_count=20)
     assert _resolve_entries(user) == 10
 
@@ -76,19 +65,12 @@ def test_neither_set_returns_none() -> None:
 
 
 def test_full_converter_synthetic_dataset_entries_eq_num_conversations() -> None:
-    """End-to-end: built ``SyntheticDataset.entries`` matches ``--num-conversations``.
-
-    Asserts the fix flows through ``build_dataset`` and survives full
-    AIPerfConfig validation - the value the SyntheticDatasetComposer reads
-    (``self._num_entries = dataset.entries``) is exactly 10.
-    """
+    """End-to-end: built ``SyntheticDataset.entries`` matches ``--num-conversations``."""
     user = _user(num_conversations=10, request_count=20)
 
-    # Direct dataset-builder path
     ds_dict = build_dataset(user)
     assert ds_dict["entries"] == 10
 
-    # Full envelope -> AIPerfConfig validation path
     aiperf_config = convert_cli_to_aiperf(user)
     main_dataset = aiperf_config.benchmark.get_default_dataset()
     assert isinstance(main_dataset, SyntheticDataset)
@@ -119,19 +101,11 @@ def _public_user(
 
 
 def test_public_entries_explicit_set_only_for_num_dataset_entries() -> None:
-    """``--num-dataset-entries`` is the lone flag that marks entries_explicit.
-
-    Provenance must emit ``num_dataset_entries`` only when the user named the
-    explicit flag (mirrors cquil's model_fields_set gate). ``--num-conversations``
-    / ``--request-count`` populate ``entries`` (the live entry-limit) but must
-    NOT set the provenance flag.
-    """
+    """``--num-dataset-entries`` is the lone flag that marks entries_explicit."""
     explicit = build_dataset(_public_user(num_dataset_entries=42))
     assert explicit["entries"] == 42
     assert explicit["_entries_explicit"] is True
 
-    # Fallbacks still write ``entries`` (the live entry-limit) but pin the
-    # sentinel to False so provenance omits num_dataset_entries.
     via_num_conversations = build_dataset(_public_user(num_conversations=10))
     assert via_num_conversations["entries"] == 10
     assert via_num_conversations["_entries_explicit"] is False
@@ -142,11 +116,7 @@ def test_public_entries_explicit_set_only_for_num_dataset_entries() -> None:
 
 
 def test_public_dataset_entries_explicit_survives_validation() -> None:
-    """The ``_entries_explicit`` sentinel maps onto the model's ``entries_explicit``.
-
-    Full envelope path: explicit flag -> True; fallback path -> False. The
-    sentinel key is consumed (``extra="forbid"`` would reject a stray key).
-    """
+    """The ``_entries_explicit`` sentinel maps onto the model's ``entries_explicit``."""
     explicit_cfg = convert_cli_to_aiperf(_public_user(num_dataset_entries=42))
     explicit_ds = explicit_cfg.benchmark.get_default_dataset()
     assert isinstance(explicit_ds, PublicDataset)

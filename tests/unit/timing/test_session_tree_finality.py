@@ -6,12 +6,7 @@ from aiperf.timing.session_tree import SessionTreeRegistry
 
 
 class _FakeConcurrency:
-    """Minimal stand-in for the concurrency manager the registry releases to.
-
-    ``SessionTreeRegistry`` requires a concurrency manager exposing
-    ``release_session_slot(phase)``; these finality-query tests only exercise
-    the state map, so the release is a no-op.
-    """
+    """Minimal stand-in for the concurrency manager the registry releases to."""
 
     def release_session_slot(self, phase: CreditPhase) -> None:
         pass
@@ -36,9 +31,6 @@ def test_root_terminal_unknown_tree_is_none():
 
 
 def test_root_terminal_false_while_pending_true_after():
-    # A live descendant keeps the tree open past on_root_terminal so the
-    # post-terminal state is observable; a rootless drain would pop the tree
-    # (release path) and root_terminal would then read as unknown/None.
     registry = _registry_with_tree(descendants=1)
     assert registry.root_terminal("root-1") is False
     registry.on_root_terminal("root-1")
@@ -67,10 +59,7 @@ def test_not_last_when_descendants_outstanding_or_branches_pending():
 
 
 def test_spawn_declaring_final_turn_gated_by_has_branches():
-    """Same registry state that yields True with ``has_branches=False`` must
-    yield False when the turn declares ANY branch: a SPAWN-declaring final turn
-    (``has_forks`` stays False) registers its children only at return-intercept,
-    AFTER this stamp, so it can never be provably-last."""
+    """Same registry state that yields True with ``has_branches=False`` must"""
     registry = _registry_with_tree(root="root-3")
     assert registry.is_last_tree_request(
         "root-3", is_final_turn=True, is_root_credit=True, has_branches=False
@@ -95,8 +84,7 @@ def test_unknown_tree_is_conservative_false():
 
 
 def test_finality_flows_credit_to_request_info():
-    """REAL structs end-to-end: a Credit stamped with finality must surface
-    on the RequestInfo the worker builds. Catches a missed plumb touch."""
+    """REAL structs end-to-end: a Credit stamped with finality must surface"""
     from aiperf.common.models.record_models import RequestInfo
     from aiperf.credit.structs import Credit
 

@@ -44,14 +44,7 @@ def test_multi_run_rejects_parameter_sweep_fields():
 
 
 class TestConvergenceThresholdValidation:
-    """`ConvergenceConfig.threshold` is `float | None`, default None.
-
-    None means "use the criterion class's algorithm-specific default."
-    When set, Pydantic must still enforce the (0, 1) open interval — a
-    threshold of 0 collapses the convergence test to never-fire, and a
-    threshold >= 1 makes it always-fire (for the dispersion-style modes)
-    or fully degenerate (for the KS-p-value mode where 1 is the max).
-    """
+    """`ConvergenceConfig.threshold` is `float | None`, default None."""
 
     def test_default_threshold_is_none(self):
         cfg = ConvergenceConfig(metric="ttft")
@@ -86,8 +79,7 @@ class TestConvergenceMinRunsValidation:
 
 
 class TestMultiRunNumRunsValidation:
-    """`num_runs` is `ge=1, le=10`. Drift on either bound silently allows
-    pathological trial counts (zero = empty execution, thousands = wedge)."""
+    """`num_runs` is `ge=1, le=10`. Drift on either bound silently allows"""
 
     def test_default_num_runs_is_one(self):
         cfg = MultiRunConfig()
@@ -111,9 +103,7 @@ class TestMultiRunNumRunsValidation:
 
 
 class TestMultiRunCooldownValidation:
-    """`cooldown_seconds` is `ge=0, le=86400`. The 24h cap surfaces typos
-    like `1e18` at config-load time rather than wedging the orchestrator
-    inside `asyncio.sleep`."""
+    """`cooldown_seconds` is `ge=0, le=86400`. The 24h cap surfaces typos"""
 
     def test_default_cooldown_is_zero(self):
         assert MultiRunConfig().cooldown_seconds == 0.0
@@ -135,10 +125,7 @@ class TestMultiRunCooldownValidation:
 
 
 class TestMultiRunConfidenceLevelValidation:
-    """`confidence_level` is `gt=0, lt=1`. Pre-fix this had ZERO test
-    coverage. A drift to `ge=0, le=1` would silently accept 0.0 (always-
-    significant) or 1.0 (degenerate Student's t with infinite CI), both of
-    which corrupt downstream stats without error."""
+    """`confidence_level` is `gt=0, lt=1`. Pre-fix this had ZERO test"""
 
     def test_default_is_0_95(self):
         assert MultiRunConfig().confidence_level == 0.95
@@ -163,8 +150,7 @@ class TestMultiRunConfidenceLevelValidation:
 
 
 class TestMultiRunBooleanFlagDefaults:
-    """Default values are user-visible behavior. Flipping any of these
-    silently changes how every multi-run benchmark behaves."""
+    """Default values are user-visible behavior. Flipping any of these"""
 
     @pytest.mark.parametrize(
         "attr, expected",
@@ -180,8 +166,7 @@ class TestMultiRunBooleanFlagDefaults:
 
 class TestConvergenceMinRunsBoundary:
     def test_min_runs_equal_to_num_runs_accepted(self):
-        """Boundary: `min_runs == num_runs` must pass (cross-field validator
-        is `<=`, not `<`)."""
+        """Boundary: `min_runs == num_runs` must pass (cross-field validator"""
         cfg = MultiRunConfig(
             num_runs=5,
             convergence=ConvergenceConfig(metric="ttft", min_runs=5),
@@ -190,12 +175,7 @@ class TestConvergenceMinRunsBoundary:
 
 
 class TestRepeatTrialFlagsRequireMultipleRuns:
-    """v1 parity: across-trial flags (--set-consistent-seed,
-    --profile-run-disable-warmup-after-first, --profile-run-cooldown-seconds)
-    have no meaning at a single profiling run and must fail loud, not silently
-    build a no-op single-run multi_run block. The port routed them but dropped
-    v1's num_profile_runs==1 guard.
-    """
+    """v1 parity: across-trial flags (--set-consistent-seed,"""
 
     @pytest.mark.parametrize(
         "kwargs, flag_fragment",

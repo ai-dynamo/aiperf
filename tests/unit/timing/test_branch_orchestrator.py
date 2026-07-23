@@ -31,8 +31,7 @@ async def test_intercept_no_spawn_returns_false():
 
 @pytest.mark.asyncio
 async def test_intercept_with_spawn_dispatches_children_and_registers_sticky():
-    """Phase 1 semantics: intercept returns False after a pure-spawn with no
-    gate on the very next turn (the parent may continue running)."""
+    """Phase 1 semantics: intercept returns False after a pure-spawn with no"""
     cs = MagicMock()
     parent_meta = MagicMock()
     parent_meta.branches = [
@@ -71,20 +70,17 @@ async def test_intercept_with_spawn_dispatches_children_and_registers_sticky():
         x_correlation_id="root", conversation_id="c", turn_index=0, agent_depth=0
     )
 
-    # No SPAWN_JOIN prereq set -> no gate -> intercept returns False.
     assert await orch.intercept(credit) is False
     assert cs.start_branch_child.call_count == 2
     assert issuer.dispatch_first_turn.await_count == 2
     assert orch.stats.children_spawned == 2
-    # Sticky-routing refcount bumped once per spawned child.
     assert sticky_router.register_child_routing.call_count == 2
     sticky_router.register_child_routing.assert_called_with("root")
 
 
 @pytest.mark.asyncio
 async def test_intercept_uses_get_metadata():
-    """ConversationSource must expose ``get_metadata``; the orchestrator calls
-    it directly."""
+    """ConversationSource must expose ``get_metadata``; the orchestrator calls"""
 
     class _FakeSource:
         def __init__(self, meta):
@@ -125,9 +121,6 @@ def _mk_pending_for_parent(
         parent_num_turns=num_turns,
         gated_turn_index=gated_turn_index,
     )
-    # Phase 3: outstanding values are PrereqState with an expected counter
-    # and completed set. Pre-register expected==len(outstanding); the
-    # provided child_corr ids remain outstanding (none are in completed).
     p.outstanding[prereq_key] = PrereqState(
         expected=len(outstanding), completed=set(), registered=True
     )
@@ -169,12 +162,10 @@ async def test_child_leaf_decrements_and_triggers_join_when_all_done():
         "cA": ConversationBranchMode.FORK,
         "cB": ConversationBranchMode.FORK,
     }
-    orch._descendant_counts["parent"] = 3  # root + 2 children
+    orch._descendant_counts["parent"] = 3
 
     await orch.on_child_leaf_reached("cA")
     assert issuer.dispatch_join_turn.await_count == 0
-    # Phase 3 counter form: cA reported, cB still outstanding (expected=2,
-    # completed={"cA"}).
     state = orch._active_joins["parent"].outstanding["SPAWN_JOIN:b"]
     assert state.expected == 2
     assert state.completed == {"cA"}
@@ -193,9 +184,7 @@ async def test_child_leaf_decrements_and_triggers_join_when_all_done():
 
 @pytest.mark.asyncio
 async def test_no_join_case_releases_slot_when_descendants_drain():
-    """Background / no-gate children still participate in descendant count
-    accounting; the parent's slot is released once every tracked descendant
-    reports done."""
+    """Background / no-gate children still participate in descendant count"""
     cs = MagicMock()
     issuer = MagicMock()
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
@@ -208,26 +197,17 @@ async def test_no_join_case_releases_slot_when_descendants_drain():
         )
     ]
     orch._child_modes = {"cA": ConversationBranchMode.FORK}
-    orch._descendant_counts["parent"] = 2  # root terminal + 1 child
+    orch._descendant_counts["parent"] = 2
 
     await orch.on_child_leaf_reached("cA")
-    # Without a gated_turn_index, nothing to dispatch; descendant count
-    # drops to 1 (root still pending). The slot releases when the count
-    # hits zero — here root hasn't reported yet, so the release fires only
-    # after both hit zero. Simulate root terminal done:
     orch._descendant_counts["parent"] -= 1
-    # Trigger a second decrement via a dummy child path (we only want to
-    # assert the pure descendant-count arithmetic here).
     assert "parent" in orch._descendant_counts
-    # When count reaches 0 the orchestrator releases the slot via
-    # _handle_child_done. Simulate via on_child_leaf_reached with a fresh
-    # entry:
     orch._child_to_join["cB"] = [
         ChildJoinEntry(
             parent_correlation_id="parent", gated_turn_index=None, prereq_key=None
         )
     ]
-    orch._descendant_counts["parent"] = 1  # only one tracked descendant left
+    orch._descendant_counts["parent"] = 1
     await orch.on_child_leaf_reached("cB")
     assert released == ["parent"]
 
@@ -243,9 +223,7 @@ async def test_leaf_for_unknown_child_is_noop():
 
 @pytest.mark.asyncio
 async def test_branch_orchestrator_child_stopped_decrements_pending_join():
-    """on_child_stopped: when a child's continuation is cap-blocked, the
-    parent's pending join must still drain so the join turn fires; the
-    child is tallied under children_truncated, not children_completed."""
+    """on_child_stopped: when a child's continuation is cap-blocked, the"""
     cs = MagicMock()
     issuer = MagicMock()
     issuer.dispatch_join_turn = AsyncMock(return_value=True)
@@ -269,16 +247,14 @@ async def test_branch_orchestrator_child_stopped_decrements_pending_join():
         )
     ]
     orch._child_modes = {"cA": ConversationBranchMode.FORK}
-    orch._descendant_counts["parent"] = 2  # root + 1 child
+    orch._descendant_counts["parent"] = 2
 
     await orch.on_child_stopped("cA")
 
     assert orch.stats.children_truncated == 1
     assert orch.stats.children_completed == 0
-    # Pending join drained: parent removed and join turn dispatched.
     assert "parent" not in orch._active_joins
     assert issuer.dispatch_join_turn.await_count == 1
-    # FORK sticky refcount released.
     sticky_router.release_child_routing.assert_called_once_with("parent")
 
 
@@ -389,9 +365,7 @@ async def test_child_error_fail_fast_aborts_parent(monkeypatch):
     assert "p" not in orch._active_joins
     assert "p" not in orch._descendant_counts
     assert "c2" not in orch._child_to_join
-    # Refcount released for the errored child plus its orphan sibling.
     assert sticky_router.release_child_routing.call_count == 2
-    # abort_session awaited for the parent and the orphan sibling.
     assert issuer.abort_session.await_count == 2
     awaited_targets = {call.args[0] for call in issuer.abort_session.await_args_list}
     assert awaited_targets == {"p", "c2"}
@@ -399,12 +373,7 @@ async def test_child_error_fail_fast_aborts_parent(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_child_error_fail_fast_fires_abort_observer(monkeypatch):
-    """Under FAIL_FAST, the orchestrator must fire its abort observer
-    after parent + orphan tear-down so the phase-side handler can cancel
-    every active phase lifecycle. Without this, the strategy loop keeps
-    issuing wire credits for unrelated roots and the docs' "abort the
-    whole run on first DAG child error" contract is violated.
-    """
+    """Under FAIL_FAST, the orchestrator must fire its abort observer"""
     from aiperf.common.environment import Environment
 
     monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
@@ -442,10 +411,7 @@ async def test_child_error_fail_fast_fires_abort_observer(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_child_error_non_fail_fast_does_not_fire_abort_observer(monkeypatch):
-    """Default (FAIL_FAST=False) behavior: an errored child is treated as
-    leaf-reached, NOT a whole-run abort. The abort observer must stay
-    silent so unrelated parents keep running.
-    """
+    """Default (FAIL_FAST=False) behavior: an errored child is treated as"""
     from aiperf.common.environment import Environment
 
     monkeypatch.setattr(Environment.DAG, "FAIL_FAST", False)
@@ -479,10 +445,7 @@ async def test_child_error_non_fail_fast_does_not_fire_abort_observer(monkeypatc
 
 @pytest.mark.asyncio
 async def test_cleanup_clears_abort_observer():
-    """``cleanup`` must clear ``_abort_observer`` alongside
-    ``_drain_observer`` so a torn-down orchestrator does not leak
-    references to phase-side handlers across phase boundaries.
-    """
+    """``cleanup`` must clear ``_abort_observer`` alongside"""
     orch = BranchOrchestrator(
         conversation_source=MagicMock(), credit_issuer=MagicMock()
     )
@@ -495,9 +458,7 @@ async def test_cleanup_clears_abort_observer():
 
 @pytest.mark.asyncio
 async def test_dispatch_failure_rolls_back_bookkeeping():
-    """When _dispatch_first_turn returns False (e.g. slots saturated), the
-    orchestrator must undo its children_spawned / sticky-refcount /
-    descendant-count / _child_to_join bookkeeping for the failed child."""
+    """When _dispatch_first_turn returns False (e.g. slots saturated), the"""
     cs = MagicMock()
     parent_meta = MagicMock()
     parent_meta.branches = [
@@ -525,7 +486,6 @@ async def test_dispatch_failure_rolls_back_bookkeeping():
 
     issuer = MagicMock()
 
-    # First dispatch succeeds (True), second fails (False -- slots saturated).
     async def _dispatch(session):
         return session.x_correlation_id == "child-a"
 
@@ -539,17 +499,12 @@ async def test_dispatch_failure_rolls_back_bookkeeping():
         x_correlation_id="root", conversation_id="c", turn_index=0, agent_depth=0
     )
 
-    # No gate -> intercept returns False. Only the successful child stays tracked.
     assert await orch.intercept(credit) is False
     assert orch.stats.children_spawned == 1
-    # ``dispatch_first_turn`` returning False is stop-condition refusal
-    # (slots saturated), not an error — tally as truncated.
     assert orch.stats.children_truncated == 1
     assert orch.stats.children_errored == 0
     assert "child-a" in orch._child_to_join
     assert "child-b" not in orch._child_to_join
-    # register_child_routing fired for both children; release fired for the one
-    # that failed to dispatch.
     assert sticky_router.register_child_routing.call_count == 2
     assert sticky_router.release_child_routing.call_count == 1
 
@@ -565,8 +520,7 @@ async def test_child_error_for_unknown_child_is_noop():
 
 @pytest.mark.asyncio
 async def test_spawn_mode_branch_does_not_register_sticky_routing():
-    """SPAWN-mode children must NOT increment the parent's sticky refcount
-    (they do not inherit the parent's worker)."""
+    """SPAWN-mode children must NOT increment the parent's sticky refcount"""
     cs = MagicMock()
     parent_meta = MagicMock()
     parent_meta.branches = [
@@ -604,13 +558,10 @@ async def test_spawn_mode_branch_does_not_register_sticky_routing():
         x_correlation_id="root", conversation_id="c", turn_index=0, agent_depth=0
     )
 
-    # No gate -> intercept returns False; children still spawn.
     assert await orch.intercept(credit) is False
     assert orch.stats.children_spawned == 1
-    # Sticky refcount untouched for SPAWN-mode children.
     assert sticky_router.register_child_routing.call_count == 0
 
-    # Leaf-reached must also NOT release anything because register didn't fire.
     await orch.on_child_leaf_reached("child-spawn-a")
     assert sticky_router.release_child_routing.call_count == 0
 
@@ -653,8 +604,7 @@ def test_has_pending_branch_work_zeroed_descendant_count_is_false():
 
 
 def test_has_pending_branch_work_bare_child_tracking():
-    """Child-to-join entries alone keep has_pending True — a child
-    still in flight (not yet evicted) counts as outstanding work."""
+    """Child-to-join entries alone keep has_pending True — a child"""
     orch = BranchOrchestrator(
         conversation_source=MagicMock(), credit_issuer=MagicMock()
     )
@@ -671,14 +621,12 @@ def test_cleanup_is_idempotent():
         conversation_source=MagicMock(), credit_issuer=MagicMock()
     )
     orch.cleanup()
-    # Second call is a no-op; must not raise.
     orch.cleanup()
     assert orch._cleaning_up is True
 
 
 def test_cleanup_emits_leak_warning_when_state_nonempty(caplog):
-    """Any residual active/future joins at cleanup time means the DAG failed
-    to drain — cleanup logs a warning so diagnosis has a breadcrumb."""
+    """Any residual active/future joins at cleanup time means the DAG failed"""
     import logging
 
     orch = BranchOrchestrator(
@@ -715,7 +663,6 @@ def test_cleanup_emits_leak_warning_when_state_nonempty(caplog):
     assert len(abandoned_joins) == 1
     assert "leaky-parent" in abandoned_joins[0].getMessage()
 
-    # State is cleared even on the warning path so subsequent access is clean.
     assert orch._active_joins == {}
     assert orch._future_joins == {}
     assert orch._child_to_join == {}
@@ -746,13 +693,10 @@ async def test_on_child_leaf_reached_short_circuits_when_cleaning_up():
         )
     ]
     orch.cleanup()
-    # State snapshotted by cleanup was cleared, but the method must
-    # also guard against re-entrancy with a direct early-return.
     orch._child_to_join["c"] = [
         ChildJoinEntry(
             parent_correlation_id="p", gated_turn_index=None, prereq_key=None
         )
     ]
     await orch.on_child_leaf_reached("c")
-    # children_completed should NOT increment during teardown.
     assert orch.stats.children_completed == 0

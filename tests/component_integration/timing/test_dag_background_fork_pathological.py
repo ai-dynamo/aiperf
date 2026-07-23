@@ -1,23 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial / pathological end-to-end pins for ``DagFork.background``.
-
-These cases drive the full credit/orchestrator pipeline against fixtures
-designed to stress the parts that quietly broke under the v1 design (and
-caught the ``root_requests_sent`` counter bug):
-
-  - Nested BG-fork (root → BG fork → A → BG fork → B): does the parent's
-    full-turn-list dispatch correctly at every depth?
-  - Fan-out BG (root BG-forks 5 children at once): orchestrator must
-    track all 5 spawn-and-drain edges concurrently with the parent's
-    later turns.
-  - BG-fork + SPAWN_JOIN coexistence: parent BG-forks on turn 0
-    (fire-and-forget), THEN suspends on a SPAWN_JOIN gate at turn 1, then
-    runs turn 2 after the gate fires. Tests the runtime correctly
-    distinguishes the two scheduling modes on the same conversation.
-  - Concurrency=4 + BG-fork: drain-observer interaction. Multiple BG
-    parents in flight, each with their own children fanning out. Pre-fix
-    this exposed the same race the dag_hard_cap suite caught."""
+"""Adversarial / pathological end-to-end pins for ``DagFork.background``."""
 
 from __future__ import annotations
 
@@ -54,15 +37,7 @@ def _cmd(input_file: Path, **kwargs) -> str:
 
 @pytest.mark.component_integration
 class TestNestedBgFork:
-    """Nested BG fork: a BG-forked child can itself BG-fork (or
-    plain-FORK) a grandchild. The orchestrator's ``intercept`` runs at
-    every depth — the prior ``agent_depth > 0`` short-circuit was
-    overly conservative and silently dropped grandchildren.
-
-    Topology: r (2 turns, BG-forks ``a`` on t0) → a (2 turns, BG-forks
-    ``b`` on t0) → b (2 turns).
-    Wire count: r(2) + a(2) + b(2) = 6.
-    """
+    """Nested BG fork: a BG-forked child can itself BG-fork (or"""
 
     def test_nested_bg_fork_grandchild_dispatches(self, cli: AIPerfCLI) -> None:
         """Grandchild fires; full tree's wires (r+a+b) all run."""
@@ -97,13 +72,7 @@ class TestNestedBgFork:
 
 @pytest.mark.component_integration
 class TestBgForkFanOut:
-    """One parent BG-forks 5 children at once. The orchestrator's
-    descendant tracking must handle the concurrent spawn-and-drain across
-    all 5 children in parallel with the parent's later turns.
-
-    Topology: r (2 turns, BG-forks 5 children on t0) → c1..c5 (1 turn each).
-    Wire count: r(2) + 5×1 = 7.
-    """
+    """One parent BG-forks 5 children at once. The orchestrator's"""
 
     def test_fanout_5_bg_children(self, cli: AIPerfCLI) -> None:
         result = cli.run_sync(
@@ -133,16 +102,7 @@ class TestBgForkFanOut:
 
 @pytest.mark.component_integration
 class TestBgForkCoexistsWithSpawnJoinE2E:
-    """A parent that BG-forks on turn 0 (fire-and-forget) AND runs a
-    SPAWN with auto-join on turn 1 must:
-      - dispatch the BG child concurrently with the parent's continuation
-      - SUSPEND at turn 2 (next-turn after spawn) until the SPAWN child drains
-      - resume turn 2 after the gate fires
-      - eventually drain the BG child too
-
-    Topology: r (3 turns; t0 BG-forks side, t1 SPAWNs sync) → side (2
-    turns) + sync (1 turn). Wire count: r(3) + side(2) + sync(1) = 6.
-    """
+    """A parent that BG-forks on turn 0 (fire-and-forget) AND runs a"""
 
     def test_bg_and_spawn_join_coexist_e2e(self, cli: AIPerfCLI) -> None:
         result = cli.run_sync(
@@ -157,8 +117,7 @@ class TestBgForkCoexistsWithSpawnJoinE2E:
         assert analyzer.credits_balanced()
 
     def test_bg_and_spawn_join_branch_stats(self, cli: AIPerfCLI) -> None:
-        """BG fork is one spawn; SPAWN+auto-join is another. Both complete.
-        Parent suspends ONCE (at the SPAWN's auto-join gate) and resumes."""
+        """BG fork is one spawn; SPAWN+auto-join is another. Both complete."""
         result = cli.run_sync(
             _cmd(JOIN_COEX, concurrency=1, num_conversations=1),
             timeout=30.0,
@@ -173,17 +132,6 @@ class TestBgForkCoexistsWithSpawnJoinE2E:
             f"(BG fork doesn't generate one); got "
             f"parents_suspended={bs.parents_suspended}"
         )
-        # Conservation: the single SPAWN_JOIN suspension is resolved exactly once
-        # (either the gated turn is dispatched -> parents_resumed, or the stop
-        # condition blocks it -> joins_suppressed). The parent DOES resume -- the
-        # run sends all 6 wires balanced incl. the parent's post-join turn (see
-        # test_bg_and_spawn_join_coexist_e2e). G16 (deferred, functionally
-        # correct): under --num-conversations 1 the gated turn lands via the
-        # normal-continuation path, so _release_blocked_join's redundant attempt
-        # is attributed to joins_suppressed rather than parents_resumed. Fixing
-        # the attribution needs delicate credit-counter surgery (5 other engine
-        # tests depend on it); the conservation invariant below is the
-        # meaningful contract and self-heals if the counter is later corrected.
         assert bs.parents_resumed + bs.joins_suppressed == bs.parents_suspended == 1
         if bs.parents_resumed != 1:
             pytest.xfail(
@@ -196,16 +144,10 @@ class TestBgForkCoexistsWithSpawnJoinE2E:
 
 @pytest.mark.component_integration
 class TestBgForkUnderConcurrency:
-    """Concurrency-stress: 4 BG-forking parents in flight simultaneously
-    means 4 BG children fan out concurrently with each parent's later
-    turns. Pre-drain-observer-fix this race-class hung; this is a
-    regression pin specifically against the BG-fork interaction."""
+    """Concurrency-stress: 4 BG-forking parents in flight simultaneously"""
 
     def test_bg_fork_concurrency_4_no_hang(self, cli: AIPerfCLI) -> None:
-        """4 root sessions, each runs 2 turns + BG-forks 5 children (1
-        turn each). Total per root: 2 + 5 = 7 wires. 4 roots × 7 = 28 wires.
-        With ``--concurrency 4`` all 4 roots are simultaneously in flight.
-        Pre-fix the conc=4 + BG-fork combination hung; post-fix completes."""
+        """4 root sessions, each runs 2 turns + BG-forks 5 children (1"""
         result = cli.run_sync(
             _cmd(FANOUT, concurrency=4, num_conversations=4),
             timeout=30.0,
@@ -219,11 +161,7 @@ class TestBgForkUnderConcurrency:
         assert analyzer.credits_balanced()
 
     def test_bg_fork_request_count_truncation(self, cli: AIPerfCLI) -> None:
-        """``--request-count 10`` against the 5-child fanout topology
-        truncates somewhere mid-tree. The cap must hold exactly; the run
-        must not hang. (``--num-conversations`` is rejected when paired
-        with ``--request-count`` so we drop it; the dataset recycles to
-        fill the cap.)"""
+        """``--request-count 10`` against the 5-child fanout topology"""
         result = cli.run_sync(
             _cmd(FANOUT, concurrency=1, request_count=10),
             timeout=30.0,
@@ -237,10 +175,7 @@ class TestBgForkUnderConcurrency:
         assert analyzer.credits_balanced()
 
     def test_bg_fork_request_count_concurrency_4(self, cli: AIPerfCLI) -> None:
-        """The full stress: --concurrency 4 + --request-count 12 + 5-child
-        BG fan-out. Multiple BG parents truncating concurrently — exactly
-        the shape that exposed the dag_hard_cap drain-observer race.
-        Post-fix it must complete with exactly 12 wires."""
+        """The full stress: --concurrency 4 + --request-count 12 + 5-child"""
         result = cli.run_sync(
             _cmd(FANOUT, concurrency=4, request_count=12),
             timeout=30.0,

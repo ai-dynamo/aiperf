@@ -1,27 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Advanced adversarial tests for the v2 scenario resolver (``apply_scenario``).
-
-Rebased from the v1 ``validate_scenario(MagicMock UserConfig)`` suite onto the
-v2 ``apply_scenario(run)`` resolver with REAL ``BenchmarkConfig`` /
-``BenchmarkRun`` objects. Picks up where
-``test_scenario_validator_adversarial.py`` leaves off, pinning edge cases not
-covered by the basic or first-round adversarial suites:
-
-* truthy/falsy coercion variants for ``endpoint.extra['ignore_eos']`` beyond
-  the canonical "true"/"false" strings
-* ``--unsafe-override`` interaction with a clean config (no violations)
-* detected-loader None (no recognized loader)
-* benchmark-duration 0 / None auto-fill boundaries
-
-DROP NOTES (v1 behaviors with no v2 analog):
-* ``_extract_extra_inputs`` fallback paths (parsed -> extra -> dict(raw)) are
-  gone: v2 reads ``endpoint.extra`` (a real dict) directly. The two fallback
-  tests (``..._falls_back_to_extra_attribute_when_parsed_is_none``,
-  ``..._non_coercible_raw_treated_as_empty``) are dropped. The coercion
-  semantics themselves are still exercised by the ignore_eos value tests here
-  and in the sibling adversarial module.
-"""
+"""Advanced adversarial tests for the v2 scenario resolver (``apply_scenario``)."""
 
 from __future__ import annotations
 
@@ -91,9 +70,6 @@ def _build_run(
     )
 
 
-# ---------------------------------------------------------------------------
-# ignore_eos truthy-string variants beyond "true"
-# ---------------------------------------------------------------------------
 def test_ignore_eos_truthy_string_yes_passes() -> None:
     """'yes' is not falsy, so it passes clean."""
     run = _build_run(streaming=True, extra={"ignore_eos": "yes"})
@@ -125,17 +101,13 @@ def test_ignore_eos_padded_yes_treated_as_truthy() -> None:
 
 
 def test_ignore_eos_unknown_string_not_falsy_does_not_violate() -> None:
-    """A string outside the falsy reject-list ('maybe') is NOT falsy, so no
-    violation. Only explicit falsy strings trip the lock."""
+    """A string outside the falsy reject-list ('maybe') is NOT falsy, so no"""
     run = _build_run(streaming=True, extra={"ignore_eos": "maybe"})
     outcome = apply_scenario(run)
     assert outcome.violations == []
     assert outcome.submission_valid is True
 
 
-# ---------------------------------------------------------------------------
-# ignore_eos falsy variants beyond "false"
-# ---------------------------------------------------------------------------
 def test_ignore_eos_falsy_string_no_violates() -> None:
     """'no' is in ``_is_falsy_extra_input``'s reject list."""
     run = _build_run(streaming=True, extra={"ignore_eos": "no"})
@@ -152,12 +124,8 @@ def test_ignore_eos_falsy_string_zero_violates() -> None:
     assert any(v.flag == "extra_inputs.ignore_eos" for v in exc_info.value.violations)
 
 
-# ---------------------------------------------------------------------------
-# trace_idle_gap_cap_seconds: explicit-and-matching path
-# ---------------------------------------------------------------------------
 def test_trace_idle_gap_cap_explicit_matching_no_violation() -> None:
-    """When the user explicitly sets the cap to the spec value (10.0), no
-    violation fires."""
+    """When the user explicitly sets the cap to the spec value (10.0), no"""
     run = _build_run(
         streaming=True,
         extra={"ignore_eos": True},
@@ -174,13 +142,8 @@ def test_trace_idle_gap_cap_explicit_matching_no_violation() -> None:
     assert run.cfg.get_default_dataset().trace_idle_gap_cap_seconds == 10.0
 
 
-# ---------------------------------------------------------------------------
-# unsafe_override + clean config: must NOT flip submission_valid to False
-# ---------------------------------------------------------------------------
 def test_unsafe_override_with_no_violations_returns_submission_valid_true() -> None:
-    """``unsafe_override=True`` only flips ``submission_valid`` to False when
-    there are violations. A clean config under override still returns
-    ``submission_valid=True`` and ``submission_invalid_reasons=[]``."""
+    """``unsafe_override=True`` only flips ``submission_valid`` to False when"""
     run = _build_run(streaming=True, extra={"ignore_eos": True}, unsafe_override=True)
     outcome = apply_scenario(run)
     assert outcome.violations == []
@@ -188,15 +151,8 @@ def test_unsafe_override_with_no_violations_returns_submission_valid_true() -> N
     assert outcome.submission_invalid_reasons == []
 
 
-# ---------------------------------------------------------------------------
-# detected_loader=None: when scenario requires a loader, an undetectable loader
-# IS a violation. A FileDataset with no recognized loader in
-# run.resolved.dataset_types yields detected=None.
-# ---------------------------------------------------------------------------
 def test_detected_loader_none_violates_when_loader_required() -> None:
-    """``_detect_loader`` returns None for a FileDataset with no resolved
-    dataset_types entry; None is not in the allowed loader tuple, so the lock
-    fires the ``--input-file (loader)`` violation."""
+    """``_detect_loader`` returns None for a FileDataset with no resolved"""
     run = _build_run(
         streaming=True,
         extra={"ignore_eos": True},
@@ -215,21 +171,13 @@ def test_detected_loader_none_violates_when_loader_required() -> None:
             "cache_bust": {"target": "first_turn_prefix"},
         },
     )
-    # No run.resolved.dataset_types entry -> _detect_loader returns None.
     with pytest.raises(ScenarioLockError) as exc_info:
         apply_scenario(run)
     assert any(v.flag == "--input-file (loader)" for v in exc_info.value.violations)
 
 
-# ---------------------------------------------------------------------------
-# benchmark_duration=0 still violates (0 < 900 floor; ``duration or 0.0``
-# short-circuits identically to None).
-# ---------------------------------------------------------------------------
 def test_benchmark_duration_zero_violates() -> None:
-    """0 < 900 produces a duration violation; 0 is treated like 'unset'
-    through ``duration or 0.0`` rather than 'unlimited'."""
-    # phase.duration has gt=0 at config-build; build valid then set 0 directly
-    # on the phase to reach the lock's ``duration or 0.0`` short-circuit.
+    """0 < 900 produces a duration violation; 0 is treated like 'unset'"""
     run = _build_run(streaming=True, extra={"ignore_eos": True})
     run.cfg.get_profiling_phases()[0].duration = 0
     with pytest.raises(ScenarioLockError) as exc_info:
@@ -238,10 +186,7 @@ def test_benchmark_duration_zero_violates() -> None:
 
 
 def test_benchmark_duration_none_auto_fills_scenario_default() -> None:
-    """``None`` duration is auto-filled from the scenario's
-    ``default_benchmark_duration_seconds`` (1800) instead of violating. Build
-    then clear the phase duration to simulate 'unset' (duration is required at
-    config-build time as a stop condition)."""
+    """``None`` duration is auto-filled from the scenario's"""
     run = _build_run(streaming=True, extra={"ignore_eos": True})
     run.cfg.get_profiling_phases()[0].duration = None
     outcome = apply_scenario(run)

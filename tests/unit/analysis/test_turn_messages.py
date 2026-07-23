@@ -62,11 +62,7 @@ def _accumulated(conv: str, n_turns: int) -> list[dict]:
 
 
 def _extract_payload(html_path: Path) -> dict:
-    """Mirror the viewer's client-side decode: base64 -> zstd -> JSON.
-
-    Caps the decoder window at ``ZSTD_WINDOW_LOG`` so this also asserts the
-    frame is within the fzstd-safe window (a larger window would raise here).
-    """
+    """Mirror the viewer's client-side decode: base64 -> zstd -> JSON."""
     match = re.search(r'atob\("([A-Za-z0-9+/=]+)"\)', html_path.read_text())
     assert match, "embedded payload not found"
     dctx = zstandard.ZstdDecompressor(max_window_size=1 << ZSTD_WINDOW_LOG)
@@ -81,14 +77,11 @@ def _write_raw(run_dir: Path, recs: list[dict]) -> None:
 
 class TestBuildPayload:
     def test_interns_repeated_messages(self):
-        # 4 turns re-sending history: 1 system + 4 user + 3 assistant = 8 unique,
-        # but the raw message refs are far more (system+user repeat every turn).
         recs = [_flatten_record(r) for r in _accumulated("c1", 4)]
         total_refs = sum(len(r["messages"]) for r in recs)
         payload = build_payload(recs, 1, cap=8000, limit=40, max_turns=60)
         assert len(payload["msgs"]) == 8
-        assert total_refs > len(payload["msgs"])  # interning actually dedups
-        # every turn references the shared table by id, never inlines content
+        assert total_refs > len(payload["msgs"])
         turns = payload["convs"][0]["turns"]
         for turn in turns:
             assert "ids" in turn and "msgs" not in turn
@@ -118,8 +111,7 @@ class TestBuildPayload:
         recs = [_flatten_record(_rec("c1", 0, [{"role": "user", "content": "abcdef"}]))]
         payload = build_payload(recs, 1, cap=-10, limit=40, max_turns=60)
         (msg,) = payload["msgs"]
-        assert msg["body"] == "" and msg["trunc"] == 6  # cap clamped to 0
-        # negative limit clamps to 0 -> nothing shown, no crash
+        assert msg["body"] == "" and msg["trunc"] == 6
         assert build_payload(recs, 1, cap=8000, limit=-1, max_turns=-1)["convs"] == []
 
 
@@ -129,18 +121,18 @@ class TestWriteHtml:
         out = write_turn_messages_html(tmp_path)
         assert out == tmp_path / "turn_messages.html"
 
-        payload = _extract_payload(out)  # also asserts windowLog <= 26
+        payload = _extract_payload(out)
         assert len(payload["convs"]) == 1
-        assert payload["msgs"]  # interned table present
+        assert payload["msgs"]
         ids = payload["convs"][0]["turns"][0]["ids"]
         assert all(0 <= i < len(payload["msgs"]) for i in ids)
 
     def test_self_contained_inline_decoder_no_decompressionstream(self, tmp_path: Path):
         _write_raw(tmp_path, _accumulated("c1", 3))
         html = write_turn_messages_html(tmp_path).read_text()
-        assert ".fzstd=f()" in html  # decoder inlined as a global
+        assert ".fzstd=f()" in html
         assert "fzstd.decompress(" in html
-        assert "DecompressionStream" not in html  # no native gzip dependency
+        assert "DecompressionStream" not in html
         assert "__FZSTD_JS__" not in html and "__PAYLOAD_B64__" not in html
 
     def test_reads_raw_records_shard_folder(self, tmp_path: Path):
@@ -153,7 +145,6 @@ class TestWriteHtml:
         assert _extract_payload(out)["convs"][0]["id"] == "c1"
 
     def test_nested_raw_records_are_not_merged(self, tmp_path: Path):
-        # Parent dir with only nested run trees must not silently merge them.
         for name, conv in (("run_a", "a"), ("run_b", "b")):
             nested = tmp_path / name
             nested.mkdir()
@@ -180,21 +171,15 @@ def _write_lines(run_dir: Path, lines: list[bytes]) -> None:
 
 class TestAdversarial:
     def test_injected_html_in_content_cannot_escape_payload_blob(self, tmp_path: Path):
-        # Message content is attacker-controlled; it must end up inside the
-        # base64 zstd blob and be rendered via textContent, never as live markup.
         evil = '</script><script>alert(String.fromCharCode(88,83,83))</script>"\\'
         _write_raw(tmp_path, [_rec("c1", 0, [{"role": "user", "content": evil}])])
         out = write_turn_messages_html(tmp_path)
         html = out.read_text()
-        # the raw injection never appears outside the (base64) payload literal
         assert evil not in html
         assert "alert(String.fromCharCode" not in html
-        # ...and it round-trips byte-for-byte through the payload
         assert _extract_payload(out)["msgs"][0]["body"] == evil
 
     def test_template_placeholder_strings_in_content_roundtrip(self, tmp_path: Path):
-        # Content equal to the template placeholders must not corrupt the file
-        # (base64 cannot contain '_', so the substitution can't be fooled).
         for i, marker in enumerate(("__PAYLOAD_B64__", "__FZSTD_JS__")):
             d = tmp_path / f"run{i}"
             d.mkdir()
@@ -212,7 +197,6 @@ class TestAdversarial:
         assert _extract_payload(out)["convs"][0]["id"] == cid
 
     def test_non_object_json_lines_are_skipped(self, tmp_path: Path):
-        # Valid JSON that is not an object (int/str/array/null) must not crash.
         good = orjson.dumps(_rec("c1", 0, [{"role": "user", "content": "ok"}]))
         _write_lines(
             tmp_path,
@@ -232,7 +216,6 @@ class TestAdversarial:
         assert payload["msgs"][0]["body"] == "ok"
 
     def test_messages_not_a_list_is_tolerated(self, tmp_path: Path):
-        # payload.messages as a non-list (str/dict/int) must not be iterated raw.
         recs = [
             _rec("c1", 0, "i am a string not a list"),
             _rec("c2", 0, {"role": "user", "content": "a dict not a list"}),

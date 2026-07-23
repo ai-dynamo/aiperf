@@ -21,9 +21,6 @@ def _one_conv_with(
     prereqs: list[TurnPrerequisite] | None = None,
     branches: list[ConversationBranchInfo] | None = None,
 ) -> DatasetMetadata:
-    # Auto-generate stub ConversationMetadata for every child_conversation_id
-    # referenced by any provided branch so the validator's child-existence
-    # check is satisfied without every test needing to construct stubs.
     child_ids: set[str] = set()
     for b in branches or []:
         child_ids.update(b.child_conversation_ids)
@@ -134,9 +131,7 @@ def test_validator_rejects_event_name():
 
 
 def test_validator_accepts_multiple_prereqs_on_one_turn_distinct_branches():
-    """Phase 3: multi-source gates (one turn gated by multiple branches) are
-    now supported; the orchestrator tracks each prereq independently under
-    the same ``PendingBranchJoin.outstanding`` dict."""
+    """Phase 3: multi-source gates (one turn gated by multiple branches) are"""
     md = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -168,7 +163,6 @@ def test_validator_accepts_multiple_prereqs_on_one_turn_distinct_branches():
         ],
         sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
     )
-    # Phase 3 accepts this shape.
     validate_for_orchestrator_v1(md)
 
 
@@ -184,10 +178,6 @@ def test_validator_rejects_prereq_pointing_at_unknown_branch():
 
 
 def test_validator_rejects_background_branch_with_matching_prereq():
-    # v2 re-keys fire-and-forget from is_background to dispatch_timing="pre":
-    # a pre-session (fire-and-forget) SPAWN cannot be SPAWN_JOIN-gated because
-    # no parent session exists at dispatch time. The branch is declared on
-    # turn 0 (valid pre-session shape) and referenced by the prereq on turn 1.
     br = ConversationBranchInfo(
         branch_id="r:0",
         child_conversation_ids=["c"],
@@ -204,11 +194,6 @@ def test_validator_rejects_background_branch_with_matching_prereq():
 
 
 def test_validator_accepts_overlapping_pending_joins_for_parent():
-    # Phase 1: delayed joins are supported. Branch r:0 is spawned on turn 0
-    # and consumed on turn 3 (K=3); branch r:1 is spawned on turn 1 — inside
-    # the first gate's open window — and consumed on turn 4 (K=3). Parent
-    # holds two concurrent future joins; the orchestrator's two-level
-    # _future_joins map handles this naturally.
     md = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -250,5 +235,4 @@ def test_validator_accepts_overlapping_pending_joins_for_parent():
         ],
         sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
     )
-    # No exception — Phase 1 accepts this shape.
     validate_for_orchestrator_v1(md)

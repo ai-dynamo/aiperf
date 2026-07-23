@@ -74,9 +74,6 @@ def test_decode_itl_curve_default_step_counts_match_spec():
     assert len(osl_values) == 4
 
 
-# ---- Adversarial cases ----
-
-
 @pytest.mark.parametrize(
     ("overrides", "match"),
     [
@@ -107,7 +104,6 @@ def test_decode_itl_curve_unknown_override_keys_silently_ignored():
 
 
 def test_decode_itl_curve_ignores_sla_targets():
-    # Grid recipe; sla_targets is irrelevant input.
     out = DecodeITLCurve().expand(make_ctx(sla_targets={"itl_sla_ms": 50.0}))
     assert out.sla_filters == []
 
@@ -165,8 +161,6 @@ def test_decode_itl_curve_streaming_error_message_names_recipe_and_metric():
 
 
 def test_decode_itl_curve_only_concurrency_overridden_osl_keeps_default():
-    # Mixing override with a default-kept dimension; default OSL endpoints stay
-    # pinned at [64, 1024] when osl_* keys are absent from sweep_overrides.
     out = DecodeITLCurve().expand(make_ctx(concurrency_max=32))
     osl_values = out.sweep_parameters["datasets.main.prompts.osl"]
     assert osl_values[0] == 64

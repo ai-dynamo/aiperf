@@ -17,28 +17,10 @@ from aiperf.common.models import (
 from aiperf.timing.branch_orchestrator import BranchOrchestrator
 from tests.unit.timing._shared_helpers import _mk_conv, _mk_source
 
-# 0.1. dispatch_join_turn propagates SPAWN parent mode
-
-# NOTE: test_dispatch_join_turn_preserves_spawn_parent_mode and
-# test_dispatch_join_turn_preserves_has_forks_on_gated_turn pruned here -
-# they exercise CreditIssuer.dispatch_join_turn which is wired in P2T18.
-# When restoring, also re-add imports for TurnToSend (aiperf.credit.structs)
-# and PendingBranchJoin (aiperf.timing.branch_orchestrator).
-
-
-# 0.3. intercept with all-children-failed + gate must not hang
-
 
 @pytest.mark.asyncio
 async def test_intercept_all_children_failed_with_gate_does_not_hang():
-    """When every ``start_branch_child`` raises on a parent turn whose next
-    turn is gated, the future join has zero outstanding children and would
-    never fire via the child-leaf decrement path. The orchestrator pops the
-    vacuously-satisfied gate SILENTLY and returns False; the strategy's normal
-    continuation (callback handler -> handle_credit_return -> _dispatch_next_turn)
-    then dispatches the now-ungated turn exactly once. The orchestrator must NOT
-    dispatch the join turn here for an immediate-next gate -- intercept returns
-    False, so doing so would double-dispatch the same turn_index."""
+    """When every ``start_branch_child`` raises on a parent turn whose next"""
     branch = ConversationBranchInfo(
         branch_id="root:0",
         child_conversation_ids=["a", "b"],
@@ -75,25 +57,14 @@ async def test_intercept_all_children_failed_with_gate_does_not_hang():
         branch_mode=ConversationBranchMode.FORK,
     )
 
-    # No children landed; the gate is vacuously satisfied at zero outstanding
-    # and popped SILENTLY. Parent's next turn is turn 1; intercept returns False
-    # (no surviving unsatisfied gate at next_turn_index), so the strategy's
-    # normal continuation dispatches turn 1 -- exactly once.
     result = await orch.intercept(credit)
     assert result is False
 
-    # The orchestrator must NOT dispatch the immediate-next gate here: intercept
-    # returned False, so the callback handler's normal continuation advances
-    # turn 1. Dispatching here too would double-dispatch the same turn_index.
     assert issuer.dispatch_join_turn.await_count == 0
 
-    # No leaked per-parent state (the gate popped, the slot released on drain).
     assert "root-corr" not in orch._active_joins
     assert "root-corr" not in orch._future_joins
     assert "root-corr" not in orch._descendant_counts
-    # parents_resumed counts orchestrator-driven resumes (_release_blocked_join);
-    # here the parent resumes via the strategy's normal continuation, so it is
-    # not counted (matches v1, which also pops this gate silently).
     assert orch.stats.parents_resumed == 0
     assert orch.stats.children_errored == 2
     assert orch.stats.children_spawned == 0

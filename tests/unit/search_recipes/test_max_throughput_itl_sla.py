@@ -46,8 +46,7 @@ def test_max_throughput_itl_sla_expand_emits_inter_token_latency_sla_filter() ->
 def test_max_throughput_itl_sla_expand_with_tpot_sla_alias_returns_same_filter() -> (
     None
 ):
-    """``--tpot-sla-ms`` is an alias for ``--itl-sla-ms``; either populates the
-    same ``inter_token_latency`` SLA filter via ``get_inter_token_sla_ms``."""
+    """``--tpot-sla-ms`` is an alias for ``--itl-sla-ms``; either populates the"""
     out = MaxThroughputUnderITLSLA().expand(make_ctx(sla_targets={"tpot_sla_ms": 50.0}))
     assert len(out.sla_filters) == 1
     sla = out.sla_filters[0]

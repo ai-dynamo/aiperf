@@ -142,9 +142,6 @@ class TestBuildTokenSequence:
         assert 7 in generator._cache
 
     def test_prefix_only_pads_tail_instead_of_raising(self, generator):
-        # input_length > len(hash_ids) * block_size: real captured traces
-        # (e.g. bailian block_size=16) list only the cached prefix; the
-        # un-hashed tail must be padded with sampled tokens, not raise.
         tokens = generator._build_token_sequence(100, [1, 2], 16)
         assert len(tokens) == 100
 
@@ -314,14 +311,7 @@ class TestCodingConversation:
 
 
 class TestSeedDeterminism:
-    """Whole-corpus determinism guarantees driven by the global RNG seed.
-
-    Per-hash-id determinism is covered by `test_deterministic_per_hash_id`.
-    These tests cover the broader contract: building a generator twice under
-    the same global seed yields byte-identical pools and outputs, while a
-    different seed produces different pools (so any stray non-derived RNG
-    inside the generator would be caught here).
-    """
+    """Whole-corpus determinism guarantees driven by the global RNG seed."""
 
     @pytest.fixture
     def config(self):

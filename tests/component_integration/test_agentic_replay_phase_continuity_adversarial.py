@@ -1,30 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Agentic_replay cross-phase state continuity adversarial tests.
-
-Each test exercises the WARMUP -> PROFILING boundary by sharing a single
-``TrajectorySource`` between two freshly-constructed ``AgenticReplayStrategy``
-instances (one per phase), mirroring how the TimingManager / PhaseRunner wires
-the two phases in production: the source is constructed ONCE at TimingManager
-scope, and a fresh ``AgenticReplayStrategy`` is built per phase but reads from
-the same source.
-
-These tests stay at the strategy + source level (rather than spinning up a
-full CLI run) because the invariants under test are about *state survival*
-across the two-strategies/one-source seam. End-to-end CLI coverage of the
-agentic_replay scenario lives elsewhere.
-
-V2 PORT NOTE: built against ``aiperf.config``'s v2 surface. The source is
-constructed through the PUBLIC ``TrajectorySource(...)`` constructor (not
-``__new__``) so trajectory selection and per-trajectory ``k_i`` sampling run
-through the production code path, with a deterministic ``SequentialSampler``
-for reproducibility. The cross-phase legs covered here -- k_i + correlation-id
-survival across the boundary, extended-warmup-grace clean resume, and
-multi-source recycle determinism -- are NOT exercised by the unit-level
-``test_agentic_replay_phase_adversarial.py`` /
-``test_agentic_replay_recycle_adversarial.py`` (which use ``__new__`` sources
-and a single strategy instance).
-"""
+"""Agentic_replay cross-phase state continuity adversarial tests."""
 
 from __future__ import annotations
 
@@ -45,10 +21,6 @@ from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import (
     TrajectorySource,
 )
-
-# =============================================================================
-# Helpers
-# =============================================================================
 
 
 def _make_dataset(num_traces: int, turns_per_trace: int) -> DatasetMetadata:
@@ -71,12 +43,7 @@ def _make_real_source(
     concurrency: int,
     seed: int,
 ) -> TrajectorySource:
-    """Build a real TrajectorySource with deterministic sampling.
-
-    Uses the public constructor (not __new__) so trajectory selection runs through
-    the production code path; ``SequentialSampler`` provides reproducibility
-    without leaning on dataset_sampler RNG state.
-    """
+    """Build a real TrajectorySource with deterministic sampling."""
     ds = _make_dataset(num_traces, turns_per_trace)
     sampler = SequentialSampler([c.conversation_id for c in ds.conversations])
     return TrajectorySource(
@@ -133,8 +100,7 @@ def _make_credit(
 def _capture_dispatched_turns(
     issuer: AsyncMock,
 ) -> list[tuple[str, int, str]]:
-    """Materialize all (conversation_id, turn_index, x_correlation_id) triples
-    that were issued through the credit_issuer mock."""
+    """Materialize all (conversation_id, turn_index, x_correlation_id) triples"""
     out: list[tuple[str, int, str]] = []
     for call in issuer.issue_credit.await_args_list:
         turn = call.args[0]
@@ -142,15 +108,9 @@ def _capture_dispatched_turns(
     return out
 
 
-# =============================================================================
-# Test 1: k_i + x_correlation_id survive the WARMUP -> PROFILING boundary
-# =============================================================================
-
-
 @pytest.mark.component_integration
 class TestTrajectoryKSurvivesPhaseBoundary:
-    """Same source, two strategies, identical k_i values; PROFILING resumes at
-    k_i + 1 and preserves each warmed trajectory's x_correlation_id."""
+    """Same source, two strategies, identical k_i values; PROFILING resumes at"""
 
     @pytest.mark.asyncio
     async def test_trajectory_k_observable_identically_in_both_phases(self):
@@ -162,7 +122,6 @@ class TestTrajectoryKSurvivesPhaseBoundary:
             for trajectory in source.trajectories
         ]
 
-        # WARMUP phase -- observe what gets dispatched (each trajectory at k_i).
         warmup_strategy, warmup_issuer, _ = _make_strategy(
             phase=CreditPhase.WARMUP, source=source
         )
@@ -179,15 +138,12 @@ class TestTrajectoryKSurvivesPhaseBoundary:
             "WARMUP must dispatch each trajectory at exactly its sampled k_i"
         )
 
-        # Trajectory list itself is unchanged after WARMUP execute.
         trajectories_after_warmup = [
             (trajectory.conversation_id, trajectory.start_turn_index)
             for trajectory in source.trajectories
         ]
         assert trajectories_after_warmup == trajectories_before_warmup
 
-        # PROFILING phase -- same source, fresh strategy. Must resume each
-        # trajectory at k_i + 1, proving k_i is still observable.
         profiling_strategy, profiling_issuer, _ = _make_strategy(
             phase=CreditPhase.PROFILING, source=source
         )
@@ -210,16 +166,9 @@ class TestTrajectoryKSurvivesPhaseBoundary:
         )
 
 
-# =============================================================================
-# Test 2: WARMUP grace-period extends beyond duration estimate
-# =============================================================================
-
-
 @pytest.mark.component_integration
 class TestWarmupGraceExceedsEstimate:
-    """A slow server forces WARMUP to run longer than the initial duration
-    estimate; PROFILING must still start cleanly with the same trajectory
-    state."""
+    """A slow server forces WARMUP to run longer than the initial duration"""
 
     @pytest.mark.asyncio
     async def test_profiling_starts_cleanly_after_extended_warmup(self):
@@ -234,11 +183,6 @@ class TestWarmupGraceExceedsEstimate:
         await warmup_strategy.setup_phase()
         await warmup_strategy.execute_phase()
 
-        # Simulate a slow server: many credit returns flow through, none are
-        # final, none trigger recycle (WARMUP recycle is a no-op anyway).
-        # PhaseRunner's grace-period logic is the actual time-extender; from
-        # the strategy's perspective the only requirement is "no state
-        # change". Verify by issuing several no-op credit returns.
         for trajectory in source.trajectories:
             ret = _make_credit(
                 conversation_id=trajectory.conversation_id,
@@ -248,26 +192,21 @@ class TestWarmupGraceExceedsEstimate:
             )
             await warmup_strategy.handle_credit_return(ret)
 
-        # No follow-up credits issued by WARMUP regardless of how long it ran.
         warmup_dispatched_after = _capture_dispatched_turns(warmup_issuer)
         assert len(warmup_dispatched_after) == len(snapshot), (
             "WARMUP must not issue follow-up credits even after extended runtime"
         )
 
-        # No terminal failures recorded -- report_warmup_failures must be silent.
-        warmup_strategy.report_warmup_failures()  # must not raise
+        warmup_strategy.report_warmup_failures()
 
-        # Trajectory is unchanged.
         assert source.trajectories == snapshot
 
-        # PROFILING phase starts cleanly: setup + execute both succeed.
         profiling_strategy, profiling_issuer, _ = _make_strategy(
             phase=CreditPhase.PROFILING, source=source
         )
         await profiling_strategy.setup_phase()
         await profiling_strategy.execute_phase()
 
-        # Each trajectory resumed at k_i + 1.
         resumed = {
             (cid, idx) for cid, idx, _ in _capture_dispatched_turns(profiling_issuer)
         }
@@ -276,22 +215,15 @@ class TestWarmupGraceExceedsEstimate:
         }
 
 
-# =============================================================================
-# Test 3: Multi-machine determinism -- same dataset + seed -> identical state
-# =============================================================================
-
-
 @pytest.mark.component_integration
 class TestMultiMachineDeterminism:
-    """Same dataset + same seed -> same trajectory, same k_i values, and same
-    recycle order across two independent PROFILING sources."""
+    """Same dataset + same seed -> same trajectory, same k_i values, and same"""
 
     @pytest.mark.asyncio
     async def test_two_independent_sources_yield_identical_trajectories_and_recycle_order(
         self,
     ):
         seed = 13_579
-        # Build two independent sources with byte-identical inputs.
         source_a = _make_real_source(
             num_traces=12, turns_per_trace=10, concurrency=5, seed=seed
         )
@@ -299,7 +231,6 @@ class TestMultiMachineDeterminism:
             num_traces=12, turns_per_trace=10, concurrency=5, seed=seed
         )
 
-        # Same trajectory assignment + same k_i per member.
         trajectories_a = [
             (m.conversation_id, m.start_turn_index) for m in source_a.trajectories
         ]
@@ -309,11 +240,6 @@ class TestMultiMachineDeterminism:
         assert trajectories_a == trajectories_b
         assert len(trajectories_a) == 5
 
-        # Same recycle order: drive identical final-turn-return sequences
-        # through both PROFILING strategies and compare the recycled dispatch
-        # ids. Recycle draws from each source's own deterministic
-        # SequentialSampler (at the same position after the build), so the two
-        # sequences must be byte-identical and each fresh dispatch starts at 0.
         async def _capture_recycle_order(
             source: TrajectorySource,
         ) -> tuple[list[str], list[int]]:
@@ -331,8 +257,6 @@ class TestMultiMachineDeterminism:
             await strat.setup_phase()
             await strat.execute_phase()
 
-            # Finalize each lane in lane order; each final-turn return recycles
-            # the lane into the next sampler root.
             lane_to_corr = {
                 lane: corr for corr, lane in strat._correlation_to_lane.items()
             }
@@ -365,14 +289,7 @@ class TestMultiMachineDeterminism:
 
     @pytest.mark.asyncio
     async def test_different_seeds_produce_distinguishable_trajectories(self):
-        """Sanity check: determinism is seed-driven, not constant. Without
-        this check, ``test_two_independent_sources_yield_identical_trajectories_and_recycle_order``
-        would also pass for a buggy implementation that always returns the
-        same trajectory regardless of seed."""
-        # Use a turn count where a seed difference will yield different k_i
-        # for at least one trace (with k_max=floor(0.75*20) capped at n-2=18,
-        # many possible values per trace, 5 traces -> overwhelmingly different
-        # k_i sets).
+        """Sanity check: determinism is seed-driven, not constant. Without"""
         source_a = _make_real_source(
             num_traces=5, turns_per_trace=20, concurrency=5, seed=1
         )
@@ -386,8 +303,6 @@ class TestMultiMachineDeterminism:
             (m.conversation_id, m.start_turn_index) for m in source_b.trajectories
         ]
 
-        # Same conversation_ids (deterministic sequential sampler), but k_i
-        # values differ for at least one trace.
         ids_a = [cid for cid, _ in trajectories_a]
         ids_b = [cid for cid, _ in trajectories_b]
         assert ids_a == ids_b, "sampler is sequential -- id order should match"

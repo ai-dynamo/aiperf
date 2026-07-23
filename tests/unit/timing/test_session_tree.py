@@ -45,32 +45,28 @@ def test_root_only_tree_releases_on_root_terminal(cm, registry):
 
 
 def test_descendant_holds_slot_until_it_drains(cm, registry):
-    """The slot is held while a descendant is in flight, then released when it
-    completes after the root has gone terminal."""
+    """The slot is held while a descendant is in flight, then released when it"""
     registry.open_tree("root-a", PROFILING, root_pending=True)
     registry.register_descendants("root-a", 1)
 
-    # Root finishes first; the subagent is still running -> slot must be held.
     released_now = registry.on_root_terminal("root-a")
     assert released_now is False
     assert cm.released == []
     assert registry.open_count() == 1
 
-    # Subagent finishes -> tree drains -> slot released exactly once.
     registry.on_descendant_done("root-a")
     assert cm.released == [PROFILING]
     assert registry.open_count() == 0
 
 
 def test_descendant_completing_before_root_does_not_release(cm, registry):
-    """If every descendant finishes before the root's terminal turn, the slot is
-    held until the root itself goes terminal."""
+    """If every descendant finishes before the root's terminal turn, the slot is"""
     registry.open_tree("root-a", PROFILING, root_pending=True)
     registry.register_descendants("root-a", 2)
 
     registry.on_descendant_done("root-a")
     registry.on_descendant_done("root-a")
-    assert cm.released == []  # root still pending
+    assert cm.released == []
     assert registry.open_count() == 1
 
     registry.on_root_terminal("root-a")
@@ -78,8 +74,7 @@ def test_descendant_completing_before_root_does_not_release(cm, registry):
 
 
 def test_rootless_tree_releases_when_last_descendant_drains(cm, registry):
-    """A rootless lane (no root credit ever) drains purely on descendant
-    completion -- root_pending=False from the start."""
+    """A rootless lane (no root credit ever) drains purely on descendant"""
     registry.open_tree("lane-root", PROFILING, root_pending=False)
     registry.register_descendants("lane-root", 3)
 
@@ -92,17 +87,11 @@ def test_rootless_tree_releases_when_last_descendant_drains(cm, registry):
 
 
 def test_descendants_registered_before_open_are_counted(cm, registry):
-    """Snapshot regression: a lane's subagents register BEFORE the lane slot is
-    acquired (seed_snapshot precedes acquire_lane_credit). They must be buffered
-    and folded into the tree at open_tree -- otherwise the tree opens at
-    outstanding=0 and drains on the FIRST child completion while siblings still
-    run (premature drain -> recycle overlap -> swim-lane lane overshoot)."""
-    registry.register_descendants("lane-root", 3)  # tree not open yet
+    """Snapshot regression: a lane's subagents register BEFORE the lane slot is"""
+    registry.register_descendants("lane-root", 3)
     assert registry.open_count() == 0
-    registry.open_tree("lane-root", PROFILING, root_pending=False)  # rootless lane
+    registry.open_tree("lane-root", PROFILING, root_pending=False)
 
-    # The tree opened aware of all 3 subagents: draining the first two does NOT
-    # release; only the third (the true last) drains the tree.
     registry.on_descendant_done("lane-root")
     registry.on_descendant_done("lane-root")
     assert cm.released == []
@@ -111,16 +100,11 @@ def test_descendants_registered_before_open_are_counted(cm, registry):
 
 
 def test_descendant_completing_before_open_does_not_leak_slot(cm, registry):
-    """H3 regression: a subagent at offset 0 can complete BEFORE the lane's root
-    (scheduled later) opens the tree. The pre-open completion must decrement the
-    pending buffer; otherwise open_tree folds in the stale full count and the
-    tree never drains (a descendant that already completed can't complete again),
-    leaking the session slot until teardown -> concurrency under-fill mid-run."""
-    registry.register_descendants("lane-root", 2)  # 2 subagents seeded pre-open
-    registry.on_descendant_done("lane-root")  # one completes BEFORE open_tree
-    registry.open_tree("lane-root", PROFILING, root_pending=False)  # rootless lane
+    """H3 regression: a subagent at offset 0 can complete BEFORE the lane's root"""
+    registry.register_descendants("lane-root", 2)
+    registry.on_descendant_done("lane-root")
+    registry.open_tree("lane-root", PROFILING, root_pending=False)
 
-    # Only the 1 remaining subagent is outstanding; its completion must drain.
     assert cm.released == []
     registry.on_descendant_done("lane-root")
     assert cm.released == [PROFILING]
@@ -128,12 +112,12 @@ def test_descendant_completing_before_open_does_not_leak_slot(cm, registry):
 
 def test_buffered_descendants_combine_with_post_open_registrations(cm, registry):
     """Pre-open (buffered) and post-open (live-spawned) descendants both count."""
-    registry.register_descendants("root-a", 2)  # buffered (pre-open)
+    registry.register_descendants("root-a", 2)
     registry.open_tree("root-a", PROFILING, root_pending=True)
-    registry.register_descendants("root-a", 1)  # live spawn (post-open)
+    registry.register_descendants("root-a", 1)
     registry.on_root_terminal("root-a")
     for _ in range(3):
-        assert cm.released == []  # 3 descendants outstanding
+        assert cm.released == []
         registry.on_descendant_done("root-a")
     assert cm.released == [PROFILING]
 
@@ -142,7 +126,6 @@ def test_release_is_exactly_once(cm, registry):
     """Double root-terminal / extra descendant-done never double-release."""
     registry.open_tree("root-a", PROFILING, root_pending=True)
     registry.on_root_terminal("root-a")
-    # Tree already gone; further events are no-ops.
     assert registry.on_root_terminal("root-a") is False
     registry.on_descendant_done("root-a")
     registry.register_descendants("root-a", 5)
@@ -163,43 +146,41 @@ def test_descendant_done_clamps_at_zero(cm, registry):
     registry.open_tree("root-a", PROFILING, root_pending=True)
     registry.register_descendants("root-a", 1)
     registry.on_descendant_done("root-a")
-    registry.on_descendant_done("root-a")  # extra
-    assert cm.released == []  # still root_pending, outstanding clamped at 0
+    registry.on_descendant_done("root-a")
+    assert cm.released == []
     registry.on_root_terminal("root-a")
     assert cm.released == [PROFILING]
 
 
 def test_drain_callback_fires_on_release(cm, registry):
-    """The drain callback fires exactly once per tree, on release, with the
-    root id + phase, so the strategy can recycle the freed lane."""
+    """The drain callback fires exactly once per tree, on release, with the"""
     drained: list[tuple[str, CreditPhase]] = []
     registry.set_drain_callback(lambda root, phase: drained.append((root, phase)))
 
     registry.open_tree("root-a", PROFILING, root_pending=True)
     registry.register_descendants("root-a", 1)
     registry.on_root_terminal("root-a")
-    assert drained == []  # held
+    assert drained == []
     registry.on_descendant_done("root-a")
     assert drained == [("root-a", PROFILING)]
 
 
 def test_release_all_releases_open_trees_for_phase_without_drain_callback(cm, registry):
-    """Teardown releases every still-open tree's slot for the phase and does NOT
-    fire the drain callback (no recycle at teardown)."""
+    """Teardown releases every still-open tree's slot for the phase and does NOT"""
     drained: list[str] = []
     registry.set_drain_callback(lambda root, phase: drained.append(root))
 
     registry.open_tree("r1", PROFILING, root_pending=True)
     registry.open_tree("r2", PROFILING, root_pending=True)
-    registry.register_descendants("r2", 2)  # still has work
+    registry.register_descendants("r2", 2)
     registry.open_tree("w1", WARMUP, root_pending=True)
 
     released = registry.release_all(PROFILING)
     assert released == 2
     assert cm.released == [PROFILING, PROFILING]
-    assert drained == []  # teardown does not recycle
+    assert drained == []
     assert registry.open_count(PROFILING) == 0
-    assert registry.open_count(WARMUP) == 1  # other phase untouched
+    assert registry.open_count(WARMUP) == 1
 
 
 def test_open_count_by_phase(registry):
@@ -211,8 +192,7 @@ def test_open_count_by_phase(registry):
 
 
 def test_release_uses_the_trees_own_phase(cm, registry):
-    """A tree releases against the phase it was opened with, even if drained
-    via a descendant-done call that carries no phase."""
+    """A tree releases against the phase it was opened with, even if drained"""
     registry.open_tree("w-root", WARMUP, root_pending=False)
     registry.register_descendants("w-root", 1)
     registry.on_descendant_done("w-root")

@@ -1,29 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Agentic-replay end-to-end component-integration tests.
-
-Three paths are covered:
-
-1. ``test_agentic_replay_e2e_clean_run_under_scenario`` -- exercise the full
-   agentic_replay pipeline against the small synthetic weka fixture: load
-   traces, build a TrajectorySource, run WARMUP+PROFILING strategies,
-   stamp the validator outcome onto AggregateResult.metadata, export the JSON.
-   Asserts the four spec invariants (warmup barrier, recycle observed, metrics
-   window correct, aggregate JSON ``submission_valid: true`` + scenario stamp).
-2. ``test_agentic_replay_e2e_unsafe_override_stamps_false`` -- the validator
-   path under ``--unsafe-override`` with a duration below the 900s floor:
-   aggregate JSON contains ``submission_valid: false`` with ``unsafe_override``
-   in ``submission_invalid_reasons``.
-3. ``test_agentic_replay_e2e_no_scenario_omits_submission_valid`` -- bare
-   agentic_replay timing mode (no ``--scenario``): aggregate JSON omits the
-   ``submission_valid`` field; the rest of the run still succeeds.
-
-This file pins the loader -> trajectory -> strategy -> aggregate -> exporter
-chain end-to-end at the integration boundary above the
-orchestrator-construction seam. The full ``aiperf profile --scenario`` CLI
-surface (which drives the orchestrator's TrajectorySource construction) is
-covered by ``test_agentic_replay_cli_e2e.py``.
-"""
+"""Agentic-replay end-to-end component-integration tests."""
 
 from __future__ import annotations
 
@@ -53,11 +30,6 @@ pytestmark = pytest.mark.component_integration
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "weka_traces_small"
 
 
-# =============================================================================
-# Helpers
-# =============================================================================
-
-
 @dataclass
 class _DispatchLog:
     """Capture every credit issued through the strategy for ordering checks."""
@@ -73,14 +45,7 @@ class _DispatchLog:
 
 
 class _SequentialSampler:
-    """Deterministic sampler over a fixed conversation_id list (rooted only).
-
-    Wraps around to the start indefinitely, matching the production
-    ``SequentialSampler`` (``dataset_samplers.py``). Recycle now draws roots from
-    this same sampler via ``TrajectorySource.next_recycle_conversation_id``, so
-    it must keep handing ids back past the first pass rather than raising
-    StopIteration.
-    """
+    """Deterministic sampler over a fixed conversation_id list (rooted only)."""
 
     def __init__(self, conversation_ids: list[str]) -> None:
         self._ids = list(conversation_ids)
@@ -95,11 +60,7 @@ class _SequentialSampler:
 
 
 def _make_weka_run():
-    """Build a real ``BenchmarkRun`` adequate for WekaTraceLoader.
-
-    The shared ``make_weka_run`` helper supplies the trace-replay knobs
-    (tokenizer, models, and no fixed-schedule window).
-    """
+    """Build a real ``BenchmarkRun`` adequate for WekaTraceLoader."""
     from tests.unit.dataset.loader.conftest import make_weka_run
 
     return make_weka_run(
@@ -109,25 +70,7 @@ def _make_weka_run():
 
 
 def _load_small_weka_dataset(monkeypatch, *, parallel: bool = False) -> DatasetMetadata:
-    """Load the synthetic weka fixture into a DatasetMetadata.
-
-    Stubs the prompt-synthesis path because the test does not need real
-    tokenization -- the inputs/outputs are downstream of trajectory selection
-    and credit dispatch, not the actual prompt content.
-
-    ``parallel=False``: forces serial reconstruction
-    (``WEKA_PARALLEL_WORKERS=1``) and stubs ``_decode_block_tokens`` /
-    ``_decode_tokens_to_text`` directly on the loader so the corpus/tokenizer
-    machinery never runs.
-
-    ``parallel=True``: forces the multi-process reconstruction path
-    (``WEKA_PARALLEL_WORKERS=2``, threshold lowered) but replaces the
-    real ``multiprocessing.Pool`` with an in-process stub that calls
-    ``_init_worker`` + ``_process_task`` synchronously. A small real
-    int-array corpus and a stub tokenizer satisfy
-    ``run_parallel_weka_reconstruction``'s ``SharedMemory`` allocation
-    and the per-worker ``Tokenizer.from_pretrained`` lookup.
-    """
+    """Load the synthetic weka fixture into a DatasetMetadata."""
     from aiperf.common.environment import Environment
 
     run = _make_weka_run()
@@ -152,8 +95,6 @@ def _load_small_weka_dataset(monkeypatch, *, parallel: bool = False) -> DatasetM
 
     if not parallel:
         monkeypatch.setattr(Environment.DATASET, "WEKA_PARALLEL_WORKERS", 1)
-        # Bypass the corpus/tokenizer-dependent path entirely; serial
-        # reconstruction calls these directly per turn.
         monkeypatch.setattr(
             loader,
             "_decode_block_tokens",
@@ -163,10 +104,6 @@ def _load_small_weka_dataset(monkeypatch, *, parallel: bool = False) -> DatasetM
             loader, "_decode_tokens_to_text", lambda tokens: "x" * len(tokens)
         )
     else:
-        # Parallel path: provide a real corpus + real RNG so SharedMemory
-        # allocation succeeds and worker reseeding is deterministic. The
-        # fake Pool runs everything in-process so monkeypatched callables
-        # remain visible.
         from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
 
         loader.prompt_generator._tokenized_corpus = list(range(10000, 11000))
@@ -179,8 +116,6 @@ def _load_small_weka_dataset(monkeypatch, *, parallel: bool = False) -> DatasetM
             lambda toks: f"<dec:{len(toks)}>"
         )
 
-        # Force parallel: workers >= 2 AND threshold low enough that 10
-        # traces cross the bar.
         monkeypatch.setattr(Environment.DATASET, "WEKA_PARALLEL_WORKERS", 2)
         monkeypatch.setattr(Environment.DATASET, "WEKA_PARALLEL_THRESHOLD", 1)
         _install_inproc_pool(monkeypatch, loader)
@@ -193,15 +128,7 @@ def _load_small_weka_dataset(monkeypatch, *, parallel: bool = False) -> DatasetM
 
 
 def _install_inproc_pool(monkeypatch, loader) -> None:
-    """Replace the multiprocessing Pool with a synchronous in-process stub.
-
-    Patches ``get_loader_mp_context`` to return an object whose
-    ``Pool(...)`` is a context-manager fake that runs ``_init_worker``
-    once in-process, then dispatches ``_process_task`` per task on
-    ``imap``. Patches ``Tokenizer.from_pretrained`` to return the
-    loader's stub tokenizer so the worker's tokenizer lookup
-    succeeds without network access.
-    """
+    """Replace the multiprocessing Pool with a synchronous in-process stub."""
     from aiperf.dataset.loader import weka_parallel_convert as wpc
 
     pg = loader.prompt_generator
@@ -236,18 +163,7 @@ def _install_inproc_pool(monkeypatch, loader) -> None:
 
 
 def _make_recording_issuer(log: _DispatchLog, current_phase: list[CreditPhase]):
-    """Build an AsyncMock credit issuer that records dispatches into ``log``.
-
-    The current-phase list is a one-element box so the WARMUP and PROFILING
-    strategies (constructed sequentially) can update the recorded phase
-    without re-binding the issuer.
-
-    Also exposes ``cid_to_xcorr`` on the issuer: a mapping from conversation_id
-    to the most recently issued x_correlation_id. Tests use this to send
-    final-turn credit returns whose ``x_correlation_id`` matches what
-    ``setup_phase`` / ``_spawn_from_recycle_or_id`` minted, so the strategy's
-    ``_correlation_to_lane`` invariant holds and recycle proceeds.
-    """
+    """Build an AsyncMock credit issuer that records dispatches into ``log``."""
     issuer = AsyncMock()
     cid_to_xcorr: dict[str, str] = {}
 
@@ -288,20 +204,7 @@ def _make_credit(
 
 
 def _make_running_scheduler() -> MagicMock:
-    """Build a scheduler mock whose ``schedule_later`` actually runs coroutines.
-
-    Both phase strategies defer dispatches through
-    ``scheduler.schedule_later(delay, coro)`` rather than awaiting them inline:
-    under spread mode (the default) WARMUP fires only the single max-lead credit
-    inline and schedules every earlier-lead credit, and PROFILING fires only a
-    lane whose first post-t* offset is 0 inline and schedules the rest. A bare
-    ``MagicMock`` scheduler swallows those coroutines (they never run and leak as
-    un-awaited warnings), so the recording issuer never sees them.
-
-    This stub schedules each coroutine as a real task on the running loop
-    (delay is irrelevant -- the test fixtures collapse asyncio.sleep) and tracks
-    the tasks so ``_flush_scheduled`` can drain them after ``execute_phase``.
-    """
+    """Build a scheduler mock whose ``schedule_later`` actually runs coroutines."""
     scheduler = MagicMock()
     scheduled: list[asyncio.Task] = []
 
@@ -314,12 +217,7 @@ def _make_running_scheduler() -> MagicMock:
 
 
 async def _flush_scheduled(strategy: AgenticReplayStrategy) -> None:
-    """Await every task the strategy's scheduler queued via ``schedule_later``.
-
-    Drains iteratively so a scheduled coroutine that itself schedules more
-    (e.g. a recycle dispatch) is also awaited. Yields the loop a couple times
-    first so freshly ``ensure_future``-d tasks register before draining.
-    """
+    """Await every task the strategy's scheduler queued via ``schedule_later``."""
     scheduled: list[asyncio.Task] = strategy.scheduler._scheduled_tasks
     for _ in range(50):
         await asyncio.sleep(0)
@@ -327,7 +225,6 @@ async def _flush_scheduled(strategy: AgenticReplayStrategy) -> None:
         if not pending:
             break
         await asyncio.gather(*pending)
-    # Surface any exception captured in a completed task.
     for task in scheduled:
         if task.done() and not task.cancelled():
             task.result()
@@ -350,9 +247,6 @@ def _build_phase_strategy(
         stop_checker=stop_checker if stop_checker is not None else _make_stop_checker(),
         credit_issuer=issuer,
         lifecycle=MagicMock(),
-        # These boundary tests don't drive cache-bust; run=None defaults to
-        # CacheBustTarget.NONE + benchmark_id="unknown" while still exercising
-        # the full warmup/profiling/recycle/metrics-window engine.
         run=None,
     )
 
@@ -373,15 +267,7 @@ def _make_aggregate_with_carriers(
     total_responses: int,
     context_overflow_count: int,
 ) -> AggregateResult:
-    """Build an AggregateResult carrying the cli_runner stamps.
-
-    This mirrors the wiring in ``cli_runner/_aggregate.py``: when ``--scenario``
-    is set, the validator outcome flows through these underscore-prefixed
-    metadata keys to the JSON exporter, which pops them and emits the
-    ``submission_valid`` / ``submission_invalid_reasons`` / ``scenario`` fields.
-    When ``--scenario`` is unset (no_scenario test), no carrier keys are stamped
-    so the exporter omits the field entirely.
-    """
+    """Build an AggregateResult carrying the cli_runner stamps."""
     md: dict = {}
     if scenario_name is not None:
         md["_scenario_name"] = scenario_name
@@ -399,37 +285,12 @@ def _make_aggregate_with_carriers(
     )
 
 
-# =============================================================================
-# Test 1: clean run under --scenario inferencex-agentx-mvp
-# =============================================================================
-
-
 @pytest.mark.parametrize("parallel", [False, True], ids=["serial", "parallel"])
 @pytest.mark.asyncio
 async def test_agentic_replay_e2e_clean_run_under_scenario(
     tmp_path: Path, monkeypatch, parallel: bool
 ) -> None:
-    """Spec section 8.2 #1: clean scenario run.
-
-    End-to-end through the genuine pipeline:
-    1. WekaTraceLoader loads the small synthetic fixture (10 traces, N in [1, 10]).
-    2. TrajectorySource samples a 4-member trajectory with k_i in [0, 0.7*N_i].
-    3. WARMUP strategy dispatches one credit per warmable stream at its
-       warmup_turn_index.
-    4. PROFILING strategy resumes each trajectory at k_i + 1 and processes
-       enough credit-returns to drive at least one full trace recycle.
-    5. cli_runner-style metadata stamping populates carrier keys.
-    6. AggregateConfidenceJsonExporter produces the final JSON.
-
-    Assertions:
-    - Warmup barrier: zero PROFILING dispatches before WARMUP execute_phase
-      finishes.
-    - Recycle: at least one trace_id appears more than once in the dispatch
-      log (trajectory + recycle re-dispatch).
-    - Metrics window: stop_checker.can_start_new_session gating prevents new
-      sessions from being spawned post-stop (verified by toggling the gate).
-    - Aggregate JSON: submission_valid is True; scenario is the locked name.
-    """
+    """Spec section 8.2 #1: clean scenario run."""
     dataset = _load_small_weka_dataset(monkeypatch, parallel=parallel)
     assert len(dataset.conversations) == 10, (
         "small fixture should produce exactly 10 traces"
@@ -448,20 +309,14 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
     current_phase = [CreditPhase.WARMUP]
     issuer = _make_recording_issuer(log, current_phase)
 
-    # ---- WARMUP ----
     warmup = _build_phase_strategy(
         phase=CreditPhase.WARMUP, source=source, issuer=issuer
     )
     await warmup.setup_phase()
     await warmup.execute_phase()
-    await _flush_scheduled(warmup)  # run the spread-deferred warmup credits
-    warmup.report_warmup_failures()  # must not raise -- no terminal failures injected
+    await _flush_scheduled(warmup)
+    warmup.report_warmup_failures()
 
-    # Snapshot-path WARMUP dispatches one priming credit per stream active at
-    # t* -- each stream's last request before t* (its ``warmup_turn_index``),
-    # NOT every trajectory at its root start. A trajectory whose only turn is at
-    # t=0 (``trace_01_n1``) has warmup_turn_index None and contributes nothing,
-    # so the count is ``source.warmup_credit_count``, below the 4 lanes.
     warmup_dispatched = log.by_phase(CreditPhase.WARMUP)
     expected_warmup = {
         (state.conversation_id, state.warmup_turn_index)
@@ -476,30 +331,21 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
     )
     assert len(warmup_dispatched) == source.warmup_credit_count
 
-    # WARMUP BARRIER: no PROFILING dispatch happened during WARMUP.
     assert log.by_phase(CreditPhase.PROFILING) == [], (
         "Warmup barrier violated: PROFILING dispatched before WARMUP completed"
     )
 
-    # ---- PROFILING ----
     current_phase[0] = CreditPhase.PROFILING
     profiling = _build_phase_strategy(
         phase=CreditPhase.PROFILING, source=source, issuer=issuer
     )
     await profiling.setup_phase()
-    # Recycle now draws roots straight from the shared dataset sampler
-    # (TrajectorySource.next_recycle_conversation_id) rather than a strategy-side
-    # queue, so there is no _recycle_queue to introspect. PROFILING setup must
-    # leave the trajectory lanes intact for recycle to draw against.
     assert profiling.config.phase == CreditPhase.PROFILING
     assert len(profiling.conversation_source.trajectories) == len(source.trajectories)
 
     await profiling.execute_phase()
-    await _flush_scheduled(profiling)  # run the spread-deferred resume credits
+    await _flush_scheduled(profiling)
 
-    # Each trajectory resumed at k_i + 1, except trace_01_n1 (N=1) which
-    # has k_i=0 with no further turns and is recycled immediately. Verify
-    # resume-or-recycle holds for every trajectory.
     profiling_dispatched = log.by_phase(CreditPhase.PROFILING)
     trajectory_ks = {
         trajectory.conversation_id: trajectory.start_turn_index
@@ -509,30 +355,16 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
     for trajectory_id, k in trajectory_ks.items():
         n = len(metadata_lookup[trajectory_id].turns)
         if k + 1 < n:
-            # Resume path: must have dispatched (trajectory_id, k+1).
             assert (trajectory_id, k + 1) in profiling_dispatched, (
                 f"trajectory {trajectory_id} should resume at k+1={k + 1}"
             )
         else:
-            # Recycle-immediately path (N=1 + k=0): a fresh session from
-            # the recycle queue must have dispatched in its place at turn
-            # 0. The full-pool queue may select the same trace_id again.
             recycled_at_zero = [cid for cid, idx in profiling_dispatched if idx == 0]
             assert recycled_at_zero, (
                 f"trajectory {trajectory_id} (N={n}, k={k}) should trigger an "
                 "immediate recycle dispatch but none observed"
             )
 
-    # ---- RECYCLE: drive final-turn completions for every trajectory to
-    # exercise recycle. On the snapshot path each lane's root resumes at its
-    # ``next_turn_index`` (its first turn at/after t*), which for these short
-    # fixtures is already the trace's final turn, so its initial PROFILING
-    # dispatch IS the final turn. Returning it final recycles the lane: a fresh
-    # root is drawn from the dataset sampler and dispatched at turn 0. The
-    # recycled roots are then themselves driven to final-turn returns so they
-    # feed back through the sampler. After enough rounds at least one trace_id
-    # must appear more than once in the dispatch log (the canonical recycle
-    # observation).
     pre_recycle_count = len(profiling_dispatched)
 
     def _finalize(cid: str) -> Credit:
@@ -544,8 +376,6 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
             x_correlation_id=issuer.cid_to_xcorr[cid],
         )
 
-    # Round 1: complete every trajectory at its final turn. Each finish draws a
-    # fresh root from the dataset sampler and dispatches it at turn 0.
     trajectories_to_finalize = list(source.trajectories)
     for trajectory in trajectories_to_finalize:
         await profiling.handle_credit_return(_finalize(trajectory.conversation_id))
@@ -556,12 +386,6 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
         "round 1: recycle should have produced new turn-0 dispatches"
     )
 
-    # Rounds 2..R: complete each newly-recycled dispatch (turn 0 of a new
-    # trace_id). Treat each as final so the strategy recycles again. The
-    # queue is finite (size 6 + trajectory pushes), so after at most a few rounds
-    # at least one trace_id MUST resurface. Track which trace_ids we've
-    # already finalized to avoid the strategy's debug ``_in_flight_recycled``
-    # assert which guards against re-recycling a still-in-flight trace_id.
     last_seen = pre_recycle_count
     finalized_so_far: set[str] = {m.conversation_id for m in trajectories_to_finalize}
     safety = 0
@@ -574,7 +398,6 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
         last_seen = len(snapshot)
         for cid, _idx in new_dispatches:
             if cid in finalized_so_far:
-                # Duplicate observed; recycle confirmed.
                 continue
             n = len(metadata_lookup[cid].turns)
             await profiling.handle_credit_return(
@@ -599,15 +422,8 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
         f"dispatch log over {len(full_profiling_ids)} dispatches; ids={full_profiling_ids}"
     )
 
-    # ---- METRICS WINDOW: post-stop gating ----
-    # Once the stop condition fires, can_start_new_session() returns False and
-    # _spawn_from_recycle_or_id is a no-op -- no new sessions begin. Verify
-    # by toggling the gate and triggering a final-turn return.
     profiling.stop_checker.can_start_new_session.return_value = False
     pre_post_stop = len(log.by_phase(CreditPhase.PROFILING))
-    # Pick an in-flight session (correlation_id present in _correlation_to_lane)
-    # so the strategy treats the final-turn return as legitimate. The post-stop
-    # gate is what must prevent the follow-up recycle dispatch.
     in_flight_xcorrs = list(profiling._correlation_to_lane.keys())
     assert in_flight_xcorrs, (
         "Post-stop gate test requires at least one in-flight session"
@@ -627,7 +443,6 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
         "Metrics window: handle_credit_return after stop must not spawn new sessions"
     )
 
-    # ---- AGGREGATE JSON STAMPING ----
     aggregate = _make_aggregate_with_carriers(
         scenario_name="inferencex-agentx-mvp",
         validator_valid=True,
@@ -641,7 +456,6 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
     assert md["scenario"] == "inferencex-agentx-mvp"
     assert md["submission_valid"] is True
     assert "submission_invalid_reasons" not in md
-    # Carrier keys stripped from output.
     for key in (
         "_scenario_name",
         "_validator_submission_valid",
@@ -652,25 +466,11 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
         assert key not in md, f"carrier key {key!r} leaked into output"
 
 
-# =============================================================================
-# Test 2: --unsafe-override + duration-below-floor stamps submission_valid: false
-# =============================================================================
-
-
 @pytest.mark.asyncio
 async def test_agentic_replay_e2e_unsafe_override_stamps_false(
     tmp_path: Path,
 ) -> None:
-    """Spec section 8.2 #2: --unsafe-override + violation -> submission_valid: false.
-
-    Models the cli_runner stamping path under ``--unsafe-override`` with a
-    violation (duration below the 900s floor): the validator returns
-    ``submission_valid=False`` with ``["unsafe_override"]`` reasons; cli_runner
-    pipes that through to the aggregate metadata; the JSON exporter emits
-    ``submission_valid: false`` with the reason list.
-
-    This test focuses on the cli_runner -> exporter wire.
-    """
+    """Spec section 8.2 #2: --unsafe-override + violation -> submission_valid: false."""
     aggregate = _make_aggregate_with_carriers(
         scenario_name="inferencex-agentx-mvp",
         validator_valid=False,
@@ -689,24 +489,12 @@ async def test_agentic_replay_e2e_unsafe_override_stamps_false(
     assert "unsafe_override" in md["submission_invalid_reasons"]
 
 
-# =============================================================================
-# Test 3: bare agentic_replay timing mode (no --scenario) omits the field
-# =============================================================================
-
-
 @pytest.mark.parametrize("parallel", [False, True], ids=["serial", "parallel"])
 @pytest.mark.asyncio
 async def test_agentic_replay_e2e_no_scenario_omits_submission_valid(
     tmp_path: Path, monkeypatch, parallel: bool
 ) -> None:
-    """Spec section 8.2 #3: bare agentic_replay timing mode without scenario.
-
-    Exercises the same loader -> trajectory -> strategy chain to confirm the
-    pipeline runs cleanly when ``--scenario`` is unset, then stamps the
-    aggregate with no carrier keys (mirroring cli_runner's branch where
-    ``scenario is None``). The exporter must omit ``submission_valid`` and
-    ``scenario`` entirely.
-    """
+    """Spec section 8.2 #3: bare agentic_replay timing mode without scenario."""
     dataset = _load_small_weka_dataset(monkeypatch, parallel=parallel)
     assert len(dataset.conversations) == 10
 
@@ -728,10 +516,8 @@ async def test_agentic_replay_e2e_no_scenario_omits_submission_valid(
     )
     await warmup.setup_phase()
     await warmup.execute_phase()
-    await _flush_scheduled(warmup)  # run the spread-deferred warmup credits
+    await _flush_scheduled(warmup)
     warmup.report_warmup_failures()
-    # Snapshot-path WARMUP dispatches one priming credit per stream active at t*
-    # (its ``warmup_turn_index``), not one per lane.
     warmup_dispatched = log.by_phase(CreditPhase.WARMUP)
     expected_warmup = {
         (state.conversation_id, state.warmup_turn_index)
@@ -752,9 +538,8 @@ async def test_agentic_replay_e2e_no_scenario_omits_submission_valid(
     )
     await profiling.setup_phase()
     await profiling.execute_phase()
-    await _flush_scheduled(profiling)  # run the spread-deferred resume credits
+    await _flush_scheduled(profiling)
 
-    # Aggregate the way cli_runner does for a non-scenario run: no carrier keys.
     aggregate = _make_aggregate_with_carriers(
         scenario_name=None,
         validator_valid=None,
@@ -762,7 +547,6 @@ async def test_agentic_replay_e2e_no_scenario_omits_submission_valid(
         total_responses=0,
         context_overflow_count=0,
     )
-    # Add some normal metadata so the run is recognizable as a real export.
     aggregate.metadata["confidence_level"] = 0.95
     aggregate.metadata["cooldown_seconds"] = 5
 
@@ -774,6 +558,5 @@ async def test_agentic_replay_e2e_no_scenario_omits_submission_valid(
     )
     assert "submission_invalid_reasons" not in md
     assert "scenario" not in md
-    # Standard non-scenario metadata still flows through.
     assert md["confidence_level"] == 0.95
     assert md["cooldown_seconds"] == 5

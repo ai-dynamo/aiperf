@@ -55,8 +55,6 @@ class TestPromptGeneratorComprehensive:
         prefix_prompts = PrefixPromptConfig(pool_size=5, length=10)
         return mock_tokenizer, prompts, prefix_prompts
 
-    # Initialization Tests
-
     def test_init_basic_configuration(self, basic_config):
         """Test basic initialization without prefix prompts."""
         tokenizer, prompts, prefix_prompts = basic_config
@@ -91,8 +89,6 @@ class TestPromptGeneratorComprehensive:
             )
             mock_init.assert_called_once()
 
-    # Generate Method Tests
-
     def test_generate_without_hash_ids(self, basic_config):
         """Test generate method without hash_ids uses normal generation."""
         tokenizer, prompts, prefix_prompts = basic_config
@@ -100,12 +96,10 @@ class TestPromptGeneratorComprehensive:
             tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
         )
 
-        # Test that generate without hash_ids returns a string
         result = generator.generate(mean=100, stddev=20)
 
         assert isinstance(result, str)
         assert len(result) > 0
-        # Verify it contains tokens from the corpus
         assert " " in result or len(result.split()) > 0
 
     def test_generate_with_hash_ids(self, basic_config):
@@ -130,14 +124,10 @@ class TestPromptGeneratorComprehensive:
             tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
         )
 
-        # Empty list should be falsy, so should use normal generation
         result = generator.generate(mean=100, stddev=20, hash_ids=[])
 
-        # Verify it returns a string with tokens
         assert isinstance(result, str)
         assert len(result) > 0
-
-    # generate_prompt Method Tests
 
     def testgenerate_prompt_normal_case(self, basic_config):
         """Test generate_prompt method with normal parameters."""
@@ -167,8 +157,6 @@ class TestPromptGeneratorComprehensive:
 
         generator.generate_prompt(1000)
 
-    # _generate_cached_prompt Method Tests
-
     def test_generate_cached_prompt_valid_parameters(self, basic_config):
         """Test _generate_cached_prompt with valid parameters."""
         tokenizer, prompts, prefix_prompts = basic_config
@@ -180,15 +168,12 @@ class TestPromptGeneratorComprehensive:
             num_tokens=10, hash_ids=[1, 2], block_size=5
         )
 
-        # Should have created cache entries
         assert 1 in generator._cache
         assert 2 in generator._cache
 
-        # Each cache entry should have BOS token at start
-        assert generator._cache[1][0] == 1  # BOS token
-        assert generator._cache[2][0] == 1  # BOS token
+        assert generator._cache[1][0] == 1
+        assert generator._cache[2][0] == 1
 
-        # Should return decoded prompt
         assert isinstance(result, str)
 
     def test_generate_cached_prompt_reuse_cache(self, basic_config):
@@ -198,14 +183,12 @@ class TestPromptGeneratorComprehensive:
             tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
         )
 
-        # Pre-populate cache
         generator._cache[1] = [1, 10, 11, 12, 13]
 
         _ = generator._generate_cached_prompt(
             num_tokens=10, hash_ids=[1, 2], block_size=5
         )
 
-        # Should reuse existing cache for hash_id 1
         assert generator._cache[1] == [1, 10, 11, 12, 13]
 
     def test_generate_cached_prompt_uneven_final_block(self, basic_config):
@@ -216,35 +199,28 @@ class TestPromptGeneratorComprehensive:
         )
 
         _ = generator._generate_cached_prompt(
-            num_tokens=12,  # 5 + 5 + 2
+            num_tokens=12,
             hash_ids=[1, 2, 3],
             block_size=5,
         )
 
-        # Final block should have different size
-        assert len(generator._cache[3]) == 2  # Final block: 12 - (2 * 5) = 2
+        assert len(generator._cache[3]) == 2
 
     @pytest.mark.parametrize(
         "num_tokens, hash_ids, block_size, should_raise",
         [
-            # Failing cases
-            (10, [1, 2, 3], 5, True),  # final_block_size = 0 (should fail)
-            (5, [1, 2, 3], 5, True),  # final_block_size = -5 (should fail)
-            # Prefix-only layout: M*block_size=10 < num_tokens=20, the un-hashed
-            # remainder is a 10-token fresh tail. Valid since the
-            # ``_build_token_sequence`` rewrite (real captured traces list only
-            # the cached prefix in hash_ids).
+            (10, [1, 2, 3], 5, True),
+            (5, [1, 2, 3], 5, True),
             (20, [1, 2], 5, False),
-            (0, [1], 5, True),  # num_tokens = 0 (should fail)
-            (10, [1, 2, 3], 0, True),  # block_size = 0 (should fail)
-            (10, [1, 2, 3], -1, True),  # negative block_size (should fail)
-            # Passing cases
-            (10, [1, 2], 5, False),  # final_block_size == block_size
-            (10, [1], 15, False),  # final_block_size < block_size
-            (6, [1, 2], 5, False),  # final_block_size < block_size
-            (5, [1], 5, False),  # final_block_size == block_size
-            (3, [1], 5, False),  # final_block_size < block_size
-            (12, [1, 2, 3], 5, False),  # final_block_size < block_size
+            (0, [1], 5, True),
+            (10, [1, 2, 3], 0, True),
+            (10, [1, 2, 3], -1, True),
+            (10, [1, 2], 5, False),
+            (10, [1], 15, False),
+            (6, [1, 2], 5, False),
+            (5, [1], 5, False),
+            (3, [1], 5, False),
+            (12, [1, 2, 3], 5, False),
         ],
     )
     def test_generate_cached_prompt_configuration_errors(
@@ -262,7 +238,6 @@ class TestPromptGeneratorComprehensive:
                     num_tokens=num_tokens, hash_ids=hash_ids, block_size=block_size
                 )
 
-            # Verify error message contains expected information
             error_message = str(exc_info.value)
             assert "are not compatible" in error_message
             assert f"Input length: {num_tokens}" in error_message
@@ -298,15 +273,12 @@ class TestPromptGeneratorComprehensive:
             tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
         )
 
-        # First call
         generator._generate_cached_prompt(10, [1, 2], 5)
         first_cache_1 = generator._cache[1].copy()
         first_cache_2 = generator._cache[2].copy()
 
-        # Second call with same hash_ids
         generator._generate_cached_prompt(10, [1, 2], 5)
 
-        # Cache should be reused (same values)
         assert generator._cache[1] == first_cache_1
         assert generator._cache[2] == first_cache_2
 
@@ -317,16 +289,13 @@ class TestPromptGeneratorComprehensive:
             tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
         )
 
-        # Pre-populate cache with one hash_id
         generator._cache[1] = [1, 10, 11, 12, 13]
 
-        # Call with mix of cached and new hash_ids
         _ = generator._generate_cached_prompt(15, [1, 2, 3], 5)
 
-        # Should reuse hash_id 1 and create new for 2 and 3
-        assert generator._cache[1] == [1, 10, 11, 12, 13]  # Unchanged
-        assert 2 in generator._cache  # Newly created
-        assert 3 in generator._cache  # Newly created
+        assert generator._cache[1] == [1, 10, 11, 12, 13]
+        assert 2 in generator._cache
+        assert 3 in generator._cache
 
     def test_large_cache_usage(self, basic_config):
         """Test that large cache usage works correctly."""
@@ -335,19 +304,15 @@ class TestPromptGeneratorComprehensive:
             tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
         )
 
-        # Generate many cached prompts with different hash_ids
         block_size = 5
         hash_ids = list(range(50))
         for i in range(0, len(hash_ids), 10):
             chunk = hash_ids[i : i + 10]
             generator._generate_cached_prompt(50, chunk, block_size)
 
-        # Cache should contain all hash_ids
         assert len(generator._cache) == len(hash_ids)
         assert all(h in generator._cache for h in hash_ids)
         assert all(len(generator._cache[h]) == block_size for h in hash_ids)
-
-    # _sample_tokens Method Tests
 
     def test_sample_tokens_normal_case(self, basic_config):
         """Test _sample_tokens with normal parameters."""
@@ -370,7 +335,6 @@ class TestPromptGeneratorComprehensive:
         )
         corpus_size = generator._corpus_size
 
-        # Start near the end to force wrap-around
         with patch.object(
             generator._corpus_rng, "randrange", return_value=corpus_size - 2
         ):
@@ -410,7 +374,6 @@ class TestPromptGeneratorComprehensive:
         with patch.object(generator._corpus_rng, "randrange", return_value=0):
             tokens = generator._sample_tokens(corpus_size * 2)
 
-        # Should log a warning
         mock_warning.assert_called_once()
         assert "longer than the corpus" in str(mock_warning.call_args)
         assert len(tokens) == corpus_size * 2
@@ -427,8 +390,6 @@ class TestPromptGeneratorComprehensive:
         with pytest.raises(NotInitializedError):
             generator._sample_tokens(5)
 
-    # get_random_prefix_prompt Method Tests
-
     def test_get_random_prefix_prompt_success(self, prefix_config):
         """Test get_random_prefix_prompt with populated pool."""
         tokenizer, prompts, prefix_prompts = prefix_config
@@ -436,11 +397,9 @@ class TestPromptGeneratorComprehensive:
             tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
         )
 
-        # Test that it returns one of the prefix prompts from the pool
         result = generator.get_random_prefix_prompt()
         assert isinstance(result, str)
         assert len(result) > 0
-        # Verify it's from the prefix prompts pool
         assert result in generator._prefix_prompts
 
     def test_get_random_prefix_prompt_multiple_calls(self, prefix_config):
@@ -450,13 +409,11 @@ class TestPromptGeneratorComprehensive:
             tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
         )
 
-        # Should be able to call multiple times
         prompt1 = generator.get_random_prefix_prompt()
         prompt2 = generator.get_random_prefix_prompt()
 
         assert isinstance(prompt1, str)
         assert isinstance(prompt2, str)
-        # Both should be from the pool
         assert prompt1 in generator._prefix_prompts
         assert prompt2 in generator._prefix_prompts
 
@@ -470,8 +427,6 @@ class TestPromptGeneratorComprehensive:
         with pytest.raises(InvalidStateError):
             generator.get_random_prefix_prompt()
 
-    # _initialize_corpus Method Tests
-
     @patch("os.cpu_count", return_value=4)
     def test_initialize_corpus_success(self, mock_cpu_count, basic_config):
         """Test _initialize_corpus method successful execution."""
@@ -484,8 +439,6 @@ class TestPromptGeneratorComprehensive:
         assert generator._corpus_size > 0
         assert isinstance(generator._tokenized_corpus, list)
         assert all(isinstance(token, int) for token in generator._tokenized_corpus)
-
-    # _create_prefix_prompt_pool Method Tests
 
     def test_create_prefix_prompt_pool_success(self, prefix_config):
         """Test _create_prefix_prompt_pool successful creation."""
@@ -509,20 +462,13 @@ class TestPromptGeneratorComprehensive:
             generator._create_prefix_prompt_pool()
 
     def test_create_prefix_prompt_pool_zero_length(self, mock_tokenizer):
-        """Test _create_prefix_prompt_pool with zero length prompts.
-
-        v2 PrefixPromptConfig requires length >= 1, so we mutate the value
-        post-init via Pydantic's allow-attribute-assignment behavior; if the
-        config rejects 0 we test the equivalent code path where length is
-        treated as falsy and pool entries are empty strings.
-        """
+        """Test _create_prefix_prompt_pool with zero length prompts."""
         prompts = PromptConfig(block_size=512)
         prefix_prompts = PrefixPromptConfig(pool_size=5, length=1)
         generator = _make_generator(
             mock_tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
         )
 
-        # Force length to 0 and rebuild the pool to mirror legacy behavior.
         generator.prefix_prompts = PrefixPromptConfig.model_construct(
             pool_size=5, length=0
         )
@@ -531,8 +477,6 @@ class TestPromptGeneratorComprehensive:
 
         assert len(generator._prefix_prompts) == 5
         assert all(prompt == "" for prompt in generator._prefix_prompts)
-
-    # Shared System Prompt Tests
 
     def test_generate_shared_system_prompt_success(self, mock_tokenizer):
         """Test _generate_shared_system_prompt generates prompt successfully."""
@@ -585,8 +529,6 @@ class TestPromptGeneratorComprehensive:
         assert "not initialized" in str(exc_info.value)
         assert "shared-system-prompt-length" in str(exc_info.value)
 
-    # User Context Prompt Tests
-
     def test_generate_user_context_prompt_first_session(self, mock_tokenizer):
         """Test generate_user_context_prompt for first session."""
         prompts = PromptConfig(block_size=512)
@@ -625,10 +567,8 @@ class TestPromptGeneratorComprehensive:
             mock_tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
         )
 
-        # Generate prompt for session 0
         prompt0_first = generator.generate_user_context_prompt(0)
 
-        # Request same session again - should return cached
         prompt0_second = generator.generate_user_context_prompt(0)
 
         assert prompt0_first == prompt0_second
@@ -642,7 +582,6 @@ class TestPromptGeneratorComprehensive:
             mock_tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
         )
 
-        # Request session 5 directly (should generate 0-5)
         prompt5 = generator.generate_user_context_prompt(5)
 
         assert len(generator._user_context_prompts) == 6
@@ -676,8 +615,6 @@ class TestPromptGeneratorComprehensive:
 
         assert "corpus" in str(exc_info.value).lower()
 
-    # Decoded String Cache Tests
-
     def test_decoded_cache_initialized_empty(self, basic_config):
         """Test that decoded cache is initialized as empty dict."""
         tokenizer, prompts, prefix_prompts = basic_config
@@ -688,17 +625,6 @@ class TestPromptGeneratorComprehensive:
         assert hasattr(generator, "_decoded_cache")
         assert isinstance(generator._decoded_cache, dict)
         assert len(generator._decoded_cache) == 0
-
-    # NOTE: ``_generate_cached_prompt`` no longer reads/writes ``_decoded_cache``.
-    # The hash-id reseed path (WekaTraceLoader + the trace loaders) scopes block
-    # content per-(trace_id, hash_id) and clears ``_cache`` between trace files,
-    # so a cross-trace decoded-cache hit would serve stale bytes and break
-    # byte-exact trace replay. The former decoded-cache population tests
-    # (populated_on_first_call / hit_on_repeated_call / miss_* / key_structure)
-    # are removed: the decode is now always fresh. ``_decoded_cache`` remains a
-    # declared attribute (other call sites still reference it).
-
-    # _build_token_sequence Method Tests
 
     def test_build_token_sequence_returns_tokens(self, basic_config):
         """Test that _build_token_sequence returns a list of token IDs."""
@@ -722,7 +648,6 @@ class TestPromptGeneratorComprehensive:
 
         _ = generator._build_token_sequence(10, [1, 2], 5)
 
-        # Token block cache should be populated
         assert 1 in generator._cache
         assert 2 in generator._cache
 
@@ -735,7 +660,6 @@ class TestPromptGeneratorComprehensive:
 
         _ = generator._build_token_sequence(10, [1, 2], 5)
 
-        # Decoded cache should remain empty
         assert len(generator._decoded_cache) == 0
 
     def test_build_token_sequence_same_validation_as_generate_cached(
@@ -747,6 +671,5 @@ class TestPromptGeneratorComprehensive:
             tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
         )
 
-        # This should raise same error as _generate_cached_prompt
         with pytest.raises(ConfigurationError):
-            generator._build_token_sequence(10, [1, 2, 3], 5)  # final_block_size = 0
+            generator._build_token_sequence(10, [1, 2, 3], 5)

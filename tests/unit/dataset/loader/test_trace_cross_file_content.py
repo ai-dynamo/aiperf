@@ -20,27 +20,14 @@ from aiperf.dataset.loader.bailian_trace import BailianTraceDatasetLoader
 from aiperf.dataset.loader.burst_gpt import BurstGPTTraceDatasetLoader
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 
-# Long mock corpus so sample slices have room to vary across reseeds.
 MOCK_CORPUS_CONTENT = " ".join([f"word{i}" for i in range(1024)]) + "\n"
 
-# Trace loaders carry no FileDataset block_size in v2; the test wants block_size
-# 4 so sample slices line up. It reaches the loader via default_block_size=.
 _TEST_BLOCK_SIZE = 4
 
 
 @pytest.fixture(autouse=True)
 def _mock_parallel_decode_tokenizer(mock_tokenizer_cls):
-    """Route ``parallel_decode``'s tokenizer load to the mock.
-
-    The trace loaders synthesize hash-id prompts via
-    ``HashIdsPromptSynthesisMixin.synthesize_prompts_from_hash_ids`` ->
-    ``parallel_decode``, whose sequential path does
-    ``Tokenizer.from_pretrained(self._tokenizer_name)``. ``_tokenizer_name`` is
-    "test-tok" (from the v2 run), which would hit a real HuggingFace 404. Patch
-    it to the deterministic MockTokenizer so decode is consistent (same tokens ->
-    same string, different tokens -> different string), preserving the cross-file
-    distinctness / within-file determinism the tests assert.
-    """
+    """Route ``parallel_decode``'s tokenizer load to the mock."""
     with patch(
         "aiperf.common.tokenizer.Tokenizer.from_pretrained",
         lambda name, **kw: mock_tokenizer_cls.from_pretrained(name),
@@ -86,9 +73,6 @@ def _write_burst_csv(
     return str(p)
 
 
-# Mooncake
-
-
 class TestMooncakeCrossFileContent:
     """Cross-file collision regression for MooncakeTraceDatasetLoader."""
 
@@ -110,17 +94,12 @@ class TestMooncakeCrossFileContent:
     def test_mooncake_distinct_content_across_files(
         self, tmp_path, real_prompt_generator, default_user_config
     ):
-        # Both files use the SAME hash_ids and input_length on the first
-        # trace. Different file content = different trace_id = must produce
-        # different prompts.
         line_a = '{"timestamp": 1, "input_length": 8, "output_length": 4, "hash_ids": [101, 202]}'
         file_a = _write_jsonl(tmp_path, "trace_a.jsonl", [line_a])
         file_b = _write_jsonl(
             tmp_path,
             "trace_b.jsonl",
             [
-                # Same hash_ids on the first line; second line ensures the
-                # file content hash differs across the pair.
                 line_a,
                 '{"timestamp": 99, "input_length": 8, "output_length": 4, "hash_ids": [333]}',
             ],
@@ -140,8 +119,6 @@ class TestMooncakeCrossFileContent:
     def test_mooncake_deterministic_within_file(
         self, tmp_path, real_prompt_generator, default_user_config
     ):
-        # Same hash_id appears twice in one file. Both turns must reuse the
-        # same cached block content.
         lines = [
             '{"session_id": "s1", "input_length": 8, "output_length": 4, "hash_ids": [42, 99]}',
             '{"session_id": "s1", "delay": 1, "input_length": 8, "output_length": 4, "hash_ids": [42, 99]}',
@@ -154,9 +131,6 @@ class TestMooncakeCrossFileContent:
         turn0_prompt = conversations[0].turns[0].texts[0].contents[0]
         turn1_prompt = conversations[0].turns[1].texts[0].contents[0]
         assert turn0_prompt == turn1_prompt
-
-
-# Bailian
 
 
 class TestBailianCrossFileContent:
@@ -183,7 +157,6 @@ class TestBailianCrossFileContent:
             '"input_length": 8, "output_length": 4, "type": "text", '
             '"turn": 1, "hash_ids": [555, 666]}'
         )
-        # Different file content with the SAME hash_ids on the leading trace.
         file_a = _write_jsonl(tmp_path, "bailian_a.jsonl", [line_a])
         file_b = _write_jsonl(
             tmp_path,
@@ -221,25 +194,12 @@ class TestBailianCrossFileContent:
         loader = self._make_loader(f, real_prompt_generator, default_user_config)
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
-        # Both turns share the same hash_ids -> same prompt within the file.
         prompts = [t.texts[0].contents[0] for t in conversations[0].turns]
         assert prompts[0] == prompts[1]
 
 
-# BurstGPT
-
-
 class TestBurstGPTCrossFileContent:
-    """Cross-file collision regression for BurstGPTTraceDatasetLoader.
-
-    BurstGPT rows do not carry hash_ids; prompts are sampled via the corpus
-    RNG path. The trace_id scope still matters because :class:`PromptGenerator`
-    keeps a decoded-string cache keyed only by ``(tuple(hash_ids), num_tokens,
-    block_size)`` — when ``hash_ids`` is empty the path goes through
-    ``generate(...)`` which uses ``_corpus_rng`` directly. This test pins
-    behaviour and verifies that :meth:`_init_trace_scope` clears both caches
-    so the second file does not return stale content from the first.
-    """
+    """Cross-file collision regression for BurstGPTTraceDatasetLoader."""
 
     def _make_loader(
         self, filename: str, pg, user_config
@@ -254,14 +214,12 @@ class TestBurstGPTCrossFileContent:
     def test_burst_gpt_load_clears_cache_between_files(
         self, tmp_path, real_prompt_generator, default_user_config
     ):
-        # Pre-poison the cache with stale content keyed on what could collide.
         real_prompt_generator._cache[1] = [9999, 9998]
 
         f_a = _write_burst_csv(tmp_path, "burst_a.csv", [(1.0, 8, 4), (2.0, 8, 4)])
         loader_a = self._make_loader(f_a, real_prompt_generator, default_user_config)
         loader_a.load_dataset()
 
-        # _init_trace_scope must have purged the stale entry.
         assert 1 not in real_prompt_generator._cache
 
     def test_burst_gpt_trace_id_changes_between_files(

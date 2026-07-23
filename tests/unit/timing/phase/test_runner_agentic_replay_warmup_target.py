@@ -74,12 +74,7 @@ class TestAgenticReplayWarmupTarget:
     """``PhaseRunner`` warmup-target behavior under AGENTIC_REPLAY."""
 
     async def test_concurrency_above_pool_size_wrap_fills_to_concurrency(self) -> None:
-        """Pool of 6, concurrency=8 -> 8 lanes (wrap-fill activates).
-
-        Replaces the old "rejected at __init__" assertion: silently capping
-        load below the requested concurrency was the bug; wrap-fill keeps the
-        run honouring ``--concurrency`` while reusing trajectories.
-        """
+        """Pool of 6, concurrency=8 -> 8 lanes (wrap-fill activates)."""
         import itertools
 
         md = _make_dataset_metadata({f"t{i}": 5 for i in range(6)})
@@ -94,7 +89,7 @@ class TestAgenticReplayWarmupTarget:
         )
         assert len(src.trajectories) == 8
         distinct = {t.conversation_id for t in src.trajectories}
-        assert len(distinct) == 6  # 6 distinct sources, repeated across 8 lanes
+        assert len(distinct) == 6
 
     async def test_concurrency_below_pool_size_uses_concurrency(self) -> None:
         """Pool of 10, concurrency=4 -> 4 trajectories -> target = 4 (unchanged)."""
@@ -113,13 +108,7 @@ class TestAgenticReplayWarmupTarget:
         assert runner._config.total_expected_requests == 4
 
     async def test_short_traces_skipped_below_concurrency_wrap_fills(self) -> None:
-        """Pool of 6 with one 1-turn trace, concurrency=8: wrap-fill to 8 lanes.
-
-        Previously the runner re-anchored target to the 5 usable trajectories
-        and the construction-time guard was a hard rejection; now
-        ``TrajectorySource`` wrap-fills the missing lanes by cycling through
-        the 5 usable trajectories with fresh ``start_turn_index`` salts.
-        """
+        """Pool of 6 with one 1-turn trace, concurrency=8: wrap-fill to 8 lanes."""
         import itertools
 
         md = _make_dataset_metadata({"a": 5, "b": 5, "c": 5, "d": 5, "e": 5, "tiny": 1})
@@ -134,7 +123,6 @@ class TestAgenticReplayWarmupTarget:
         )
         assert len(src.trajectories) == 8
         distinct = {t.conversation_id for t in src.trajectories}
-        # 5 usable (tiny is skipped), repeated across 8 lanes.
         assert distinct == {"a", "b", "c", "d", "e"}
 
     async def test_profiling_phase_target_unchanged(self) -> None:
@@ -158,18 +146,12 @@ class TestAgenticReplayWarmupTarget:
             arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
         )
         runner = _make_runner(profiling, src)
-        # PROFILING target untouched.
         assert runner._config.total_expected_requests == 100
 
     async def test_warmup_target_reanchored_to_warmup_credit_count(self) -> None:
-        """Multi-stream lanes: warmup dispatches one credit per warmable stream
-        (warmup_credit_count > concurrency), so the barrier must re-anchor to
-        warmup_credit_count -- otherwise the concurrency-sized barrier cancels
-        the closest-to-t* primers. (Single-stream lanes have
-        warmup_credit_count == concurrency, a no-op -- pinned by the tests above.)
-        """
+        """Multi-stream lanes: warmup dispatches one credit per warmable stream"""
         src = MagicMock()
-        src.dataset_metadata = None  # skip the FIXED_SCHEDULE re-anchor
+        src.dataset_metadata = None
         src.warmup_credit_count = 6
         runner = _make_runner(_warmup_config(concurrency=2), src)
         assert runner._config.total_expected_requests == 6
@@ -211,15 +193,11 @@ class TestAgenticReplayWarmupTarget:
             arrival_pattern=ArrivalPattern.POISSON,
         )
         runner = _make_runner(rr_warmup, src)
-        # REQUEST_RATE warmup untouched (the re-anchor is AGENTIC_REPLAY-specific).
         assert runner._config.total_expected_requests == 50
 
 
 class TestWarmupFailureAbortGate:
-    """``PhaseRunner._report_warmup_failures`` wiring: agentic WARMUP terminal
-    failures must abort the benchmark before PROFILING starts (the gate the v2
-    runner refactor briefly lost).
-    """
+    """``PhaseRunner._report_warmup_failures`` wiring: agentic WARMUP terminal"""
 
     def _make_warmup_runner(self, strategy_obj) -> PhaseRunner:
         md = _make_dataset_metadata({f"t{i}": 5 for i in range(4)})
@@ -254,14 +232,11 @@ class TestWarmupFailureAbortGate:
         strategy.report_warmup_failures.assert_called_once()
 
     async def test_backstop_skipped_when_live_abort_wired(self) -> None:
-        """When the live early-abort is wired (callback_handler.on_warmup_abort
-        is not None), the teardown backstop must NOT fire -- the first terminal
-        failure already broadcast ProfileCancelCommand, so re-raising here would
-        double-abort."""
+        """When the live early-abort is wired (callback_handler.on_warmup_abort"""
         strategy = MagicMock()
         strategy.report_warmup_failures = MagicMock()
         runner = self._make_warmup_runner(strategy)
-        runner._callback_handler.on_warmup_abort = AsyncMock()  # live path wired
+        runner._callback_handler.on_warmup_abort = AsyncMock()
 
         assert runner._should_fire_warmup_backstop(strategy) is False
 
@@ -317,15 +292,10 @@ class TestWarmupFailureAbortGate:
             pass
 
         runner = self._make_warmup_runner(_NoHook())
-        runner._report_warmup_failures(_NoHook())  # must not raise
+        runner._report_warmup_failures(_NoHook())
 
     async def test_run_invokes_gate_and_aborts_on_warmup_failure(self) -> None:
-        """End-to-end through the real ``run()``/``_run_strategy`` path: a WARMUP
-        strategy with recorded failures must call report_warmup_failures at
-        teardown and propagate the abort. Pins the call-site wiring (commit
-        8caddefb5) -- the helper-only tests above would stay green if the call at
-        the end of _run_strategy were deleted; this would not.
-        """
+        """End-to-end through the real ``run()``/``_run_strategy`` path: a WARMUP"""
         from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 
         md = _make_dataset_metadata({f"t{i}": 5 for i in range(2)})
@@ -346,17 +316,8 @@ class TestWarmupFailureAbortGate:
             side_effect=TrajectoryWarmupFailedError(["t0"])
         )
 
-        # Drive the real _run_strategy past its credit-flow waits without a live
-        # bus: stub the blocking awaits + ramper build + background-task spawn so
-        # control reaches the warmup-failure gate at the end of _run_strategy.
         runner._build_strategy = MagicMock(return_value=strategy)
-        # This test pins the TEARDOWN BACKSTOP, which only fires when the live
-        # warmup early-abort is NOT wired. Force the un-wired condition (the
-        # MagicMock callback_handler would otherwise auto-create a truthy
-        # ``on_warmup_abort`` and the backstop would correctly be skipped).
         runner._callback_handler.on_warmup_abort = None
-        # The gate is strategy-only; bypass the live branch orchestrator so the
-        # pre-session-branch dispatch doesn't need a real credit bus.
         runner._branch_orchestrator = None
         runner._credit_router.wait_for_workers = AsyncMock()
         runner._create_rampers = MagicMock(
@@ -380,8 +341,8 @@ class TestAgenticReplayWarmupTargetIntegrationWithCounter:
     @pytest.mark.parametrize(
         "concurrency,pool_size,expected_count",
         [
-            (4, 10, 4),  # below pool size
-            (10, 10, 10),  # at pool size
+            (4, 10, 4),
+            (10, 10, 10),
         ],
     )
     async def test_counter_fires_final_credit_on_last_trajectory(
@@ -390,13 +351,7 @@ class TestAgenticReplayWarmupTargetIntegrationWithCounter:
         pool_size: int,
         expected_count: int,
     ) -> None:
-        """After construction, the counter flips ``is_final_credit`` exactly on
-        the last trajectory's credit, which is what unblocks the runner's wait.
-
-        Only in-budget shapes are exercised here; out-of-budget shapes are
-        rejected at ``TrajectorySource.__init__`` and are pinned by
-        ``TestAgenticReplayWarmupTarget`` above.
-        """
+        """After construction, the counter flips ``is_final_credit`` exactly on"""
         from aiperf.credit.structs import TurnToSend
         from aiperf.timing.phase.credit_counter import CreditCounter
 

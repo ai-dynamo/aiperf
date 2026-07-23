@@ -1,19 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""ISL budget compensation tests.
-
-Three components compose the budget (see
-``docs/reference/isl-budget-compensation.md``):
-
-1. Cache-bust marker token cost (first user turn, when marker lands there).
-2. Chat-template wrapping, decomposed into per-request fixed (BOS +
-   generation prompt) and per-message wrap (role header + EOT). Fixed
-   applies to first turn only; per-message wrap applies to every user
-   turn.
-3. Shared system prompt regeneration when SYSTEM_* lands on it — done
-   in the composer by passing a ``model_copy``-d prompt config to
-   ``PromptGenerator``.
-"""
+"""ISL budget compensation tests."""
 
 from unittest.mock import MagicMock, patch
 
@@ -25,9 +12,6 @@ from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.synthetic import SyntheticDatasetComposer
 from tests.unit.conftest import make_run_from_cli
 
-# v2 imports ``estimate_marker_token_cost`` lazily inside
-# ``BaseDatasetComposer._init_isl_compensation`` (rather than at module scope),
-# so it must be patched at its definition site, not on the composer base module.
 _MARKER_COST_PATCH = "aiperf.timing.strategies.cache_bust.estimate_marker_token_cost"
 
 
@@ -38,17 +22,7 @@ def _make_config(
     isl_mean: int = 100,
     apply_chat_template: bool = True,
 ):
-    """Build a v2 ``BenchmarkRun`` for budget tests.
-
-    Replaces the v1 ``UserConfig.model_construct`` pattern. The composer reads
-    the synthetic prompt slice off ``run.cfg`` -- ``prompts.cache_bust.target``,
-    ``prefix_prompts.shared_system_length``, ``tokenizer.apply_chat_template`` --
-    so a real BenchmarkRun (built through the v2 resolver) is required.
-
-    ``apply_chat_template`` defaults to True since this module's purpose is
-    exercising chat-template-aware ISL budget accounting; a dedicated test
-    verifies the opt-out (flag=False) path.
-    """
+    """Build a v2 ``BenchmarkRun`` for budget tests."""
     overrides: dict = {
         "model_names": ["test-model"],
         "conversation_num_dataset_entries": 1,
@@ -66,7 +40,7 @@ def _make_tokenizer_no_chat_template():
     """A tokenizer mock with no apply_chat_template — overheads collapse to 0."""
     tokenizer = MagicMock()
     tokenizer.encode = MagicMock(return_value=list(range(10)))
-    tokenizer._tokenizer = MagicMock(spec=[])  # spec=[] -> no attributes
+    tokenizer._tokenizer = MagicMock(spec=[])
     return tokenizer
 
 
@@ -165,8 +139,6 @@ class TestSharedSystemPromptCompensation:
         ):
             SyntheticDatasetComposer(run=config, tokenizer=tokenizer)
 
-        # PromptGenerator was constructed with a config whose
-        # shared_system_prompt_length is 200 - 15 = 185.
         passed_prefix = mock_prompt_gen_cls.call_args.kwargs["prefix_prompts"]
         assert passed_prefix.shared_system_length == 200 - 15
 
@@ -240,7 +212,6 @@ class TestSharedSystemPromptCompensation:
         ):
             SyntheticDatasetComposer(run=config, tokenizer=tokenizer)
 
-        # Original config is untouched.
         prefix_prompts = config.cfg.get_default_dataset().prefix_prompts
         assert prefix_prompts.shared_system_length == 200
 
@@ -280,7 +251,7 @@ class TestChatTemplateOverheadProbe:
         )
 
         per_msg_wrap = 5
-        per_request_fixed = 4  # BOS(1) + gen_prompt(3)
+        per_request_fixed = 4
 
         def fake_apply(messages, **_kwargs):
             content_tokens = sum(len(m["content"].split()) for m in messages)
@@ -298,7 +269,6 @@ class TestChatTemplateOverheadProbe:
         fixed, wrap = _estimate_chat_template_overheads(tokenizer)
         assert fixed == per_request_fixed
         assert wrap == per_msg_wrap
-        # 2 templates per sample -> 2 * len(samples) apply calls.
         assert inner.apply_chat_template.call_count == 2 * len(
             _CHAT_TEMPLATE_PROBE_SAMPLES
         )
@@ -307,9 +277,8 @@ class TestChatTemplateOverheadProbe:
         """Defensive: never trust a probe that gives negative numbers."""
         from aiperf.dataset.composer.base import _estimate_chat_template_overheads
 
-        # Templated < 2*bare + single -> avg_wrap negative.
         def fake_apply(messages, **_kwargs):
-            return list(range(1))  # tiny
+            return list(range(1))
 
         inner = MagicMock()
         inner.apply_chat_template = MagicMock(side_effect=fake_apply)
@@ -326,13 +295,11 @@ class TestAdjustmentProperties:
     def test_first_turn_adjustment_composes_all_three(self):
         config = _make_config(cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX)
         composer = _build_composer(config, marker_cost=10, chat_fixed=4, chat_wrap=5)
-        # 4 (fixed) + 5 (wrap) + 10 (marker) = 19
         assert composer.first_turn_isl_adjustment == 19
 
     def test_subsequent_turn_adjustment_only_per_msg_wrap(self):
         config = _make_config(cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX)
         composer = _build_composer(config, marker_cost=10, chat_fixed=4, chat_wrap=5)
-        # Only 5 (wrap), no fixed and no marker.
         assert composer.subsequent_turn_isl_adjustment == 5
 
     def test_no_adjustment_when_everything_zero(self):
@@ -368,13 +335,11 @@ class TestSyntheticPromptBudgetSubtraction:
     def test_first_turn_subtracts_fixed_plus_wrap_plus_marker(self):
         composer = self._build(marker_cost=10, chat_fixed=4, chat_wrap=5, isl_mean=100)
         composer._generate_text_payloads(Turn(), is_first=True)
-        # 100 - 10 - 4 - 5 = 81
         assert composer.prompt_generator.generate.call_args.kwargs["mean"] == 81
 
     def test_subsequent_turn_subtracts_only_per_msg_wrap(self):
         composer = self._build(marker_cost=10, chat_fixed=4, chat_wrap=5, isl_mean=100)
         composer._generate_text_payloads(Turn(), is_first=False)
-        # 100 - 5 = 95 (no marker, no fixed)
         assert composer.prompt_generator.generate.call_args.kwargs["mean"] == 95
 
     def test_compensation_floors_at_one_for_tiny_isl(self):
@@ -404,23 +369,17 @@ class TestSyntheticPromptBudgetSubtraction:
             isl_mean=100,
         )
         composer._generate_text_payloads(Turn(), is_first=True)
-        # 100 - 4 - 5 = 91 on first turn
         assert composer.prompt_generator.generate.call_args.kwargs["mean"] == 91
 
         composer._generate_text_payloads(Turn(), is_first=False)
-        # 100 - 5 = 95 on subsequent turns
         assert composer.prompt_generator.generate.call_args.kwargs["mean"] == 95
 
 
 class TestApplyChatTemplateOptOut:
-    """Without ``--apply-chat-template`` (the default), the composer
-    must skip the chat-template overhead probe entirely so synthetic
-    ISL passes through at the bare-text token count.
-    """
+    """Without ``--apply-chat-template`` (the default), the composer"""
 
     def test_overhead_probe_not_invoked_when_flag_off(self):
-        """Probe is expensive (multiple template renders + encodes); it
-        must not fire when the user opted out."""
+        """Probe is expensive (multiple template renders + encodes); it"""
         config = _make_config(apply_chat_template=False)
         tokenizer = _make_tokenizer_no_chat_template()
         with (
@@ -443,8 +402,7 @@ class TestApplyChatTemplateOptOut:
         assert composer.subsequent_turn_isl_adjustment == 0
 
     def test_synthetic_isl_passes_through_when_flag_off(self):
-        """End-to-end: prompt generator receives the user's ``--isl``
-        verbatim (no template wrapping subtraction)."""
+        """End-to-end: prompt generator receives the user's ``--isl``"""
         config = _make_config(
             apply_chat_template=False,
             cache_bust_target=CacheBustTarget.NONE,
@@ -476,16 +434,13 @@ class TestApplyChatTemplateOptOut:
 @pytest.mark.parametrize(
     "target,has_shared_system,expected_marker_estimator_calls",
     [
-        # marker on first user turn -> estimator runs once
         (CacheBustTarget.FIRST_TURN_PREFIX, False, 1),
         (CacheBustTarget.FIRST_TURN_SUFFIX, False, 1),
         (CacheBustTarget.FIRST_TURN_PREFIX, True, 1),
         (CacheBustTarget.SYSTEM_PREFIX, False, 1),
         (CacheBustTarget.SYSTEM_SUFFIX, False, 1),
-        # marker on shared system prompt -> estimator runs to compensate it
         (CacheBustTarget.SYSTEM_PREFIX, True, 1),
         (CacheBustTarget.SYSTEM_SUFFIX, True, 1),
-        # NONE -> never invoked
         (CacheBustTarget.NONE, False, 0),
         (CacheBustTarget.NONE, True, 0),
     ],

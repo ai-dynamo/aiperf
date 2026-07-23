@@ -25,11 +25,7 @@ pytestmark = pytest.mark.looptime
 
 
 def make_dataset_metadata(conversations: list[tuple[str, int]]) -> DatasetMetadata:
-    """Create dataset metadata with specified conversations.
-
-    Args:
-        conversations: List of (conversation_id, num_turns) tuples.
-    """
+    """Create dataset metadata with specified conversations."""
     return DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -671,7 +667,6 @@ class TestProgressReporting:
     ) -> None:
         r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
         task = asyncio.create_task(r._progress_report_loop())
-        # Use longer sleep to ensure at least one progress publish in CI environments
         await asyncio.sleep(0.1)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -816,9 +811,6 @@ class TestEdgeCases:
             final_cancelled_sessions=0,
         )
         r._progress.create_stats = MagicMock(return_value=stats)
-        # Force the post-timeout cancel branch: pretend credits are still
-        # outstanding at the initial check, time out the wait, then recompute
-        # need == 0 so the empty-drain guard sets the event without waiting.
         r._progress.check_all_returned_or_cancelled = MagicMock(return_value=False)
         r._lifecycle.start()
         r._lifecycle.mark_sending_complete()
@@ -847,7 +839,6 @@ class TestFixedScheduleConfigCorrection:
         cb: MagicMock,
     ) -> None:
         """FIXED_SCHEDULE should use dataset metadata size, not config values."""
-        # Config says 100 requests/sessions, but dataset only has 2 conversations
         config = cfg(mode=TimingMode.FIXED_SCHEDULE, reqs=100)
         config = config.model_copy(update={"expected_num_sessions": 100})
 
@@ -856,9 +847,8 @@ class TestFixedScheduleConfigCorrection:
 
         r = make_runner(config, conv_src, pub, router, conc, cancel, cb)
 
-        # Config should be updated to reflect actual dataset size
-        assert r._config.total_expected_requests == 5  # 3 + 2 turns
-        assert r._config.expected_num_sessions == 2  # 2 conversations
+        assert r._config.total_expected_requests == 5
+        assert r._config.expected_num_sessions == 2
 
     async def test_fixed_schedule_without_metadata_uses_config(
         self,
@@ -876,7 +866,6 @@ class TestFixedScheduleConfigCorrection:
 
         r = make_runner(config, conv_src, pub, router, conc, cancel, cb)
 
-        # Config should remain unchanged
         assert r._config.total_expected_requests == 100
 
     async def test_request_rate_mode_ignores_dataset_metadata(
@@ -895,7 +884,6 @@ class TestFixedScheduleConfigCorrection:
 
         r = make_runner(config, conv_src, pub, router, conc, cancel, cb)
 
-        # Config should remain unchanged for REQUEST_RATE
         assert r._config.total_expected_requests == 100
 
     async def test_user_centric_rate_mode_ignores_dataset_metadata(
@@ -914,7 +902,6 @@ class TestFixedScheduleConfigCorrection:
 
         r = make_runner(config, conv_src, pub, router, conc, cancel, cb)
 
-        # Config should remain unchanged for USER_CENTRIC_RATE
         assert r._config.total_expected_requests == 100
 
     async def test_fixed_schedule_filtered_dataset_scenario(
@@ -926,11 +913,9 @@ class TestFixedScheduleConfigCorrection:
         cb: MagicMock,
     ) -> None:
         """Simulates start/end offset filtering that reduces dataset size."""
-        # Original file had 1000 conversations, config reflects that
         config = cfg(mode=TimingMode.FIXED_SCHEDULE, reqs=1000)
         config = config.model_copy(update={"expected_num_sessions": 1000})
 
-        # But filtering reduced to just 2 conversations
         conv_src = MagicMock()
         conv_src.dataset_metadata = make_dataset_metadata(
             [("filtered_1", 1), ("filtered_2", 1)]
@@ -938,14 +923,12 @@ class TestFixedScheduleConfigCorrection:
 
         r = make_runner(config, conv_src, pub, router, conc, cancel, cb)
 
-        # Config should reflect the filtered dataset, not the original
         assert r._config.total_expected_requests == 2
         assert r._config.expected_num_sessions == 2
 
 
 class TestPhaseRunnerWorkerReadiness:
-    """The phase must gate credit issuance on worker readiness. Regression
-    coverage for the startup-race deadlock (see PhaseRunner._run_strategy)."""
+    """The phase must gate credit issuance on worker readiness. Regression"""
 
     async def test_run_strategy_awaits_wait_for_workers_with_start_timeout(
         self,
@@ -956,8 +939,6 @@ class TestPhaseRunnerWorkerReadiness:
         cancel: MagicMock,
         cb: MagicMock,
     ) -> None:
-        # Pins the barrier's timeout to START_TIMEOUT. Gating is proven by the
-        # real-router test below; the mock barrier here never blocks.
         r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
         r._progress.all_credits_sent_event.set()
         r._progress.all_credits_returned_event.set()
@@ -977,11 +958,6 @@ class TestPhaseRunnerWorkerReadiness:
         cancel: MagicMock,
         cb: MagicMock,
     ) -> None:
-        # Regression guard for the startup-race deadlock. Uses the REAL
-        # StickyCreditRouter barrier (not a mock), so it actually gates
-        # execution: with no workers, _run_strategy must block before running
-        # execute_phase. A barrier placed after execute_async (the original
-        # bug) would let execute_phase run here and fail the first assert.
         real_router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         r = make_runner(cfg(), conv_src, pub, real_router, conc, cancel, cb)
 
@@ -994,10 +970,6 @@ class TestPhaseRunnerWorkerReadiness:
         strategy = GatedStrategy()
         run_task = asyncio.create_task(r._run_strategy(strategy, is_final_phase=True))
 
-        # Advance to the barrier. With no worker registered the phase must block
-        # there, before kicking off the issuance task. ``_execution_task`` stays
-        # None iff the barrier precedes issuance; if it has been created here the
-        # barrier was placed after ``execute_async`` (the original deadlock).
         await asyncio.sleep(0.1)
         assert r._execution_task is None, (
             "issuance task was created before the worker-readiness barrier "
@@ -1006,17 +978,13 @@ class TestPhaseRunnerWorkerReadiness:
         )
         assert not run_task.done()
 
-        # First worker registers -> barrier releases -> phase runs to completion.
         real_router._register_worker("worker-1")
         await asyncio.wait_for(run_task, timeout=5.0)
         assert strategy.execute_called
 
 
 class TestWarmupProgressHeartbeat:
-    """Warmup emits a throttled INFO heartbeat in _progress_report_loop
-    (AIPERF_SERVICE_WARMUP_PROGRESS_LOG_INTERVAL, default 30s, 0 disables) so
-    headless warmup stays observable when no interactive UI consumes progress.
-    """
+    """Warmup emits a throttled INFO heartbeat in _progress_report_loop"""
 
     def test_format_warmup_progress_includes_returned_target_and_elapsed(self):
         stats = CreditPhaseStats(
@@ -1029,15 +997,12 @@ class TestWarmupProgressHeartbeat:
         )
         msg = PhaseRunner._format_warmup_progress(stats)
         assert "Phase warmup progress" in msg
-        assert "returned=32/50" in msg  # completed + cancelled / target
+        assert "returned=32/50" in msg
         assert "sent=40" in msg
         assert "errors=1" in msg
         assert "elapsed=" in msg
 
     def test_format_warmup_progress_prefers_final_requests_sent(self):
-        # When both are populated, final_requests_sent is the primary target;
-        # total_expected_requests is only the fallback. Guards a regression
-        # that would silently prefer the fallback.
         stats = CreditPhaseStats(
             phase=CreditPhase.WARMUP,
             requests_sent=40,
@@ -1047,7 +1012,7 @@ class TestWarmupProgressHeartbeat:
             total_expected_requests=50,
         )
         msg = PhaseRunner._format_warmup_progress(stats)
-        assert "returned=32/42" in msg  # completed + cancelled / final_requests_sent
+        assert "returned=32/42" in msg
         assert "/50" not in msg
 
     def test_format_warmup_progress_without_target(self):
@@ -1057,10 +1022,9 @@ class TestWarmupProgressHeartbeat:
             requests_completed=3,
         )
         msg = PhaseRunner._format_warmup_progress(stats)
-        assert "returned=3" in msg and "returned=3/" not in msg  # no target
+        assert "returned=3" in msg and "returned=3/" not in msg
 
     def test_warmup_log_interval_env_field_exists(self):
-        # 0 disables; default is a positive heartbeat cadence.
         assert Environment.SERVICE.WARMUP_PROGRESS_LOG_INTERVAL >= 0.0
 
     async def _drive_progress_loop(
@@ -1070,9 +1034,7 @@ class TestWarmupProgressHeartbeat:
         monotonic_values: list[float],
         stop_after_publishes: int,
     ) -> MagicMock:
-        """Run _progress_report_loop with a controlled clock and stop it after
-        a fixed number of publish_progress calls. Returns the patched info mock.
-        """
+        """Run _progress_report_loop with a controlled clock and stop it after"""
         stats = CreditPhaseStats(phase=runner._config.phase, requests_sent=1)
         runner._progress.create_stats = MagicMock(return_value=stats)
 
@@ -1116,8 +1078,6 @@ class TestWarmupProgressHeartbeat:
         r = make_runner(
             cfg(phase=CreditPhase.WARMUP), conv_src, pub, router, conc, cancel, cb
         )
-        # interval=10; setup reads 0 (next_at=10). Loop reads now at 1,5,11,15,22:
-        # fires at 11 (next_at=21) and 22 (next_at=32) -> exactly 2 heartbeats.
         with patch.object(Environment.SERVICE, "WARMUP_PROGRESS_LOG_INTERVAL", 10.0):
             info_mock = await self._drive_progress_loop(
                 r, pub, [0, 1, 5, 11, 15, 22], stop_after_publishes=6

@@ -1,19 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Regression coverage: agentx trace-replay flags must route NATIVELY onto both
-FILE (mooncake/weka_trace) and PUBLIC (weka_hf) datasets through the v2
-converter -- not be silently dropped by the v2 config cutover.
-
-``--prompt-corpus`` and ``--cache-bust`` are written into the ``prompts``
-subtable by ``_build_prompts`` for synthetic datasets, but ``_apply_dataset_type``
-strips that whole subtable for FILE/PUBLIC. Without ``_apply_corpus_and_cache_bust``
-(which re-attaches corpus under ``prompts`` after the strip; cache-bust may
-still be top-level) they no-op on trace replay -- the corpus reconstruction
-falls back to the loader default and KV-cache-bust experiments do nothing.
-``--inter-turn-delay-cap-seconds`` was FILE-only and dropped for weka_hf.
-These are the gaps a faithful agentx->v2 port must close.
-"""
+"""Regression coverage: agentx trace-replay flags must route NATIVELY onto both"""
 
 from __future__ import annotations
 
@@ -129,11 +117,7 @@ class TestInterTurnDelayCapRouting:
 
 
 class TestTraceDelayFlagRouting:
-    """``--ignore-trace-delays`` / ``--use-think-time-only`` /
-    ``--use-end-to-start-delays`` / ``--trace-idle-gap-cap-seconds`` must route
-    onto FILE and PUBLIC datasets. Without an ``_apply_*`` helper they are
-    silently dropped by ``build_dataset`` even when set on ``CLIConfig``.
-    """
+    """``--ignore-trace-delays`` / ``--use-think-time-only`` /"""
 
     @pytest.mark.parametrize(
         "cli_factory_id",
@@ -213,9 +197,7 @@ class TestTraceDelayFlagRouting:
 
 
 class TestSynthesisCapRouting:
-    """--max-isl/--max-osl cap weka replay; the weka loader reads
-    synthesis.max_isl/max_osl. PublicDataset (weka_hf) now carries a synthesis
-    sub-config so the caps apply to HF Weka replay, not just file traces."""
+    """--max-isl/--max-osl cap weka replay; the weka loader reads"""
 
     def test_routes_onto_file_trace(self, trace_jsonl: Path) -> None:
         ds = convert_cli_to_aiperf(
@@ -235,8 +217,7 @@ class TestSynthesisCapRouting:
 
 
 class TestOslFallbackRouting:
-    """--osl per-record fallback routes onto the flat FileDataset/PublicDataset
-    osl field; the composer's _osl_distribution reads it for either type."""
+    """--osl per-record fallback routes onto the flat FileDataset/PublicDataset"""
 
     def test_routes_onto_file_trace(self, trace_jsonl: Path) -> None:
         ds = convert_cli_to_aiperf(
@@ -254,10 +235,7 @@ class TestOslFallbackRouting:
 
 
 class TestWekaHfFailFast:
-    """weka_hf <-> hf_weka_dataset consistency is validated at config-load time
-    (mirrors v1's composer-level guard), so a config file declaring
-    ``dataset: weka_hf`` with no repo fails fast with a clear error instead of
-    surfacing an opaque TypeError deep in the generic Weka loader."""
+    """weka_hf <-> hf_weka_dataset consistency is validated at config-load time"""
 
     def test_weka_hf_without_repo_raises(self):
         from aiperf.config.dataset.config import PublicDataset
@@ -302,13 +280,11 @@ class TestWekaHfFailFast:
         from aiperf.config.dataset.config import PublicDataset
 
         d = PublicDataset(type="public", name="m", dataset=_WEKA_HF)
-        assert d.hf_weka_dataset is None  # registry-defined repo, no flag needed
+        assert d.hf_weka_dataset is None
 
 
 class TestHfWekaDatasetConverterRouting:
-    """``--hf-weka-dataset`` must be copied by ``build_dataset`` and, when set
-    alone, auto-select ``--public-dataset weka_hf`` (docs + PublicDataset
-    validator require the pairing)."""
+    """``--hf-weka-dataset`` must be copied by ``build_dataset`` and, when set"""
 
     def test_weka_hf_with_repo_routes_hf_weka_dataset(self) -> None:
         out = build_dataset(
