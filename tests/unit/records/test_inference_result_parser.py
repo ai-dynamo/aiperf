@@ -716,9 +716,10 @@ class TestChatTemplateAwareTokenization:
     async def test_chat_template_counts_tool_text_on_top(
         self, setup_inference_parser, sample_turn
     ):
-        """Tool text (replayed tool_calls + tools schemas) is absent from the
-        role/content messages view, so the templated ISL must tokenise it
-        separately and add it on top of the templated count."""
+        """Top-level ``tools`` schemas are absent from the role/content
+        messages view, so the templated ISL tokenises them separately and adds
+        them on top. Assistant ``tool_calls`` ride in ``messages`` (rendered by
+        the template), so they are NOT re-counted via ``tool_texts``."""
         tokenizer = MagicMock()
         tokenizer.encode.side_effect = lambda x: list(range(len(x.split())))
         tokenizer._tokenizer.apply_chat_template.return_value = list(range(17))
@@ -756,9 +757,9 @@ class TestChatTemplateAwareTokenization:
         record = RequestRecord(request_info=info, model_name="test-model")
         result = await setup_inference_parser.compute_input_token_count(record)
 
+        # Only the top-level tools schema lands in tool_texts; the assistant
+        # tool_calls ride in messages and are counted by the template.
         expected_tool_texts = [
-            "get_weather",
-            '{"city": "Paris"}',
             "get_weather",
             "weather lookup",
             '{"type":"object"}',

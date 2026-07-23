@@ -307,10 +307,10 @@ class TestExtractPayloadInputs:
         out = endpoint.extract_payload_inputs(payload)
         assert "lookup" in out.texts
         assert '{"q":"x"}' in out.texts
-        # Also tracked separately so the chat-template ISL path can count
-        # tool text the role/content messages view omits.
-        assert "lookup" in out.tool_texts
-        assert '{"q":"x"}' in out.tool_texts
+        # The assistant turn (with its tool_calls) rides in the messages view,
+        # so the chat-template path renders the calls there; excluding them
+        # from tool_texts avoids double-counting on top of the template.
+        assert out.tool_texts == []
 
     def test_tools_schema_collected(self, endpoint):
         payload = {
