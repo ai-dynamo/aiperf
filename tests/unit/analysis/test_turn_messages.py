@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the turn-messages viewer: interning, zstd round-trip, fzstd safety.
 
-Focus: every turn re-sends accumulated history, so unique ``(role, content)``
+Focus: every turn re-sends accumulated history, so unique ``(role, body)``
 messages must be interned into a shared ``msgs`` table referenced by integer
-``ids``; and the embedded payload must decode under a fzstd-safe ``windowLog``
-window (the inlined decoder silently corrupts windows > 26).
+``ids``; structured content / ``tool_calls`` survive as JSON; and the embedded
+payload must decode under a fzstd-safe ``windowLog`` window (the inlined
+decoder silently corrupts windows > 26).
 """
 
 from __future__ import annotations
@@ -275,14 +276,32 @@ class TestAdversarial:
         assert "ok" in {m["body"] for m in _extract_payload(out)["msgs"]}
 
     def test_content_type_variants(self, tmp_path: Path):
+        image_url = "data:image/png;base64,abc123"
         msgs = [
             {"role": "system", "content": None},
             {"role": "user", "content": 42},
             {
                 "role": "user",
-                "content": [{"type": "text", "text": "hello"}, {"type": "image_url"}],
+                "content": [
+                    {"type": "text", "text": "hello"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image_url},
+                    },
+                ],
             },
             {"role": "user", "content": [{"type": "image"}]},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "get_weather", "arguments": "{}"},
+                    }
+                ],
+            },
         ]
         _write_raw(tmp_path, [_rec("c1", 0, msgs)])
         bodies = {
@@ -290,9 +309,14 @@ class TestAdversarial:
             for m in _extract_payload(write_turn_messages_html(tmp_path))["msgs"]
         }
         assert "" in bodies
-        assert "42" in bodies
-        assert "hello\n<image_url>" in bodies
-        assert "<image>" in bodies
+        assert '{"content":42}' in bodies
+        multimodal = next(b for b in bodies if image_url in b)
+        assert "hello" in multimodal
+        assert '"type":"image_url"' in multimodal
+        assert any('"type":"image"' in b for b in bodies)
+        tool = next(b for b in bodies if "get_weather" in b)
+        assert '"tool_calls"' in tool
+        assert "call_1" in tool
 
     def test_unicode_and_zero_content_cap(self, tmp_path: Path):
         body = "héllo 世界 🤖\n\ttabs\x00nul"
