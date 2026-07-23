@@ -9,6 +9,7 @@ import pytest
 
 from aiperf.accuracy.graders._codegen_worker_client import (
     CodegenGradingWorker,
+    CodegenWorkerError,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -87,5 +88,51 @@ class TestSerialization:
                 ]
             )
             assert all(r == {"pass@1": 1.0} for r in results)
+        finally:
+            await worker.aclose()
+
+
+# The very first grade (client request id==1) hangs forever to trigger a
+# client-side timeout+kill. The client's request id is monotonic and survives
+# the restart, so the respawned worker sees id==2 and responds immediately.
+_HANG_THEN_OK = """
+    import sys, orjson, time
+    for line in sys.stdin.buffer:
+        line = line.strip()
+        if not line:
+            continue
+        req = orjson.loads(line)
+        if req["id"] == 1:
+            time.sleep(3600)
+        resp = {"id": req["id"], "ok": True, "metrics": {"pass@1": 1.0}}
+        sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
+        sys.stdout.buffer.flush()
+"""
+
+
+class TestTimeoutRestart:
+    async def test_timeout_raises_and_next_grade_respawns(self, tmp_path) -> None:
+        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _HANG_THEN_OK))
+        try:
+            with pytest.raises(CodegenWorkerError):
+                await worker.grade_codegen(
+                    [{"input_output": "{}"}], [["x"]], timeout=0.2
+                )
+            assert worker._proc is None  # killed
+            # A fresh worker is spawned; this one's "first" request is fast.
+            metrics = await worker.grade_codegen(
+                [{"input_output": "{}"}], [["y"]], timeout=30
+            )
+            assert metrics == {"pass@1": 1.0}
+        finally:
+            await worker.aclose()
+
+    async def test_timeout_on_proven_worker_does_not_count_as_start_failure(
+        self, tmp_path
+    ) -> None:
+        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_OK))
+        try:
+            await worker.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
+            assert worker._worker_proven is True
         finally:
             await worker.aclose()
