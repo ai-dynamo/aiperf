@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
@@ -76,7 +76,10 @@ from aiperf.credit.messages import (
     WorkerShutdown,
 )
 from aiperf.credit.structs import Credit, CreditContext
-from aiperf.dataset.memory_map_utils import turn_from_payload_turn
+from aiperf.dataset.memory_map_utils import (
+    apply_max_tokens_to_wire_payload,
+    turn_from_payload_turn,
+)
 from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -1389,10 +1392,16 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         if turns is None:
             turns = session.turn_list if session else []
         if credit.max_tokens_override is not None and turns:
-            turns = [
-                *turns[:-1],
-                turns[-1].model_copy(update={"max_tokens": credit.max_tokens_override}),
-            ]
+            last_turn = turns[-1]
+            update: dict[str, Any] = {"max_tokens": credit.max_tokens_override}
+            # A verbatim raw_payload dict is shipped as-is by inference_client,
+            # so Turn.max_tokens alone is ignored on the wire; rewrite the wire
+            # cap too or the recorded (baked-in) value would be sent instead.
+            if isinstance(last_turn.raw_payload, dict):
+                update["raw_payload"] = apply_max_tokens_to_wire_payload(
+                    last_turn.raw_payload, credit.max_tokens_override
+                )
+            turns = [*turns[:-1], last_turn.model_copy(update=update)]
         source_turn = turns[-1] if turns else None
         return RequestInfo(
             model_endpoint=self.model_endpoint,

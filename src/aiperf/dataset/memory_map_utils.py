@@ -546,6 +546,25 @@ def max_tokens_from_wire_payload(payload: dict[str, Any] | None) -> int | None:
     return None
 
 
+def apply_max_tokens_to_wire_payload(
+    payload: dict[str, Any], value: int
+) -> dict[str, Any]:
+    """Return a copy of a raw wire body with its output-length cap set to ``value``.
+
+    Overwrites every max-token key already present so the cap is honored across
+    endpoint dialects; when none is present, sets the canonical ``max_tokens``
+    key so an override still takes effect on the wire.
+    """
+    updated = dict(payload)
+    present = [key for key in _WIRE_MAX_TOKEN_KEYS if key in updated]
+    if present:
+        for key in present:
+            updated[key] = value
+    else:
+        updated["max_tokens"] = value
+    return updated
+
+
 def _resolve_turn_max_tokens(turn: Turn) -> int | None:
     """Prefer Turn.max_tokens; fall back to wire-body keys in raw_payload."""
     if turn.max_tokens is not None:
