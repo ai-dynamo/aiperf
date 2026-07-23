@@ -2377,7 +2377,7 @@ class CLIConfig(BaseConfig):
     ] = False
 
     export_outputs_json: Annotated[
-        bool | None,
+        bool,
         Field(
             description=(
                 "Export generated response text to outputs.json after the run. "
@@ -2389,7 +2389,7 @@ class CLIConfig(BaseConfig):
             name=("--export-outputs-json",),
             group=Groups.OUTPUT,
         ),
-    ] = None
+    ] = False
 
     ##############################################################################
     # OpenTelemetry / MLflow
