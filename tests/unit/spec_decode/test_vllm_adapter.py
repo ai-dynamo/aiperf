@@ -178,8 +178,17 @@ class TestVLLMSpecDecodeAdapter:
         assert record.draft_acceptance_rate == 0.0
 
     def test_adapt_detailed_payload_carries_per_step_arrays(self) -> None:
+        # Self-consistent detailed payload: the per-step arrays agree with the
+        # histogram and counts -- 4 steps, accepted [0,1,3,0] -> histogram
+        # {0:2, 1:1, 3:1} and 4 accepted; drafted [3,3,3,3] -> 12 proposed.
         payload = {
-            **SUMMARY_PAYLOAD,
+            "mean_acceptance_length": 2.0,
+            "draft_acceptance_rate": 4 / 12,
+            "acceptance_histogram": {"0": 2, "1": 1, "3": 1},
+            "num_spec_steps": 4,
+            "num_accepted_draft_tokens": 4,
+            "num_draft_tokens": 12,
+            "num_spec_tokens": 3,
             "per_step_accepted": [0, 1, 3, 0],
             "per_step_drafted": [3, 3, 3, 3],
         }
