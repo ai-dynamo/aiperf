@@ -1,11 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from tests.unit.dataset.loader._shared_helpers import _write_trace
+
 """Adversarial subagent-graph-pathology tests for WekaTraceLoader."""
 
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import orjson
 import pytest
 
 from aiperf.common.enums import ConversationBranchMode
@@ -52,12 +53,6 @@ def _make_loader(filename, uc, monkeypatch):
     loader._tokenizer_revision = None
     loader._block_size = 64
     return loader
-
-
-def _write_trace(tmp_path, data, name="t.json"):
-    p = tmp_path / name
-    p.write_bytes(orjson.dumps(data))
-    return p
 
 
 def _subagent(

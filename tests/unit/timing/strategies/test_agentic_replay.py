@@ -29,21 +29,9 @@ from aiperf.timing.trajectory_source import (
     TrajectorySnapshot,
     TrajectorySource,
 )
+from tests.unit.timing.strategies._shared_helpers import _make_dataset
 
 # Helpers
-
-
-def _make_dataset(num_traces: int, turns_per_trace: int) -> DatasetMetadata:
-    convs = []
-    for i in range(num_traces):
-        turns = [
-            TurnMetadata(timestamp_ms=None, delay_ms=None)
-            for _ in range(turns_per_trace)
-        ]
-        convs.append(ConversationMetadata(conversation_id=f"trace_{i}", turns=turns))
-    return DatasetMetadata(
-        conversations=convs, sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL
-    )
 
 
 def _build_real_trajectory_source(

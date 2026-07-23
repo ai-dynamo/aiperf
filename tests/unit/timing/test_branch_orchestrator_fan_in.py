@@ -12,36 +12,15 @@ from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
 from aiperf.common.models import (
     ConversationBranchInfo,
     ConversationMetadata,
-    DatasetMetadata,
     TurnMetadata,
     TurnPrerequisite,
 )
-from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.branch_orchestrator import (
     BranchOrchestrator,
     PendingBranchJoin,
     PrereqState,
 )
-
-
-def _mk_conv(
-    cid: str,
-    turns: list[TurnMetadata],
-    branches: list[ConversationBranchInfo],
-) -> ConversationMetadata:
-    return ConversationMetadata(conversation_id=cid, turns=turns, branches=branches)
-
-
-def _mk_source(conversations: list[ConversationMetadata]):
-    cs = MagicMock()
-    cs.dataset_metadata = DatasetMetadata(
-        conversations=conversations,
-        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
-    )
-    cs.get_metadata.side_effect = lambda cid: next(
-        c for c in conversations if c.conversation_id == cid
-    )
-    return cs
+from tests.unit.timing._shared_helpers import _mk_conv, _mk_issuer, _mk_source
 
 
 def _mk_credit(conv_id: str, corr_id: str, turn_index: int):
@@ -93,14 +72,6 @@ def _fan_in_metadata() -> list[ConversationMetadata]:
         _mk_conv(cid, [TurnMetadata()], []) for cid in ("a1", "a2", "b1", "b2", "b3")
     ]
     return [root, *children]
-
-
-def _mk_issuer():
-    issuer = MagicMock()
-    issuer.dispatch_first_turn = AsyncMock(return_value=True)
-    issuer.dispatch_join_turn = AsyncMock(return_value=True)
-    issuer.abort_session = AsyncMock()
-    return issuer
 
 
 def _mk_start(cs):

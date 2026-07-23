@@ -28,6 +28,7 @@ from aiperf.timing.branch_orchestrator import (
     PrereqState,
 )
 from aiperf.timing.trajectory_source import ConversationState
+from tests.unit.timing._shared_helpers import _mk_issuer
 
 # Shared helpers (mirror the style of test_branch_orchestrator_adversarial_full)
 
@@ -86,14 +87,6 @@ def _mk_credit(conv_id: str, corr_id: str, turn_index: int, agent_depth: int = 0
         parent_correlation_id=None,
         branch_mode=ConversationBranchMode.FORK,
     )
-
-
-def _mk_issuer():
-    issuer = MagicMock()
-    issuer.dispatch_first_turn = AsyncMock(return_value=True)
-    issuer.dispatch_join_turn = AsyncMock(return_value=True)
-    issuer.abort_session = AsyncMock()
-    return issuer
 
 
 def _delayed_join_root() -> ConversationMetadata:

@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from tests.unit.dataset.loader._shared_helpers import _chain_outer_indices
+
 """Adversarial tests for phase-1 greedy chain building in detect_agent_chains."""
 
 import pytest
@@ -47,10 +49,6 @@ def _sreq(
 
 def _normals(*reqs) -> list[tuple[int, WekaNormalRequest | WekaStreamingRequest]]:
     return list(enumerate(reqs))
-
-
-def _chain_outer_indices(result, chain_index: int) -> list[int]:
-    return [oi for oi, _ in result.chains[chain_index].requests]
 
 
 def _worker_by_first_outer(result) -> dict[int, int]:

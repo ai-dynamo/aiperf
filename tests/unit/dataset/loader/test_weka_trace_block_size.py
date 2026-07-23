@@ -1,10 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from tests.unit.dataset.loader._shared_helpers import _write_trace
+
 """Per-trace block_size resolution in WekaTraceLoader."""
 
 from unittest.mock import MagicMock
 
-import orjson
 import pytest
 
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
@@ -43,12 +44,6 @@ def _make_loader(filename, uc, monkeypatch, *, block_size=None):
     loader._trust_remote_code = False
     loader._tokenizer_revision = None
     return loader
-
-
-def _write_trace(tmp_path, data, name="t.json"):
-    p = tmp_path / name
-    p.write_bytes(orjson.dumps(data))
-    return p
 
 
 # A turn-0 normal request with a hash_ids count that perfectly tiles in_tokens at

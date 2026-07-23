@@ -29,6 +29,7 @@ from aiperf.timing.phase.stop_conditions import (
     RequestCountStopCondition,
     SessionCountStopCondition,
 )
+from tests.unit.timing._shared_helpers import _mk_issuer
 
 
 def _mk_conv(
@@ -86,14 +87,6 @@ def _mk_credit(conv_id: str, corr_id: str, turn_index: int, agent_depth: int = 0
         parent_correlation_id=None,
         branch_mode=ConversationBranchMode.FORK,
     )
-
-
-def _mk_issuer():
-    issuer = MagicMock()
-    issuer.dispatch_first_turn = AsyncMock(return_value=True)
-    issuer.dispatch_join_turn = AsyncMock(return_value=True)
-    issuer.abort_session = AsyncMock()
-    return issuer
 
 
 def _simple_spawn_metadata(

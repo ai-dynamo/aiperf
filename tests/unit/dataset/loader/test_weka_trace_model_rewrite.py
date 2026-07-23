@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from tests.unit.dataset.loader._shared_helpers import _write_trace
+
 """Tests for WekaTraceLoader model-name rewrite behavior.
 
 The trace's per-request ``model`` field is rewritten to
@@ -7,10 +9,8 @@ The trace's per-request ``model`` field is rewritten to
 no flag.
 """
 
-from pathlib import Path
 from unittest.mock import MagicMock
 
-import orjson
 
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
 from aiperf.dataset.loader.weka_trace_models import (
@@ -52,12 +52,6 @@ def _make_loader(filename, uc, monkeypatch):
     loader._tokenizer_revision = None
     loader._block_size = 64
     return loader
-
-
-def _write_trace(tmp_path: Path, data, name="t.json"):
-    p = tmp_path / name
-    p.write_bytes(orjson.dumps(data))
-    return p
 
 
 def _trace(trace_id, requests, models=("m",)):

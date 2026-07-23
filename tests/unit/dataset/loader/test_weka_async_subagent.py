@@ -1,11 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from tests.unit.dataset.loader._shared_helpers import _write_trace
+
 """Tests for async-subagent and parallel-inner-request replay in WekaTraceLoader."""
 
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import orjson
 
 from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
 from aiperf.common.environment import Environment
@@ -84,12 +85,6 @@ def _build_trace(trace_id, requests, models=("m",)):
         "hash_id_scope": "local",
         "requests": requests,
     }
-
-
-def _write_trace(tmp_path, data, name="t.json"):
-    p = tmp_path / name
-    p.write_bytes(orjson.dumps(data))
-    return p
 
 
 def test_subagent_running_past_following_parent_is_background(tmp_path, monkeypatch):

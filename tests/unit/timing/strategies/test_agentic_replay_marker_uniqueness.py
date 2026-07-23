@@ -8,32 +8,14 @@ import re
 from unittest.mock import AsyncMock, MagicMock
 
 from aiperf.common.enums import CacheBustTarget, CreditPhase
-from aiperf.common.models import (
-    ConversationMetadata,
-    DatasetMetadata,
-    TurnMetadata,
-)
-from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import Trajectory, TrajectorySource
+from tests.unit.timing.strategies._shared_helpers import _make_dataset
 
 _RID_RE = re.compile(r"\[rid:[0-9a-f]{12}\]")
 
 
 # Harness (mirrors test_agentic_replay.py)
-
-
-def _make_dataset(num_traces: int, turns_per_trace: int) -> DatasetMetadata:
-    convs = []
-    for i in range(num_traces):
-        turns = [
-            TurnMetadata(timestamp_ms=None, delay_ms=None)
-            for _ in range(turns_per_trace)
-        ]
-        convs.append(ConversationMetadata(conversation_id=f"trace_{i}", turns=turns))
-    return DatasetMetadata(
-        conversations=convs, sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL
-    )
 
 
 def _build_real_trajectory_source(
