@@ -109,6 +109,13 @@ The wire object maps to the record one-to-one, except:
 - **Zero-step / fully-rejected**: reported verbatim (empty or `{0: N}`
   histogram, `mean_acceptance_length == 1.0`).
 - **Malformed payload**: the adapter degrades to `None` rather than raising, so
-  one bad response cannot abort a run.
+  one bad response cannot abort a run. Records whose aggregate counts contradict
+  each other (histogram not summing to `num_spec_steps`, etc.) are rejected the
+  same way.
+- **`n > 1`**: when a request produces multiple sequences, each choice carries
+  its own per-sequence stats, but `completion_tokens` is request-level. Rather
+  than mix one sequence's acceptance with all sequences' token count, the record
+  is suppressed (`None`) for `n > 1`, mirroring how per-request timing metrics
+  are suppressed for multi-sequence requests.
 - **Behind Dynamo** the custom field is currently stripped, so this path is
   direct-to-vLLM only.

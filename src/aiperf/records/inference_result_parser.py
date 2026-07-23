@@ -320,8 +320,16 @@ class InferenceResultParser(CommunicationMixin):
         that actually have stats. Otherwise walks registered adapters in
         priority order and uses the first whose ``can_adapt`` recognizes the
         payload -- mirroring custom-dataset-loader auto-detection.
+
+        Suppresses the record when more than one response carried stats (an
+        ``n > 1`` streaming request, where each sequence's stats ride its own
+        finish chunk): the per-request record can't attribute request-level
+        ``completion_tokens`` to a single sequence, so a mixed record is worse
+        than none. ``n > 1`` non-streaming is suppressed upstream in
+        ``BaseEndpoint.extract_spec_decode_stats``.
         """
-        if not any(r.spec_decode_stats for r in responses):
+        with_stats = [r for r in responses if r.spec_decode_stats is not None]
+        if len(with_stats) != 1:
             return None
         for _entry, AdapterClass in plugins.iter_all(PluginType.SPEC_DECODE_ADAPTER):
             if AdapterClass.can_adapt(responses):

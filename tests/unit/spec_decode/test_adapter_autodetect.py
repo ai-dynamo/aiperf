@@ -58,3 +58,15 @@ def test_extract_returns_none_for_unrecognized_engine_payload():
         )
     ]
     assert InferenceResultParser._extract_spec_decode_acceptance(responses) is None
+
+
+def test_extract_suppresses_multi_sequence_stats() -> None:
+    """n > 1 streaming: more than one response carries stats, so the per-request
+    record is suppressed rather than mixing one sequence's acceptance with the
+    request-level completion_tokens."""
+    responses = [
+        ParsedResponse(perf_ns=1, spec_decode_stats=SUMMARY_PAYLOAD),
+        ParsedResponse(perf_ns=2, spec_decode_stats=SUMMARY_PAYLOAD),
+        ParsedResponse(perf_ns=3, usage={"completion_tokens": 10}),
+    ]
+    assert InferenceResultParser._extract_spec_decode_acceptance(responses) is None

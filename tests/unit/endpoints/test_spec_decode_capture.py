@@ -125,6 +125,21 @@ class TestChatSpecDecodeCapture:
         json_obj = {"object": "error", "choices": {"0": {"message": {}}}}
         assert chat_endpoint.parse_response(_mock_response(json_obj)) is None
 
+    def test_parse_response_multi_choice_suppresses_stats(
+        self, chat_endpoint: ChatEndpoint
+    ) -> None:
+        """n > 1 (multiple stats-bearing choices): stats suppressed, not mixed."""
+        json_obj = {
+            "object": "chat.completion",
+            "choices": [
+                {"message": {"content": "a"}, "speculative_decoding_stats": STATS},
+                {"message": {"content": "b"}, "speculative_decoding_stats": STATS},
+            ],
+        }
+        parsed = chat_endpoint.parse_response(_mock_response(json_obj))
+        assert parsed is not None
+        assert parsed.spec_decode_stats is None
+
 
 class TestCompletionsSpecDecodeCapture:
     def test_parse_response_non_streaming_captures_stats(
