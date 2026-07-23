@@ -74,11 +74,35 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         Returns:
             List of successfully parsed responses
         """
-        return [
+        if record._parsed_responses_cache is not None:
+            return record._parsed_responses_cache
+
+        parsed_responses = [
             parsed
             for response in record.responses
             if (parsed := self.parse_response(response))
         ]
+        record._parsed_responses_cache = parsed_responses
+        return parsed_responses
+
+    def process_responses(
+        self,
+        record: RequestRecord,
+        *,
+        capture_assistant_turn: bool,
+    ) -> tuple[list[ParsedResponse], Turn | None]:
+        """Parse a completed response stream and optionally capture its replay turn.
+
+        The parsed responses are cached on the worker-local record so endpoint
+        replay logic and request timing calculations share the same objects.
+        Endpoint implementations that need raw structured response fields can
+        override this method to collect both representations in one pass.
+        """
+        parsed_responses = self.extract_response_data(record)
+        assistant_turn = (
+            self.build_assistant_turn(record) if capture_assistant_turn else None
+        )
+        return parsed_responses, assistant_turn
 
     def build_assistant_turn(self, record: RequestRecord) -> Turn | None:
         """Build a Turn representing the assistant response for context replay.
@@ -102,8 +126,17 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         Returns ``None`` when the record has no replayable assistant content
         (error response, empty body, etc.).
         """
+        return self._build_assistant_turn_from_parsed(
+            self.extract_response_data(record)
+        )
+
+    @staticmethod
+    def _build_assistant_turn_from_parsed(
+        parsed_responses: list[ParsedResponse],
+    ) -> Turn | None:
+        """Build the default text-only assistant turn from parsed responses."""
         output_texts: list[str] = []
-        for response in self.extract_response_data(record):
+        for response in parsed_responses:
             if not response.data:
                 continue
             if isinstance(response.data, ReasoningResponseData):

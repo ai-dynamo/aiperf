@@ -173,13 +173,69 @@ class ChatEndpoint(BaseEndpoint):
         if not json_obj:
             return None
 
+        return self._parse_json_response(response.perf_ns, json_obj)
+
+    def _parse_json_response(
+        self, perf_ns: int, json_obj: JsonObject
+    ) -> ParsedResponse | None:
+        """Parse one already-decoded Chat Completions response object."""
+
         data = self.extract_chat_response_data(json_obj)
         usage = json_obj.get("usage") or None
 
         if data or usage:
-            return ParsedResponse(perf_ns=response.perf_ns, data=data, usage=usage)
+            return ParsedResponse(perf_ns=perf_ns, data=data, usage=usage)
 
         return None
+
+    def process_responses(
+        self,
+        record: RequestRecord,
+        *,
+        capture_assistant_turn: bool,
+    ) -> tuple[list[ParsedResponse], Turn | None]:
+        """Parse chat responses and collect replay fields in one JSON pass."""
+        parsed_responses: list[ParsedResponse] = []
+        content_parts: list[str] = []
+        tool_calls_by_index: dict[int, dict[str, Any]] = {}
+
+        for response in record.responses:
+            json_obj = response.get_json()
+            if not json_obj:
+                continue
+
+            if parsed := self._parse_json_response(response.perf_ns, json_obj):
+                parsed_responses.append(parsed)
+
+            if not capture_assistant_turn:
+                continue
+            choices = json_obj.get("choices") or []
+            if not choices:
+                continue
+            self._absorb_chat_choice(
+                json_obj.get("object"),
+                choices[0],
+                content_parts,
+                tool_calls_by_index,
+            )
+
+        record._parsed_responses_cache = parsed_responses
+        if not capture_assistant_turn:
+            return parsed_responses, None
+
+        if not tool_calls_by_index:
+            return parsed_responses, self._build_assistant_turn_from_parsed(
+                parsed_responses
+            )
+
+        text = "".join(content_parts)
+        tool_calls = [tool_calls_by_index[k] for k in sorted(tool_calls_by_index)]
+        assistant_msg: dict[str, Any] = {
+            "role": "assistant",
+            "content": text if text else None,
+            "tool_calls": tool_calls,
+        }
+        return parsed_responses, Turn(role="assistant", raw_messages=[assistant_msg])
 
     def extract_chat_response_data(
         self, json_obj: JsonObject
@@ -277,40 +333,7 @@ class ChatEndpoint(BaseEndpoint):
         are present, so callers that don't care about tools see no
         behavioural change.
         """
-        content_parts: list[str] = []
-        # OpenAI streams tool_calls as deltas keyed by ``index``; each delta
-        # may carry a partial id, type, function.name, or function.arguments
-        # fragment that must be concatenated in order.
-        tool_calls_by_index: dict[int, dict[str, Any]] = {}
-
-        for response in record.responses:
-            json_obj = response.get_json()
-            if not json_obj:
-                continue
-            choices = json_obj.get("choices") or []
-            if not choices:
-                continue
-            self._absorb_chat_choice(
-                json_obj.get("object"),
-                choices[0],
-                content_parts,
-                tool_calls_by_index,
-            )
-
-        if not tool_calls_by_index:
-            # No structured fields to preserve - fall back to base behaviour.
-            return super().build_assistant_turn(record)
-
-        text = "".join(content_parts)
-        tool_calls = [tool_calls_by_index[k] for k in sorted(tool_calls_by_index)]
-        # OpenAI requires ``content`` on assistant messages; it is permitted
-        # to be ``null`` when the message carries ``tool_calls`` instead.
-        assistant_msg: dict[str, Any] = {
-            "role": "assistant",
-            "content": text if text else None,
-            "tool_calls": tool_calls,
-        }
-        return Turn(role="assistant", raw_messages=[assistant_msg])
+        return self.process_responses(record, capture_assistant_turn=True)[1]
 
     @staticmethod
     def _absorb_chat_choice(
