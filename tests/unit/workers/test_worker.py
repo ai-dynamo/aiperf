@@ -420,19 +420,84 @@ class TestCreateRequestInfo:
         assert request_info.turns[-1].max_tokens == 1
         assert original.max_tokens == 4096
 
+    @pytest.mark.parametrize(
+        "recorded_payload, cap_key",
+        [
+            param(
+                {"model": "m", "messages": [], "max_tokens": 4096, "stream": True},
+                "max_tokens",
+                id="chat-max_tokens",
+            ),
+            param(
+                {"model": "m", "messages": [], "max_completion_tokens": 4096},
+                "max_completion_tokens",
+                id="chat-max_completion_tokens",
+            ),
+            param(
+                {"model": "m", "input": [], "max_output_tokens": 4096},
+                "max_output_tokens",
+                id="responses-max_output_tokens",
+            ),
+        ],
+    )  # fmt: skip
     async def test_create_request_info_override_rewrites_raw_payload_wire_cap(
-        self, mock_worker
+        self, mock_worker, recorded_payload, cap_key
     ):
         # PAYLOAD_BYTES turns carry a verbatim raw_payload dict that
         # inference_client ships as-is, so the override must rewrite the wire
         # max-token keys too -- not just Turn.max_tokens -- or the recorded cap
         # would reach the server while the record claims the override.
-        original = Turn(
-            max_tokens=4096,
-            raw_payload={"model": "m", "max_completion_tokens": 4096, "stream": True},
+        original = Turn(max_tokens=4096, raw_payload=recorded_payload)
+        request_info = mock_worker._create_request_info(
+            x_request_id="request-id",
+            credit_context=self._warmup_override_credit(),
+            turns=[original],
         )
-        turns = [original]
-        credit_context = CreditContext(
+
+        outgoing = request_info.turns[-1]
+        assert outgoing.max_tokens == 1
+        assert outgoing.raw_payload[cap_key] == 1
+        # Source turn (and its nested dict) left untouched.
+        assert original.max_tokens == 4096
+        assert original.raw_payload[cap_key] == 4096
+
+    @pytest.mark.parametrize(
+        "recorded_payload, expected_key",
+        [
+            param({"model": "m", "messages": []}, "max_tokens", id="chat-no-cap"),
+            param(
+                {"model": "m", "input": []},
+                "max_output_tokens",
+                id="responses-no-cap",
+            ),
+        ],
+    )  # fmt: skip
+    async def test_create_request_info_override_injects_dialect_cap_when_none_recorded(
+        self, mock_worker, recorded_payload, expected_key
+    ):
+        # A recorded body with no cap key must still get the override, using the
+        # dialect's canonical key so the server honors it: Responses bodies
+        # (keyed by "input") take max_output_tokens; chat/completions take
+        # max_tokens.
+        original = Turn(max_tokens=None, raw_payload=recorded_payload)
+        request_info = mock_worker._create_request_info(
+            x_request_id="request-id",
+            credit_context=self._warmup_override_credit(),
+            turns=[original],
+        )
+
+        outgoing = request_info.turns[-1]
+        assert outgoing.max_tokens == 1
+        assert outgoing.raw_payload[expected_key] == 1
+        # Only the dialect-canonical key is injected, no cross-dialect leakage.
+        other_keys = {"max_tokens", "max_completion_tokens", "max_output_tokens"} - {
+            expected_key
+        }
+        assert not (other_keys & outgoing.raw_payload.keys())
+
+    @staticmethod
+    def _warmup_override_credit() -> CreditContext:
+        return CreditContext(
             credit=Credit(
                 id=1,
                 phase=CreditPhase.WARMUP,
@@ -445,20 +510,6 @@ class TestCreateRequestInfo:
             ),
             drop_perf_ns=0,
         )
-
-        request_info = mock_worker._create_request_info(
-            x_request_id="request-id",
-            credit_context=credit_context,
-            turns=turns,
-        )
-
-        outgoing = request_info.turns[-1]
-        assert outgoing.max_tokens == 1
-        assert outgoing.raw_payload["max_completion_tokens"] == 1
-        assert outgoing.raw_payload["stream"] is True
-        # Source turn (and its nested dict) left untouched.
-        assert original.max_tokens == 4096
-        assert original.raw_payload["max_completion_tokens"] == 4096
 
     async def test_create_request_info_plumbs_finality_from_credit(self, mock_worker):
         # Real Credit struct (not a MagicMock, which would auto-create the

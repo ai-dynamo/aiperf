@@ -561,7 +561,11 @@ def apply_max_tokens_to_wire_payload(
         for key in present:
             updated[key] = value
     else:
-        updated["max_tokens"] = value
+        # No cap recorded: pick the canonical key for the body's dialect so the
+        # server actually honors it. Responses bodies (keyed by "input") expect
+        # max_output_tokens; chat/completions bodies expect max_tokens.
+        canonical = "max_output_tokens" if "input" in updated else "max_tokens"
+        updated[canonical] = value
     return updated
 
 
