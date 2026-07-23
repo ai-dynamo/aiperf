@@ -6,9 +6,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__AIPERF_TITLE__ · AIPerf Session Trace</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #0a0d13;
@@ -24,8 +21,8 @@
     --cyan: #56c8dd;
     --red: #ef6a6a;
     --green: #57c994;
-    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
-    --display: "Oxanium", "IBM Plex Mono", ui-monospace, monospace;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Cascadia Mono", "DejaVu Sans Mono", monospace;
+    --display: "Oxanium", ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
@@ -1582,6 +1579,11 @@ function segAt(px, py) {
 
 const fmtN = (n) => (n == null ? "—" : Math.round(n).toLocaleString("en-US"));
 const fmtMs = (n) => (n == null ? "—" : `${n.toLocaleString("en-US", { maximumFractionDigits: 1 })} ms`);
+// Escape profile-derived strings before innerHTML insertion (ids/convs can
+// carry attacker-controlled markup from a crafted profile_export.jsonl).
+const esc = (s) => String(s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
 function showTooltip(ev, seg) {
   const s = DATA.sessions[seg.si];
@@ -1594,9 +1596,9 @@ function showTooltip(ev, seg) {
     rows = [
       ["gap", `${(seg.t1 - seg.t0).toFixed(3)} s`],
       ["window", `${seg.t0.toFixed(2)} → ${seg.t1.toFixed(2)} s`],
-      ...(s.root ? [["parent", s.root.slice(0, 18) + "…"]] : []),
-      ["session", s.id.slice(0, 18) + "…"],
-      ["conv", s.conv.slice(0, 18) + "…"],
+      ...(s.root ? [["parent", esc(s.root.slice(0, 18)) + "…"]] : []),
+      ["session", esc(s.id.slice(0, 18)) + "…"],
+      ["conv", esc(s.conv.slice(0, 18)) + "…"],
     ];
   } else {
     const t = s.turns[seg.ti];
@@ -1609,9 +1611,9 @@ function showTooltip(ev, seg) {
       ...(t[9] ? [["status", t[9] === 1 ? "⚠ error" : "⚠ context overflow"]] : []),
       ...(s.rows > 1 ? [["sub-row", `${t[6] + 1} of ${s.rows} (parallel)`]] : []),
       ...(t[7] ? [["agent depth", t[7]]] : []),
-      ...(s.root ? [["parent", s.root.slice(0, 18) + "…"]] : []),
-      ["session", s.id.slice(0, 18) + "…"],
-      ["conv", s.conv.slice(0, 18) + "…"],
+      ...(s.root ? [["parent", esc(s.root.slice(0, 18)) + "…"]] : []),
+      ["session", esc(s.id.slice(0, 18)) + "…"],
+      ["conv", esc(s.conv.slice(0, 18)) + "…"],
     ];
   }
   tooltip.innerHTML =
@@ -1900,8 +1902,8 @@ function openDetail(si) {
   document.getElementById("d-title-text").innerHTML =
     `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${c};margin-right:8px"></span>${s.aux ? "AUX (SIDECAR)" : s.sub ? "SUBAGENT" : "SESSION"} · SLOT ${s.slot}`;
   document.getElementById("d-conv").innerHTML =
-    `session ${s.id}<br>conv&nbsp;&nbsp;&nbsp; ${s.conv}` +
-    (s.root ? `<br>parent&nbsp; ${s.root}` : "");
+    `session ${esc(s.id)}<br>conv&nbsp;&nbsp;&nbsp; ${esc(s.conv)}` +
+    (s.root ? `<br>parent&nbsp; ${esc(s.root)}` : "");
   const start = s.turns.reduce((a, t) => Math.min(a, t[0]), Infinity);
   const end = s.turns.reduce((a, t) => Math.max(a, t[1]), -Infinity);
   const span = end - start;
