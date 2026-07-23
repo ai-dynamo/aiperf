@@ -12,6 +12,12 @@ JSON payload. Endpoints may extend this walk by setting ``PART_TYPES``
 
 from __future__ import annotations
 
+from aiperf.common.models import (
+    ExtractedPayload,
+    InferenceServerResponse,
+    ParsedResponse,
+    RequestInfo,
+)
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 from aiperf.endpoints.nim_image_retrieval import ImageRetrievalEndpoint
 from aiperf.endpoints.openai_chat import ChatEndpoint
@@ -261,10 +267,12 @@ class TestImageRetrievalOverride:
 class MinimalEndpoint(BaseEndpoint):
     """Concrete subclass for testing base behaviour without other overrides."""
 
-    def format_payload(self, request_info):
+    def format_payload(self, request_info: RequestInfo) -> dict:
         return {}
 
-    def parse_response(self, response):
+    def parse_response(
+        self, response: InferenceServerResponse
+    ) -> ParsedResponse | None:
         return None
 
 
@@ -276,8 +284,6 @@ class TestBaseExtractionDefaults:
         result = endpoint.extract_payload_inputs(
             {"messages": [{"role": "user", "content": "x"}]}
         )
-        from aiperf.common.models import ExtractedPayload
-
         assert isinstance(result, ExtractedPayload)
         assert result.texts == ["x"]
 
@@ -340,7 +346,7 @@ class TestChatMessagesField:
             {"role": "assistant", "content": "", "tool_calls": tool_calls},
         ]
 
-    def test_message_tool_calls_not_double_counted_in_tool_texts(self):
+    def test_extract_payload_inputs_message_tool_calls_excluded_from_tool_texts(self):
         """tool_calls riding in ``messages`` are excluded from ``tool_texts``.
 
         The chat-template ISL path renders ``messages`` (tool_calls included)
@@ -371,7 +377,7 @@ class TestChatMessagesField:
         assert "get_weather" in result.texts
         assert '{"city": "SF"}' in result.texts
 
-    def test_responses_function_call_stays_in_tool_texts(self):
+    def test_extract_payload_inputs_responses_function_call_in_tool_texts(self):
         """Responses ``function_call`` items have no role, so they are absent
         from ``messages`` and must remain in ``tool_texts`` for the
         chat-template path to account for them."""

@@ -202,16 +202,9 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
     ) -> list[dict[str, Any]]:
         """Shared flatten-and-merge skeleton for ``build_messages`` overrides.
 
-        Handles turn iteration, ``reset_context`` (a reset turn discards
-        everything accumulated so far before splicing its own
-        ``raw_messages``), and the synthetic-turn fallback. Subclasses supply
-        only the per-item behaviour:
-
-        - ``transform_raw_item``: map each ``raw_messages`` item to its wire
-          form, or return ``None`` to drop it (e.g. Responses replay-unsafe
-          output items). Defaults to identity.
-        - ``render_synthetic``: render a turn that carries no ``raw_messages``.
-          Defaults to ``_render_turn_message``.
+        ``transform_raw_item`` maps each ``raw_messages`` item to its wire form
+        or returns ``None`` to drop it; ``render_synthetic`` renders a turn with
+        no ``raw_messages``. Both default to identity / ``_render_turn_message``.
         """
         messages: list[dict[str, Any]] = []
         for turn in turns:
