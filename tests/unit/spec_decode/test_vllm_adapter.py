@@ -39,6 +39,20 @@ SUMMARY_PAYLOAD: dict[str, Any] = {
     "num_spec_tokens": 3,
 }
 
+# A self-consistent ``detailed`` payload: 4 steps, accepted [0,1,3,0] ->
+# histogram {0:2, 1:1, 3:1} and 4 accepted; drafted [3,3,3,3] -> 12 proposed.
+DETAILED_PAYLOAD: dict[str, Any] = {
+    "mean_acceptance_length": 2.0,
+    "draft_acceptance_rate": 4 / 12,
+    "acceptance_histogram": {"0": 2, "1": 1, "3": 1},
+    "num_spec_steps": 4,
+    "num_accepted_draft_tokens": 4,
+    "num_draft_tokens": 12,
+    "num_spec_tokens": 3,
+    "per_step_accepted": [0, 1, 3, 0],
+    "per_step_drafted": [3, 3, 3, 3],
+}
+
 
 def _response(
     *,
@@ -178,25 +192,43 @@ class TestVLLMSpecDecodeAdapter:
         assert record.draft_acceptance_rate == 0.0
 
     def test_adapt_detailed_payload_carries_per_step_arrays(self) -> None:
-        # Self-consistent detailed payload: the per-step arrays agree with the
-        # histogram and counts -- 4 steps, accepted [0,1,3,0] -> histogram
-        # {0:2, 1:1, 3:1} and 4 accepted; drafted [3,3,3,3] -> 12 proposed.
-        payload = {
-            "mean_acceptance_length": 2.0,
-            "draft_acceptance_rate": 4 / 12,
-            "acceptance_histogram": {"0": 2, "1": 1, "3": 1},
-            "num_spec_steps": 4,
-            "num_accepted_draft_tokens": 4,
-            "num_draft_tokens": 12,
-            "num_spec_tokens": 3,
-            "per_step_accepted": [0, 1, 3, 0],
-            "per_step_drafted": [3, 3, 3, 3],
-        }
-        record = VLLMSpecDecodeAdapter.adapt(_non_streaming(payload))
+        record = VLLMSpecDecodeAdapter.adapt(_non_streaming(DETAILED_PAYLOAD))
 
         assert record is not None
         assert record.per_step_accepted == [0, 1, 3, 0]
         assert record.per_step_drafted == [3, 3, 3, 3]
+
+    @pytest.mark.parametrize(
+        "bad_payload",
+        [
+            # Per-step arrays that don't reconcile with the aggregates.
+            param(
+                {**DETAILED_PAYLOAD, "per_step_accepted": [0, 1, 3]},
+                id="per_step_accepted_wrong_length",
+            ),
+            param(
+                {**DETAILED_PAYLOAD, "per_step_accepted": [0, 1, 3, 1]},
+                id="per_step_accepted_wrong_sum",
+            ),
+            param(
+                {**DETAILED_PAYLOAD, "per_step_drafted": [3, 3, 3, 4]},
+                id="per_step_drafted_wrong_sum",
+            ),
+            param(
+                # sums still reconcile (12), but step 2 accepted 3 > drafted 2
+                {**DETAILED_PAYLOAD, "per_step_drafted": [3, 3, 2, 4]},
+                id="step_accepted_exceeds_drafted",
+            ),
+        ],
+    )  # fmt: skip
+    def test_adapt_inconsistent_per_step_payload_degrades_to_none(
+        self, bad_payload: dict[str, Any]
+    ) -> None:
+        """Detailed arrays that contradict the aggregates fail the record's
+        per-step invariants; the adapter degrades to None."""
+        responses = [_response(spec_decode_stats=bad_payload)]
+        assert VLLMSpecDecodeAdapter.can_adapt(responses) is True
+        assert VLLMSpecDecodeAdapter.adapt(responses) is None
 
     def test_adapt_missing_num_spec_tokens_is_optional(self) -> None:
         payload = {k: v for k, v in SUMMARY_PAYLOAD.items() if k != "num_spec_tokens"}
@@ -334,3 +366,32 @@ class TestRecordConstraints:
     ) -> None:
         with pytest.raises(ValidationError):
             SpecDecodeAcceptanceRecord(**{**self._valid_kwargs(), **kwargs})
+
+    def _valid_detailed_kwargs(self) -> dict[str, Any]:
+        # 4 steps; accepted [0,1,3,0] -> histogram {0:2,1:1,3:1}, 4 accepted;
+        # drafted [3,3,3,3] -> 12 proposed.
+        return {
+            "engine": "vllm",
+            "mean_acceptance_length": 2.0,
+            "draft_acceptance_rate": 4 / 12,
+            "acceptance_histogram": {0: 2, 1: 1, 3: 1},
+            "num_accepted_draft_tokens": 4,
+            "num_draft_tokens": 12,
+            "num_spec_steps": 4,
+            "per_step_accepted": [0, 1, 3, 0],
+            "per_step_drafted": [3, 3, 3, 3],
+        }
+
+    @pytest.mark.parametrize(
+        "override",
+        [
+            param({"per_step_accepted": [0, 1, 3]}, id="per_step_accepted_wrong_length"),
+            param({"per_step_drafted": [3, 3, 3, 4]}, id="per_step_drafted_wrong_sum"),
+            param({"per_step_drafted": [3, 3, 2, 4]}, id="step_accepted_exceeds_drafted"),
+        ],
+    )  # fmt: skip
+    def test_record_rejects_inconsistent_per_step_arrays(
+        self, override: dict[str, Any]
+    ) -> None:
+        with pytest.raises(ValidationError):
+            SpecDecodeAcceptanceRecord(**{**self._valid_detailed_kwargs(), **override})

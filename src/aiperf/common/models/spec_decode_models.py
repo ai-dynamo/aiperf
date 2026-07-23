@@ -103,14 +103,16 @@ class SpecDecodeAcceptanceRecord(AIPerfBaseModel):
     def _check_aggregate_invariants(self) -> Self:
         """Reject records whose aggregate counts contradict each other.
 
-        Only the exact integer identities are enforced -- the histogram is the
-        per-step accepted-draft tally, so its counts must sum to num_spec_steps
-        and its j-weighted sum must equal num_accepted_draft_tokens, and one
-        cannot accept more drafts than were proposed. These are definitional
-        (not accounting choices), so a violation means a corrupt payload, not
-        benign engine drift. Float relationships (mean/rate) are intentionally
-        not re-derived here to avoid rounding false-positives. The vLLM adapter
-        catches the resulting ValidationError and degrades to None.
+        Only the exact integer identities are enforced -- the histogram and the
+        per-step arrays are just the per-step accepted/proposed tallies viewed
+        another way, so their counts, lengths, and sums must reconcile with
+        num_spec_steps / num_accepted_draft_tokens / num_draft_tokens, and one
+        cannot accept more drafts than were proposed (per step or overall).
+        These are definitional (not accounting choices), so a violation means a
+        corrupt payload, not benign engine drift. Float relationships (mean/rate)
+        are intentionally not re-derived here to avoid rounding false-positives.
+        The vLLM adapter catches the resulting ValidationError and degrades to
+        None.
         """
         step_count = sum(self.acceptance_histogram.values())
         if step_count != self.num_spec_steps:
@@ -129,4 +131,45 @@ class SpecDecodeAcceptanceRecord(AIPerfBaseModel):
                 f"num_accepted_draft_tokens ({self.num_accepted_draft_tokens}) "
                 f"exceeds num_draft_tokens ({self.num_draft_tokens})"
             )
+        self._check_per_step_invariants()
         return self
+
+    def _check_per_step_invariants(self) -> None:
+        """Detailed level: the ordered per-step arrays (each optional) must
+        reconcile with the aggregates the same way the histogram does."""
+        if self.per_step_accepted is not None:
+            if len(self.per_step_accepted) != self.num_spec_steps:
+                raise ValueError(
+                    f"per_step_accepted has {len(self.per_step_accepted)} entries, "
+                    f"but num_spec_steps is {self.num_spec_steps}"
+                )
+            if sum(self.per_step_accepted) != self.num_accepted_draft_tokens:
+                raise ValueError(
+                    f"per_step_accepted sums to {sum(self.per_step_accepted)}, but "
+                    f"num_accepted_draft_tokens is {self.num_accepted_draft_tokens}"
+                )
+        if self.per_step_drafted is not None:
+            if len(self.per_step_drafted) != self.num_spec_steps:
+                raise ValueError(
+                    f"per_step_drafted has {len(self.per_step_drafted)} entries, "
+                    f"but num_spec_steps is {self.num_spec_steps}"
+                )
+            if sum(self.per_step_drafted) != self.num_draft_tokens:
+                raise ValueError(
+                    f"per_step_drafted sums to {sum(self.per_step_drafted)}, but "
+                    f"num_draft_tokens is {self.num_draft_tokens}"
+                )
+        if (
+            self.per_step_accepted is not None
+            and self.per_step_drafted is not None
+            and any(
+                a > d
+                for a, d in zip(
+                    self.per_step_accepted, self.per_step_drafted, strict=True
+                )
+            )
+        ):
+            raise ValueError(
+                "a verification step accepted more drafts than it proposed "
+                "(per_step_accepted[i] > per_step_drafted[i])"
+            )
