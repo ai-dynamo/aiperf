@@ -59,7 +59,7 @@ def _summary() -> AccuracySummary:
 class TestAccuracyTagsAreUnregistered:
     """Documents the invariant that makes the display-path guard necessary."""
 
-    def test_accuracy_summary_tags_are_not_in_metric_registry(self) -> None:
+    def test_to_metric_results_accuracy_tags_absent_from_registry(self) -> None:
         results = _summary().to_metric_results()
         assert results, "expected the summary to emit accuracy MetricResults"
 
@@ -82,7 +82,9 @@ class TestAccuracyTagsSurviveDisplayFilter:
     """filter_display_metrics feeds the dashboard's realtime view. It must not
     raise on unregistered accuracy tags — the exact crash from issue #1145."""
 
-    def test_filter_display_metrics_does_not_raise_on_accuracy_tags(self) -> None:
+    def test_filter_display_metrics_unregistered_accuracy_tags_passes_through(
+        self,
+    ) -> None:
         results = _summary().to_metric_results()
         # Must not raise MetricTypeError; unregistered tags pass through as-is.
         filtered = filter_display_metrics(results)
@@ -94,14 +96,25 @@ class TestAccuracyTagsSurviveDashboardTable:
     display metadata. On v0.11.0 it used the raising get_class and crashed in
     ``on_realtime_metrics``; it must use the tolerant lookup for accuracy tags."""
 
-    def test_dashboard_table_methods_do_not_raise_on_accuracy_tags(self) -> None:
+    def test__should_skip_unregistered_accuracy_tag_returns_bool(self) -> None:
         from aiperf.ui.dashboard.realtime_metrics_dashboard import RealtimeMetricsTable
 
         # The tag->class resolution helpers use only MetricRegistry + Environment,
         # not widget state, so a bare instance exercises them without a running app.
         table = RealtimeMetricsTable.__new__(RealtimeMetricsTable)
         for metric in _summary().to_metric_results():
-            # None of these may raise MetricTypeError on an unregistered tag.
             assert table._should_skip(metric) in (True, False)
+
+    def test__metric_display_order_unregistered_accuracy_tag_returns_int(self) -> None:
+        from aiperf.ui.dashboard.realtime_metrics_dashboard import RealtimeMetricsTable
+
+        table = RealtimeMetricsTable.__new__(RealtimeMetricsTable)
+        for metric in _summary().to_metric_results():
             assert isinstance(table._metric_display_order(metric), int)
+
+    def test__metric_short_header_unregistered_accuracy_tag_returns_str(self) -> None:
+        from aiperf.ui.dashboard.realtime_metrics_dashboard import RealtimeMetricsTable
+
+        table = RealtimeMetricsTable.__new__(RealtimeMetricsTable)
+        for metric in _summary().to_metric_results():
             assert isinstance(table._metric_short_header(metric), str)
