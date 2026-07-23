@@ -103,6 +103,8 @@ class CodegenGradingWorker:
             ) from exc
 
         if not isinstance(resp, dict):
+            # Valid JSON that is not an object would make the ok/metrics lookups
+            # below raise; fault it like the other malformed-response classes.
             await self._handle_fault()
             raise CodegenWorkerError(
                 f"grading worker emitted a non-object response: {line!r}"

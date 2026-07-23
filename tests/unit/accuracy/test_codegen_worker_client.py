@@ -176,9 +176,36 @@ _EMIT_GARBAGE = """
 """
 
 
+# Claims success but omits the metrics dict, simulating the grading path that
+# returned ok:true without results. This is the class closest to the real bug:
+# it must fault instead of returning junk (or KeyError-ing) to the grader.
+_EMIT_OK_NO_METRICS = """
+    import sys, orjson
+    for line in sys.stdin.buffer:
+        line = line.strip()
+        if not line:
+            continue
+        req = orjson.loads(line)
+        resp = {"id": req["id"], "ok": True}
+        sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
+        sys.stdout.buffer.flush()
+"""
+
+
 class TestMalformedResponse:
     async def test_non_json_response_faults_and_kills_worker(self, tmp_path) -> None:
         worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _EMIT_GARBAGE))
+        try:
+            with pytest.raises(CodegenWorkerError):
+                await worker.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=5)
+            assert worker._proc is None
+        finally:
+            await worker.aclose()
+
+    async def test_ok_without_metrics_faults_and_kills_worker(self, tmp_path) -> None:
+        worker = CodegenGradingWorker(
+            worker_cmd=_write_worker(tmp_path, _EMIT_OK_NO_METRICS)
+        )
         try:
             with pytest.raises(CodegenWorkerError):
                 await worker.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=5)
