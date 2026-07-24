@@ -135,7 +135,7 @@ At end of the profiling phase, `RecordsManager._publish_accuracy_results(phase)`
 
 ```mermaid
 flowchart TD
-    W[Worker] -->|raw response| RP[AccuracyRecordProcessor<br/>grade vs ground truth]
+    W[Worker] -->|parsed inference result| RP[AccuracyRecordProcessor<br/>grade vs ground truth]
     RP -->|AccuracyRecordsData<br/>record_type=accuracy| RM[RecordsManager<br/>routing table]
     RM -->|process_record| ACC[AccuracyAccumulator<br/>AccuracySummary]
     RM -->|process_record| JW[AccuracyJSONLWriter<br/>accuracy_export.jsonl]
@@ -219,7 +219,8 @@ This section describes the end-to-end message flow during a benchmark run, showi
 **Key Data Structures:**
 - **Timing Credit**: Grants permission to send one request
 - **Dataset Entry**: Prompt and conversation context
-- **Raw Result**: Request timing, tokens, response text
+- **Inference Result**: Request timing plus worker-parsed response data; raw
+  responses are retained when required for raw export or compatibility
 - **Metric Record**: Per-request computed metrics plus trace data
 - **Aggregated Results**: Final performance summary and per-request details
 
@@ -228,7 +229,9 @@ This section describes the end-to-end message flow during a benchmark run, showi
 2. Workers access dataset entries via memory-mapped files
 3. Workers send requests to Inference Server (external HTTP)
 4. Workers return completed credits to the Timing Manager over a dedicated PUSH/PULL fan-in channel
-5. Workers push raw results to Record Processors
+5. Workers push parsed inference results to Record Processors. For valid
+   non-raw records using built-in response types, the internal envelope omits
+   raw responses; raw export, errors, and custom response types retain them.
 6. Record Processors push metric records to Records Manager
 7. Records Manager aggregates and exports final results
 
@@ -371,7 +374,7 @@ sequenceDiagram
     participant C as OTel Collector
     participant M as MLflow Tracking
 
-    W->>RP: raw response
+    W->>RP: parsed inference result
     RP->>RM: MetricRecordsData
     RM->>OP: process_result(MetricRecordsData)
     OP->>OP: MetricResultsStrategy.supports -> True

@@ -1,14 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from pytest import param
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CreditPhase, ExportLevel
 from aiperf.common.models import (
+    BaseResponseData,
     Conversation,
     ErrorDetails,
     ParsedResponse,
@@ -24,6 +26,11 @@ from tests.harness.fake_communication import FakeCommunication as FakeCommunicat
 from tests.harness.fake_service_manager import FakeServiceManager as FakeServiceManager
 from tests.harness.fake_tokenizer import FakeTokenizer
 from tests.harness.fake_transport import FakeTransport as FakeTransport
+
+
+@dataclass(slots=True)
+class CustomResponseData(BaseResponseData):
+    value: str
 
 
 @pytest.mark.parametrize(
@@ -647,7 +654,140 @@ class TestPayloadBytesFastPath:
         assert handled is True
         assert sample_credit_context.error == error_record.error
         mock_worker._send_inference_result_message.assert_awaited_once_with(
-            error_record
+            error_record, []
         )
         sent_request_info = mock_worker.inference_client.send_request.call_args.args[0]
         assert sent_request_info.payload_bytes == b'{"p": 1}'
+
+
+@pytest.mark.asyncio
+async def test_process_credit_finalize_failure_still_sends_raw_record(
+    mock_worker: Worker, sample_credit_context: CreditContext
+) -> None:
+    session = SimpleNamespace(
+        conversation=SimpleNamespace(
+            system_message=None,
+            user_context_message=None,
+        ),
+        advance_turn=Mock(),
+    )
+    record = RequestRecord(
+        responses=[SSEMessage(perf_ns=2)],
+    )
+    mock_worker._try_payload_bytes_fast_path = AsyncMock(return_value=False)
+    mock_worker.session_manager.get = Mock(return_value=session)
+    mock_worker._create_request_info = Mock(return_value=Mock())
+    mock_worker.inference_client.send_request = AsyncMock(return_value=record)
+    mock_worker._finalize_session_response = Mock(
+        side_effect=RuntimeError("finalize failed")
+    )
+    mock_worker._send_inference_result_message = AsyncMock()
+    mock_worker._release_and_evict_for_terminal = Mock()
+
+    await mock_worker._process_credit(sample_credit_context)
+
+    mock_worker._send_inference_result_message.assert_awaited_once_with(record, None)
+    assert record.responses == [SSEMessage(perf_ns=2)]
+    assert sample_credit_context.error.type == "RuntimeError"
+    assert "finalize failed" in sample_credit_context.error.message
+
+
+@pytest.mark.asyncio
+class TestInferenceResultIPC:
+    @staticmethod
+    def _capture_push(mock_worker):
+        mock_worker.inference_results_push_client.push = Mock(return_value=Mock())
+        mock_worker.execute_async = Mock()
+        return mock_worker.inference_results_push_client.push
+
+    @pytest.mark.parametrize(
+        "export_level",
+        [
+            param(ExportLevel.SUMMARY, id="summary"),
+            param(ExportLevel.RECORDS, id="records"),
+        ],
+    )
+    async def test_non_raw_export_sends_parsed_responses_without_raw(
+        self, mock_worker: Worker, export_level: ExportLevel
+    ) -> None:
+        push = self._capture_push(mock_worker)
+        mock_worker.run.cfg.artifacts.records = (
+            False if export_level == ExportLevel.SUMMARY else ["jsonl"]
+        )
+        record = RequestRecord(
+            start_perf_ns=1,
+            responses=[SSEMessage(perf_ns=2)],
+        )
+        parsed_responses = [ParsedResponse(perf_ns=2, data=TextResponseData("hello"))]
+
+        await mock_worker._send_inference_result_message(record, parsed_responses)
+
+        message = push.call_args.args[0]
+        assert record.responses is None
+        assert message.parsed_responses is not None
+        assert message.last_response_perf_ns == 2
+        assert message.raw_response_count == 1
+        assert message.responses_compacted is True
+        assert "responses" not in message.model_dump(exclude_none=True)["record"]
+
+    @pytest.mark.parametrize(
+        (
+            "raw_export",
+            "response_perf_ns",
+            "parsed_responses",
+            "expected_last_response_perf_ns",
+        ),
+        [
+            param(
+                True,
+                2,
+                [ParsedResponse(perf_ns=2, data=TextResponseData("hello"))],
+                2,
+                id="raw-export",
+            ),
+            param(
+                False,
+                2,
+                [
+                    ParsedResponse(perf_ns=1, data=TextResponseData("built-in")),
+                    ParsedResponse(
+                        perf_ns=2,
+                        data=CustomResponseData(value="custom"),
+                    ),
+                ],
+                2,
+                id="custom-data",
+            ),
+            param(
+                False,
+                -1,
+                [ParsedResponse(perf_ns=-1, data=TextResponseData("invalid"))],
+                None,
+                id="invalid-timestamp",
+            ),
+        ],
+    )  # fmt: skip
+    async def test_uncompacted_responses_retain_raw(
+        self,
+        mock_worker: Worker,
+        raw_export: bool,
+        response_perf_ns: int,
+        parsed_responses: list[ParsedResponse],
+        expected_last_response_perf_ns: int | None,
+    ) -> None:
+        push = self._capture_push(mock_worker)
+        mock_worker.run.cfg.artifacts.raw = raw_export
+        response = SSEMessage(perf_ns=response_perf_ns)
+        record = RequestRecord(
+            start_perf_ns=1,
+            responses=[response],
+        )
+
+        await mock_worker._send_inference_result_message(record, parsed_responses)
+
+        message = push.call_args.args[0]
+        assert record.responses == [response]
+        assert message.parsed_responses is None
+        assert message.last_response_perf_ns == expected_last_response_perf_ns
+        assert message.raw_response_count == 1
+        assert message.responses_compacted is False
