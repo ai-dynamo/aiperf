@@ -36,6 +36,18 @@ source data exists. Validation and a deterministic metadata fingerprint pin the
 graph. Telemetry-owned injected rows stay absent until their producer supplies
 values (see [telemetry.md](telemetry.md)).
 
+Image-retrieval and multimodal-image endpoints report per-sample throughput three
+ways off the captured `num_images` column. `total_num_images` sums the images
+across the run; `image_samples_per_second` is the aggregate rate
+(`total_num_images / benchmark_duration`, images/sec) alongside the token
+throughputs; and `effective_image_samples_per_second` is the sweep-line
+accumulator variant — each request spreads its `num_images` uniformly over its
+active `[start, end)` interval, the per-request rates accumulate into a
+right-continuous step function, and the duration-weighted statistics
+(avg/min/max/p50/p90/p95/p99/std, scaled by `NANOS_PER_SECOND`) report the true
+time-varying sample rate the same way the effective token throughputs do. All
+three stay absent when no image samples are captured.
+
 ### Exact vs sketch
 
 Exact mode retains records as configured artifacts require. Sketch mode
