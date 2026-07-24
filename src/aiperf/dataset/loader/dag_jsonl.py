@@ -16,7 +16,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.models import DatasetMetadata, TurnPrerequisite
 from aiperf.common.models.branch import ConversationBranchInfo
-from aiperf.common.models.dataset_models import Conversation, Turn
+from aiperf.common.models.dataset_models import Conversation, ThinkTimeSpec, Turn
 from aiperf.common.validators.orchestrator_v1 import validate_for_orchestrator_v1
 from aiperf.dataset.loader._dag_jsonl_helpers import (
     DagLoadError,
@@ -266,11 +266,54 @@ class DagJsonlLoader(BaseFileLoader):
         turns: list[Turn] = []
         inline_forks_per_turn: list[list[DagFork]] = []
         inline_spawns_per_turn: list[list[tuple[list[str], int | None]]] = []
-        for t in dag_conv.turns:
-            turns.append(self._build_turn(t))
-            inline_forks_per_turn.append([normalize_fork_entry(e) for e in t.forks])
-            inline_spawns_per_turn.append(group_spawn_entries(t.spawns))
-        self._conversations[sid] = Conversation(session_id=sid, turns=turns)
+        think_time_spec: ThinkTimeSpec | None = None
+        if dag_conv.think_time_sigma is not None:
+            think_time_spec = ThinkTimeSpec(
+                sigma=dag_conv.think_time_sigma,
+                min_ms=dag_conv.think_time_min_ms,
+                max_ms=dag_conv.think_time_max_ms,
+            )
+        if dag_conv.orchestrator and dag_conv.rounds is not None:
+            # Gated spine: N request-free rounds. Each round-k turn spawns the
+            # conversation-level ``spawns`` children with an explicit
+            # ``join_at=k+1`` so the NEXT turn AND-waits (join=all) for all of
+            # round k's branches before firing -- a chained conversation paced
+            # by per-round waiting. Turn N is a terminal request-free gate that
+            # waits on round N's branches and then completes the session. All
+            # turns are ``no_request`` (the spine sends no HTTP itself).
+            # Per-round think-time: the wait the coordinator applies before
+            # releasing each round. It rides ONLY the N spawning turns (0..N-1) --
+            # turn 0 via the normal strategy delay and turns 1..N-1 via the gated
+            # ``_release_blocked_join``. The terminal gate (turn N) spawns no
+            # further round, so it carries NO think-time: stamping it would delay
+            # session completion by one spurious think interval per spine.
+            think_ms = dag_conv.think_time_ms or 0.0
+            for k in range(dag_conv.rounds):
+                turns.append(Turn(no_request=True, delay=think_ms))
+                inline_forks_per_turn.append([])
+                inline_spawns_per_turn.append([(list(dag_conv.spawns), k + 1)])
+            turns.append(Turn(no_request=True))
+            inline_forks_per_turn.append([])
+            inline_spawns_per_turn.append([])
+        elif dag_conv.orchestrator:
+            # Synthesize a single no-op turn (no messages, no_request=True). Its
+            # conversation-level ``spawns`` desugar into a post-timing SPAWN
+            # branch via the normal ``_apply_spawns`` path (see _desugar_forks),
+            # so the orchestrator re-fires on every sampled iteration.
+            turns.append(Turn(no_request=True))
+            inline_forks_per_turn.append([])
+            inline_spawns_per_turn.append(group_spawn_entries(list(dag_conv.spawns)))
+        else:
+            for t in dag_conv.turns:
+                turns.append(self._build_turn(t))
+                inline_forks_per_turn.append([normalize_fork_entry(e) for e in t.forks])
+                inline_spawns_per_turn.append(group_spawn_entries(t.spawns))
+        self._conversations[sid] = Conversation(
+            session_id=sid,
+            turns=turns,
+            is_orchestrator=dag_conv.orchestrator,
+            think_time=think_time_spec,
+        )
         self._inline_forks[sid] = inline_forks_per_turn
         self._inline_spawns[sid] = inline_spawns_per_turn
         self._inline_pre_session_spawns[sid] = self._check_pre_session_duplicates(
@@ -378,7 +421,11 @@ class DagJsonlLoader(BaseFileLoader):
                 dispatch_timing="pre",
             )
         )
-        conv.turns[0].branch_ids.append(branch_id)
+        # Orchestrator conversations have no turns; the pre-session branch lives at
+        # the conversation level only. Non-orchestrators still record turn-0 membership
+        # so the validator/dispatch turn-0 checks keep working.
+        if conv.turns:
+            conv.turns[0].branch_ids.append(branch_id)
 
     def _apply_forks(
         self,

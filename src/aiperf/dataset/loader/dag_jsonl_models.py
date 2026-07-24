@@ -191,8 +191,61 @@ class DagConversation(AIPerfBaseModel):
         description="Unique identifier for this conversation within the file.",
     )
     turns: list[DagTurn] = Field(
-        min_length=1,
-        description="Ordered list of turns (non-empty).",
+        default_factory=list,
+        description="Ordered list of turns. Non-empty for normal conversations; "
+        "empty only for an orchestrator conversation (see 'orchestrator').",
+    )
+    orchestrator: bool = Field(
+        default=False,
+        description="Mark this as a request-less orchestrator: it sends no request "
+        "and re-fires its conversation-level 'spawns' children on every sampled "
+        "iteration. The loader synthesizes a single no-op (no_request) turn that "
+        "issues a virtual credit and desugars 'spawns' into a post-timing SPAWN "
+        "branch. Requires an empty authored turns list, a non-empty 'spawns', and "
+        "an empty 'pre_session_spawns'.",
+    )
+    spawns: list[str] = Field(
+        default_factory=list,
+        description="Conversation-level SPAWN children for an orchestrator "
+        "conversation. Desugared by the loader into a post-timing SPAWN branch on "
+        "the synthesized no-op turn, so the orchestrator re-fires them on every "
+        "sampled iteration (fire-and-forget). Only valid when 'orchestrator' is "
+        "true; per-turn spawning uses 'DagTurn.spawns' instead.",
+    )
+    think_time_ms: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Orchestrator-'rounds'-only. Per-round think-time (milliseconds) "
+        "the coordinator waits after a round's branches all complete, before "
+        "releasing the next round. Applied on turn 0 via the normal turn delay and "
+        "on each gated join turn via the branch orchestrator. A fixed value today; "
+        "a sampled distribution (per (instance, round)) plugs in at the same seam.",
+    )
+    think_time_sigma: float | None = Field(
+        default=None,
+        gt=0.0,
+        le=10.0,
+        description="When set, per-round think-time is drawn from a lognormal whose "
+        "MEDIAN is 'think_time_ms' and log-space stddev is this value (independent "
+        "draw per (instance, round), reproducible under --random-seed). Requires "
+        "'think_time_ms'. Unset => fixed think-time.",
+    )
+    think_time_min_ms: float | None = Field(
+        default=None, ge=0.0, description="Optional lower clamp on the sampled draw."
+    )
+    think_time_max_ms: float | None = Field(
+        default=None, ge=0.0, description="Optional upper clamp on the sampled draw."
+    )
+    rounds: int | None = Field(
+        default=None,
+        ge=1,
+        description="Orchestrator-only. When set, synthesize a gated 'spine' of N "
+        "rounds instead of a single fire-and-forget turn: each round spawns the "
+        "conversation-level 'spawns' children, and the next round waits (join=all) "
+        "for ALL of them to complete before firing. Produces N+1 request-free turns "
+        "(N spawning turns + a terminal gate). Use this for a chained agentic "
+        "conversation whose turns are paced by per-round waiting. When unset, the "
+        "orchestrator synthesizes a single fire-and-forget turn (default behavior).",
     )
     pre_session_spawns: list[str] = Field(
         default_factory=list,
@@ -203,3 +256,84 @@ class DagConversation(AIPerfBaseModel):
         "(background SPAWN only); children get a fresh correlation id "
         "with ``parent_correlation_id=None``.",
     )
+
+    @model_validator(mode="after")
+    def _validate_orchestrator(self) -> "DagConversation":
+        if self.orchestrator:
+            if self.turns:
+                raise ValueError(
+                    "orchestrator conversation must have an empty authored 'turns' "
+                    "list (the loader synthesizes its single no-op turn)"
+                )
+            if not self.spawns:
+                raise ValueError(
+                    "orchestrator conversation requires a non-empty 'spawns'"
+                )
+            if self.pre_session_spawns:
+                raise ValueError(
+                    "orchestrator conversation must not set 'pre_session_spawns'; "
+                    "use conversation-level 'spawns' instead"
+                )
+        else:
+            if self.rounds is not None:
+                raise ValueError(
+                    "'rounds' is only valid on an orchestrator conversation "
+                    "(set 'orchestrator': true)"
+                )
+            if not self.turns:
+                raise ValueError(
+                    "'turns' must be non-empty unless 'orchestrator' is true"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_think_time(self) -> "DagConversation":
+        """Per-round think-time is exclusive to an orchestrator 'rounds' spine;
+        reject orphan/mis-placed/contradictory think-time config up front so it
+        can never silently no-op or reach the sampler as a bad value."""
+        think_fields = (
+            self.think_time_sigma,
+            self.think_time_min_ms,
+            self.think_time_max_ms,
+        )
+        if not self.orchestrator:
+            if self.think_time_ms is not None or any(
+                v is not None for v in think_fields
+            ):
+                raise ValueError(
+                    "'think_time_ms'/'think_time_sigma'/'think_time_min_ms'/"
+                    "'think_time_max_ms' are only valid on an orchestrator "
+                    "conversation with 'rounds' set"
+                )
+            return self
+        if self.think_time_ms is not None and self.rounds is None:
+            raise ValueError(
+                "'think_time_ms' requires 'rounds' (it is the per-round wait of the "
+                "gated spine); it has no meaning for a single fire-and-forget turn"
+            )
+        if self.think_time_sigma is not None and self.think_time_ms is None:
+            raise ValueError(
+                "'think_time_sigma' requires 'think_time_ms' (the lognormal median "
+                "to sample around)"
+            )
+        # Clamps apply to the SAMPLED draw only; without a distribution they would
+        # be silently ignored, so reject clamp-only configs.
+        clamp_set = (
+            self.think_time_min_ms is not None or self.think_time_max_ms is not None
+        )
+        if clamp_set and self.think_time_sigma is None:
+            raise ValueError(
+                "'think_time_min_ms'/'think_time_max_ms' require 'think_time_sigma' "
+                "(they clamp the sampled draw; a fixed think-time has nothing to clamp)"
+            )
+        # Ordered clamp: an inverted range silently collapses every draw.
+        if (
+            self.think_time_min_ms is not None
+            and self.think_time_max_ms is not None
+            and self.think_time_min_ms > self.think_time_max_ms
+        ):
+            raise ValueError(
+                "'think_time_min_ms' must be <= 'think_time_max_ms' "
+                f"(got {self.think_time_min_ms} > {self.think_time_max_ms})"
+            )
+        return self

@@ -4,7 +4,11 @@
 import pytest
 from pydantic import ValidationError
 
-from aiperf.dataset.loader.dag_jsonl_models import DagSpawn, DagTurn
+from aiperf.dataset.loader.dag_jsonl_models import (
+    DagConversation,
+    DagSpawn,
+    DagTurn,
+)
 
 
 class TestDagSpawn:
@@ -44,3 +48,43 @@ class TestDagTurnMaxTokens:
             DagTurn.model_validate(
                 {"messages": [{"role": "user", "content": "x"}], "max_tokens": False}
             )
+
+
+class TestDagConversationOrchestrator:
+    def test_orchestrator_conversation_loads_with_spawns(self):
+        conv = DagConversation(
+            session_id="start",
+            turns=[],
+            orchestrator=True,
+            spawns=["fan-out-a", "fan-out-b"],
+        )
+        assert conv.orchestrator is True
+        assert conv.turns == []
+        assert conv.spawns == ["fan-out-a", "fan-out-b"]
+
+    def test_orchestrator_requires_spawns(self):
+        with pytest.raises(ValueError, match="spawns"):
+            DagConversation(session_id="s", turns=[], orchestrator=True, spawns=[])
+
+    def test_orchestrator_rejects_non_empty_turns(self):
+        with pytest.raises(ValueError, match="orchestrator"):
+            DagConversation(
+                session_id="s",
+                orchestrator=True,
+                spawns=["c"],
+                turns=[{"messages": [{"role": "user", "content": "hi"}]}],
+            )
+
+    def test_orchestrator_rejects_pre_session_spawns(self):
+        with pytest.raises(ValueError, match="pre_session_spawns"):
+            DagConversation(
+                session_id="s",
+                turns=[],
+                orchestrator=True,
+                spawns=["c"],
+                pre_session_spawns=["c"],
+            )
+
+    def test_empty_turns_without_orchestrator_rejected(self):
+        with pytest.raises(ValueError):
+            DagConversation(session_id="s", turns=[])

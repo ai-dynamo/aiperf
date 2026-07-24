@@ -109,6 +109,7 @@ class PhaseProgressTracker:
         errored: bool = False,
         *,
         is_child: bool = False,
+        no_request: bool = False,
     ) -> bool:
         """Atomically increment returned count.
 
@@ -124,6 +125,9 @@ class PhaseProgressTracker:
                 real HTTP requests — but skip session-level bookkeeping
                 (``completed_sessions`` / ``cancelled_sessions``)
                 because children inherit the parent's session slot.
+            no_request: Whether the returned credit is a virtual ``no_request``
+                orchestrator credit (excluded from the billable request count,
+                symmetric with ``increment_sent``). Orthogonal to ``is_child``.
 
         Returns:
             True if ALL credits returned (this was the final return).
@@ -139,7 +143,11 @@ class PhaseProgressTracker:
         checking lifecycle.is_complete before calling this method.
         """
         return self._counter.increment_returned(
-            is_final_turn, cancelled, errored=errored, is_child=is_child
+            is_final_turn,
+            cancelled,
+            errored=errored,
+            is_child=is_child,
+            no_request=no_request,
         )
 
     def increment_prefill_released(self) -> None:

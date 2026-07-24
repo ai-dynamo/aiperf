@@ -816,6 +816,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         try:
             if not self.inference_client:
                 raise NotInitializedError("Inference server client not initialized.")
+            # Defensive: no_request credits are normally short-circuited at the
+            # router and never reach a worker; this guarantees no HTTP even if one
+            # ever arrives here. The finally block emits a normal CreditReturn.
+            if credit_context.credit.no_request:
+                return
             await self._process_credit(credit_context)
         except Exception as e:
             self.exception(
@@ -836,7 +841,17 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # done callback would return the credit as completed anyway (no
             # record emitted) -- the exact lockstep break this guards against.
             # Contain the failure and always proceed to return the credit.
-            if not credit_context.cancelled and not credit_context.record_emitted:
+            #
+            # A no_request virtual orchestrator credit legitimately produces no
+            # record (it sends no HTTP request) and is excluded from the billable
+            # request count, so — like a cancelled credit — it must be exempt from
+            # the lockstep failure-record emit, else it returns with a spurious
+            # error and the records barrier waits for a record that never comes.
+            if (
+                not credit_context.cancelled
+                and not credit_context.record_emitted
+                and not credit_context.credit.no_request
+            ):
                 try:
                     await self._emit_credit_failure_record(credit_context)
                 except Exception as e:

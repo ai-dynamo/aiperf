@@ -234,6 +234,13 @@ class TurnMetadata(AIPerfBaseModel):
         "can defer parent-session eviction until all forks have spawned. Stays "
         "False on non-DAG datasets.",
     )
+    no_request: bool = Field(
+        default=False,
+        description="True if this turn is a virtual orchestrator firing that issues "
+        "no HTTP request. Propagated into the issued Credit so the worker returns it "
+        "immediately without contacting the inference server. Stays False for normal "
+        "turns.",
+    )
     prerequisites: list["TurnPrerequisite"] = Field(
         default_factory=list,
         description="Conditions gating dispatch of this turn (DAG projection). "
@@ -460,6 +467,13 @@ class Turn(AIPerfBaseModel):
             "None otherwise."
         ),
     )
+    no_request: bool = Field(
+        default=False,
+        description="True if this is a synthesized virtual orchestrator turn that "
+        "issues no HTTP request. Propagated into ``TurnMetadata.no_request`` and the "
+        "issued Credit so the worker returns it immediately. Stays False for normal "
+        "turns.",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -482,7 +496,47 @@ class Turn(AIPerfBaseModel):
                 self.theoretical_prefix_cache_total_blocks
             ),
             input_kind=self.input_kind,
+            no_request=self.no_request,
         )
+
+
+class ThinkTimeSpec(AIPerfBaseModel):
+    """Lognormal distribution for an orchestrator spine's per-round think-time.
+
+    The distribution MEDIAN is the per-round ``delay_ms`` stamped on each spine
+    turn; this carries the lognormal shape (``sigma``) and an optional clamp.
+    The value is sampled independently per (conversation instance, round) at
+    join release, so runs are reproducible under ``--random-seed`` and no value
+    is shared across instances or rounds. A mean-pinned lognormal/weibull
+    sampler (e.g. PR #1188's ``common/distributions.py``) can replace the draw
+    in place without changing this carrier.
+    """
+
+    sigma: float = Field(
+        gt=0.0,
+        le=10.0,
+        description="Lognormal shape parameter (standard deviation in log space); "
+        "larger = more right-skew. The median is the turn's stamped think-time. "
+        "Bounded finite (<=10) so an absurd shape cannot overflow math.exp.",
+    )
+    min_ms: float | None = Field(
+        default=None, ge=0.0, description="Optional lower clamp on the draw (ms)."
+    )
+    max_ms: float | None = Field(
+        default=None, ge=0.0, description="Optional upper clamp on the draw (ms)."
+    )
+
+    @model_validator(mode="after")
+    def _validate_clamp_order(self) -> "ThinkTimeSpec":
+        if (
+            self.min_ms is not None
+            and self.max_ms is not None
+            and self.min_ms > self.max_ms
+        ):
+            raise ValueError(
+                f"think-time min_ms ({self.min_ms}) must be <= max_ms ({self.max_ms})"
+            )
+        return self
 
 
 class ConversationMetadata(AIPerfBaseModel):
@@ -519,6 +573,18 @@ class ConversationMetadata(AIPerfBaseModel):
     is_root: bool = Field(
         default=True,
         description="True for sampleable roots; False for fork/spawn children.",
+    )
+    is_orchestrator: bool = Field(
+        default=False,
+        description="True for a request-less orchestrator conversation that fires "
+        "its conversation-level SPAWN children on every sampled iteration via a "
+        "synthesized no-op (no_request) turn.",
+    )
+    think_time: ThinkTimeSpec | None = Field(
+        default=None,
+        description="Optional lognormal distribution for an orchestrator spine's "
+        "per-round think-time (median = each spine turn's delay_ms). Sampled per "
+        "(instance, round) at join release. None => the fixed delay_ms is used.",
     )
     agent_depth: int = Field(
         default=0,
@@ -676,6 +742,18 @@ class Conversation(AIPerfBaseModel):
         default=None,
         description="Optional sub-agent classification (EXPLORE/GENERAL/PLAN) for metrics/routing.",
     )
+    is_orchestrator: bool = Field(
+        default=False,
+        description="True for a request-less orchestrator conversation that fires "
+        "its conversation-level SPAWN children on every sampled iteration via a "
+        "synthesized no-op (no_request) turn.",
+    )
+    think_time: ThinkTimeSpec | None = Field(
+        default=None,
+        description="Optional lognormal distribution for an orchestrator spine's "
+        "per-round think-time (median = each spine turn's delay_ms). Sampled per "
+        "(instance, round) at join release. None => the fixed delay_ms is used.",
+    )
     parent_conversation_id: str | None = Field(
         default=None,
         description="DAG child's parent conversation_id; None for roots.",
@@ -711,6 +789,8 @@ class Conversation(AIPerfBaseModel):
             user_context_message=self.user_context_message,
             branches=list(self.branches),
             is_root=self.is_root,
+            is_orchestrator=self.is_orchestrator,
+            think_time=self.think_time,
             agent_depth=self.agent_depth,
             subagent_type=self.subagent_type,
             parent_conversation_id=self.parent_conversation_id,

@@ -452,6 +452,7 @@ class CreditIssuer:
             root_correlation_id=turn.root_correlation_id,
             counts_toward_phase_target=turn.counts_toward_phase_target,
             has_forks=turn.has_forks,
+            no_request=turn.no_request,
             branch_mode=turn.branch_mode,
             cache_bust_marker=turn.cache_bust_marker,
             cache_bust_target=turn.cache_bust_target,
@@ -569,6 +570,7 @@ class CreditIssuer:
             # the sampled root plan and counts.
             counts_toward_phase_target=pending.parent_agent_depth == 0,
             has_forks=pending.parent_has_forks_on_gated_turn,
+            no_request=pending.parent_no_request_on_gated_turn,
             branch_mode=pending.parent_branch_mode,
             cache_bust_marker=pending.parent_cache_bust_marker,
             cache_bust_target=pending.parent_cache_bust_target,

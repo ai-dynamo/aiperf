@@ -21,9 +21,19 @@ def cfg(
     )
 
 
-def turn(conv: str = "c1", idx: int = 0, num: int = 1, corr: str = "x1") -> TurnToSend:
+def turn(
+    conv: str = "c1",
+    idx: int = 0,
+    num: int = 1,
+    corr: str = "x1",
+    no_request: bool = False,
+) -> TurnToSend:
     return TurnToSend(
-        conversation_id=conv, turn_index=idx, num_turns=num, x_correlation_id=corr
+        conversation_id=conv,
+        turn_index=idx,
+        num_turns=num,
+        x_correlation_id=corr,
+        no_request=no_request,
     )
 
 
@@ -271,3 +281,72 @@ class TestCreditCounter:
         assert not c.check_all_returned_or_cancelled()
         c.increment_returned(is_final_turn=True, cancelled=False)
         assert c.check_all_returned_or_cancelled()
+
+
+class TestNoRequestAccounting:
+    """A ``no_request`` orchestrator credit is a virtual root session: it
+    counts toward ``--num-conversations`` but fires no HTTP request, so it
+    must not advance ``requests_sent`` or the ``--request-count`` cap.
+    """
+
+    def test_no_request_root_bumps_session_not_request(self) -> None:
+        c = CreditCounter(cfg())
+        c.increment_sent(turn(idx=0, num=1, no_request=True))
+        assert c.sent_sessions == 1
+        assert c.total_session_turns == 1
+        assert c.requests_sent == 0
+
+    def test_no_request_does_not_advance_request_cap(self) -> None:
+        c = CreditCounter(cfg(reqs=1))
+        _, is_final = c.increment_sent(turn(idx=0, num=1, no_request=True))
+        assert not is_final
+        assert c.requests_sent == 0
+
+    def test_normal_credit_still_bumps_request(self) -> None:
+        c = CreditCounter(cfg())
+        c.increment_sent(turn(idx=0, num=1, no_request=False))
+        assert c.requests_sent == 1
+        assert c.sent_sessions == 1
+
+    def test_mixed_orchestrator_and_normal_sequence(self) -> None:
+        c = CreditCounter(cfg())
+        # 1 orchestrator (no_request root) + 2 normal single-turn roots.
+        c.increment_sent(turn(conv="orch", idx=0, num=1, no_request=True))
+        c.increment_sent(turn(conv="a", idx=0, num=1))
+        c.increment_sent(turn(conv="b", idx=0, num=1))
+        assert c.sent_sessions == 3
+        assert c.requests_sent == 2
+
+
+class TestCreditIdUniqueness:
+    """``credit_index`` (which becomes ``Credit.id``) must be unique per
+    dispatched credit even though a ``no_request`` credit does not bump
+    ``requests_sent``. It keys live in-flight tracking (worker
+    ``credit_tasks``, sticky-router ``active_credit_ids``, adaptive-scale
+    windows), so a collision would clobber a concurrently in-flight credit.
+    """
+
+    def test_no_request_then_real_credit_get_distinct_ids(self) -> None:
+        c = CreditCounter(cfg())
+        # A no_request orchestrator credit followed by a real credit: both
+        # would collide on id if the index were sourced from requests_sent
+        # (which the no_request credit does not advance).
+        idx_no_req, _ = c.increment_sent(turn(conv="orch", idx=0, no_request=True))
+        idx_real, _ = c.increment_sent(turn(conv="a", idx=0))
+        assert idx_no_req != idx_real
+        # Y8 rule preserved: only the real credit counts as a request.
+        assert c.requests_sent == 1
+
+    def test_all_dispatched_credits_get_distinct_ids(self) -> None:
+        c = CreditCounter(cfg())
+        turns = [
+            turn(conv="orch", idx=0, no_request=True),
+            turn(conv="a", idx=0),
+            turn(conv="orch2", idx=0, no_request=True),
+            turn(conv="b", idx=0),
+        ]
+        ids = [c.increment_sent(t)[0] for t in turns]
+        assert ids == [0, 1, 2, 3]
+        assert len(set(ids)) == len(ids)
+        # Only the two real credits advanced the billable counter.
+        assert c.requests_sent == 2
