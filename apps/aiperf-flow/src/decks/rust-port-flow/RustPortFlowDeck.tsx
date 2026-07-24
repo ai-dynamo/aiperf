@@ -101,7 +101,7 @@ const TRANSPORT_OPTIONS: SeamToggleOption<Transport>[] = [
 // Real sink types per transport target (the two-trait seam swap), named in the dispatch caption.
 const TRANSPORT_SINK: Record<Transport, string> = {
   http: "TransportSink (hyper, streaming)",
-  grpc: "GrpcTransportSink (Tonic, non-streaming)",
+  grpc: "GrpcTransportSink (Tonic — unary, server-streaming, or bidi per endpoint)",
   "dry-run": "the dry-run sink (no network round-trip)",
   dynosim: "the dynosim SteppableEngine sink (virtual time)",
 };

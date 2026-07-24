@@ -103,7 +103,7 @@ describe("RustPortFlowDeck (v2 swimlane-timeline)", () => {
     expect(screen.getAllByText("step 9/16").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/TransportSink \(hyper, streaming\)/).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "gRPC" }));
-    expect(screen.getAllByText(/GrpcTransportSink \(Tonic, non-streaming\)/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/GrpcTransportSink \(Tonic — unary, server-streaming, or bidi/).length).toBeGreaterThan(0);
   });
 
   it("deep-links into a stage from the ?stage= URL param", () => {

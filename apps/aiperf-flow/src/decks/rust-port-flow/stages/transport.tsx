@@ -27,7 +27,7 @@ import { roleClassName } from "../stage.js";
 import type { NodeRole } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
 import type { StageDef } from "../stage.js";
-import { Diagram, NodeChip, DbNode, MiniArrow, MiniBars } from "../../../chalk/index.js";
+import { Diagram, NodeChip, DbNode, DiamondNode, MiniArrow, BiArrow, MiniBars } from "../../../chalk/index.js";
 
 // Leaf (level-2) ids. Each is BOTH a level-1 target-node id (so a click drills) AND a key of
 // `leaves` (so `buildZoomTree` registers its subgraph). Namespaced to avoid any cross-stage
@@ -49,9 +49,11 @@ const seamNodes: Node[] = [
       detail: "Shared workload + SlotPool admission; just holds a sink.",
       diagram: (
         <Diagram>
-          <NodeChip>WORKLOAD</NodeChip>
+          <NodeChip>workload</NodeChip>
           <MiniArrow />
-          <NodeChip accent>SINK</NodeChip>
+          <DiamondNode>admit</DiamondNode>
+          <MiniArrow />
+          <NodeChip accent>Sink</NodeChip>
         </Diagram>
       ),
       className: roleClassName("transport"),
@@ -67,9 +69,11 @@ const seamNodes: Node[] = [
       detail: "Implement these two traits; everything else is shared.",
       diagram: (
         <Diagram>
-          <NodeChip>BUILDER</NodeChip>
+          <NodeChip>Builder</NodeChip>
           <MiniArrow />
-          <NodeChip accent>SINK</NodeChip>
+          <NodeChip accent>!Send sink</NodeChip>
+          <BiArrow />
+          <NodeChip>turn</NodeChip>
         </Diagram>
       ),
       className: roleClassName("transport"),
@@ -87,6 +91,8 @@ const seamNodes: Node[] = [
         <Diagram>
           <NodeChip accent>hyper</NodeChip>
           <MiniArrow />
+          <DiamondNode>1st?</DiamondNode>
+          <MiniArrow />
           <NodeChip>t₁·t₂·t₃</NodeChip>
         </Diagram>
       ),
@@ -99,13 +105,13 @@ const seamNodes: Node[] = [
     position: { x: 540, y: 110 },
     data: {
       title: "GrpcTransportSink",
-      subtitle: "gRPC · Tonic · non-streaming",
-      detail: "supports_response_streaming() = false — unary.",
+      subtitle: "gRPC · Tonic · unary + streaming + bidi",
+      detail: "Unary, server-streaming (KServe), or bidi (Riva) per endpoint.",
       diagram: (
         <Diagram>
           <NodeChip accent>Tonic</NodeChip>
-          <MiniArrow />
-          <NodeChip>unary</NodeChip>
+          <BiArrow />
+          <NodeChip>stream</NodeChip>
         </Diagram>
       ),
       className: roleClassName("transport"),
@@ -121,7 +127,9 @@ const seamNodes: Node[] = [
       detail: "Strict decoder; synthesizes timings offline.",
       diagram: (
         <Diagram>
-          <NodeChip accent>dry-run</NodeChip>
+          <NodeChip>decode</NodeChip>
+          <MiniArrow />
+          <DiamondNode accent>no I/O</DiamondNode>
           <MiniArrow />
           <MiniBars heights={[40, 72, 100, 84]} />
         </Diagram>
@@ -139,7 +147,9 @@ const seamNodes: Node[] = [
       detail: "In-process Dynamo mocker via SteppableReplay.",
       diagram: (
         <Diagram>
-          <NodeChip accent>dyno</NodeChip>
+          <NodeChip>req</NodeChip>
+          <MiniArrow />
+          <NodeChip accent>engine</NodeChip>
           <MiniArrow />
           <DbNode>replay</DbNode>
         </Diagram>
@@ -211,7 +221,7 @@ export const transportStage: StageDef = {
   order: 6,
   label: "Transport seam",
   caption:
-    "A transport implements exactly two traits (WorkerSink + ExecutionSinkBuilder); everything else is shared. Four targets: HTTP (TransportSink, hyper, streaming), gRPC (GrpcTransportSink, Tonic, non-streaming), dry-run, dynosim (offline co-sim).",
+    "A transport implements exactly two traits (WorkerSink + ExecutionSinkBuilder); everything else is shared. Four targets: HTTP (TransportSink, hyper, streaming), gRPC (GrpcTransportSink, Tonic — unary, server-streaming for KServe, bidi for Riva), dry-run, dynosim (offline co-sim).",
   tone: "yellow",
   // v2 timeline: the Dispatcher→sink hop in the Transport lane (inside the Transport seam frame).
   lane: "transport",
@@ -244,7 +254,7 @@ export const transportStage: StageDef = {
       ),
     },
     [GRPC]: {
-      label: "gRPC transport (Tonic, non-streaming)",
+      label: "gRPC transport (Tonic, unary + streaming + bidi)",
       ...leafChain(
         "grpc",
         {
@@ -254,12 +264,12 @@ export const transportStage: StageDef = {
         },
         {
           title: "GrpcTransportSink",
-          detail: "Tonic client; supports_response_streaming()=false.",
+          detail: "Tonic client; streaming(streaming) per endpoint binding.",
           role: "transport",
         },
         {
-          title: "Unary response",
-          detail: "One terminal response; still shares measure.",
+          title: "Unary / stream / bidi",
+          detail: "KServe ModelStreamInfer + Riva bidi; all share measure.",
           role: "transport",
         },
       ),
@@ -346,7 +356,7 @@ export const transportFlowSteps: readonly FlowStep[] = [
   {
     nodeId: GRPC,
     caption:
-      "gRPC: GrpcTransportSink (Tonic) returns one unary response — supports_response_streaming() = false.",
+      "gRPC: GrpcTransportSink (Tonic) — unary, server-streaming (KServe ModelStreamInfer), or bidirectional (Riva) depending on the endpoint binding.",
     variant: "grpc",
   },
   {

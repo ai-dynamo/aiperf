@@ -385,8 +385,8 @@ const HOT_PATH_CARDS: readonly HotPathCard[] = [
     title: "The chosen sink is the only seam",
     body: (
       <>
-        <code>TransportSink</code> (hyper, streaming) or <code>GrpcTransportSink</code> (Tonic,
-        non-streaming) is the sole transport-specific step; everything downstream is shared.
+        <code>TransportSink</code> (hyper, streaming) or <code>GrpcTransportSink</code> (Tonic —
+        unary/streaming/bidi) is the sole transport-specific step; everything downstream is shared.
       </>
     ),
   },

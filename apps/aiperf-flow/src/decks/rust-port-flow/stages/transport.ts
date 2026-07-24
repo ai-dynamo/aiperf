@@ -14,7 +14,7 @@ export const transportStage: StageDef = {
   order: 6,
   label: "Transport seam",
   caption:
-    "A transport implements exactly two traits (WorkerSink + ExecutionSinkBuilder); everything else is shared. Four targets: HTTP (hyper, streaming), gRPC (Tonic, non-streaming), dry-run, dynosim (offline co-sim).",
+    "A transport implements exactly two traits (WorkerSink + ExecutionSinkBuilder); everything else is shared. Four targets: HTTP (hyper, streaming), gRPC (Tonic — unary, server-streaming for KServe, bidi for Riva), dry-run, dynosim (offline co-sim).",
   tone: "yellow",
   lane: "transport",
   events: [{ id: "tp-dispatch", label: "dispatch", laneId: "transport", atOrder: 8, realOffsetMs: 62 }],
