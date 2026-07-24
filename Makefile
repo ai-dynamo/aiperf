@@ -18,7 +18,7 @@
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install install-app bundle-cli wheel docker docker-run first-time-setup \
 		ci-install check-mock-server-install \
-		test-verbose setup-venv install-mock-server mock-server-native install-mock-amdsmi test-ci test-all \
+		test-verbose setup-venv install-python install-mock-server mock-server-native install-mock-amdsmi test-ci test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
@@ -40,7 +40,11 @@ SHELL := /bin/bash
 # workspace). Drive cargo through --manifest-path and read build artifacts from
 # rust/target/ so make targets work when invoked from the repo root.
 CARGO_MANIFEST := rust/Cargo.toml
-CARGO := cargo --manifest-path $(CARGO_MANIFEST)
+# `--manifest-path` is a cargo SUBCOMMAND option, not a global flag: modern cargo
+# (>=1.90) rejects `cargo --manifest-path X build`. Keep `CARGO` bare and thread
+# the manifest through `CARGO_BUILD`, which places the flag after `build`.
+CARGO := cargo
+CARGO_BUILD := $(CARGO) build --manifest-path $(CARGO_MANIFEST)
 RUST_TARGET := rust/target
 
 # Default the make-driven workflow to the native Rust execution path. These are
@@ -165,16 +169,22 @@ coverage: #? run the tests and generate an html coverage report.
 
 install: install-app install-mock-server #? install the project (editable) and the native Rust mock-server command.
 
-install-app: native-cli #? install the project in editable mode and place the native `aiperf` binary on PATH.
-	$(activate_venv) && uv pip install -e ".[dev]"
+install-app: install-python native-cli #? install the project in editable mode and place the native `aiperf` binary on PATH.
 	# Editable installs don't process the wheel's `.data/scripts/` entry, so the
 	# `aiperf` command must be placed on the venv PATH explicitly. This mirrors what
 	# the wheel-repack does for a real install (see `wheel`).
 	cp $(RUST_TARGET)/release/aiperf $(VENV_PATH)/bin/aiperf
 	chmod +x $(VENV_PATH)/bin/aiperf
 
+install-python: #? install the editable Python `aiperf` package (with dev extras) into the venv — Python engine only, no Rust build.
+	# Decoupled from native-cli so the Python execution engine (python -m aiperf.cli,
+	# used by AIPERF_RUNTIME_ENGINE=python and the python-vs-rust e2e parity tests)
+	# is installable even when the native binary build is unavailable. `install-app`
+	# composes this with `native-cli` for the full native install.
+	$(activate_venv) && uv pip install -e ".[dev]"
+
 native-cli: #? build the unified native Rust `aiperf` binary (entry point + execution engine).
-	$(CARGO) build --release -p aiperf-cli $(CLI_FEATURES)
+	$(CARGO_BUILD) --release -p aiperf-cli $(CLI_FEATURES)
 
 install-native: native-cli #? install the pure-Rust `aiperf` into dist/native-bin (no Python on the profile/config path).
 	mkdir -p dist/native-bin
@@ -198,7 +208,7 @@ install-native: native-cli #? install the pure-Rust `aiperf` into dist/native-bi
 #   make bundle-cli CLI_FEATURES="--features full,search-pyo3"
 CLI_FEATURES ?= --features full
 bundle-cli: #? build the unified aiperf binary (CLI_FEATURES-selectable), fat-LTO optimized, for packaging.
-	$(CARGO) build --profile optimized -p aiperf-cli $(CLI_FEATURES)
+	$(CARGO_BUILD) --profile optimized -p aiperf-cli $(CLI_FEATURES)
 
 wheel: bundle-cli #? build the single aiperf wheel (maturin, manylinux) and repack the native binary into it.
 	$(activate_venv) && uv pip install "maturin[patchelf]" \
@@ -217,7 +227,7 @@ version: #? print the version of the project.
 	@PATH="$(UV_PATH):$(PATH)" uv version
 
 mock-server-native: #? build the high-throughput native Rust `aiperf-mock-server` binary.
-	$(CARGO) build --release -p aiperf-mock-server
+	$(CARGO_BUILD) --release -p aiperf-mock-server
 
 install-mock-server: mock-server-native #? install the native Rust `aiperf-mock-server` command on the venv PATH.
 	# The mock server is the native Rust binary (crate `aiperf-mock-server`). Place
