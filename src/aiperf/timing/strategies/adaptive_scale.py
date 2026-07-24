@@ -280,11 +280,13 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
                     await self._assessment_task
             await self._artifacts.close()
 
-    async def handle_credit_return(self, credit: Credit) -> None:
+    async def handle_credit_return(
+        self, credit: Credit, *, error: str | None = None
+    ) -> None:
         if self._user_strategy is not None:
-            await self._user_strategy.handle_credit_return(credit)
+            await self._user_strategy.handle_credit_return(credit, error=error)
             return
-        await super().handle_credit_return(credit)
+        await super().handle_credit_return(credit, error=error)
 
     def set_target_users(self, value: int) -> None:
         self._target_users = value

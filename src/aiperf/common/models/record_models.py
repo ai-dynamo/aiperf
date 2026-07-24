@@ -26,6 +26,7 @@ from pydantic.functional_validators import AfterValidator
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import STAT_KEYS
 from aiperf.common.enums import (
+    CacheBustTarget,
     CreditPhase,
     MetricConsoleGroup,
     MetricValueTypeT,
@@ -184,6 +185,36 @@ class MetricRecordMetadata(AIPerfBaseModel):
         default=None,
         description="The index of the turn in the conversation (if applicable). This can be used to lookup the original request data from the inputs.json file.",
     )
+    source_trace_id: str | None = Field(
+        default=None,
+        description=(
+            "Original trace/conversation id that produced this reconstructed "
+            "request, when provided by the dataset loader."
+        ),
+    )
+    source_outer_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index of the original top-level source request within "
+            "source_trace_id, when provided by the dataset loader."
+        ),
+    )
+    source_inner_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index within the nested source request list identified "
+            "by source_outer_idx, when provided by the dataset loader."
+        ),
+    )
+    source_kind: str | None = Field(
+        default=None,
+        description=(
+            "Loader-specific source classification for this request, when "
+            "provided by the dataset loader."
+        ),
+    )
     credit_issued_ns: int | None = Field(
         default=None,
         description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
@@ -236,6 +267,18 @@ class MetricRecordMetadata(AIPerfBaseModel):
         default=None,
         description="The wall clock timestamp of the request cancellation time measured as time.time_ns(), if applicable. "
         "This is only applicable to requests that were cancelled.",
+    )
+    context_overflow_skip: bool = Field(
+        default=False,
+        description="True iff the record was classified as a context-overflow event "
+        "AND the active scenario uses AGENTIC_REPLAY timing. Set on the worker side "
+        "by ``RecordProcessor`` and consumed by ``RecordsManager``: the record still "
+        "increments ``total_records`` (so the records-side counter stays in lockstep "
+        "with the credit-side ``final_requests_completed`` and the completion barrier "
+        "converges), but it is skipped from the error tracker, the per-record "
+        "accumulators (latency/throughput/etc.), and the stream exporters. Net effect: "
+        "the overflow event doesn't show up in any user-facing metric, while the run "
+        "still terminates cleanly.",
     )
     agent_depth: int = Field(
         default=0,
@@ -427,6 +470,13 @@ class ProfileResults(AIPerfBaseModel):
         "None for non-DAG runs; a populated snapshot for DAG-shaped "
         "runs. Forwarded to profile_export_aiperf.json under the "
         "``branch_stats`` key when present.",
+    )
+    context_overflow_count: int = Field(
+        default=0,
+        ge=0,
+        description="Count of AGENTIC_REPLAY context-overflow records skipped from "
+        "normal metric accumulation and stream export, retained only for "
+        "aggregate runtime submission validation.",
     )
     phase_records: list[PhaseProfileResults] | None = Field(
         default=None,
@@ -788,6 +838,36 @@ class RecordContext(AIPerfBaseModel):
         ...,
         description="The index of the turn in the conversation (if applicable).",
     )
+    source_trace_id: str | None = Field(
+        default=None,
+        description=(
+            "Original trace/conversation id that produced this reconstructed "
+            "request, when provided by the dataset loader."
+        ),
+    )
+    source_outer_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index of the original top-level source request within "
+            "source_trace_id, when provided by the dataset loader."
+        ),
+    )
+    source_inner_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index within the nested source request list identified "
+            "by source_outer_idx, when provided by the dataset loader."
+        ),
+    )
+    source_kind: str | None = Field(
+        default=None,
+        description=(
+            "Loader-specific source classification for this request, when "
+            "provided by the dataset loader."
+        ),
+    )
     x_request_id: str = Field(
         ...,
         description="The X-Request-ID header of the request. This is a unique ID for the request.",
@@ -851,6 +931,23 @@ class RecordContext(AIPerfBaseModel):
         "so fixed-schedule replay lag metrics can read it off the slim record "
         "without the full ``turns`` list on the wire. None for delay-scheduled "
         "continuation turns and non-fixed-schedule datasets.",
+    )
+
+    # --- Cache-bust marker (sourced from Credit, exported in raw JSONL) -------
+
+    cache_bust_marker: str | None = Field(
+        default=None,
+        description="Pre-rendered cache-bust marker text for this request, "
+        "sourced from ``Credit.cache_bust_marker``. Already includes whitespace "
+        "boundaries. None when the cache-bust feature is disabled or no marker "
+        "applied to this request. Exported in the raw JSONL so a replay tool "
+        "can correlate the inserted bytes with the originating session.",
+    )
+    cache_bust_target: CacheBustTarget | None = Field(
+        default=None,
+        description="Where the marker was injected for this request, sourced "
+        "from ``Credit.cache_bust_target``. None when cache-bust is disabled. "
+        "Pairs with ``cache_bust_marker`` for raw-JSONL provenance.",
     )
 
 
@@ -982,6 +1079,15 @@ class RequestRecord(AIPerfBaseModel):
     error: ErrorDetails | None = Field(
         default=None,
         description="The error details if the request failed.",
+    )
+    context_overflow: bool = Field(
+        default=False,
+        description="True iff this request's error response was classified "
+        "as a server-side context-overflow event by "
+        "``aiperf.common.scenario.is_context_overflow_response`` "
+        "(InferenceX AgentX scenario, RFC section 7). Set on the worker side at "
+        "response-parsing time; consumed by the ``ContextOverflowCountMetric`` "
+        "aggregate counter.",
     )
     credit_drop_latency: int | None = Field(
         default=None,
@@ -1553,4 +1659,18 @@ class RawRecordInfo(AIPerfBaseModel):
     error: ErrorDetails | None = Field(
         default=None,
         description="The error details if the request failed.",
+    )
+    cache_bust_marker: str | None = Field(
+        default=None,
+        description="Cache-bust marker text injected into the wire payload for "
+        "this request, copied from the originating ``Credit``. None when the "
+        "cache-bust feature is disabled. Surfaced here so raw-JSONL consumers "
+        "can correlate inserted bytes with the originating session without "
+        "re-parsing ``payload``.",
+    )
+    cache_bust_target: CacheBustTarget | None = Field(
+        default=None,
+        description="Where the marker was injected (``system_prefix``, "
+        "``system_suffix``, ``first_turn_prefix``, or ``first_turn_suffix``). "
+        "None when cache-bust is disabled.",
     )

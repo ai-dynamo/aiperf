@@ -306,8 +306,11 @@ class TestDatasetManagerCacheEdgeCases:
         self, tmp_path: Path, mock_tokenizer
     ) -> None:
         """A HIT whose manifest dataset_metadata_json fails validation must be
-        treated as a MISS: restored files removed, full pipeline re-run."""
+        treated as a MISS: restored files removed, poisoned cache entry
+        invalidated, and the full pipeline re-run (so populate can heal)."""
         import orjson
+
+        from aiperf.common.models import DatasetMetadata
 
         trace = _write_trace(tmp_path)
         run1 = _make_run(file_path=trace, benchmark_id="corrupt-1")
@@ -332,6 +335,11 @@ class TestDatasetManagerCacheEdgeCases:
         # The run still completed: metadata was rebuilt by the full pipeline.
         assert dm2.dataset_metadata is not None
         assert len(dm2.dataset_metadata.conversations) == 2
+
+        # invalidate() dropped the poison; populate rewrote a valid entry.
+        healed = mmap_cache.lookup(key, compressed=False)
+        assert healed is not None, "post-run populate must heal the invalidated key"
+        DatasetMetadata.model_validate_json(healed.manifest.dataset_metadata_json)
         await dm2.stop()
 
     @pytest.mark.asyncio

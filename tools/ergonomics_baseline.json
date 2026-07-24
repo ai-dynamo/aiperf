@@ -58,6 +58,11 @@
     ],
     [
       "keyword-only-args",
+      "src/aiperf/dataset/loader/weka_synth_buf.py",
+      "ConversationReconstructor.init_turn_0"
+    ],
+    [
+      "keyword-only-args",
       "src/aiperf/exporters/metrics_csv_exporter.py",
       "MetricsCsvExporter._write_gpu_metric_row_from_summary"
     ],
@@ -197,6 +202,11 @@
       "ServerMetricsParquetExporter._collect_scalar_rows"
     ],
     [
+      "keyword-only-args",
+      "src/aiperf/workers/session_manager.py",
+      "UserSessionManager.create_and_store"
+    ],
+    [
       "module-state",
       "src/aiperf/common/aiperf_logger.py",
       "_ignored_files"
@@ -240,6 +250,11 @@
       "nesting-depth",
       "src/aiperf/dataset/agentic_code_gen/reporting/simulation_engine.py",
       "simulate"
+    ],
+    [
+      "nesting-depth",
+      "src/aiperf/dataset/generator/coding_content.py",
+      "CodingContentGenerator._gen_config_file"
     ],
     [
       "nesting-depth",

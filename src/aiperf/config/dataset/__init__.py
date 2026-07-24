@@ -17,6 +17,7 @@ from aiperf.config.dataset.content import (
     ImageConfig,
     PrefixPromptConfig,
     PromptConfig,
+    PromptSelectionConfig,
     RankingsConfig,
 )
 from aiperf.config.dataset.resolver import DatasetResolver
@@ -36,6 +37,7 @@ __all__ = [
     "ImageConfig",
     "PrefixPromptConfig",
     "PromptConfig",
+    "PromptSelectionConfig",
     "PublicDataset",
     "RankingsConfig",
     "SynthesisConfig",

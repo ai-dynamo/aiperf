@@ -443,8 +443,11 @@ class TestExporterManager:
                 telemetry_results=None,
             )
             # Non-terminal console renders the exporter loop exactly once, so the
-            # assert_*_once assertions stay deterministic regardless of pytest -s.
-            await manager.export_console(Console(file=io.StringIO()))
+            # assert_*_once assertions stay deterministic regardless of pytest -s
+            # or ambient TTY detection.
+            await manager.export_console(
+                Console(file=io.StringIO(), force_terminal=False)
+            )
 
         for mock_class, mock_instance in zip(
             mock_classes, mock_instances, strict=False
@@ -507,7 +510,7 @@ class TestExportConsoleArtifactAndStyling:
         self, sample_records, mock_cfg
     ):
         buffer = io.StringIO()
-        console = Console(file=buffer)
+        console = Console(file=buffer, force_terminal=False)
         assert not console.is_terminal
 
         with patch(
@@ -583,6 +586,41 @@ class TestExportConsoleArtifactAndStyling:
         )
 
     @pytest.mark.asyncio
+    async def test_export_console_terminal_without_color_rerenders_at_live_width(
+        self, sample_records, mock_cfg
+    ):
+        """NO_COLOR / dumb terminals still need a live-width re-render for the
+        interactive replay; the fixed-width pass only feeds the .txt artifact.
+        """
+        captured_widths: list[int] = []
+
+        async def _capture_width(*, console: Console) -> None:
+            captured_widths.append(console.width)
+
+        instance = MagicMock()
+        instance.export = AsyncMock(side_effect=_capture_width)
+        mock_class = MagicMock(return_value=instance)
+        mock_entry = MagicMock()
+        mock_entry.name = "counting_console_exporter"
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all",
+            return_value=[(mock_entry, mock_class)],
+        ):
+            manager = _make_manager(sample_records, mock_cfg)
+            await manager.export_console(
+                Console(
+                    file=io.StringIO(),
+                    force_terminal=True,
+                    no_color=True,
+                    width=100,
+                )
+            )
+
+        assert 140 in captured_widths  # fixed-width artifact recording
+        assert 100 in captured_widths  # live plain-text TTY replay
+
+    @pytest.mark.asyncio
     async def test_export_console_renders_live_output_at_terminal_width_on_tty(
         self, endpoint_config, output_config, sample_records, mock_cfg
     ):
@@ -656,6 +694,8 @@ class TestExportConsoleArtifactAndStyling:
             )
             # Non-tty: single render at the fixed export width, then the recorded
             # text is replayed verbatim (no second render at terminal width).
-            await manager.export_console(Console(file=io.StringIO()))
+            await manager.export_console(
+                Console(file=io.StringIO(), force_terminal=False)
+            )
 
         assert captured_widths == [140]

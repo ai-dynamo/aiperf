@@ -209,6 +209,13 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = False
         manager._error_tracker = ErrorTracker()
         manager._complete_credit_phases = set()
+        manager._warned_missing_cache_reporting = False
+        manager._failed_request_threshold = None
+        manager._failed_request_abort_triggered = False
+        manager._skipped_context_overflow_counts_by_phase = {
+            CreditPhase.WARMUP: 0,
+            CreditPhase.PROFILING: 0,
+        }
         return manager
 
     def _records_message(self) -> RecordsMessage:
@@ -267,6 +274,37 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         )
 
     @pytest.mark.asyncio
+    async def test_context_overflow_skip_counts_as_success_not_error(self) -> None:
+        """AGENTIC_REPLAY overflow skips must advance the success counter and
+        must NOT inflate error_records (which would trip --failed-request-threshold).
+        """
+        manager = self._make_manager()
+        manager._dispatch_record = AsyncMock(return_value=[])
+        record = create_metric_record_data(1_000, 2_000)
+        record.metadata.context_overflow_skip = True
+        message = RecordsMessage(
+            service_id="rp",
+            metadata=record.metadata,
+            records=[record],
+            error=ErrorDetails(code=400, type="ContextOverflow", message="overflow"),
+        )
+
+        await manager._on_records(message)
+
+        assert (
+            manager._skipped_context_overflow_counts_by_phase[CreditPhase.PROFILING]
+            == 1
+        )
+        manager._records_tracker.update_from_request.assert_called_once_with(
+            message.metadata, None
+        )
+        manager._dispatch_record.assert_not_called()
+        assert (
+            manager._error_tracker.get_error_summary_for_phase(CreditPhase.PROFILING)
+            == []
+        )
+
+    @pytest.mark.asyncio
     async def test_warmup_plus_single_profiling_builds_phase_results(self) -> None:
         manager = RecordsManager.__new__(RecordsManager)
         manager._records_tracker = MagicMock()
@@ -307,6 +345,96 @@ class TestRecordsManagerMetricRecordDispatchErrors:
 
         assert results is not None
         assert [r.phase_name for r in results] == ["warmup", "load"]
+
+    @staticmethod
+    def _warmup_summary_manager(
+        warmup_overflow: int, base_metrics: list[MetricResult]
+    ) -> RecordsManager:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.error = MagicMock()
+        manager._records_tracker = MagicMock()
+        manager._records_tracker.was_phase_cancelled = MagicMock(return_value=False)
+        manager._has_records_for_phase = MagicMock(return_value=True)
+        manager._summarize_metric_record_accumulators = AsyncMock(
+            return_value=(list(base_metrics), None, [], None)
+        )
+        manager._skipped_context_overflow_counts_by_phase = {
+            CreditPhase.WARMUP: warmup_overflow,
+            CreditPhase.PROFILING: 7,
+        }
+        return manager
+
+    @pytest.mark.asyncio
+    async def test_warmup_summary_injects_context_overflow_metric(self) -> None:
+        base = [MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0)]
+        manager = self._warmup_summary_manager(warmup_overflow=3, base_metrics=base)
+
+        results = await RecordsManager._summarize_warmup_metric_records(manager)
+
+        assert results is not None
+        overflow = [r for r in results if r.tag == "context_overflow_count"]
+        assert len(overflow) == 1
+        # WARMUP count (3) is surfaced, not the PROFILING count (7).
+        assert overflow[0].avg == 3.0
+        assert overflow[0].count == 1
+        assert overflow[0].unit == "requests"
+
+    @pytest.mark.asyncio
+    async def test_warmup_summary_omits_metric_when_no_overflow(self) -> None:
+        base = [MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0)]
+        manager = self._warmup_summary_manager(warmup_overflow=0, base_metrics=base)
+
+        results = await RecordsManager._summarize_warmup_metric_records(manager)
+
+        assert results is not None
+        assert all(r.tag != "context_overflow_count" for r in results)
+
+    @pytest.mark.asyncio
+    async def test_warmup_summary_surfaces_overflow_when_all_requests_skipped(
+        self,
+    ) -> None:
+        """Even at 100% warmup overflow the count is still surfaced.
+
+        Context-overflow skips are recorded as success via
+        ``update_from_request(metadata, None)``, so ``_has_records_for_phase``
+        (which reads the records tracker's ``total_records``, not the metric
+        accumulator) returns True and the injection block is reached even when
+        the metric accumulator collected nothing.
+        """
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.error = MagicMock()
+
+        tracker = RecordsTracker()
+        for i in range(3):
+            tracker.update_from_request(
+                MetricRecordMetadata(
+                    session_num=i,
+                    request_start_ns=1,
+                    request_end_ns=2,
+                    worker_id="w0",
+                    record_processor_id="rp0",
+                    benchmark_phase=CreditPhase.WARMUP,
+                    phase_index=0,
+                    context_overflow_skip=True,
+                ),
+                None,
+            )
+        manager._records_tracker = tracker
+        # Metric accumulator collected nothing (every request was skipped).
+        manager._summarize_metric_record_accumulators = AsyncMock(
+            return_value=([], None, [], None)
+        )
+        manager._skipped_context_overflow_counts_by_phase = {
+            CreditPhase.WARMUP: 3,
+            CreditPhase.PROFILING: 0,
+        }
+
+        results = await RecordsManager._summarize_warmup_metric_records(manager)
+
+        assert results is not None
+        overflow = [r for r in results if r.tag == "context_overflow_count"]
+        assert len(overflow) == 1
+        assert overflow[0].avg == 3.0
 
     @pytest.mark.asyncio
     async def test_single_profiling_phase_does_not_build_duplicate_phase_results(
@@ -805,6 +933,15 @@ def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager.trace = MagicMock()
     manager.is_enabled_for = MagicMock(return_value=False)
     manager._handle_all_records_received = AsyncMock()
+    manager._credits_complete_received = False
+    manager._all_records_received_phases = set()
+    manager._warned_missing_cache_reporting = False
+    manager._failed_request_threshold = None
+    manager._failed_request_abort_triggered = False
+    manager._skipped_context_overflow_counts_by_phase = {
+        CreditPhase.WARMUP: 0,
+        CreditPhase.PROFILING: 0,
+    }
     return manager
 
 
@@ -1134,6 +1271,32 @@ class TestRecordsManagerTimingDispatch:
             CreditPhase.PROFILING
         )
 
+    @pytest.mark.asyncio
+    async def test_on_records_defers_finalization_for_multi_profiling_until_credits_complete(
+        self,
+    ) -> None:
+        """Multi-profiling runs must not finalize PROFILING before CREDITS_COMPLETE."""
+        manager = _create_manager_for_timing_dispatch()
+        manager._complete_credit_phases = {CreditPhase.PROFILING}
+        manager._has_multiple_profiling_phases = MagicMock(return_value=True)
+        manager._credits_complete_received = False
+        manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = True
+
+        await manager._on_records(_metric_records_message())
+
+        manager._records_tracker.check_and_set_all_records_received_for_phase.assert_not_called()
+        manager._handle_all_records_received.assert_not_awaited()
+
+        manager._credits_complete_received = True
+        await manager._on_records(_metric_records_message())
+
+        manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        manager._handle_all_records_received.assert_awaited_once_with(
+            CreditPhase.PROFILING
+        )
+
 
 class TestRecordsManagerAnalyzerMetrics:
     """Pin the invariant that `completed` counts request-derived records only,
@@ -1150,6 +1313,10 @@ class TestRecordsManagerAnalyzerMetrics:
         manager.service_id = "records-manager-test"
         manager._latest_branch_stats = None
         manager.publish = AsyncMock()
+        manager._skipped_context_overflow_counts_by_phase = {
+            CreditPhase.WARMUP: 0,
+            CreditPhase.PROFILING: 0,
+        }
 
         manager.run = MagicMock()
         manager.run.cfg.gpu_telemetry_disabled = True
@@ -1321,6 +1488,7 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         manager._dispatch_record = AsyncMock(
             side_effect=RuntimeError("REACHED_PROCESSING")
         )
+        manager._warned_missing_cache_reporting = False
         message = _metric_records_message()
 
         task = asyncio.create_task(manager._on_records(message))

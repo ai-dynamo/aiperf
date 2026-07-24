@@ -22,7 +22,6 @@ from aiperf.common.enums import (
 )
 from aiperf.common.models import (
     ConversationBranchInfo,
-    ConversationMetadata,
     DatasetMetadata,
     TurnMetadata,
     TurnPrerequisite,
@@ -34,28 +33,9 @@ from aiperf.timing.branch_orchestrator import (
     PendingBranchJoin,
     PrereqState,
 )
+from tests.unit.timing._shared_helpers import _mk_conv, _mk_source
 
 # -- shared harness helpers (mirrors test_branch_orchestrator_join.py) -------
-
-
-def _mk_conv(
-    cid: str,
-    turns: list[TurnMetadata],
-    branches: list[ConversationBranchInfo],
-) -> ConversationMetadata:
-    return ConversationMetadata(conversation_id=cid, turns=turns, branches=branches)
-
-
-def _mk_source(conversations: list[ConversationMetadata]):
-    cs = MagicMock()
-    cs.dataset_metadata = DatasetMetadata(
-        conversations=conversations,
-        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
-    )
-    cs.get_metadata.side_effect = lambda cid: next(
-        c for c in conversations if c.conversation_id == cid
-    )
-    return cs
 
 
 # ============================================================
@@ -328,6 +308,7 @@ async def test_start_branch_child_raise_rolls_back_sticky_refcount_unchanged():
     assert orch.stats.children_errored == 1
     assert orch.stats.children_spawned == 0
     sticky_router.register_child_routing.assert_not_called()
+    sticky_router.evict_unclaimed_sticky.assert_called_once_with("root")
     assert orch._descendant_counts == baseline_descendant_counts
     assert orch._child_to_join == {}
 
@@ -566,9 +547,7 @@ def test_cleanup_with_pending_joins_logs_leak_warning(caplog):
         expected=1, completed=set(), registered=True
     )
     orch._active_joins["leaky"] = pending
-    with caplog.at_level(
-        logging.WARNING, logger="aiperf.timing._branch_orchestrator_logging"
-    ):
+    with caplog.at_level(logging.WARNING, logger="aiperf.timing.branch_orchestrator"):
         orch.cleanup()
 
     leak_records = [r for r in caplog.records if "leaked state" in r.getMessage()]

@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-from collections import Counter
-
 import numpy as np
 from pydantic import Field
 
@@ -152,12 +150,6 @@ def extract_cache_metrics(
         all_turns.extend(turns)
     session_boundary_set = set(session_boundaries)
 
-    hash_counter: Counter[tuple[int, int]] = Counter()
-    for turn in all_turns:
-        for pos, hid in enumerate(turn.hash_ids):
-            hash_counter[(pos, hid)] += 1
-    repeated = {k for k, v in hash_counter.items() if v > 1}
-
     prefix_length: list[float] = []
     unique_prompt_length: list[float] = []
     prefix_ratio: list[float] = []
@@ -170,13 +162,18 @@ def extract_cache_metrics(
         hash_ids = turn.hash_ids
         input_length = turn.input_length
 
-        repeated_count = sum(
-            1 for pos, hid in enumerate(hash_ids) if (pos, hid) in repeated
-        )
+        # Prefix = the leading run of this turn's blocks already cached from
+        # PRIOR requests (``global_seen`` holds every earlier turn's blocks;
+        # this turn's are added below). Causal first-unseen scan, so the first
+        # turn of any session has prefix 0. The old symmetric repeated-position
+        # count credited a turn for blocks that only reappear in LATER turns,
+        # reporting the first turn as up to 100% prefix reuse and biasing the
+        # prefix/unique distributions.
+        prefix_blocks = _leading_cached_blocks(hash_ids, global_seen)
         prefix_tokens = (
             input_length
-            if hash_ids and repeated_count == len(hash_ids)
-            else min(repeated_count * block_size, input_length)
+            if hash_ids and prefix_blocks == len(hash_ids)
+            else min(prefix_blocks * block_size, input_length)
         )
 
         prefix_length.append(float(prefix_tokens))
@@ -201,16 +198,24 @@ def extract_cache_metrics(
     }
 
 
+def _leading_cached_blocks(hash_ids: list[int], seen: set[int]) -> int:
+    """Number of leading contiguous hash blocks already present in ``seen``.
+
+    Causal prefix-cache reuse for one request: the longest prefix of
+    ``hash_ids`` whose blocks were all seen in a prior request. Stops at the
+    first unseen block (a cache miss ends the reusable prefix).
+    """
+    for idx, hid in enumerate(hash_ids):
+        if hid not in seen:
+            return idx
+    return len(hash_ids)
+
+
 def _cache_hit_rate(hash_ids: list[int], seen: set[int]) -> float:
     """Return prefix cache hit rate for hash_ids against a seen-block set."""
     if not hash_ids:
         return 0.0
-    first_unseen = len(hash_ids)
-    for idx, hid in enumerate(hash_ids):
-        if hid not in seen:
-            first_unseen = idx
-            break
-    return first_unseen / len(hash_ids)
+    return _leading_cached_blocks(hash_ids, seen) / len(hash_ids)
 
 
 def _target_table(
