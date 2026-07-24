@@ -312,6 +312,50 @@ mod tests {
         }
     }
 
+    fn adaptive_scale(control_variable: &str) -> crate::model::phase::AdaptiveScale {
+        crate::model::phase::AdaptiveScale {
+            control_variable: control_variable.into(),
+            minimum: serde_json::Number::from(1),
+            maximum: serde_json::Number::from(64),
+            assessment_period_seconds: 5.0,
+            sustain_duration_seconds: 10.0,
+            min_completed_requests: 1,
+            strategy_type: "ramp_until_fail".into(),
+            step_policy: "sla_margin".into(),
+            base_step: 2,
+            max_step_multiplier: 4,
+            step_percent: 0.0,
+            sla_filters: vec![],
+        }
+    }
+
+    #[test]
+    fn adaptive_scale_rejected_on_fixed_schedule_phase() {
+        let mut phase = concurrency_phase("fs", Some(PhaseRole::Profiling));
+        phase.common.adaptive_scale = Some(adaptive_scale("concurrency"));
+        phase.kind = PhaseKind::FixedSchedule {
+            auto_offset: true,
+            start_offset: None,
+            end_offset: None,
+        };
+        let err = normalize_and_validate_phases(&mut vec![phase]).unwrap_err();
+        assert!(err.to_string().contains("fixed_schedule"));
+    }
+
+    #[test]
+    fn adaptive_request_rate_rejects_rate_series() {
+        let mut phase = concurrency_phase("rr", Some(PhaseRole::Profiling));
+        phase.common.adaptive_scale = Some(adaptive_scale("request_rate"));
+        phase.common.rate_series =
+            Some(crate::model::rate_series::RateSeries::from_json_str("[[0,1],[10,5]]").unwrap());
+        phase.kind = PhaseKind::Constant {
+            rate: 1.0,
+            concurrency: None,
+        };
+        let err = normalize_and_validate_phases(&mut vec![phase]).unwrap_err();
+        assert!(err.to_string().contains("rate_series"));
+    }
+
     #[test]
     fn custom_name_requires_kind() {
         let mut phases = vec![concurrency_phase("storm_1", None)];
