@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset.resolver import DatasetResolver
 
 if TYPE_CHECKING:
@@ -97,6 +98,16 @@ class ArtifactDirResolver:
         artifact_dir.mkdir(parents=True, exist_ok=True)
         run.resolved.artifact_dir_created = True
         _logger.debug(f"Artifact directory created: {artifact_dir}")
+
+        # Purge stale output fragments from a prior failed run. Fragment files
+        # use random service IDs as suffixes, so leftovers from a crashed run
+        # would silently contaminate the next outputs.json export.
+        if cfg.artifacts.export_outputs_json:
+            fragments_dir = artifact_dir / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+            if fragments_dir.exists():
+                for stale in fragments_dir.glob("output_fragments_*.jsonl"):
+                    stale.unlink(missing_ok=True)
+                _logger.debug("Purged stale output fragments")
 
         if run.cfg.artifacts.user_files and not for_probe:
             from aiperf.config.user_files import (
