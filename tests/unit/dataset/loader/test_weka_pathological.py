@@ -455,7 +455,8 @@ def test_relative_inner_timestamps_emit_root_timeline_child_turns(tmp_path):
     child = next(c for c in convs if c.session_id == "rel_inner::sa:a")
     assert child.turns[0].timestamp == pytest.approx(10_000.0)
     assert child.turns[1].timestamp == pytest.approx(15_000.0)
-    assert child.turns[1].delay == pytest.approx(5_000.0)
+    # end-to-start idle gap: 5.0s start-to-start minus 1.0s prev api_time.
+    assert child.turns[1].delay == pytest.approx(4_000.0)
 
 
 def test_duplicate_subagent_agent_id_in_one_trace_raises(tmp_path):

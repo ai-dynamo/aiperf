@@ -41,7 +41,6 @@ aiperf profile \
   --concurrency 256 \
   --benchmark-duration 1800 \
   --streaming \
-  --use-end-to-start-delays \
   --trace-idle-gap-cap-seconds 10.0 \
   --trajectory-start-min-ratio 0.0 \
   --trajectory-start-max-ratio 1.0 \
@@ -56,9 +55,10 @@ against its Weka allowlist but never fills one in) — you could drop every scen
 flag and get the same behavior (the scenario auto-fills them); they are written out here for
 transparency.
 
-- **Scenario-locked** (a conflicting value is rejected): `--streaming`, `--use-end-to-start-delays`,
+- **Scenario-locked** (a conflicting value is rejected): `--streaming`,
   `--trace-idle-gap-cap-seconds 10.0`, `--cache-bust first_turn_prefix`, and a pinned `--public-dataset`.
-  `--streaming` and `--use-end-to-start-delays` auto-enable if you omit them.
+  `--streaming` auto-enables if you omit it.
+- **Always on, no flag:** replay delays are always end-to-start (see below); there is no toggle.
 - **Scenario defaults** (auto-filled if omitted; you may override): `--benchmark-duration 1800` (floor
   900s), `--trajectory-start-min-ratio 0.0` / `--trajectory-start-max-ratio 1.0` (sample t\* across the
   full run).
@@ -276,8 +276,8 @@ that results is whatever those N sessions naturally produce given the recorded i
 Recorded timing is honored by default (the scenario forbids `--ignore-trace-delays`). Between turns,
 the benchmark waits the recorded "think time"/gap before sending the next turn. The gap is measured
 **end-to-start** — from the previous turn's *completion* to the next turn's dispatch, not
-request-start to request-start (this is the scenario-locked `--use-end-to-start-delays` flag from the
-[Quickstart](#quickstart) legend). Replay dispatches each turn only after the previous one completes,
+request-start to request-start. This is always the case for weka trace replay; there is no flag to
+change it. Replay dispatches each turn only after the previous one completes,
 so start-to-start deltas would double-count the server's own response time and make every session
 drift later turn by turn. Long idle gaps are capped (the AgentX scenario caps the idle gap at 10
 seconds) so a session that sat idle for an hour in the original capture doesn't stall a lane for an

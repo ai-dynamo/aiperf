@@ -131,8 +131,6 @@ def _api_time_ms(api_time: float | None) -> float | None:
 def _end_to_start_delay_ms(
     start_to_start_ms: float | None,
     prev_api_seconds: float | None,
-    *,
-    end_to_start: bool,
 ) -> float | None:
     """Convert a start-to-start inter-request delay to end-to-start.
 
@@ -144,13 +142,13 @@ def _end_to_start_delay_ms(
     per stream and fabricating cross-stream concurrency (see the agentic-replay
     timing-fidelity analysis). The faithful inter-turn delay is the *idle* gap
     between the previous request ending and this one starting:
-    ``t_k - (t_{k-1} + api_{k-1})``. Returns the start-to-start value unchanged
-    when ``end_to_start`` is False (legacy) or there is no prior turn. Clamped at
+    ``t_k - (t_{k-1} + api_{k-1})``. This is always applied (there is no
+    start-to-start mode). Returns None when there is no prior turn. Clamped at
     0: a request that began before its predecessor finished (recorded overlap)
     dispatches immediately on completion.
     """
-    if not end_to_start or start_to_start_ms is None:
-        return start_to_start_ms
+    if start_to_start_ms is None:
+        return None
     api_ms = (
         prev_api_seconds * 1000.0
         if prev_api_seconds is not None and math.isfinite(prev_api_seconds)
@@ -757,8 +755,6 @@ def _populate_flat_chain_timing(
     flat_plans_for_trace: list[_FlatChainPlan],
     warp: _IdleGapTimeWarp,
     child_by_session_request: dict[tuple[str, int], _RequestTiming],
-    *,
-    end_to_start: bool,
 ) -> tuple[dict[str, float], dict[str, float]]:
     """Warp flat-chain request timing onto the shared per-trace timeline.
 
@@ -777,9 +773,7 @@ def _populate_flat_chain_timing(
         for k, (_, req) in enumerate(fp.requests):
             t = warp.map(req.t)
             delay_ms = None if prev_flat_t is None else (t - prev_flat_t) * 1000.0
-            delay_ms = _end_to_start_delay_ms(
-                delay_ms, prev_flat_api, end_to_start=end_to_start
-            )
+            delay_ms = _end_to_start_delay_ms(delay_ms, prev_flat_api)
             child_by_session_request[(fp.session_id, k)] = _RequestTiming(t, delay_ms)
             if k == 0:
                 flat_chain_start_by_session[fp.session_id] = t
@@ -818,7 +812,6 @@ def _build_trace_idle_timing(
     child_plans: list[_ChildPlan],
     cap_seconds: float,
     flat_plans: list[_FlatChainPlan] | None = None,
-    end_to_start: bool = False,
 ) -> _TraceIdleTiming:
     """Build per-turn timing after capping request-start gaps in one root trace.
 
@@ -860,7 +853,7 @@ def _build_trace_idle_timing(
     for outer_idx, req in plan.normals:
         t = warp.map(req.t)
         delay_ms = None if prev_t is None else (t - prev_t) * 1000.0
-        delay_ms = _end_to_start_delay_ms(delay_ms, prev_api, end_to_start=end_to_start)
+        delay_ms = _end_to_start_delay_ms(delay_ms, prev_api)
         parent_by_outer_idx[outer_idx] = _RequestTiming(t, delay_ms)
         prev_t = t
         prev_api = req.api_time
@@ -872,9 +865,7 @@ def _build_trace_idle_timing(
         for k, req in enumerate(cp.requests):
             t = warp.map(req.t)
             delay_ms = None if prev_child_t is None else (t - prev_child_t) * 1000.0
-            delay_ms = _end_to_start_delay_ms(
-                delay_ms, prev_child_api, end_to_start=end_to_start
-            )
+            delay_ms = _end_to_start_delay_ms(delay_ms, prev_child_api)
             child_by_session_request[(cp.session_id, k)] = _RequestTiming(t, delay_ms)
             prev_child_t = t
             prev_child_api = req.api_time
@@ -884,7 +875,6 @@ def _build_trace_idle_timing(
             flat_plans_for_trace,
             warp,
             child_by_session_request,
-            end_to_start=end_to_start,
         )
     )
 
@@ -990,9 +980,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         self._max_context_length = getattr(dataset, "max_context_length", None)
         self._ignore_trace_delays = getattr(dataset, "ignore_trace_delays", False)
         self._use_think_time_only = getattr(dataset, "use_think_time_only", False)
-        self._use_end_to_start_delays = getattr(
-            dataset, "use_end_to_start_delays", False
-        )
         self._inter_turn_delay_cap_seconds = getattr(
             dataset, "inter_turn_delay_cap_seconds", None
         )
@@ -1562,14 +1549,12 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         trace_idle_gap_cap_seconds = self._trace_idle_gap_cap_seconds()
         if trace_idle_gap_cap_seconds is None:
             return {}
-        end_to_start = self._use_end_to_start_delays
         return {
             plan.trace_id: _build_trace_idle_timing(
                 plan=plan,
                 child_plans=child_plans,
                 cap_seconds=trace_idle_gap_cap_seconds,
                 flat_plans=flat_plans,
-                end_to_start=end_to_start,
             )
             for plan in parent_plans
         }
@@ -1930,7 +1915,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     elif think_time_only and req.think_time is not None:
                         delay_ms = req.think_time * 1000.0
                     else:
-                        delay_ms = t_ms - plan.normals[k - 1][1].t * 1000.0
+                        prev_req = plan.normals[k - 1][1]
+                        delay_ms = _end_to_start_delay_ms(
+                            t_ms - prev_req.t * 1000.0, prev_req.api_time
+                        )
                 if delay_ms is not None:
                     delay_ms = self._delay_cap_tracker.clamp(delay_ms)
                     # Floor at 0: a negative inter-turn delay (corrupt
@@ -2277,7 +2265,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     elif think_time_only and creq.think_time is not None:
                         child_delay_ms = creq.think_time * 1000.0
                     else:
-                        child_delay_ms = t_ms - cp.requests[k - 1].t * 1000.0
+                        prev_creq = cp.requests[k - 1]
+                        child_delay_ms = _end_to_start_delay_ms(
+                            t_ms - prev_creq.t * 1000.0, prev_creq.api_time
+                        )
                 if child_delay_ms is not None:
                     child_delay_ms = self._delay_cap_tracker.clamp(child_delay_ms)
                 child_delta = child_recon.turn_delta()
@@ -2441,7 +2432,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             elif think_time_only and req.think_time is not None:
                 delay_ms = req.think_time * 1000.0
             else:
-                delay_ms = t_ms - fp.requests[k - 1][1].t * 1000.0
+                prev_freq = fp.requests[k - 1][1]
+                delay_ms = _end_to_start_delay_ms(
+                    t_ms - prev_freq.t * 1000.0, prev_freq.api_time
+                )
         if delay_ms is not None:
             delay_ms = self._delay_cap_tracker.clamp(delay_ms)
         return t_ms, delay_ms

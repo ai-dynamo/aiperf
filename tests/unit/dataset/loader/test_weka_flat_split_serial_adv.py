@@ -392,8 +392,9 @@ def test_flat_chain_delays_are_within_chain_and_nonnegative():
     convs = _convert(loader, _trace("flt_delay", requests))
     worker = convs["flt_delay::fa:000"]
     assert worker.turns[0].delay is None  # turn 0 always None
-    # Within-chain delta: 8.0 - 3.0 = 5.0s -> 5000ms (NOT 8.0 - 4.0 cross-agent).
-    assert worker.turns[1].delay == pytest.approx(5000.0)
+    # Within-chain end-to-start idle gap: 8.0 - (3.0 + 0.5 api) = 4.5s -> 4500ms
+    # (NOT 8.0 - 4.0 cross-agent, and NOT the raw 5.0s start-to-start delta).
+    assert worker.turns[1].delay == pytest.approx(4500.0)
     for c in convs.values():
         for turn in c.turns:
             if turn.delay is not None:

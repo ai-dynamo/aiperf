@@ -630,25 +630,6 @@ class CLIConfig(BaseConfig):
         ),
     ] = False
 
-    use_end_to_start_delays: Annotated[
-        bool,
-        Field(
-            description="For weka_trace inputs, emit Turn.delay as the end-to-start idle gap "
-            "`t_curr - (t_prev + api_time_prev)` instead of the start-to-start delta `t_curr - t_prev`. "
-            "The replay dispatches each turn after the previous turn COMPLETES, so adding the "
-            "start-to-start gap (which already contains the previous request's server time) "
-            "double-counts `api_time` and makes each stream's clock drift later turn-by-turn, "
-            "fabricating cross-stream concurrency. End-to-start is the faithful inter-turn idle and "
-            "reproduces the recording's concurrency exactly at replay-speed parity. Computed from "
-            "`t`/`api_time` (unlike `--use-think-time-only`). Floors at 0 for recorded overlap. "
-            "No effect on non-weka loaders.",
-        ),
-        CLIParameter(
-            name=("--use-end-to-start-delays",),
-            group=Groups.INPUT,
-        ),
-    ] = False
-
     max_context_length: Annotated[
         int | None,
         Field(

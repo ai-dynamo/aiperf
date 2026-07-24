@@ -825,8 +825,6 @@ def _apply_trace_delay_flags(d: dict[str, Any], cli: CLIConfig) -> None:
         d["ignore_trace_delays"] = cli.ignore_trace_delays
     if "use_think_time_only" in s:
         d["use_think_time_only"] = cli.use_think_time_only
-    if "use_end_to_start_delays" in s:
-        d["use_end_to_start_delays"] = cli.use_end_to_start_delays
     if "trace_idle_gap_cap_seconds" in s and cli.trace_idle_gap_cap_seconds is not None:
         d["trace_idle_gap_cap_seconds"] = cli.trace_idle_gap_cap_seconds
 

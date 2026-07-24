@@ -116,7 +116,8 @@ def test_convert_to_conversations_builds_one_conversation_per_normal_request(
     # Trace `t` is in seconds; Turn.timestamp/delay contract is milliseconds.
     assert conv.turns[0].timestamp == 0.0
     assert conv.turns[1].timestamp == 5000.0
-    assert conv.turns[1].delay == pytest.approx(5000.0)
+    # end-to-start idle gap: 5.0s start-to-start minus 1.0s prev api_time.
+    assert conv.turns[1].delay == pytest.approx(4000.0)
     # weka loader populates only ``Turn.raw_messages`` (the multi-message chat
     # form consumed by ChatEndpoint.build_messages). ``Turn.texts`` is left
     # at its default empty list — a separate full-prompt decode previously
@@ -437,7 +438,8 @@ def test_weka_trace_idle_gap_cap_ignores_dropped_orphan_subagent(tmp_path):
     assert [c.session_id for c in conversations] == ["orphan_gap"]
     assert root.turns[0].timestamp == 1000.0 * 1000.0
     assert root.turns[1].timestamp == 1060.0 * 1000.0
-    assert root.turns[1].delay == 60.0 * 1000.0
+    # end-to-start idle gap: 60.0s start-to-start minus 1.0s prev api_time.
+    assert root.turns[1].delay == 59.0 * 1000.0
 
 
 def test_weka_parallel_child_conversation_metadata_is_non_root(monkeypatch):
@@ -909,7 +911,9 @@ def test_use_think_time_only_emits_recorded_think_time_as_delay(monkeypatch, tmp
     assert (
         turns[1].delay == 7000.0
     )  # think_time=7.0s -> 7000ms (NOT 12000ms full delta)
-    assert turns[2].delay == 13000.0  # think_time=None -> falls back to (25-12)*1000
+    # think_time=None -> falls back to end-to-start: (25-12)s start-to-start
+    # minus 4.0s prev api_time = 9000ms.
+    assert turns[2].delay == 9000.0
 
 
 def test_trace_idle_gap_cap_is_per_trace_and_uses_request_starts(tmp_path):
@@ -1015,8 +1019,9 @@ def test_trace_idle_gap_cap_is_per_trace_and_uses_request_starts(tmp_path):
     assert trace_a_turns[0].timestamp == 0.0
     assert trace_a_turns[1].timestamp == 80_000.0
     # The trace-wide idle-gap cap takes precedence over the old per-turn cap,
-    # so this stays 80s rather than being independently clamped to 60s.
-    assert trace_a_turns[1].delay == 80_000.0
+    # so the start-to-start gap stays 80s (not clamped to 60s); the emitted
+    # delay is the end-to-start idle gap, 80s minus 10.0s prev api_time = 70s.
+    assert trace_a_turns[1].delay == 70_000.0
     assert conv_by_id["trace_idle_a::sa:agent_idle"].turns[0].timestamp == 20_000.0
 
     # Trace B is compressed against its own request starts only: 150 -> 220
@@ -1320,11 +1325,13 @@ def test_flattened_fanout_per_chain_delays():
     }
     w0 = convs["trace_fanout::fa:000"]
     assert w0.turns[0].delay is None
-    assert w0.turns[1].delay == pytest.approx((8.5 - 2.0) * 1000.0)
+    # end-to-start within the worker chain: (8.5-2.0)s minus 6.0s prev api_time.
+    assert w0.turns[1].delay == pytest.approx(500.0)
     root = convs["trace_fanout"]
-    # Main delays computed within the main chain only: 9.0-0.0, 12.0-9.0.
-    assert root.turns[1].delay == pytest.approx(9000.0)
-    assert root.turns[2].delay == pytest.approx(3000.0)
+    # Main delays computed within the main chain only, end-to-start:
+    # (9.0-0.0)s minus 1.0s api, (12.0-9.0)s minus 1.0s api.
+    assert root.turns[1].delay == pytest.approx(8000.0)
+    assert root.turns[2].delay == pytest.approx(2000.0)
 
 
 def test_flattened_fanout_shares_decode_scope_with_root():

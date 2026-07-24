@@ -801,7 +801,6 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         # key the cache or a warm entry silently serves the other mode.
         "ignore_trace_delays": getattr(dataset, "ignore_trace_delays", False),
         "use_think_time_only": getattr(dataset, "use_think_time_only", False),
-        "use_end_to_start_delays": getattr(dataset, "use_end_to_start_delays", False),
         "inter_turn_delay_cap_seconds": getattr(
             dataset, "inter_turn_delay_cap_seconds", None
         ),

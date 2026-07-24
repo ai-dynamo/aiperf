@@ -161,25 +161,6 @@ class TestTraceDelayFlagRouting:
         "cli_factory_id",
         [param("file", id="file"), param("public", id="public_weka_hf")],
     )
-    def test_use_end_to_start_delays_routes(
-        self, trace_jsonl: Path, cli_factory_id: str
-    ) -> None:
-        def _cli() -> CLIConfig:
-            return (
-                _file_cli(trace_jsonl, use_end_to_start_delays=True)
-                if cli_factory_id == "file"
-                else _public_cli(use_end_to_start_delays=True)
-            )
-
-        out = build_dataset(_cli())
-        assert out.get("use_end_to_start_delays") is True
-        ds = convert_cli_to_aiperf(_cli()).benchmark.datasets[0]
-        assert ds.use_end_to_start_delays is True
-
-    @pytest.mark.parametrize(
-        "cli_factory_id",
-        [param("file", id="file"), param("public", id="public_weka_hf")],
-    )
     def test_trace_idle_gap_cap_routes(
         self, trace_jsonl: Path, cli_factory_id: str
     ) -> None:
@@ -320,8 +301,6 @@ class TestTraceDelayExclusivity:
         "kwargs",
         [
             {"ignore_trace_delays": True, "use_think_time_only": True},
-            {"ignore_trace_delays": True, "use_end_to_start_delays": True},
-            {"use_think_time_only": True, "use_end_to_start_delays": True},
         ],
     )
     def test_file_rejects_conflicting_delay_flags(self, kwargs) -> None:

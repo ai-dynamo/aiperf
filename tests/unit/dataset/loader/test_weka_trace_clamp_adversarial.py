@@ -234,25 +234,32 @@ def _build_loader(tmp_path, trace: dict, uc, monkeypatch) -> WekaTraceLoader:
     return loader
 
 
-# (cap_seconds, second_turn_t_seconds, expected_delay_ms)
-# Mirrors the helper-level scenarios so each path exercises the same matrix.
+# (cap_seconds, second_turn_t_seconds, parent_expected_ms, child_expected_ms)
+# The emitted delay is the end-to-start idle gap (start-to-start minus the
+# previous turn's api_time), then clamped to cap. The parent fixture uses
+# api_time=1.0s and the child fixture uses api_time=0.5s, so the two paths
+# diverge below the cap even though they share the same start-to-start matrix.
 _PARAM_CASES = [
-    # at-cap inclusive: 60s delta -> unchanged
-    pytest.param(60.0, 60.0, 60_000.0, id="at_cap_inclusive"),
-    # just over cap: 60.001s -> clamped to 60_000ms
-    pytest.param(60.0, 60.001, 60_000.0, id="just_above_cap_clamps"),
-    # well over cap: 24h -> clamped to 60_000ms
-    pytest.param(60.0, 86_400.0, 60_000.0, id="huge_delay_clamps"),
+    # at-cap inclusive: 60s start-to-start -> 59.0s/59.5s end-to-start, under cap
+    pytest.param(60.0, 60.0, 59_000.0, 59_500.0, id="at_cap_inclusive"),
+    # just over cap on start-to-start, still under cap after end-to-start
+    pytest.param(60.0, 60.001, 59_001.0, 59_501.0, id="just_above_cap_clamps"),
+    # well over cap: 24h -> end-to-start still clamped to 60_000ms
+    pytest.param(60.0, 86_400.0, 60_000.0, 60_000.0, id="huge_delay_clamps"),
     # zero cap -> any positive delay clamps to 0
-    pytest.param(0.0, 5.0, 0.0, id="zero_cap_clamps_to_zero"),
-    # None cap -> 24h passes through
-    pytest.param(None, 86_400.0, 86_400_000.0, id="none_cap_24h_passthrough"),
+    pytest.param(0.0, 5.0, 0.0, 0.0, id="zero_cap_clamps_to_zero"),
+    # None cap -> end-to-start 24h passes through
+    pytest.param(
+        None, 86_400.0, 86_399_000.0, 86_399_500.0, id="none_cap_24h_passthrough"
+    ),
 ]
 
 
-@pytest.mark.parametrize("cap_seconds,second_t,expected_delay_ms", _PARAM_CASES)
+@pytest.mark.parametrize(
+    "cap_seconds,second_t,parent_expected_ms,child_expected_ms", _PARAM_CASES
+)
 def test_parent_turn_delay_clamp_matrix(
-    tmp_path, monkeypatch, cap_seconds, second_t, expected_delay_ms
+    tmp_path, monkeypatch, cap_seconds, second_t, parent_expected_ms, child_expected_ms
 ):
     """Parent path (`weka_trace.py:~400`) clamps with `cap_seconds`."""
     uc = _mk_user_config(cap_seconds=cap_seconds)
@@ -261,12 +268,14 @@ def test_parent_turn_delay_clamp_matrix(
     convs = loader.convert_to_conversations(loader.load_dataset())
     parent = next(c for c in convs if c.session_id == "trace_clamp_parent")
     assert parent.turns[0].delay is None  # first turn always
-    assert parent.turns[1].delay == pytest.approx(expected_delay_ms)
+    assert parent.turns[1].delay == pytest.approx(parent_expected_ms)
 
 
-@pytest.mark.parametrize("cap_seconds,second_t,expected_delay_ms", _PARAM_CASES)
+@pytest.mark.parametrize(
+    "cap_seconds,second_t,parent_expected_ms,child_expected_ms", _PARAM_CASES
+)
 def test_subagent_child_turn_delay_clamp_matrix(
-    tmp_path, monkeypatch, cap_seconds, second_t, expected_delay_ms
+    tmp_path, monkeypatch, cap_seconds, second_t, parent_expected_ms, child_expected_ms
 ):
     """Subagent child path (`weka_trace.py:~527`) clamps with the same `cap_seconds` matrix as the parent path."""
     uc = _mk_user_config(cap_seconds=cap_seconds)
@@ -275,7 +284,7 @@ def test_subagent_child_turn_delay_clamp_matrix(
     convs = loader.convert_to_conversations(loader.load_dataset())
     child = next(c for c in convs if c.session_id.endswith("::sa:agent_clamp"))
     assert child.turns[0].delay is None
-    assert child.turns[1].delay == pytest.approx(expected_delay_ms)
+    assert child.turns[1].delay == pytest.approx(child_expected_ms)
 
 
 # Cap interaction with `--use-think-time-only` (spec 8.4.4 bullet 8).

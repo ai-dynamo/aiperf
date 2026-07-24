@@ -60,7 +60,6 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "max_context_length",
         "public_dataset",
         "random_seed",
-        "use_end_to_start_delays",
         "use_think_time_only",
         # ----- conversation modality -----
         "conversation_num",

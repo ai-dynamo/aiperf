@@ -370,10 +370,13 @@ def test_per_chain_timestamps_increasing_and_delays_are_intra_chain_diffs(tmp_pa
         ts = [t.timestamp for t in conv.turns]
         # strictly increasing per chain
         assert all(b > a for a, b in zip(ts, ts[1:], strict=False)), (sid, ts)
-        # delay[k] == ts[k] - ts[k-1]; delay[0] is None
+        # delay[k] is the end-to-start idle gap within the chain:
+        # (ts[k] - ts[k-1]) - api_time[k-1], floored at 0. delay[0] is None.
         assert conv.turns[0].delay is None, sid
         for k in range(1, len(conv.turns)):
-            assert conv.turns[k].delay == pytest.approx(ts[k] - ts[k - 1]), (sid, k)
+            prev_api = conv.turns[k - 1].api_time_ms or 0.0
+            expected = max(0.0, (ts[k] - ts[k - 1]) - prev_api)
+            assert conv.turns[k].delay == pytest.approx(expected), (sid, k)
 
 
 # 8. Flat-chain children carry NO branches/prerequisites (v1 cannot nest), are

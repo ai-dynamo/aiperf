@@ -251,7 +251,6 @@ def test_synthetic_default_dataset_raises_clean_loader_lock_not_value_error() ->
         dataset={"name": "main", "type": "synthetic"},
     )
     dataset = run.cfg.get_default_dataset()
-    assert not hasattr(dataset, "use_end_to_start_delays")
     assert not hasattr(dataset, "use_think_time_only")
 
     with pytest.raises(ScenarioLockError) as exc:

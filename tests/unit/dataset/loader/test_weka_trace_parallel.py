@@ -125,6 +125,7 @@ def _drive_parallel_inproc(
                         "model": req.model,
                         "t": req.t,
                         "think_time": getattr(req, "think_time", None),
+                        "api_time": getattr(req, "api_time", None),
                         "capped_output_length": loader._cap_output(req),
                         "theoretical_hit_blocks": metric_values_by_trace[plan.trace_id][
                             (plan.trace_id, k)

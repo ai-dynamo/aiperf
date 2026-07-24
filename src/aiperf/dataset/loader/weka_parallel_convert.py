@@ -50,6 +50,21 @@ def _api_time_ms(api_time: float | None) -> float | None:
     return max(0.0, api_time) * 1000.0
 
 
+def _end_to_start_delay_ms(
+    start_to_start_ms: float | None, prev_api_seconds: float | None
+) -> float | None:
+    """Idle inter-turn delay ``t_k - (t_{k-1} + api_{k-1})`` (mirrors
+    weka_trace._end_to_start_delay_ms). Kept local to avoid a circular import."""
+    if start_to_start_ms is None:
+        return None
+    api_ms = (
+        prev_api_seconds * 1000.0
+        if prev_api_seconds is not None and math.isfinite(prev_api_seconds)
+        else 0.0
+    )
+    return max(0.0, start_to_start_ms - api_ms)
+
+
 class _WekaParentTurnDict(TypedDict):
     """One reconstructed turn (parent or child) shipped from worker -> orchestrator."""
 
@@ -428,7 +443,10 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             elif task.think_time_only and req.get("think_time") is not None:
                 delay_ms = req["think_time"] * 1000.0
             else:
-                delay_ms = t_ms - normals[k - 1][1]["t"] * 1000.0
+                prev_req = normals[k - 1][1]
+                delay_ms = _end_to_start_delay_ms(
+                    t_ms - prev_req["t"] * 1000.0, prev_req.get("api_time")
+                )
         if delay_ms is not None:
             delay_ms = delay_tracker.clamp(delay_ms)
             # Floor at 0, mirroring the serial parent loop in
@@ -672,7 +690,10 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 elif task.think_time_only and creq.get("think_time") is not None:
                     child_delay_ms = creq["think_time"] * 1000.0
                 else:
-                    child_delay_ms = t_ms - creqs[k - 1]["t"] * 1000.0
+                    prev_creq = creqs[k - 1]
+                    child_delay_ms = _end_to_start_delay_ms(
+                        t_ms - prev_creq["t"] * 1000.0, prev_creq.get("api_time")
+                    )
             if child_delay_ms is not None:
                 child_delay_ms = delay_tracker.clamp(child_delay_ms)
 

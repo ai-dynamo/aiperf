@@ -548,24 +548,6 @@ class FileDataset(BaseConfig):
         ),
     ]
 
-    use_end_to_start_delays: Annotated[
-        bool,
-        Field(
-            default=False,
-            description="For weka_trace inputs, emit Turn.delay as the end-to-start "
-            "idle gap `t_curr - (t_prev + api_time_prev)` instead of the start-to-start "
-            "delta `t_curr - t_prev`. The replay dispatches each turn after the previous "
-            "turn COMPLETES, so adding the start-to-start gap (which already contains the "
-            "previous request's server time) double-counts `api_time` and makes each "
-            "stream's clock drift later turn-by-turn, fabricating cross-stream concurrency. "
-            "End-to-start is the faithful inter-turn idle and reproduces the recording's "
-            "concurrency exactly at replay-speed parity. Computed from `t`/`api_time` "
-            "(unlike `use_think_time_only`, which trusts the recorded `think_time` field "
-            "that can disagree with the timeline). Floors at 0 for recorded overlap. No "
-            "effect on non-weka loaders.",
-        ),
-    ]
-
     max_context_length: Annotated[
         int | None,
         Field(
@@ -604,7 +586,6 @@ class FileDataset(BaseConfig):
     ]
 
     _use_think_time_only_explicitly_set: bool = False
-    _use_end_to_start_delays_explicitly_set: bool = False
 
     @model_validator(mode="after")
     def _validate_trace_delay_exclusivity(self) -> FileDataset:
@@ -612,28 +593,12 @@ class FileDataset(BaseConfig):
         self._use_think_time_only_explicitly_set = (
             "use_think_time_only" in self.model_fields_set
         )
-        self._use_end_to_start_delays_explicitly_set = (
-            "use_end_to_start_delays" in self.model_fields_set
-        )
-        # All three flags set Turn.delay differently (None / recorded think_time /
-        # end-to-start idle gap), so at most one may be active. The prior check
-        # only rejected the ignore+think_time pair, silently allowing
-        # ignore+end_to_start and think_time+end_to_start.
-        active_delay_modes = [
-            name
-            for name, on in (
-                ("--ignore-trace-delays", self.ignore_trace_delays),
-                ("--use-think-time-only", self.use_think_time_only),
-                ("--use-end-to-start-delays", self.use_end_to_start_delays),
-            )
-            if on
-        ]
-        if len(active_delay_modes) > 1:
+        # Both flags set Turn.delay differently (None / recorded think_time), so
+        # at most one may be active.
+        if self.ignore_trace_delays and self.use_think_time_only:
             raise ValueError(
-                "trace-delay flags are mutually exclusive (each sets Turn.delay "
-                f"differently); got {active_delay_modes}. Set at most one of "
-                "--ignore-trace-delays, --use-think-time-only, "
-                "--use-end-to-start-delays."
+                "--ignore-trace-delays and --use-think-time-only are mutually "
+                "exclusive (each sets Turn.delay differently)."
             )
         return self
 
@@ -853,19 +818,6 @@ class PublicDataset(BaseConfig):
         ),
     ]
 
-    use_end_to_start_delays: Annotated[
-        bool,
-        Field(
-            default=False,
-            description="For HF-backed Weka replay, emit Turn.delay as the "
-            "end-to-start idle gap `t_curr - (t_prev + api_time_prev)` instead of "
-            "the start-to-start delta (mirror of "
-            "``FileDataset.use_end_to_start_delays``). Prevents per-stream clock "
-            "drift that fabricates cross-stream concurrency on completion-gated "
-            "replay. No effect on non-weka loaders.",
-        ),
-    ]
-
     max_context_length: Annotated[
         int | None,
         Field(
@@ -968,28 +920,12 @@ class PublicDataset(BaseConfig):
         self._use_think_time_only_explicitly_set = (
             "use_think_time_only" in self.model_fields_set
         )
-        self._use_end_to_start_delays_explicitly_set = (
-            "use_end_to_start_delays" in self.model_fields_set
-        )
-        # All three flags set Turn.delay differently (None / recorded think_time /
-        # end-to-start idle gap), so at most one may be active. The prior check
-        # only rejected the ignore+think_time pair, silently allowing
-        # ignore+end_to_start and think_time+end_to_start.
-        active_delay_modes = [
-            name
-            for name, on in (
-                ("--ignore-trace-delays", self.ignore_trace_delays),
-                ("--use-think-time-only", self.use_think_time_only),
-                ("--use-end-to-start-delays", self.use_end_to_start_delays),
-            )
-            if on
-        ]
-        if len(active_delay_modes) > 1:
+        # Both flags set Turn.delay differently (None / recorded think_time), so
+        # at most one may be active.
+        if self.ignore_trace_delays and self.use_think_time_only:
             raise ValueError(
-                "trace-delay flags are mutually exclusive (each sets Turn.delay "
-                f"differently); got {active_delay_modes}. Set at most one of "
-                "--ignore-trace-delays, --use-think-time-only, "
-                "--use-end-to-start-delays."
+                "--ignore-trace-delays and --use-think-time-only are mutually "
+                "exclusive (each sets Turn.delay differently)."
             )
         return self
 

@@ -96,7 +96,6 @@ aiperf profile \
     --use-server-token-count \
     --streaming \
     --extra-inputs ignore_eos:true \
-    --use-end-to-start-delays \
     --cache-bust first_turn_prefix \
     --trace-idle-gap-cap-seconds 10 \
     --trajectory-start-min-ratio 0.0 \
@@ -140,7 +139,7 @@ what you must set, what you may tune, and what you shouldn't touch:
   is explained below).
 
 **Flags the scenario hard-locks** — `--streaming`,
-`--extra-inputs ignore_eos:true`, `--use-end-to-start-delays`,
+`--extra-inputs ignore_eos:true`,
 `--cache-bust first_turn_prefix`, and `--trace-idle-gap-cap-seconds 10`. You
 can omit all of them (AIPerf fills in exactly these values under
 `--scenario`), but writing them out makes the command document what runs. If
@@ -260,7 +259,7 @@ flag.
 | `timing_mode` is `agentic_replay` | Use the multi-turn agentic-replay scheduler (locked in by the scenario; not a user-selectable flag) | This is the scheduling discipline AgentX MVP requires (warmup → steady-state — the [profiling phase](#profiling-phase-replay-recycle-idle-gap-compression) — with sampler-driven trace recycle, per-session-tree concurrency, and trace idle-gap compression). |
 | `extra_inputs.ignore_eos = true` | Server is told to ignore its end-of-stream token and generate the full requested length | Without this, models stop early and you measure their decision to stop, not the server. |
 | `--streaming` is on | Responses stream token-by-token (auto-enabled when unset; explicit `--no-streaming` errors) | The per-token latency metrics (TTFT, ITL) are core to this benchmark and need streaming responses. |
-| `--use-end-to-start-delays` is on | Each turn's replay delay is the recorded idle gap from the previous response's *end* to the next request's *start*, not the start-to-start delta (auto-enabled when unset; explicitly disabling it errors) | Replay dispatches each turn after the previous one completes, so start-to-start deltas would double-count the previous request's server time, making every session drift later turn by turn and overstating how many sessions overlap at once. |
+| Replay delays are end-to-start (always on, no flag) | Each turn's replay delay is the recorded idle gap from the previous response's *end* to the next request's *start*, not the start-to-start delta. This is unconditional for weka trace replay — there is no toggle. | Replay dispatches each turn after the previous one completes, so start-to-start deltas would double-count the previous request's server time, making every session drift later turn by turn and overstating how many sessions overlap at once. |
 | `--ignore-trace-delays` is off | Trace-derived delays are preserved, with long idle gaps capped by the trace idle-gap rule below | The whole point of replay is to preserve the agent's pacing without letting coffee-break gaps dominate steady-state. |
 | `--trace-idle-gap-cap-seconds = 10` | Gaps between recorded request starts over 10s are compressed to 10s per trace | Real coding sessions have long idle gaps; capping request-start gaps preserves relative subagent overlap better than clamping each parent turn delay independently. |
 | `--cache-bust first_turn_prefix` | A unique per-conversation marker is injected at the start of the first user turn for every play (each dispatch of a trace, initial or recycled) | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker gives every recycled play a fresh prompt prefix. |
@@ -270,7 +269,7 @@ flag.
 | `--random-seed` is set | If you didn't pass one, AIPerf picks a strong random one and logs it | Reproducibility — every replayed result can be regenerated. |
 
 If you forget to pass the `ignore_eos` extra-input, `--streaming`,
-`--use-end-to-start-delays`, `--cache-bust`, or `--random-seed`, AIPerf
+`--cache-bust`, or `--random-seed`, AIPerf
 injects the locked value and tells you at INFO log level. The same goes for
 `--trace-idle-gap-cap-seconds` and `--benchmark-duration` (1800s default)
 when you don't set them explicitly. If you pass one of these explicitly with
@@ -424,7 +423,7 @@ keeps replaying its conversation from turn `k_i + 1` onward, honoring the
 recorded inter-turn idle gaps: the 10-second compression rule is applied to
 the recorded request-start timeline, then each gap is replayed as an
 end-to-start delay counted from the moment the previous turn completes (the
-locked `--use-end-to-start-delays` rule from the table above). When a
+always-on end-to-start rule from the table above). When a
 recorded gap between consecutive request starts in the same trace exceeds 10
 seconds, the later request and everything after it are shifted earlier so
 the gap becomes exactly 10 seconds, preserving local subagent overlap.

@@ -86,7 +86,6 @@ def apply_scenario(run: BenchmarkRun) -> ScenarioOutcome:
     _apply_require_ignore_eos(run, spec, violations, applied)
     _apply_forbid_ignore_trace_delays(run, spec, violations, applied)
     _apply_use_think_time_only(run, spec, violations, applied)
-    _apply_use_end_to_start_delays(run, spec, violations, applied)
     _apply_forbid_input_truncation(run, spec, violations, applied)
     _apply_require_loader(run, spec, violations, applied)
     _apply_require_cache_bust(run, spec, violations, applied)
@@ -359,41 +358,6 @@ def _apply_use_think_time_only(
             "Scenario %r: forcing --use-think-time-only=true (was unset).", spec.name
         )
         applied.append("use_think_time_only")
-
-
-def _apply_use_end_to_start_delays(
-    run: BenchmarkRun,
-    spec: ScenarioSpec,
-    violations: list[ScenarioViolation],
-    applied: list[str],
-) -> None:
-    if not spec.require_use_end_to_start_delays:
-        return
-    dataset = run.cfg.get_default_dataset()
-    if not hasattr(dataset, "use_end_to_start_delays"):
-        # Synthetic datasets have no end-to-start-delay concept; the authoritative
-        # violation comes from _apply_require_loader, not an auto-fill crash.
-        return
-    if getattr(dataset, "use_end_to_start_delays", False):
-        applied.append("use_end_to_start_delays")
-        return
-    explicit = getattr(dataset, "_use_end_to_start_delays_explicitly_set", False)
-    if explicit:
-        violations.append(
-            ScenarioViolation(
-                flag="--use-end-to-start-delays",
-                current_value=False,
-                required_value=True,
-                message=f"scenario {spec.name!r} requires --use-end-to-start-delays=true",
-            )
-        )
-    else:
-        dataset.use_end_to_start_delays = True
-        _logger.info(
-            "Scenario %r: forcing --use-end-to-start-delays=true (was unset).",
-            spec.name,
-        )
-        applied.append("use_end_to_start_delays")
 
 
 def _apply_forbid_input_truncation(
