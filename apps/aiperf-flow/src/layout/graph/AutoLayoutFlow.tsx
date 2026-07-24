@@ -45,7 +45,8 @@ function AutoLayoutInner({
       nodes={nodes}
       edges={edges}
       fitView
-      fitViewOptions={{ padding: 0.2 }}
+      fitViewOptions={{ padding: 0.16, maxZoom: 1 }}
+      minZoom={0.5}
       nodesDraggable={false}
       onNodeClick={(_event, node) => onNodeClick?.(node.id)}
       proOptions={{ hideAttribution: true }}

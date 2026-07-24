@@ -33,6 +33,14 @@ function positionMap(nodes: Node[]): Map<string, XYPosition> {
   return new Map(nodes.map((n) => [n.id, n.position]));
 }
 
+/** Escape a node id for use in a CSS attribute selector (falls back to a manual escape). */
+function cssEscape(id: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(id);
+  }
+  return id.replace(/["\\\]]/g, "\\$&");
+}
+
 /**
  * Lays out `inputNodes`/`edges` with ELK whenever the graph identity (node ids + edge ids) or
  * `opts` change, gated on React Flow having measured the nodes, and fits the view after each pass.
@@ -70,10 +78,22 @@ export function useElkLayout(inputNodes: Node[], edges: Edge[], opts: ElkOptions
     let seeded = false;
 
     const run = (): void => {
-      // Prefer React Flow's own node objects — they carry `.measured` sizes the input nodes lack.
+      // Measure each node's true rendered footprint straight from the DOM. React Flow's own
+      // `getNodes().measured` is unreliable on a canvas that mounts inside an animation (it can stay
+      // unmeasured, so ELK would reserve default box sizes and tall text-wrapped cards overlap).
+      // The rendered element's offsetWidth/offsetHeight is the real layout size (CSS transforms do
+      // not affect it), so ELK reserves each box's actual space and boxes stop overlapping.
       const measured = getNodes();
-      const byId = new Map(measured.map((n) => [n.id, n]));
-      const sized = inputNodes.map((n) => ({ ...n, measured: byId.get(n.id)?.measured }));
+      const rfById = new Map(measured.map((n) => [n.id, n]));
+      const sized = inputNodes.map((n) => {
+        const el =
+          typeof document !== "undefined"
+            ? (document.querySelector(`.react-flow__node[data-id="${cssEscape(n.id)}"]`) as HTMLElement | null)
+            : null;
+        const dom =
+          el && el.offsetWidth > 0 ? { width: el.offsetWidth, height: el.offsetHeight } : undefined;
+        return { ...n, measured: dom ?? rfById.get(n.id)?.measured };
+      });
 
       // Seed synchronously on the first pass so the canvas is visible immediately.
       if (!seeded) {
@@ -88,7 +108,9 @@ export function useElkLayout(inputNodes: Node[], edges: Edge[], opts: ElkOptions
         setPositions(positionMap(laid));
         setLaidOut(true);
         requestAnimationFrame(() => {
-          if (!cancelled) fitView({ padding: 0.2 });
+          // maxZoom 1 keeps text at its natural size when the graph fits; larger graphs settle at
+          // the flow's minZoom and stay pannable rather than shrinking to unreadable.
+          if (!cancelled) fitView({ padding: 0.16, maxZoom: 1 });
         });
       });
     };

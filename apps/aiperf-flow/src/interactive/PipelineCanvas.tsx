@@ -69,7 +69,8 @@ function AutoLaidCanvas({
       nodes={nodes}
       edges={edges}
       fitView
-      fitViewOptions={{ padding: fitViewPadding }}
+      fitViewOptions={{ padding: fitViewPadding, maxZoom: 1 }}
+      minZoom={0.5}
       nodesDraggable={false}
       onNodeClick={(_event, node) => onNodeClick?.(node.id)}
       proOptions={{ hideAttribution: true }}
