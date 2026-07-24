@@ -37,7 +37,14 @@ pub fn run(config: &MockServerConfig) -> anyhow::Result<()> {
     };
     let host = config.host.clone();
     let port = config.port;
-    let state = crate::app::build_state(config.clone());
+    // build_state spawns tokio tasks for the DCGM throughput sampler and the
+    // batch scheduler; neither exists under the io_uring runtime and both are
+    // irrelevant to this --fast raw-throughput engine. Disable them so setup
+    // does not touch a Tokio reactor.
+    let mut cfg = config.clone();
+    cfg.dcgm_auto_load = false;
+    cfg.scheduler_enabled = false;
+    let state = crate::app::build_state(cfg);
 
     tracing::info!(
         %host, port, cores,
