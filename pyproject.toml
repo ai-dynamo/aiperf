@@ -293,4 +293,4 @@ filterwarnings = [
 
 [tool.codespell]
 skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html,src/aiperf/config/schema/aiperf-config.schema.json"
-ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency,mot,ser"
+ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency,mot,ser,clen"
