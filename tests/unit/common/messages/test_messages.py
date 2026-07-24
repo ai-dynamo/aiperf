@@ -5,16 +5,31 @@ import time
 
 import orjson
 import pytest
+from pydantic import Field
 
 from aiperf.common.enums import LifecycleState, MessageType
 from aiperf.common.messages import (
     ErrorMessage,
     HeartbeatMessage,
+    InferenceResultsMessage,
+    Message,
     ShutdownCommand,
     StatusMessage,
 )
-from aiperf.common.models import ErrorDetails
+from aiperf.common.models import (
+    BinaryResponse,
+    ErrorDetails,
+    RequestRecord,
+    SSEField,
+    SSEMessage,
+)
 from aiperf.plugin.enums import ServiceType
+
+
+class CustomRequestRecord(RequestRecord):
+    """Request record used to verify duck-typed IPC serialization."""
+
+    custom_metadata: str = Field(description="Custom metadata carried over IPC")
 
 
 def test_status_message():
@@ -111,6 +126,56 @@ class TestBaseStatusMessageTimestamp:
 
 class TestMessageToJsonBytes:
     """Test suite for Message.to_json_bytes() optimization."""
+
+    def test_to_json_bytes_matches_legacy_pipeline_for_inference_record(self):
+        """Direct serialization preserves the existing inference-record wire shape."""
+        record = CustomRequestRecord(
+            custom_metadata="café",
+            unregistered_extra={"label": "retained"},
+            responses=[
+                *[
+                    SSEMessage(
+                        perf_ns=index,
+                        packets=[
+                            SSEField(
+                                name="data",
+                                value='{"choices":[{"delta":{"content":"é"}}]}',
+                            )
+                        ],
+                    )
+                    for index in range(256)
+                ],
+                BinaryResponse(
+                    perf_ns=256,
+                    raw_bytes=b"binary payload",
+                    content_type="application/octet-stream",
+                ),
+            ],
+        )
+        message = InferenceResultsMessage(
+            service_id="worker-0",
+            request_id="request-0",
+            record=record,
+        )
+
+        legacy_bytes = orjson.dumps(
+            message.model_dump(
+                exclude_none=True,
+                mode="json",
+                context={"include_internal": True},
+            )
+        )
+        direct_bytes = message.to_json_bytes()
+
+        assert orjson.loads(direct_bytes) == orjson.loads(legacy_bytes)
+        restored = Message.from_json(direct_bytes)
+        assert isinstance(restored, InferenceResultsMessage)
+        assert restored.record.model_extra["custom_metadata"] == "café"
+        assert restored.record.model_extra["unregistered_extra"] == {
+            "label": "retained"
+        }
+        assert len(restored.record.responses) == 257
+        assert restored.record.responses[-1].raw_bytes == b"binary payload"
 
     def test_to_json_bytes_returns_bytes(self):
         """Test that to_json_bytes() returns bytes type."""

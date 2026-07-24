@@ -3,7 +3,6 @@
 import time
 from typing import ClassVar
 
-import orjson
 from pydantic import Field
 
 from aiperf.common.enums import MessageType
@@ -44,11 +43,11 @@ class Message(AIPerfBaseModel):
         return self.model_dump_json(exclude_none=True)
 
     def to_json_bytes(self) -> bytes:
-        """Serialize message to JSON bytes using orjson for optimal performance.
+        """Serialize a message directly to JSON bytes.
 
-        This method uses orjson for high-performance serialization (6x faster for
-        large records >20KB). It automatically excludes None fields to minimize
-        message size.
+        This method uses Pydantic's compiled serializer to avoid creating an
+        intermediate Python dictionary. It automatically excludes None fields
+        to minimize message size.
 
         Returns:
             bytes: JSON-encoded message as bytes
@@ -61,12 +60,10 @@ class Message(AIPerfBaseModel):
             IPC-only fields like ``MetricResult.console_group`` that are stripped
             from public/exporter dumps but must survive the cross-process bus.
         """
-        return orjson.dumps(
-            self.model_dump(
-                exclude_none=True,
-                mode="json",
-                context={"include_internal": True},
-            )
+        return self.__pydantic_serializer__.to_json(
+            self,
+            exclude_none=True,
+            context={"include_internal": True},
         )
 
 
