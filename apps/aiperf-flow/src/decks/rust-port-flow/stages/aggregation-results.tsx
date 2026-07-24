@@ -1,0 +1,290 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Stage 8 — Aggregation → final results. Fills in the level-1 subgraph, the level-2 "exact-fold vs
+//! t-digest-merge" leaf, verified source anchors, and a level-1 `FlowStep[]` fragment for the play
+//! head to traverse this stage's internals.
+//!
+//! The narrative (spec §8, corrections baked in): a worker-local `NativeMetricsObserver` accumulates
+//! records into a `metrics_core` NaN-sparse column store (NaN is a sparse-column sentinel scrubbed at
+//! the reporting boundary). Two fold strategies then coexist — EXACT folds replay the column-store
+//! partitions in global order so the FINAL report stays bit-exact from records, while the SKETCH path
+//! (`cellular::sketch::TDigest`, NOT DDSketch) drives mergeable heartbeats / cellular merge where
+//! percentiles + stddev become streaming estimates but counts/sums/extrema stay exact. A
+//! deterministic boundary merge feeds `NativeReporter`, producing a `NativeReport` that the
+//! `ExporterRegistry` (nine sinks, file writers before uploaders) emits, and the runner writes
+//! `native-v2.json` and emits `RunTerminalV2` carrying its `report_path`.
+
+import type { Edge, Node } from "@xyflow/react";
+import { categoryBgTintClassName } from "../../../theme/tokens.js";
+import type { FlowStep } from "../../../interactive/index.js";
+import type { StageDef } from "../stage.js";
+
+/** Leaf id: the clickable node that drills into the exact-fold vs t-digest-merge comparison. */
+const EXACT_VS_SKETCH_LEAF = "aggExactVsSketch";
+
+const COL = 240;
+
+/** Level-1 subgraph: the aggregation pipeline internals, worker-local accumulation → terminal report. */
+function aggregationNodes(): Node[] {
+  return [
+    {
+      id: "agg-observer",
+      type: "card",
+      position: { x: 0, y: 0 },
+      data: {
+        title: "NativeMetricsObserver",
+        subtitle: "worker-local",
+        detail: "Per-worker record accumulation sharing the runtime clock origin.",
+        className: categoryBgTintClassName("green"),
+      },
+    },
+    {
+      id: "agg-store",
+      type: "card",
+      position: { x: COL, y: 0 },
+      data: {
+        title: "NaN-sparse column store",
+        subtitle: "metrics_core",
+        detail: "MetricsAccumulator ragged columns; NaN is a sparse-column sentinel, scrubbed at the reporting boundary.",
+        className: categoryBgTintClassName("gray"),
+      },
+    },
+    {
+      id: "agg-exact",
+      type: "card",
+      position: { x: 2 * COL, y: -110 },
+      data: {
+        title: "Exact record fold",
+        subtitle: "authoritative",
+        detail: "Column-store partitions replayed in global order — the final report is exact from records.",
+        className: categoryBgTintClassName("green"),
+      },
+    },
+    {
+      id: "agg-sketch",
+      type: "card",
+      position: { x: 2 * COL, y: 110 },
+      data: {
+        title: "t-digest sketch",
+        subtitle: "cellular::sketch::TDigest",
+        detail: "Mergeable percentile/stddev estimate (NOT DDSketch); counts/sums/extrema stay exact.",
+        className: categoryBgTintClassName("purple"),
+      },
+    },
+    {
+      id: EXACT_VS_SKETCH_LEAF,
+      type: "card",
+      position: { x: 3 * COL, y: 0 },
+      data: {
+        title: "Exact vs sketch merge",
+        subtitle: "click to compare",
+        detail: "Exact folds for final reports; t-digest sketches for mergeable heartbeats / cellular merge.",
+        className: categoryBgTintClassName("yellow"),
+      },
+    },
+    {
+      id: "agg-boundary",
+      type: "card",
+      position: { x: 4 * COL, y: 0 },
+      data: {
+        title: "Deterministic boundary merge",
+        subtitle: "order-independent",
+        detail: "Exact column-store replay + associative TDigest::merge — same result regardless of shard order.",
+        className: categoryBgTintClassName("orange"),
+      },
+    },
+    {
+      id: "agg-reporter",
+      type: "card",
+      position: { x: 5 * COL, y: 0 },
+      data: {
+        title: "NativeReporter → NativeReport",
+        subtitle: "metrics_core::report",
+        detail: "Metrics-first reporter builds the NativeReport (schema_version, summary, metric map) without IO.",
+        className: categoryBgTintClassName("cyan"),
+      },
+    },
+    {
+      id: "agg-registry",
+      type: "card",
+      position: { x: 6 * COL, y: 0 },
+      data: {
+        title: "ExporterRegistry",
+        subtitle: "nine sinks",
+        detail: "Ordered Exporter trait objects: local-file writers emit before network uploaders.",
+        className: categoryBgTintClassName("blue"),
+      },
+    },
+    {
+      id: "agg-terminal",
+      type: "card",
+      position: { x: 7 * COL, y: 0 },
+      data: {
+        title: "RunTerminalV2",
+        subtitle: "report_path",
+        detail: "Runner writes native-v2.json and emits the terminal envelope carrying report_path.",
+        className: categoryBgTintClassName("green"),
+      },
+    },
+  ];
+}
+
+/** Level-1 edges: linear spine with an exact/sketch split converging on the comparison node. */
+function aggregationEdges(): Edge[] {
+  return [
+    { id: "e-obs-store", source: "agg-observer", target: "agg-store", type: "flow" },
+    { id: "e-store-exact", source: "agg-store", target: "agg-exact", type: "flow" },
+    { id: "e-store-sketch", source: "agg-store", target: "agg-sketch", type: "flow" },
+    { id: "e-exact-cmp", source: "agg-exact", target: EXACT_VS_SKETCH_LEAF, type: "flow" },
+    { id: "e-sketch-cmp", source: "agg-sketch", target: EXACT_VS_SKETCH_LEAF, type: "flow" },
+    { id: "e-cmp-boundary", source: EXACT_VS_SKETCH_LEAF, target: "agg-boundary", type: "flow" },
+    { id: "e-boundary-reporter", source: "agg-boundary", target: "agg-reporter", type: "flow" },
+    { id: "e-reporter-registry", source: "agg-reporter", target: "agg-registry", type: "flow" },
+    { id: "e-registry-terminal", source: "agg-registry", target: "agg-terminal", type: "flow" },
+  ];
+}
+
+/** Level-2 leaf: the exact-fold (authoritative) vs t-digest-merge (mergeable estimate) comparison. */
+function exactVsSketchLeafNodes(): Node[] {
+  return [
+    {
+      id: "leaf-exact-fold",
+      type: "card",
+      position: { x: 0, y: 0 },
+      data: {
+        title: "Exact: merge_records_in_global_order",
+        subtitle: "column store",
+        detail: "Records shard partitions replayed in global order — bit-exact percentiles, sums, counts from the full record set.",
+        className: categoryBgTintClassName("green"),
+      },
+    },
+    {
+      id: "leaf-exact-report",
+      type: "card",
+      position: { x: 0, y: 170 },
+      data: {
+        title: "Final NativeReport = EXACT",
+        subtitle: "from records",
+        detail: "Reported metrics are computed from retained records; no estimation on the terminal report.",
+        className: categoryBgTintClassName("green"),
+      },
+    },
+    {
+      id: "leaf-sketch-merge",
+      type: "card",
+      position: { x: 340, y: 0 },
+      data: {
+        title: "t-digest: TDigest::merge",
+        subtitle: "cellular::sketch",
+        detail: "Concatenate centroids + compress; min/max stay exact; associative & deterministic at fixed topology.",
+        className: categoryBgTintClassName("purple"),
+      },
+    },
+    {
+      id: "leaf-sketch-heartbeat",
+      type: "card",
+      position: { x: 340, y: 170 },
+      data: {
+        title: "Mergeable heartbeats / cellular merge",
+        subtitle: "streaming estimate",
+        detail: "Percentiles + stddev become streaming estimates; counts, sums and extrema stay exact.",
+        className: categoryBgTintClassName("purple"),
+      },
+    },
+  ];
+}
+
+/** Level-2 leaf edges: each column chains its type into its consequence. */
+function exactVsSketchLeafEdges(): Edge[] {
+  return [
+    { id: "e-leaf-exact", source: "leaf-exact-fold", target: "leaf-exact-report", type: "flow" },
+    { id: "e-leaf-sketch", source: "leaf-sketch-merge", target: "leaf-sketch-heartbeat", type: "flow" },
+  ];
+}
+
+/**
+ * Level-1 play fragment: the request's record traversing this stage's internals, active node id +
+ * real caption per hop. Exposed so a stage-internal play head (or a future full-pipeline flatten)
+ * can animate the aggregation stage using the real type names.
+ */
+export const aggregationResultsSteps: readonly FlowStep[] = [
+  {
+    nodeId: "agg-observer",
+    caption: "The record lands in the worker-local NativeMetricsObserver, sharing the runtime clock origin.",
+  },
+  {
+    nodeId: "agg-store",
+    caption: "It is appended into the metrics_core NaN-sparse column store (MetricsAccumulator ragged columns).",
+  },
+  {
+    nodeId: "agg-exact",
+    caption: "Exact fold: the column store replays partitions in global order so the final report stays exact from records.",
+  },
+  {
+    nodeId: "agg-sketch",
+    caption: "Sketch path: a cellular::sketch::TDigest (not DDSketch) captures a mergeable percentile/stddev estimate.",
+  },
+  {
+    nodeId: EXACT_VS_SKETCH_LEAF,
+    caption: "Exact folds drive the final report; t-digest sketches drive mergeable heartbeats — counts/sums/extrema stay exact either way.",
+  },
+  {
+    nodeId: "agg-boundary",
+    caption: "Deterministic boundary merge: exact column-store replay + associative TDigest::merge, order-independent.",
+  },
+  {
+    nodeId: "agg-reporter",
+    caption: "NativeReporter builds the NativeReport (schema_version, summary, metric map) without IO.",
+  },
+  {
+    nodeId: "agg-registry",
+    caption: "ExporterRegistry fans the report out to nine sinks — local-file writers before network uploaders.",
+  },
+  {
+    nodeId: "agg-terminal",
+    caption: "The runner writes native-v2.json and emits RunTerminalV2 carrying its report_path.",
+  },
+];
+
+/**
+ * Stage 8 detail: aggregation → final results. Keeps the spine id/order/label/tone so it drops into
+ * the `STAGES` registry in place of the stub; adds the real subgraph, the exact-vs-sketch leaf, and
+ * verified `file:line` anchors.
+ */
+export const aggregationResultsStage: StageDef = {
+  id: "aggregation",
+  order: 8,
+  label: "Aggregation → results",
+  caption:
+    "Worker-local NativeMetricsObserver → metrics_core NaN-sparse column store → EXACT folds (final report is exact from records) vs t-digest sketch (cellular::sketch::TDigest, mergeable heartbeats; percentiles+stddev streaming, counts/sums/extrema exact) → deterministic boundary merge → NativeReporter → NativeReport → ExporterRegistry (nine sinks) → RunTerminalV2 report_path.",
+  tone: "green",
+  subgraph: {
+    nodes: aggregationNodes(),
+    edges: aggregationEdges(),
+    children: [EXACT_VS_SKETCH_LEAF],
+  },
+  leaves: {
+    [EXACT_VS_SKETCH_LEAF]: {
+      label: "Exact folds vs t-digest merge",
+      nodes: exactVsSketchLeafNodes(),
+      edges: exactVsSketchLeafEdges(),
+    },
+  },
+  evidence: [
+    { label: "struct NativeMetricsObserver", path: "runtime/src/metrics.rs:203" },
+    { label: "struct MetricsAccumulator", path: "runtime/src/metrics_core/accumulator.rs:416" },
+    { label: "MetricValue NaN sparse-column sentinel", path: "runtime/src/metrics_core/value.rs:6" },
+    { label: "TDigest (cellular::sketch)", path: "runtime/src/cellular/mod.rs:33" },
+    { label: "fn TDigest::merge", path: "runtime/src/cellular/sketch.rs:127" },
+    { label: "fn merge_records_in_global_order", path: "runtime/src/cellular/shard.rs:106" },
+    { label: "struct NativeReporter", path: "runtime/src/metrics_core/report.rs:1031" },
+    { label: "struct NativeReport", path: "runtime/src/metrics_core/report.rs:1079" },
+    { label: "trait Exporter", path: "runtime/src/export/mod.rs:208" },
+    { label: "struct ExporterRegistry", path: "runtime/src/export/mod.rs:258" },
+    { label: "fn register_builtins (nine sinks)", path: "runtime/src/export/mod.rs:295" },
+    { label: "RunTerminalV2 report_path", path: "runtime/src/engine/coordinator.rs:334" },
+  ],
+};

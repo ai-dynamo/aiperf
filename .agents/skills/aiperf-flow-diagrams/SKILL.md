@@ -108,6 +108,51 @@ severity-graded — don't approximate it with `info`/`warning`/`success` anymore
 - `useStepSimulator<T>(steps: T[], opts?: {autoPlayMs?})` (`src/state/useStepSimulator.ts`) — Play/Pause/Next/Back/Reset over a step array, clamped, auto-stops at the end. **This is the primitive for any "click through to see X happen" interactive walkthrough.** Don't write `while (!sim.isLast) sim.next()` — `next()` schedules a state update, it doesn't mutate synchronously, so that spins forever. Loop a bounded number of times instead (see `src/decks/segment-pools/PoolPage.tsx`'s `simulatePoolInterning`/"Run all" for the reference pattern).
 - Motion's `layout`/`layoutId` (from `motion/react`, not yet used anywhere in this codebase but available) — for animating a node's position/size change or a shared-element transition between two arrangements. Reach for this before writing any custom interpolation code.
 
+### Interactive semantic-zoom + play primitives (`src/interactive/`)
+
+Domain-agnostic building blocks for a **zoomable, playable** deck — a continuous
+drill-down canvas with an animated "thing moving through a graph", instead of the
+`PageTabs`-swap static model. All are additive shared exports from
+`src/interactive/index.ts`; compose them, don't fork them. First built for and
+composed by `src/decks/rust-port-flow/` (read `RustPortFlowDeck.tsx` for the
+reference composition).
+
+- `PipelineCanvas` (`src/interactive/PipelineCanvas.tsx`) — renders one level's
+  React Flow `nodes`/`edges` and owns its **own** `ReactFlowProvider` per
+  `<ReactFlow>` (the one-provider-per-instance trap above is handled for you).
+  `{ nodes, edges, height?, onNodeClick?, fitViewPadding?, className? }`.
+- `ZoomStage<T>` (`src/interactive/ZoomStage.tsx`) — semantic-zoom container over a
+  generic `ZoomTree<T>` (a `Record<id, { label, nodes, edges, children?, data? }>`).
+  Manages level/active-id/breadcrumb state, `motion` `layout` expand/collapse,
+  backdrop/`Esc`-to-pop, arrow-key sibling nav, and `prefers-reduced-motion`
+  fallback. `{ tree, rootId, children: (ctx) => ReactNode, onNavigate?, className? }`
+  — the render prop receives a `ZoomStageContext` (`level`, `activeId`, `node`,
+  `breadcrumb`, `siblings`, `drill(childId)`, `pop()`, `goToSibling(id)`,
+  `reducedMotion`). Not AIPerf-specific — any node→subgraph tree drives it.
+- `useFlowPlayer(steps, { autoPlayMs? })` (`src/interactive/useFlowPlayer.ts`) —
+  Play/Pause/Next/Back/Reset/`scrubTo` over a typed `FlowStep[]`
+  (`{ nodeId, caption, timingMs?, variant? }`), built on `useStepSimulator` (the
+  bounded-loop rule still applies — it's handled inside). Exposes
+  `current`/`index`/`total`/`isFirst`/`isLast`/`isPlaying`/`activeNodeId`/`caption`.
+- `RequestParticle` (`src/interactive/RequestParticle.tsx`) — presentational
+  "now playing" bar: a `motion` pulse dot + the active node label + the step
+  caption + a `position/total` readout. `{ step, position?, total?, nodeLabel?,
+  tone?: CategoryRole, className? }`. Pair with `useFlowPlayer`; it reflects
+  whatever `step` you feed it (drive several from one seam state to animate the
+  same request through different routings).
+- `SeamToggle<V>` (`src/interactive/SeamToggle.tsx`) — segmented control for
+  swapping a diagram between named variants, built on shared `Pill` (no new chip
+  type). `{ label?, options: { value:V, label, tone?, ariaLabel? }[], value, onChange,
+  ariaLabel?, className? }`. Use for a Clock/Transport/mode selector; each option
+  renders a real `<button>` so tests can target it by accessible name.
+
+**Assembling a full-pipeline play sequence:** a `FlowStep[]` can be assembled from
+several stages' own exported fragments (e.g. `hotPathSteps` + a transport sink step
++ `aggregationResultsSteps`) and rerouted/replaced by seam state — see
+`buildRequestLifecycleSteps` in `RustPortFlowDeck.tsx`. Give each play control set a
+**distinct** accessible button name (`"Next"` vs `"Next token"`) when a page renders
+more than one `useFlowPlayer`, or `getByRole("button", { name })` matches both.
+
 ### Multi-page decks (`src/shell/`)
 
 - `PageTabs<T extends string>` (`src/shell/PageTabs.tsx`) — tab row for switching between named pages *within* one deck (distinct from slide-to-slide navigation). `{ pages: {id:T,label:string}[], current: T, onChange: (id:T)=>void, className? }`. See `src/decks/segment-pools/SegmentPoolsDeck.tsx` for the composition pattern: `useState` for the current page id, conditional render of one page component per tab.

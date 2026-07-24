@@ -30,6 +30,12 @@ export const DECKS: readonly DeckListing[] = [
       "One binary, two roles — eleven pages spanning process boundaries, runtime seams, scheduled/graph workloads, cellular scaling, and extension points.",
   },
   {
+    path: "/rust-port-flow",
+    title: "Rust Port · Request Lifecycle",
+    description:
+      "One request's life through the Rust port as a single zoomable canvas: drill into any of nine pipeline stages, play an animated request through, and flip the Clock and Transport seams live.",
+  },
+  {
     path: "/aiperf-graph-engine",
     title: "AIPerf Graph Engine",
     description: "The async-dataflow graph engine: node groups, control flow, and how graph programs execute end to end.",
