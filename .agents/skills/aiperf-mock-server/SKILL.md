@@ -134,6 +134,8 @@ Every flag has a `MOCK_SERVER_*` env twin; set the log level dynamically with `A
 | `-f, --fast` | off | Zero all latency; bypass scheduler + cache |
 | `--ludicrous-speed` / `--plaid` | off | **NOT a realistic mock server.** Skip the real server entirely; serve one hard-coded response via blocking `std::net` sockets (`src/fastmock.rs`) — raw-throughput extreme testing only, see `references/microbench-tools.md` |
 | `--no-tokenizer` | off | Skip HF tokenizer load (avoids network download) |
+| `--no-metrics` | off | Disable all hot-path metric recording (`/metrics` still responds, reports zeros). Removes per-request histogram observes + shared-counter increments; ~+15-30% throughput under saturating load. Behavioral response content unaffected — for raw-throughput runs that don't scrape metrics |
+| `--openmetrics` | off | Serve the `/metrics` family as OpenMetrics text (`application/openmetrics-text; version=1.0.0`, `# EOF`, suffix-less counter families) instead of classic Prometheus text, matching the vLLM Rust frontend. No effect with `--no-metrics`. See `references/telemetry.md` |
 | `-w, --workers` | 0 (=nproc) | Tokio worker threads |
 | `--processes` | 1 | Spawn N child servers behind an L4 round-robin balancer (0=nproc) |
 | `--max-concurrent-streams` | 0 | h2 `SETTINGS_MAX_CONCURRENT_STREAMS` (0 = hyper default) |
