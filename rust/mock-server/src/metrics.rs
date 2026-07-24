@@ -81,7 +81,10 @@ pub struct MetricRecorder {
     // `labeled()` returns a shared throwaway handle without touching the
     // DashMap — the request hot path skips all per-request metric work.
     enabled: bool,
-    disabled_handle: Arc<LabeledMetrics>,
+    // Only populated when `!enabled`. Building it eagerly would register the
+    // `__disabled__` sentinel child series in the exposed metric families, so
+    // it stays `None` in the normal enabled path where it is never used.
+    disabled_handle: Option<Arc<LabeledMetrics>>,
     inflight_count: AtomicI64,
     total_kv_blocks: i64,
     // Lock-free membership set: the hot path only ever *reads* it (the model is
@@ -109,7 +112,8 @@ impl MetricRecorder {
     /// endpoints respond, but no per-request updates occur.
     pub fn with_enabled(enabled: bool) -> Self {
         let metrics = AllMetrics::new();
-        let disabled_handle = Arc::new(Self::build_labeled(&metrics, "__disabled__", "__disabled__"));
+        let disabled_handle = (!enabled)
+            .then(|| Arc::new(Self::build_labeled(&metrics, "__disabled__", "__disabled__")));
         Self {
             metrics,
             throughput: Arc::new(Throughput::new()),
@@ -134,8 +138,8 @@ impl MetricRecorder {
         // Disabled: hand back the shared throwaway handle. Every `*_fast`
         // recorder short-circuits on `!enabled`, so its counters are never
         // touched — no DashMap access or key allocation on the hot path.
-        if !self.enabled {
-            return self.disabled_handle.clone();
+        if let Some(handle) = &self.disabled_handle {
+            return handle.clone();
         }
         let key = (endpoint.to_string(), model.to_string());
         if let Some(hit) = self.labeled_cache.get(&key) {
