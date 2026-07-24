@@ -334,6 +334,16 @@ class MediaType(CaseInsensitiveStrEnum):
     VIDEO = "video"
 
 
+class MemoryMapFormat(CaseInsensitiveStrEnum):
+    """Storage format for memory-mapped dataset files."""
+
+    CONVERSATION = "conversation"
+    """Each entry is a JSON-serialized Conversation object."""
+
+    PAYLOAD_BYTES = "payload_bytes"
+    """Each entry is pre-encoded payload bytes for verbatim API replay."""
+
+
 class MessageType(CaseInsensitiveStrEnum):
     """The various types of messages that can be sent between services.
 
