@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import multiprocessing as mp
+import os
 import subprocess
 import sys
 import textwrap
@@ -164,3 +165,36 @@ class TestStdoutGuardSubprocess:
         )
         assert result.stdout == b'{"frame": 1}\n'
         assert b"LIBRARY NOISE" in result.stderr
+
+
+class TestProtocolFdIsolation:
+    @pytest.mark.skipif(not hasattr(os, "fork"), reason="fork unavailable")
+    def test_protocol_fd_closed_in_forked_children(self, tmp_path) -> None:
+        # lighteval forks sandbox children that run arbitrary generated code.
+        # They must NOT inherit the protocol fd, or that code could write to the
+        # client's JSONL response channel and spoof/desync grading.
+        script = tmp_path / "fork_probe.py"
+        script.write_text(
+            textwrap.dedent(
+                """
+                import os
+                from aiperf.accuracy.graders import _codegen_worker as w
+                proto = w._install_stdout_guard()
+                pfd = proto.fileno()
+                pid = os.fork()
+                if pid == 0:
+                    try:
+                        os.write(pfd, b"SPOOFED\\n")
+                    except OSError:
+                        pass
+                    os._exit(0)
+                os.waitpid(pid, 0)
+                proto.write(b"LEGIT\\n")
+                proto.flush()
+                """
+            )
+        )
+        result = subprocess.run(
+            [sys.executable, str(script)], capture_output=True, timeout=30
+        )
+        assert result.stdout == b"LEGIT\n", result.stdout

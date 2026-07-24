@@ -14,6 +14,7 @@ multithreaded-fork hang. See issue #1145.
 
 from __future__ import annotations
 
+import contextlib
 import math
 import multiprocessing as mp
 import os
@@ -126,12 +127,24 @@ def _force_fork() -> None:
         mp.set_start_method("fork", force=True)
 
 
+def _close_fd_quietly(fd: int) -> None:
+    with contextlib.suppress(OSError):
+        os.close(fd)
+
+
 def _install_stdout_guard() -> BinaryIO:
     """Return a private binary stream that writes to the real stdout, then point
     fd 1 at fd 2 so any library writes to stdout land on stderr instead of
     corrupting the protocol stream."""
     protocol_fd = os.dup(1)
     os.dup2(2, 1)
+    # lighteval forks sandbox children that run untrusted generated code. They
+    # must not inherit the protocol fd (fork copies fds, and it isn't exec'd so
+    # close-on-exec wouldn't help), or that code could write to the client's
+    # JSONL response channel and spoof/desync grading. Close it in every forked
+    # child; only the worker parent keeps it.
+    if hasattr(os, "register_at_fork"):
+        os.register_at_fork(after_in_child=lambda: _close_fd_quietly(protocol_fd))
     return os.fdopen(protocol_fd, "wb", buffering=0)
 
 
