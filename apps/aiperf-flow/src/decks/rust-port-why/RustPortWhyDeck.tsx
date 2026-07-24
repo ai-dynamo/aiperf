@@ -142,6 +142,20 @@ const REASONS: ReadonlyArray<ChalkCardProps> = [
     children:
       "A native binary launches instantly. Python must start the interpreter, import heavy ML dependencies (tokenizers, pydantic, …), and hand-shake the multi-service ZMQ mesh before the first request — seconds of fixed overhead on every run. Rust is ready in milliseconds, so edit-run-measure iteration is tight.",
   },
+  {
+    accent: "cyan",
+    badge: 8,
+    title: "Any workload, simulated in seconds",
+    diagram: (
+      <Diagram>
+        <NodeChip>workload</NodeChip>
+        <MiniArrow />
+        <NodeChip accent>SimClock</NodeChip>
+      </Diagram>
+    ),
+    children:
+      "Point any AIPerf workload at the offline Dynamo mocker and it runs on a virtual clock — no GPUs, no network, deterministic. A run that spans minutes of real wall-clock finishes in seconds, because SimClock advances virtual time in discrete hops instead of waiting.",
+  },
 ];
 
 // ── Honest performance rows (recent live A-B, July 2026) ──────────────────────
@@ -269,6 +283,38 @@ export function RustPortWhyDeck(): React.JSX.Element {
                 spokes={REASONS}
                 liveWire={0}
               />
+              <Callout tone="success" title="Marquee capability: simulate any workload in seconds — no GPUs, no network">
+                <Stack gap={8}>
+                  <span>
+                    Because it is one front-end over a {"{transport, clock}"} seam, the offline
+                    virtual-clock Dynamo mocker co-simulation applies to the{" "}
+                    <span className={inkClassName("primary")}>entire AIPerf workload surface</span> — not a
+                    separate tool:
+                  </span>
+                  <ul className={`ml-4 list-disc space-y-1 text-sm ${inkClassName("secondary")}`}>
+                    <li>
+                      Every AIPerf feature — arrival patterns, datasets, multi-turn, tokenization, metrics,
+                      exporters — runs <span className={inkClassName("primary")}>unchanged</span> in sim
+                      mode. Nothing to re-author per workload.
+                    </li>
+                    <li>
+                      The virtual clock removes real waiting: a run spanning minutes of wall-clock finishes
+                      in <span className={inkClassName("primary")}>seconds</span>, deterministically and
+                      reproducibly.
+                    </li>
+                    <li>
+                      No hardware — the Dynamo mocker is co-simulated in-process, so scheduler/timing
+                      regression tests and design-space sweeps run in{" "}
+                      <span className={inkClassName("primary")}>CI</span>, without a GPU or an inference
+                      server.
+                    </li>
+                    <li>
+                      This is what Dynamo Replay does today — now available for any AIPerf workload for
+                      free, and it subsumes that separate front-end.
+                    </li>
+                  </ul>
+                </Stack>
+              </Callout>
             </Stack>
 
             {/* ── Accidental complexity contrast ───────────────────────────── */}

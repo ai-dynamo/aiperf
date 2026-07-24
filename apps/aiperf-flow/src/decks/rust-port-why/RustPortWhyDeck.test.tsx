@@ -71,6 +71,16 @@ describe("RustPortWhyDeck (executive overview)", () => {
     ).toBeInTheDocument();
   });
 
+  it("headlines offline virtual-clock simulation of any workload in seconds", () => {
+    renderDeck();
+    // The driver spoke (rendered twice by HubSpoke) + the marquee callout.
+    expect(screen.getAllByText(/Any workload, simulated in seconds/i).length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/simulate any workload in seconds — no GPUs, no network/i),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/SimClock/i).length).toBeGreaterThan(0);
+  });
+
   it("preempts the free-threaded (no-GIL) Python objection honestly", () => {
     renderDeck();
     expect(screen.getByText(/no-GIL\) Python make this moot/i)).toBeInTheDocument();
