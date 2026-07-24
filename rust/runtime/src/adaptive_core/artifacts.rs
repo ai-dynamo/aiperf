@@ -564,10 +564,16 @@ impl FileArtifactSink {
 impl AdaptiveArtifactSink for FileArtifactSink {
     fn emit_event(&mut self, event: &AdaptiveEvent) -> Result<(), AdaptiveError> {
         let value = sorted_json_value(serde_json::to_value(event)?);
-        let encoded = serde_json::to_vec(&value)?;
+        let mut encoded = serde_json::to_vec(&value)?;
+        // Append the record and its line terminator in ONE `write_all`. With
+        // `O_APPEND`, a single write lands atomically at end-of-file, so a
+        // concurrent writer (the adaptive controller and the phase/report path
+        // can both hold a sink on the same artifact dir) can never slip its
+        // bytes between this record and its trailing newline — the split
+        // two-`write_all` form produced `}{`-glued lines that broke JSONL parse.
+        encoded.push(b'\n');
         let mut file = OpenOptions::new().append(true).open(&self.event_path)?;
         file.write_all(&encoded)?;
-        file.write_all(b"\n")?;
         Ok(())
     }
 
