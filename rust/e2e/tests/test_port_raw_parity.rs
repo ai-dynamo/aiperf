@@ -140,11 +140,20 @@ async fn port26_session_affinity_headers_absent_by_default_raw_parity() {
     let py = h.run_env(&args, &[("AIPERF_RUNTIME_ENGINE", "python")]);
     assert!(py.success(), "python run failed:\n{}", py.stderr);
 
-    for (label, recs) in [("rust", rust.artifacts.raw_records()), ("python", py.artifacts.raw_records())] {
+    for (label, recs) in [
+        ("rust", rust.artifacts.raw_records()),
+        ("python", py.artifacts.raw_records()),
+    ] {
         assert!(!recs.is_empty(), "{label} produced no raw records");
         for (i, r) in recs.iter().enumerate() {
-            assert!(header(r, "X-Session-ID").is_none(), "{label} record {i}: unexpected X-Session-ID");
-            assert!(header(r, "X-SMG-Routing-Key").is_none(), "{label} record {i}: unexpected X-SMG-Routing-Key");
+            assert!(
+                header(r, "X-Session-ID").is_none(),
+                "{label} record {i}: unexpected X-Session-ID"
+            );
+            assert!(
+                header(r, "X-SMG-Routing-Key").is_none(),
+                "{label} record {i}: unexpected X-SMG-Routing-Key"
+            );
         }
     }
 }
@@ -301,23 +310,21 @@ async fn port31_assistant_tool_calls_isl_parity() {
     // The chat-shape extraction must count the tool-call name/arguments toward
     // input_sequence_length exactly once (in `texts`, not double-counted via
     // `tool_texts`), identically to the Python engine.
-    let traces = vec![
-        json!({
-            "timestamp": 0,
-            "messages": [
-                {"role": "user", "content": "What is the weather in New York City today?"},
-                {"role": "assistant", "content": null, "tool_calls": [
-                    {"id": "call_1", "type": "function", "function": {
-                        "name": "get_current_weather",
-                        "arguments": "{\"location\":\"New York City\",\"unit\":\"fahrenheit\"}"
-                    }}
-                ]},
-                {"role": "tool", "tool_call_id": "call_1", "content": "72F and sunny"},
-                {"role": "user", "content": "Thanks, and what about tomorrow?"}
-            ],
-            "output_length": 8
-        }),
-    ];
+    let traces = vec![json!({
+        "timestamp": 0,
+        "messages": [
+            {"role": "user", "content": "What is the weather in New York City today?"},
+            {"role": "assistant", "content": null, "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {
+                    "name": "get_current_weather",
+                    "arguments": "{\"location\":\"New York City\",\"unit\":\"fahrenheit\"}"
+                }}
+            ]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "72F and sunny"},
+            {"role": "user", "content": "Thanks, and what about tomorrow?"}
+        ],
+        "output_length": 8
+    })];
     let trace_file = write_jsonl(h.artifact_dir.path(), "tool_calls_msgs.jsonl", &traces);
     // Default export level so profile_export.jsonl (records + metrics) is written.
     let args = format!(
@@ -347,4 +354,168 @@ async fn port31_assistant_tool_calls_isl_parity() {
         isl_projection(&py_recs),
         "assistant tool_calls ISL diverged between rust and python engines"
     );
+}
+
+// ---------------------------------------------------------------------------
+// #25 — outputs.json per-record metric allowlist (ISL/TTFT/ITL added)
+// ---------------------------------------------------------------------------
+
+/// Sorted metric-key set present on each `outputs.json` row (keyed by
+/// session/turn). Metric VALUES are timing-dependent, but which metrics the
+/// allowlist emits is deterministic and must match Python.
+fn outputs_metric_keys(outputs: &Value) -> Vec<String> {
+    sorted(
+        outputs
+            .get("data")
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .map(|r| {
+                        let mut keys: Vec<&str> = r
+                            .get("metrics")
+                            .and_then(Value::as_object)
+                            .map(|m| m.keys().map(String::as_str).collect())
+                            .unwrap_or_default();
+                        keys.sort();
+                        json!({
+                            "session_num": r["session_num"],
+                            "turn_index": r["turn_index"],
+                            "metric_keys": keys,
+                        })
+                        .to_string()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    )
+}
+
+#[tokio::test]
+async fn port25_outputs_json_metric_allowlist_parity() {
+    let h = AIPerfHarness::new().await;
+    // The native CLI enables outputs.json via config (artifacts.export_outputs_json),
+    // not a --export-outputs-json flag, so both engines run from a Config-v2 YAML.
+    let config_dir = tempfile::TempDir::new().expect("config tempdir");
+    let config_path = config_dir.path().join("outputs_json.yaml");
+    let config_body = format!(
+        r#"schemaVersion: "2.0"
+benchmark:
+  model: {model}
+  endpoint:
+    url: {url}
+    type: chat
+    streaming: true
+  dataset:
+    type: synthetic
+    entries: 100
+    prompts:
+      isl: 16
+      osl: 4
+  artifacts:
+    export_outputs_json: true
+    records:
+      - jsonl
+  phases:
+    - name: profiling
+      type: concurrency
+      concurrency: 1
+      requests: 4
+"#,
+        model = DEFAULT_MODEL,
+        url = h.mock.url,
+    );
+    std::fs::write(&config_path, config_body).expect("write config");
+    let args = format!(
+        "--config {} --workers-max 1 --random-seed 42 --ui simple --tokenizer builtin",
+        config_path.display()
+    );
+    let rust = h.run(&args);
+    assert!(rust.success(), "rust run failed:\n{}", rust.stderr);
+    let py = h.run_env(&args, &[("AIPERF_RUNTIME_ENGINE", "python")]);
+    assert!(py.success(), "python run failed:\n{}", py.stderr);
+
+    let rust_out = rust.artifacts.read_json_file("**/outputs.json");
+    let py_out = py.artifacts.read_json_file("**/outputs.json");
+
+    // The three metrics this port adds must be present on every rust row.
+    let rust_rows = rust_out
+        .get("data")
+        .expect("rust outputs.json has data array");
+    for r in rust_rows
+        .as_array()
+        .expect("rust outputs.json data is an array")
+    {
+        let keys = r
+            .get("metrics")
+            .and_then(Value::as_object)
+            .expect("metrics obj");
+        for added in [
+            "input_sequence_length",
+            "time_to_first_token",
+            "inter_token_latency",
+        ] {
+            assert!(
+                keys.contains_key(added),
+                "rust outputs.json row missing {added}: {r}"
+            );
+        }
+    }
+
+    // Byte-identical metric-key set across engines.
+    assert_eq!(
+        outputs_metric_keys(&rust_out),
+        outputs_metric_keys(&py_out),
+        "outputs.json metric allowlist diverged between rust and python engines"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #13 — console export width honors AIPERF_UI_CONSOLE_EXPORT_WIDTH
+// ---------------------------------------------------------------------------
+
+/// The widest rendered line in `profile_export_console.txt` (in display columns,
+/// counting chars — the ASCII box art the table uses is 1 col/char).
+fn max_console_line_width(path: &std::path::Path) -> usize {
+    std::fs::read_to_string(path)
+        .expect("read console txt")
+        .lines()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(0)
+}
+
+#[tokio::test]
+async fn port13_console_export_width_env_parity() {
+    let h = AIPerfHarness::new().await;
+    let args = format!(
+        "--model {DEFAULT_MODEL} --url {} --endpoint-type chat --streaming \
+         --concurrency 1 --request-count 4 --workers-max 1 --random-seed 42 \
+         --synthetic-input-tokens-mean 16 --output-tokens-mean 4 \
+         --ui simple --tokenizer builtin",
+        h.mock.url
+    );
+    // A non-default width both engines must pin the console artifact to.
+    let env = &[("AIPERF_UI_CONSOLE_EXPORT_WIDTH", "80")];
+
+    let rust = h.run_env(&args, env);
+    assert!(rust.success(), "rust run failed:\n{}", rust.stderr);
+    let mut py_env = env.to_vec();
+    py_env.push(("AIPERF_RUNTIME_ENGINE", "python"));
+    let py = h.run_env(&args, &py_env);
+    assert!(py.success(), "python run failed:\n{}", py.stderr);
+
+    let rust_txt = rust
+        .artifacts
+        .find_file("**/profile_export_console.txt")
+        .expect("rust profile_export_console.txt exists");
+    let py_txt = py
+        .artifacts
+        .find_file("**/profile_export_console.txt")
+        .expect("python profile_export_console.txt exists");
+
+    let rust_w = max_console_line_width(&rust_txt);
+    let py_w = max_console_line_width(&py_txt);
+    // Both engines pin the table to the configured 80 columns.
+    assert_eq!(rust_w, 80, "rust console width {rust_w} != configured 80");
+    assert_eq!(py_w, 80, "python console width {py_w} != configured 80");
 }
