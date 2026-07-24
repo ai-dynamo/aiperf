@@ -24,7 +24,6 @@ import { SeamFrame as SeamFrameBox } from "./SeamFrame.js";
 import { EventMarker } from "./EventMarker.js";
 import {
   buildOffsetForOrder,
-  eventOffsetMs,
   fractionForOrder,
   timelineBounds,
   type Lane,
@@ -91,14 +90,6 @@ function clampX(x: number): number {
   return Math.max(AXIS_LEFT, Math.min(AXIS_RIGHT, x));
 }
 
-/** Pick ~5 evenly-spaced ticks from the request path so the axis stays legible. */
-function pickTickIndices(count: number): number[] {
-  if (count <= 5) {
-    return Array.from({ length: count }, (_, i) => i);
-  }
-  return [0, Math.round(count / 4), Math.round(count / 2), Math.round((3 * count) / 4), count - 1];
-}
-
 /**
  * The swimlane-timeline renderer. Lays out the axis, lanes, regions, seam frames, the request line,
  * and the event markers into one responsive SVG.
@@ -108,7 +99,8 @@ export function TimelineTrack({
   regions,
   events,
   seamFrames,
-  requestPath,
+  // `requestPath` is still part of the props (callers pass it) but the overview no longer draws a
+  // connecting line, so it is intentionally not consumed here.
   activeEventId,
   scale,
   onRegionClick,
@@ -226,20 +218,11 @@ export function TimelineTrack({
       ? regions.find((r) => activeEvent.atOrder >= r.startOrder && activeEvent.atOrder <= r.endOrder)?.id
       : undefined;
 
-  const unitLabel = scale === "real" ? "RealClock · wall-ms" : "SimClock · virtual ticks";
-
-  // Axis ticks: a downsampled set of request-path events, labeled by wall-ms (real) or tick (virtual).
-  const pathEvents = requestPath
-    .map((id) => eventById.get(id))
-    .filter((event): event is TimelineEvent => event !== undefined);
-  const tickIdx = new Set(pickTickIndices(pathEvents.length));
-  const ticks: TimeAxisTick[] = pathEvents
-    .map((event, i) => ({ event, i }))
-    .filter(({ i }) => tickIdx.has(i))
-    .map(({ event }) => ({
-      x: xForEvent(event),
-      label: scale === "real" ? `${Math.round(eventOffsetMs(event))}` : `t${event.atOrder}`,
-    }));
+  // The axis caption names the active clock as CONTEXT — it does not claim the blocks are placed by
+  // wall time (they are evenly spaced by request order). No numeric ticks: labeling even positions
+  // with wall-ms values would be misleading, so the axis is a plain "request order" rule.
+  const unitLabel = `Request order · ${scale === "real" ? "RealClock" : "SimClock"}`;
+  const ticks: TimeAxisTick[] = [];
 
   return (
     <div className={className}>
@@ -343,8 +326,8 @@ export function TimelineTrack({
         )}
       </svg>
       <p className={`mt-1 text-[11px] ${inkClassName("tertiary")}`}>
-        One request riding the time axis through {lanes.length} subsystem lanes — click a stage block
-        to drill in.
+        {regions.length} stages in request order across {lanes.length} subsystem lanes — click a stage
+        block to drill in.
       </p>
     </div>
   );

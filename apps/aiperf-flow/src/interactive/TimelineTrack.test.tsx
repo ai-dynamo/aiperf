@@ -68,12 +68,12 @@ describe("TimelineTrack", () => {
     expect(markers[0]!.getAttribute("data-active")).toBe("true");
   });
 
-  it("switches the axis unit label with the scale", () => {
+  it("names the active clock on the axis caption (context, not a wall-time claim)", () => {
     const virtual = renderTrack({ scale: "virtual" });
-    expect(virtual.getByText("SimClock · virtual ticks")).toBeInTheDocument();
+    expect(virtual.getByText("Request order · SimClock")).toBeInTheDocument();
     virtual.unmount();
     const real = renderTrack({ scale: "real" });
-    expect(real.getByText("RealClock · wall-ms")).toBeInTheDocument();
+    expect(real.getByText("Request order · RealClock")).toBeInTheDocument();
   });
 
   it("uses even (order-based) x-positions independent of the Clock scale (even-spaced stage flow)", () => {

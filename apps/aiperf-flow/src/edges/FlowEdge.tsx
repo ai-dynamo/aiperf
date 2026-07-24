@@ -4,7 +4,7 @@
  */
 
 import type { EdgeProps, Edge } from "@xyflow/react";
-import { BaseEdge, getSmoothStepPath } from "@xyflow/react";
+import { BaseEdge, getBezierPath } from "@xyflow/react";
 
 /** Animation speed presets, mapped to a CSS `animation-duration`. */
 export type FlowEdgeSpeed = "slow" | "normal" | "fast";
@@ -29,10 +29,10 @@ const SPEED_DURATIONS: Record<FlowEdgeSpeed, string> = {
 /**
  * Animated dashed connector signaling data/request flow along an edge.
  *
- * Renders a bezier path with a dashed `strokeDasharray` and a CSS keyframe
- * animation that continuously decrements `stroke-dashoffset`, giving the
- * appearance of dashes traveling from source to target. Respects
- * `prefers-reduced-motion` via a CSS media query that disables the animation.
+ * Renders a continuous bezier curve (research: continuous curved paths are followed more easily
+ * than polylines, and fewer/shallower bends improve path-tracing) with a dashed `strokeDasharray`
+ * and a CSS keyframe animation that continuously decrements `stroke-dashoffset`, giving the
+ * appearance of dashes traveling from source to target. Respects `prefers-reduced-motion`.
  */
 export function FlowEdge({
   id,
@@ -45,14 +45,13 @@ export function FlowEdge({
   markerEnd,
   data,
 }: EdgeProps<FlowEdgeType>): React.JSX.Element {
-  const [edgePath] = getSmoothStepPath({
+  const [edgePath] = getBezierPath({
     sourceX,
     sourceY,
     sourcePosition,
     targetX,
     targetY,
     targetPosition,
-    borderRadius: 8,
   });
 
   const color = data?.color ?? DEFAULT_COLOR;
@@ -96,8 +95,8 @@ export function FlowEdge({
         markerEnd={markerEnd ?? `url(#${markerId})`}
         className="flow-edge__path"
         stroke={color}
-        strokeWidth={2.5}
-        strokeDasharray="8 8"
+        strokeWidth={2}
+        strokeDasharray="7 7"
         style={{ "--flow-edge-duration": duration } as React.CSSProperties}
       />
     </>

@@ -54,13 +54,18 @@ export function roleClassName(role: NodeRole): string {
   return `${categoryBgTintClassName(ROLE_COLOR[role])} ${ROLE_BORDER_LEFT[role]}`;
 }
 
-/** Legend rows for the deck to render a color key (order = display order). */
+/**
+ * Legend rows for the deck to render a color key. Order is deliberate: it separates the visually
+ * closest hues (green↔cyan, orange↔yellow) so no two adjacent swatches are hard to tell apart —
+ * this ordering passes the colorblind + normal-vision adjacency checks (validated with the dataviz
+ * palette validator on the dark surface). Every swatch is also text-labeled (secondary encoding).
+ */
 export const NODE_ROLE_LEGEND: ReadonlyArray<{ role: NodeRole; label: string; color: CategoryRole }> = [
   { role: "storage", label: "Storage / data", color: ROLE_COLOR.storage },
   { role: "compute", label: "Compute / workers", color: ROLE_COLOR.compute },
-  { role: "transport", label: "Transport / network", color: ROLE_COLOR.transport },
-  { role: "control", label: "Control / orchestration", color: ROLE_COLOR.control },
   { role: "media", label: "Media / sidecar", color: ROLE_COLOR.media },
+  { role: "control", label: "Control / orchestration", color: ROLE_COLOR.control },
+  { role: "transport", label: "Transport / network", color: ROLE_COLOR.transport },
   { role: "server", label: "Inference server", color: ROLE_COLOR.server },
 ];
 import type {

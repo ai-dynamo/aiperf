@@ -235,11 +235,11 @@ export function RustPortFlowDeck(): React.JSX.Element {
                 One request&apos;s life through the AIPerf Rust port
               </h1>
               <p className={`mt-1 max-w-4xl text-sm ${inkClassName("secondary")}`}>
-                A single request rides a time axis top-to-bottom through six subsystem swimlanes,
-                grouped inside the Clock / Workload / Transport seam frames. Press Play to send it
-                down the line; flip the Clock seam to rescale the axis (RealClock wall-milliseconds ↔
-                SimClock virtual ticks) and the Transport seam to reroute the dispatch hop. Click any
-                stage block to drill into its subsystem; Esc or the breadcrumb backs out; arrow keys
+                One request&apos;s nine stages, in order left-to-right across six subsystem swimlanes,
+                grouped inside the Clock / Workload / Transport seam frames. Press Play to step the
+                request through its events; the Clock seam switches RealClock ↔ SimClock and the
+                Transport seam reroutes the dispatch hop. Click any stage to drill into its subsystem —
+                every box there is colored by what it is. Esc or the breadcrumb backs out; arrow keys
                 move between sibling stages.
               </p>
             </div>

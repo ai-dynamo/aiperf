@@ -78,11 +78,11 @@ describe("RustPortFlowDeck (v2 swimlane-timeline)", () => {
     expect(screen.getAllByText(/re-exec of the same binary/).length).toBeGreaterThan(0);
   });
 
-  it("rescales the timeline x-axis when the Clock seam changes (real wall-ms ↔ virtual ticks)", () => {
+  it("names the active clock on the axis caption when the Clock seam changes", () => {
     renderDeck();
-    expect(screen.getByText("RealClock · wall-ms")).toBeInTheDocument();
+    expect(screen.getByText("Request order · RealClock")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "SimClock" }));
-    expect(screen.getByText("SimClock · virtual ticks")).toBeInTheDocument();
+    expect(screen.getByText("Request order · SimClock")).toBeInTheDocument();
   });
 
   it("drills into a stage on region click, revealing its real source anchor", () => {
