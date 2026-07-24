@@ -17,35 +17,38 @@
   --text-base: 1.0625rem;
   --text-base--line-height: calc(1.6 / 1.0625);
 
-  --color-ink-primary: #e6e6e6;
-  --color-ink-secondary: #b3b3b3;
-  --color-ink-tertiary: #8a8a8a;
-  --color-ink-quaternary: #5c5c5c;
-  --color-ink-link: #7ee08a;
+  /* "Systems Chalk" palette (ported byte-for-byte from the approved brainstorm mockup,
+     systems-chalk-hub-spoke.html): warm chalk-white ink on a warm-charcoal canvas, with a
+     cyan / blue / violet / amber / coral / green accent set. */
+  --color-ink-primary: #f2eee3; /* warm chalk white */
+  --color-ink-secondary: #9da6aa; /* muted */
+  --color-ink-tertiary: #768084;
+  --color-ink-quaternary: #596266; /* guide */
+  --color-ink-link: #65d9de; /* cyan */
 
-  /* Neutral charcoal-grey surfaces (a Cursor-editor-like dark theme) instead of near-black —
-     chrome/page/elevated/panel step from darkest to lightest so cards visibly lift off the page. */
-  --color-surface-chrome: #191919;
-  --color-surface-page: #1e1e1e;
-  --color-surface-elevated: #262626;
-  --color-surface-panel: #2f2f2f;
+  /* Warm-charcoal surfaces, darkest→lightest so cards lift off the canvas. canvas/panel/panel-2
+     are the mockup's --canvas / --panel / --panel-2. */
+  --color-surface-chrome: #141719;
+  --color-surface-page: #181b1d;
+  --color-surface-elevated: #24282b;
+  --color-surface-panel: #2c3135;
 
-  --color-stroke-primary: #6e6e6e;
-  --color-stroke-secondary: #454545;
-  --color-stroke-tertiary: #303030;
+  --color-stroke-primary: #596266;
+  --color-stroke-secondary: #3a4145;
+  --color-stroke-tertiary: #2a3033;
 
-  --color-accent-primary: #22c55e;
-  --color-accent-tint: rgba(34, 197, 94, 0.16);
-  --color-accent-control: #4fb3d9;
+  --color-accent-primary: #65d9de; /* cyan — the chalk "live"/active accent */
+  --color-accent-tint: rgba(101, 217, 222, 0.16);
+  --color-accent-control: #74a9ff; /* blue */
 
-  --color-category-green: #4ade80;
-  --color-category-yellow: #e0b23d;
-  --color-category-purple: #a488e0;
-  --color-category-blue: #5b9bf0;
-  --color-category-red: #e5677f;
-  --color-category-orange: #e08a4a;
-  --color-category-cyan: #4fd0e0;
-  --color-category-gray: #9aa0aa;
+  --color-category-green: #72d6a2;
+  --color-category-yellow: #f6bd60; /* amber */
+  --color-category-purple: #9b72ff; /* violet */
+  --color-category-blue: #74a9ff;
+  --color-category-red: #f58b76; /* coral */
+  --color-category-orange: #f0a15f;
+  --color-category-cyan: #65d9de;
+  --color-category-gray: #9da6aa;
 
   --radius-none: 0px;
 }
@@ -58,12 +61,24 @@ body {
   margin: 0;
   font-family: var(--font-sans);
   color-scheme: dark;
-  background-color: var(--color-surface-page);
   color: var(--color-ink-primary);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  /* Chalk canvas: a soft cyan glow over a faint 30px engineering grid on the warm-charcoal page
+     (ported from the mockup's body background). */
+  background:
+    radial-gradient(circle at 50% 42%, rgba(101, 217, 222, 0.05), transparent 34%),
+    linear-gradient(rgba(255, 255, 255, 0.016) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.016) 1px, transparent 1px),
+    var(--color-surface-page);
+  background-size:
+    auto,
+    30px 30px,
+    30px 30px,
+    auto;
+  background-attachment: fixed;
 }
 
 /* React Flow's built-in default edge (used by a handful of intentionally

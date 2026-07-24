@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Systems Chalk — Hub and Spoke</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --canvas: #181b1d;
+      --panel: #24282b;
+      --panel-2: #2c3135;
+      --ink: #f2eee3;
+      --muted: #9da6aa;
+      --guide: #596266;
+      --cyan: #65d9de;
+      --blue: #74a9ff;
+      --violet: #9b72ff;
+      --amber: #f6bd60;
+      --coral: #f58b76;
+      --green: #72d6a2;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      overflow: hidden;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 50% 48%, rgba(101, 217, 222, .055), transparent 31%),
+        linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px),
+        var(--canvas);
+      background-size: auto, 30px 30px, 30px 30px, auto;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+
+    .page {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      padding: 24px 30px 20px;
+    }
+
+    header, footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: relative;
+      z-index: 4;
+    }
+
+    .eyebrow {
+      color: var(--cyan);
+      font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 5px 0 0;
+      font-size: clamp(18px, 2vw, 27px);
+      font-weight: 560;
+      letter-spacing: -.025em;
+    }
+
+    .theme-mark {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font: 600 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .13em;
+    }
+
+    .theme-mark::before {
+      content: "";
+      width: 24px;
+      height: 24px;
+      border: 2px solid var(--ink);
+      border-radius: 7px 7px 11px 5px;
+      transform: rotate(-4deg);
+      box-shadow: inset 4px -4px 0 rgba(101,217,222,.25);
+    }
+
+    .field {
+      position: relative;
+      width: min(1160px, 94vw);
+      height: min(690px, 79vh);
+      min-height: 530px;
+      margin: -4px auto 0;
+    }
+
+    .wires {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      overflow: visible;
+      pointer-events: none;
+    }
+
+    .wire {
+      fill: none;
+      stroke: var(--guide);
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      stroke-dasharray: 3 7;
+      animation: wire 1.1s cubic-bezier(.2,.8,.2,1) both;
+    }
+
+    .wire.live {
+      stroke: var(--cyan);
+      stroke-width: 2;
+      stroke-dasharray: 320;
+      stroke-dashoffset: 320;
+      animation: draw 1.2s .7s cubic-bezier(.3,.7,.2,1) forwards;
+      filter: drop-shadow(0 0 4px rgba(101,217,222,.25));
+    }
+
+    .wire-dot {
+      fill: var(--cyan);
+      opacity: 0;
+      animation: appear .3s 1.85s forwards;
+    }
+
+    .hub {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 250px;
+      height: 148px;
+      transform: translate(-50%, -50%);
+      display: grid;
+      place-items: center;
+      z-index: 3;
+      text-align: center;
+      border: 1px solid rgba(155,114,255,.5);
+      border-radius: 18px;
+      background:
+        linear-gradient(145deg, rgba(155,114,255,.21), rgba(101,217,222,.06)),
+        rgba(36,40,43,.96);
+      box-shadow: 0 18px 60px rgba(0,0,0,.34), inset 0 0 0 1px rgba(255,255,255,.035);
+      animation: hub-in .7s cubic-bezier(.2,.8,.2,1) both;
+    }
+
+    .hub::before, .hub::after {
+      content: "";
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border: 2px solid var(--cyan);
+      border-radius: 50%;
+      background: var(--canvas);
+    }
+    .hub::before { left: -6px; top: calc(50% - 6px); }
+    .hub::after { right: -6px; top: calc(50% - 6px); }
+
+    .hub-kicker {
+      color: var(--violet);
+      font: 700 10px ui-monospace, monospace;
+      letter-spacing: .18em;
+    }
+
+    .hub h2 {
+      margin: 9px 0 5px;
+      font-size: 25px;
+      font-weight: 610;
+      letter-spacing: -.03em;
+    }
+
+    .hub p {
+      max-width: 190px;
+      margin: 0 auto;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .pulse {
+      position: absolute;
+      width: 82%;
+      height: 118%;
+      border: 1px solid rgba(101,217,222,.18);
+      border-radius: 50%;
+      animation: pulse 3s 2s ease-out infinite;
+      pointer-events: none;
+    }
+
+    .card {
+      --accent: var(--cyan);
+      position: absolute;
+      z-index: 2;
+      width: 252px;
+      min-height: 130px;
+      padding: 15px 16px 14px;
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 13px;
+      background: rgba(36,40,43,.95);
+      box-shadow: 0 12px 28px rgba(0,0,0,.2);
+      opacity: 0;
+      transform: translateY(8px) scale(.98);
+      animation: card-in .55s cubic-bezier(.2,.8,.2,1) forwards;
+      transition: border-color .2s, transform .2s, background .2s;
+    }
+
+    .card:hover {
+      transform: translateY(-2px);
+      border-color: color-mix(in srgb, var(--accent) 58%, transparent);
+      background: var(--panel-2);
+    }
+
+    .card:nth-of-type(2) { animation-delay: .20s; }
+    .card:nth-of-type(3) { animation-delay: .32s; }
+    .card:nth-of-type(4) { animation-delay: .44s; }
+    .card:nth-of-type(5) { animation-delay: .56s; }
+    .card:nth-of-type(6) { animation-delay: .68s; }
+    .card:nth-of-type(7) { animation-delay: .80s; }
+
+    .c1 { left: 2%; top: 6%; --accent: var(--amber); }
+    .c2 { left: 50%; top: 1%; transform: translateX(-50%); --accent: var(--blue); }
+    .c2:hover { transform: translateX(-50%) translateY(-2px); }
+    .c3 { right: 2%; top: 6%; --accent: var(--violet); }
+    .c4 { left: 0; top: 51%; --accent: var(--green); }
+    .c5 { right: 0; top: 51%; --accent: var(--coral); }
+    .c6 { left: 18%; bottom: 0; --accent: var(--cyan); }
+    .c7 { right: 18%; bottom: 0; --accent: var(--amber); }
+
+    .card-head {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .number {
+      display: grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      flex: 0 0 auto;
+      border: 1px solid var(--accent);
+      border-radius: 50%;
+      color: var(--accent);
+      font: 700 10px ui-monospace, monospace;
+    }
+
+    .card h3 {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 650;
+      letter-spacing: -.01em;
+    }
+
+    .diagram {
+      height: 56px;
+      margin: 10px 0 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 11px;
+      color: var(--muted);
+    }
+
+    .node {
+      display: grid;
+      place-items: center;
+      min-width: 36px;
+      height: 31px;
+      padding: 0 7px;
+      border: 1px solid currentColor;
+      border-radius: 5px;
+      font: 700 8px ui-monospace, monospace;
+    }
+
+    .node.accent { color: var(--accent); }
+    .node.round { border-radius: 50%; width: 33px; min-width: 33px; padding: 0; }
+    .node.db { border-radius: 50% / 17%; position: relative; }
+    .node.db::before {
+      content: "";
+      position: absolute;
+      top: 5px;
+      left: -1px;
+      right: -1px;
+      height: 1px;
+      background: currentColor;
+    }
+
+    .arrow {
+      position: relative;
+      width: 32px;
+      height: 1px;
+      background: repeating-linear-gradient(90deg, currentColor 0 3px, transparent 3px 7px);
+      opacity: .8;
+    }
+    .arrow::after {
+      content: "";
+      position: absolute;
+      right: -1px;
+      top: -3px;
+      width: 6px;
+      height: 6px;
+      border-top: 1px solid currentColor;
+      border-right: 1px solid currentColor;
+      transform: rotate(45deg);
+    }
+
+    .mini-bars {
+      display: flex;
+      align-items: end;
+      gap: 3px;
+      height: 32px;
+    }
+    .mini-bars i {
+      display: block;
+      width: 6px;
+      border-radius: 2px 2px 0 0;
+      background: var(--accent);
+      opacity: .85;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.4;
+    }
+
+    footer {
+      color: #768084;
+      font: 600 9px ui-monospace, monospace;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+
+    .legend { display: flex; gap: 16px; }
+    .legend span::before {
+      content: "";
+      display: inline-block;
+      width: 5px;
+      height: 5px;
+      margin-right: 6px;
+      border-radius: 50%;
+      background: var(--dot);
+      box-shadow: 0 0 7px var(--dot);
+    }
+
+    @keyframes hub-in {
+      from { opacity: 0; transform: translate(-50%,-50%) scale(.9); }
+      to { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+    }
+    @keyframes card-in {
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .c2 { animation-name: card-in-top; }
+    @keyframes card-in-top {
+      from { opacity: 0; transform: translateX(-50%) translateY(8px) scale(.98); }
+      to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+    }
+    @keyframes wire {
+      from { opacity: 0; }
+      to { opacity: .68; }
+    }
+    @keyframes draw { to { stroke-dashoffset: 0; } }
+    @keyframes appear { to { opacity: 1; } }
+    @keyframes pulse {
+      0% { opacity: 0; transform: scale(.8); }
+      25% { opacity: .7; }
+      100% { opacity: 0; transform: scale(1.3); }
+    }
+
+    @media (max-width: 860px) {
+      body { overflow: auto; }
+      .page { display: block; }
+      .field {
+        height: auto;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+        margin: 24px auto;
+      }
+      .wires { display: none; }
+      .hub, .card {
+        position: relative;
+        inset: auto;
+        width: 100%;
+        min-height: 125px;
+        transform: none;
+      }
+      .hub { left: auto; top: auto; height: 150px; transform: none; }
+      .c2 { transform: none; }
+      .c2:hover { transform: translateY(-2px); }
+      footer { margin-top: 18px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; opacity: 1 !important; }
+      .wire.live { stroke-dashoffset: 0; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div>
+        <div class="eyebrow">AIPerf Flow · Scene study 02</div>
+        <h1>From one request to the whole system</h1>
+      </div>
+      <div class="theme-mark">SYSTEMS CHALK</div>
+    </header>
+
+    <section class="field" aria-label="Hub and spoke request lifecycle diagram">
+      <svg class="wires" viewBox="0 0 1160 690" preserveAspectRatio="none" aria-hidden="true">
+        <path class="wire live" d="M580 345 C478 248 385 155 258 112"/>
+        <path class="wire" d="M580 345 C580 249 580 196 580 112"/>
+        <path class="wire" d="M580 345 C682 248 775 155 902 112"/>
+        <path class="wire" d="M580 345 C436 351 334 400 252 426"/>
+        <path class="wire" d="M580 345 C724 351 826 400 908 426"/>
+        <path class="wire" d="M580 345 C504 450 424 533 354 592"/>
+        <path class="wire" d="M580 345 C656 450 736 533 806 592"/>
+        <circle class="wire-dot" cx="258" cy="112" r="4"/>
+      </svg>
+
+      <div class="hub">
+        <div class="pulse"></div>
+        <div>
+          <div class="hub-kicker">REQUEST · R-017</div>
+          <h2>What made this slow?</h2>
+          <p>Follow one causal path across every layer of inference.</p>
+        </div>
+      </div>
+
+      <article class="card c1">
+        <div class="card-head"><span class="number">1</span><h3>Prompt enters the gateway</h3></div>
+        <div class="diagram">
+          <span class="node">CLIENT</span><span class="arrow"></span><span class="node accent">EDGE</span>
+        </div>
+        <p>Route and admission decisions become the first authored beat.</p>
+      </article>
+
+      <article class="card c2">
+        <div class="card-head"><span class="number">2</span><h3>Admission queues the work</h3></div>
+        <div class="diagram">
+          <span class="node round">8</span><span class="node round accent">9</span><span class="node round">10</span>
+          <span class="arrow"></span><span class="node">GPU</span>
+        </div>
+        <p>Queue depth and wait time remain attached to the request.</p>
+      </article>
+
+      <article class="card c3">
+        <div class="card-head"><span class="number">3</span><h3>Prefix cache is consulted</h3></div>
+        <div class="diagram">
+          <span class="node">HASH</span><span class="arrow"></span><span class="node db accent">KV</span>
+        </div>
+        <p>A cache hit shortens prefill; a miss explains the extra work.</p>
+      </article>
+
+      <article class="card c4">
+        <div class="card-head"><span class="number">4</span><h3>Prefill claims compute</h3></div>
+        <div class="diagram">
+          <span class="node accent">PREFILL</span><span class="arrow"></span>
+          <span class="mini-bars"><i style="height:35%"></i><i style="height:70%"></i><i style="height:100%"></i><i style="height:82%"></i></span>
+        </div>
+        <p>Batch pressure and memory occupancy explain time to first token.</p>
+      </article>
+
+      <article class="card c5">
+        <div class="card-head"><span class="number">5</span><h3>Decode streams tokens</h3></div>
+        <div class="diagram">
+          <span class="node accent">GPU</span><span class="arrow"></span><span class="node">t₁ · t₂ · t₃</span>
+        </div>
+        <p>Inter-token gaps reveal contention without losing narrative rhythm.</p>
+      </article>
+
+      <article class="card c6">
+        <div class="card-head"><span class="number">6</span><h3>Telemetry supplies evidence</h3></div>
+        <div class="diagram">
+          <span class="mini-bars"><i style="height:28%"></i><i style="height:48%"></i><i style="height:92%"></i><i style="height:62%"></i><i style="height:78%"></i></span>
+          <span class="arrow"></span><span class="node accent">TRACE</span>
+        </div>
+        <p>Metrics are supporting evidence, not a competing dashboard.</p>
+      </article>
+
+      <article class="card c7">
+        <div class="card-head"><span class="number">7</span><h3>The causal path resolves</h3></div>
+        <div class="diagram">
+          <span class="node">ARRIVE</span><span class="arrow"></span><span class="node accent">DONE</span>
+        </div>
+        <p>Every spoke collapses back into one explainable request story.</p>
+      </article>
+    </section>
+
+    <footer>
+      <div class="legend">
+        <span style="--dot:var(--cyan)">active cause</span>
+        <span style="--dot:var(--violet)">selected request</span>
+        <span style="--dot:var(--amber)">decision point</span>
+      </div>
+      <span>Entity → connector → destination → annotation</span>
+    </footer>
+  </main>
+</body>
+</html>
