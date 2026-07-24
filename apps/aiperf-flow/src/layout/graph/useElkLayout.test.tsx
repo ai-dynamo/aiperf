@@ -61,4 +61,19 @@ describe("useElkLayout", () => {
     renderHook(() => useElkLayout(NODES, EDGES, {}));
     await waitFor(() => expect(fitView).toHaveBeenCalled(), { timeout: 3000 });
   });
+
+  it("reflects live node data changes (same ids) without relayout", async () => {
+    const initial: Node[] = [{ id: "a", position: { x: 0, y: 0 }, data: { title: "before" } }];
+    const { result, rerender } = renderHook(({ nodes }) => useElkLayout(nodes, [], {}), {
+      initialProps: { nodes: initial },
+    });
+    await waitFor(() => expect(result.current.laidOut).toBe(true));
+    const laidPosition = result.current.nodes[0]!.position;
+
+    // New data, SAME id: data must update, position must be preserved (no relayout needed).
+    const updated: Node[] = [{ id: "a", position: { x: 0, y: 0 }, data: { title: "after" } }];
+    rerender({ nodes: updated });
+    expect(result.current.nodes[0]!.data).toEqual({ title: "after" });
+    expect(result.current.nodes[0]!.position).toEqual(laidPosition);
+  });
 });
