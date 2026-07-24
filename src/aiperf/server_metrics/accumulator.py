@@ -204,6 +204,12 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         # (phase_time_ranges["warmup"]): extend past credit-phase complete to
         # include the dedicated end-of-warmup scrape when present.
         warmup_summary_end_ns = warmup_end_ns
+        if self._last_warmup_record_ns is not None:
+            warmup_summary_end_ns = (
+                self._last_warmup_record_ns
+                if warmup_end_ns is None
+                else max(warmup_end_ns, self._last_warmup_record_ns)
+            )
         if (
             warmup_start_ns is not None
             and warmup_end_ns is not None
@@ -217,7 +223,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             if not warmup_endpoint_summaries:
                 warmup_endpoint_summaries = self._compute_endpoint_summaries(
                     warmup_start_ns,
-                    warmup_end_ns,
+                    warmup_summary_end_ns,
                     self._slice_duration,
                     include_final_collection=False,
                 )
