@@ -487,6 +487,51 @@ async def test_root_context_overflow_calls_registry_on_root_terminal(
 
 
 @pytest.mark.asyncio
+async def test_final_turn_context_overflow_still_runs_intercept(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+):
+    """A FINAL-turn context-overflow is NOT overflow_terminal.
+
+    overflow_terminal is scoped to non-final turns (a mid-trajectory death);
+    on the authored final turn, intercept must still run so the turn's declared
+    DAG children dispatch, and the tree is marked terminal because it is the
+    final turn -- not because the error was an overflow.
+    """
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    handler = CreditCallbackHandler(mock_concurrency, session_tree_registry=registry)
+    handler.register_phase(
+        phase=CreditPhase.PROFILING,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+    orchestrator = MagicMock()
+    orchestrator.intercept = AsyncMock(return_value=False)
+    orchestrator.set_drain_observer = MagicMock()
+    handler.set_branch_orchestrator(orchestrator)
+
+    credit = make_credit(turn_index=4, num_turns=5)  # final turn
+    await handler.on_credit_return(
+        "worker-1",
+        make_credit_return(
+            credit,
+            error="This model's maximum context length is 131072 tokens",
+        ),
+    )
+
+    orchestrator.intercept.assert_awaited_once_with(credit)
+    registry.on_root_terminal.assert_called_once_with(
+        credit.effective_root_correlation_id
+    )
+
+
+@pytest.mark.asyncio
 async def test_root_non_overflow_error_skips_registry_on_root_terminal(
     mock_concurrency,
     mock_progress,

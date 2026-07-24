@@ -436,7 +436,8 @@ class CreditCallbackHandler:
         # ``_handle_warmup_failure``. Skip intercept entirely on overflow
         # terminal -- spawning or suspending a dead parent is wrong.
         overflow_terminal = (
-            credit_return.error is not None
+            not credit.is_final_turn
+            and credit_return.error is not None
             and is_context_overflow_response(body=credit_return.error)
         )
         root_terminal = credit.is_final_turn or overflow_terminal
