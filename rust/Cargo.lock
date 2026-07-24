@@ -79,6 +79,7 @@ dependencies = [
  "http-body-util",
  "hyper 1.10.1",
  "hyper-util",
+ "libc",
  "libmimalloc-sys",
  "mimalloc",
  "minijinja",
