@@ -17,7 +17,7 @@ export function CardNode({ data }: NodeProps<CardNodeType>): React.JSX.Element {
   return (
     <div
       className={clsx(
-        "min-w-[180px] rounded-lg border border-l-2 px-4 py-3 shadow-sm",
+        "min-w-[180px] max-w-[260px] rounded-lg border border-l-2 px-4 py-3 shadow-sm",
         surfaceClassName("elevated"),
         strokeClassName(data.strokeRole ?? "primary"),
         "border-l-accent-primary",
@@ -25,18 +25,18 @@ export function CardNode({ data }: NodeProps<CardNodeType>): React.JSX.Element {
       )}
     >
       <Handle type="target" position={Position.Left} className={HANDLE_CLASS_NAME} />
-      <div className={`text-sm font-semibold tracking-tight ${inkClassName("primary")}`}>
+      <div className={`text-sm font-semibold tracking-tight break-words ${inkClassName("primary")}`}>
         {data.title}
       </div>
       {data.subtitle !== undefined && (
         <div
-          className={`mt-1 text-[11px] font-medium tracking-wide uppercase ${inkClassName("tertiary")}`}
+          className={`mt-1 text-[11px] font-medium tracking-wide uppercase break-words ${inkClassName("tertiary")}`}
         >
           {data.subtitle}
         </div>
       )}
       {data.detail !== undefined && (
-        <div className={`mt-1.5 text-xs ${inkClassName("secondary")}`}>{data.detail}</div>
+        <div className={`mt-1.5 text-xs break-words ${inkClassName("secondary")}`}>{data.detail}</div>
       )}
       <Handle type="source" position={Position.Right} className={HANDLE_CLASS_NAME} />
     </div>

@@ -55,7 +55,7 @@ export interface StageDef {
 export const OVERVIEW_ID = "overview";
 
 const COL = 300;
-const ROW = 190;
+const ROW = 380;
 
 /** Boustrophedon position for a stage by its spine ordinal, so edges read as one connected pipeline. */
 function overviewPosition(order: number): { x: number; y: number } {

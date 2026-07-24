@@ -14,17 +14,17 @@ export function HeaderNode({ data }: NodeProps<HeaderNodeType>): React.JSX.Eleme
   return (
     <div
       className={clsx(
-        "min-w-[280px] rounded-lg border-b px-4 py-3 shadow-sm",
+        "min-w-[280px] max-w-[360px] rounded-lg border-b px-4 py-3 shadow-sm",
         surfaceClassName(data.surfaceRole ?? "chrome"),
         strokeClassName("tertiary"),
         data.className,
       )}
     >
-      <div className={`text-xs font-bold tracking-widest ${inkClassName("secondary")}`}>
+      <div className={`text-xs font-bold tracking-widest break-words ${inkClassName("secondary")}`}>
         {data.title}
       </div>
       {data.caption !== undefined && (
-        <div className={`mt-1 text-[11px] tracking-wide ${inkClassName("tertiary")}`}>
+        <div className={`mt-1 text-[11px] tracking-wide break-words ${inkClassName("tertiary")}`}>
           {data.caption}
         </div>
       )}
