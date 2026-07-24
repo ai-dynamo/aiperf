@@ -128,6 +128,20 @@ const REASONS: ReadonlyArray<ChalkCardProps> = [
     children:
       "No message bus, no per-service CPU tuning, no multi-pod control plane to keep alive for a single-node run. Fewer moving parts means fewer failure modes at high load.",
   },
+  {
+    accent: "red",
+    badge: 7,
+    title: "Cold start in a blink",
+    diagram: (
+      <Diagram>
+        <NodeChip>py: s</NodeChip>
+        <MiniArrow />
+        <NodeChip accent>rs: ms</NodeChip>
+      </Diagram>
+    ),
+    children:
+      "A native binary launches instantly. Python must start the interpreter, import heavy ML dependencies (tokenizers, pydantic, …), and hand-shake the multi-service ZMQ mesh before the first request — seconds of fixed overhead on every run. Rust is ready in milliseconds, so edit-run-measure iteration is tight.",
+  },
 ];
 
 // ── Honest performance rows (recent live A-B, July 2026) ──────────────────────
@@ -343,17 +357,18 @@ export function RustPortWhyDeck(): React.JSX.Element {
                 <ChalkCard
                   accent="purple"
                   badge="B"
-                  title="The language barrier is eroding"
+                  title="The language barrier is already broken"
                   diagram={
                     <Diagram>
                       <NodeChip>barrier</NodeChip>
                       <MiniArrow />
-                      <NodeChip accent>lower</NodeChip>
+                      <NodeChip accent>crossed</NodeChip>
                     </Diagram>
                   }
                 >
-                  AI-assisted, spec-driven development makes Rust approachable to write and review,
-                  removing the accessibility reason that favored Python.
+                  This is not a forecast — it is the proof. The accessibility barrier that once favored
+                  Python has already fallen: an AI-assisted, spec-driven effort reproduced a mature Python
+                  codebase in Rust, at parity. The port existing at all is the evidence the barrier is gone.
                 </ChalkCard>
                 <ChalkCard
                   accent="green"

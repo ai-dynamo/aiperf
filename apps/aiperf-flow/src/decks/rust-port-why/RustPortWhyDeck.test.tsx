@@ -60,7 +60,24 @@ describe("RustPortWhyDeck (executive overview)", () => {
   it("answers 'why now' — accessibility was the original Python reason, now eroded by AI-assisted development", () => {
     renderDeck();
     expect(screen.getByText(/Why Rust, why now/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/spec-driven development/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/spec-driven/i).length).toBeGreaterThan(0);
+  });
+
+  it("uses the port itself as PROOF the language barrier is already broken", () => {
+    renderDeck();
+    expect(screen.getByText(/language barrier is already broken/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/the port existing at all is the evidence the barrier is gone/i),
+    ).toBeInTheDocument();
+  });
+
+  it("pitches fast startup as a quick edit-run-measure iteration win", () => {
+    renderDeck();
+    // Rendered twice by HubSpoke (ring + narrow fallback).
+    expect(screen.getAllByText(/Cold start in a blink/i).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(/edit-run-measure iteration is tight/i).length,
+    ).toBeGreaterThan(0);
   });
 
   it("is registered on Home's deck listing", () => {
