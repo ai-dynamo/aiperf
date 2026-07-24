@@ -70,12 +70,32 @@ fn now_secs() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+/// A process-unique request-id number, cheaper than a v4 UUID on the hot path.
+///
+/// The response `id` only needs to be unique, not random. Each thread claims a
+/// distinct high-order ordinal once, then increments a thread-local counter — no
+/// per-request RNG and no cross-thread atomic contention. Unique for up to 2^40
+/// requests across up to 2^24 threads, far beyond any run.
+fn next_request_seq() -> u64 {
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static THREAD_ORDINAL: AtomicU64 = AtomicU64::new(0);
+    thread_local! {
+        static SEQ: Cell<u64> = Cell::new(THREAD_ORDINAL.fetch_add(1, Ordering::Relaxed) << 40);
+    }
+    SEQ.with(|c| {
+        let v = c.get();
+        c.set(v.wrapping_add(1));
+        v
+    })
+}
+
 fn make_request_id(prefix: &str) -> String {
-    format!("{prefix}-{}", uuid::Uuid::new_v4())
+    format!("{prefix}-{:016x}", next_request_seq())
 }
 
 fn make_anthropic_message_id() -> String {
-    format!("msg_{}", uuid::Uuid::new_v4())
+    format!("msg_{:016x}", next_request_seq())
 }
 
 fn maybe_inject_error(state: &AppState) -> Option<AppError> {
@@ -203,7 +223,7 @@ impl RequestCtx {
             tokenized.count(),
             active_inflight,
             state.scheduler.clone(),
-            request_id.clone(),
+            &request_id,
             latency_cached,
         );
         Self {
@@ -351,8 +371,11 @@ pub async fn chat_completions(
         );
         Ok(sse_response(body))
     } else {
-        state.recorder.record_request_start(endpoint, &ctx.model);
-        state.recorder.record_llm_inflight_start(&ctx.model);
+        // Resolve all labeled metric handles once, then drive the whole
+        // request lifecycle through cached child handles (no per-metric label
+        // hash/lookup on the hot path).
+        let labeled = state.recorder.labeled(endpoint, &ctx.model);
+        state.recorder.admit_fast(&labeled);
         let (prefill, _decode) = ctx.latency_sim.wait_for_tokens(ctx.tokenized.count()).await;
         let latency = start.elapsed();
         let info = LLMLatencyInfo {
@@ -360,22 +383,17 @@ pub async fn chat_completions(
             prefill,
             decode: latency.saturating_sub(prefill),
         };
-        let body = build_chat_response(&ctx);
-        let json_body = serde_json::to_vec(&body).map_err(internal_error)?;
+        let json_body = write_chat_response(&ctx);
         let resp_bytes = json_body.len() as u64;
 
-        state
-            .recorder
-            .record_request_bytes(endpoint, ctx.tokenized.text.len() as u64, resp_bytes);
-        state.recorder.record_llm_success(
-            endpoint,
-            &ctx.model,
+        state.recorder.complete_fast(
+            &labeled,
             latency.as_secs_f64(),
             &ctx.usage,
             &info,
+            ctx.tokenized.text.len() as u64,
+            resp_bytes,
         );
-        state.recorder.record_llm_inflight_end(&ctx.model);
-        state.recorder.record_request_end(endpoint);
 
         Ok(Response::builder()
             .status(StatusCode::OK)
@@ -383,6 +401,186 @@ pub async fn chat_completions(
             .body(Body::from(json_body))
             .map_err(internal_error)?)
     }
+}
+
+/// Chat-completion generation for the hand-rolled `--blocking`/`--uring`
+/// engines, without the tokio/axum request machinery. Handles both streaming
+/// (SSE, one pre-rendered body) and non-streaming, under `--fast` semantics
+/// (zero simulated latency, so no `wait_for_tokens` await). Returns the response
+/// content-type and body. Records the same metrics the axum `--fast` path does.
+///
+/// Not handled here (these engines target raw throughput): error injection,
+/// mid-stream failures, and null-object chunk injection.
+pub(crate) fn render_chat_completion_fast(
+    state: &AppState,
+    req: &ChatCompletionRequest,
+) -> (&'static str, Vec<u8>) {
+    let endpoint = "/v1/chat/completions";
+    let start = Instant::now();
+    state.recorder.init_model_config(&req.model);
+    let req_gen = GenRequest::Chat(req);
+    let mut ctx = RequestCtx::build("chatcmpl", &req_gen, endpoint, start, state);
+    if state.inject_tool_call() {
+        let (spec, tool_use_tokens) = ToolCallSpec::from_config(&state.config);
+        ctx.usage.tool_use_prompt_token_count = Some(tool_use_tokens);
+        ctx.tool_call = Some(spec);
+    }
+    let labeled = state.recorder.labeled(endpoint, &ctx.model);
+
+    if req.stream {
+        // Mirror the axum fast streaming path's metric sequence exactly.
+        let include_usage = req.include_usage();
+        state.recorder.record_streaming_start(endpoint, &ctx.model);
+        state.recorder.record_request_start(endpoint, &ctx.model);
+        state.recorder.record_llm_inflight_start(&ctx.model);
+        let total_tokens =
+            ctx.tokenized.reasoning_content_tokens.len() + ctx.tokenized.tokens.len();
+        if total_tokens > 0 {
+            state
+                .recorder
+                .record_zero_ttft_and_itls(&labeled, total_tokens - 1);
+            state
+                .recorder
+                .record_streamed_tokens_fast(&labeled, total_tokens as u64);
+        }
+        let body = render_chat_fast_body(&ctx, include_usage);
+        let latency = start.elapsed();
+        let info = LLMLatencyInfo {
+            e2e: latency,
+            prefill: std::time::Duration::ZERO,
+            decode: latency,
+        };
+        state
+            .recorder
+            .record_llm_success(endpoint, &ctx.model, latency.as_secs_f64(), &ctx.usage, &info);
+        state.recorder.record_llm_inflight_end(&ctx.model);
+        state.recorder.record_request_end(endpoint);
+        return ("text/event-stream", body.to_vec());
+    }
+
+    state.recorder.admit_fast(&labeled);
+    let latency = start.elapsed();
+    let info = LLMLatencyInfo {
+        e2e: latency,
+        prefill: std::time::Duration::ZERO,
+        decode: latency,
+    };
+    let json_body = write_chat_response(&ctx);
+    let resp_bytes = json_body.len() as u64;
+    state.recorder.complete_fast(
+        &labeled,
+        latency.as_secs_f64(),
+        &ctx.usage,
+        &info,
+        ctx.tokenized.text.len() as u64,
+        resp_bytes,
+    );
+    ("application/json", json_body)
+}
+
+/// Text-completion (`/v1/completions`) generation for the hand-rolled engines,
+/// streaming or not, under `--fast` semantics. Mirrors the axum path's metrics.
+pub(crate) fn render_text_completion_fast(
+    state: &AppState,
+    req: &crate::models::CompletionRequest,
+) -> (&'static str, Vec<u8>) {
+    let endpoint = "/v1/completions";
+    let start = Instant::now();
+    state.recorder.init_model_config(&req.model);
+    let req_gen = GenRequest::Completion(req);
+    let ctx = RequestCtx::build("cmpl", &req_gen, endpoint, start, state);
+    let labeled = state.recorder.labeled(endpoint, &ctx.model);
+    let latency_info = || {
+        let latency = start.elapsed();
+        (
+            latency,
+            LLMLatencyInfo {
+                e2e: latency,
+                prefill: std::time::Duration::ZERO,
+                decode: latency,
+            },
+        )
+    };
+
+    if req.stream {
+        let include_usage = req.include_usage();
+        state.recorder.record_streaming_start(endpoint, &ctx.model);
+        state.recorder.record_request_start(endpoint, &ctx.model);
+        state.recorder.record_llm_inflight_start(&ctx.model);
+        let count = ctx.tokenized.tokens.len();
+        if count > 0 {
+            state.recorder.record_zero_ttft_and_itls(&labeled, count - 1);
+            state
+                .recorder
+                .record_streamed_tokens_fast(&labeled, count as u64);
+        }
+        let body = render_text_fast_body(&ctx, include_usage);
+        let (latency, info) = latency_info();
+        state
+            .recorder
+            .record_llm_success(endpoint, &ctx.model, latency.as_secs_f64(), &ctx.usage, &info);
+        state.recorder.record_llm_inflight_end(&ctx.model);
+        state.recorder.record_request_end(endpoint);
+        return ("text/event-stream", body.to_vec());
+    }
+
+    state.recorder.record_request_start(endpoint, &ctx.model);
+    state.recorder.record_llm_inflight_start(&ctx.model);
+    let json_body =
+        serde_json::to_vec(&build_completion_response(&ctx)).unwrap_or_else(|_| b"{}".to_vec());
+    let (latency, info) = latency_info();
+    state.recorder.record_request_bytes(
+        endpoint,
+        ctx.tokenized.text.len() as u64,
+        json_body.len() as u64,
+    );
+    state
+        .recorder
+        .record_llm_success(endpoint, &ctx.model, latency.as_secs_f64(), &ctx.usage, &info);
+    state.recorder.record_llm_inflight_end(&ctx.model);
+    state.recorder.record_request_end(endpoint);
+    ("application/json", json_body)
+}
+
+/// Embeddings (`/v1/embeddings`) generation for the hand-rolled engines. Always
+/// non-streaming JSON; mirrors the axum path's metrics (`--fast` skips the
+/// simulated per-input processing latency).
+pub(crate) fn render_embeddings_fast(
+    state: &AppState,
+    req: &crate::models::EmbeddingRequest,
+) -> Vec<u8> {
+    let endpoint = "/v1/embeddings";
+    let start = Instant::now();
+    let req_gen = GenRequest::Embedding(req);
+    let ctx = RequestCtx::build("emb", &req_gen, endpoint, start, state);
+    let inputs = req.inputs();
+    state.recorder.record_request_start(endpoint, &req.model);
+    let data: Vec<Value> = inputs
+        .iter()
+        .enumerate()
+        .map(|(i, text)| {
+            json!({
+                "object": "embedding",
+                "index": i,
+                "embedding": generate_embedding(text, 768),
+            })
+        })
+        .collect();
+    let body = json!({
+        "object": "list",
+        "model": req.model,
+        "data": data,
+        "usage": ctx.usage,
+    });
+    state.recorder.record_embedding_success(
+        endpoint,
+        &req.model,
+        ctx.usage.prompt_tokens,
+        inputs.len(),
+        start.elapsed().as_secs_f64(),
+    );
+    state.recorder.record_request_end(endpoint);
+    serde_json::to_vec(&body).unwrap_or_else(|_| b"{}".to_vec())
 }
 
 /// Typed mirror of the `json!()`-built response this replaced. Serializing a
@@ -432,6 +630,214 @@ struct ChatResponse<'a> {
     model: &'a str,
     choices: [ChatResponseChoice<'a>; 1],
     usage: &'a Usage,
+}
+
+/// Serializes as a single JSON string equal to the concatenation of `tokens`,
+/// streamed straight into the output via `collect_str` — no intermediate
+/// concatenated `String`. serde_json's `collect_str` applies the identical
+/// string escaping it would to the joined `&str`, so output is byte-identical.
+struct TokenJoin<'a>(&'a [String]);
+
+impl std::fmt::Display for TokenJoin<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for t in self.0 {
+            f.write_str(t)?;
+        }
+        Ok(())
+    }
+}
+
+impl Serialize for TokenJoin<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+/// Hand-assembled equivalent of `serde_json::to_vec(&build_chat_response(ctx))`.
+///
+/// Structural keys and literal values (`object`, `role`, braces, the
+/// `assistant`/`function` constants) are written as raw bytes — serde would
+/// escape-scan every one of them on the hot path. Only the variable values
+/// (id, model, finish_reason, content, tool-call fields, usage) go through
+/// `serde_json::to_writer`, so their escaping and number formatting stay
+/// byte-identical to the derived-`Serialize` path. Verified by
+/// `write_chat_response_matches_serde`.
+fn write_chat_response(ctx: &RequestCtx) -> Vec<u8> {
+    write_chat_response_bytes(
+        &ctx.request_id,
+        &ctx.model,
+        now_secs(),
+        ctx.tokenized.finish_reason,
+        ctx.tool_call.as_ref(),
+        &ctx.tokenized.tokens,
+        &ctx.tokenized.reasoning_content_tokens,
+        &ctx.usage,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_chat_response_bytes(
+    id: &str,
+    model: &str,
+    created: i64,
+    base_finish_reason: &str,
+    tool_call: Option<&ToolCallSpec>,
+    content_tokens: &[String],
+    reasoning_tokens: &[String],
+    usage: &Usage,
+) -> Vec<u8> {
+    use std::io::Write as _;
+    let finish_reason = if tool_call.is_some() {
+        "tool_calls"
+    } else {
+        base_finish_reason
+    };
+    let mut buf = Vec::with_capacity(256);
+    buf.extend_from_slice(br#"{"id":"#);
+    serde_json::to_writer(&mut buf, id).unwrap();
+    buf.extend_from_slice(br#","object":"chat.completion","created":"#);
+    let _ = write!(&mut buf, "{created}");
+    buf.extend_from_slice(br#","model":"#);
+    serde_json::to_writer(&mut buf, model).unwrap();
+    buf.extend_from_slice(br#","choices":[{"index":0,"finish_reason":"#);
+    serde_json::to_writer(&mut buf, finish_reason).unwrap();
+    buf.extend_from_slice(br#","message":{"role":"assistant","content":"#);
+    serde_json::to_writer(&mut buf, &TokenJoin(content_tokens)).unwrap();
+    if !reasoning_tokens.is_empty() {
+        buf.extend_from_slice(br#","reasoning_content":"#);
+        serde_json::to_writer(&mut buf, &TokenJoin(reasoning_tokens)).unwrap();
+    }
+    if let Some(tc) = tool_call {
+        buf.extend_from_slice(br#","tool_calls":[{"id":"#);
+        serde_json::to_writer(&mut buf, &tc.id).unwrap();
+        buf.extend_from_slice(br#","type":"function","function":{"name":"#);
+        serde_json::to_writer(&mut buf, &tc.name).unwrap();
+        buf.extend_from_slice(br#","arguments":"#);
+        serde_json::to_writer(&mut buf, &tc.arguments).unwrap();
+        buf.extend_from_slice(br#"}}]"#);
+    }
+    buf.extend_from_slice(br#"}}],"usage":"#);
+    serde_json::to_writer(&mut buf, usage).unwrap();
+    buf.push(b'}');
+    buf
+}
+
+#[cfg(test)]
+mod chat_response_serialize_tests {
+    use super::*;
+    use crate::models::{PromptTokensDetails, Usage};
+
+    fn usage_sample() -> Usage {
+        Usage {
+            prompt_tokens: 2,
+            completion_tokens: 3,
+            total_tokens: 5,
+            completion_tokens_details: None,
+            prompt_tokens_details: Some(PromptTokensDetails {
+                cached_tokens: 1,
+                audio_tokens: None,
+            }),
+            cache_creation_input_tokens: None,
+            prompt_cache_miss_tokens: None,
+            tool_use_prompt_token_count: None,
+            prompt_audio_seconds: None,
+            cache_read_input_tokens: None,
+        }
+    }
+
+    // Reference: the exact bytes the derived-Serialize path produced.
+    fn reference(
+        id: &str,
+        model: &str,
+        created: i64,
+        base_fr: &str,
+        tool_call: Option<&ToolCallSpec>,
+        content_tokens: &[String],
+        reasoning_tokens: &[String],
+        usage: &Usage,
+    ) -> Vec<u8> {
+        let (finish_reason, tool_calls) = if let Some(tc) = tool_call {
+            (
+                "tool_calls",
+                Some([ChatResponseToolCall {
+                    id: &tc.id,
+                    call_type: "function",
+                    function: ChatResponseFunctionCall {
+                        name: &tc.name,
+                        arguments: &tc.arguments,
+                    },
+                }]),
+            )
+        } else {
+            (base_fr, None)
+        };
+        let reasoning_content = if reasoning_tokens.is_empty() {
+            None
+        } else {
+            Some(reasoning_tokens.concat())
+        };
+        let resp = ChatResponse {
+            id,
+            object: "chat.completion",
+            created,
+            model,
+            choices: [ChatResponseChoice {
+                index: 0,
+                finish_reason,
+                message: ChatResponseMessage {
+                    role: "assistant",
+                    content: content_tokens.concat(),
+                    reasoning_content,
+                    tool_calls,
+                },
+            }],
+            usage,
+        };
+        serde_json::to_vec(&resp).unwrap()
+    }
+
+    #[test]
+    fn write_chat_response_matches_serde() {
+        let usage = usage_sample();
+        // Include characters that force JSON escaping (quote, backslash, newline)
+        // in every user-influenced field, so escaping parity is exercised.
+        let content = vec![" he\"llo".to_string(), " wo\\rld\n".to_string()];
+        let reasoning = vec!["think ".to_string(), "hard".to_string()];
+        let cases: Vec<(&str, Option<ToolCallSpec>, &[String])> = vec![
+            ("plain", None, &[]),
+            ("reasoning", None, &reasoning),
+        ];
+        for (label, tc, rsn) in cases {
+            let got = write_chat_response_bytes(
+                "chatcmpl-x\"1", "mo\"del", 1234567890, "stop", tc.as_ref(), &content, rsn, &usage,
+            );
+            let exp = reference(
+                "chatcmpl-x\"1", "mo\"del", 1234567890, "stop", tc.as_ref(), &content, rsn, &usage,
+            );
+            assert_eq!(
+                got, exp,
+                "{label}:\n got={}\n exp={}",
+                String::from_utf8_lossy(&got),
+                String::from_utf8_lossy(&exp)
+            );
+        }
+        // Tool-call case (overrides finish_reason, appends tool_calls).
+        let tc = ToolCallSpec {
+            id: "call_1".to_string(),
+            name: "get\"weather".to_string(),
+            arguments: "{\"city\":\"x\"}".to_string(),
+        };
+        let got = write_chat_response_bytes(
+            "id1", "m", 42, "stop", Some(&tc), &content, &[], &usage,
+        );
+        let exp = reference("id1", "m", 42, "stop", Some(&tc), &content, &[], &usage);
+        assert_eq!(
+            got, exp,
+            "tool_call:\n got={}\n exp={}",
+            String::from_utf8_lossy(&got),
+            String::from_utf8_lossy(&exp)
+        );
+    }
 }
 
 fn build_chat_response(ctx: &RequestCtx) -> ChatResponse<'_> {
@@ -716,7 +1122,7 @@ pub async fn vllm_generate(
         osl,
         active_inflight,
         state.scheduler.clone(),
-        request_id.clone(),
+        &request_id,
         0,
     );
 
@@ -904,10 +1310,13 @@ where
                 if rest.is_empty() || rest == b"[DONE]" {
                     continue;
                 }
-                let mut line = Vec::with_capacity(piece.len() + 1);
-                line.extend_from_slice(piece);
-                line.push(b'\n');
-                let frame = EventStreamMessage::payload_part(Bytes::from(line)).encode();
+                // The AWS `PayloadPart.Bytes` member carries the raw inner
+                // chat-completion-chunk JSON directly (see
+                // `EventStreamMessage::payload_part`) — not the SSE-framed
+                // `data: {...}\n` line. Emit the stripped payload so the frame
+                // matches the documented contract and real bare-JSON wire form.
+                let frame =
+                    EventStreamMessage::payload_part(Bytes::copy_from_slice(rest)).encode();
                 yield Ok::<Bytes, Infallible>(frame);
             }
         }
@@ -3121,10 +3530,20 @@ fn image_stream(
     }
 }
 
-fn prom_response(body: Vec<u8>) -> Response {
+/// Render a Prometheus exposition body, honoring `--openmetrics`: when set, the
+/// body is converted to OpenMetrics text (with `# EOF` and suffix-less counter
+/// families) and served with the OpenMetrics content-type, matching the vLLM
+/// Rust frontend; otherwise classic `text/plain; version=0.0.4`.
+fn metrics_response(state: &AppState, mut body: Vec<u8>) -> Response {
+    let content_type = if state.config.openmetrics {
+        crate::prom::to_openmetrics(&mut body);
+        crate::prom::OPENMETRICS_CONTENT_TYPE
+    } else {
+        "text/plain; version=0.0.4"
+    };
     Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/plain; version=0.0.4")
+        .header(header::CONTENT_TYPE, content_type)
         .body(Body::from(body))
         .expect("response")
 }
@@ -3157,7 +3576,7 @@ pub async fn aiperf_mock_metrics(State(state): State<Arc<AppState>>) -> Response
     if state.accuracy.is_some() {
         crate::prom::append_accuracy_metrics(&mut body, &state.accuracy_live.snapshot());
     }
-    prom_response(body)
+    metrics_response(&state, body)
 }
 
 /// `GET /accuracy` — the live accuracy tally for the current run: how many
@@ -3193,33 +3612,33 @@ pub async fn accuracy_status(State(state): State<Arc<AppState>>) -> impl IntoRes
 }
 
 pub async fn vllm_metrics(State(state): State<Arc<AppState>>) -> Response {
-    prom_response(crate::prom::encode(&state.recorder.metrics.vllm.registry))
+    let body = crate::prom::encode(&state.recorder.metrics.vllm.registry);
+    metrics_response(&state, body)
 }
 
 pub async fn sglang_metrics(State(state): State<Arc<AppState>>) -> Response {
-    prom_response(crate::prom::encode(&state.recorder.metrics.sglang.registry))
+    let body = crate::prom::encode(&state.recorder.metrics.sglang.registry);
+    metrics_response(&state, body)
 }
 
 pub async fn trtllm_metrics(State(state): State<Arc<AppState>>) -> Response {
-    prom_response(crate::prom::encode(&state.recorder.metrics.trtllm.registry))
+    let body = crate::prom::encode(&state.recorder.metrics.trtllm.registry);
+    metrics_response(&state, body)
 }
 
 pub async fn dynamo_frontend_metrics(State(state): State<Arc<AppState>>) -> Response {
-    prom_response(crate::prom::encode(
-        &state.recorder.metrics.dynamo_frontend.registry,
-    ))
+    let body = crate::prom::encode(&state.recorder.metrics.dynamo_frontend.registry);
+    metrics_response(&state, body)
 }
 
 pub async fn dynamo_prefill_metrics(State(state): State<Arc<AppState>>) -> Response {
-    prom_response(crate::prom::encode(
-        &state.recorder.metrics.dynamo_prefill.registry,
-    ))
+    let body = crate::prom::encode(&state.recorder.metrics.dynamo_prefill.registry);
+    metrics_response(&state, body)
 }
 
 pub async fn dynamo_decode_metrics(State(state): State<Arc<AppState>>) -> Response {
-    prom_response(crate::prom::encode(
-        &state.recorder.metrics.dynamo_decode.registry,
-    ))
+    let body = crate::prom::encode(&state.recorder.metrics.dynamo_decode.registry);
+    metrics_response(&state, body)
 }
 
 fn dcgm_response(state: &AppState, idx: usize) -> Result<Response, AppError> {

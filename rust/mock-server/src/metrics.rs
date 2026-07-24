@@ -3,12 +3,10 @@
 
 //! High-level metric recording functions.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use dashmap::DashMap;
-use parking_lot::Mutex;
 use prometheus::Histogram;
 use prometheus::core::{AtomicI64 as PromAtomicI64, AtomicU64, GenericCounter, GenericGauge};
 
@@ -79,9 +77,20 @@ pub struct ModelMetrics {
 pub struct MetricRecorder {
     pub metrics: AllMetrics,
     pub throughput: Arc<Throughput>,
+    // When false (`--no-metrics`), every recording method is a no-op and
+    // `labeled()` returns a shared throwaway handle without touching the
+    // DashMap — the request hot path skips all per-request metric work.
+    enabled: bool,
+    // Only populated when `!enabled`. Building it eagerly would register the
+    // `__disabled__` sentinel child series in the exposed metric families, so
+    // it stays `None` in the normal enabled path where it is never used.
+    disabled_handle: Option<Arc<LabeledMetrics>>,
     inflight_count: AtomicI64,
     total_kv_blocks: i64,
-    initialized_models: Mutex<HashSet<String>>,
+    // Lock-free membership set: the hot path only ever *reads* it (the model is
+    // already present after the first request), so a `DashMap` read beats
+    // taking a global `Mutex` on every request just to find the model present.
+    initialized_models: DashMap<String, ()>,
     labeled_cache: DashMap<(String, String), Arc<LabeledMetrics>>,
     model_cache: DashMap<String, Arc<ModelMetrics>>,
 }
@@ -95,25 +104,55 @@ pub struct LLMLatencyInfo {
 
 impl MetricRecorder {
     pub fn new() -> Self {
+        Self::with_enabled(true)
+    }
+
+    /// Construct a recorder, optionally with all hot-path recording disabled
+    /// (`--no-metrics`). The metric families are still created so the exposition
+    /// endpoints respond, but no per-request updates occur.
+    pub fn with_enabled(enabled: bool) -> Self {
+        let metrics = AllMetrics::new();
+        let disabled_handle = (!enabled)
+            .then(|| Arc::new(Self::build_labeled(&metrics, "__disabled__", "__disabled__")));
         Self {
-            metrics: AllMetrics::new(),
+            metrics,
             throughput: Arc::new(Throughput::new()),
+            enabled,
+            disabled_handle,
             inflight_count: AtomicI64::new(0),
             total_kv_blocks: 1024,
-            initialized_models: Mutex::new(HashSet::new()),
+            initialized_models: DashMap::new(),
             labeled_cache: DashMap::with_capacity_and_shard_amount(256, 32),
             model_cache: DashMap::with_capacity_and_shard_amount(256, 32),
         }
     }
 
+    /// Whether hot-path metric recording is active.
+    #[inline]
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
     /// Cache per-request handles so token loops avoid label-map lookups.
     pub fn labeled(&self, endpoint: &str, model: &str) -> Arc<LabeledMetrics> {
+        // Disabled: hand back the shared throwaway handle. Every `*_fast`
+        // recorder short-circuits on `!enabled`, so its counters are never
+        // touched — no DashMap access or key allocation on the hot path.
+        if let Some(handle) = &self.disabled_handle {
+            return handle.clone();
+        }
         let key = (endpoint.to_string(), model.to_string());
         if let Some(hit) = self.labeled_cache.get(&key) {
             return hit.clone();
         }
-        let m = &self.metrics;
-        let built = LabeledMetrics {
+        let built = Self::build_labeled(&self.metrics, endpoint, model);
+        let arc = Arc::new(built);
+        self.labeled_cache.entry(key).or_insert(arc).clone()
+    }
+
+    /// Resolve every labeled child handle for one (endpoint, model) pair once.
+    fn build_labeled(m: &AllMetrics, endpoint: &str, model: &str) -> LabeledMetrics {
+        LabeledMetrics {
             tokens_streamed: m
                 .aiperf
                 .TOKENS_STREAMED_TOTAL
@@ -219,9 +258,7 @@ impl MetricRecorder {
                 .aiperf
                 .STREAMING_REQUESTS_TOTAL
                 .with_label_values(&[endpoint, model]),
-        };
-        let arc = Arc::new(built);
-        self.labeled_cache.entry(key).or_insert(arc).clone()
+        }
     }
 
     /// Cache per-request handles for the model-only-keyed metrics used by
@@ -287,6 +324,9 @@ impl MetricRecorder {
     }
 
     pub fn record_request_start(&self, endpoint: &str, model: &str) {
+        if !self.enabled {
+            return;
+        }
         self.metrics
             .aiperf
             .REQUESTS_IN_PROGRESS
@@ -300,6 +340,9 @@ impl MetricRecorder {
     }
 
     pub fn record_request_end(&self, endpoint: &str) {
+        if !self.enabled {
+            return;
+        }
         self.metrics
             .aiperf
             .REQUESTS_IN_PROGRESS
@@ -308,6 +351,9 @@ impl MetricRecorder {
     }
 
     pub fn record_error(&self, endpoint: &str, error_type: &str) {
+        if !self.enabled {
+            return;
+        }
         self.metrics
             .aiperf
             .REQUESTS_TOTAL
@@ -321,6 +367,9 @@ impl MetricRecorder {
     }
 
     pub fn record_basic_success(&self, endpoint: &str, latency_secs: f64) {
+        if !self.enabled {
+            return;
+        }
         self.metrics
             .aiperf
             .REQUESTS_TOTAL
@@ -334,6 +383,9 @@ impl MetricRecorder {
     }
 
     pub fn record_request_bytes(&self, endpoint: &str, req_bytes: u64, resp_bytes: u64) {
+        if !self.enabled {
+            return;
+        }
         self.metrics
             .aiperf
             .REQUEST_BYTES_TOTAL
@@ -347,6 +399,9 @@ impl MetricRecorder {
     }
 
     pub fn record_token_metrics(&self, endpoint: &str, model: &str, usage: &Usage) {
+        if !self.enabled {
+            return;
+        }
         self.metrics
             .aiperf
             .PROMPT_TOKENS_TOTAL
@@ -373,6 +428,9 @@ impl MetricRecorder {
 
     /// Record TTFT without resolving labels.
     pub fn record_ttft_fast(&self, labeled: &LabeledMetrics, ttft_secs: f64) {
+        if !self.enabled {
+            return;
+        }
         labeled.ttft_by_endpoint.observe(ttft_secs);
         self.metrics
             .vllm
@@ -391,6 +449,9 @@ impl MetricRecorder {
 
     /// Record ITL without resolving labels.
     pub fn record_itl_fast(&self, labeled: &LabeledMetrics, itl_secs: f64) {
+        if !self.enabled {
+            return;
+        }
         labeled.itl_by_endpoint.observe(itl_secs);
         self.metrics
             .vllm
@@ -405,6 +466,9 @@ impl MetricRecorder {
 
     #[inline]
     pub fn record_streamed_token_fast(&self, labeled: &LabeledMetrics) {
+        if !self.enabled {
+            return;
+        }
         labeled.tokens_streamed.inc();
         self.throughput.record_tokens(1);
     }
@@ -412,6 +476,9 @@ impl MetricRecorder {
     /// Record a pre-rendered batch with one counter update.
     #[inline]
     pub fn record_streamed_tokens_fast(&self, labeled: &LabeledMetrics, count: u64) {
+        if !self.enabled {
+            return;
+        }
         labeled.tokens_streamed.inc_by(count);
         self.throughput.record_tokens(count);
     }
@@ -419,6 +486,9 @@ impl MetricRecorder {
     /// Record the zero-latency observations represented by a pre-rendered batch.
     #[inline]
     pub fn record_zero_ttft_and_itls(&self, labeled: &LabeledMetrics, itl_count: usize) {
+        if !self.enabled {
+            return;
+        }
         labeled.ttft_by_endpoint.observe(0.0);
         self.metrics.vllm.TIME_TO_FIRST_TOKEN_SECONDS.observe(0.0);
         self.metrics.sglang.TIME_TO_FIRST_TOKEN_SECONDS.observe(0.0);
@@ -436,6 +506,9 @@ impl MetricRecorder {
     }
 
     pub fn record_ttft(&self, endpoint: &str, model: &str, ttft_secs: f64) {
+        if !self.enabled {
+            return;
+        }
         self.metrics
             .aiperf
             .TIME_TO_FIRST_TOKEN_SECONDS
@@ -461,6 +534,9 @@ impl MetricRecorder {
     }
 
     pub fn record_itl(&self, endpoint: &str, model: &str, itl_secs: f64) {
+        if !self.enabled {
+            return;
+        }
         self.metrics
             .aiperf
             .INTER_TOKEN_LATENCY_SECONDS
@@ -482,6 +558,9 @@ impl MetricRecorder {
     }
 
     pub fn record_streamed_token(&self, endpoint: &str, model: &str) {
+        if !self.enabled {
+            return;
+        }
         self.metrics
             .aiperf
             .TOKENS_STREAMED_TOTAL
@@ -532,6 +611,9 @@ impl MetricRecorder {
     }
 
     pub fn record_llm_inflight_start(&self, model: &str) {
+        if !self.enabled {
+            return;
+        }
         self.inflight_count.fetch_add(1, Ordering::Relaxed);
         self.metrics.vllm.NUM_REQUESTS_RUNNING.inc();
         self.metrics.vllm.NUM_REQUESTS_WAITING.set(0);
@@ -546,6 +628,9 @@ impl MetricRecorder {
     }
 
     pub fn record_llm_inflight_end(&self, model: &str) {
+        if !self.enabled {
+            return;
+        }
         let prev = self.inflight_count.fetch_sub(1, Ordering::Relaxed);
         if prev <= 0 {
             self.inflight_count.store(0, Ordering::Relaxed);
@@ -560,6 +645,9 @@ impl MetricRecorder {
     }
 
     pub fn record_llm_backend_success(&self, latency_secs: f64, usage: &Usage) {
+        if !self.enabled {
+            return;
+        }
         let p = usage.prompt_tokens as u64;
         let c = usage.completion_tokens as u64;
         let t = usage.total_tokens as u64;
@@ -623,6 +711,9 @@ impl MetricRecorder {
         usage: &Usage,
         info: &LLMLatencyInfo,
     ) {
+        if !self.enabled {
+            return;
+        }
         let p = usage.prompt_tokens as u64;
         let c = usage.completion_tokens as u64;
 
@@ -647,10 +738,107 @@ impl MetricRecorder {
         usage: &Usage,
         info: &LLMLatencyInfo,
     ) {
+        if !self.enabled {
+            return;
+        }
         self.record_token_metrics(endpoint, model, usage);
         self.record_basic_success(endpoint, latency_secs);
         self.record_llm_backend_success(latency_secs, usage);
         self.record_dynamo_success(model, latency_secs, usage, info);
+    }
+
+    /// Admit a non-streaming request using pre-resolved `LabeledMetrics` handles.
+    ///
+    /// Behaviourally identical to `record_request_start` + `record_llm_inflight_start`
+    /// but every labeled metric is reached through the cached child handle in
+    /// `labeled`, so no `MetricVec` label hash/lookup (nor the separate
+    /// `model_metrics` DashMap lookup) happens on the request hot path. Bracket
+    /// the request with `complete_fast` after the response is built.
+    pub fn admit_fast(&self, l: &LabeledMetrics) {
+        if !self.enabled {
+            return;
+        }
+        // request_start
+        l.requests_in_progress.inc();
+        l.requests_by_model.inc();
+        // llm_inflight_start
+        self.inflight_count.fetch_add(1, Ordering::Relaxed);
+        self.metrics.vllm.NUM_REQUESTS_RUNNING.inc();
+        self.metrics.vllm.NUM_REQUESTS_WAITING.set(0);
+        self.metrics.sglang.NUM_RUNNING_REQS.inc();
+        self.metrics.sglang.NUM_QUEUE_REQS.set(0);
+        l.df_inflight.inc();
+        l.df_queued.set(0);
+        l.dp_inflight.inc();
+        l.dd_inflight.inc();
+        self.update_kv_cache_gauges("");
+    }
+
+    /// Retire a non-streaming request admitted with `admit_fast`, recording bytes,
+    /// token/latency/backend/dynamo success, inflight-end and request-end through
+    /// the cached `labeled` handles. Mirrors the exact sequence of
+    /// `record_request_bytes` + `record_llm_success` + `record_llm_inflight_end`
+    /// + `record_request_end`, minus every per-call label lookup.
+    #[allow(clippy::too_many_arguments)]
+    pub fn complete_fast(
+        &self,
+        l: &LabeledMetrics,
+        latency_secs: f64,
+        usage: &Usage,
+        info: &LLMLatencyInfo,
+        req_bytes: u64,
+        resp_bytes: u64,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        let p = usage.prompt_tokens as u64;
+        let c = usage.completion_tokens as u64;
+
+        // request_bytes
+        l.request_bytes.inc_by(req_bytes);
+        l.response_bytes.inc_by(resp_bytes);
+
+        // token_metrics
+        l.prompt_tokens.inc_by(p);
+        l.completion_tokens.inc_by(c);
+        l.tokens_per_request_prompt.observe(usage.prompt_tokens as f64);
+        l.tokens_per_request_completion
+            .observe(usage.completion_tokens as f64);
+        self.throughput.record_tokens(c);
+
+        // basic_success
+        l.requests_total_200.inc();
+        l.request_latency.observe(latency_secs);
+
+        // backend_success (global, non-labeled metrics — nothing to cache)
+        self.record_llm_backend_success(latency_secs, usage);
+
+        // dynamo_success via cached handles
+        l.df_request_duration.observe(latency_secs);
+        l.df_requests.inc();
+        l.df_input_seq_tokens.inc_by(p);
+        l.df_output_tokens.inc_by(c);
+        l.df_output_seq_tokens.inc_by(c);
+        l.dp_request_duration.observe(info.prefill.as_secs_f64());
+        l.dp_requests.inc();
+        l.dd_request_duration.observe(info.decode.as_secs_f64());
+        l.dd_requests.inc();
+
+        // llm_inflight_end
+        let prev = self.inflight_count.fetch_sub(1, Ordering::Relaxed);
+        if prev <= 0 {
+            self.inflight_count.store(0, Ordering::Relaxed);
+        }
+        self.metrics.vllm.NUM_REQUESTS_RUNNING.dec();
+        self.metrics.sglang.NUM_RUNNING_REQS.dec();
+        l.df_inflight.dec();
+        l.dp_inflight.dec();
+        l.dd_inflight.dec();
+        self.update_kv_cache_gauges("");
+
+        // request_end
+        l.requests_in_progress.dec();
     }
 
     pub fn record_embedding_success(
@@ -661,6 +849,9 @@ impl MetricRecorder {
         num_embeddings: usize,
         latency_secs: f64,
     ) {
+        if !self.enabled {
+            return;
+        }
         self.metrics
             .aiperf
             .PROMPT_TOKENS_TOTAL
@@ -682,6 +873,9 @@ impl MetricRecorder {
         num_passages: usize,
         latency_secs: f64,
     ) {
+        if !self.enabled {
+            return;
+        }
         self.metrics
             .aiperf
             .PROMPT_TOKENS_TOTAL
@@ -706,6 +900,9 @@ impl MetricRecorder {
         num_images: usize,
         latency_secs: f64,
     ) {
+        if !self.enabled {
+            return;
+        }
         self.metrics
             .aiperf
             .IMAGES_PROCESSED_TOTAL
@@ -715,6 +912,9 @@ impl MetricRecorder {
     }
 
     pub fn record_content_bytes_fetched(&self, endpoint: &str, bytes: u64) {
+        if !self.enabled {
+            return;
+        }
         self.metrics
             .aiperf
             .CONTENT_BYTES_FETCHED_TOTAL
@@ -723,6 +923,9 @@ impl MetricRecorder {
     }
 
     pub fn record_tgi_success(&self, endpoint: &str, usage: &Usage, latency_secs: f64) {
+        if !self.enabled {
+            return;
+        }
         self.metrics
             .aiperf
             .PROMPT_TOKENS_TOTAL
@@ -737,6 +940,9 @@ impl MetricRecorder {
     }
 
     pub fn record_streaming_start(&self, endpoint: &str, model: &str) {
+        if !self.enabled {
+            return;
+        }
         self.metrics
             .aiperf
             .STREAMING_REQUESTS_TOTAL
@@ -746,15 +952,25 @@ impl MetricRecorder {
 
     /// Return observed models in deterministic order.
     pub fn seen_models(&self) -> Vec<String> {
-        let guard = self.initialized_models.lock();
-        let mut v: Vec<String> = guard.iter().cloned().collect();
+        let mut v: Vec<String> = self
+            .initialized_models
+            .iter()
+            .map(|e| e.key().clone())
+            .collect();
         v.sort();
         v
     }
 
     pub fn init_model_config(&self, model: &str) {
-        let mut guard = self.initialized_models.lock();
-        if !guard.insert(model.to_string()) {
+        if !self.enabled {
+            return;
+        }
+        // Fast path: an already-seen model is the overwhelming common case, and
+        // a `DashMap` read here avoids a global lock on every request.
+        if self.initialized_models.contains_key(model) {
+            return;
+        }
+        if self.initialized_models.insert(model.to_string(), ()).is_some() {
             return;
         }
         self.metrics

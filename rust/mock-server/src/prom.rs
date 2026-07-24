@@ -4,9 +4,11 @@
 //! Prometheus metric registries - one per exposed endpoint.
 
 use prometheus::{
-    Encoder, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec,
+    Encoder, Gauge, GaugeVec, HistogramOpts, HistogramVec, IntCounter, IntCounterVec,
     IntGauge, IntGaugeVec, Opts, Registry, TextEncoder,
 };
+
+use crate::sharded::ShardedHistogram;
 
 #[allow(non_snake_case)]
 pub struct AIPerfMockMetrics {
@@ -281,12 +283,12 @@ impl AIPerfMockMetrics {
 #[allow(non_snake_case)]
 pub struct VllmMetrics {
     pub registry: Registry,
-    pub E2E_REQUEST_LATENCY_SECONDS: Histogram,
-    pub TIME_TO_FIRST_TOKEN_SECONDS: Histogram,
-    pub INTER_TOKEN_LATENCY_SECONDS: Histogram,
+    pub E2E_REQUEST_LATENCY_SECONDS: ShardedHistogram,
+    pub TIME_TO_FIRST_TOKEN_SECONDS: ShardedHistogram,
+    pub INTER_TOKEN_LATENCY_SECONDS: ShardedHistogram,
     pub PROMPT_TOKENS: IntCounter,
     pub GENERATION_TOKENS: IntCounter,
-    pub REQUEST_QUEUE_TIME_SECONDS: Histogram,
+    pub REQUEST_QUEUE_TIME_SECONDS: ShardedHistogram,
     pub REQUEST_SUCCESS: IntCounter,
     pub NUM_REQUESTS_RUNNING: IntGauge,
     pub NUM_REQUESTS_WAITING: IntGauge,
@@ -297,7 +299,7 @@ pub struct VllmMetrics {
     pub EXTERNAL_PREFIX_CACHE_HITS: IntCounter,
     pub EXTERNAL_PREFIX_CACHE_QUERIES: IntCounter,
     pub CPU_CACHE_USAGE: Gauge,
-    pub ITERATION_TOKENS_TOTAL: Histogram,
+    pub ITERATION_TOKENS_TOTAL: ShardedHistogram,
 }
 
 impl VllmMetrics {
@@ -317,7 +319,7 @@ impl VllmMetrics {
         ];
 
         let m = Self {
-            E2E_REQUEST_LATENCY_SECONDS: Histogram::with_opts(
+            E2E_REQUEST_LATENCY_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "vllm:e2e_request_latency_seconds",
                     "Histogram of e2e request latency in seconds.",
@@ -325,7 +327,7 @@ impl VllmMetrics {
                 .buckets(vllm_latency.clone()),
             )
             .unwrap(),
-            TIME_TO_FIRST_TOKEN_SECONDS: Histogram::with_opts(
+            TIME_TO_FIRST_TOKEN_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "vllm:time_to_first_token_seconds",
                     "Histogram of time to first token in seconds.",
@@ -333,7 +335,7 @@ impl VllmMetrics {
                 .buckets(vllm_latency.clone()),
             )
             .unwrap(),
-            INTER_TOKEN_LATENCY_SECONDS: Histogram::with_opts(
+            INTER_TOKEN_LATENCY_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "vllm:inter_token_latency_seconds",
                     "Histogram of inter-token latency in seconds.",
@@ -351,7 +353,7 @@ impl VllmMetrics {
                 "Number of generation tokens processed.",
             ))
             .unwrap(),
-            REQUEST_QUEUE_TIME_SECONDS: Histogram::with_opts(
+            REQUEST_QUEUE_TIME_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "vllm:request_queue_time_seconds",
                     "Histogram of time spent in WAITING phase for request.",
@@ -409,7 +411,7 @@ impl VllmMetrics {
                 "CPU KV-cache usage. 1 means 100 percent usage.",
             ))
             .unwrap(),
-            ITERATION_TOKENS_TOTAL: Histogram::with_opts(
+            ITERATION_TOKENS_TOTAL: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "vllm:iteration_tokens_total",
                     "Histogram of number of tokens per engine_step.",
@@ -487,9 +489,9 @@ pub struct SglangMetrics {
     pub PROMPT_TOKENS: IntCounter,
     pub GENERATION_TOKENS: IntCounter,
     pub NUM_RETRACTED_REQS: IntCounter,
-    pub QUEUE_TIME_SECONDS: Histogram,
-    pub E2E_REQUEST_LATENCY_SECONDS: Histogram,
-    pub TIME_TO_FIRST_TOKEN_SECONDS: Histogram,
+    pub QUEUE_TIME_SECONDS: ShardedHistogram,
+    pub E2E_REQUEST_LATENCY_SECONDS: ShardedHistogram,
+    pub TIME_TO_FIRST_TOKEN_SECONDS: ShardedHistogram,
 }
 
 impl SglangMetrics {
@@ -553,7 +555,7 @@ impl SglangMetrics {
                 "The number of retracted (preempted) requests.",
             ))
             .unwrap(),
-            QUEUE_TIME_SECONDS: Histogram::with_opts(
+            QUEUE_TIME_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "sglang:queue_time_seconds",
                     "Histogram of queueing time in seconds.",
@@ -561,7 +563,7 @@ impl SglangMetrics {
                 .buckets(expo.clone()),
             )
             .unwrap(),
-            E2E_REQUEST_LATENCY_SECONDS: Histogram::with_opts(
+            E2E_REQUEST_LATENCY_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "sglang:e2e_request_latency_seconds",
                     "Histogram of end to end request latency in seconds.",
@@ -569,7 +571,7 @@ impl SglangMetrics {
                 .buckets(expo),
             )
             .unwrap(),
-            TIME_TO_FIRST_TOKEN_SECONDS: Histogram::with_opts(
+            TIME_TO_FIRST_TOKEN_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "sglang:time_to_first_token_seconds",
                     "Histogram of time to first token in seconds.",
@@ -625,10 +627,10 @@ impl SglangMetrics {
 #[allow(non_snake_case)]
 pub struct TrtllmMetrics {
     pub registry: Registry,
-    pub E2E_REQUEST_LATENCY_SECONDS: Histogram,
-    pub TIME_TO_FIRST_TOKEN_SECONDS: Histogram,
-    pub TIME_PER_OUTPUT_TOKEN_SECONDS: Histogram,
-    pub REQUEST_QUEUE_TIME_SECONDS: Histogram,
+    pub E2E_REQUEST_LATENCY_SECONDS: ShardedHistogram,
+    pub TIME_TO_FIRST_TOKEN_SECONDS: ShardedHistogram,
+    pub TIME_PER_OUTPUT_TOKEN_SECONDS: ShardedHistogram,
+    pub REQUEST_QUEUE_TIME_SECONDS: ShardedHistogram,
     pub REQUEST_SUCCESS: IntCounter,
 }
 
@@ -648,7 +650,7 @@ impl TrtllmMetrics {
             10.0, 20.0, 40.0, 80.0,
         ];
         let m = Self {
-            E2E_REQUEST_LATENCY_SECONDS: Histogram::with_opts(
+            E2E_REQUEST_LATENCY_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "trtllm:e2e_request_latency_seconds",
                     "Histogram of end to end request latency in seconds.",
@@ -656,7 +658,7 @@ impl TrtllmMetrics {
                 .buckets(trtllm_latency.clone()),
             )
             .unwrap(),
-            TIME_TO_FIRST_TOKEN_SECONDS: Histogram::with_opts(
+            TIME_TO_FIRST_TOKEN_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "trtllm:time_to_first_token_seconds",
                     "Histogram of time to first token in seconds.",
@@ -664,7 +666,7 @@ impl TrtllmMetrics {
                 .buckets(trtllm_ttft),
             )
             .unwrap(),
-            TIME_PER_OUTPUT_TOKEN_SECONDS: Histogram::with_opts(
+            TIME_PER_OUTPUT_TOKEN_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "trtllm:time_per_output_token_seconds",
                     "Histogram of time per output token in seconds.",
@@ -672,7 +674,7 @@ impl TrtllmMetrics {
                 .buckets(trtllm_tpot),
             )
             .unwrap(),
-            REQUEST_QUEUE_TIME_SECONDS: Histogram::with_opts(
+            REQUEST_QUEUE_TIME_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "trtllm:request_queue_time_seconds",
                     "Histogram of time spent in WAITING phase for request.",
@@ -1037,6 +1039,73 @@ pub fn encode(registry: &Registry) -> Vec<u8> {
     buf
 }
 
+/// OpenMetrics exposition content-type, matching what the vLLM Rust frontend's
+/// `/metrics` route serves (`prometheus_client` encoder + this header). The mock
+/// server otherwise emits classic Prometheus text (`text/plain; version=0.0.4`).
+pub const OPENMETRICS_CONTENT_TYPE: &str =
+    "application/openmetrics-text; version=1.0.0; charset=utf-8";
+
+/// Convert a classic Prometheus text exposition (as produced by [`encode`] and
+/// [`append_accuracy_metrics`]) into OpenMetrics text in place, so the mock can
+/// present its `/metrics` family like the vLLM Rust frontend does.
+///
+/// Two differences matter to a strict OpenMetrics parser and are handled here:
+///
+/// 1. A counter MetricFamily name must NOT carry the `_total` suffix — the
+///    suffix belongs on the sample line only. The tikv `TextEncoder` emits
+///    `# TYPE foo_total counter` / `# HELP foo_total ...`; we rewrite those
+///    metadata lines to the suffix-less family name while leaving the
+///    `foo_total{...} N` sample lines untouched.
+/// 2. The body must be terminated by a lone `# EOF` line.
+///
+/// Sample values, labels, histogram/gauge families, and ordering are otherwise
+/// already valid OpenMetrics, so they pass through unchanged.
+pub fn to_openmetrics(buf: &mut Vec<u8>) {
+    let text = String::from_utf8_lossy(buf);
+
+    // First pass: collect the `_total`-suffixed names declared as counters.
+    let mut counter_totals: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("# TYPE ") {
+            // `<name> <type>`
+            if let Some((name, kind)) = rest.rsplit_once(' ') {
+                if kind == "counter" && name.ends_with("_total") {
+                    counter_totals.insert(name);
+                }
+            }
+        }
+    }
+
+    // Second pass: strip `_total` from the family name on `# TYPE`/`# HELP`
+    // metadata lines for those counters; leave everything else verbatim.
+    let mut out = String::with_capacity(text.len() + 8);
+    for line in text.lines() {
+        let rewritten = rewrite_counter_meta(line, &counter_totals);
+        out.push_str(&rewritten);
+        out.push('\n');
+    }
+    out.push_str("# EOF\n");
+
+    *buf = out.into_bytes();
+}
+
+/// If `line` is a `# TYPE`/`# HELP` metadata line for a `_total`-named counter,
+/// return it with the `_total` suffix removed from the family name; otherwise
+/// return the line unchanged.
+fn rewrite_counter_meta(line: &str, counter_totals: &std::collections::HashSet<&str>) -> String {
+    for prefix in ["# TYPE ", "# HELP "] {
+        if let Some(rest) = line.strip_prefix(prefix) {
+            // `<name>` is the first whitespace-delimited token.
+            let name = rest.split(' ').next().unwrap_or("");
+            if counter_totals.contains(name) {
+                let base = &name[..name.len() - "_total".len()];
+                return format!("{prefix}{base}{}", &rest[name.len()..]);
+            }
+        }
+    }
+    line.to_string()
+}
+
 /// Escape a Prometheus label value (backslash, double-quote, newline).
 fn escape_label(v: &str) -> String {
     v.replace('\\', "\\\\")
@@ -1175,5 +1244,28 @@ mod tests {
         let text = String::from_utf8(body).unwrap();
         assert!(text.contains("vllm:kv_cache_usage_perc"));
         assert!(text.contains("0.5"));
+    }
+
+    #[test]
+    fn to_openmetrics_strips_counter_total_and_appends_eof() {
+        let m = AIPerfMockMetrics::new();
+        m.REQUESTS_TOTAL
+            .with_label_values(&["/v1/chat/completions", "POST", "200"])
+            .inc();
+        let mut body = encode(&m.registry);
+        // Classic exposition: counter family metadata carries the `_total`
+        // suffix and there is no `# EOF` terminator.
+        let classic = String::from_utf8(body.clone()).unwrap();
+        assert!(classic.contains("# TYPE aiperf_mock_requests_total counter"));
+        assert!(!classic.contains("# EOF"));
+
+        to_openmetrics(&mut body);
+        let om = String::from_utf8(body).unwrap();
+        // OpenMetrics: suffix-less counter family in metadata, `_total` retained
+        // on the sample line, and a trailing `# EOF`.
+        assert!(om.contains("# TYPE aiperf_mock_requests counter"));
+        assert!(!om.contains("# TYPE aiperf_mock_requests_total counter"));
+        assert!(om.contains("aiperf_mock_requests_total{"));
+        assert!(om.ends_with("# EOF\n"));
     }
 }

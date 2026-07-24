@@ -129,7 +129,7 @@ impl ToolCallRng {
 
 impl AppState {
     pub fn build(config: MockServerConfig) -> Arc<Self> {
-        let recorder = MetricRecorder::new();
+        let recorder = MetricRecorder::with_enabled(!config.no_metrics);
         let dcgm_pool = Self::build_dcgm_pool(&config);
         let scheduler = if config.scheduler_enabled {
             let s = BatchScheduler::new(&config);

@@ -538,6 +538,44 @@ pub struct MockServerConfig {
     #[arg(long, env = "MOCK_SERVER_NO_TOKENIZER", default_value_t = false)]
     pub no_tokenizer: bool,
 
+    /// Disable all Prometheus metric recording on the request hot path. Every
+    /// `/metrics`, `/vllm/metrics`, `/sglang/metrics`, etc. endpoint still
+    /// responds but reports zeros. Under saturating load the per-request
+    /// metric updates (histogram observes and shared-counter increments across
+    /// vLLM/SGLang/TRT-LLM/Dynamo telemetry) are a large fraction of server
+    /// CPU; this flag trades that telemetry for maximum request throughput.
+    /// Behavioral response content is unaffected. Use for raw-throughput runs
+    /// that do not scrape server metrics.
+    #[arg(long, env = "MOCK_SERVER_NO_METRICS", default_value_t = false)]
+    pub no_metrics: bool,
+
+    /// Serve the request hot path on an io_uring thread-per-core engine
+    /// (monoio) instead of the tokio/hyper stack, to exceed the async runtime's
+    /// per-request scheduling ceiling. Requires a build with `--features uring`;
+    /// currently handles the non-streaming OpenAI chat-completions path with
+    /// full real behavior (parse, tokenize, metrics, deterministic response).
+    /// Implies `--fast` semantics on the served path (zero simulated latency).
+    #[arg(long, env = "MOCK_SERVER_URING", default_value_t = false)]
+    pub uring: bool,
+
+    /// Serve the request hot path on a blocking thread-per-connection engine
+    /// (no async runtime; `SO_REUSEPORT` accept loops + one thread per
+    /// connection) instead of tokio/hyper. Same real non-streaming chat path
+    /// and `--fast` semantics as `--uring`; isolates async-runtime cost from
+    /// real per-request work. Always available (no extra build features).
+    #[arg(long, env = "MOCK_SERVER_BLOCKING", default_value_t = false)]
+    pub blocking: bool,
+
+    /// Serve the `/metrics` family as OpenMetrics text instead of classic
+    /// Prometheus text, matching the vLLM Rust frontend (which uses the
+    /// `prometheus-client` OpenMetrics encoder). Sets the
+    /// `application/openmetrics-text; version=1.0.0` content-type, terminates
+    /// the body with `# EOF`, and drops the `_total` suffix from counter
+    /// MetricFamily metadata (kept on sample lines). Has no effect with
+    /// `--no-metrics`.
+    #[arg(long, env = "MOCK_SERVER_OPENMETRICS", default_value_t = false)]
+    pub openmetrics: bool,
+
     /// Path to a JSONL accuracy dataset. Each line is an object with a prompt
     /// field (`prompt`/`question`/`input`/`text`) and a gold field
     /// (`ground_truth`/`answer`/`gold`/`target`), plus optional `task`,

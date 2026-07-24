@@ -9,9 +9,11 @@
 pub mod accuracy;
 pub mod app;
 pub mod balancer;
+pub mod blocking;
 pub mod config;
 pub mod dcgm;
 pub mod fastmock;
+pub mod http_core;
 pub mod grpc;
 pub mod grpc_riva;
 pub mod handlers;
@@ -22,10 +24,13 @@ pub mod models;
 pub mod prefix_cache;
 pub mod prom;
 pub mod scheduler;
+pub mod sharded;
 pub mod state;
 pub mod throughput;
 pub mod tls;
 pub mod tokens;
+#[cfg(feature = "uring")]
+pub mod uring;
 
 pub use app::{AppState, build_router};
 pub use config::MockServerConfig;

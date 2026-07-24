@@ -28,6 +28,34 @@ The runner scrapes these two ways (Config v2 / `aiperf profile` flags):
 | `GET /dynamo_component/decode/metrics` | Dynamo decode worker (`dynamo_component_*`) |
 | `GET /dcgm1/metrics`, `GET /dcgm2/metrics` | Two independent synthetic DCGM exporters |
 
+## Exposition format: classic Prometheus vs OpenMetrics (`--openmetrics`)
+
+By default every `/metrics`-family endpoint serves **classic Prometheus text**
+(`Content-Type: text/plain; version=0.0.4`) via the tikv `prometheus` crate's `TextEncoder`.
+This matches the **Dynamo** frontend, which also uses tikv `prometheus` (v0.14) +
+`TextEncoder.encode(registry.gather())`.
+
+`--openmetrics` (env `MOCK_SERVER_OPENMETRICS`) switches all of them to **OpenMetrics text**,
+matching the **vLLM Rust frontend** (`rust/src/metrics/` + `server/src/routes/metrics.rs`,
+which uses the `prometheus-client` OpenMetrics encoder). The mock produces this by
+post-processing the classic exposition rather than swapping libraries:
+
+- `Content-Type: application/openmetrics-text; version=1.0.0; charset=utf-8`
+- body terminated with a lone `# EOF` line
+- the `_total` suffix stripped from counter **MetricFamily metadata** (`# TYPE`/`# HELP`) while
+  retained on the sample line (`foo_total{...} N`) — the OpenMetrics counter-family rule
+
+Why not switch to `prometheus-client`? A source-verified microbench showed it ~30% faster on
+cached `observe`/`inc` and ~18% better under shared-histogram contention, but ~26% slower on
+uncached labeled lookups — and the mock already caches child handles, so the net is a few % on
+the metrics-on path only, not worth re-registering ~100 metric families. Dynamo (the closer
+analog to what AIPerf drives) uses the same tikv crate we do.
+
+**Disabling metrics entirely:** `--no-metrics` (env `MOCK_SERVER_NO_METRICS`) makes every
+recording call a no-op — the endpoints still respond but report zeros. Under saturating load
+the per-request histogram observes + shared-counter increments are a large fraction of server
+CPU; this trades that telemetry for ~+15-30% throughput. Response content is unaffected.
+
 ## `/metrics` — the mock's own instrumentation (`aiperf_mock_*`)
 
 Counters/gauges/histograms labeled by endpoint/model, e.g. `aiperf_mock_requests_total`,

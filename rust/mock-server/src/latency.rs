@@ -98,7 +98,7 @@ impl LatencySimulator {
         osl: usize,
         active_inflight: usize,
         sched: Option<Arc<BatchScheduler>>,
-        request_key: String,
+        request_key: &str,
         cached_tokens: usize,
     ) -> Self {
         let mut seed: u64 = 0xcbf2_9ce4_8422_2325;
@@ -106,6 +106,14 @@ impl LatencySimulator {
             seed ^= *b as u64;
             seed = seed.wrapping_mul(0x0000_0100_0000_01b3);
         }
+        // The stored key is only read by the scheduler decode path; when no
+        // scheduler is attached (e.g. `--fast`) skip owning it so the hot path
+        // avoids a per-request allocation.
+        let request_key = if sched.is_some() {
+            request_key.to_owned()
+        } else {
+            String::new()
+        };
 
         let mut rng = seeded_rng(seed, 1);
         let active = active_inflight as f64;

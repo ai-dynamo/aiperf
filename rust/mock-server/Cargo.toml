@@ -35,6 +35,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
 parking_lot = "0.12"
+# Global allocator for the `aiperf-mock-server` binary. Under saturating load
+# the request hot path is allocation-heavy (per-request request-id/model/content
+# strings, response buffers, hyper framing) across all worker threads; profiling
+# showed glibc malloc's arena locking as ~28% of server CPU. mimalloc's
+# per-thread heaps remove that contention. Matches the main `aiperf` binary.
+mimalloc = "0.1"
 futures = { workspace = true }
 bytes = { workspace = true }
 axum = { workspace = true, features = ["macros", "multipart"] }
@@ -51,7 +57,7 @@ blake2 = "0.10"
 once_cell = "1"
 uuid = { version = "1", features = ["v4", "fast-rng"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-prometheus = { version = "0.13", default-features = false }
+prometheus = { version = "0.14", default-features = false }
 async-stream = "0.3"
 dashmap = "6"
 socket2 = { version = "0.5", features = ["all"] }
@@ -68,6 +74,16 @@ rustls = "0.23"
 tokio-rustls = "0.26"
 rustls-pemfile = "2"
 rcgen = "0.13"
+
+# HTTP/1.1 request framing for the alternative hand-rolled engines (--blocking,
+# --uring). Small and already present transitively via hyper.
+httparse = "1"
+# io_uring thread-per-core engine (`--uring`), gated so the default build keeps
+# only the tokio/hyper stack. monoio brings the io_uring driver.
+monoio = { version = "0.2", features = ["iouring"], optional = true }
+
+[features]
+uring = ["dep:monoio"]
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json", "stream"] }
