@@ -113,7 +113,11 @@ class ShardAggregatorMixin(AIPerfLoggerMixin):
                     header_from_first=header_from_first,
                     is_first_shard=i == 0,
                 )
-                shard.unlink(missing_ok=True)
+        # Delete shards only after the whole merge has succeeded. If any append
+        # above raised, the shards are left intact so the aggregator's next
+        # export() can retry rather than losing already-merged records.
+        for shard in shards:
+            shard.unlink(missing_ok=True)
         with contextlib.suppress(OSError):
             shard_dir.rmdir()
         return count
@@ -121,7 +125,7 @@ class ShardAggregatorMixin(AIPerfLoggerMixin):
     async def _append_shard(
         self,
         shard: Path,
-        out,
+        out: aiofiles.threadpool.AsyncBufferedIOBase,
         *,
         header_from_first: bool,
         is_first_shard: bool,
