@@ -107,4 +107,15 @@ async fn test_image_samples_per_second_exact() {
         effective + 1e-6 >= expected_rate,
         "sweep-line rate {effective} should be >= aggregate rate {expected_rate}",
     );
+
+    // The active-masked sweep-line sibling is present and at least as high as the
+    // effective rate: it averages the sample rate only over intervals where image
+    // requests are in flight, so it can only exceed the whole-window average.
+    let active = json["active_image_samples_per_second"]["avg"]
+        .as_f64()
+        .expect("active_image_samples_per_second present");
+    assert!(
+        active + 1e-6 >= effective,
+        "active rate {active} should be >= effective rate {effective}",
+    );
 }

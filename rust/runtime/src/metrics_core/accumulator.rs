@@ -1555,6 +1555,7 @@ fn is_injected(tag: MetricTag) -> bool {
             | MetricTag::ActivePrefillThroughput
             | MetricTag::ActiveDecodeThroughputPerUser
             | MetricTag::ActivePrefillThroughputPerUser
+            | MetricTag::ActiveImageSamplesPerSecond
             | MetricTag::ActiveTotalThroughput
     )
 }
@@ -1640,6 +1641,7 @@ fn sweep_tag(tag: &str) -> Option<MetricTag> {
         "active_prefill_throughput" => MetricTag::ActivePrefillThroughput,
         "active_decode_throughput_per_user" => MetricTag::ActiveDecodeThroughputPerUser,
         "active_prefill_throughput_per_user" => MetricTag::ActivePrefillThroughputPerUser,
+        "active_image_samples_per_second" => MetricTag::ActiveImageSamplesPerSecond,
         "active_total_throughput" => MetricTag::ActiveTotalThroughput,
         _ => return None,
     })

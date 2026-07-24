@@ -141,6 +141,7 @@ pub enum MetricTag {
     ActivePrefillThroughput,
     ActiveDecodeThroughputPerUser,
     ActivePrefillThroughputPerUser,
+    ActiveImageSamplesPerSecond,
     ActiveTotalThroughput,
 }
 
@@ -284,6 +285,7 @@ impl MetricTag {
             Self::ActivePrefillThroughput => "active_prefill_throughput",
             Self::ActiveDecodeThroughputPerUser => "active_decode_throughput_per_user",
             Self::ActivePrefillThroughputPerUser => "active_prefill_throughput_per_user",
+            Self::ActiveImageSamplesPerSecond => "active_image_samples_per_second",
             Self::ActiveTotalThroughput => "active_total_throughput",
         }
     }
@@ -1580,6 +1582,17 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             []
         ),
         spec!(
+            ActiveImageSamplesPerSecond,
+            "Active Image Samples Per Second",
+            ImagesPerSecond,
+            Derived,
+            None,
+            MetricFlags::NO_INDIVIDUAL_RECORDS
+                | MetricFlags::SUPPORTS_IMAGE_ONLY
+                | MetricFlags::LARGER_IS_BETTER,
+            []
+        ),
+        spec!(
             ActiveTotalThroughput,
             "Active Total Throughput",
             TokensPerSecond,
@@ -2187,7 +2200,7 @@ mod tests {
     #[test]
     fn catalog_has_unique_acyclic_resolved_dependencies() {
         let order = validate_catalog().unwrap();
-        assert_eq!(CATALOG.len(), 123);
+        assert_eq!(CATALOG.len(), 124);
         assert!(order.contains(&MetricTag::RequestLatency));
         assert!(
             CATALOG
@@ -2204,7 +2217,8 @@ mod tests {
         // the first to final content response; ports Python's
         // decode_duration_metric.py), hand-porting origin/main's fe999132f.
         // Updated 2026-07-24: added TotalNumImages, ImageSamplesPerSecond (aggregate
-        // image-sample rate) and EffectiveImageSamplesPerSecond (sweep-line variant).
-        assert_eq!(catalog_fingerprint(), 529_320_713_813_550_582);
+        // image-sample rate), EffectiveImageSamplesPerSecond and
+        // ActiveImageSamplesPerSecond (sweep-line effective + active variants).
+        assert_eq!(catalog_fingerprint(), 2_498_879_834_924_344_438);
     }
 }

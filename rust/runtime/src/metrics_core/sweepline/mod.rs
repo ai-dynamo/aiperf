@@ -952,6 +952,15 @@ impl SweepLineCurves {
                     window_end_ns,
                 ),
             ));
+            results.push(SweepMetricResult::from_stats(
+                ACTIVE_METRIC_SPECS[5],
+                compute_active_weighted_stats(
+                    &self.sample_throughput,
+                    &self.concurrency,
+                    window_start_ns,
+                    window_end_ns,
+                ),
+            ));
             results
         };
         if self
@@ -1077,7 +1086,7 @@ const EFFECTIVE_METRIC_SPECS: [SweepMetricSpec; 10] = [
     ),
 ];
 
-const ACTIVE_METRIC_SPECS: [SweepMetricSpec; 5] = [
+const ACTIVE_METRIC_SPECS: [SweepMetricSpec; 6] = [
     SweepMetricSpec::new(
         "active_decode_throughput",
         "Active Decode Throughput",
@@ -1110,6 +1119,13 @@ const ACTIVE_METRIC_SPECS: [SweepMetricSpec; 5] = [
         "active_total_throughput",
         "Active Total Throughput",
         "tokens/sec",
+        NANOS_PER_SECOND,
+        MetricConsoleGroup::Active,
+    ),
+    SweepMetricSpec::new(
+        "active_image_samples_per_second",
+        "Active Image Samples Per Second",
+        "images/sec",
         NANOS_PER_SECOND,
         MetricConsoleGroup::Active,
     ),
@@ -1361,22 +1377,27 @@ mod tests {
     }
 
     #[test]
-    fn full_bundle_emits_ten_effective_and_five_active_metrics() {
+    fn full_bundle_emits_ten_effective_and_six_active_metrics() {
         let curves =
             SweepLineCurves::compute(&[0.0], &[10.0], &[110.0], &[100.0], &[11.0], &[4.0], None);
         let metrics = curves.compute_metrics(0.0, 110.0);
-        assert_eq!(metrics.len(), 15);
+        assert_eq!(metrics.len(), 16);
         assert_eq!(metrics[0].tag, "effective_concurrency");
         assert_eq!(metrics[9].tag, "effective_image_samples_per_second");
         assert_eq!(metrics[14].tag, "active_total_throughput");
+        assert_eq!(metrics[15].tag, "active_image_samples_per_second");
         // 4 images spread over [0, 110) ns, duration-weighted over the same window
         // and scaled to per-second: 4 / 110ns * 1e9 = 36_363_636.36… images/sec.
         let observed = metrics[9].avg.as_f64().expect("sample rate is finite");
         assert!((observed - 4.0 / 110.0 * NANOS_PER_SECOND).abs() < 1e-6);
+        // The single request is in flight over the whole [0, 110) span, so the
+        // active-masked rate equals the effective rate here.
+        let active = metrics[15].avg.as_f64().expect("active sample rate is finite");
+        assert!((active - 4.0 / 110.0 * NANOS_PER_SECOND).abs() < 1e-6);
     }
 
     #[test]
-    fn metric_specs_preserve_all_fifteen_exact_identities() {
+    fn metric_specs_preserve_all_sixteen_exact_identities() {
         let observed = EFFECTIVE_METRIC_SPECS
             .into_iter()
             .chain(ACTIVE_METRIC_SPECS)
@@ -1496,6 +1517,13 @@ mod tests {
                     "active_total_throughput",
                     "Active Total Throughput",
                     "tokens/sec",
+                    NANOS_PER_SECOND,
+                    MetricConsoleGroup::Active,
+                ),
+                (
+                    "active_image_samples_per_second",
+                    "Active Image Samples Per Second",
+                    "images/sec",
                     NANOS_PER_SECOND,
                     MetricConsoleGroup::Active,
                 ),
