@@ -45,6 +45,8 @@ def mock_concurrency():
     mock = MagicMock()
     mock.acquire_session_slot = AsyncMock(return_value=True)
     mock.acquire_prefill_slot = AsyncMock(return_value=True)
+    mock.try_acquire_session_slot_prechecked = MagicMock(return_value=True)
+    mock.try_acquire_prefill_slot_prechecked = MagicMock(return_value=True)
     mock.release_session_slot = MagicMock()
     return mock
 
@@ -272,6 +274,69 @@ class TestStopConditionChecking:
         call_args = mock_concurrency.acquire_prefill_slot.call_args
         check_fn = call_args[0][1]  # Second positional arg is the check function
         assert check_fn == mock_stop_checker.can_send_any_turn
+
+
+# =============================================================================
+# Test: Non-Blocking Credit Issuance
+# =============================================================================
+
+
+class TestNonBlockingCreditIssuance:
+    """Tests for checked and prechecked non-blocking issuance."""
+
+    async def test_checked_first_turn_evaluates_stop_condition_once(
+        self, credit_issuer, mock_stop_checker, mock_concurrency, mock_router
+    ) -> None:
+        result = await credit_issuer.try_issue_credit(make_turn())
+
+        assert result is True
+        mock_stop_checker.can_start_new_session.assert_called_once_with()
+        mock_concurrency.try_acquire_session_slot_prechecked.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.try_acquire_prefill_slot_prechecked.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_router.send_credit.assert_awaited_once()
+
+    async def test_checked_first_turn_stopped_skips_slot_acquisition(
+        self, credit_issuer, mock_stop_checker, mock_concurrency, mock_router
+    ) -> None:
+        mock_stop_checker.can_start_new_session.return_value = False
+
+        result = await credit_issuer.try_issue_credit(make_turn())
+
+        assert result is False
+        mock_stop_checker.can_start_new_session.assert_called_once_with()
+        mock_concurrency.try_acquire_session_slot_prechecked.assert_not_called()
+        mock_concurrency.try_acquire_prefill_slot_prechecked.assert_not_called()
+        mock_router.send_credit.assert_not_awaited()
+
+    async def test_prechecked_session_slot_unavailable_returns_none(
+        self, credit_issuer, mock_stop_checker, mock_concurrency, mock_router
+    ) -> None:
+        mock_concurrency.try_acquire_session_slot_prechecked.return_value = False
+
+        result = await credit_issuer.try_issue_credit_prechecked(make_turn())
+
+        assert result is None
+        mock_stop_checker.can_start_new_session.assert_not_called()
+        mock_concurrency.try_acquire_prefill_slot_prechecked.assert_not_called()
+        mock_router.send_credit.assert_not_awaited()
+
+    async def test_prechecked_prefill_failure_releases_session_slot(
+        self, credit_issuer, mock_stop_checker, mock_concurrency, mock_router
+    ) -> None:
+        mock_concurrency.try_acquire_prefill_slot_prechecked.return_value = False
+
+        result = await credit_issuer.try_issue_credit_prechecked(make_turn())
+
+        assert result is None
+        mock_stop_checker.can_start_new_session.assert_not_called()
+        mock_concurrency.release_session_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_router.send_credit.assert_not_awaited()
 
 
 # =============================================================================

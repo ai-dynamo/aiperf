@@ -197,10 +197,10 @@ class RequestRateStrategy(AIPerfLoggerMixin):
                     return
 
             # Priority 2: Start new session if allowed and slots available.
-            # try_issue_credit returns None if no slot (skip interval), False if
-            # stop condition reached (exit loop), True if issued successfully.
+            # The prechecked issuer returns None if no slot (skip interval),
+            # False if the final credit was issued, or True otherwise.
             elif self._stop_checker.can_start_new_session():
-                result = await self._credit_issuer.try_issue_credit(
+                result = await self._credit_issuer.try_issue_credit_prechecked(
                     next_new_session_turn
                 )
                 match result:
@@ -209,10 +209,8 @@ class RequestRateStrategy(AIPerfLoggerMixin):
                         next_new_session_turn = (
                             self._conversation_source.next().build_first_turn()
                         )
-                    case False:  # Stop condition reached
-                        self.debug(
-                            "Exiting: stop condition reached after try_issue_credit"
-                        )
+                    case False:  # Final credit issued
+                        self.debug("Exiting: final credit issued")
                         return
                     case None:  # No slot available, retry later
                         # Always yield to event loop to allow callbacks to run.

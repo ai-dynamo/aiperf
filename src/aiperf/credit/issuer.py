@@ -189,15 +189,33 @@ class CreditIssuer:
         if not can_proceed_fn():
             return False
 
+        return await self.try_issue_credit_prechecked(turn)
+
+    async def try_issue_credit_prechecked(self, turn: TurnToSend) -> bool | None:
+        """Try to issue credit after the caller has checked stop conditions.
+
+        The caller must invoke this method in the same event-loop turn as the
+        successful stop-condition check.
+
+        Args:
+            turn: The turn to send.
+
+        Returns:
+            True: Credit issued, more credits can be sent.
+            False: Credit issued but this was final.
+            None: No slots available, credit not issued.
+        """
+        is_first_turn = turn.turn_index == 0
+
         if is_first_turn:
-            acquired = self._concurrency_manager.try_acquire_session_slot(
-                self._phase_key, can_proceed_fn
+            acquired = self._concurrency_manager.try_acquire_session_slot_prechecked(
+                self._phase_key
             )
             if not acquired:
                 return None  # No slot - credit not issued
 
-        acquired = self._concurrency_manager.try_acquire_prefill_slot(
-            self._phase_key, can_proceed_fn
+        acquired = self._concurrency_manager.try_acquire_prefill_slot_prechecked(
+            self._phase_key
         )
         if not acquired:
             # CRITICAL: Release session slot if we acquired it to maintain symmetry

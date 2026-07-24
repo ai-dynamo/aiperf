@@ -209,7 +209,7 @@ async def test_request_rate_update_wakes_pending_sleep() -> None:
     conversation_source = MagicMock()
     conversation_source.next.return_value.build_first_turn.return_value = object()
     credit_issuer = MagicMock()
-    credit_issuer.try_issue_credit = AsyncMock(return_value=False)
+    credit_issuer.try_issue_credit_prechecked = AsyncMock(return_value=False)
     stop_checker = MagicMock()
     stop_checker.can_start_new_session.return_value = True
 
@@ -238,7 +238,8 @@ async def test_request_rate_update_wakes_pending_sleep() -> None:
     strategy.set_request_rate(100.0)
     await asyncio.wait_for(task, timeout=1.0)
 
-    credit_issuer.try_issue_credit.assert_awaited_once()
+    stop_checker.can_start_new_session.assert_called_once_with()
+    credit_issuer.try_issue_credit_prechecked.assert_awaited_once()
 
 
 class TestConcurrencyBurstGenerator:

@@ -289,7 +289,10 @@ class StopConditionChecker:
         - Request count limit reached
         - All sessions complete (session-based mode)
         """
-        return all(func() for func in self._can_send_any_turn_funcs)
+        for func in self._can_send_any_turn_funcs:  # noqa: SIM110 - avoid allocation
+            if not func():
+                return False
+        return True
 
     def can_send_dag_child_turn(self) -> bool:
         """True if a DAG child turn can still dispatch.
@@ -301,7 +304,10 @@ class StopConditionChecker:
         to their parent's session and shouldn't be truncated by
         ``--num-conversations``.
         """
-        return all(func() for func in self._can_send_dag_child_turn_funcs)
+        for func in self._can_send_dag_child_turn_funcs:  # noqa: SIM110 - avoid allocation
+            if not func():
+                return False
+        return True
 
     def can_start_new_session(self) -> bool:
         """True if phase can start a NEW session (more restrictive).
@@ -316,4 +322,7 @@ class StopConditionChecker:
         if not self.can_send_any_turn():
             return False
 
-        return all(func() for func in self._can_start_new_session_funcs)
+        for func in self._can_start_new_session_funcs:  # noqa: SIM110 - avoid allocation
+            if not func():
+                return False
+        return True

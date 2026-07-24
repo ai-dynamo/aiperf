@@ -204,6 +204,7 @@ The Timing Manager uses a **credit-based flow control system** to control when r
 **Credit Distribution:**
 - Credits are dispatched to workers via a ROUTER/DEALER pattern (the Timing Manager's sticky ROUTER to each worker's DEALER)
 - Router selects workers based on sticky sessions (multi-turn conversations) or least-loaded worker selection
+- Request-rate strategies validate stop conditions once before non-blocking slot acquisition; the prevalidated acquisition remains synchronous in the same event-loop turn. Blocking acquisition continues to revalidate after waits.
 - Credit returns travel back on a dedicated PUSH/PULL fan-in channel: each worker PUSHes its `CreditReturn`/`FirstToken` to the Timing Manager's single PULL, separating the high-volume return path from credit dispatch
 - The return channel carries no ZMQ envelope identity, so the returning worker id travels inside the message
 - No coordination required between workers

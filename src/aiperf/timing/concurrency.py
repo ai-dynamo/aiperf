@@ -307,9 +307,26 @@ class GlobalPhaseConcurrencyLimiter:
         if phase not in self._phase_limits:
             raise ValueError(f"Phase {phase} not configured in limiter")
 
-        # Check stop conditions first to avoid unnecessary slot attempts
         if not can_proceed_fn():
             return False
+
+        return self.try_acquire_prechecked(phase)
+
+    def try_acquire_prechecked(self, phase: PhaseRuntimeKey) -> bool:
+        """Try to acquire a slot after the caller has checked stop conditions.
+
+        Args:
+            phase: The phase to acquire for.
+
+        Returns:
+            True if both global and phase slots were acquired, False if no slots
+            are available.
+
+        Raises:
+            ValueError: If phase not configured via configure_for_phase().
+        """
+        if phase not in self._phase_limits:
+            raise ValueError(f"Phase {phase} not configured in limiter")
 
         phase_limit = self._phase_limits[phase]
 
@@ -483,6 +500,12 @@ class ConcurrencyManager:
             return can_proceed_fn()
         return self._session_limiter.try_acquire(phase, can_proceed_fn)
 
+    def try_acquire_session_slot_prechecked(self, phase: PhaseRuntimeKey) -> bool:
+        """Try to acquire a session slot after stop conditions were checked."""
+        if not self._session_limiter.enabled:
+            return True
+        return self._session_limiter.try_acquire_prechecked(phase)
+
     def release_session_slot(self, phase: PhaseRuntimeKey) -> None:
         """Release a session concurrency slot.
 
@@ -539,6 +562,12 @@ class ConcurrencyManager:
         if not self._prefill_limiter.enabled:
             return can_proceed_fn()
         return self._prefill_limiter.try_acquire(phase, can_proceed_fn)
+
+    def try_acquire_prefill_slot_prechecked(self, phase: PhaseRuntimeKey) -> bool:
+        """Try to acquire a prefill slot after stop conditions were checked."""
+        if not self._prefill_limiter.enabled:
+            return True
+        return self._prefill_limiter.try_acquire_prechecked(phase)
 
     def release_prefill_slot(self, phase: PhaseRuntimeKey) -> None:
         """Release a prefill concurrency slot.

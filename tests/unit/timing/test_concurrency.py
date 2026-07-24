@@ -305,6 +305,13 @@ class TestGlobalPhaseConcurrencyLimiter:
         lim.configure_for_phase(P, 5)
         assert await lim.acquire(P, lambda: can_proceed) == expected
 
+    def test_try_acquire_prechecked_acquires_available_slots(self) -> None:
+        lim = GlobalPhaseConcurrencyLimiter()
+        lim.configure_for_phase(P, 1)
+
+        assert lim.try_acquire_prechecked(P) is True
+        assert lim.try_acquire_prechecked(P) is False
+
     def test_release_requires_configured_phase(self) -> None:
         lim = GlobalPhaseConcurrencyLimiter()
         lim.configure_for_phase(P, 10)
@@ -389,6 +396,15 @@ class TestConcurrencyManager:
         m.configure_for_phase(P, 5, None)
         assert await m.acquire_session_slot(P, lambda: can_proceed) == expected
 
+    @pytest.mark.parametrize("concurrency", [None, 1])
+    def test_try_acquire_session_slot_prechecked(self, concurrency: int | None) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(P, concurrency, None)
+
+        assert m.try_acquire_session_slot_prechecked(P) is True
+        if concurrency is not None:
+            assert m.try_acquire_session_slot_prechecked(P) is False
+
     def test_release_session_slot_disabled_noop(self) -> None:
         m = ConcurrencyManager()
         m.configure_for_phase(P, None, None)
@@ -425,6 +441,15 @@ class TestConcurrencyManager:
         m = ConcurrencyManager()
         m.configure_for_phase(P, None, 5)
         assert await m.acquire_prefill_slot(P, lambda: True) is True
+
+    @pytest.mark.parametrize("concurrency", [None, 1])
+    def test_try_acquire_prefill_slot_prechecked(self, concurrency: int | None) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(P, None, concurrency)
+
+        assert m.try_acquire_prefill_slot_prechecked(P) is True
+        if concurrency is not None:
+            assert m.try_acquire_prefill_slot_prechecked(P) is False
 
     def test_release_prefill_slot_disabled_noop(self) -> None:
         m = ConcurrencyManager()
