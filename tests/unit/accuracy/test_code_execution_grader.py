@@ -148,3 +148,12 @@ class TestGradeDelegatesToWorker:
         assert result.correct is False
         assert result.unparsed is True
         assert "sandboxed exec failed" in result.reasoning
+
+    async def test_aclose_terminates_worker(self, monkeypatch) -> None:
+        # Graceful shutdown must tear down the worker subprocess (the record
+        # processor's @on_stop calls grader.aclose()).
+        monkeypatch.setattr(code_execution, "_HAS_LIGHTEVAL_LCB", True)
+        grader = CodeExecutionGrader(run=MagicMock())
+        grader._worker.aclose = AsyncMock()
+        await grader.aclose()
+        grader._worker.aclose.assert_awaited_once()

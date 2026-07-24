@@ -174,6 +174,14 @@ class CodeExecutionGrader(BaseGrader):
             ground_truth="<lcb test cases>",
         )
 
+    async def aclose(self) -> None:
+        """Terminate the grading worker and its process group on graceful stop.
+
+        The abrupt ``os._exit`` force-kill path (where this never runs) is handled
+        worker-side by a death-pipe watcher; see ``_codegen_worker.py``.
+        """
+        await self._worker.aclose()
+
 
 def _derive_grade_timeout(num_cases: int) -> float:
     """Client-side wall-clock ceiling for one grade. lighteval caps a problem at
