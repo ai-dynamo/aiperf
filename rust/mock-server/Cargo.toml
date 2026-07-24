@@ -57,7 +57,11 @@ blake2 = "0.10"
 once_cell = "1"
 uuid = { version = "1", features = ["v4", "fast-rng"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-prometheus = { version = "0.13", default-features = false }
+# `protobuf` feature swaps the exposition proto model from the crate's
+# hand-written `plain_model` to rust-protobuf-generated types, which expose the
+# `mut_histogram`/`mut_bucket` accessors `ShardedHistogram::collect` uses to
+# merge per-thread shards into one Histogram family.
+prometheus = { version = "0.13", default-features = false, features = ["protobuf"] }
 async-stream = "0.3"
 dashmap = "6"
 socket2 = { version = "0.5", features = ["all"] }
