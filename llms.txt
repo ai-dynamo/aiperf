@@ -401,6 +401,10 @@ Whole system:
   execution boundary: the protocol-v2 stdio envelope, the `BenchmarkRun`
   vocabulary, dataset/transport path selection, and the in-process
   linked-capability catalog.
+- [`docs/specs/2026-07-24-rust-port-flow-deck-design.md`](docs/specs/2026-07-24-rust-port-flow-deck-design.md)
+  — design for the `apps/aiperf-flow` `rust-port-flow` deck: an interactive,
+  zoomable, playable request-lifecycle explainer of the whole Rust port, plus
+  the shared `src/interactive/` primitives it introduces.
 
 Execution and scheduling:
 
