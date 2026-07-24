@@ -351,8 +351,11 @@ pub async fn chat_completions(
         );
         Ok(sse_response(body))
     } else {
-        state.recorder.record_request_start(endpoint, &ctx.model);
-        state.recorder.record_llm_inflight_start(&ctx.model);
+        // Resolve all labeled metric handles once, then drive the whole
+        // request lifecycle through cached child handles (no per-metric label
+        // hash/lookup on the hot path).
+        let labeled = state.recorder.labeled(endpoint, &ctx.model);
+        state.recorder.admit_fast(&labeled);
         let (prefill, _decode) = ctx.latency_sim.wait_for_tokens(ctx.tokenized.count()).await;
         let latency = start.elapsed();
         let info = LLMLatencyInfo {
@@ -364,18 +367,14 @@ pub async fn chat_completions(
         let json_body = serde_json::to_vec(&body).map_err(internal_error)?;
         let resp_bytes = json_body.len() as u64;
 
-        state
-            .recorder
-            .record_request_bytes(endpoint, ctx.tokenized.text.len() as u64, resp_bytes);
-        state.recorder.record_llm_success(
-            endpoint,
-            &ctx.model,
+        state.recorder.complete_fast(
+            &labeled,
             latency.as_secs_f64(),
             &ctx.usage,
             &info,
+            ctx.tokenized.text.len() as u64,
+            resp_bytes,
         );
-        state.recorder.record_llm_inflight_end(&ctx.model);
-        state.recorder.record_request_end(endpoint);
 
         Ok(Response::builder()
             .status(StatusCode::OK)
