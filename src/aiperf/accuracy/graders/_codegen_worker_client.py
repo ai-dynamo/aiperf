@@ -22,6 +22,7 @@ from typing import Any
 import orjson
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.constants import IS_WINDOWS
 
 _log = AIPerfLogger(__name__)
 
@@ -109,8 +110,18 @@ class CodegenGradingWorker:
         # for the worker's life so its close (even via the parent's os._exit)
         # tells the worker to reap itself. os.pipe fds are non-inheritable by
         # default, so mark the read end inheritable before passing it through.
-        death_r, death_w = os.pipe()
-        os.set_inheritable(death_r, True)
+        # Windows has no process groups (nothing for the worker to killpg) and
+        # subprocess rejects pass_fds there, so skip the pipe and rely on the
+        # stdin-EOF teardown; the worker's death watcher likewise no-ops there.
+        death_r: int | None = None
+        death_w: int | None = None
+        pass_fds: tuple[int, ...] = ()
+        death_env: dict[str, str] = {}
+        if not IS_WINDOWS:
+            death_r, death_w = os.pipe()
+            os.set_inheritable(death_r, True)
+            pass_fds = (death_r,)
+            death_env = {_DEATH_FD_ENV: str(death_r)}
         try:
             self._proc = await asyncio.create_subprocess_exec(
                 *self._cmd,
@@ -121,15 +132,18 @@ class CodegenGradingWorker:
                 # Own process group so _kill can reap lighteval's forked sandbox
                 # grandchildren, not just the worker (no-op on Windows).
                 start_new_session=True,
-                pass_fds=(death_r,),
-                env={**os.environ, _DEATH_FD_ENV: str(death_r)},
+                pass_fds=pass_fds,
+                env={**os.environ, **death_env},
             )
         except Exception as exc:
-            os.close(death_r)
-            os.close(death_w)
+            if death_r is not None:
+                os.close(death_r)
+            if death_w is not None:
+                os.close(death_w)
             self._start_failures += 1
             raise CodegenWorkerError(f"failed to spawn grading worker: {exc}") from exc
-        os.close(death_r)  # the child holds it now; we keep only the write end
+        if death_r is not None:
+            os.close(death_r)  # the child holds it now; we keep only the write end
         self._death_w = death_w
         # Drain stderr continuously so the pipe never fills (which would block the
         # worker) and the last output is retained to explain a fault.

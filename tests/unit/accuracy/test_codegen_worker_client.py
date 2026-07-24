@@ -389,6 +389,10 @@ class TestProcessGroup:
 
 
 class TestDeathPipe:
+    @pytest.mark.skipif(
+        not hasattr(os, "killpg"),
+        reason="death pipe is POSIX-only; Windows has no killpg to reap with",
+    )
     async def test_death_pipe_held_for_worker_life_then_closed(self, tmp_path) -> None:
         # The client holds the death-pipe write end open for the worker's whole
         # life (so the parent's exit — even os._exit — signals the worker to
