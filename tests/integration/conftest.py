@@ -42,6 +42,13 @@ logging.getLogger("asyncio").setLevel(logging.INFO)
 # extension teardown. Bounding arenas fixes it without user-visible cost.
 os.environ.setdefault("MALLOC_ARENA_MAX", "2")
 
+# MLflow 3.x put the filesystem (file://) tracking backend into "maintenance
+# mode" and raises unless this opt-out is set. The MLflow exporter integration
+# tests use file:// stores under tmp_path, so without this they fail with
+# MlflowException and write zero runs. The exporter itself works fine against a
+# file store once opted in. setdefault so an explicit override still wins.
+os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
+
 _logger = AIPerfLogger(__name__)
 
 
