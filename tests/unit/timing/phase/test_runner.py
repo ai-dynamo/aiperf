@@ -573,6 +573,37 @@ class TestPhaseRunnerCancellation:
         runner.cancel()
         assert runner._scheduler.pending_count == 0
 
+    async def test_cancelled_phase_is_not_a_grace_period_timeout(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """A cancelled phase must not be reported as a grace-period timeout.
+
+        Regression guard: the full-port re-port inherited origin/main's
+        ``grace_period_triggered=True`` on the cancellation completion path,
+        which mislabelled every cancelled phase (warmup early-abort, Ctrl-C,
+        ``--request-count`` cutoff) as a grace-period timeout in the console
+        phase-complete line, the OTEL metric, and the aggregated
+        ``ProfileResults`` flag. Cancellation is tracked via ``was_cancelled``.
+        """
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
+        ):
+            r._was_cancelled = True
+            r._progress.all_credits_sent_event.set()
+            r._progress.all_credits_returned_event.set()
+            result = await r.run(is_final_phase=True)
+
+        assert r._lifecycle.grace_period_triggered is False
+        assert result.grace_period_timeout_triggered is False
+
 
 class TestTimeoutHandling:
     async def test_returns_false_when_event_set(
