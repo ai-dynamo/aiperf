@@ -127,10 +127,26 @@ fn walk_item(
     chat_messages: &mut Vec<Value>,
 ) {
     let msg_text_parts = walk_item_content(item, result, part_types);
-    walk_item_tool_calls(item, result);
+    // A string `role` means this item rides in the `messages`/`input` array the
+    // chat template renders. That routing decides where tool-call text is
+    // counted so it is not double-counted (see `walk_item_tool_calls`).
+    let in_messages = item.get("role").and_then(Value::as_str).is_some();
+    walk_item_tool_calls(item, result, in_messages);
     walk_item_function_call(item, result);
     if let Some(role) = item.get("role").and_then(Value::as_str) {
-        chat_messages.push(json!({"role": role, "content": msg_text_parts.concat()}));
+        let mut msg = json!({"role": role, "content": msg_text_parts.concat()});
+        // Pass replayed assistant `tool_calls` through: chat templates render
+        // them, so dropping them would undercount the templated ISL for agent
+        // replays.
+        if let Some(tool_calls) = item
+            .get("tool_calls")
+            .and_then(Value::as_array)
+            .filter(|calls| !calls.is_empty())
+            && let Some(obj) = msg.as_object_mut()
+        {
+            obj.insert("tool_calls".into(), Value::Array(tool_calls.clone()));
+        }
+        chat_messages.push(msg);
     }
 }
 
@@ -180,7 +196,15 @@ fn walk_content_part(
     }
 }
 
-fn walk_item_tool_calls(item: &Map<String, Value>, result: &mut ExtractedPayload) {
+/// Account a chat-shape assistant message's replayed `tool_calls`.
+///
+/// `in_messages` routes the collected `function.name`/`arguments` strings: when
+/// the item rides in the rendered `messages` array (string role), the tool_calls
+/// are passed through in `messages` and the chat template tokenizes them, so
+/// they go to `texts` only — adding them to `tool_texts` would double-count them
+/// on the chat-template ISL path. Otherwise (Responses `input` items with no
+/// role) they go to both ledgers via `append_tool_texts`.
+fn walk_item_tool_calls(item: &Map<String, Value>, result: &mut ExtractedPayload, in_messages: bool) {
     let Some(tool_calls) = item.get("tool_calls").and_then(Value::as_array) else {
         return;
     };
@@ -194,7 +218,11 @@ fn walk_item_tool_calls(item: &Map<String, Value>, result: &mut ExtractedPayload
         };
         let mut collected = Vec::new();
         collect_str_fields(function, &["name", "arguments"], &mut collected);
-        append_tool_texts(result, collected);
+        if in_messages {
+            result.texts.extend(collected);
+        } else {
+            append_tool_texts(result, collected);
+        }
     }
 }
 
