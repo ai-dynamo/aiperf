@@ -57,7 +57,12 @@ impl LiveMetrics {
 
     /// Fold one completed record into the accumulator.
     fn ingest(&self, record: &RecordIngest) {
-        self.0.borrow_mut().process_record(record);
+        let mut record = record.clone();
+        // The dedicated realtime observer recycles in-flight slots after each
+        // drain, so its `request_index` is not a stable run-global identity.
+        // Live summaries only need aggregate facts, so ingest append-wise.
+        record.request_index = None;
+        self.0.borrow_mut().process_record(&record);
     }
 
     /// Summarize everything folded so far (non-consuming).

@@ -22,7 +22,7 @@ use tokio::sync::Notify;
 
 use crate::graph::errors::TraceError;
 use crate::graph::materialize::PromptMaterializer;
-use crate::graph::model::{GraphRecord, GraphTracePlan};
+use crate::graph::model::{GraphRecord, GraphTracePlan, PromptItem};
 use crate::graph::policy::{
     NodeDispatchInfo, NodeDispatchPolicy, NodeFailure, NodeFailureDisposition, NodeFailureKind,
     NodeFailurePolicy,
@@ -31,18 +31,27 @@ use crate::graph::reducers::ChanVal;
 use crate::graph::sink::{GraphReplyStatus, GraphSink};
 use crate::graph::wire::WireMessage;
 
-/// Returns `true` when `graph` is an eligible flat trace: exactly one `LlmNode`
-/// and that node declares no channel-requirement inputs (no fan-in). Every other
-/// shape — zero nodes, more than one node, or a node awaiting a produced channel —
-/// is ineligible and falls to the general `TraceExecutor`. The runtime graph model
-/// has only one executable node type (`LlmNode`); spawn/fork/subgraph/loop/barrier/
-/// tool behavior is lowered into multiple `LlmNode`s + edges before a `GraphRecord`
-/// exists, so a multi-node or fan-in shape is exactly what this rejects (fails
-/// closed).
+/// Returns `true` when `graph` is an eligible flat trace: exactly one `LlmNode`,
+/// that node declares no channel-requirement inputs (no fan-in), and its prompt
+/// program contains no `PromptItem::Splice`. Every other shape — zero nodes,
+/// more than one node, a node awaiting a produced channel, or a node whose
+/// prompt splices a channel (even one seeded only by `initial_state`, which
+/// needs no fan-in wait but still needs a real runtime value the flat path's
+/// empty inputs map cannot supply) — is ineligible and falls to the general
+/// `TraceExecutor`. The runtime graph model has only one executable node type
+/// (`LlmNode`); spawn/fork/subgraph/loop/barrier/tool behavior is lowered into
+/// multiple `LlmNode`s + edges before a `GraphRecord` exists, so a multi-node,
+/// fan-in, or splice shape is exactly what this rejects (fails closed).
 pub fn is_flat_graph(graph: &GraphRecord) -> bool {
     let mut nodes = graph.nodes.values();
     match (nodes.next(), nodes.next()) {
-        (Some(only), None) => only.inputs.is_empty(),
+        (Some(only), None) => {
+            only.inputs.is_empty()
+                && !only
+                    .items
+                    .iter()
+                    .any(|item| matches!(item, PromptItem::Splice { .. }))
+        }
         _ => false,
     }
 }
@@ -240,13 +249,17 @@ mod tests {
     use std::cell::RefCell;
 
     fn llm_node(inputs: Vec<ChannelRequirement>) -> LlmNode {
+        llm_node_with_items(inputs, Vec::new())
+    }
+
+    fn llm_node_with_items(inputs: Vec<ChannelRequirement>, items: Vec<PromptItem>) -> LlmNode {
         LlmNode {
             output: "out".into(),
             streaming: true,
             inputs,
             min_start_delay_us: None,
             max_tokens: Some(4),
-            items: Vec::new(),
+            items,
             metadata: BTreeMap::new(),
         }
     }
@@ -273,6 +286,24 @@ mod tests {
     #[test]
     fn single_node_no_inputs_is_flat() {
         assert!(is_flat_graph(&graph(vec![("a", llm_node(vec![]))])));
+    }
+
+    #[test]
+    fn single_node_with_splice_item_is_not_flat() {
+        // A channel reference seeded only by `initial_state` (e.g. `@messages`)
+        // needs no fan-in wait (inputs stays empty) but still lowers to a
+        // `PromptItem::Splice` that needs a real runtime value. The flat path's
+        // empty inputs map would silently drop it, so this must fall to the
+        // general executor. Regression for the FailedReply bug where a
+        // single-node authored `conditional_graph` trace referencing
+        // `initial_state` content dispatched an empty/malformed prompt.
+        let node = llm_node_with_items(
+            vec![],
+            vec![PromptItem::Splice {
+                splice: "messages".into(),
+            }],
+        );
+        assert!(!is_flat_graph(&graph(vec![("a", node)])));
     }
 
     #[test]

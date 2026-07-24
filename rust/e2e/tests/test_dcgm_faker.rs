@@ -45,14 +45,14 @@ fn faker_output_parsed_by_real_telemetry_collector(gpu_name: &str) {
         assert!(record.metadata.pci_bus_id.is_some());
         assert!(record.metadata.device.is_some());
 
-        let util = record.metrics["gpu_utilization"];
-        let power = record.metrics["gpu_power_usage"];
-        let temp = record.metrics["gpu_temperature"];
+        let util = record.metrics["nvidia_gpu_utilization"];
+        let power = record.metrics["nvidia_power_usage"];
+        let temp = record.metrics["nvidia_temperature"];
 
-        assert!(record.metrics.contains_key("energy_consumption"));
-        assert!(record.metrics.contains_key("gpu_memory_used"));
-        assert!(record.metrics.contains_key("xid_errors"));
-        assert!(record.metrics.contains_key("power_violation"));
+        assert!(record.metrics.contains_key("nvidia_energy_consumption"));
+        assert!(record.metrics.contains_key("nvidia_memory_used"));
+        assert!(record.metrics.contains_key("nvidia_xid_errors"));
+        assert!(record.metrics.contains_key("nvidia_power_violation"));
 
         assert!((0.0..=100.0).contains(&util));
         assert!(power > 0.0 && power <= cfg.max_power_w as f64);
@@ -107,8 +107,8 @@ async fn test_load_affects_telemetry_records() {
     let high_records = decode(&faker.generate());
     let high = &high_records[0].metrics;
 
-    assert!(high["gpu_power_usage"] > low["gpu_power_usage"]);
-    assert!(high["gpu_temperature"] > low["gpu_temperature"]);
-    assert!(high["gpu_utilization"] > low["gpu_utilization"]);
-    assert!(high["gpu_memory_used"] > low["gpu_memory_used"]);
+    assert!(high["nvidia_power_usage"] > low["nvidia_power_usage"]);
+    assert!(high["nvidia_temperature"] > low["nvidia_temperature"]);
+    assert!(high["nvidia_gpu_utilization"] > low["nvidia_gpu_utilization"]);
+    assert!(high["nvidia_memory_used"] > low["nvidia_memory_used"]);
 }

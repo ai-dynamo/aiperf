@@ -7,6 +7,27 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::rate_series::RateSeries;
+
+/// Semantic runtime role (`warmup` vs `profiling`).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PhaseRole {
+    /// Excluded from aggregate profiling results.
+    Warmup,
+    /// Contributes to benchmark results.
+    Profiling,
+}
+
+impl std::fmt::Display for PhaseRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Warmup => f.write_str("warmup"),
+            Self::Profiling => f.write_str("profiling"),
+        }
+    }
+}
+
 /// A concurrency, prefill, or rate ramp.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Ramp {
@@ -70,8 +91,11 @@ pub struct AdaptiveScale {
 /// Fields common to every phase.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PhaseCommon {
-    /// Phase name (`warmup` / `profiling`).
+    /// Unique workflow label for this phase.
     pub name: String,
+    /// Semantic role (`warmup` or `profiling`); inferred for canonical names when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<PhaseRole>,
     /// Exclude this phase's records from results.
     pub exclude_from_results: bool,
     /// Run seamlessly into the next phase (no drain barrier).
@@ -109,6 +133,9 @@ pub struct PhaseCommon {
     /// Adaptive-scale controller (present when `--adaptive-scale` is set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adaptive_scale: Option<AdaptiveScale>,
+    /// Piecewise-linear request-rate schedule (mutually exclusive with scalar `rate`).
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "rateSeries")]
+    pub rate_series: Option<RateSeries>,
 }
 
 /// The `type`-discriminated phase body.
@@ -190,6 +217,7 @@ mod tests {
         let p = Phase {
             common: PhaseCommon {
                 name: "profiling".into(),
+                kind: Some(PhaseRole::Profiling),
                 exclude_from_results: false,
                 seamless: false,
                 requests: Some(1),
@@ -203,6 +231,7 @@ mod tests {
                 cancellation: None,
                 agentic_cache_warmup_duration: None,
                 adaptive_scale: None,
+                rate_series: None,
             },
             kind: PhaseKind::Concurrency { concurrency: 1 },
         };

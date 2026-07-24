@@ -43,6 +43,9 @@ pub struct PublicDatasetSpec {
     /// Dataset-local seed overriding the run seed.
     #[serde(default)]
     pub random_seed: Option<u64>,
+    /// Shared prompt-source selection for synthesized prompt content.
+    #[serde(default)]
+    pub prompts: Option<PromptSelectionSpec>,
     /// Validated loader/composer options from plugin metadata and Config v2.
     #[serde(default)]
     pub options: Map<String, Value>,
@@ -71,6 +74,15 @@ pub enum PublicDatasetSourceSpec {
     },
 }
 
+/// Shared prompt-source selection for non-synthetic dataset kinds.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PromptSelectionSpec {
+    /// Prompt corpus selector when authored.
+    #[serde(default)]
+    pub corpus: Option<String>,
+}
+
 /// Resolved file/inline dataset configuration.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -96,6 +108,9 @@ pub struct FileDatasetSpec {
     /// Output-length fallback for rows without an authored limit.
     #[serde(default)]
     pub osl: Option<DistributionSpec>,
+    /// Shared prompt-source selection for synthesized prompt content.
+    #[serde(default)]
+    pub prompts: Option<PromptSelectionSpec>,
     /// Optional native trace transformation and caps.
     #[serde(default)]
     pub synthesis: Option<TraceSynthesisSpec>,
@@ -133,9 +148,6 @@ pub struct TraceSynthesisSpec {
     /// True-idle gap cap for WEKA/Dynamo replay; null disables compression.
     #[serde(default = "default_recorded_idle_gap_cap")]
     pub idle_gap_cap_seconds: Option<f64>,
-    /// Recorded content corpus (`coding` by default, or `sonnet`).
-    #[serde(default)]
-    pub corpus: Option<String>,
     /// Lower trajectory-start bound as a fraction of the replayable span.
     #[serde(default)]
     pub trajectory_start_min_ratio: f64,
@@ -215,6 +227,9 @@ pub struct SyntheticPromptsSpec {
     /// Hash block size retained for Config-v2 completeness. Synthetic rows have no hash IDs.
     #[serde(default)]
     pub block_size: Option<usize>,
+    /// Prompt corpus selector (`sonnet`, `coding`, or `random` when authored).
+    #[serde(default)]
+    pub corpus: Option<String>,
     /// Independently generated prompt values per turn.
     #[serde(default = "one_usize")]
     pub batch_size: usize,
@@ -933,6 +948,54 @@ mod tests {
         .unwrap();
         assert_eq!(spec.entries, 1);
         assert!(matches!(spec.turns, DistributionSpec::Fixed(_)));
+    }
+
+    #[test]
+    fn synthetic_prompt_corpus_decodes_from_protocol_v2() {
+        let SyntheticDatasetInput::Synthetic(spec) = serde_json::from_str(
+            r#"{"type":"synthetic","entries":1,"sampling":"sequential",
+                "prompts":{"isl":{"mean":256.0,"stddev":0.0},"corpus":"coding"},
+                "turns":{"value":1.0},"turn_delay_ms":{"value":0.0}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            spec.prompts
+                .as_ref()
+                .and_then(|prompts| prompts.corpus.as_deref()),
+            Some("coding")
+        );
+    }
+
+    #[test]
+    fn file_prompt_corpus_decodes_from_protocol_v2() {
+        let FileDatasetInput::File(spec) = serde_json::from_str(
+            r#"{"type":"file","format":"mooncake_trace",
+                "records":[{"input_length":16,"output_length":4}],
+                "prompts":{"corpus":"random"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            spec.prompts
+                .as_ref()
+                .and_then(|prompts| prompts.corpus.as_deref()),
+            Some("random")
+        );
+    }
+
+    #[test]
+    fn public_prompt_corpus_decodes_from_protocol_v2() {
+        let PublicDatasetInput::Public(spec) = serde_json::from_str(
+            r#"{"type":"public","name":"sharegpt","format":"sharegpt",
+                "source":{"type":"url","url":"https://example.invalid/sharegpt.jsonl"},
+                "prompts":{"corpus":"coding"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            spec.prompts
+                .as_ref()
+                .and_then(|prompts| prompts.corpus.as_deref()),
+            Some("coding")
+        );
     }
 
     #[test]

@@ -55,6 +55,8 @@ pub struct MockServer {
     pub grpc_url: Option<String>,
     /// The bound gRPC loopback port, when enabled.
     pub grpc_port: Option<u16>,
+    /// Shared mock application state for control-route and metrics assertions.
+    pub state: Arc<AppState>,
     // Owned runtime whose worker threads drive the accept loop. Dropping it
     // shuts the server down. Kept last so it drops after everything else.
     runtime: Option<tokio::runtime::Runtime>,
@@ -125,7 +127,7 @@ impl MockServer {
             (None, None)
         };
 
-        let router = build_router(state);
+        let router = build_router(state.clone());
         runtime.spawn(async move {
             let listener = tokio::net::TcpListener::from_std(std_listener)
                 .expect("adopt std listener into tokio");
@@ -144,6 +146,7 @@ impl MockServer {
             port,
             grpc_url,
             grpc_port,
+            state,
             runtime: Some(runtime),
         }
     }

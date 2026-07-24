@@ -442,6 +442,15 @@ pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
                     counters.errored = counters.errored.saturating_add(heartbeat.counters.errored);
                     heartbeats.insert(cell_id, *heartbeat);
                 }
+                Some(CellMessage::PhaseSignal {
+                    cell_id,
+                    phase,
+                    signal,
+                }) => bail!(
+                    "aggregator {agg_id} received unexpected phase signal {signal:?} for \
+                     phase {phase:?} from cell {cell_id}; controller-owned phase barriers \
+                     must bypass aggregator store-merge transport"
+                ),
                 Some(CellMessage::Partition(_)) => bail!(
                     "aggregator {agg_id} received a raw record Partition; hierarchical merge is \
                      fold-only (sketch or exact-fold). The byte-exact retain path keeps the flat \

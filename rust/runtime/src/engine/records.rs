@@ -116,6 +116,14 @@ struct RecordMetadata {
     worker_id: &'static str,
     record_processor_id: &'static str,
     benchmark_phase: Phase,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phase_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phase_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phase_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profiling_index: Option<usize>,
     was_cancelled: bool,
     cancellation_time_ns: Option<i64>,
 }
@@ -262,6 +270,14 @@ struct RawRecordMetadata {
     worker_id: &'static str,
     record_processor_id: &'static str,
     benchmark_phase: Phase,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phase_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phase_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phase_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profiling_index: Option<usize>,
     was_cancelled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     cancellation_time_ns: Option<i64>,
@@ -871,6 +887,10 @@ fn record_row(captured: &CapturedRecord, config: &MetricsConfig, include_trace: 
             worker_id: "rust-0",
             record_processor_id: "aiperf runner",
             benchmark_phase: record.phase,
+            phase_index: record.phase_index,
+            phase_name: record.phase_name.clone(),
+            phase_kind: record.phase_kind.clone(),
+            profiling_index: record.profiling_index,
             was_cancelled: record.canceled,
             cancellation_time_ns: record.canceled.then_some(record.end_ns),
         },
@@ -911,6 +931,10 @@ fn raw_record_row<'a>(
             worker_id: "rust-0",
             record_processor_id: "aiperf runner",
             benchmark_phase: ingest.phase,
+            phase_index: ingest.phase_index,
+            phase_name: ingest.phase_name.clone(),
+            phase_kind: ingest.phase_kind.clone(),
+            profiling_index: ingest.profiling_index,
             was_cancelled: ingest.canceled,
             cancellation_time_ns: ingest.canceled.then_some(ingest.end_ns),
             agent_depth: 0,

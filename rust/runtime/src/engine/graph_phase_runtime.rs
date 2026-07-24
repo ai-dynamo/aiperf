@@ -62,10 +62,12 @@ use crate::engine::graph_execution::{
     GraphExecutionEventSink, ObservedRunnerGraphPlacement,
 };
 use crate::engine::graph_input::TStarWindow;
+use crate::engine::phase_identity::{PhaseIdentity, phase_identity_from_spec};
 use crate::engine::protocol::{AdaptiveControlVariableSpec, PhaseCommonSpec, PhaseSpec};
 use crate::engine::protocol_v2::FailureStageV2;
 use crate::engine::records::CapturedRecord;
 use crate::engine::registry::PreparedRunFailure;
+use crate::timing::PhaseKind;
 
 /// Backend-owned inputs for one already lowered Graph-IR phase.
 pub(crate) struct GraphPhaseBackendConfig {
@@ -235,6 +237,7 @@ pub fn graph_pressure_grace_sec(user_grace: Option<f64>, cache_pressure: f64) ->
 }
 
 struct PreparedGraphPhase {
+    phase_identity: PhaseIdentity,
     workload: GraphWorkload,
     placement: Rc<dyn TracePlacement>,
     events: mpsc::UnboundedReceiver<GraphExecutionEvent>,
@@ -1088,6 +1091,7 @@ impl GraphRecordDrainStop {
 }
 
 struct GraphPhaseExecution {
+    phase_identity: PhaseIdentity,
     clock: Rc<dyn Clock>,
     context: PhaseContext,
     workload: Rc<GraphWorkload>,
@@ -1129,13 +1133,20 @@ impl GraphPhaseExecution {
             .take()
             .ok_or_else(|| anyhow!("graph record receiver was already consumed"))?;
         let captured = self.captured.clone();
+        let phase_identity = self.phase_identity.clone();
         let sampler = self.adaptive_sampler.clone();
         let progress = self.progress.clone();
         let stop = self.drain_stop.clone();
         *self.drain_task.borrow_mut() = Some(tokio::task::spawn_local(async move {
             loop {
                 while let Ok(event) = events.try_recv() {
-                    ingest_graph_execution_event(&captured, sampler.as_ref(), &progress, event);
+                    ingest_graph_execution_event_for_phase(
+                        &captured,
+                        sampler.as_ref(),
+                        &progress,
+                        &phase_identity,
+                        event,
+                    );
                 }
                 if stop.stopped.get() {
                     return;
@@ -1149,10 +1160,11 @@ impl GraphPhaseExecution {
                 tokio::select! {
                     biased;
                     event = events.recv() => match event {
-                        Some(event) => ingest_graph_execution_event(
+                        Some(event) => ingest_graph_execution_event_for_phase(
                             &captured,
                             sampler.as_ref(),
                             &progress,
+                            &phase_identity,
                             event,
                         ),
                         None => return,
@@ -1163,6 +1175,25 @@ impl GraphPhaseExecution {
         }));
         Ok(())
     }
+}
+
+fn ingest_graph_execution_event_for_phase(
+    captured: &Rc<RefCell<Vec<CapturedRecord>>>,
+    sampler: Option<&SharedWindowSampler>,
+    progress: &GraphPhaseProgress,
+    identity: &PhaseIdentity,
+    mut event: GraphExecutionEvent,
+) {
+    if let GraphExecutionEvent::Record { record, .. } = &mut event {
+        record.ingest.phase_index = Some(identity.phase_index);
+        record.ingest.phase_name = Some(identity.phase_name.clone());
+        record.ingest.phase_kind = Some(match identity.phase_kind {
+            PhaseKind::Warmup => "warmup".to_string(),
+            PhaseKind::Profiling => "profiling".to_string(),
+        });
+        record.ingest.profiling_index = identity.profiling_index;
+    }
+    ingest_graph_execution_event(captured, sampler, progress, event);
 }
 
 fn ingest_graph_execution_event(
@@ -1473,6 +1504,7 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
             })
         });
         Rc::new(GraphPhaseExecution {
+            phase_identity: prepared.phase_identity,
             clock: context.clock(),
             context,
             workload,
@@ -1659,9 +1691,18 @@ pub(crate) async fn run_graph_phases(
         .any(graph_phase_uses_session_admission)
         .then(|| Rc::new(SlotPool::new(1)));
     let mut prepared = Vec::with_capacity(phases.len());
+    let mut profiling_index = 0usize;
     for (phase_index, phase) in phases.iter().enumerate() {
+        let profiling_idx = if phase.common().exclude_from_results {
+            None
+        } else {
+            let index = profiling_index;
+            profiling_index += 1;
+            Some(index)
+        };
         prepared.push(prepare_graph_phase(
             phase_index,
+            profiling_idx,
             phase,
             benchmark_id,
             artifact_dir,
@@ -1803,6 +1844,7 @@ fn validate_dataset_wrap_policy(
 #[allow(clippy::too_many_arguments)]
 fn prepare_graph_phase(
     phase_index: usize,
+    profiling_index: Option<usize>,
     phase: &PhaseSpec,
     benchmark_id: &str,
     artifact_dir: &Path,
@@ -1815,8 +1857,8 @@ fn prepare_graph_phase(
     backends: &dyn GraphPhaseBackendFactory,
     on_failure: OnFailure,
 ) -> Result<PreparedGraphPhase> {
-    let phase_index = u64::try_from(phase_index).context("graph phase index exceeds u64")?;
-    let phase_rng = rng_root.derive_indexed_root(namespace::GRAPH_PHASE, phase_index);
+    let phase_rng_index = u64::try_from(phase_index).context("graph phase index exceeds u64")?;
+    let phase_rng = rng_root.derive_indexed_root(namespace::GRAPH_PHASE, phase_rng_index);
     let common = phase.common();
     let one_pass =
         common.sessions.is_none() && common.requests.is_none() && common.duration.is_none();
@@ -1948,6 +1990,7 @@ fn prepare_graph_phase(
         session_slots.clone(),
     )?;
     Ok(PreparedGraphPhase {
+        phase_identity: phase_identity_from_spec(phase, phase_index, profiling_index),
         workload,
         placement,
         events: events_rx,

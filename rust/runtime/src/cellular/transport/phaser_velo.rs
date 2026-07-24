@@ -220,4 +220,41 @@ mod tests {
         sub.await_generation(4).await.expect("live to gen 4");
         assert!(sub.seen_generation() >= 4);
     }
+
+    #[tokio::test]
+    async fn cell_awaits_named_phase_advances_from_replay_and_live_over_velo() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let coordinate = format!("tcp://{}", listener.local_addr().expect("addr"));
+        let controller_velo = build_velo(BindSpec::TcpListener(listener))
+            .await
+            .expect("controller velo");
+        let phaser = Phaser::new();
+        let _server = PhaserServer::bind(controller_velo.clone(), phaser.clone()).expect("bind");
+
+        phaser.advance(PhaseTransition::Started);
+        phaser.advance(PhaseTransition::PhaseAdvance("warmup".into()));
+
+        let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
+        let controller_peer = connect_controller(&cell_velo, &coordinate)
+            .await
+            .expect("connect controller");
+        let mut sub = PhaserClient::subscribe(cell_velo, &controller_peer)
+            .await
+            .expect("subscribe");
+
+        assert_eq!(
+            sub.await_phase_advance("warmup")
+                .await
+                .expect("replayed warmup"),
+            2
+        );
+
+        phaser.advance(PhaseTransition::PhaseAdvance("profiling".into()));
+        assert_eq!(
+            sub.await_phase_advance("profiling")
+                .await
+                .expect("live profiling"),
+            3
+        );
+    }
 }

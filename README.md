@@ -3,12 +3,6 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-> # ✅ CANONICAL — native Rust AIPerf (build here)
-> This `rust/` workspace (branch `ajc/rust`) is **THE native Rust AIPerf**:
-> single-process, multi-threaded tokio — no ZMQ, no services, no mmap, no credit
-> protocol. The `aiperf-rs` and `~/projects/aiperf-rust` trees are **DEPRECATED**.
-> Native-Rust design specs live in [`specs/`](specs/).
-
 # AIPerf
 
 [![PyPI version](https://img.shields.io/pypi/v/AIPerf)](https://pypi.org/project/aiperf/)

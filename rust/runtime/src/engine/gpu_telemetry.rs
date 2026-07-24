@@ -504,6 +504,7 @@ struct TelemetryRow<'a> {
     namespace: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pod_name: Option<&'a str>,
+    platform: &'a str,
     timestamp_ns: i64,
     dcgm_url: &'a str,
     telemetry_data: &'a BTreeMap<String, f64>,
@@ -520,6 +521,7 @@ impl<'a> From<&'a GpuTelemetryRecord> for TelemetryRow<'a> {
             hostname: record.metadata.hostname.as_deref(),
             namespace: record.metadata.namespace.as_deref(),
             pod_name: record.metadata.pod_name.as_deref(),
+            platform: &record.metadata.platform,
             timestamp_ns: record.timestamp_ns,
             dcgm_url: &record.endpoint_url,
             telemetry_data: &record.metrics,
@@ -530,6 +532,7 @@ impl<'a> From<&'a GpuTelemetryRecord> for TelemetryRow<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gpu_telemetry::{GpuMetadata, NVIDIA_GPU_TELEMETRY_PLATFORM};
 
     #[test]
     fn snapshot_merge_keeps_all_endpoints_and_uses_runtime_boundary() {
@@ -553,5 +556,31 @@ mod tests {
                 .timestamp_ns,
             40
         );
+    }
+
+    #[test]
+    fn telemetry_row_jsonl_includes_platform_and_normalized_metrics() {
+        let metrics = BTreeMap::from([("nvidia_power_usage".to_string(), 250.0)]);
+        let record = GpuTelemetryRecord {
+            timestamp_ns: 42,
+            endpoint_url: "http://dcgm/metrics".to_string(),
+            metadata: GpuMetadata {
+                gpu_index: 0,
+                gpu_uuid: "GPU-a".to_string(),
+                gpu_model_name: "H100".to_string(),
+                pci_bus_id: None,
+                device: None,
+                hostname: Some("n1".to_string()),
+                namespace: None,
+                pod_name: None,
+                platform: NVIDIA_GPU_TELEMETRY_PLATFORM.to_string(),
+            },
+            metrics,
+        };
+        let row = TelemetryRow::from(&record);
+        let value = serde_json::to_value(&row).unwrap();
+        assert_eq!(value["platform"], "nvidia");
+        assert_eq!(value["telemetry_data"]["nvidia_power_usage"], 250.0);
+        assert!(value["telemetry_data"].get("gpu_power_usage").is_none());
     }
 }

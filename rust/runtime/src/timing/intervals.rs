@@ -12,7 +12,7 @@
 //! The pacer converts a `next_interval_ns()` into an absolute target time and
 //! `clock.sleep`s to it — identical code on real and virtual clocks.
 
-use crate::rng::RustRandomGenerator;
+use crate::rng::{ConfiguredRandomGenerator, RandomGenerator};
 
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 
@@ -53,7 +53,7 @@ pub trait IntervalGenerator {
 /// Poisson process: exponential inter-arrival times with mean `1/rate`.
 pub struct Poisson {
     rate: f64,
-    rng: RustRandomGenerator,
+    rng: ConfiguredRandomGenerator,
 }
 
 impl Poisson {
@@ -62,7 +62,7 @@ impl Poisson {
         assert!(rate > 0.0, "Poisson rate must be > 0, got {rate}");
         Self {
             rate,
-            rng: RustRandomGenerator::from_seed(Some(seed)),
+            rng: ConfiguredRandomGenerator::from_seed_or_entropy(Some(seed)),
         }
     }
 }
@@ -70,11 +70,7 @@ impl Poisson {
 impl IntervalGenerator for Poisson {
     fn next_interval_ns(&mut self) -> i64 {
         // Exp(λ) has mean 1/λ; λ = rate, so mean interval = 1/rate seconds.
-        secs_to_ns(
-            self.rng
-                .expovariate(self.rate)
-                .expect("rate > 0 checked at construction/set_rate"),
-        )
+        secs_to_ns(self.rng.expovariate(self.rate))
     }
     fn set_rate(&mut self, rate: f64) {
         assert!(rate > 0.0, "Poisson rate must be > 0, got {rate}");
@@ -96,7 +92,7 @@ pub struct GammaProcess {
     // path, and arrival sampling is once-per-request so the rebuild is not a
     // measured bottleneck.
     scale: f64,
-    rng: RustRandomGenerator,
+    rng: ConfiguredRandomGenerator,
 }
 
 impl GammaProcess {
@@ -111,7 +107,7 @@ impl GammaProcess {
             rate,
             smoothness,
             scale: Self::scale(rate, smoothness),
-            rng: RustRandomGenerator::from_seed(Some(seed)),
+            rng: ConfiguredRandomGenerator::from_seed_or_entropy(Some(seed)),
         }
     }
 

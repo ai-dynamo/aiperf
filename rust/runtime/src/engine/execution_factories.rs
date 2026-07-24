@@ -90,6 +90,11 @@ impl ExecutionFactories {
     pub fn control_plane_http(&self) -> &dyn ControlPlaneHttpProviderFactory {
         self.control_plane_http.as_ref()
     }
+
+    /// Retain the factory for run-local, inference-isolated control handles.
+    pub fn control_plane_http_handle(&self) -> Arc<dyn ControlPlaneHttpProviderFactory> {
+        self.control_plane_http.clone()
+    }
 }
 
 impl fmt::Debug for ExecutionFactories {

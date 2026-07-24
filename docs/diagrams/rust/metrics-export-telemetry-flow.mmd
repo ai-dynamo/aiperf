@@ -1,0 +1,26 @@
+flowchart TD
+    OBS["NativeMetricsObserver"]
+    INGEST["RecordIngest"]
+    EXACT["Exact record storage"]
+    SKETCH["Sketch storage / mergeable t-digests"]
+    REDUCE["Phase / window / sweepline reduction"]
+    TELEMETRY["GPU / server / network sidecars"]
+    SIDECAR["SidecarMetric inputs"]
+    SUMMARY["AccumulatorSummary"]
+    REPORTER["NativeReporter"]
+    REPORT["NativeReport"]
+    COMMIT["Authoritative native-v2 commit"]
+    EXPORT["ExporterRegistry"]
+
+    OBS -->|"terminal events"| INGEST
+    INGEST -->|"artifacts require records"| EXACT
+    INGEST -.->|"--sketch-metrics"| SKETCH
+    EXACT -->|"record + aggregate metrics"| REDUCE
+    SKETCH -->|"exact counts, estimated tails"| REDUCE
+    TELEMETRY -->|"phase-boundary snapshots"| SIDECAR
+    SIDECAR -->|"feeds report metrics seam"| REDUCE
+    REDUCE -->|"aggregate + derived metrics"| SUMMARY
+    SUMMARY -->|"IO-free report input"| REPORTER
+    REPORTER -->|"typed metrics-first output"| REPORT
+    REPORT -->|"finalize once"| COMMIT
+    COMMIT -->|"finalized report fan-out"| EXPORT

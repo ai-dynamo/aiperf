@@ -22,7 +22,11 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWrit
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 
-use crate::gpu_telemetry::model::{GpuMetadata, GpuScrape, GpuTelemetryRecord};
+use crate::gpu_telemetry::fields::normalize_legacy_nvidia_metric_names;
+use crate::gpu_telemetry::model::{
+    AMD_GPU_TELEMETRY_PLATFORM, GpuMetadata, GpuScrape, GpuTelemetryRecord,
+    NVIDIA_GPU_TELEMETRY_PLATFORM, UNKNOWN_GPU_TELEMETRY_PLATFORM,
+};
 use crate::gpu_telemetry::source::{GpuScrapeMode, GpuTelemetryError, GpuTelemetrySource};
 
 /// Version of the Python-collector stdio protocol.
@@ -386,12 +390,24 @@ struct PythonTelemetryRecord {
     namespace: Option<String>,
     #[serde(default)]
     pod_name: Option<String>,
+    #[serde(default = "unknown_platform")]
+    platform: String,
     dcgm_url: String,
     telemetry_data: BTreeMap<String, f64>,
 }
 
+fn unknown_platform() -> String {
+    UNKNOWN_GPU_TELEMETRY_PLATFORM.to_string()
+}
+
 impl PythonTelemetryRecord {
     fn into_native(self, timestamp_ns: i64) -> GpuTelemetryRecord {
+        let platform = match self.platform.as_str() {
+            NVIDIA_GPU_TELEMETRY_PLATFORM => NVIDIA_GPU_TELEMETRY_PLATFORM,
+            AMD_GPU_TELEMETRY_PLATFORM => AMD_GPU_TELEMETRY_PLATFORM,
+            _ => UNKNOWN_GPU_TELEMETRY_PLATFORM,
+        }
+        .to_string();
         GpuTelemetryRecord {
             timestamp_ns,
             endpoint_url: self.dcgm_url,
@@ -404,12 +420,14 @@ impl PythonTelemetryRecord {
                 hostname: self.hostname,
                 namespace: self.namespace,
                 pod_name: self.pod_name,
+                platform,
             },
-            metrics: self
-                .telemetry_data
-                .into_iter()
-                .filter(|(_, value)| value.is_finite())
-                .collect(),
+            metrics: normalize_legacy_nvidia_metric_names(
+                self.telemetry_data
+                    .into_iter()
+                    .filter(|(_, value)| value.is_finite())
+                    .collect(),
+            ),
         }
     }
 }
@@ -417,4 +435,52 @@ impl PythonTelemetryRecord {
 #[derive(Deserialize)]
 struct ShutdownResult {
     shutdown: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn python_record_propagates_amd_platform() {
+        let native = PythonTelemetryRecord {
+            gpu_index: 0,
+            gpu_uuid: "AMD-0".to_string(),
+            gpu_model_name: "MI300X".to_string(),
+            pci_bus_id: None,
+            device: None,
+            hostname: None,
+            namespace: None,
+            pod_name: None,
+            platform: AMD_GPU_TELEMETRY_PLATFORM.to_string(),
+            dcgm_url: "amdsmi://localhost".to_string(),
+            telemetry_data: BTreeMap::from([("amd_power".to_string(), 500.0)]),
+        }
+        .into_native(42);
+
+        assert_eq!(native.metadata.platform, AMD_GPU_TELEMETRY_PLATFORM);
+        assert_eq!(native.metrics["amd_power"], 500.0);
+    }
+
+    #[test]
+    fn python_record_normalizes_legacy_nvidia_names() {
+        let native = PythonTelemetryRecord {
+            gpu_index: 0,
+            gpu_uuid: "GPU-0".to_string(),
+            gpu_model_name: "H100".to_string(),
+            pci_bus_id: None,
+            device: None,
+            hostname: None,
+            namespace: None,
+            pod_name: None,
+            platform: NVIDIA_GPU_TELEMETRY_PLATFORM.to_string(),
+            dcgm_url: "pynvml://localhost".to_string(),
+            telemetry_data: BTreeMap::from([("gpu_power_usage".to_string(), 250.0)]),
+        }
+        .into_native(42);
+
+        assert_eq!(native.metadata.platform, NVIDIA_GPU_TELEMETRY_PLATFORM);
+        assert_eq!(native.metrics["nvidia_power_usage"], 250.0);
+        assert!(!native.metrics.contains_key("gpu_power_usage"));
+    }
 }

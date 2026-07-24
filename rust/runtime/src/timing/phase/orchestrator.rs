@@ -352,11 +352,6 @@ fn validate_phase_order(configs: &[PhaseConfig]) -> Result<(), PhaseOrchestrator
             return Err(PhaseOrchestratorError::DuplicatePhaseId(config.id.clone()));
         }
         match config.kind {
-            PhaseKind::Warmup if profiling_seen => {
-                return Err(PhaseOrchestratorError::WarmupAfterProfiling(
-                    config.id.clone(),
-                ));
-            }
             PhaseKind::Profiling => profiling_seen = true,
             PhaseKind::Warmup => {}
         }

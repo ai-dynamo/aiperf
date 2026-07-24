@@ -11,6 +11,7 @@ use std::fmt::{self, Display};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -71,6 +72,16 @@ pub trait TextTokenizer: Send + Sync {
     /// Implementations that cannot expose this value may return `None`; raw
     /// prompt generation then selects a known non-EOS corpus token instead.
     fn vocab_size(&self) -> Option<u32> {
+        None
+    }
+
+    /// Optional filtered token domain for synthetic random generation.
+    ///
+    /// Tokenizers that can distinguish ordinary vocabulary ids from
+    /// special/control/otherwise-unsuitable ids should return the subset that is
+    /// safe to sample directly. `None` means callers should fall back to the
+    /// full `0..vocab_size` range.
+    fn allowed_random_token_ids(&self) -> Option<Arc<[u32]>> {
         None
     }
 
@@ -350,6 +361,7 @@ pub struct NativeTiktokenTokenizer {
     decoder: Vec<Vec<u8>>,
     bos_token_id: Option<u32>,
     eos_token_id: Option<u32>,
+    allowed_random_token_ids: Arc<[u32]>,
 }
 
 impl NativeTiktokenTokenizer {
@@ -450,6 +462,12 @@ impl NativeTiktokenTokenizer {
             };
             special_tokens_encoder.insert(name, id);
         }
+        let mut special_token_ids = vec![false; reserved_end as usize];
+        for &id in special_tokens_encoder.values() {
+            if let Some(slot) = special_token_ids.get_mut(id as usize) {
+                *slot = true;
+            }
+        }
 
         // Dense id -> bytes decoder for lossy reconstruction.
         let mut decoder = vec![Vec::new(); reserved_end as usize];
@@ -485,6 +503,8 @@ impl NativeTiktokenTokenizer {
                 model_path.display()
             ))
         })?;
+        let allowed_random_token_ids =
+            native_allowed_random_token_ids(&decoder, &special_token_ids);
 
         Ok(Self {
             bpe,
@@ -493,6 +513,7 @@ impl NativeTiktokenTokenizer {
             decoder,
             bos_token_id,
             eos_token_id,
+            allowed_random_token_ids,
         })
     }
 }
@@ -502,6 +523,24 @@ impl NativeTiktokenTokenizer {
 fn read_optional_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
     let bytes = std::fs::read(path).ok()?;
     serde_json::from_slice(&bytes).ok()
+}
+
+/// Filter a local tiktoken vocabulary down to ordinary decodable token ids.
+///
+/// Random prompt generation samples only ids whose standalone bytes are valid
+/// UTF-8 and are not registered special/reserved tokens.
+fn native_allowed_random_token_ids(decoder: &[Vec<u8>], special_token_ids: &[bool]) -> Arc<[u32]> {
+    decoder
+        .iter()
+        .enumerate()
+        .filter_map(|(id, bytes)| {
+            (!special_token_ids.get(id).copied().unwrap_or(false)
+                && !bytes.is_empty()
+                && std::str::from_utf8(bytes).is_ok())
+            .then_some(id as u32)
+        })
+        .collect::<Vec<_>>()
+        .into()
 }
 
 /// Extract the string content of a `bos_token`/`eos_token` field, tolerating
@@ -550,6 +589,10 @@ impl TextTokenizer for NativeTiktokenTokenizer {
         Some(self.vocab_upper_bound)
     }
 
+    fn allowed_random_token_ids(&self) -> Option<Arc<[u32]>> {
+        Some(self.allowed_random_token_ids.clone())
+    }
+
     fn name(&self) -> &str {
         &self.name
     }
@@ -570,6 +613,7 @@ pub struct HuggingFaceTokenizer {
     bos_token_id: Option<u32>,
     eos_token_id: Option<u32>,
     vocab_size: Option<u32>,
+    allowed_random_token_ids: Option<Arc<[u32]>>,
 }
 
 impl HuggingFaceTokenizer {
@@ -588,6 +632,7 @@ impl HuggingFaceTokenizer {
             bos_token_id: None,
             eos_token_id: None,
             vocab_size: vocab_size_of(&introspect),
+            allowed_random_token_ids: allowed_random_token_ids_of(&introspect),
         })
     }
 
@@ -604,6 +649,7 @@ impl HuggingFaceTokenizer {
             bos_token_id: None,
             eos_token_id: None,
             vocab_size: vocab_size_of(&introspect),
+            allowed_random_token_ids: allowed_random_token_ids_of(&introspect),
         };
         let config_path = directory.join("tokenizer_config.json");
         let tokenizer_config = if config_path.is_file() {
@@ -660,6 +706,22 @@ fn vocab_size_of(tokenizer: &HfTokenizer) -> Option<u32> {
     u32::try_from(tokenizer.get_vocab_size(true)).ok()
 }
 
+/// Exclude Hugging Face added special tokens from direct random sampling.
+fn allowed_random_token_ids_of(tokenizer: &HfTokenizer) -> Option<Arc<[u32]>> {
+    let vocab_size = vocab_size_of(tokenizer)?;
+    let special_ids: std::collections::HashSet<u32> = tokenizer
+        .get_added_tokens_decoder()
+        .into_iter()
+        .filter_map(|(id, token)| token.special.then_some(id))
+        .collect();
+    Some(
+        (0..vocab_size)
+            .filter(|id| !special_ids.contains(id))
+            .collect::<Vec<_>>()
+            .into(),
+    )
+}
+
 /// Build a chat-template formatter for a model directory.
 ///
 /// The template lives either inline in `tokenizer_config.json` (`chat_template`)
@@ -705,6 +767,10 @@ impl TextTokenizer for HuggingFaceTokenizer {
 
     fn vocab_size(&self) -> Option<u32> {
         self.vocab_size
+    }
+
+    fn allowed_random_token_ids(&self) -> Option<Arc<[u32]>> {
+        self.allowed_random_token_ids.clone()
     }
 
     fn name(&self) -> &str {
@@ -1300,6 +1366,52 @@ mod tests {
     }
 
     #[test]
+    fn native_tiktoken_allowed_random_tokens_exclude_reserved_and_invalid_utf8_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        write_synthetic_tiktoken_model(dir.path());
+        std::fs::write(
+            dir.path().join("tokenizer_config.json"),
+            r#"{
+  "bos_token": "[BOS]",
+  "eos_token": "[EOS]",
+  "added_tokens_decoder": {
+    "258": {"content": "[BOS]", "special": true},
+    "259": {"content": "[EOS]", "special": true}
+  }
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"model_type": "kimi_k2", "vocab_size": 512}"#,
+        )
+        .unwrap();
+
+        let tokenizer = NativeTiktokenTokenizer::from_directory(dir.path()).unwrap();
+        let allowed = tokenizer
+            .allowed_random_token_ids()
+            .expect("local tiktoken should expose an allowed token subset");
+
+        assert!(allowed.contains(&65), "ASCII token should be allowed");
+        assert!(
+            allowed.contains(&256),
+            "merged UTF-8 token should be allowed"
+        );
+        assert!(
+            !allowed.contains(&128),
+            "invalid standalone UTF-8 byte should be excluded"
+        );
+        assert!(
+            !allowed.contains(&258),
+            "reserved BOS token should be excluded"
+        );
+        assert!(
+            !allowed.contains(&259),
+            "reserved EOS token should be excluded"
+        );
+    }
+
+    #[test]
     fn native_tiktoken_defaults_reserved_slots_without_config() {
         let dir = tempfile::tempdir().unwrap();
         write_synthetic_tiktoken_model(dir.path());
@@ -1541,6 +1653,38 @@ mod tests {
         assert_eq!(templated.len(), 4);
         assert_eq!(tokenizer.bos_token_id(), Some(1));
         assert_eq!(tokenizer.eos_token_id(), Some(2));
+    }
+
+    #[test]
+    fn hugging_face_allowed_random_tokens_exclude_added_special_ids() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("tokenizer.json"),
+            r#"{
+  "version":"1.0",
+  "truncation":null,
+  "padding":null,
+  "added_tokens":[
+    {"id":0,"content":"[UNK]","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true},
+    {"id":1,"content":"<s>","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true},
+    {"id":2,"content":"</s>","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true}
+  ],
+  "normalizer":null,
+  "pre_tokenizer":{"type":"Whitespace"},
+  "post_processor":null,
+  "decoder":null,
+  "model":{"type":"WordLevel","vocab":{"[UNK]":0,"<s>":1,"</s>":2,"user":3,"hello":4,"assistant":5},"unk_token":"[UNK]"}
+}"#,
+        )
+        .unwrap();
+
+        let tokenizer =
+            HuggingFaceTokenizer::from_file(directory.path().join("tokenizer.json")).unwrap();
+        let allowed = tokenizer
+            .allowed_random_token_ids()
+            .expect("HF tokenizer should expose an allowed token subset");
+
+        assert_eq!(allowed.as_ref(), &[3, 4, 5]);
     }
 
     // The newer HF layout stores the chat template in a sibling

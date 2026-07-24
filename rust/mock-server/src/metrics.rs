@@ -232,8 +232,14 @@ impl MetricRecorder {
         }
         let m = &self.metrics;
         let built = ModelMetrics {
-            df_inflight: m.dynamo_frontend.INFLIGHT_REQUESTS.with_label_values(&[model]),
-            df_queued: m.dynamo_frontend.QUEUED_REQUESTS.with_label_values(&[model]),
+            df_inflight: m
+                .dynamo_frontend
+                .INFLIGHT_REQUESTS
+                .with_label_values(&[model]),
+            df_queued: m
+                .dynamo_frontend
+                .QUEUED_REQUESTS
+                .with_label_values(&[model]),
             df_request_duration: m
                 .dynamo_frontend
                 .REQUEST_DURATION_SECONDS
@@ -252,7 +258,10 @@ impl MetricRecorder {
                 .dynamo_prefill
                 .REQUEST_DURATION_SECONDS
                 .with_label_values(&["generate", model]),
-            dp_requests: m.dynamo_prefill.REQUESTS.with_label_values(&["generate", model]),
+            dp_requests: m
+                .dynamo_prefill
+                .REQUESTS
+                .with_label_values(&["generate", model]),
             dp_inflight: m
                 .dynamo_prefill
                 .INFLIGHT_REQUESTS
@@ -261,14 +270,20 @@ impl MetricRecorder {
                 .dynamo_decode
                 .REQUEST_DURATION_SECONDS
                 .with_label_values(&["generate", model]),
-            dd_requests: m.dynamo_decode.REQUESTS.with_label_values(&["generate", model]),
+            dd_requests: m
+                .dynamo_decode
+                .REQUESTS
+                .with_label_values(&["generate", model]),
             dd_inflight: m
                 .dynamo_decode
                 .INFLIGHT_REQUESTS
                 .with_label_values(&["generate", model]),
         };
         let arc = Arc::new(built);
-        self.model_cache.entry(model.to_string()).or_insert(arc).clone()
+        self.model_cache
+            .entry(model.to_string())
+            .or_insert(arc)
+            .clone()
     }
 
     pub fn record_request_start(&self, endpoint: &str, model: &str) {

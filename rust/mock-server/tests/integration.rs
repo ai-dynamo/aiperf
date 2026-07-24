@@ -28,6 +28,29 @@ async fn spawn_server(cfg: MockServerConfig) -> (SocketAddr, tokio::task::JoinHa
     (bound, handle)
 }
 
+async fn spawn_server_with_state(
+    cfg: MockServerConfig,
+) -> (
+    SocketAddr,
+    Arc<aiperf_mock_server::app::AppState>,
+    tokio::task::JoinHandle<()>,
+) {
+    let cfg = cfg.apply_flags();
+    let std_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr: SocketAddr = std_listener.local_addr().unwrap();
+    drop(std_listener);
+
+    let state = aiperf_mock_server::app::build_state(cfg);
+    let app = build_router(state.clone());
+    let tcp = tokio::net::TcpListener::bind(addr).await.unwrap();
+    let bound = tcp.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        axum::serve(tcp, app.into_make_service()).await.unwrap();
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    (bound, state, handle)
+}
+
 fn fast_cfg() -> MockServerConfig {
     MockServerConfig {
         fast: true,
@@ -71,6 +94,27 @@ async fn root_returns_info() {
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["version"], "2.0.0");
     assert_eq!(body["message"], "AIPerf Mock Server");
+}
+
+#[tokio::test]
+async fn mock_server_control_routes_mutate_state() {
+    let (addr, state, _h) = spawn_server_with_state(fast_cfg()).await;
+    assert_eq!(state.profiler_state().starts(), 0);
+    assert_eq!(state.profiler_state().stops(), 0);
+    assert_eq!(state.prefix_cache_generation(), 0);
+
+    for path in ["/start_profile", "/stop_profile", "/reset_prefix_cache"] {
+        let response = client()
+            .post(format!("http://{addr}{path}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "path={path}");
+    }
+
+    assert_eq!(state.profiler_state().starts(), 1);
+    assert_eq!(state.profiler_state().stops(), 1);
+    assert_eq!(state.prefix_cache_generation(), 1);
 }
 
 #[tokio::test]

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Sampling distributions backed by [`RustRandomGenerator`].
+//! Sampling distributions backed by generic RNG capabilities.
 //!
 //! These types implement the distribution control flow: post-draw clamping and
 //! integer ceiling; normal, log-normal, multimodal, and empirical raw sampling;
@@ -9,14 +9,15 @@
 
 use crate::rng::error::{Result, RngError};
 use crate::rng::generator::{RustRandomGenerator, positive_integer_from_f64};
+use crate::rng::random_generator::RandomGenerator;
 
 const PROBABILITY_SUM_REL_TOLERANCE: f64 = 1.0e-6;
 const PROBABILITY_SUM_ABS_TOLERANCE: f64 = 1.0e-6;
 
 /// Random operations required by workload distributions.
 ///
-/// [`RustRandomGenerator`] and deterministic test sources use this generic seam
-/// without dynamic dispatch on the hot path.
+/// Any [`RandomGenerator`] implementer automatically satisfies this seam without
+/// dynamic dispatch on the hot path.
 pub trait SamplingRng {
     /// Draw a uniform value from `[0, 1)`.
     fn random(&mut self) -> f64;
@@ -36,25 +37,25 @@ pub trait SamplingRng {
     fn sample_positive_normal_integer(&mut self, mean: f64, stddev: f64) -> Result<i64>;
 }
 
-impl SamplingRng for RustRandomGenerator {
+impl<R: RandomGenerator + ?Sized> SamplingRng for R {
     fn random(&mut self) -> f64 {
-        Self::random(self)
+        RandomGenerator::random(self)
     }
 
     fn random_batch(&mut self, size: usize) -> Vec<f64> {
-        Self::random_batch(self, size)
+        RandomGenerator::random_batch(self, size)
     }
 
     fn sample_normal(&mut self, mean: f64, stddev: f64, lower: f64, upper: f64) -> Result<f64> {
-        Self::sample_normal(self, mean, stddev, lower, upper)
+        RandomGenerator::sample_normal(self, mean, stddev, lower, upper)
     }
 
     fn sample_positive_normal(&mut self, mean: f64, stddev: f64) -> Result<f64> {
-        Self::sample_positive_normal(self, mean, stddev)
+        RandomGenerator::sample_positive_normal(self, mean, stddev)
     }
 
     fn sample_positive_normal_integer(&mut self, mean: f64, stddev: f64) -> Result<i64> {
-        Self::sample_positive_normal_integer(self, mean, stddev)
+        RandomGenerator::sample_positive_normal_integer(self, mean, stddev)
     }
 }
 
@@ -398,13 +399,23 @@ impl SamplingDistribution {
     }
 
     /// Draw one sample, applying distribution-level bounds after the raw draw.
-    pub fn sample(&self, rng: &mut RustRandomGenerator) -> Result<f64> {
+    pub fn sample_with<R: SamplingRng + ?Sized>(&self, rng: &mut R) -> Result<f64> {
         DistributionSampler::sample(self, rng)
     }
 
     /// Draw one sample and return `max(1, ceil(sample))`.
-    pub fn sample_int(&self, rng: &mut RustRandomGenerator) -> Result<i64> {
+    pub fn sample_int_with<R: SamplingRng + ?Sized>(&self, rng: &mut R) -> Result<i64> {
         DistributionSampler::sample_int(self, rng)
+    }
+
+    /// Draw one sample, applying distribution-level bounds after the raw draw.
+    pub fn sample<R: SamplingRng + ?Sized>(&self, rng: &mut R) -> Result<f64> {
+        self.sample_with(rng)
+    }
+
+    /// Draw one sample and return `max(1, ceil(sample))`.
+    pub fn sample_int<R: SamplingRng + ?Sized>(&self, rng: &mut R) -> Result<i64> {
+        self.sample_int_with(rng)
     }
 
     /// Unclamped analytic expected value.
@@ -628,17 +639,31 @@ impl SequenceLengthDistribution {
     }
 
     /// Draw one `(ISL, OSL)` pair.
-    pub fn sample(&self, rng: &mut RustRandomGenerator) -> Result<(i64, i64)> {
+    pub fn sample_with<R: SamplingRng + ?Sized>(&self, rng: &mut R) -> Result<(i64, i64)> {
         SequenceSampler::sample(self, rng)
     }
 
     /// Draw `batch_size` samples.
-    pub fn sample_batch(
+    pub fn sample_batch_with<R: SamplingRng + ?Sized>(
         &self,
-        rng: &mut RustRandomGenerator,
+        rng: &mut R,
         batch_size: usize,
     ) -> Result<Vec<(i64, i64)>> {
         SequenceSampler::sample_batch(self, rng, batch_size)
+    }
+
+    /// Draw one `(ISL, OSL)` pair.
+    pub fn sample<R: SamplingRng + ?Sized>(&self, rng: &mut R) -> Result<(i64, i64)> {
+        self.sample_with(rng)
+    }
+
+    /// Draw `batch_size` samples.
+    pub fn sample_batch<R: SamplingRng + ?Sized>(
+        &self,
+        rng: &mut R,
+        batch_size: usize,
+    ) -> Result<Vec<(i64, i64)>> {
+        self.sample_batch_with(rng, batch_size)
     }
 
     fn sample_pair_at<R: SamplingRng + ?Sized>(
@@ -783,6 +808,7 @@ mod tests {
     use std::collections::VecDeque;
 
     use super::*;
+    use crate::rng::PythonRandomGenerator;
 
     fn mean(values: &[f64]) -> f64 {
         values.iter().sum::<f64>() / values.len() as f64
@@ -1021,6 +1047,24 @@ mod tests {
                 &mut failing_rng,
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn inherent_helpers_accept_python_parity_generators() {
+        let mut rng = PythonRandomGenerator::from_child_seed(17);
+        let dist = SamplingDistribution::normal(12.0, 0.0).unwrap();
+        assert_eq!(dist.sample_with(&mut rng).unwrap(), 12.0);
+        assert_eq!(dist.sample_int_with(&mut rng).unwrap(), 12);
+
+        let sequence = SequenceLengthDistribution::new(vec![
+            SequenceLengthPair::new_with_stddev(7, 0.0, 9, 0.0, 100.0).unwrap(),
+        ])
+        .unwrap();
+        assert_eq!(sequence.sample_with(&mut rng).unwrap(), (7, 9));
+        assert_eq!(
+            sequence.sample_batch_with(&mut rng, 2).unwrap(),
+            vec![(7, 9), (7, 9)]
         );
     }
 

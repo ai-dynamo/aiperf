@@ -320,6 +320,7 @@ struct TelemetryGpu {
     gpu_index: i64,
     gpu_name: String,
     gpu_uuid: String,
+    platform: String,
     hostname: Option<String>,
     namespace: Option<String>,
     pod_name: Option<String>,
@@ -398,6 +399,9 @@ fn render_telemetry_data(report: &NativeReport) -> Option<Value> {
                         gpu_index,
                         gpu_name: model_name.clone(),
                         gpu_uuid: gpu_uuid.clone(),
+                        platform: labels.get("platform").cloned().unwrap_or_else(|| {
+                            crate::gpu_telemetry::UNKNOWN_GPU_TELEMETRY_PLATFORM.to_string()
+                        }),
                         hostname: labels.get("hostname").cloned(),
                         namespace: labels.get("namespace").cloned(),
                         pod_name: labels.get("pod").cloned(),
@@ -424,6 +428,7 @@ fn render_telemetry_data(report: &NativeReport) -> Option<Value> {
             gpu_obj.insert("gpu_index".to_owned(), Value::from(gpu.gpu_index));
             gpu_obj.insert("gpu_name".to_owned(), Value::String(gpu.gpu_name.clone()));
             gpu_obj.insert("gpu_uuid".to_owned(), Value::String(gpu.gpu_uuid.clone()));
+            gpu_obj.insert("platform".to_owned(), Value::String(gpu.platform.clone()));
             if let Some(hostname) = &gpu.hostname {
                 gpu_obj.insert("hostname".to_owned(), Value::String(hostname.clone()));
             }

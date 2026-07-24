@@ -52,11 +52,17 @@ struct Responses {
 
 fn build_responses() -> Responses {
     let body = b"data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"mock-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"x\"}}]}\n\ndata: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"mock-model\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
-    let head = format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n", body.len());
+    let head = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+        body.len()
+    );
     let chat: Arc<Vec<u8>> = Arc::new([head.as_bytes(), body].concat());
 
     let models = b"{\"object\":\"list\",\"data\":[{\"id\":\"mock-model\",\"object\":\"model\"}]}";
-    let mhead = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n", models.len());
+    let mhead = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+        models.len()
+    );
     let models_resp: Arc<Vec<u8>> = Arc::new([mhead.as_bytes(), models.as_ref()].concat());
 
     Responses {
@@ -90,7 +96,11 @@ fn drain_requests<S: Write>(
         if rest.len() < total {
             break;
         }
-        let resp = if head.starts_with(b"GET") { models } else { chat };
+        let resp = if head.starts_with(b"GET") {
+            models
+        } else {
+            chat
+        };
         if stream.write_all(resp).is_err() {
             return Err(());
         }
@@ -185,7 +195,9 @@ fn serve_unix(listener: std::os::unix::net::UnixListener, threads: usize) {
 }
 
 fn auto_parallelism() -> usize {
-    thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+    thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
 }
 
 /// Bind `--host:--port` (and `--uds`, if set) and serve the static fastmock

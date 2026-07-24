@@ -65,7 +65,7 @@ use std::sync::Arc;
 use crate::clock::Clock;
 use crate::metrics_core::Phase;
 use crate::phase_runtime::ScheduledPhaseSidecar;
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 
 use crate::engine::cell_launcher::owned_positions;
 #[cfg(test)]
@@ -110,10 +110,9 @@ pub(crate) fn two_level_partition(
 /// total work budget and prefill admission must still be statically
 /// partitioned or a `Global`-dispatch run would attempt `workers` DUPLICATE
 /// copies of the full request budget (`workers`x over-dispatch) instead of
-/// the authored total. This is a deliberate narrowing of
-/// `specs/global-exact-dispatch.md`'s literal "leaves requests ... unsliced"
-/// framing to what `GlobalAdmission`'s two gates actually cover; a
-/// request-count-sharing gate is future work.
+/// the authored total. This is a deliberate narrowing of the literal
+/// "leaves requests ... unsliced" framing to what `GlobalAdmission`'s two
+/// gates actually cover; a request-count-sharing gate is future work.
 ///
 /// `concurrency` and `rate` (the two fields `GlobalAdmission` DOES provide a
 /// shared gate for) slice under [`DispatchMode::Sharded`] exactly as before.
@@ -126,7 +125,7 @@ pub(crate) fn two_level_partition(
 /// its own internal session pool independent of the shared
 /// `NativeScheduledResources`/`GlobalAdmission` seam this change wires, and
 /// `FixedSchedule` has no concurrency/rate concept at all — both are called
-/// out as follow-up scope in `specs/global-exact-dispatch.md`.
+/// out as follow-up scope.
 pub(crate) fn slice_phase_for_thread(
     phase: &PhaseSpec,
     thread_id: usize,
@@ -252,6 +251,21 @@ pub(crate) async fn run_sharded_scheduled(
     if workers == 0 {
         bail!("sharded scheduled execution requires at least one worker");
     }
+
+    // Fail closed on the clock-seam invariant this path silently depends on: each
+    // worker thread reconstructs a reactor-local `RealClock` from
+    // `shared.real_clock_anchor` (a `!Send` `Rc<dyn Clock>` cannot cross the spawn
+    // boundary, and a `SimClock`'s virtual time is driven by ONE reactor's pump so
+    // it cannot be shared across `W` independent worker reactors). The engine
+    // upstream already forces `workers == 1` for a virtual-clock run, so this path
+    // must never see a virtual coordinator clock; assert it rather than leave the
+    // worker threads to silently run on live wall time under a virtual run.
+    ensure!(
+        !coordinator_clock.is_virtual(),
+        "sharded scheduled execution reached a virtual coordinator clock with workers={workers}; \
+         thread-per-core workers reconstruct reactor-local RealClocks and cannot share virtual \
+         time — a virtual-clock run must collapse to workers == 1"
+    );
 
     // Synchronous unbounded sends let worker threads return results without a
     // runtime while the receiver keeps main-thread sidecars progressing.

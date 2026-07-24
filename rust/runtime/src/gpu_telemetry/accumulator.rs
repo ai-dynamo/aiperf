@@ -396,7 +396,7 @@ impl GpuTelemetryAccumulator {
         self.series
             .iter()
             .filter_map(|(key, state)| {
-                ["gpu_power_usage", "amd_power"]
+                ["nvidia_power_usage", "amd_power"]
                     .into_iter()
                     .find_map(|name| {
                         let spec = self.metric_specs.get(name)?;
@@ -413,7 +413,7 @@ impl GpuTelemetryAccumulator {
         self.series
             .keys()
             .filter_map(|key| {
-                ["energy_consumption", "amd_energy_consumption"]
+                ["nvidia_energy_consumption", "amd_energy_consumption"]
                     .into_iter()
                     .find_map(|name| {
                         boundary_counter_delta(
@@ -494,6 +494,7 @@ fn labels_for(metadata: &GpuMetadata) -> BTreeMap<String, String> {
         ("gpu".to_string(), metadata.gpu_index.to_string()),
         ("gpu_uuid".to_string(), metadata.gpu_uuid.clone()),
         ("model_name".to_string(), metadata.gpu_model_name.clone()),
+        ("platform".to_string(), metadata.platform.clone()),
     ]);
     for (name, value) in [
         ("pci_bus_id", metadata.pci_bus_id.as_ref()),
@@ -527,10 +528,11 @@ mod tests {
                 hostname: Some("node".to_string()),
                 namespace: None,
                 pod_name: None,
+                platform: crate::gpu_telemetry::model::NVIDIA_GPU_TELEMETRY_PLATFORM.to_string(),
             },
             metrics: BTreeMap::from([
-                ("gpu_power_usage".to_string(), power),
-                ("energy_consumption".to_string(), energy_mj),
+                ("nvidia_power_usage".to_string(), power),
+                ("nvidia_energy_consumption".to_string(), energy_mj),
             ]),
         }
     }
@@ -593,7 +595,7 @@ mod tests {
             Some(500.0)
         );
 
-        let power = &summary.sidecar_metrics()["gpu_power_usage"].series[0].stats;
+        let power = &summary.sidecar_metrics()["nvidia_power_usage"].series[0].stats;
         let SidecarStats::Gauge(power) = power else {
             panic!("expected gauge")
         };
@@ -606,7 +608,7 @@ mod tests {
             primary.finite_value(MetricTag::TotalGpuEnergy),
             Some(2_000.0)
         );
-        assert!(primary.sidecar_metrics().contains_key("gpu_power_usage"));
+        assert!(primary.sidecar_metrics().contains_key("nvidia_power_usage"));
     }
 
     #[test]
@@ -650,9 +652,11 @@ mod tests {
                     hostname: Some("node".to_string()),
                     namespace: None,
                     pod_name: None,
+                    platform: crate::gpu_telemetry::model::NVIDIA_GPU_TELEMETRY_PLATFORM
+                        .to_string(),
                 },
                 metrics: BTreeMap::from([
-                    ("gpu_power_usage".to_string(), 500.0),
+                    ("nvidia_power_usage".to_string(), 500.0),
                     ("sm_clock".to_string(), sm_clock),
                     ("mem_clock".to_string(), mem_clock),
                     ("memory_temp".to_string(), memory_temp),
@@ -678,7 +682,7 @@ mod tests {
             ("sm_clock", Unit::Megahertz),
             ("mem_clock", Unit::Megahertz),
             ("memory_temp", Unit::Celsius),
-            ("gpu_power_usage", Unit::Watt),
+            ("nvidia_power_usage", Unit::Watt),
         ] {
             let metric = summary
                 .sidecar_metrics()
@@ -694,9 +698,9 @@ mod tests {
     fn duplicate_and_empty_custom_specs_are_rejected() {
         assert_eq!(
             GpuTelemetryAccumulator::new()
-                .with_additional_metric_specs([custom_spec("gpu_power_usage", Unit::Watt)])
+                .with_additional_metric_specs([custom_spec("nvidia_power_usage", Unit::Watt)])
                 .unwrap_err(),
-            GpuMetricRegistrationError::DuplicateName("gpu_power_usage".to_string())
+            GpuMetricRegistrationError::DuplicateName("nvidia_power_usage".to_string())
         );
         assert_eq!(
             GpuTelemetryAccumulator::new()

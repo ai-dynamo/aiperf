@@ -1,0 +1,29 @@
+flowchart TD
+    TOGGLE["AIPERF_CELLULAR_HUB"]
+    HUB["Hub"]
+    VELO["Shared velo anchor"]
+    SERVER["HubServer"]
+    DISCOVERY["DiscoveryPlugin"]
+    CELL["CellControllerHubPlugin"]
+    ARTIFACT["ArtifactHubPlugin"]
+    DATASET["DatasetHubPlugin"]
+    PHASER["PhaserHubPlugin"]
+
+    TOGGLE -->|"on: build_cellular_hub"| HUB
+    HUB -->|"owns one bound instance"| VELO
+    HUB -->|"serves separate HTTP diagnostics"| SERVER
+    HUB -->|"registers"| DISCOVERY
+    HUB -->|"registers"| CELL
+    HUB -.->|"when http_shipping && velo artifacts"| ARTIFACT
+    HUB -.->|"when AIPERF_CELL_DATASET_FANOUT"| DATASET
+    HUB -.->|"when AIPERF_CELL_PHASER_START"| PHASER
+    SERVER -->|"POST /discovery/hello"| DISCOVERY
+    SERVER -.->|"diagnostic routes"| CELL
+    SERVER -.->|"diagnostic routes"| ARTIFACT
+    SERVER -.->|"diagnostic routes"| DATASET
+    SERVER -.->|"diagnostic routes"| PHASER
+    DISCOVERY -->|"velo unary uses same handler"| VELO
+    CELL -->|"register / heartbeat / partitions"| VELO
+    ARTIFACT -->|"OPEN / CLOSE / DONE streams"| VELO
+    DATASET -->|"subscribe / chunk fan-out"| VELO
+    PHASER -->|"subscribe / event generations"| VELO

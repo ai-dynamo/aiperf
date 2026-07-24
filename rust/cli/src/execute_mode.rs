@@ -81,6 +81,7 @@ pub fn capabilities_catalog() -> anyhow::Result<aiperf_runtime::engine::protocol
 /// Enter the requested execution mode and drive one run to its terminal envelope.
 /// Always terminates the process (`-> !`); callers do not return from here.
 pub fn dispatch(args: &[String]) -> ! {
+    crate::diagnostics::register_sigusr1_faulthandler();
     let flag = args.first().map(String::as_str).unwrap_or("");
     let cell_mode = flag == CELL_FLAG;
     let aggregator_mode = flag == AGGREGATOR_FLAG;

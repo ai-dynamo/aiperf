@@ -6,12 +6,103 @@ use common::*;
 
 use serde_json::Value;
 
+const LEGACY_NVIDIA_FIELDS: &[&str] = &[
+    "gpu_power_usage",
+    "energy_consumption",
+    "gpu_utilization",
+    "mem_utilization",
+    "gpu_memory_used",
+    "gpu_temperature",
+    "decoder_utilization",
+    "encoder_utilization",
+    "jpg_utilization",
+    "sm_utilization",
+    "xid_errors",
+    "power_violation",
+];
+
 fn has_gpu_telemetry(json: &Value) -> bool {
     json.get("telemetry_data")
         .and_then(|t| t.get("endpoints"))
         .and_then(|e| e.as_object())
         .map(|m| !m.is_empty())
         .unwrap_or(false)
+}
+
+#[tokio::test]
+async fn test_native_gpu_platform_propagates_through_raw_profile_artifacts() {
+    if cfg!(target_os = "windows") || cfg!(target_os = "macos") {
+        return;
+    }
+    let h = AIPerfHarness::new_with(MockServerConfig {
+        fast: true,
+        no_tokenizer: true,
+        workers: 8,
+        random_seed: Some(17),
+        dcgm_seed: Some(23),
+        ..MockServerConfig::default()
+    })
+    .await;
+    let dcgm = h.mock.dcgm_urls().join(" ");
+    let r = h.run(&format!(
+        "--model {DEFAULT_MODEL} --url {} --endpoint-type chat --streaming \
+         --gpu-telemetry {dcgm} --request-count 8 --concurrency 2 \
+         --workers-max 1 --random-seed 7 --tokenizer builtin \
+         --synthetic-input-tokens-mean 32 --synthetic-input-tokens-stddev 0 \
+         --output-tokens-mean 8 --output-tokens-stddev 0 \
+         --export-level raw --ui simple",
+        h.mock.url
+    ));
+    assert!(r.success(), "profile failed: {}", r.stderr);
+    assert_eq!(r.artifacts.raw_records().len(), 8);
+
+    let telemetry_path = r
+        .artifacts
+        .find_file("**/*gpu_telemetry*.jsonl")
+        .expect("native telemetry JSONL");
+    let telemetry_text = std::fs::read_to_string(telemetry_path).expect("read telemetry JSONL");
+    let telemetry_rows = telemetry_text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str::<Value>(line).expect("valid telemetry JSONL row"))
+        .collect::<Vec<_>>();
+    assert!(!telemetry_rows.is_empty(), "expected telemetry JSONL rows");
+    for row in &telemetry_rows {
+        assert_eq!(row["platform"], "nvidia");
+        let metrics = row["telemetry_data"]
+            .as_object()
+            .expect("telemetry_data object");
+        assert!(metrics.contains_key("nvidia_power_usage"));
+        for legacy in LEGACY_NVIDIA_FIELDS {
+            assert!(
+                !metrics.contains_key(*legacy),
+                "telemetry JSONL emitted legacy NVIDIA field {legacy}"
+            );
+        }
+    }
+
+    let summary = r.artifacts.json();
+    let endpoints = summary
+        .pointer("/telemetry_data/endpoints")
+        .and_then(Value::as_object)
+        .expect("telemetry summary endpoints");
+    assert!(
+        !endpoints.is_empty(),
+        "expected telemetry summary endpoints"
+    );
+    for endpoint in endpoints.values() {
+        for gpu in endpoint["gpus"].as_object().expect("summary gpus").values() {
+            assert_eq!(gpu["platform"], "nvidia");
+            let metrics = gpu["metrics"].as_object().expect("summary metrics");
+            assert!(metrics.contains_key("nvidia_power_usage"));
+            for legacy in LEGACY_NVIDIA_FIELDS {
+                assert!(
+                    !metrics.contains_key(*legacy),
+                    "telemetry summary emitted legacy NVIDIA field {legacy}"
+                );
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -41,7 +132,11 @@ async fn test_gpu_telemetry() {
         .expect("telemetry_data.endpoints must be an object");
     assert!(!endpoints.is_empty());
 
-    let counter_metrics = ["energy_consumption", "xid_errors", "power_violation"];
+    let counter_metrics = [
+        "nvidia_energy_consumption",
+        "nvidia_xid_errors",
+        "nvidia_power_violation",
+    ];
 
     for (_dcgm_url, endpoint) in endpoints {
         let gpus = endpoint["gpus"]

@@ -10,8 +10,7 @@
 //! and a single [`axum`] HTTP service. Each registered plugin contributes an HTTP
 //! router (mounted under its prefix) and velo handlers (installed on the shared
 //! instance); the two surfaces are expected to share one handler function so they
-//! cannot diverge. See [`specs/velo-hub.md`](../../../../specs/velo-hub.md) for the
-//! design record and the deferred controller/artifact-plane fold-in.
+//! cannot diverge.
 //!
 //! The velo and HTTP surfaces bind distinct sockets (as the cell↔controller and
 //! artifact planes do today); "co-bound" means one [`Hub`]/[`HubServer`] owns and

@@ -1225,7 +1225,7 @@ Python need not reproduce the warmup state-transfer implementation.
 ## Default RNGs intentionally differ
 
 Python defaults to its historical generators. Rust uses BLAKE3-derived PCG
-streams. `AIPERF_RNG_BACKEND=rust_parity` is the compatibility lane.
+streams. `AIPERF_RNG_BACKEND=rust` is the compatibility lane.
 
 The migration contract must state which surfaces require parity mode. Default
 cross-engine byte equivalence should not be claimed without enabling it.

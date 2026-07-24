@@ -67,6 +67,33 @@ pub struct ProfileFlags {
     #[arg(long = "custom-endpoint", visible_alias = "endpoint")]
     pub custom_endpoint: Option<String>,
 
+    /// Enable the endpoint-local KV-cache reset hook (`--reset-kv-cache`).
+    #[arg(long = "reset-kv-cache", default_value_t = false)]
+    pub reset_kv_cache: bool,
+    /// Override the KV-cache reset hook timeout, seconds
+    /// (`--reset-kv-cache-timeout-seconds`). Implies hook enablement.
+    #[arg(long = "reset-kv-cache-timeout-seconds")]
+    pub reset_kv_cache_timeout_seconds: Option<f64>,
+    /// Override the KV-cache reset hook path (`--reset-kv-cache-path`).
+    /// Implies hook enablement.
+    #[arg(long = "reset-kv-cache-path")]
+    pub reset_kv_cache_path: Option<String>,
+    /// Enable the endpoint-local server-profiler hooks (`--server-profiler`).
+    #[arg(long = "server-profiler", default_value_t = false)]
+    pub server_profiler: bool,
+    /// Override the server-profiler hook timeout, seconds
+    /// (`--server-profiler-timeout-seconds`). Implies hook enablement.
+    #[arg(long = "server-profiler-timeout-seconds")]
+    pub server_profiler_timeout_seconds: Option<f64>,
+    /// Override the server-profiler start path (`--server-profiler-start-path`).
+    /// Implies hook enablement.
+    #[arg(long = "server-profiler-start-path")]
+    pub server_profiler_start_path: Option<String>,
+    /// Override the server-profiler stop path (`--server-profiler-stop-path`).
+    /// Implies hook enablement.
+    #[arg(long = "server-profiler-stop-path")]
+    pub server_profiler_stop_path: Option<String>,
+
     /// Per-record export level (`--export-level` / `--profile-export-level`):
     /// `summary` (no per-record files), `records` (JSONL, default), or `raw`
     /// (JSONL + raw request/response JSONL).
@@ -669,6 +696,10 @@ pub struct ProfileFlags {
     #[arg(long = "request-rate-mode")]
     pub request_rate_mode: Option<String>,
 
+    /// Piecewise-linear request-rate schedule JSON file (`--request-rate-series`).
+    #[arg(long = "request-rate-series")]
+    pub request_rate_series: Option<PathBuf>,
+
     /// Gamma burstiness/smoothness shape (`--arrival-smoothness`).
     #[arg(long = "arrival-smoothness")]
     pub arrival_smoothness: Option<f64>,
@@ -771,6 +802,10 @@ pub struct ProfileFlags {
     /// the shared prefix (`--prefix-reuse-ratio`). Defaults to `0.5`.
     #[arg(long = "prefix-reuse-ratio")]
     pub prefix_reuse_ratio: Option<f64>,
+
+    /// Prompt corpus selector for synthesized prompt content (`--prompt-corpus`).
+    #[arg(long = "prompt-corpus", value_parser = ["sonnet", "coding", "random"])]
+    pub prompt_corpus: Option<String>,
 
     /// Cap on inter-turn delay, seconds (`--inter-turn-delay-cap-seconds`).
     #[arg(long = "inter-turn-delay-cap-seconds")]
@@ -1233,6 +1268,24 @@ mod tests {
         on_big_stack(|| {
             let flags = parse(&["--dispatch", "bogus"]);
             assert!(flags.dispatch_mode().is_err());
+        });
+    }
+
+    #[test]
+    fn prompt_corpus_flag_parses_supported_values() {
+        on_big_stack(|| {
+            assert_eq!(
+                parse(&["--prompt-corpus", "coding"])
+                    .prompt_corpus
+                    .as_deref(),
+                Some("coding")
+            );
+            assert_eq!(
+                parse(&["--prompt-corpus", "random"])
+                    .prompt_corpus
+                    .as_deref(),
+                Some("random")
+            );
         });
     }
 }

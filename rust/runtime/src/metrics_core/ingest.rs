@@ -130,6 +130,18 @@ pub struct RecordIngest {
     pub dimensions: InferenceDimensions,
     /// Record phase.
     pub phase: Phase,
+    /// Zero-based position in the authored workflow phase sequence.
+    #[serde(default)]
+    pub phase_index: Option<usize>,
+    /// User-authored workflow phase name, when the run uses named multi-phase configs.
+    #[serde(default)]
+    pub phase_name: Option<String>,
+    /// Semantic phase role (`warmup` or `profiling`) for named workflows.
+    #[serde(default)]
+    pub phase_kind: Option<String>,
+    /// Zero-based index among profiling-kind phases in the authored workflow.
+    #[serde(default)]
+    pub profiling_index: Option<usize>,
     /// Request start timestamp in nanoseconds.
     pub start_ns: i64,
     /// Request end timestamp in nanoseconds.
@@ -178,6 +190,10 @@ impl RecordIngest {
             conversation_id: None,
             dimensions: InferenceDimensions::default(),
             phase,
+            phase_index: None,
+            phase_name: None,
+            phase_kind: None,
+            profiling_index: None,
             start_ns,
             end_ns,
             admit_ns: None,

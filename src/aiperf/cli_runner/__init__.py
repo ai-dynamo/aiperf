@@ -94,6 +94,14 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
 
     _reject_native_only_configs(plan)
 
+    # Register the SIGUSR1 stack-dump handler in the SystemController (main)
+    # process; each spawned service subprocess registers it in
+    # bootstrap_and_run_service, so `kill -USR1 <pid>` dumps thread tracebacks
+    # for any process in the tree when debugging a hang.
+    from aiperf.common.bootstrap import register_sigusr1_faulthandler
+
+    register_sigusr1_faulthandler()
+
     _preflight_artifact_dir(plan)
     _preflight_accuracy_deps(plan)
     _preflight_fd_limit()

@@ -265,12 +265,10 @@ async fn proxy(
     // through untouched.
     let upstream_path_and_query = match route {
         RouteKind::Passthrough => path_and_query.clone(),
-        RouteKind::SageMakerInvoke | RouteKind::SageMakerInvokeStream => {
-            match req.uri().query() {
-                Some(q) => format!("{chat_path}?{q}"),
-                None => chat_path.clone(),
-            }
-        }
+        RouteKind::SageMakerInvoke | RouteKind::SageMakerInvokeStream => match req.uri().query() {
+            Some(q) => format!("{chat_path}?{q}"),
+            None => chat_path.clone(),
+        },
     };
 
     let new_uri = format!("{upstream_scheme}://{upstream_authority}{upstream_path_and_query}");
@@ -581,9 +579,8 @@ fn encode_payload_part(payload: Bytes) -> Bytes {
 fn error_response(code: u16) -> Response<ClientBody> {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, "text/plain".parse().unwrap());
-    let mut builder = Response::builder().status(
-        StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-    );
+    let mut builder = Response::builder()
+        .status(StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR));
     if let Some(h) = builder.headers_mut() {
         *h = headers;
     }

@@ -598,10 +598,10 @@ mod tests {
         use crate::engine::records::CapturedModelOutput;
 
         let record = |session_num: u64,
-                          turn_index: u32,
-                          visible: &str,
-                          reasoning: Option<&str>,
-                          phase: Phase| {
+                      turn_index: u32,
+                      visible: &str,
+                      reasoning: Option<&str>,
+                      phase: Phase| {
             let mut ingest = RecordIngest::minimal(1_000_000, 11_000_000, phase);
             ingest.session_num = session_num;
             ingest.turn_index = turn_index;

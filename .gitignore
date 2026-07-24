@@ -3,6 +3,8 @@
 
 .idea
 *.pyc
+# personal ops runbooks belong in ~/.claude/workflows/, not the repo
+.workflows/
 # maturin-compiled native extension (built into the wheel, never checked in)
 src/aiperf/*.so
 .coverage
@@ -19,6 +21,7 @@ htmlcov/
 .env.*
 *.log
 artifacts/
+test-results/
 dist/
 .DS_Store
 uv.lock
@@ -29,6 +32,7 @@ profile.html
 # Bundled template data (sample mooncake-trace files) is intentionally tracked.
 !src/aiperf/config/templates/data/*.jsonl
 !tests/fixtures/**/*.jsonl
+!tests/unit/plot/fixtures/**/*.jsonl
 coverage.xml
 *.egg-info/
 coverage.json
@@ -72,13 +76,11 @@ node_modules/
 
 .venv*/
 
-# Architecture Atlas generated files
-apps/architecture-atlas/node_modules/
-apps/architecture-atlas/dist/
-apps/architecture-atlas/test-results/
-apps/architecture-atlas/playwright-report/
-
 # cargo build output for ad-hoc deploy targets
 .deploy-target*/
 
 dynamo-aiperf-native
+
+# superpowers plans/specs scratch (kept locally, not tracked)
+docs/superpowers/
+plans/

@@ -18,6 +18,7 @@ pub mod metrics;
 pub mod models;
 pub mod phase;
 pub mod public_catalog;
+pub mod rate_series;
 pub mod resolved;
 pub mod runtime;
 pub mod telemetry;

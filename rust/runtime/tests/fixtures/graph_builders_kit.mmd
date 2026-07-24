@@ -1,0 +1,175 @@
+flowchart TD
+%% ==========================================================================
+%%  GRAPH BUILDER'S KIT — AI-authoring toolkit for AIPerf Graph-IR workloads
+%% ==========================================================================
+%%  PURPOSE (read first, AI agent):
+%%    Help the user express the TRUE shape of their LLM / agent workload as a
+%%    graph. Use the CORE vocabulary below for almost everything; reach into
+%%    ADVANCED only if the workload genuinely needs it.
+%%    >>> DO NOT limit the design to "what is supported today." Draw the real
+%%    workload; the AIPerf team builds whatever the graph expresses. <<<
+%% .
+%%  HOW TO USE:
+%%    1. Interview the user: nodes & types; edges & branch conditions; which
+%%       steps send a REAL request vs wait/think vs non-model tool step;
+%%       fan-out (fixed or ×N) & fan-in (join all / any=race+cancel / quorum);
+%%       per-node think/tool time; loops (counted ×N or until-cond); spawned
+%%       sub-agents; multi-turn chaining; which requests run OFF the user path
+%%       (guards); the ★ user-visible answer(s).
+%%    2. Emit a mermaid `flowchart` using the CORE shapes/classes/annotation.
+%%    3. Annotate every node so it is buildable; label branch/delay/cancel edges.
+%% .
+%%  CORE — SHAPE = TYPE:
+%%    ([START]) ([END])  blue stadium .......... entry / exit
+%%    ["llm"]            blue rect ............. sends a request (on user path)
+%%    ["answer ★"]       thick-blue rect ....... terminal_for_user
+%%    ["guard"]          DASHED-blue rect ...... REAL request, OFF the user path
+%%    {"router"}         diamond ............... conditional branch (labels = keys)
+%%    ["tool_exec"]      yellow rect ........... tool / replay step (NO model)
+%%    (["think"])        dashed-yellow stadium . delay (NO request)
+%%    {{"join"}}         orange hexagon ........ barrier: join=all | any | quorum(k)
+%%    ["worker ×N"]      blue rect w/ ×N ....... replicated parallel fan-out
+%%    ["spawn"]          purple DASHED rect .... detached child
+%%    [/"await"/]        purple parallelogram .. collect a detached child
+%%    (["loop"])         green stadium ......... loop: counted (×N/max=N) or until=<cond>
+%%    [["subgraph"]]     purple subroutine ..... reusable nested graph
+%%    [("channel")]      blue cylinder ......... state channel
+%% .
+%%  CORE — NODE PARAMS (inside label, `·`-separated):
+%%    out=<chan> ; in=[<chan>,..] ; join=all|any|quorum(k) ; ×N ;
+%%    max=<N> ; until=<cond> ; think=<N>ms ; tool=<N>ms ; guard ;
+%%    ★terminal ; max_tokens=<N>
+%% .
+%%  CORE — EDGES:
+%%    A --> B                ordering / data dependency
+%%    A -->|"@chan"| B       B splices channel `chan` into its prompt
+%%    A -->|branchKey| B     conditional branch out of a router
+%%    A -. spawn .-> B       detached ;  A -. await .-> B  collects it
+%%    A -. cancel .-> B      loser of a race (barrier join=any/quorum) is cancelled
+%% .
+%%  LATENCY LENS:
+%%    user-facing latency = time to the LAST ★ terminal on the user path
+%%                          (first-★-wins if terminals race).
+%%    full-trace latency  = time to reach END (includes parallel GUARDS).
+%%    join=all → a slow branch delays downstream; join=any → losers cancelled;
+%%    a guard that meets others only at END delays full-trace, not user-facing.
+%% .
+%%  ADVANCED VOCABULARY (use ONLY if the workload needs it — no new shapes required;
+%%  express as params/edges/notes, and the team will build them):
+%%    tool-use loop : agent(llm) --> tool(tool_exec) -->|"@result"| agent  (until done)
+%%    aggregate     : a NO-model reduce of N inputs via reducer=add_messages|append|last|overwrite|stream
+%%    human         : a human-in-the-loop / interrupt (pause for approval, then resume)
+%%    reducers      : channel merge policy for parallel/loop writes (see aggregate)
+%%    placement     : place=sticky|pool|free ; cache=prefix-share:<node>  (KV/prefix reuse)
+%%    timing dist   : think=lognormal(μ,σ) | empirical   (instead of fixed ms)
+%%    reliability   : timeout=<N>ms ; retry=<N> ; A -. on_error .-> B
+%%    streaming/TTFT: streaming=true ; A -->|after 1st token| B  (overlap before B completes)
+%%    endpoints     : model=<name> / endpoint=<pool>   (different model per node)
+%% .
+%%  OUTPUT RULE: keep the `classDef` block; delete the ①/② reference blocks
+%%  and replace them with the user's real graph.
+%% ==========================================================================
+
+  %% ---------------------------------------------------------------- ① PALETTE
+  subgraph PALETTE["① Core palette — shape = type"]
+    direction TB
+    k_start([START]):::stad
+    k_end([END]):::stad
+    k_llm["llm · sends a request · out=c"]:::llm
+    k_term["answer · llm · ★terminal"]:::term
+    k_guard["safety · guard · REAL req · off user path"]:::guard
+    k_router{"router · branch on key"}:::gate
+    k_replay["tool_exec · replay · tool=80ms · NO model"]:::replay
+    k_delay(["think · delay · think=200ms · NO request"]):::delay
+    k_barrier{{"join · barrier · join=all | any | quorum(k)"}}:::barrier
+    k_repl["worker · llm · ×N (parallel replicas)"]:::llm
+    k_spawn["spawn child · detached"]:::spawn
+    k_await[/"await child · collect"/]:::await
+    k_loop(["loop · max=3 · until=done"]):::loop
+    k_subg[["subgraph · reusable unit"]]:::subg
+    k_chan[("channel · state")]:::chan
+    k_start --> k_llm --> k_term --> k_end
+  end
+
+  %% ------------------------------------------------------------- ② PATTERNS
+  subgraph PATTERNS["② Composition patterns"]
+    direction TB
+
+    subgraph P1["chain + splice"]
+      direction TB
+      p1s([START]):::stad --> p1a["plan · llm · out=plan"]
+      p1a -->|"@plan"| p1b["answer · llm · ★terminal"]:::term --> p1e([END]):::stad
+    end
+
+    subgraph P2["fan-out ×N + fan-in (AND-barrier)"]
+      direction TB
+      p2r(["root · delay · think"]):::delay --> p2w["worker · llm · ×N · out=sec"]:::llm
+      p2w --> p2j{{"join · barrier · in=[sec×N] · join=all"}}:::barrier
+      p2j --> p2m["merge · llm · ★terminal"]:::term
+    end
+
+    subgraph PR["race-and-cancel (join=any)"]
+      direction TB
+      prs([START]):::stad --> prshop["shopping · llm · out=ans"]:::llm
+      prs --> prsafe["safety · guard · out=verdict"]:::guard
+      prshop --> prj{{"join · barrier · join=any"}}:::barrier
+      prsafe --> prj
+      prj -. "cancel loser" .-> prshop
+      prj --> pre["reply · llm · ★terminal"]:::term
+    end
+
+    subgraph P4["conditional routing"]
+      direction TB
+      p4r{"route · router"}:::gate -->|shopping| p4p["plan · llm"]
+      p4r -->|non_shopping| p4e([END]):::stad
+    end
+
+    subgraph P5["chained diamond (per-round AND-wait + think)"]
+      direction TB
+      p5s([START]):::stad --> p5r1{{"root1 · barrier+delay · think"}}:::barrier
+      p5r1 --> p5a1["A1 · llm · ★"]:::term
+      p5r1 --> p5b1["B1 · guard"]:::guard
+      p5a1 --> p5r2{{"root2 · AND-wait A1,B1 · think"}}:::barrier
+      p5b1 --> p5r2
+      p5r2 --> p5a2["A2 · llm · ★"]:::term
+      p5r2 --> p5b2["B2 · guard"]:::guard
+    end
+
+    subgraph P7["loop (counted OR until-condition)"]
+      direction TB
+      p7l(["loop · max=3 · until=done"]):::loop -->|next| p7b["step · llm"]
+      p7b --> p7c{"done? · router"}:::gate
+      p7c -->|no| p7l
+      p7c -->|"until done"| p7d["finish · llm · ★terminal"]:::term
+    end
+
+    subgraph P6["spawn / await (detached sub-agent)"]
+      direction TB
+      p6p["plan · llm"] -. spawn .-> p6c["sub-agent · llm"]:::spawn
+      p6p --> p6m["main · llm"]
+      p6c -. await .-> p6j[/"merge · await"/]:::await
+      p6m --> p6j
+    end
+  end
+
+  PALETTE --> PATTERNS
+
+  %% ---------------------------------------------------------------- STYLES
+  classDef stad   fill:#bbdefb,stroke:#1565c0,color:#0d47a1,stroke-width:3px
+  classDef llm    fill:#bbdefb,stroke:#1565c0,color:#0d47a1
+  classDef term   fill:#bbdefb,stroke:#1565c0,color:#0d47a1,stroke-width:3px
+  classDef guard  fill:#bbdefb,stroke:#1565c0,color:#0d47a1,stroke-dasharray:4 2
+  classDef replay fill:#fff9c4,stroke:#f9a825,color:#5d4037
+  classDef delay  fill:#fff9c4,stroke:#f9a825,stroke-dasharray:5 3,color:#5d4037
+  classDef barrier fill:#ffe0b2,stroke:#ef6c00,color:#4e2600,stroke-width:2px
+  classDef gate   fill:#fffde7,stroke:#f9a825,color:#5d4037
+  classDef spawn  fill:#ede7f6,stroke:#6a1b9a,stroke-dasharray:5 3,color:#4a148c
+  classDef await  fill:#ede7f6,stroke:#6a1b9a,color:#4a148c
+  classDef loop   fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
+  classDef subg   fill:#d1c4e9,stroke:#6a1b9a,color:#311b92
+  classDef chan   fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+
+  class k_llm llm
+  class k_repl llm
+  class k_replay replay
+  class k_spawn spawn

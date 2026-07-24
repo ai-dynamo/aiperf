@@ -144,6 +144,32 @@ async fn test_mooncake_trace_multi_turn_with_session_id() {
 }
 
 #[tokio::test]
+async fn test_mooncake_trace_block_size_override_replays_trace() {
+    let h = AIPerfHarness::new().await;
+    // input_length 48 with 3 hash blocks is consistent with block_size 16
+    // (final block = 48 - 2*16 = 16) but not with the default 512.
+    let traces = vec![
+        json!({"input_length": 48, "output_length": 8, "hash_ids": [1, 2, 3], "timestamp": 100}),
+        json!({"input_length": 48, "output_length": 8, "hash_ids": [4, 5, 6], "timestamp": 200}),
+    ];
+    let trace_file = create_mooncake_trace_file(h.artifact_dir.path(), &traces);
+    let request_count = traces.len();
+
+    let r = h.run(&format!(
+        "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
+         --input-file {} --custom-dataset-type mooncake_trace \
+         --isl-block-size 16 --request-count {} --concurrency 1 \
+         --workers-max 1 --export-level records --ui simple",
+        h.mock.url,
+        trace_file.display(),
+        request_count,
+    ));
+
+    assert!(r.success(), "run failed: {}", r.stderr);
+    assert_eq!(r.artifacts.request_count() as usize, request_count);
+}
+
+#[tokio::test]
 async fn test_mooncake_trace_text_input_with_synthesis_speedup() {
     let h = AIPerfHarness::new().await;
     let traces = vec![

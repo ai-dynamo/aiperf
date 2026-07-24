@@ -4,7 +4,6 @@
 //! Recorded-trace compilation shared by WEKA, Dynamo, and AIPerf trace inputs.
 
 mod aiperf_trace;
-mod coding;
 mod content;
 mod dynamo;
 mod scalar;
@@ -37,6 +36,8 @@ pub enum PromptCorpus {
     Coding,
     /// Deterministically chunked Shakespeare corpus.
     Sonnet,
+    /// Tokenizer-driven synthetic random generation.
+    Random,
 }
 
 impl PromptCorpus {
@@ -45,8 +46,9 @@ impl PromptCorpus {
         match value {
             "coding" => Ok(Self::Coding),
             "sonnet" => Ok(Self::Sonnet),
+            "random" => Ok(Self::Random),
             other => Err(RecordedTraceError(format!(
-                "recorded graph prompt corpus must be \"coding\" or \"sonnet\", got {other:?}"
+                "recorded graph prompt corpus must be \"coding\", \"sonnet\", or \"random\", got {other:?}"
             ))),
         }
     }

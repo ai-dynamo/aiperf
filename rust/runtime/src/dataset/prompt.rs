@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::rng::namespace::DATASET_PROMPT_CORPUS;
-use crate::rng::{RngRoot, RustRandomGenerator};
+use crate::rng::{ConfiguredRandomGenerator, RngRoot, RuntimeRandomGenerator};
 
 use crate::dataset::corpus::{SHAKESPEARE_CORPUS, tokenize_corpus_chunked};
 use crate::dataset::error::{DatasetError, Result};
@@ -60,24 +60,18 @@ pub trait PromptGeneratorFactory: Send + Sync {
 
 /// Text body a [`CorpusPromptGeneratorFactory`] samples prompts from.
 ///
-/// A trait-free enum is deliberate: the corpus is data, not behavior, and both
-/// variants flow through the identical chunk-tokenization policy in
-/// [`tokenize_corpus_chunked`].
+/// A trait-free enum is deliberate: the corpus choice is authored data, not a
+/// separate behavior interface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CorpusSource {
     /// The embedded Shakespeare ("sonnet") product-default corpus.
     Sonnet,
+    /// The seeded procedural coding/tool corpus shared with recorded traces.
+    Coding,
+    /// Tokenizer-driven synthetic random generation.
+    Random,
     /// A caller-supplied corpus body (custom-corpus configs and tests).
     Custom(String),
-}
-
-impl CorpusSource {
-    fn text(&self) -> &str {
-        match self {
-            Self::Sonnet => SHAKESPEARE_CORPUS,
-            Self::Custom(text) => text,
-        }
-    }
 }
 
 /// Corpus-token generator with prefix block reuse.
@@ -95,6 +89,20 @@ impl CorpusPromptGeneratorFactory {
     pub fn sonnet() -> Self {
         Self {
             corpus: CorpusSource::Sonnet,
+        }
+    }
+
+    /// Use the seeded procedural coding/tool corpus.
+    pub fn coding() -> Self {
+        Self {
+            corpus: CorpusSource::Coding,
+        }
+    }
+
+    /// Use tokenizer-driven synthetic random generation.
+    pub fn random() -> Self {
+        Self {
+            corpus: CorpusSource::Random,
         }
     }
 
@@ -128,7 +136,14 @@ impl CorpusPromptGeneratorFactory {
         tokenizer: &dyn TextTokenizer,
     ) -> Result<PreparedCorpusPromptGeneratorFactory> {
         Ok(PreparedCorpusPromptGeneratorFactory {
-            corpus_tokens: tokenize_corpus_arc(self.corpus.text(), tokenizer)?,
+            source: match &self.corpus {
+                CorpusSource::Random => PreparedPromptGeneratorSource::Random,
+                _ => PreparedPromptGeneratorSource::Corpus(tokenize_corpus_arc(
+                    &self.corpus,
+                    tokenizer,
+                    None,
+                )?),
+            },
         })
     }
 }
@@ -146,13 +161,19 @@ impl PromptGeneratorFactory for CorpusPromptGeneratorFactory {
         tokenizer: &'a dyn TextTokenizer,
         root: RngRoot,
     ) -> Result<Box<dyn PromptGenerator + 'a>> {
-        // Tokenize once into Arc and build the generator directly — avoid the
-        // prepare→create detour that would Arc::clone a temporary factory.
-        Ok(Box::new(CorpusPromptGenerator::from_corpus_tokens(
-            tokenize_corpus_arc(self.corpus.text(), tokenizer)?,
-            tokenizer,
-            root,
-        )))
+        match &self.corpus {
+            CorpusSource::Random => Ok(Box::new(RandomPromptGenerator::new(tokenizer, root)?)),
+            _ => {
+                // Tokenize once into Arc and build the generator directly — avoid
+                // the prepare→create detour that would Arc::clone a temporary
+                // factory.
+                Ok(Box::new(CorpusPromptGenerator::from_corpus_tokens(
+                    tokenize_corpus_arc(&self.corpus, tokenizer, Some(root))?,
+                    tokenizer,
+                    root,
+                )))
+            }
+        }
     }
 }
 
@@ -163,7 +184,13 @@ impl PromptGeneratorFactory for CorpusPromptGeneratorFactory {
 /// builds fresh RNG / block-cache state; the corpus is not re-tokenized.
 #[derive(Debug, Clone)]
 pub struct PreparedCorpusPromptGeneratorFactory {
-    corpus_tokens: Arc<[u32]>,
+    source: PreparedPromptGeneratorSource,
+}
+
+#[derive(Debug, Clone)]
+enum PreparedPromptGeneratorSource {
+    Corpus(Arc<[u32]>),
+    Random,
 }
 
 impl PromptGeneratorFactory for PreparedCorpusPromptGeneratorFactory {
@@ -172,17 +199,48 @@ impl PromptGeneratorFactory for PreparedCorpusPromptGeneratorFactory {
         tokenizer: &'a dyn TextTokenizer,
         root: RngRoot,
     ) -> Result<Box<dyn PromptGenerator + 'a>> {
-        Ok(Box::new(CorpusPromptGenerator::from_corpus_tokens(
-            Arc::clone(&self.corpus_tokens),
-            tokenizer,
-            root,
-        )))
+        match &self.source {
+            PreparedPromptGeneratorSource::Corpus(corpus_tokens) => {
+                Ok(Box::new(CorpusPromptGenerator::from_corpus_tokens(
+                    Arc::clone(corpus_tokens),
+                    tokenizer,
+                    root,
+                )))
+            }
+            PreparedPromptGeneratorSource::Random => {
+                Ok(Box::new(RandomPromptGenerator::new(tokenizer, root)?))
+            }
+        }
     }
 }
 
-/// Tokenize a corpus body into a non-empty shared token stream.
-fn tokenize_corpus_arc(corpus: &str, tokenizer: &dyn TextTokenizer) -> Result<Arc<[u32]>> {
-    let corpus_tokens = tokenize_corpus_chunked(corpus, tokenizer)?;
+/// Build or tokenize one corpus into a non-empty shared token stream.
+fn tokenize_corpus_arc(
+    corpus: &CorpusSource,
+    tokenizer: &dyn TextTokenizer,
+    root: Option<RngRoot>,
+) -> Result<Arc<[u32]>> {
+    let corpus_tokens = match corpus {
+        CorpusSource::Sonnet => tokenize_corpus_chunked(SHAKESPEARE_CORPUS, tokenizer)?,
+        CorpusSource::Coding => {
+            let root = root.ok_or_else(|| {
+                DatasetError::Validation(
+                    "coding corpus preparation requires generator creation with a run root".into(),
+                )
+            })?;
+            crate::dataset::coding::build_coding_corpus(
+                tokenizer,
+                root.derive_seed_or_entropy("dataset.prompt.coding"),
+            )
+            .map_err(|error| DatasetError::Validation(error.to_string()))?
+        }
+        CorpusSource::Random => {
+            return Err(DatasetError::Validation(
+                "random prompt generation does not use a reusable corpus token stream".into(),
+            ));
+        }
+        CorpusSource::Custom(text) => tokenize_corpus_chunked(text, tokenizer)?,
+    };
     if corpus_tokens.is_empty() {
         return Err(DatasetError::Validation(
             "prompt generator corpus encoded to zero tokens".into(),
@@ -195,7 +253,7 @@ struct CorpusPromptGenerator<'a> {
     corpus_tokens: Arc<[u32]>,
     block_separator: Option<u32>,
     tokenizer: &'a dyn TextTokenizer,
-    rng: RustRandomGenerator,
+    rng: ConfiguredRandomGenerator,
     blocks: HashMap<i64, Vec<u32>>,
 }
 
@@ -209,7 +267,7 @@ impl<'a> CorpusPromptGenerator<'a> {
             corpus_tokens,
             block_separator: tokenizer.block_separation_token_id(),
             tokenizer,
-            rng: RustRandomGenerator::from_seed(root.derive_seed(DATASET_PROMPT_CORPUS)),
+            rng: root.derive_generator(DATASET_PROMPT_CORPUS),
             blocks: HashMap::new(),
         }
     }
@@ -350,8 +408,293 @@ impl CorpusPromptGenerator<'_> {
     }
 }
 
+const RANDOM_TEXT_REPAIR_ATTEMPTS: usize = 16;
+
+#[derive(Clone, Copy)]
+enum RandomGenerationMode {
+    Raw,
+    Text,
+}
+
+struct RandomPromptGenerator<'a> {
+    tokenizer: &'a dyn TextTokenizer,
+    block_separator: Option<u32>,
+    rng: ConfiguredRandomGenerator,
+    raw_blocks: HashMap<i64, Vec<u32>>,
+    text_blocks: HashMap<i64, Vec<u32>>,
+    allowed_token_ids: Option<Arc<[u32]>>,
+    vocab_size: Option<u32>,
+    eos_token_id: Option<u32>,
+    replacement_token: u32,
+}
+
+impl<'a> RandomPromptGenerator<'a> {
+    fn new(tokenizer: &'a dyn TextTokenizer, root: RngRoot) -> Result<Self> {
+        let allowed_token_ids = tokenizer.allowed_random_token_ids();
+        if allowed_token_ids
+            .as_ref()
+            .is_some_and(|tokens| tokens.is_empty())
+        {
+            return Err(DatasetError::Tokenizer(format!(
+                "tokenizer {:?} exposes no allowed token ids for synthetic random prompts",
+                tokenizer.name()
+            )));
+        }
+        let vocab_size = tokenizer.vocab_size().filter(|size| *size > 0);
+        if allowed_token_ids.is_none() && vocab_size.is_none() {
+            return Err(DatasetError::Tokenizer(format!(
+                "tokenizer {:?} does not expose a usable vocabulary for synthetic random prompts",
+                tokenizer.name()
+            )));
+        }
+        let eos_token_id = tokenizer
+            .eos_token_id()
+            .filter(|eos| vocab_size.is_none_or(|size| *eos < size));
+        let replacement_token = allowed_token_ids
+            .as_deref()
+            .into_iter()
+            .flatten()
+            .copied()
+            .chain(vocab_size.iter().copied().flat_map(|size| 0..size))
+            .find(|token| Some(*token) != eos_token_id)
+            .ok_or_else(|| {
+                DatasetError::Tokenizer(format!(
+                    "tokenizer {:?} has no valid non-EOS token for synthetic random input",
+                    tokenizer.name()
+                ))
+            })?;
+        Ok(Self {
+            tokenizer,
+            block_separator: tokenizer.block_separation_token_id(),
+            rng: root.derive_generator(DATASET_PROMPT_CORPUS),
+            raw_blocks: HashMap::new(),
+            text_blocks: HashMap::new(),
+            allowed_token_ids,
+            vocab_size,
+            eos_token_id,
+            replacement_token,
+        })
+    }
+
+    fn build_token_ids(
+        &mut self,
+        num_tokens: usize,
+        hash_ids: &[i64],
+        block_size: usize,
+        mode: RandomGenerationMode,
+    ) -> Result<Vec<u32>> {
+        if num_tokens == 0 {
+            return Err(DatasetError::Validation(
+                "synthetic prompt length must be greater than zero".into(),
+            ));
+        }
+        let tokens = if hash_ids.is_empty() {
+            self.materialize_tokens(num_tokens, false, mode)?
+        } else {
+            if block_size == 0 {
+                return Err(DatasetError::Validation(
+                    "hash-id block_size must be greater than zero".into(),
+                ));
+            }
+            let prefix = hash_ids
+                .len()
+                .saturating_sub(1)
+                .checked_mul(block_size)
+                .ok_or_else(|| DatasetError::Validation("hash block length overflow".into()))?;
+            let final_size = num_tokens
+                .checked_sub(prefix)
+                .filter(|size| *size <= block_size);
+            let final_size = final_size.ok_or_else(|| {
+                DatasetError::Validation(format!(
+                    "input length {num_tokens}, {} hash ids, and block size {block_size} are incompatible",
+                    hash_ids.len()
+                ))
+            })?;
+            let mut tokens = Vec::with_capacity(num_tokens);
+            for (index, hash_id) in hash_ids.iter().enumerate() {
+                let size = if index + 1 == hash_ids.len() {
+                    final_size
+                } else {
+                    block_size
+                };
+                if !self.has_block(mode, *hash_id) {
+                    let block = self.materialize_tokens(size, true, mode)?;
+                    self.insert_block(mode, *hash_id, block);
+                }
+                let block = self
+                    .get_block(mode, *hash_id)
+                    .expect("block inserted above or already present");
+                if block.len() != size {
+                    return Err(DatasetError::Validation(format!(
+                        "hash id {hash_id} was first materialized with {} tokens but is now requested with {size}",
+                        block.len()
+                    )));
+                }
+                tokens.extend_from_slice(block);
+            }
+            tokens
+        };
+        debug_assert_eq!(tokens.len(), num_tokens);
+        Ok(tokens)
+    }
+
+    fn materialize_tokens(
+        &mut self,
+        count: usize,
+        include_separator: bool,
+        mode: RandomGenerationMode,
+    ) -> Result<Vec<u32>> {
+        match mode {
+            RandomGenerationMode::Raw => self.sample_raw_candidate(count, include_separator),
+            RandomGenerationMode::Text => self.sample_text_exact_tokens(count, include_separator),
+        }
+    }
+
+    fn sample_raw_candidate(&mut self, count: usize, include_separator: bool) -> Result<Vec<u32>> {
+        let mut tokens = Vec::with_capacity(count);
+        if include_separator
+            && count > 0
+            && let Some(separator) = self.block_separator
+        {
+            tokens.push(self.valid_token(separator));
+        }
+        let remaining = count.saturating_sub(tokens.len());
+        tokens.extend(self.sample_raw_tokens(remaining)?);
+        Ok(tokens)
+    }
+
+    fn sample_text_exact_tokens(
+        &mut self,
+        count: usize,
+        include_separator: bool,
+    ) -> Result<Vec<u32>> {
+        let candidate = self.sample_raw_candidate(count, include_separator)?;
+        self.repair_exact_text_tokens(candidate, count)
+    }
+
+    fn repair_exact_text_tokens(
+        &mut self,
+        mut candidate: Vec<u32>,
+        target_len: usize,
+    ) -> Result<Vec<u32>> {
+        if target_len == 0 {
+            return Ok(Vec::new());
+        }
+        self.replace_eos_in_place(&mut candidate);
+        for _ in 0..RANDOM_TEXT_REPAIR_ATTEMPTS {
+            let text = self.tokenizer.decode_lossy(&candidate)?;
+            let mut encoded = self.tokenizer.encode(&text)?;
+            self.replace_eos_in_place(&mut encoded);
+            if encoded.len() == target_len {
+                return Ok(encoded);
+            }
+            candidate = encoded;
+            if candidate.len() > target_len {
+                candidate.truncate(target_len);
+            } else {
+                let missing = target_len - candidate.len();
+                candidate.extend(self.sample_raw_tokens(missing)?);
+            }
+        }
+        Err(DatasetError::Validation(format!(
+            "tokenizer {:?} could not repair synthetic random prompt to exact length {target_len}",
+            self.tokenizer.name()
+        )))
+    }
+
+    fn sample_raw_tokens(&mut self, count: usize) -> Result<Vec<u32>> {
+        let mut tokens = Vec::with_capacity(count);
+        for _ in 0..count {
+            let sampled = if let Some(allowed) = &self.allowed_token_ids {
+                let index = self
+                    .rng
+                    .randrange_u64(0, allowed.len() as u64)
+                    .map_err(|error| DatasetError::Validation(error.to_string()))?
+                    as usize;
+                allowed[index]
+            } else {
+                self.rng
+                    .randrange_u64(0, u64::from(self.vocab_size.expect("validated above")))
+                    .map_err(|error| DatasetError::Validation(error.to_string()))?
+                    as u32
+            };
+            tokens.push(self.valid_token(sampled));
+        }
+        Ok(tokens)
+    }
+
+    fn replace_eos_in_place(&self, tokens: &mut [u32]) {
+        if let Some(eos) = self.eos_token_id {
+            for token in tokens {
+                if *token == eos {
+                    *token = self.replacement_token;
+                }
+            }
+        }
+    }
+
+    fn valid_token(&self, token: u32) -> u32 {
+        if Some(token) == self.eos_token_id {
+            self.replacement_token
+        } else {
+            token
+        }
+    }
+
+    fn has_block(&self, mode: RandomGenerationMode, hash_id: i64) -> bool {
+        match mode {
+            RandomGenerationMode::Raw => self.raw_blocks.contains_key(&hash_id),
+            RandomGenerationMode::Text => self.text_blocks.contains_key(&hash_id),
+        }
+    }
+
+    fn insert_block(&mut self, mode: RandomGenerationMode, hash_id: i64, block: Vec<u32>) {
+        match mode {
+            RandomGenerationMode::Raw => {
+                self.raw_blocks.insert(hash_id, block);
+            }
+            RandomGenerationMode::Text => {
+                self.text_blocks.insert(hash_id, block);
+            }
+        }
+    }
+
+    fn get_block(&self, mode: RandomGenerationMode, hash_id: i64) -> Option<&[u32]> {
+        match mode {
+            RandomGenerationMode::Raw => self.raw_blocks.get(&hash_id).map(Vec::as_slice),
+            RandomGenerationMode::Text => self.text_blocks.get(&hash_id).map(Vec::as_slice),
+        }
+    }
+}
+
+impl PromptGenerator for RandomPromptGenerator<'_> {
+    fn generate_token_ids(
+        &mut self,
+        num_tokens: usize,
+        hash_ids: &[i64],
+        block_size: usize,
+    ) -> Result<Vec<u32>> {
+        self.build_token_ids(num_tokens, hash_ids, block_size, RandomGenerationMode::Raw)
+    }
+
+    fn generate(
+        &mut self,
+        num_tokens: usize,
+        hash_ids: &[i64],
+        block_size: usize,
+    ) -> Result<GeneratedPrompt> {
+        let tokens =
+            self.build_token_ids(num_tokens, hash_ids, block_size, RandomGenerationMode::Text)?;
+        Ok(GeneratedPrompt {
+            text: self.tokenizer.decode(&tokens)?,
+            tokens,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::rng::RngRoot;
@@ -403,6 +746,54 @@ mod tests {
 
         fn name(&self) -> &str {
             "counting"
+        }
+    }
+
+    struct AllowedOnlyTokenizer;
+
+    impl TextTokenizer for AllowedOnlyTokenizer {
+        fn encode(&self, text: &str) -> Result<Vec<u32>> {
+            if text.chars().all(|c| c == 'a') {
+                Ok(vec![1; text.chars().count()])
+            } else {
+                Err(DatasetError::Tokenizer(format!(
+                    "unexpected text for allowed-only tokenizer: {text:?}"
+                )))
+            }
+        }
+
+        fn decode(&self, token_ids: &[u32]) -> Result<String> {
+            if token_ids.iter().all(|id| *id == 1) {
+                Ok("a".repeat(token_ids.len()))
+            } else {
+                Err(DatasetError::Tokenizer(format!(
+                    "disallowed token ids in decode: {token_ids:?}"
+                )))
+            }
+        }
+
+        fn decode_lossy(&self, token_ids: &[u32]) -> Result<String> {
+            self.decode(token_ids)
+        }
+
+        fn bos_token_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn eos_token_id(&self) -> Option<u32> {
+            Some(9)
+        }
+
+        fn vocab_size(&self) -> Option<u32> {
+            Some(10)
+        }
+
+        fn allowed_random_token_ids(&self) -> Option<Arc<[u32]>> {
+            Some(Arc::from(vec![1_u32]))
+        }
+
+        fn name(&self) -> &str {
+            "allowed-only"
         }
     }
 
@@ -508,6 +899,94 @@ mod tests {
         assert_eq!(same.generate(64, &[], 1).unwrap(), prompt);
         let mut other = factory.create(&tokenizer, RngRoot::new(Some(12))).unwrap();
         assert_ne!(other.generate(64, &[], 1).unwrap().tokens, prompt.tokens);
+    }
+
+    #[test]
+    fn coding_prompts_are_seeded_and_distinct_from_sonnet() {
+        let tokenizer = TiktokenTokenizer::builtin();
+        let coding = CorpusPromptGeneratorFactory::coding();
+        let sonnet = CorpusPromptGeneratorFactory::sonnet();
+
+        let coding_prompt = coding
+            .create(&tokenizer, RngRoot::new(Some(17)))
+            .unwrap()
+            .generate(32, &[], 1)
+            .unwrap();
+        let repeated = coding
+            .create(&tokenizer, RngRoot::new(Some(17)))
+            .unwrap()
+            .generate(32, &[], 1)
+            .unwrap();
+        let sonnet_prompt = sonnet
+            .create(&tokenizer, RngRoot::new(Some(17)))
+            .unwrap()
+            .generate(32, &[], 1)
+            .unwrap();
+
+        assert_eq!(coding_prompt, repeated);
+        assert_eq!(coding_prompt.tokens.len(), 32);
+        assert_ne!(coding_prompt.tokens, sonnet_prompt.tokens);
+    }
+
+    #[test]
+    fn random_prompts_are_seeded_and_reencode_to_exact_length() {
+        let tokenizer = TiktokenTokenizer::builtin();
+        let factory = CorpusPromptGeneratorFactory::random();
+
+        let prompt = factory
+            .create(&tokenizer, RngRoot::new(Some(17)))
+            .unwrap()
+            .generate(32, &[], 1)
+            .unwrap();
+        let repeated = factory
+            .create(&tokenizer, RngRoot::new(Some(17)))
+            .unwrap()
+            .generate(32, &[], 1)
+            .unwrap();
+        let other = factory
+            .create(&tokenizer, RngRoot::new(Some(18)))
+            .unwrap()
+            .generate(32, &[], 1)
+            .unwrap();
+
+        assert_eq!(prompt, repeated);
+        assert_eq!(prompt.tokens.len(), 32);
+        assert_eq!(tokenizer.encode(&prompt.text).unwrap(), prompt.tokens);
+        assert_ne!(prompt.tokens, other.tokens);
+    }
+
+    #[test]
+    fn random_raw_token_generation_avoids_eos() {
+        use crate::dataset::tokenizer::NoDecodeTokenizer;
+
+        let tokenizer = NoDecodeTokenizer;
+        let factory = CorpusPromptGeneratorFactory::random();
+        let token_ids = factory
+            .create(&tokenizer, RngRoot::new(Some(3)))
+            .unwrap()
+            .generate_token_ids(8, &[1, 2], 4)
+            .unwrap();
+
+        assert_eq!(token_ids.len(), 8);
+        assert!(!token_ids.contains(&9));
+    }
+
+    #[test]
+    fn random_generation_respects_allowed_token_filter_for_raw_and_text_modes() {
+        let tokenizer = AllowedOnlyTokenizer;
+        let factory = CorpusPromptGeneratorFactory::random();
+        let mut generator = factory
+            .create(&tokenizer, RngRoot::new(Some(5)))
+            .expect("random generator");
+
+        let raw = generator
+            .generate_token_ids(8, &[], 1)
+            .expect("raw token ids");
+        assert_eq!(raw, vec![1; 8]);
+
+        let text = generator.generate(8, &[], 1).expect("text prompt");
+        assert_eq!(text.tokens, vec![1; 8]);
+        assert_eq!(text.text, "aaaaaaaa");
     }
 
     #[test]

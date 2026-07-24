@@ -1,0 +1,50 @@
+flowchart TD
+  %% Automated customer-support assistant — two message exchanges (multi-turn)
+
+  s([START]):::stad --> m1(["msg1 arrives · delay · think=0ms · NO request"]):::delay
+
+  %% ---- Exchange 1 : fan-out into two parallel tracks ----
+  m1 --> c1["classify1 · llm · out=class1"]:::llm
+  m1 --> cc1["compliance1 · llm · guard · out=comp1"]:::guard
+
+  c1 --> r1{"route1 · router · branch on class1"}:::gate
+  r1 -->|billing| lk1["lookup_acct1 · tool_exec · replay · tool=100ms · NO request · out=acct1"]:::replay
+  r1 -->|non_billing| dr1
+  lk1 -->|"@acct1"| dr1["draft1 · llm · out=draft1"]:::llm
+  dr1 -->|"@draft1"| rp1["reply1 · llm · ★terminal · out=reply1"]:::term
+
+  rp1 --> j1{{"turn1_join · barrier · in=[reply1,comp1] · join=all"}}:::barrier
+  cc1 --> j1
+
+  %% ---- inter-message pause, then Exchange 2 ----
+  j1 -->|next msg| m2(["msg2 arrives · delay · think=200ms · NO request"]):::delay
+
+  m2 --> c2["classify2 · llm · out=class2"]:::llm
+  m2 --> cc2["compliance2 · llm · guard · out=comp2"]:::guard
+
+  c2 --> r2{"route2 · router · branch on class2"}:::gate
+  r2 -->|billing| lk2["lookup_acct2 · tool_exec · replay · tool=100ms · NO request · out=acct2"]:::replay
+  r2 -->|non_billing| dr2
+  lk2 -->|"@acct2"| dr2["draft2 · llm · out=draft2"]:::llm
+  dr2 -->|"@draft2"| rp2["reply2 · llm · ★terminal · out=reply2"]:::term
+
+  rp2 --> j2{{"turn2_join · barrier · in=[reply2,comp2] · join=all"}}:::barrier
+  cc2 --> j2
+
+  j2 --> e([END]):::stad
+
+  %% ---------------------------------------------------------------- STYLES
+  classDef stad   fill:#bbdefb,stroke:#1565c0,color:#0d47a1,stroke-width:3px
+  classDef llm    fill:#bbdefb,stroke:#1565c0,color:#0d47a1
+  classDef term   fill:#bbdefb,stroke:#1565c0,color:#0d47a1,stroke-width:3px
+  classDef replay fill:#fff9c4,stroke:#f9a825,color:#5d4037
+  classDef delay  fill:#fff9c4,stroke:#f9a825,stroke-dasharray:5 3,color:#5d4037
+  classDef barrier fill:#ffe0b2,stroke:#ef6c00,color:#4e2600,stroke-width:2px
+  classDef gate   fill:#fffde7,stroke:#f9a825,color:#5d4037
+  classDef guard  fill:#ffe0b2,stroke:#ef6c00,color:#4e2600
+  classDef spawn  fill:#ede7f6,stroke:#6a1b9a,stroke-dasharray:5 3,color:#4a148c
+  classDef await  fill:#ede7f6,stroke:#6a1b9a,color:#4a148c
+  classDef loop   fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
+  classDef subg   fill:#d1c4e9,stroke:#6a1b9a,color:#311b92
+  classDef chan   fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+  classDef legend fill:#eceff1,stroke:#607d8b,color:#263238

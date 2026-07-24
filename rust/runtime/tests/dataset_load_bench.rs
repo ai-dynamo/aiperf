@@ -12,10 +12,17 @@ mod dataset_load_bench;
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use aiperf_runtime::dataset::{
+    ComposeConfig, DatasetSource, GeneratedPrompt, LoadConfig, LoaderRegistry, Payload,
+    PromptGenerator, PromptGeneratorFactory, SegmentPool, SyntheticDatasetConfig,
+    SyntheticPromptConfig, TextTokenizer, TiktokenTokenizer,
+};
+use aiperf_runtime::rng::{RngRoot, SamplingDistribution};
 use dataset_load_bench::{
     Args, BENCHMARK_FORMATS, Sample, inject_prepared_prompt_generator, measure,
-    needs_prepared_prompt_generator, parse_args, registry_format_name,
+    needs_prepared_prompt_generator, parse_args, registry_format_name, verified_options,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -41,14 +48,78 @@ fn write_json(dir: &TempDir, name: &str, value: &Value) -> PathBuf {
     path
 }
 
+fn local_source_json(path: &PathBuf) -> String {
+    serde_json::to_string(&json!({
+        "kind": "local_file",
+        "path": path.to_string_lossy(),
+    }))
+    .expect("serialize local source")
+}
+
+fn synthetic_source_json(format: &str, entries: usize) -> String {
+    let inline = match format {
+        "synthetic" => json!({
+            "marker": "__aiperf_synthetic",
+            "synthetic_config": {
+                "entries": entries,
+                "turns": 1.0,
+                "prompts": {
+                    "input_tokens": 12.0,
+                    "output_tokens": 8.0,
+                    "batch_size": 1
+                }
+            }
+        }),
+        "synthetic_rankings" => json!({
+            "marker": "__aiperf_synthetic_rankings",
+            "synthetic_config": {
+                "entries": entries,
+                "turns": 1.0,
+                "rankings": {
+                    "passages": 2.0,
+                    "passage_tokens": 8.0,
+                    "query_tokens": 4.0
+                }
+            }
+        }),
+        other => panic!("unsupported synthetic test format {other}"),
+    };
+    serde_json::to_string(&json!({
+        "kind": "inline_synthetic",
+        "inline": inline,
+    }))
+    .expect("serialize synthetic source")
+}
+
 fn args_for(format: &str, path: PathBuf, fixture_id: &str) -> Args {
+    let options = verified_options(format).expect("verified options");
     Args {
         format: format.to_string(),
-        path,
-        options_json: "{}".to_string(),
+        path: Some(path.clone()),
+        options_json: serde_json::to_string(&options).expect("serialize options"),
+        source_json: local_source_json(&path),
         fixture_id: fixture_id.to_string(),
         seed: 42,
         model: "test-model".to_string(),
+        tokenizer: "builtin".to_string(),
+        apply_chat_template: false,
+        exact_isl: false,
+    }
+}
+
+fn synthetic_args_for(format: &str, fixture_id: &str, entries: usize) -> Args {
+    let options = verified_options(format).expect("verified options");
+    Args {
+        format: format.to_string(),
+        path: None,
+        options_json: serde_json::to_string(&options).expect("serialize options"),
+        source_json: synthetic_source_json(format, entries),
+        fixture_id: fixture_id.to_string(),
+        seed: 42,
+        model: "test-model".to_string(),
+        tokenizer: "builtin".to_string(),
+        apply_chat_template: false,
+        exact_isl: false,
     }
 }
 
@@ -167,6 +238,322 @@ async fn inputs_json_fixture_reports_positive_counts() {
     assert_eq!(sample.conversation_count, 2);
     assert_eq!(sample.turn_count, 3);
     assert_eq!(sample.total_input_tokens, None);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn synthetic_fixture_reports_logical_row_count_and_tokens() {
+    let sample = measure(&synthetic_args_for("synthetic", "synthetic-seed42", 3)).await;
+    assert_successful_sample(&sample, "synthetic", "synthetic-seed42");
+    assert_eq!(sample.row_count, 3);
+    assert_eq!(sample.conversation_count, 3);
+    assert_eq!(sample.turn_count, 3);
+    assert_eq!(sample.total_input_tokens, Some(36));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn synthetic_rankings_fixture_reports_logical_row_count_and_tokens() {
+    let sample = measure(&synthetic_args_for(
+        "synthetic_rankings",
+        "synthetic-rankings-seed42",
+        3,
+    ))
+    .await;
+    assert_successful_sample(&sample, "synthetic_rankings", "synthetic-rankings-seed42");
+    assert_eq!(sample.row_count, 3);
+    assert_eq!(sample.conversation_count, 3);
+    assert_eq!(sample.turn_count, 3);
+    assert_eq!(sample.total_input_tokens, Some(60));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn synthetic_template_counts_use_chat_template_when_requested() {
+    struct TemplateOnlyTokenizer {
+        inner: TiktokenTokenizer,
+    }
+
+    impl TemplateOnlyTokenizer {
+        fn new() -> Self {
+            Self {
+                inner: TiktokenTokenizer::builtin(),
+            }
+        }
+    }
+
+    impl TextTokenizer for TemplateOnlyTokenizer {
+        fn encode(&self, _text: &str) -> aiperf_runtime::dataset::Result<Vec<u32>> {
+            panic!("template-aware synthetic counting should not fall back to bare encode");
+        }
+
+        fn decode(&self, token_ids: &[u32]) -> aiperf_runtime::dataset::Result<String> {
+            self.inner.decode(token_ids)
+        }
+
+        fn bos_token_id(&self) -> Option<u32> {
+            self.inner.bos_token_id()
+        }
+
+        fn eos_token_id(&self) -> Option<u32> {
+            self.inner.eos_token_id()
+        }
+
+        fn vocab_size(&self) -> Option<u32> {
+            self.inner.vocab_size()
+        }
+
+        fn name(&self) -> &str {
+            "template-only"
+        }
+
+        fn apply_chat_template(
+            &self,
+            messages: &[Value],
+            add_generation_prompt: bool,
+        ) -> aiperf_runtime::dataset::Result<Option<Vec<u32>>> {
+            assert!(add_generation_prompt);
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0]["role"], "user");
+            assert!(
+                messages[0]["content"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            );
+            Ok(Some(vec![1, 2, 3, 4, 5]))
+        }
+    }
+
+    let registry = LoaderRegistry::with_builtin_formats().expect("registry");
+    let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));
+    let builtin = TiktokenTokenizer::builtin();
+    let mut compose = ComposeConfig::new("test-model", RngRoot::new(Some(42)));
+    compose.synthetic_config = Some(SyntheticDatasetConfig {
+        entries: 2,
+        turns: SamplingDistribution::fixed(1.0).expect("fixed turns"),
+        prompts: Some(SyntheticPromptConfig {
+            input_tokens: SamplingDistribution::fixed(12.0).expect("fixed isl"),
+            batch_size: 1,
+            ..SyntheticPromptConfig::default()
+        }),
+        ..SyntheticDatasetConfig::default()
+    });
+
+    let registration = registry.get("synthetic").expect("synthetic format");
+    let rows = registration.loader.load(&load).await.expect("load rows");
+    let mut pool = SegmentPool::new();
+    let conversations = registration
+        .composer
+        .compose(rows, &compose, &builtin, &mut pool)
+        .expect("compose");
+    let dataset = aiperf_runtime::dataset::Dataset::new(
+        conversations,
+        Arc::new(pool.freeze()),
+        load.sampling_strategy.as_deref().unwrap_or("sequential"),
+        registration
+            .loader
+            .default_context_mode()
+            .unwrap_or(compose.default_context_mode),
+    )
+    .expect("dataset");
+
+    let tokenizer = TemplateOnlyTokenizer::new();
+    let total = dataset_load_bench::benchmark_total_input_tokens(
+        "synthetic",
+        &dataset,
+        &tokenizer,
+        "HuggingFaceTB/SmolLM2-135M-Instruct",
+        true,
+        false,
+    )
+    .expect("count templated synthetic inputs");
+
+    assert_eq!(total, Some(10));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn synthetic_text_payload_retokenizes_to_the_stored_exact_count() {
+    let registry = LoaderRegistry::with_builtin_formats().expect("registry");
+    let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));
+    let tokenizer = TiktokenTokenizer::builtin();
+    let mut compose = ComposeConfig::new("test-model", RngRoot::new(Some(42)));
+    compose.synthetic_config = Some(SyntheticDatasetConfig {
+        entries: 2,
+        turns: SamplingDistribution::fixed(1.0).expect("fixed turns"),
+        prompts: Some(SyntheticPromptConfig {
+            input_tokens: SamplingDistribution::fixed(12.0).expect("fixed isl"),
+            batch_size: 1,
+            ..SyntheticPromptConfig::default()
+        }),
+        ..SyntheticDatasetConfig::default()
+    });
+    inject_prepared_prompt_generator(&mut compose, &tokenizer).expect("prepare");
+
+    let registration = registry.get("synthetic").expect("synthetic format");
+    let rows = registration.loader.load(&load).await.expect("load rows");
+    let mut pool = SegmentPool::new();
+    let conversations = registration
+        .composer
+        .compose(rows, &compose, &tokenizer, &mut pool)
+        .expect("compose");
+    for conversation in &conversations {
+        for turn in &conversation.turns {
+            assert_eq!(turn.input_tokens, Some(12));
+        }
+    }
+    let dataset = aiperf_runtime::dataset::Dataset::new(
+        conversations,
+        std::sync::Arc::new(pool.freeze()),
+        load.sampling_strategy.as_deref().unwrap_or("sequential"),
+        registration
+            .loader
+            .default_context_mode()
+            .unwrap_or(compose.default_context_mode),
+    )
+    .expect("dataset");
+
+    for conversation in dataset.conversations() {
+        let handle = conversation.turns[0].content[0].handles[0];
+        let Payload::Text {
+            bytes, token_count, ..
+        } = dataset.segments().get(handle).expect("text payload")
+        else {
+            panic!("synthetic turn must store text payload");
+        };
+        let encoded = tokenizer
+            .encode(std::str::from_utf8(bytes).expect("utf8"))
+            .unwrap();
+        assert_eq!(
+            encoded.len(),
+            *token_count as usize,
+            "stored text payload should re-tokenize to its authoritative count"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn synthetic_composition_reuses_generated_tokens_without_reencoding_text() {
+    struct StaticPromptGenerator {
+        prompt: GeneratedPrompt,
+    }
+
+    impl PromptGenerator for StaticPromptGenerator {
+        fn generate_token_ids(
+            &mut self,
+            num_tokens: usize,
+            _hash_ids: &[i64],
+            _block_size: usize,
+        ) -> aiperf_runtime::dataset::Result<Vec<u32>> {
+            assert_eq!(num_tokens, self.prompt.tokens.len());
+            Ok(self.prompt.tokens.clone())
+        }
+
+        fn generate(
+            &mut self,
+            num_tokens: usize,
+            _hash_ids: &[i64],
+            _block_size: usize,
+        ) -> aiperf_runtime::dataset::Result<GeneratedPrompt> {
+            assert_eq!(num_tokens, self.prompt.tokens.len());
+            Ok(self.prompt.clone())
+        }
+    }
+
+    struct StaticPromptGeneratorFactory {
+        prompt: GeneratedPrompt,
+    }
+
+    impl PromptGeneratorFactory for StaticPromptGeneratorFactory {
+        fn create<'a>(
+            &self,
+            _tokenizer: &'a dyn TextTokenizer,
+            _root: RngRoot,
+        ) -> aiperf_runtime::dataset::Result<Box<dyn PromptGenerator + 'a>> {
+            Ok(Box::new(StaticPromptGenerator {
+                prompt: self.prompt.clone(),
+            }))
+        }
+    }
+
+    struct RejectGeneratedTextTokenizer {
+        inner: TiktokenTokenizer,
+    }
+
+    impl RejectGeneratedTextTokenizer {
+        fn new() -> Self {
+            Self {
+                inner: TiktokenTokenizer::builtin(),
+            }
+        }
+    }
+
+    impl TextTokenizer for RejectGeneratedTextTokenizer {
+        fn encode(&self, text: &str) -> aiperf_runtime::dataset::Result<Vec<u32>> {
+            if text == "generated prompt" {
+                return Err(aiperf_runtime::dataset::DatasetError::Tokenizer(
+                    "unexpected synthetic prompt re-encode".into(),
+                ));
+            }
+            self.inner.encode(text)
+        }
+
+        fn decode(&self, token_ids: &[u32]) -> aiperf_runtime::dataset::Result<String> {
+            self.inner.decode(token_ids)
+        }
+
+        fn bos_token_id(&self) -> Option<u32> {
+            self.inner.bos_token_id()
+        }
+
+        fn eos_token_id(&self) -> Option<u32> {
+            self.inner.eos_token_id()
+        }
+
+        fn vocab_size(&self) -> Option<u32> {
+            self.inner.vocab_size()
+        }
+
+        fn name(&self) -> &str {
+            self.inner.name()
+        }
+    }
+
+    let registry = LoaderRegistry::with_builtin_formats().expect("registry");
+    let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));
+    let tokenizer = RejectGeneratedTextTokenizer::new();
+    let mut compose = ComposeConfig::new("test-model", RngRoot::new(Some(42)));
+    compose.prompt_generator = Arc::new(StaticPromptGeneratorFactory {
+        prompt: GeneratedPrompt {
+            text: "generated prompt".into(),
+            tokens: vec![11, 12, 13],
+        },
+    });
+    compose.synthetic_config = Some(SyntheticDatasetConfig {
+        entries: 1,
+        turns: SamplingDistribution::fixed(1.0).expect("fixed turns"),
+        prompts: Some(SyntheticPromptConfig {
+            input_tokens: SamplingDistribution::fixed(3.0).expect("fixed isl"),
+            batch_size: 1,
+            ..SyntheticPromptConfig::default()
+        }),
+        ..SyntheticDatasetConfig::default()
+    });
+
+    let dataset = registry
+        .build_dataset(Some("synthetic"), &load, &compose, &tokenizer)
+        .await
+        .expect("synthetic loader should reuse generated tokens");
+    let turn = &dataset.conversations()[0].turns[0];
+    assert_eq!(turn.input_tokens, Some(3));
+    let handle = turn.content[0].handles[0];
+    let Payload::Text {
+        bytes, token_count, ..
+    } = dataset.segments().get(handle).expect("text payload")
+    else {
+        panic!("synthetic turn must store text payload");
+    };
+    assert_eq!(
+        std::str::from_utf8(bytes).expect("utf8"),
+        "generated prompt"
+    );
+    assert_eq!(*token_count, 3);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -327,8 +714,18 @@ fn missing_required_argument_emits_structured_error_sample() {
         "dataset_load_bench".into(),
         "--format".into(),
         "single_turn".into(),
+        "--path".into(),
+        "/tmp/x".into(),
+        "--options-json".into(),
+        "{}".into(),
+        "--fixture-id".into(),
+        "x".into(),
+        "--seed".into(),
+        "42".into(),
+        "--model".into(),
+        "test-model".into(),
     ])
-    .expect_err("missing --path must fail");
+    .expect_err("missing --source-json must fail");
     assert_eq!(sample.implementation, "rust");
     assert!(sample.error.is_some());
     assert_eq!(sample.elapsed_ns, 0);
@@ -351,6 +748,8 @@ fn unknown_cli_flag_emits_structured_error_sample() {
         "test-model".into(),
         "--options-json".into(),
         "{}".into(),
+        "--source-json".into(),
+        r#"{"kind":"local_file","path":"/tmp/x"}"#.into(),
         "--not-a-flag".into(),
     ])
     .expect_err("unknown flag must fail");
@@ -363,6 +762,36 @@ fn unknown_cli_flag_emits_structured_error_sample() {
         "error={:?}",
         sample.error
     );
+}
+
+#[test]
+fn parse_args_accepts_tokenizer_and_chat_template_flags() {
+    let args = parse_args([
+        "dataset_load_bench".into(),
+        "--format".into(),
+        "single_turn".into(),
+        "--path".into(),
+        "/tmp/x".into(),
+        "--fixture-id".into(),
+        "x".into(),
+        "--seed".into(),
+        "42".into(),
+        "--model".into(),
+        "test-model".into(),
+        "--options-json".into(),
+        "{}".into(),
+        "--source-json".into(),
+        r#"{"kind":"local_file","path":"/tmp/x"}"#.into(),
+        "--tokenizer".into(),
+        "openai-community/gpt2".into(),
+        "--apply-chat-template".into(),
+        "--exact-isl".into(),
+    ])
+    .expect("flags should parse");
+
+    assert_eq!(args.tokenizer, "openai-community/gpt2");
+    assert!(args.apply_chat_template);
+    assert!(args.exact_isl);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -422,7 +851,7 @@ fn prepared_prompt_generator_flags_cover_entire_supported_catalog() {
         assert_eq!(registry_format_name(format.name), format.registry_name);
     }
 
-    assert_eq!(BENCHMARK_FORMATS.len(), 9);
+    assert_eq!(BENCHMARK_FORMATS.len(), 22);
     assert_eq!(registry_format_name("burst_gpt_trace"), "burst_gpt");
     assert!(!needs_prepared_prompt_generator("not_a_format"));
 }

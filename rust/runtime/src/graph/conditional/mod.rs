@@ -13,7 +13,7 @@
 //! `GraphRecord` is emitted into `parsed.graphs[trace.id]`.
 //!
 //! No runtime node kind, edge kind, reducer, channel type, or reactive branch
-//! machinery is introduced. See `specs/conditional-graph-lowering.md`.
+//! machinery is introduced.
 
 mod fold;
 mod model;

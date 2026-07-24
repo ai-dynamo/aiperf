@@ -11,7 +11,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::rng::{RngRoot, RustRandomGenerator, SamplingDistribution, SequenceLengthDistribution};
+use crate::rng::{
+    ConfiguredRandomGenerator, RandomGenerator, RngRoot, SamplingDistribution,
+    SequenceLengthDistribution,
+};
 use bytes::Bytes;
 use serde_json::{Map, Value};
 
@@ -106,7 +109,7 @@ pub struct RandomModelSelectorFactory;
 
 struct RandomModelSelector {
     models: Vec<ModelId>,
-    rng: RustRandomGenerator,
+    rng: ConfiguredRandomGenerator,
 }
 
 impl ModelSelector for RandomModelSelector {
@@ -127,7 +130,7 @@ impl ModelSelectorFactory for RandomModelSelectorFactory {
         }
         Ok(Box::new(RandomModelSelector {
             models: models.to_vec(),
-            rng: RustRandomGenerator::from_seed(root.derive_seed("composer.turn.model_selection")),
+            rng: root.derive_generator("composer.turn.model_selection"),
         }))
     }
 }
@@ -216,9 +219,7 @@ impl ComposeConfig {
         Ok(TurnFinalizer {
             config: self,
             model_selector: self.model_selector.create(&self.models, self.rng_root)?,
-            max_tokens_rng: RustRandomGenerator::from_seed(
-                self.rng_root.derive_seed("composer.turn.max_tokens"),
-            ),
+            max_tokens_rng: self.rng_root.derive_generator("composer.turn.max_tokens"),
         })
     }
 }
@@ -251,7 +252,7 @@ impl ComposeState<'_> {
 pub(crate) struct TurnFinalizer<'a> {
     config: &'a ComposeConfig,
     model_selector: Box<dyn ModelSelector>,
-    max_tokens_rng: RustRandomGenerator,
+    max_tokens_rng: ConfiguredRandomGenerator,
 }
 
 impl TurnFinalizer<'_> {

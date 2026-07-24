@@ -123,6 +123,8 @@ navigation:
       path: tutorials/prefill-concurrency.md
     - page: Adaptive Scale
       path: tutorials/adaptive-scale.md
+    - page: Multi-Phase Workflows
+      path: tutorials/multi-phase-workflows.md
     - page: Time-Based Benchmarking
       path: tutorials/time-based-benchmarking.md
     - page: Multi-URL Load Balancing
@@ -213,6 +215,8 @@ navigation:
     path: environment-variables.md
   - page: AIPerf Metrics Reference
     path: metrics-reference.md
+  - page: GPU Telemetry & Power-Efficiency Dataflow
+    path: reference/gpu-telemetry-metrics-dataflow.md
   - page: Benchmark Datasets
     path: benchmark-datasets.md
   - page: Pre-Flight Tokenizer Auto Detection
@@ -265,6 +269,8 @@ navigation:
   contents:
   - page: Architecture of AIPerf
     path: architecture.md
+  - page: Rust Internals Diagram Atlas
+    path: diagrams/rust-internals.md
   - page: Metrics Flow
     path: diagrams/metrics-flow.md
   - page: Mixins

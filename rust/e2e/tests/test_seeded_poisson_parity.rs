@@ -120,7 +120,7 @@ async fn test_seeded_poisson_schedule_parity() {
     // The first draw precedes the first dispatch, so observed gaps start at draw two.
     let reference_gaps: Vec<f64> = reference[1..].to_vec();
 
-    let parity_gaps = run_python_poisson(&harness, "rust_parity");
+    let parity_gaps = run_python_poisson(&harness, "rust");
     let comparison_gaps = run_python_poisson(&harness, "python");
 
     let n = reference_gaps
@@ -160,12 +160,12 @@ async fn test_seeded_poisson_schedule_parity() {
     // Allow bounded loopback jitter while requiring schedule-level agreement.
     assert!(
         parity_err < mean_interval * 0.15,
-        "rust_parity schedule should match the Rust aiperf_runtime::rng reference within jitter, \
+        "rust backend schedule should match the Rust aiperf_runtime::rng reference within jitter, \
          but mean per-gap error {parity_err:.6}s >= 15% of mean interval {mean_interval:.6}s"
     );
     assert!(
         comparison_err > parity_err * 5.0,
         "comparison schedule should diverge from the Rust reference far more than \
-         rust_parity: comparison_err={comparison_err:.6}s parity_err={parity_err:.6}s"
+         rust backend: comparison_err={comparison_err:.6}s parity_err={parity_err:.6}s"
     );
 }

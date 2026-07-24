@@ -15,6 +15,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::{collections::BTreeMap, fmt};
 
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +32,16 @@ pub enum PhaseTransition {
     PhaseAdvance(String),
     /// Terminal: the run is complete; no further generations follow.
     Done,
+}
+
+impl PhaseTransition {
+    /// The named phase when this transition is a [`Self::PhaseAdvance`].
+    pub fn phase_name(&self) -> Option<&str> {
+        match self {
+            Self::PhaseAdvance(name) => Some(name.as_str()),
+            _ => None,
+        }
+    }
 }
 
 /// One phaser step: a monotonic `generation` and what it signals.
@@ -112,6 +123,8 @@ pub struct PhaserSubscription {
     cursor: usize,
     /// Highest generation observed so far.
     seen_generation: u64,
+    /// Named phase-advance generations already observed through replay or live events.
+    seen_phase_advances: BTreeMap<String, u64>,
     /// Set once the terminal `Finalized` was observed.
     finalized: bool,
 }
@@ -125,6 +138,7 @@ impl PhaserSubscription {
             sub,
             cursor: 0,
             seen_generation: 0,
+            seen_phase_advances: BTreeMap::new(),
             finalized: false,
         }
     }
@@ -132,6 +146,11 @@ impl PhaserSubscription {
     /// The highest generation this subscriber has observed (from replay + drained live).
     pub fn seen_generation(&self) -> u64 {
         self.seen_generation
+    }
+
+    /// The generation at which this subscriber observed the named phase advance, if any.
+    pub fn seen_phase_advance(&self, phase: &str) -> Option<u64> {
+        self.seen_phase_advances.get(phase).copied()
     }
 
     /// Pull the next phaser event (replay first, then live), updating the observed
@@ -158,6 +177,10 @@ impl PhaserSubscription {
         match event {
             BroadcastEvent::Item(phase) => {
                 self.seen_generation = self.seen_generation.max(phase.generation);
+                if let Some(name) = phase.transition.phase_name() {
+                    self.seen_phase_advances
+                        .insert(name.to_owned(), phase.generation);
+                }
                 Some(phase)
             }
             BroadcastEvent::Finalized => {
@@ -184,6 +207,23 @@ impl PhaserSubscription {
         Err(PhaserClosed)
     }
 
+    /// Block until the named phase advance has been observed through replay or the live
+    /// tail, returning the generation that carried it.
+    pub async fn await_phase_advance(&mut self, phase: &str) -> Result<u64, PhaserClosed> {
+        if let Some(generation) = self.seen_phase_advance(phase) {
+            return Ok(generation);
+        }
+        while let Some(event) = self.next().await {
+            if matches!(
+                &event.transition,
+                PhaseTransition::PhaseAdvance(name) if name == phase
+            ) {
+                return Ok(event.generation);
+            }
+        }
+        Err(PhaserClosed)
+    }
+
     /// Await the START (generation 1). Sugar over `await_generation(1)`.
     pub async fn await_started(&mut self) -> Result<(), PhaserClosed> {
         self.await_generation(1).await
@@ -196,7 +236,7 @@ impl PhaserSubscription {
 pub struct PhaserClosed;
 
 impl std::fmt::Display for PhaserClosed {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "phaser finalized before the awaited generation was reached"

@@ -30,7 +30,10 @@ mod vllm_generate;
 
 pub use anthropic::MessagesEndpoint;
 pub use chat::chat_request_body;
-pub use config::{EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig, RequestContentType};
+pub use config::{
+    EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig, RequestContentType,
+    ResetKvCacheConfig, ServerProfilerConfig,
+};
 pub use dynosim::DynosimEndpointFactory;
 pub use endpoints::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CompletionsEndpoint, EmbeddingsEndpoint, Endpoint,

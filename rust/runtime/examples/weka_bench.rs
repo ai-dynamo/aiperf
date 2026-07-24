@@ -11,7 +11,7 @@
 //! Run:
 //! ```bash
 //! cargo run -p aiperf-runtime --release --example weka_bench -- \
-//!   /home/anthony/.cache/huggingface/hub/datasets--semianalysisai--cc-traces-weka-062126/snapshots/23f152f6f0f9399a85901b89a6458def0ef16729/traces.jsonl
+//!   $HOME/.cache/huggingface/hub/datasets--semianalysisai--cc-traces-weka-062126/snapshots/<rev>/traces.jsonl
 //! ```
 
 use std::path::PathBuf;

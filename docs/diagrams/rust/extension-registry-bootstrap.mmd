@@ -1,0 +1,28 @@
+flowchart TD
+    FACTORY["BuiltinAIPerfRegistryFactory"]
+    BUILTIN["Built-in AIPerfExtension set"]
+    CUSTOM["Linked custom AIPerfExtension set"]
+    STAGE["Transactional staging / commit_on_clone"]
+    REG["AIPerfRegistry"]
+    FROZEN["Frozen AIPerfRegistry"]
+    APP["Application"]
+    CATALOG["Capability catalog"]
+    SELECT["Authored component IDs"]
+    TRANSPORT["transport_factory lookup"]
+    WORKLOAD["workload_factory lookup"]
+    FACTORIES["TransportFactory + WorkloadFactory"]
+
+    FACTORY -->|"constructs"| REG
+    BUILTIN -->|"registers first"| STAGE
+    CUSTOM -.->|"explicit linked set"| STAGE
+    REG -->|"clone before extension mutation"| STAGE
+    STAGE -->|"commit only on success"| FROZEN
+    FROZEN -->|"composition root"| APP
+    APP -->|"derives from same registry"| CATALOG
+    SELECT -->|"transport ID"| TRANSPORT
+    SELECT -->|"workload ID"| WORKLOAD
+    FROZEN -->|"resolves registered ID"| TRANSPORT
+    FROZEN -->|"resolves registered ID"| WORKLOAD
+    TRANSPORT -->|"validated factory"| FACTORIES
+    WORKLOAD -->|"validated factory"| FACTORIES
+    CUSTOM -.->|"no runtime discovery"| FROZEN

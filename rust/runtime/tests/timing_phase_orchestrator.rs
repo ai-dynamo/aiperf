@@ -192,7 +192,7 @@ fn non_seamless_handoff_waits_for_warmup_to_fully_drain() {
 }
 
 #[test]
-fn validation_rejects_warmup_after_profiling() {
+fn named_workflow_allows_warmup_after_profiling() {
     let clock = Rc::new(SimClock::new());
     let events = Rc::new(RefCell::new(Vec::new()));
     let observer: Rc<dyn PhaseObserver> = Rc::new(TimelineObserver {
@@ -212,14 +212,8 @@ fn validation_rejects_warmup_after_profiling() {
     ));
     let configs = vec![profiling_config(), warmup_config(false)];
 
-    let error = match ClockPhaseOrchestrator::new(configs, runner_factory, observer) {
-        Ok(_) => panic!("invalid phase order was accepted"),
-        Err(error) => error,
-    };
-    assert_eq!(
-        error,
-        PhaseOrchestratorError::WarmupAfterProfiling("warmup".into())
-    );
+    ClockPhaseOrchestrator::new(configs, runner_factory, observer)
+        .expect("named workflows may place warmup after profiling");
 }
 
 #[test]

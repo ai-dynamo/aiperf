@@ -394,7 +394,7 @@ class _RNGManager:
             root_seed: Root seed for derivation. If None, all derived RNGs
                       will be non-deterministic (seeded with None).
             backend: ``"python"`` uses Python MT and NumPy with SHA-256
-                derivation. ``"rust_parity"`` uses Pcg64 with BLAKE3
+                derivation. ``"rust"`` uses Pcg64 with BLAKE3
                 derivation. Selected from ``Environment.RNG.BACKEND`` by
                 :func:`init`.
         """
@@ -410,14 +410,14 @@ class _RNGManager:
         Returns:
             New RNG with a derived seed, or an entropy-seeded RNG when the root
             is ``None``. ``python`` returns :class:`RandomGenerator`;
-            ``rust_parity`` returns ``ParityRandomGenerator``.
+            ``rust`` returns ``ParityRandomGenerator``.
 
         Note:
             The same identifier produces the same derived seed. ``python`` uses
-            SHA-256; ``rust_parity`` uses BLAKE3 to match the Rust
+            SHA-256; ``rust`` uses BLAKE3 to match the Rust
             ``aiperf::rng`` reproducibility contract.
         """
-        if self._backend == "rust_parity":
+        if self._backend == "rust":
             # Byte-exact Rust parity: BLAKE3 seed algebra + Pcg64 generator. RngRoot
             # handles the seedless (entropy) case with the same semantics as Rust.
             from aiperf.common.rng_parity import RngRoot
@@ -542,11 +542,11 @@ def derive_variation_seed(
     if root_seed is None:
         return None
 
-    # rust_parity uses the Rust runtime's BLAKE3 variation-seed algebra; python
+    # rust uses the Rust runtime's BLAKE3 variation-seed algebra; python
     # uses SHA-256.
     from aiperf.common.environment import Environment
 
-    if Environment.RNG.BACKEND == "rust_parity":
+    if Environment.RNG.BACKEND == "rust":
         from aiperf.common.rng_parity import RngRoot
 
         return RngRoot(root_seed).derive_variation_seed(variation_label)

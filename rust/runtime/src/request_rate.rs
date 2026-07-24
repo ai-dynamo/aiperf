@@ -146,7 +146,7 @@ pub struct RequestRateWorkload {
     /// When set (`global`/`global-hop` dispatch on a rate phase), arrival pacing
     /// draws its base fire time from this cell-shared gate instead of this
     /// thread's local `intervals`, so aggregate issuance across all `W` worker
-    /// threads matches one global rate exactly (§`specs/global-exact-dispatch.md`).
+    /// threads matches one global rate exactly.
     /// `intervals` is still consulted for the mean-zero Poisson/Gamma jitter
     /// offset added to each claimed base slot.
     rate_gate: Option<Arc<GlobalRateGate>>,

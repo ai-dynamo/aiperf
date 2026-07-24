@@ -4,6 +4,7 @@
 //! Shared application state held inside axum's `State<Arc<AppState>>`.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use aiperf_runtime::clock::RealClockAnchor;
@@ -36,6 +37,10 @@ pub struct AppState {
     /// KV-cache prefix-reuse model. Disabled only when `--disable-prefix-cache`
     /// is set without a positive `--prefix-cache-hit-rate` override.
     pub prefix_cache: Option<Arc<PrefixCache>>,
+    /// Control-plane profiler lifecycle counters exposed to focused tests.
+    pub profiler_state: ProfilerState,
+    /// Monotone reset generation incremented by `/reset_prefix_cache`.
+    pub prefix_cache_generation: AtomicU64,
     /// Seeded benchmark answers loaded by `--accuracy-dataset`.
     pub accuracy: Option<Arc<crate::accuracy::AccuracyDataset>>,
     /// Live accuracy exposed by `GET /accuracy` and Prometheus metrics.
@@ -79,6 +84,35 @@ impl ErrorRng {
 /// draws are reproducible and independent of the error stream.
 pub struct ToolCallRng {
     rng: aiperf_runtime::rng::RustRandomGenerator,
+}
+
+/// Server-local profiler lifecycle counters for control-route testing.
+#[derive(Debug, Default)]
+pub struct ProfilerState {
+    starts: AtomicU64,
+    stops: AtomicU64,
+}
+
+impl ProfilerState {
+    /// Record one profiler-start control action.
+    pub fn note_start(&self) {
+        self.starts.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record one profiler-stop control action.
+    pub fn note_stop(&self) {
+        self.stops.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Snapshot the number of profiler starts observed so far.
+    pub fn starts(&self) -> u64 {
+        self.starts.load(Ordering::Relaxed)
+    }
+
+    /// Snapshot the number of profiler stops observed so far.
+    pub fn stops(&self) -> u64 {
+        self.stops.load(Ordering::Relaxed)
+    }
 }
 
 impl ToolCallRng {
@@ -130,6 +164,8 @@ impl AppState {
             start_wallclock: std::time::SystemTime::now(),
             scheduler,
             prefix_cache,
+            profiler_state: ProfilerState::default(),
+            prefix_cache_generation: AtomicU64::new(0),
             accuracy,
             accuracy_live: crate::accuracy::AccuracyLive::default(),
             content_fetch_client,
@@ -243,5 +279,23 @@ impl AppState {
             return false;
         }
         self.tool_call_rng.lock().next() < rate
+    }
+
+    /// Borrow the profiler lifecycle counters for assertions.
+    pub fn profiler_state(&self) -> &ProfilerState {
+        &self.profiler_state
+    }
+
+    /// Count successful prefix-cache reset control requests.
+    pub fn prefix_cache_generation(&self) -> u64 {
+        self.prefix_cache_generation.load(Ordering::Relaxed)
+    }
+
+    /// Reset prefix-cache state and advance the observable generation counter.
+    pub fn reset_prefix_cache(&self) {
+        if let Some(prefix_cache) = &self.prefix_cache {
+            prefix_cache.clear();
+        }
+        self.prefix_cache_generation.fetch_add(1, Ordering::Relaxed);
     }
 }

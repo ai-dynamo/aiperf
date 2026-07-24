@@ -7,7 +7,33 @@
 //! child seed depends only on `(root_seed, identifier)`. The stable contract is
 //! BLAKE3's first eight digest bytes interpreted as a big-endian `u64`.
 
+use crate::rng::compat::python_random::PythonRandomGenerator;
 use crate::rng::generator::RustRandomGenerator;
+
+/// Construct one backend-specific generator from an [`RngRoot`] and identifier.
+///
+/// Native Rust streams preserve the BLAKE3 derivation contract and seedless
+/// `None` semantics. Python-parity streams instead mirror Python's SHA-256
+/// derivation and use a fresh entropy seed when no deterministic root exists.
+pub trait DerivedRandomGenerator: Sized {
+    /// Construct one named child stream from `root`.
+    fn from_rng_root(root: RngRoot, identifier: &str) -> Self;
+}
+
+impl DerivedRandomGenerator for RustRandomGenerator {
+    fn from_rng_root(root: RngRoot, identifier: &str) -> Self {
+        Self::from_seed(root.derive_seed(identifier))
+    }
+}
+
+impl DerivedRandomGenerator for PythonRandomGenerator {
+    fn from_rng_root(root: RngRoot, identifier: &str) -> Self {
+        match root.seed() {
+            Some(seed) => Self::derive(seed, identifier),
+            None => Self::from_seed_or_entropy(None),
+        }
+    }
+}
 
 /// Root seed for a reproducible run.
 ///
@@ -33,7 +59,12 @@ impl RngRoot {
     /// only on `(root, identifier)`. Seedless roots produce a fresh entropy-seeded
     /// generator. Creating or drawing from any other child cannot perturb it.
     pub fn derive(self, identifier: &str) -> RustRandomGenerator {
-        RustRandomGenerator::from_seed(self.derive_seed(identifier))
+        self.derive_generator(identifier)
+    }
+
+    /// Derive one backend-specific child generator for `identifier`.
+    pub fn derive_generator<R: DerivedRandomGenerator>(self, identifier: &str) -> R {
+        R::from_rng_root(self, identifier)
     }
 
     /// Derive a child root for a named subsystem.
@@ -217,6 +248,21 @@ mod tests {
         let first_next = first.random_u64();
         let _ = unrelated.random_u64();
         assert_eq!(first_next, second.random_u64());
+    }
+
+    #[test]
+    fn generic_derivation_uses_each_backend_seed_algebra() {
+        let root = RngRoot::new(Some(42));
+        let native: RustRandomGenerator = root.derive_generator(namespace::DATASET_PROMPT_LENGTH);
+        let python: PythonRandomGenerator = root.derive_generator(namespace::DATASET_PROMPT_LENGTH);
+        assert_eq!(
+            native.seed(),
+            root.derive_seed(namespace::DATASET_PROMPT_LENGTH)
+        );
+        assert_eq!(
+            python.seed(),
+            PythonRandomGenerator::derive_child_seed(42, namespace::DATASET_PROMPT_LENGTH)
+        );
     }
 
     #[test]

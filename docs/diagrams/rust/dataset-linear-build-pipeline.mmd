@@ -1,0 +1,23 @@
+flowchart TD
+    SOURCE["LoadConfig / DatasetSource"]
+    REG["LoaderRegistry"]
+    FORMAT["explicit format / DatasetProbe detection"]
+    LOADER["DatasetLoader"]
+    ROW["RawRow"]
+    COMPOSER["Composer"]
+    WORKING["Conversation + SegmentPool"]
+    CONTEXT["apply_common_contexts / rebase_conversation_handles"]
+    FREEZE["SegmentPool::freeze"]
+    DATASET["frozen Dataset"]
+    META["DatasetMetadata / sampling_strategy"]
+
+    SOURCE -->|"build_dataset"| REG
+    REG -->|"get or detect"| FORMAT
+    FORMAT -->|"DatasetFormatRegistration"| LOADER
+    LOADER -->|"load"| ROW
+    ROW -->|"compose"| COMPOSER
+    COMPOSER -->|"intern handle-only turns"| WORKING
+    WORKING -->|"inject shared / user context"| CONTEXT
+    CONTEXT -->|"final segment arena"| FREEZE
+    FREEZE -->|"conversations + SegmentStore"| DATASET
+    DATASET -->|"emits metadata + sampling_strategy"| META

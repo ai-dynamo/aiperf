@@ -115,7 +115,6 @@ GPU telemetry collection configuration. Controls GPU metrics collection frequenc
 | `AIPERF_GPU_FINAL_SCRAPE_GRACE_NS` | `666000000` | ≥ 0, ≤ 60000000000 | Grace window in nanoseconds appended to phase end_ns when computing the GPU energy-counter delta. Energy is scraped on a cadence (see COLLECTION_INTERVAL), so the trailing scrape often lands after the phase ends; this grace lets it be included while bounding the window so cooldown/idle samples and subsequent-phase samples don't leak into the delta. Default 666_000_000 ns ~= 2x the default 333 ms COLLECTION_INTERVAL; raise this if you also raise COLLECTION_INTERVAL. |
 | `AIPERF_GPU_REACHABILITY_TIMEOUT` | `10` | ≥ 1, ≤ 300 | Timeout in seconds for checking GPU telemetry endpoint reachability during init |
 | `AIPERF_GPU_SHUTDOWN_DELAY` | `5.0` | ≥ 1.0, ≤ 300.0 | Delay in seconds before shutting down GPU telemetry service to allow command response transmission |
-| `AIPERF_GPU_THREAD_JOIN_TIMEOUT` | `5.0` | ≥ 1.0, ≤ 300.0 | Timeout in seconds for joining GPU telemetry collection threads during shutdown |
 
 ## HTTP
 
@@ -126,9 +125,7 @@ HTTP client socket and connection configuration. Controls low-level socket optio
 | `AIPERF_HTTP_CONNECTION_LIMIT` | `2500` | ≥ 1, ≤ 65000 | Maximum number of concurrent HTTP connections |
 | `AIPERF_HTTP_KEEPALIVE_TIMEOUT` | `300` | ≥ 0, ≤ 10000 | HTTP connection keepalive timeout in seconds for connection pooling |
 | `AIPERF_HTTP_SO_RCVBUF` | `10485760` | ≥ 1024 | Socket receive buffer size in bytes (default: 10MB for high-throughput streaming) |
-| `AIPERF_HTTP_SO_RCVTIMEO` | `30` | ≥ 1, ≤ 100000 | Socket receive timeout in seconds |
 | `AIPERF_HTTP_SO_SNDBUF` | `10485760` | ≥ 1024 | Socket send buffer size in bytes (default: 10MB for high-throughput streaming) |
-| `AIPERF_HTTP_SO_SNDTIMEO` | `30` | ≥ 1, ≤ 100000 | Socket send timeout in seconds |
 | `AIPERF_HTTP_TCP_KEEPCNT` | `1` | ≥ 1, ≤ 100 | Maximum number of keepalive probes to send before considering the connection dead |
 | `AIPERF_HTTP_TCP_KEEPIDLE` | `60` | ≥ 1, ≤ 100000 | Time in seconds before starting TCP keepalive probes on idle connections |
 | `AIPERF_HTTP_TCP_KEEPINTVL` | `30` | ≥ 1, ≤ 100000 | Interval in seconds between TCP keepalive probes |
@@ -162,7 +159,8 @@ Metrics collection and storage configuration. Controls metrics storage allocatio
 | `AIPERF_METRICS_USAGE_PCT_DIFF_THRESHOLD` | `10.0` | ≥ 0.0, ≤ 100.0 | Percentage difference threshold for flagging discrepancies between API usage and client token counts (default: 10%) |
 | `AIPERF_METRICS_OSL_MISMATCH_PCT_THRESHOLD` | `5.0` | ≥ 0.0, ≤ 100.0 | Percentage difference threshold for flagging discrepancies between requested and actual output sequence length (default: 5%) |
 | `AIPERF_METRICS_OSL_MISMATCH_MAX_TOKEN_THRESHOLD` | `50` | ≥ 1 | Maximum absolute token threshold for OSL mismatch. The effective threshold is min(requested_osl * pct_threshold, this value). Makes threshold tighter for large OSL values (default: 50 tokens) |
-| `AIPERF_METRICS_TDIGEST_COMPRESSION` | `500` | ≥ 20, ≤ 10000 | t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size. |
+| `AIPERF_METRICS_TDIGEST_COMPRESSION` | `500` | ≥ 20, ≤ 10000 | t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size. Also the compression used by the whole-run sketch metrics mode (AIPERF_METRICS_SKETCH). |
+| `AIPERF_METRICS_SKETCH` | `False` | — | Opt-in bounded-memory metrics mode (--sketch-metrics). Stream every per-record metric value into a t-digest sketch (compression TDIGEST_COMPRESSION) instead of retaining each value, so the native aiperf runner's metric memory stays O(1) in the request count at very high request rates. Counts, sums, averages, and min/max stay exact; percentiles become approximate. Per-record artifacts (records/raw/outputs JSONL, per-record OTLP histograms) and the per-row-only trend outputs (timeslices, per-model/endpoint inference series, sweep curves) are unavailable in this mode and are dropped from the run request. Off by default. |
 | `AIPERF_METRICS_LIST_BACKEND` | `'ragged'` | — | Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (at most 0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint. |
 | `AIPERF_METRICS_EXPORT_FLUSH_INTERVAL` | `1.0` | ≥ 0.05, ≤ 60.0 | Periodic flush interval (seconds) for buffered JSONL stream exporters (raw record writer, record export, gpu/server-metrics JSONL writers). Bounds the worst-case freshness of low-throughput export files when the in-memory batch never reaches batch_size. |
 
@@ -209,6 +207,24 @@ Record processing and export configuration. Controls batch sizes, processor scal
 | `AIPERF_RECORD_PROGRESS_REPORT_INTERVAL` | `2.0` | ≥ 0.1, ≤ 600.0 | Interval in seconds between records progress report messages |
 | `AIPERF_RECORD_PROCESS_RECORDS_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for processing record results |
 | `AIPERF_RECORD_STRIP_PAYLOAD_BYTES` | `None` | — | Tri-state control for omitting canonical request payload bytes from RecordContext after a request is sent, which substantially reduces record-pipeline memory for very large prompts. None (default) auto-detects: bytes are stripped only when no downstream record consumer needs them (client-side input tokenization disabled, no synthetic image/audio/video inputs, and raw payload export off). True forces stripping even when a consumer wants the bytes, disabling client-side input tokenization, media counting from request bodies, and raw request payload export. False always retains them. Auto-detection does not see media embedded in custom dataset payloads under server-token-count mode; set False explicitly for that case. |
+
+## RNG
+
+Selects which random-number backend seeds AIPerf's reproducible streams. ``python`` uses ``random.Random`` and NumPy draws with SHA-256 seed derivation. ``rust`` uses Pcg64 draws and BLAKE3 seed derivation so seeded Python and Rust produce identical streams.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_RNG_BACKEND` | `'python'` | — | Random-number backend: `python` (Python MT + NumPy with SHA-256 derivation, default) or `rust` (Pcg64 with BLAKE3 derivation for cross-language parity). Set via AIPERF_RNG_BACKEND. |
+
+## RUNTIME
+
+Selects which execution engine runs a single benchmark. ``rust`` (default) dispatches through the Rust ``aiperf``; that is the only Rust executable on the product path. ``python`` routes the same ``BenchmarkRun`` through the pre-Rust pure-Python service mesh (SystemController + Worker / TimingManager / RecordsManager children) so the legacy hot path can be A/B benchmarked against the Rust core. Both consume an identical ``BenchmarkRun``; only the execution engine differs.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_RUNTIME_ENGINE` | `'rust'` | — | Execution engine for a single benchmark: `rust` (the aiperf runner, default) or `python` (the legacy pure-Python service mesh, for A/B benchmarking against the Rust core). Set via AIPERF_RUNTIME_ENGINE. |
+| `AIPERF_RUNTIME_NATIVE_EXPORT` | `True` | — | Whether the native Rust `aiperf::export` sink plane is the sole emitter for every report artifact (profile_export_aiperf.{json,csv}, timeslices, server_metrics.{json,csv,parquet}, accuracy_results.csv, profile_export_console.txt, and the OTel/MLflow/W&B network sinks). When true (default) the frontend projects cfg.export for the runner, suppresses the Python live-streaming sidecar, and skips the Python ExporterManager + post-run uploaders entirely so each destination receives a single native emission. Set AIPERF_RUNTIME_NATIVE_EXPORT=0 to restore the legacy Python emitters (ExporterManager, mlflow/wandb uploaders, OTel sidecar) for A/B verification, mirroring AIPERF_RUNTIME_ENGINE=python. Reversible. |
+| `AIPERF_RUNTIME_EXACT_FOLD` | `True` | — | Whether the native aiperf runner folds each completed record's metric scalars into the EXACT accumulator (keeping exact NaN-sparse columns for exact percentiles/timeslices/series) and drops the heavy per-record data during the run, instead of retaining every record until end-of-run. When true (default) an eligible run — the single-thread scheduled online path with a supported dataset shape and no adaptive, live-sink, heartbeat, accuracy, cellular, sketch, or sharded disqualifier — streams its per-record artifacts and folds-and-drops, bounding coordinator peak memory; every other run falls back unchanged to the retain-then-batch path. This is purely a memory optimization: the report and all artifacts are byte-identical to the retain path. Set AIPERF_RUNTIME_EXACT_FOLD=0 (also off/false/no) to force the legacy retain path for A/B verification, mirroring AIPERF_RUNTIME_ENGINE=python. Read only by the runner (no wire projection): unlike sketch, exact-fold retains exact per-record values, so it needs no artifact-path stripping. Reversible. |
 
 ## SEARCHPLANNER
 
@@ -291,7 +307,6 @@ User interface and dashboard configuration. Controls refresh rates, update thres
 |----------------------|---------|-------------|-------------|
 | `AIPERF_UI_LOG_REFRESH_INTERVAL` | `0.1` | ≥ 0.01, ≤ 100000.0 | Log viewer refresh interval in seconds (default: 10 FPS) |
 | `AIPERF_UI_MIN_UPDATE_PERCENT` | `1.0` | ≥ 0.01, ≤ 100.0 | Minimum percentage difference from last update to trigger a UI update (for non-dashboard UIs) |
-| `AIPERF_UI_NOTIFICATION_TIMEOUT` | `3` | ≥ 1, ≤ 100000 | Duration in seconds to display UI notifications before auto-dismissing |
 | `AIPERF_UI_REALTIME_METRICS_INTERVAL` | `None` | ≥ 0.0, ≤ 1000.0 | Interval in seconds between real-time metrics messages (and the per-tick stats log block). 0 disables the log block; dashboards still poll. When None, ``realtime_metrics_interval(ui_type)`` auto-defaults to 5.0 under --ui dashboard, 30.0 otherwise. |
 | `AIPERF_UI_REALTIME_METRICS_ENABLED` | `False` | — | Enable real-time metrics collection and reporting despite UI type |
 | `AIPERF_UI_SPINNER_REFRESH_RATE` | `0.1` | ≥ 0.1, ≤ 100.0 | Progress spinner refresh rate in seconds (default: 10 FPS) |
@@ -318,6 +333,7 @@ Worker management and auto-scaling configuration. Controls worker pool sizing, h
 | `AIPERF_WORKER_HIGH_LOAD_CPU_USAGE` | `85.0` | ≥ 50.0, ≤ 100.0 | CPU usage percentage threshold for considering a worker under high load |
 | `AIPERF_WORKER_HIGH_LOAD_RECOVERY_TIME` | `5.0` | ≥ 0.1, ≤ 1000.0 | Time in seconds from last high load before worker is considered recovered |
 | `AIPERF_WORKER_MAX_WORKERS_CAP` | `32` | ≥ 1, ≤ 10000 | Absolute maximum number of workers to spawn, regardless of CPU count |
+| `AIPERF_WORKER_DEFAULT_WORKERS_PER_POD` | `32` | ≥ 1, ≤ 10000 | Default worker count per pod used by the Kubernetes memory estimator and JobSet sizing when runtime.workers_per_pod is unset. Sizing-only heuristic; the native cellular path partitions by cells. |
 | `AIPERF_WORKER_STALE_TIME` | `10.0` | ≥ 0.1, ≤ 1000.0 | Time in seconds from last status report before worker is considered stale |
 | `AIPERF_WORKER_STATUS_SUMMARY_INTERVAL` | `0.5` | ≥ 0.1, ≤ 1000.0 | Interval in seconds between worker status summary messages |
 
@@ -327,7 +343,6 @@ ZMQ socket and communication configuration. Controls ZMQ socket timeouts, keepal
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_ZMQ_CONTEXT_TERM_TIMEOUT` | `10.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for terminating the ZMQ context during shutdown |
 | `AIPERF_ZMQ_PULL_YIELD_INTERVAL` | `10` | ≥ 0, ≤ 1000000 | Yield to the event loop after every N received messages from ZMQ PULL clients. Prevents event loop starvation during message bursts. 0 disables yielding, 1 yields after every message, 10 yields every 10 messages, etc. |
 | `AIPERF_ZMQ_REPLY_YIELD_INTERVAL` | `10` | ≥ 0, ≤ 1000000 | Yield to the event loop after every N received requests from ZMQ ROUTER reply clients. Prevents event loop starvation during request bursts. 0 disables yielding, 1 yields after every request, 10 yields every 10 requests, etc. |
 | `AIPERF_ZMQ_REQUEST_YIELD_INTERVAL` | `10` | ≥ 0, ≤ 1000000 | Yield to the event loop after every N received responses from ZMQ DEALER request clients. Prevents event loop starvation during response bursts. 0 disables yielding, 1 yields after every response, 10 yields every 10 responses, etc. |

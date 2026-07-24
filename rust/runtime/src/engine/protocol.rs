@@ -382,8 +382,11 @@ const fn true_value() -> bool {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PhaseCommonSpec {
-    /// Stable phase name (`warmup` or `profiling`).
+    /// Stable workflow phase name.
     pub name: String,
+    /// Semantic role (`warmup` or `profiling`); inferred for canonical names when omitted.
+    #[serde(default)]
+    pub kind: Option<PhaseRoleSpec>,
     /// Exclude phase metrics from profiling output.
     pub exclude_from_results: bool,
     /// Stop after this many issued turns.
@@ -423,6 +426,56 @@ pub struct PhaseCommonSpec {
     /// uses it as the cache-pressure window; absence selects the pair's default.
     #[serde(default)]
     pub agentic_cache_warmup_duration: Option<f64>,
+    /// Piecewise-linear request-rate schedule (mutually exclusive with scalar `rate`).
+    #[serde(default, alias = "rateSeries")]
+    pub rate_series: Option<RateSeriesSpec>,
+}
+
+/// Semantic runtime role for one authored phase.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PhaseRoleSpec {
+    /// Excluded from aggregate profiling results.
+    Warmup,
+    /// Contributes to benchmark results.
+    Profiling,
+}
+
+/// Piecewise-linear request-rate schedule on the wire.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RateSeriesSpec {
+    /// Strictly increasing control points (≥2).
+    pub points: Vec<RateSeriesPointSpec>,
+}
+
+/// One request-rate control point.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RateSeriesPointSpec {
+    #[serde(alias = "timeS")]
+    pub time_s: f64,
+    pub qps: f64,
+}
+
+impl PhaseCommonSpec {
+    /// Resolve the semantic role, inferring canonical names when `kind` is omitted.
+    pub fn semantic_role(&self) -> PhaseRoleSpec {
+        if let Some(kind) = self.kind {
+            return kind;
+        }
+        match self.name.as_str() {
+            "warmup" => PhaseRoleSpec::Warmup,
+            "profiling" => PhaseRoleSpec::Profiling,
+            _ if self.exclude_from_results => PhaseRoleSpec::Warmup,
+            _ => PhaseRoleSpec::Profiling,
+        }
+    }
+
+    /// Whether this phase is excluded from aggregate profiling results.
+    pub fn is_warmup(&self) -> bool {
+        matches!(self.semantic_role(), PhaseRoleSpec::Warmup)
+    }
 }
 
 /// Fully resolved adaptive-scale policy for one profiling phase.

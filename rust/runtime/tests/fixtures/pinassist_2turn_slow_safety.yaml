@@ -1,0 +1,87 @@
+# Our interpretation of Cristian's real intent: a 2-TURN chained PinAssist.
+# Each turn = the real shopping pipeline (route + parallel safety guard, long
+# shopping chain, replay tool steps, terminal_for_user summary). Turn 2 begins
+# only after turn 1's USER-VISIBLE answer (summarize1), plus a think-time
+# (min_start_delay_us on turn-2 entry nodes = Cristian's "no-request root").
+# Node ids are turn-suffixed so the sink can classify per-node dispatch.
+graph:
+  state:
+    messages:      {type: messages, reducer: add_messages}
+    intent1:       {type: text}
+    plan1:         {type: text}
+    brand_cands1:  {type: messages, reducer: add_messages}
+    brand_map1:    {type: text}
+    preprocessed1: {type: messages, reducer: add_messages}
+    summary1:      {type: text}
+    safety1:       {type: text}
+    redirect1:     {type: text}
+    intent2:       {type: text}
+    plan2:         {type: text}
+    brand_cands2:  {type: messages, reducer: add_messages}
+    brand_map2:    {type: text}
+    preprocessed2: {type: messages, reducer: add_messages}
+    summary2:      {type: text}
+    safety2:       {type: text}
+    redirect2:     {type: text}
+  nodes:
+    # ---- TURN 1 ----
+    route1:      {node_type: llm, streaming: false, output: intent1,
+                  prompt: [{role: system, content: "ROUTE1 classify shopping intent"}, "@messages"]}
+    safety1:     {node_type: llm, streaming: false, output: safety1, min_start_delay_us: 500000,
+                  prompt: [{role: system, content: "SAFETY1 classify the request"}, "@messages"]}
+    plan1:       {node_type: llm, output: plan1,
+                  prompt: [{role: system, content: "PLAN1 the tool calls"}, {role: user, content: "make a plan"}]}
+    tool_exec1:  {node_type: replay, outputs: [brand_cands1], duration_ms: 80}
+    brandmap1:   {node_type: llm, output: brand_map1,
+                  prompt: [{role: system, content: "BRANDMAP1 map products to brands"}, "@brand_cands1"]}
+    preprocess1: {node_type: replay, outputs: [preprocessed1], duration_ms: 5}
+    summarize1:  {node_type: llm, output: summary1, terminal_for_user: true,
+                  prompt: [{role: system, content: "SUMMARIZE1 for the user"}, "@preprocessed1"]}
+    redirect1:   {node_type: llm, output: redirect1, terminal_for_user: true,
+                  prompt: [{role: system, content: "REDIRECT1 on unsafe input"}, {role: user, content: "redirect"}]}
+    # ---- "root2": think-time coordinator, lowered onto turn-2 entry (no request) ----
+    route2:      {node_type: llm, streaming: false, output: intent2, min_start_delay_us: 100000,
+                  prompt: [{role: system, content: "ROUTE2 classify shopping intent"}, "@summary1"]}
+    safety2:     {node_type: llm, streaming: false, output: safety2, min_start_delay_us: 600000,
+                  prompt: [{role: system, content: "SAFETY2 classify the request"}, "@summary1"]}
+    plan2:       {node_type: llm, output: plan2,
+                  prompt: [{role: system, content: "PLAN2 the tool calls"}, {role: user, content: "make a plan"}]}
+    tool_exec2:  {node_type: replay, outputs: [brand_cands2], duration_ms: 80}
+    brandmap2:   {node_type: llm, output: brand_map2,
+                  prompt: [{role: system, content: "BRANDMAP2 map products to brands"}, "@brand_cands2"]}
+    preprocess2: {node_type: replay, outputs: [preprocessed2], duration_ms: 5}
+    summarize2:  {node_type: llm, output: summary2, terminal_for_user: true,
+                  prompt: [{role: system, content: "SUMMARIZE2 for the user"}, "@preprocessed2"]}
+    redirect2:   {node_type: llm, output: redirect2, terminal_for_user: true,
+                  prompt: [{role: system, content: "REDIRECT2 on unsafe input"}, {role: user, content: "redirect"}]}
+  edges:
+    - {source: START, target: route1}
+    - {source: START, target: safety1}
+    - {source: route1, branches: {shopping: plan1, non_shopping: route2}}
+    - {source: plan1, target: tool_exec1}
+    - {source: tool_exec1, target: brandmap1}
+    - {source: brandmap1, target: preprocess1}
+    - {source: preprocess1, target: summarize1}
+    - {source: safety1, branches: {safe: END, unsafe: redirect1}}
+    - {source: redirect1, target: END}
+    # CHAIN: turn 2 starts after turn 1's user answer (+ think-time on route2/safety2)
+    - {source: summarize1, target: route2}
+    - {source: summarize1, target: safety2}
+    - {source: route2, branches: {shopping: plan2, non_shopping: END}}
+    - {source: plan2, target: tool_exec2}
+    - {source: tool_exec2, target: brandmap2}
+    - {source: brandmap2, target: preprocess2}
+    - {source: preprocess2, target: summarize2}
+    - {source: summarize2, target: END}
+    - {source: safety2, branches: {safe: END, unsafe: redirect2}}
+    - {source: redirect2, target: END}
+traces:
+  - id: t-2turn-shopping
+    selected_branches: {route1: shopping, safety1: safe, route2: shopping, safety2: safe}
+    initial_state:
+      messages: [{role: user, content: "find me cheaper alternatives"}]
+    replay_outputs:
+      tool_exec1:  {brand_cands1: [{role: user, content: "Candidates: Nike, Adidas"}]}
+      preprocess1: {preprocessed1: [{role: user, content: "Top hits: Brand A"}]}
+      tool_exec2:  {brand_cands2: [{role: user, content: "Candidates: Puma, Asics"}]}
+      preprocess2: {preprocessed2: [{role: user, content: "Top hits: Brand B"}]}

@@ -9,7 +9,7 @@
 //! Token-native composition uses a no-decode branch: exact IDs enter the segment
 //! arena directly and no temporary text payload is constructed.
 
-use crate::rng::{RngRoot, RustRandomGenerator};
+use crate::rng::{ConfiguredRandomGenerator, RandomGenerator, RngRoot};
 use async_trait::async_trait;
 use bytes::Bytes;
 use smallvec::SmallVec;
@@ -112,11 +112,9 @@ impl Composer for SyntheticComposer {
         } else {
             None
         };
-        let mut prefix_rng = RustRandomGenerator::from_seed(
-            config
-                .rng_root
-                .derive_seed("dataset.prompt.prefix.selection"),
-        );
+        let mut prefix_rng: ConfiguredRandomGenerator = config
+            .rng_root
+            .derive_generator("dataset.prompt.prefix.selection");
         let prefix_pool = if shape.prefixes.pool_size.is_some() {
             let generator = prompt_generator.as_mut().ok_or_else(|| {
                 DatasetError::Validation("synthetic prefixes require a tokenizer".into())
@@ -258,7 +256,11 @@ impl Composer for SyntheticComposer {
                         DatasetError::Validation("synthetic prompts require a tokenizer".into())
                     })?;
                     if config.requires_raw_token_ids {
-                        let token_ids = generator.generate_token_ids(input_tokens, &[], 1)?;
+                        let token_ids = if let Some(reuse) = prefix_reuse.as_mut() {
+                            reuse.prompt_token_ids(generator, input_tokens)?
+                        } else {
+                            generator.generate_token_ids(input_tokens, &[], 1)?
+                        };
                         turn.input_tokens = Some(token_ids.len() as u64);
                         let handle = segments.intern_token_ids(parent, token_ids)?;
                         parent = Some(handle);
@@ -304,11 +306,13 @@ impl Composer for SyntheticComposer {
                             let selected_prefix = (turn_index == 0 && !prefix_pool.is_empty())
                                 .then(|| prefix_rng.choice(&prefix_pool).ok().cloned())
                                 .flatten();
-                            let text = selected_prefix.as_ref().map_or_else(
-                                || generated.text.clone(),
-                                |prefix| format!("{prefix} {}", generated.text),
-                            );
-                            let tokens = tokenizer.encode(&text)?;
+                            let (text, tokens) = if let Some(prefix) = selected_prefix.as_ref() {
+                                let text = format!("{prefix} {}", generated.text);
+                                let tokens = tokenizer.encode(&text)?;
+                                (text, tokens)
+                            } else {
+                                (generated.text, generated.tokens)
+                            };
                             turn.input_tokens = Some(
                                 turn.input_tokens
                                     .unwrap_or(0)
@@ -571,11 +575,6 @@ fn validate_raw_token_shape(config: &ComposeConfig, shape: &SyntheticDatasetConf
             "raw-token synthetic datasets require prompt batch_size=1".into(),
         ));
     }
-    if prompt.prefix_reuse_fraction > 0.0 {
-        return Err(DatasetError::Validation(
-            "raw-token synthetic datasets do not support prompt prefix reuse".into(),
-        ));
-    }
     if has_prefixes(&shape.prefixes)
         || config.shared_system_prompt.is_some()
         || !config.user_context_prompts.is_empty()
@@ -698,7 +697,7 @@ struct PrefixReuse {
     /// Portion of a reusing prompt's input length taken from the reusable run.
     ratio: f64,
     /// Selection stream deciding reuse, kept apart from the corpus sampling draw.
-    decision: RustRandomGenerator,
+    decision: ConfiguredRandomGenerator,
     /// Reusable prefix ids, held stable once materialized so every hit lines up.
     shared: Vec<u32>,
 }
@@ -709,9 +708,7 @@ impl PrefixReuse {
         (prompt.prefix_reuse_fraction > 0.0).then(|| Self {
             fraction: prompt.prefix_reuse_fraction,
             ratio: prompt.prefix_reuse_ratio,
-            decision: RustRandomGenerator::from_seed(
-                root.derive_seed("dataset.prompt.prefix.reuse"),
-            ),
+            decision: root.derive_generator("dataset.prompt.prefix.reuse"),
             shared: Vec::new(),
         })
     }
@@ -737,6 +734,27 @@ impl PrefixReuse {
         Ok(tokens)
     }
 
+    /// Build one exact-length raw-token prompt under the same shared-prefix
+    /// selection policy, never decoding the sampled ids to text.
+    fn prompt_token_ids(
+        &mut self,
+        generator: &mut dyn PromptGenerator,
+        input_tokens: usize,
+    ) -> Result<Vec<u32>> {
+        if self.decision.random() >= self.fraction {
+            return generator.generate_token_ids(input_tokens, &[], 1);
+        }
+        let prefix_len = ((input_tokens as f64) * self.ratio).round() as usize;
+        let prefix_len = prefix_len.min(input_tokens);
+        self.grow_shared_ids(generator, prefix_len)?;
+        let mut tokens = self.shared[..prefix_len].to_vec();
+        let suffix = input_tokens - prefix_len;
+        if suffix > 0 {
+            tokens.extend_from_slice(&generator.generate_token_ids(suffix, &[], 1)?);
+        }
+        Ok(tokens)
+    }
+
     /// Grow the reusable run up to at least `needed` tokens, leaving the ids
     /// already materialized untouched so every reusing prompt stays aligned.
     fn grow_shared(&mut self, generator: &mut dyn PromptGenerator, needed: usize) -> Result<()> {
@@ -744,6 +762,20 @@ impl PrefixReuse {
             let delta = needed - self.shared.len();
             self.shared
                 .extend_from_slice(&generator.generate(delta, &[], 1)?.tokens);
+        }
+        Ok(())
+    }
+
+    /// Grow the reusable raw-token prefix without passing through a text decode.
+    fn grow_shared_ids(
+        &mut self,
+        generator: &mut dyn PromptGenerator,
+        needed: usize,
+    ) -> Result<()> {
+        while self.shared.len() < needed {
+            let delta = needed - self.shared.len();
+            self.shared
+                .extend_from_slice(&generator.generate_token_ids(delta, &[], 1)?);
         }
         Ok(())
     }
@@ -814,19 +846,117 @@ fn append_media_batch(
     Ok(())
 }
 
-fn component_rng(root: RngRoot, namespace: &str) -> RustRandomGenerator {
-    RustRandomGenerator::from_seed(root.derive_seed(namespace))
+fn component_rng(root: RngRoot, namespace: &str) -> ConfiguredRandomGenerator {
+    root.derive_generator(namespace)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::rng::SamplingDistribution;
     use serde_json::json;
 
     use super::*;
     use crate::dataset::loader::LoaderRegistry;
+    use crate::dataset::prompt::{GeneratedPrompt, PromptGenerator, PromptGeneratorFactory};
     use crate::dataset::segment::Payload;
-    use crate::dataset::tokenizer::TiktokenTokenizer;
+    use crate::dataset::tokenizer::{TextTokenizer, TiktokenTokenizer};
+
+    struct StaticPromptGenerator {
+        prompt: GeneratedPrompt,
+    }
+
+    impl PromptGenerator for StaticPromptGenerator {
+        fn generate_token_ids(
+            &mut self,
+            num_tokens: usize,
+            _hash_ids: &[i64],
+            _block_size: usize,
+        ) -> Result<Vec<u32>> {
+            if num_tokens != self.prompt.tokens.len() {
+                return Err(DatasetError::Validation(format!(
+                    "expected {} tokens, got {num_tokens}",
+                    self.prompt.tokens.len()
+                )));
+            }
+            Ok(self.prompt.tokens.clone())
+        }
+
+        fn generate(
+            &mut self,
+            num_tokens: usize,
+            _hash_ids: &[i64],
+            _block_size: usize,
+        ) -> Result<GeneratedPrompt> {
+            if num_tokens != self.prompt.tokens.len() {
+                return Err(DatasetError::Validation(format!(
+                    "expected {} tokens, got {num_tokens}",
+                    self.prompt.tokens.len()
+                )));
+            }
+            Ok(self.prompt.clone())
+        }
+    }
+
+    struct StaticPromptGeneratorFactory {
+        prompt: GeneratedPrompt,
+    }
+
+    impl PromptGeneratorFactory for StaticPromptGeneratorFactory {
+        fn create<'a>(
+            &self,
+            _tokenizer: &'a dyn TextTokenizer,
+            _root: RngRoot,
+        ) -> Result<Box<dyn PromptGenerator + 'a>> {
+            Ok(Box::new(StaticPromptGenerator {
+                prompt: self.prompt.clone(),
+            }))
+        }
+    }
+
+    struct RejectGeneratedTextTokenizer {
+        inner: TiktokenTokenizer,
+    }
+
+    impl RejectGeneratedTextTokenizer {
+        fn new() -> Self {
+            Self {
+                inner: TiktokenTokenizer::builtin(),
+            }
+        }
+    }
+
+    impl TextTokenizer for RejectGeneratedTextTokenizer {
+        fn encode(&self, text: &str) -> Result<Vec<u32>> {
+            if text == "generated prompt" {
+                return Err(DatasetError::Tokenizer(
+                    "unexpected synthetic prompt re-encode".into(),
+                ));
+            }
+            self.inner.encode(text)
+        }
+
+        fn decode(&self, token_ids: &[u32]) -> Result<String> {
+            self.inner.decode(token_ids)
+        }
+
+        fn bos_token_id(&self) -> Option<u32> {
+            self.inner.bos_token_id()
+        }
+
+        fn eos_token_id(&self) -> Option<u32> {
+            self.inner.eos_token_id()
+        }
+
+        fn vocab_size(&self) -> Option<u32> {
+            self.inner.vocab_size()
+        }
+
+        fn name(&self) -> &str {
+            self.inner.name()
+        }
+    }
 
     #[test]
     fn prefix_reuse_shares_exact_token_ids_and_holds_length() {
@@ -840,9 +970,7 @@ mod tests {
         let mut reuse = PrefixReuse {
             fraction: 1.0,
             ratio: 0.5,
-            decision: RustRandomGenerator::from_seed(
-                RngRoot::new(Some(19)).derive_seed("test.reuse"),
-            ),
+            decision: RngRoot::new(Some(19)).derive_generator("test.reuse"),
             shared: Vec::new(),
         };
         let first = reuse.prompt_tokens(generator.as_mut(), 10).unwrap();
@@ -870,9 +998,7 @@ mod tests {
         let mut reuse = PrefixReuse {
             fraction: 1.0,
             ratio: 0.5,
-            decision: RustRandomGenerator::from_seed(
-                RngRoot::new(Some(23)).derive_seed("test.reuse"),
-            ),
+            decision: RngRoot::new(Some(23)).derive_generator("test.reuse"),
             shared: Vec::new(),
         };
         // ratio 0.5 reserves prefixes of 4, 8, and 12 tokens for these lengths.
@@ -978,6 +1104,50 @@ mod tests {
         // With the default fraction 0.0 no shared prefix is drawn, so leading
         // token runs stay distinct across prompts.
         assert_eq!(prefixes.len(), 8);
+    }
+
+    #[tokio::test]
+    async fn synthetic_prompts_reuse_generated_tokens_without_reencoding_text() {
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(29)));
+        compose.prompt_generator = Arc::new(StaticPromptGeneratorFactory {
+            prompt: GeneratedPrompt {
+                text: "generated prompt".into(),
+                tokens: vec![11, 12, 13],
+            },
+        });
+        compose.synthetic_config = Some(SyntheticDatasetConfig {
+            entries: 1,
+            turns: SamplingDistribution::fixed(1.0).unwrap(),
+            prompts: Some(SyntheticPromptConfig {
+                input_tokens: SamplingDistribution::fixed(3.0).unwrap(),
+                batch_size: 1,
+                ..SyntheticPromptConfig::default()
+            }),
+            ..SyntheticDatasetConfig::default()
+        });
+
+        let dataset = registry
+            .build_dataset(
+                Some("synthetic"),
+                &load,
+                &compose,
+                &RejectGeneratedTextTokenizer::new(),
+            )
+            .await
+            .expect("dataset should not re-encode generated prompt text");
+        let turn = &dataset.conversations()[0].turns[0];
+        assert_eq!(turn.input_tokens, Some(3));
+        let handle = turn.content[0].handles[0];
+        let Payload::Text {
+            bytes, token_count, ..
+        } = dataset.segments().get(handle).unwrap()
+        else {
+            panic!("synthetic prompt must be text");
+        };
+        assert_eq!(std::str::from_utf8(bytes).unwrap(), "generated prompt");
+        assert_eq!(*token_count, 3);
     }
 
     #[tokio::test]
@@ -1156,5 +1326,60 @@ mod tests {
         };
         assert_eq!(token_ids.len(), 8);
         assert!(!token_ids.contains(&9));
+    }
+
+    #[tokio::test]
+    async fn raw_token_prefix_reuse_shares_leading_token_run() {
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(37)));
+        compose.requires_raw_token_ids = true;
+        compose.prompt_generator = Arc::new(crate::dataset::CorpusPromptGeneratorFactory::random());
+        compose.synthetic_config = Some(SyntheticDatasetConfig {
+            entries: 6,
+            turns: SamplingDistribution::fixed(1.0).unwrap(),
+            prompts: Some(crate::dataset::generator::SyntheticPromptConfig {
+                input_tokens: SamplingDistribution::fixed(12.0).unwrap(),
+                batch_size: 1,
+                prefix_reuse_fraction: 1.0,
+                prefix_reuse_ratio: 0.5,
+            }),
+            ..SyntheticDatasetConfig::default()
+        });
+
+        let dataset = registry
+            .build_dataset(
+                Some("synthetic"),
+                &load,
+                &compose,
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dataset.conversations().len(), 6);
+
+        let expected_prefix_len = 6;
+        let first = &dataset.conversations()[0].turns[0];
+        let first_handle = *first.body.first().expect("raw token handle");
+        let Payload::TokenIds {
+            token_ids: first_tokens,
+        } = dataset.segments().get(first_handle).unwrap()
+        else {
+            panic!("raw-token synthetic prompt must be stored as token IDs");
+        };
+        assert_eq!(first_tokens.len(), 12);
+
+        for conversation in &dataset.conversations()[1..] {
+            let turn = &conversation.turns[0];
+            let handle = *turn.body.first().expect("raw token handle");
+            let Payload::TokenIds { token_ids } = dataset.segments().get(handle).unwrap() else {
+                panic!("raw-token synthetic prompt must be stored as token IDs");
+            };
+            assert_eq!(token_ids.len(), 12);
+            assert_eq!(
+                &token_ids[..expected_prefix_len],
+                &first_tokens[..expected_prefix_len]
+            );
+        }
     }
 }

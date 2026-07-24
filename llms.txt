@@ -8,10 +8,10 @@ SPDX-License-Identifier: Apache-2.0
 Single-page topology of the important source + design files, with a one-line
 purpose for each, so an agent knows which file to open for a given question.
 
-## ✅ Canonical / ⛔️ deprecated
+## Product entry point and architecture
 
-- **CANONICAL PRODUCT PATH:** the human-facing `aiperf` command IS the ONE native
-  binary (crate `aiperf-cli`) — it owns `profile`/`config` natively
+- **Native binary:** the human-facing `aiperf` command is a native Rust binary
+  (crate `aiperf-cli`) — it owns `profile`/`config` natively
   (byte-exact Config v2), projects one protocol-v2 request, and drives execution
   by re-execing ITSELF (`aiperf --execute`), delegating only peripheral subcommands
   (`plot`/`service`/`plugins`) to Python (embedded CPython, or `python -m aiperf`
@@ -24,10 +24,7 @@ purpose for each, so an agent knows which file to open for a given question.
   developer/test target is an ordinary online inference server, not an
   orchestrated backend process. `rust/runtime` is a runtime library and
   intentionally has no binary target (the native binary is the `aiperf-cli` crate).
-- **DEPRECATED:** the `aiperf-rs` and `~/projects/aiperf-rust` trees (mechanical
-  1:1 ports that reproduce the Python multiprocess/ZMQ complexity this design
-  deletes). Do not build on them.
-- **OWNERSHIP:** Rust execution truth is `rust/`; canonical Python frontend
+- **Source organization:** Rust execution truth is `rust/`; Python frontend
   truth includes `src/aiperf/config`, `src/aiperf/orchestrator`, and
   `src/aiperf/cli_runner`. The old controller/service/ZMQ implementation under
   `src/` remains legacy and is not an alternate hot path.
@@ -160,7 +157,10 @@ and `dynamo_trace` enter the runner-owned Graph-IR input adapter once and invoke
 exactly one selected compiler, lowering directly to graph plans plus one frozen
 segment store without a second registry or linear dataset intermediate.
 Recorded formats accept `synthesis.max_osl`, `max_context_length`,
-`idle_gap_cap_seconds`, `corpus`, and `allow_dataset_wrap` where applicable;
+`idle_gap_cap_seconds`, and `allow_dataset_wrap` where applicable; synthetic
+and count/hash-based trace prompt synthesis share `prompts.corpus` /
+`--prompt-corpus` over `sonnet`, `coding`, and tokenizer-driven `random`,
+defaulting to `coding` for recorded-graph reconstruction;
 Python forwards those authored values without parsing trace payloads. Native gRPC requires
 `transport.type: grpc` with `grpc://` or `grpcs://` URLs, behind the default-on
 `grpc` Cargo feature (a lean HTTP-only build drops it and `tonic`); offline/wall-clock
@@ -172,7 +172,7 @@ never branch on a transport enum. There is ONE thread-per-core execution model:
 `workers==1` runs a single co-located `WorkerSink` on the coordinator reactor
 (`turn_execution::build_native`), and `workers>1` runs under a `runtime.dispatch`
 selector (`sharded` | `global` | `global-hop`; `global` is the default — see
-`specs/global-exact-dispatch.md`): `sharded` tiles that same sink across `W`
+`docs/specs/global-exact-dispatch.md`): `sharded` tiles that same sink across `W`
 self-contained sub-cells with no cross-thread per-request hop
 (`sharded_scheduled::run_sharded_scheduled`); `global` keeps that same tiling but
 admits concurrency/rate from a shared per-cell gate for byte-exact aggregate
@@ -198,7 +198,7 @@ requires both `AIPERF_CONTENT_SERVER_ENABLED=true` and a non-empty existing
 `AIPERF_CONTENT_SERVER_CONTENT_DIR`; enabled with an empty directory starts a
 temporary server but keeps media inline. See `docs/tutorials/content-server.md`.
 
-`AIPERF_RNG_BACKEND=rust_parity` (default `python`) swaps the seeded random
+`AIPERF_RNG_BACKEND=rust` (default `python`) swaps the seeded random
 substrate from Python's Mersenne Twister + NumPy (SHA-256 derivation) to a
 pure-Python byte-exact implementation of the Rust `aiperf_runtime::rng` `Pcg64` + BLAKE3 substrate
 (`src/aiperf/common/rng_parity/`), so seeded Python and Rust produce identical
@@ -382,111 +382,111 @@ profiler.
   `rust/runtime/src/report.rs`; strict run selection/composition is in
   `rust/runtime/src/engine/{protocol_v2,registry,execute}.rs`.
 
-## Design specs (`specs/` — intent, code is authoritative)
+## Design specs (`docs/specs/` — intent, code is authoritative)
 
-Full index: [`specs/README.md`](specs/README.md). Each spec states current built
+Full index: [`docs/specs/README.md`](docs/specs/README.md). Each spec states current built
 behavior plus, where present, an explicit `Future requirements` section.
 
 Whole system:
 
-- [`specs/architecture.md`](specs/architecture.md) — process model, crate
+- [`docs/specs/architecture.md`](docs/specs/architecture.md) — process model, crate
   topology, and the three orthogonal seams (time, transport, workload).
-- [`specs/repository-layout.md`](specs/repository-layout.md) — Cargo workspace
+- [`docs/specs/repository-layout.md`](docs/specs/repository-layout.md) — Cargo workspace
   topology, package identity, and naming rules enforced by
   `tools/check_crate_layout.py`.
-- [`specs/extension-registry.md`](specs/extension-registry.md) — the
+- [`docs/specs/extension-registry.md`](docs/specs/extension-registry.md) — the
   `AIPerfRegistry`/`AIPerfExtension` link-time composition seam, its capability
   categories, and the frozen bootstrap object graph.
-- [`specs/runner-protocol.md`](specs/runner-protocol.md) — the Config-v2 ↔
+- [`docs/specs/runner-protocol.md`](docs/specs/runner-protocol.md) — the Config-v2 ↔
   execution boundary: the protocol-v2 stdio envelope, the `BenchmarkRun`
   vocabulary, dataset/transport path selection, and the in-process
   linked-capability catalog.
 
 Execution and scheduling:
 
-- [`specs/execution-model.md`](specs/execution-model.md) — the single
+- [`docs/specs/execution-model.md`](docs/specs/execution-model.md) — the single
   thread-per-core hot path, the two-trait transport seam, worker-local
   accumulation, and the shared reduce/measure layers.
-- [`specs/flatgraph-fast-path.md`](specs/flatgraph-fast-path.md) — built
+- [`docs/specs/flatgraph-fast-path.md`](docs/specs/flatgraph-fast-path.md) — built
   `FlatGraphActor` fast path: eligible local and worker-backed production graph
   placement routes one-node/no-fan-in traces through the shared sink without the
   general graph context, proven byte-identical to the general executor through the
   real `aiperf` binary; later scheduled-workload and multi-node work remain future.
-- [`specs/scheduling.md`](specs/scheduling.md) — request-rate, concurrency,
+- [`docs/specs/scheduling.md`](docs/specs/scheduling.md) — request-rate, concurrency,
   user-centric, and fixed-schedule workloads over one `Clock`-backed runtime, and
   how each partitions across sub-cells.
-- [`specs/global-exact-dispatch.md`](specs/global-exact-dispatch.md) — the
+- [`docs/specs/global-exact-dispatch.md`](docs/specs/global-exact-dispatch.md) — the
   built `runtime.dispatch` selector (`sharded` | `global` | `global-hop`)
   replacing the static per-thread partition with a shared per-cell
   `GlobalAdmission` gate (`global`, the `workers>1` default) or a
   single-coordinator hop dispatcher (`global-hop`) so `workers>1` runs are
   byte-exact against Python's single global concurrency/rate limiter.
-- [`specs/phase-orchestration.md`](specs/phase-orchestration.md) — one
+- [`docs/specs/phase-orchestration.md`](docs/specs/phase-orchestration.md) — one
   `Clock`-native warmup→profiling lifecycle: escalation ladder, cancellation
   latch, and the seam scheduled and graph runs share.
-- [`specs/ancillary-timing.md`](specs/ancillary-timing.md) — ramping, seeded
+- [`docs/specs/ancillary-timing.md`](docs/specs/ancillary-timing.md) — ramping, seeded
   request cancellation, and sticky round-robin URL selection over a running
   phase.
-- [`specs/adaptive-scale.md`](specs/adaptive-scale.md) — the closed-loop SLA
+- [`docs/specs/adaptive-scale.md`](docs/specs/adaptive-scale.md) — the closed-loop SLA
   controller (`ramp_until_fail`), its four live actuators, and its schema-v2
   artifacts.
-- [`specs/cellular.md`](specs/cellular.md) — partitioning one run across cell
+- [`docs/specs/cellular.md`](docs/specs/cellular.md) — partitioning one run across cell
   processes, the multi-process and velo cross-host topologies, and the fidelity
   guards.
-- [`specs/velo-hub.md`](specs/velo-hub.md) — the per-experiment control-plane hub
+- [`docs/specs/velo-hub.md`](docs/specs/velo-hub.md) — the per-experiment control-plane hub
   (`aiperf_runtime::hub`, `cellular` feature): a plugin trait whose plugins each
   contribute an HTTP router and velo handlers backed by one shared handler
   function, the discovery connect-by-endpoint plugin, and the cell↔controller,
   `/artifact`, `/dataset` (fan-out), and `/phaser` plugins that fold every standalone
   velo plane onto the hub, and the `AIPERF_CELLULAR_HUB` bootstrap toggle in
   `engine::cellular_controller`.
-- [`specs/slurm-native.md`](specs/slurm-native.md) — running a cellular benchmark
+- [`docs/specs/slurm-native.md`](docs/specs/slurm-native.md) — running a cellular benchmark
   natively under a SLURM allocation: the `aiperf slurm run` rank dispatch, the
   `SLURM_*` → controller/cell topology mapping, the `SlurmLauncher`, and the
   `aiperf slurm generate` sbatch generator.
 
 Transports:
 
-- [`specs/http-transport.md`](specs/http-transport.md) — the Clock-injected hyper
+- [`docs/specs/http-transport.md`](docs/specs/http-transport.md) — the Clock-injected hyper
   HTTP stack: protocols, SSE streaming, endpoint binding, and post-send
   cancellation.
-- [`specs/grpc-transport.md`](specs/grpc-transport.md) — the Clock-injected Tonic
+- [`docs/specs/grpc-transport.md`](docs/specs/grpc-transport.md) — the Clock-injected Tonic
   gRPC stack: the binding registry, KServe OIP v2 and Riva families, the
   protoc-free codec, and the worker-local sink.
-- [`specs/websocket-transport.md`](specs/websocket-transport.md) — built reusable
+- [`docs/specs/websocket-transport.md`](docs/specs/websocket-transport.md) — built reusable
   content, SSE, bidirectional framing, measurement, placement, and registration
   prerequisites plus the future Clock-injected WebSocket transport contract.
-- [`specs/sagemaker-runtime-endpoint.md`](specs/sagemaker-runtime-endpoint.md) —
+- [`docs/specs/sagemaker-runtime-endpoint.md`](docs/specs/sagemaker-runtime-endpoint.md) —
   AWS SageMaker Runtime dialect: `InvokeEndpoint`/
   `InvokeEndpointWithResponseStream` mock-server routes, the AWS
   `application/vnd.amazon.eventstream` binary frame codec, and the
   single-factory client endpoint dialect it composes over, verified e2e and
   against a genuine `boto3` client.
-- [`specs/offline-cosimulation.md`](specs/offline-cosimulation.md) — socket-free
+- [`docs/specs/offline-cosimulation.md`](docs/specs/offline-cosimulation.md) — socket-free
   Dynamo co-simulation behind the `dynosim` feature: the steppable clocked engine
   boundary and the observer contract.
 
 Inputs, endpoints, and graph:
 
-- [`specs/dataset.md`](specs/dataset.md) — the content-addressed segment store and
+- [`docs/specs/dataset.md`](docs/specs/dataset.md) — the content-addressed segment store and
   the loader→compose→store→sampler→materializer pipeline.
-- [`specs/endpoint-body-construction.md`](specs/endpoint-body-construction.md) —
+- [`docs/specs/endpoint-body-construction.md`](docs/specs/endpoint-body-construction.md) —
   `format_payload → BodyPlan` and the two shared materializers that turn segment
   handles into wire bytes.
-- [`specs/endpoints.md`](specs/endpoints.md) — the `Endpoint` dialect adapter, the
+- [`docs/specs/endpoints.md`](docs/specs/endpoints.md) — the `Endpoint` dialect adapter, the
   native dialects, endpoint identity, and the registry consumed by validation and
   execution.
-- [`specs/content-server.md`](specs/content-server.md) — the run-owned HTTP
+- [`docs/specs/content-server.md`](docs/specs/content-server.md) — the run-owned HTTP
   delivery sidecar that serves generated media by URL, its publication seam, and
   request-correlated media-fetch metrics (`rid`/`mi`/`td` URL tagging, streaming
   drain into `SidecarMetric` distributions).
-- [`specs/rng.md`](specs/rng.md) — the hash-derived randomness substrate:
+- [`docs/specs/rng.md`](docs/specs/rng.md) — the hash-derived randomness substrate:
   order-independent BLAKE3 stream derivation, generators, and sampling
   distributions.
-- [`specs/graph-runtime.md`](specs/graph-runtime.md) — the Graph-IR runtime:
+- [`docs/specs/graph-runtime.md`](docs/specs/graph-runtime.md) — the Graph-IR runtime:
   deterministic async dataflow, the recorded-trace compilers, and the
   trajectory-snapshot/warmup-priming subsystem.
-- [`specs/conditional-graph-lowering.md`](specs/conditional-graph-lowering.md) —
+- [`docs/specs/conditional-graph-lowering.md`](docs/specs/conditional-graph-lowering.md) —
   the model-independent-branching contract: pinned/recorded/weighted conditional
   branching and recorded non-LLM content resolved and folded into the flat
   `LlmNode`/`StaticEdge` substrate at lowering, the eager-vs-forbidden
@@ -495,36 +495,26 @@ Inputs, endpoints, and graph:
 
 Measurement and output:
 
-- [`specs/metrics.md`](specs/metrics.md) — the IO-free metrics engine: the
+- [`docs/specs/metrics.md`](docs/specs/metrics.md) — the IO-free metrics engine: the
   column-store accumulator, the metric catalog, sweep curves, and the typed
   report; exact vs sketch modes.
-- [`specs/telemetry.md`](specs/telemetry.md) — GPU telemetry, server metrics, and
+- [`docs/specs/telemetry.md`](docs/specs/telemetry.md) — GPU telemetry, server metrics, and
   network latency side channels feeding the metrics seam.
-- [`specs/exporters.md`](specs/exporters.md) — the typed report core and the
+- [`docs/specs/exporters.md`](docs/specs/exporters.md) — the typed report core and the
   static set of `Exporter` sinks behind one trait.
-- [`specs/accuracy.md`](specs/accuracy.md) — the Rust dispatch/capture vs
+- [`docs/specs/accuracy.md`](docs/specs/accuracy.md) — the Rust dispatch/capture vs
   pinned-Python grading split, the injected evaluator seam, and sharded capture
   with a single grade.
-- [`specs/dataset-analysis.md`](specs/dataset-analysis.md) — built `--dry-run`
+- [`docs/specs/dataset-analysis.md`](docs/specs/dataset-analysis.md) — built `--dry-run`
   analytical report: dataset shape, turn-by-turn ISL/OSL, prefix/KV-cache reuse
   (ideal and finite-capacity), and the real execution timeline distilled from a
   dry run's records, emitted as `dataset_analysis.{txt,json,csv,html}`.
 
 Targets:
 
-- [`specs/mock-server.md`](specs/mock-server.md) — the standalone HTTP/gRPC
+- [`docs/specs/mock-server.md`](docs/specs/mock-server.md) — the standalone HTTP/gRPC
   inference target with deterministic generation, latency and error models,
   telemetry, and request recording.
-
-Developer tooling:
-
-- [`specs/aiperf-flow.md`](specs/aiperf-flow.md) — `apps/aiperf-flow`:
-  component-native explainer decks authored as plain `.tsx` using React Flow,
-  Motion for React, and Tailwind, replacing `apps/explainers`'s `.flow` DSL
-  and hand-rolled SVG layout/connector/animation engines. Component
-  vocabulary, worked example deck, and presentation shell built; the 15-deck
-  `.flow` migration is still pending. Authoring guidance:
-  [`.claude/skills/aiperf-flow-diagrams/SKILL.md`](.claude/skills/aiperf-flow-diagrams/SKILL.md).
 
 ## Build / test / run
 

@@ -4,7 +4,7 @@
 //! The velo-backed cell↔controller transport.
 //!
 //! Realizes the [`CellClient`] / [`ControllerTransport`] seam over the Velo 0.5
-//! messaging framework. Four named handlers on the
+//! messaging framework. Five named handlers on the
 //! controller carry the whole protocol:
 //!
 //! - [`HANDLER_REGISTER`] (unary): a cell sends its [`CellRegister`] (its own
@@ -12,6 +12,8 @@
 //!   later messages route back) and returns that cell's serialized `CellLaunchSpec`.
 //! - [`HANDLER_HEARTBEAT`] (fire-and-forget): a cell's periodic
 //!   [`CellMessage::Heartbeat`].
+//! - [`HANDLER_PHASE_SIGNAL`] (fire-and-forget): a cell's named
+//!   [`CellMessage::PhaseSignal`] barrier notification.
 //! - [`HANDLER_PARTITION`] (unary): a cell's final [`RecordsShardPartition`]; the
 //!   reply is a [`CellAck`].
 //! - [`HANDLER_STORE_PARTITION`] (unary): a cell's final
@@ -33,8 +35,10 @@ use velo::{Context, EventHandle, Handler, PeerInfo, Velo};
 use super::{
     CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister, CellStorePartitionShip,
     CellTransportError, ControllerTransport, HANDLER_HEARTBEAT, HANDLER_PARTITION,
-    HANDLER_REGISTER, HANDLER_STORE_PARTITION,
+    HANDLER_PHASE_SIGNAL, HANDLER_REGISTER, HANDLER_STORE_PARTITION,
 };
+#[cfg(test)]
+use super::CellPhaseSignal;
 
 /// Supplies each cell's serialized (`rmp`) `CellLaunchSpec` by `cell_id`, or
 /// `None` if the `cell_id` is out of range. The controller precomputes every
@@ -63,7 +67,7 @@ fn io(error: impl std::fmt::Display) -> CellTransportError {
     CellTransportError::Io(error.to_string())
 }
 
-/// The controller's velo endpoint: registers the three handlers and exposes a
+/// The controller's velo endpoint: registers the control/partition handlers and exposes a
 /// merged [`ControllerTransport::recv`] stream of every cell's decoded messages.
 pub struct VeloControllerTransport {
     /// Held so the velo instance (and thus its registered handlers) outlives the
@@ -76,7 +80,7 @@ pub struct VeloControllerTransport {
 }
 
 impl VeloControllerTransport {
-    /// Register the register/heartbeat/partition handlers on `velo` and return the
+    /// Register the register/control/partition handlers on `velo` and return the
     /// controller transport. `spec_for` supplies each registering cell's
     /// `CellLaunchSpec` bytes; `start_event` is the run-wide START handle returned
     /// to each cell; the barrier fires once all `cell_count` cells have registered.
@@ -144,6 +148,31 @@ impl VeloControllerTransport {
                             let _ = sender
                                 .send(Err(CellTransportError::Decode(format!(
                                     "heartbeat: {error}"
+                                ))))
+                                .await;
+                        }
+                    }
+                    Ok(())
+                }
+            })
+            .build(),
+        )
+        .map_err(io)?;
+
+        // phase_signal (fire-and-forget): push the decoded CellMessage::PhaseSignal.
+        let phase_signal_sender = sender.clone();
+        velo.register_handler(
+            Handler::am_handler_async(HANDLER_PHASE_SIGNAL, move |ctx: Context| {
+                let sender = phase_signal_sender.clone();
+                async move {
+                    match rmp_serde::from_slice::<CellMessage>(&ctx.payload) {
+                        Ok(message) => {
+                            let _ = sender.send(Ok(message)).await;
+                        }
+                        Err(error) => {
+                            let _ = sender
+                                .send(Err(CellTransportError::Decode(format!(
+                                    "phase signal: {error}"
                                 ))))
                                 .await;
                         }
@@ -238,8 +267,8 @@ impl ControllerTransport for VeloControllerTransport {
 /// A cell's velo client to the controller. Built from a velo instance and the
 /// controller's resolved [`PeerInfo`] (obtained via the bootstrap in
 /// [`connect`](crate::cellular::transport::connect)); [`register`](Self::register)
-/// fetches the cell's launch spec, and [`CellClient::send`] ships heartbeats and the
-/// final partition.
+/// fetches the cell's launch spec, and [`CellClient::send`] ships control messages and
+/// the final partition.
 pub struct VeloCellClient {
     velo: Arc<Velo>,
     controller: PeerInfo,
@@ -291,6 +320,17 @@ impl CellClient for VeloCellClient {
                 let body = rmp_serde::to_vec(message).map_err(encode)?;
                 self.velo
                     .am_send(HANDLER_HEARTBEAT)
+                    .map_err(io)?
+                    .raw_payload(Bytes::from(body))
+                    .instance(self.controller.instance_id())
+                    .send()
+                    .await
+                    .map_err(io)?;
+            }
+            CellMessage::PhaseSignal { .. } => {
+                let body = rmp_serde::to_vec(message).map_err(encode)?;
+                self.velo
+                    .am_send(HANDLER_PHASE_SIGNAL)
                     .map_err(io)?
                     .raw_payload(Bytes::from(body))
                     .instance(self.controller.instance_id())
@@ -417,6 +457,12 @@ mod tests {
                 }
                 CellMessage::StorePartition(partition) => {
                     panic!("this test ships a records partition, not a store: {partition:?}");
+                }
+                CellMessage::PhaseSignal { phase, signal, .. } => {
+                    panic!(
+                        "this test ships a heartbeat and a records partition, not a phase signal: \
+                         {phase} {signal:?}"
+                    );
                 }
             }
         }
@@ -548,5 +594,46 @@ mod tests {
             .await_start(reply_b.start_event)
             .await
             .expect("B start");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn controller_receives_cell_phase_complete_notification() {
+        let controller_velo = build_velo(BindSpec::TcpLoopback)
+            .await
+            .expect("controller velo");
+        let controller_peer = controller_velo.peer_info();
+        let start = controller_velo
+            .event_manager()
+            .new_event()
+            .expect("start event");
+        let start_handle = start.handle();
+        let spec_for: SpecFor = Arc::new(|_| Some(vec![0xCD]));
+        let mut controller =
+            VeloControllerTransport::bind_controller(controller_velo, spec_for, 1, start_handle)
+                .expect("bind");
+
+        let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
+        let mut cell = VeloCellClient::connect(cell_velo, controller_peer).expect("connect");
+
+        cell.send(&CellMessage::PhaseSignal {
+            cell_id: 7,
+            phase: "profiling".to_owned(),
+            signal: CellPhaseSignal::Complete,
+        })
+        .await
+        .expect("ship phase signal");
+
+        match controller.recv().await.expect("recv").expect("some") {
+            CellMessage::PhaseSignal {
+                cell_id,
+                phase,
+                signal,
+            } => {
+                assert_eq!(cell_id, 7);
+                assert_eq!(phase, "profiling");
+                assert_eq!(signal, CellPhaseSignal::Complete);
+            }
+            other => panic!("expected phase signal, got {other:?}"),
+        }
     }
 }

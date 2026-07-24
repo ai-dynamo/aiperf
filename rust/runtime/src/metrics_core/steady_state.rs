@@ -51,7 +51,10 @@ const STEADY_WINDOW_RATE_TAGS: &[MetricTag] = &[
 /// profiling phase (every request that returned, ramp-up and drain included
 /// — no survivorship bias), with only [`STEADY_WINDOW_RATE_TAGS`] overridden
 /// from the steady-state-windowed summary.
-fn hybrid_summary(accumulator: &MetricsAccumulator, windowed: &AccumulatorSummary) -> AccumulatorSummary {
+fn hybrid_summary(
+    accumulator: &MetricsAccumulator,
+    windowed: &AccumulatorSummary,
+) -> AccumulatorSummary {
     let mut merged = accumulator.export_results(&ExportContext::phase(Phase::Profiling));
     for &tag in STEADY_WINDOW_RATE_TAGS {
         if let Some(result) = windowed.result(tag) {
@@ -284,7 +287,8 @@ pub fn steady_state_summary(
     let run_end_ns = timestamps.last().map(|&t| t as i64).unwrap_or(0);
 
     // Reuse the shared summary path over the detected half-open time range.
-    let windowed = accumulator.export_results(&ExportContext::time_range(window.start_ns, window.end_ns));
+    let windowed =
+        accumulator.export_results(&ExportContext::time_range(window.start_ns, window.end_ns));
 
     let summary = if config.hybrid_latency {
         hybrid_summary(accumulator, &windowed)

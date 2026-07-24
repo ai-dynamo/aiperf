@@ -1,0 +1,25 @@
+flowchart TD
+    PLAN["GraphTracePlan"]
+    EXEC["TraceExecutor deterministic async dataflow"]
+    SCHED["Scheduler"]
+    CTX["TraceContext"]
+    STORE["VersionedChannelStore"]
+    READY["readiness gate: await_inputs + edge delays"]
+    SNAP["captured channel snapshot"]
+    MAT["PromptMaterializer"]
+    SINK["GraphSink"]
+    REPLY["GraphReply"]
+    PUB["terminal channel publication"]
+
+    PLAN -->|"build_context"| EXEC
+    EXEC -->|"constructs"| SCHED
+    EXEC -->|"creates per trace"| CTX
+    CTX -->|"owns"| STORE
+    SCHED -->|"entry / successor nodes"| READY
+    STORE -->|"await_inputs + current_seq"| READY
+    READY -->|"snapshot_selected_at_seq"| SNAP
+    SNAP -->|"splice inputs"| MAT
+    MAT -->|"materialized messages"| SINK
+    SINK -->|"terminal reply"| REPLY
+    REPLY -->|"write_channel_value"| PUB
+    PUB -->|"append write_seq"| STORE

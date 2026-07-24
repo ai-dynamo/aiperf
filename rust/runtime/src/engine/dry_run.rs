@@ -58,6 +58,7 @@ use crate::extensions::AIPerfRegistry;
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, RequestTrace};
 use crate::multiturn::TurnToSend;
+use crate::rng::{ConfiguredRandomGenerator, RandomGenerator};
 use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome};
 use crate::transport::core::{DispatchResult, MeasuredContext, MeasuredOutcome};
 use crate::transport::core::{PreparedTurn, RequestExecutor};
@@ -291,14 +292,14 @@ fn ms_to_ns(ms: f64) -> i64 {
 }
 
 /// Deterministic per-request RNG derived from a root seed and salt.
-fn seeded_rng(seed: u64, salt: u64) -> crate::rng::RustRandomGenerator {
-    crate::rng::RustRandomGenerator::from_seed(Some(
+fn seeded_rng(seed: u64, salt: u64) -> ConfiguredRandomGenerator {
+    ConfiguredRandomGenerator::from_seed_or_entropy(Some(
         seed ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15),
     ))
 }
 
 /// Mean-preserving lognormal jitter; non-positive `cv` yields `1.0`.
-fn lognormal_jitter(rng: &mut crate::rng::RustRandomGenerator, cv: f64) -> f64 {
+fn lognormal_jitter(rng: &mut ConfiguredRandomGenerator, cv: f64) -> f64 {
     if cv <= 0.0 {
         return 1.0;
     }

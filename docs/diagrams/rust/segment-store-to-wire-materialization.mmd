@@ -1,0 +1,24 @@
+flowchart TD
+    POOL["SegmentPool"]
+    ID["prefix-dependent BLAKE3 SegmentId"]
+    HANDLE["dense Handle"]
+    STORE["frozen SegmentStore"]
+    ENDPOINT["endpoint format_payload"]
+    PLAN["BodyPlan"]
+    JSON["JsonBodyMaterializer"]
+    BODY["JSON body bytes"]
+    PAYLOAD["KServe canonical payload"]
+    CODEC["grpc::codec / encode_model_infer_request"]
+    PROTO["protobuf request bytes"]
+
+    POOL -->|"intern payload + parent"| ID
+    ID -->|"deduplicate or append"| HANDLE
+    HANDLE -->|"indexes arena"| STORE
+    ENDPOINT -->|"declares segment slots"| PLAN
+    PLAN -->|"references Handle slots"| STORE
+    PLAN -->|"JSON-only splice path"| JSON
+    STORE -->|"segment wire lookup"| JSON
+    JSON -->|"concatenate stored wire bytes"| BODY
+    STORE -.->|"structured segment data; no JSON splice"| PAYLOAD
+    PAYLOAD -.->|"separate gRPC materialization"| CODEC
+    CODEC -->|"prost encode"| PROTO

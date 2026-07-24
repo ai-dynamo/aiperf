@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::cellular::partition::{CellPartition, ModuloCellPartition};
 use crate::extensions::RegistryId;
-use crate::rng::{RngRoot, RustRandomGenerator};
+use crate::rng::{ConfiguredRandomGenerator, RandomGenerator, RngRoot};
 
 use crate::dataset::error::{DatasetError, Result};
 use crate::dataset::model::{ConversationMetadata, SessionId};
@@ -173,7 +173,7 @@ fn root_ids(metadata: &[ConversationMetadata]) -> Vec<SessionId> {
 /// Uniform random sampling with replacement.
 pub struct RandomSampler {
     ids: Vec<SessionId>,
-    rng: RustRandomGenerator,
+    rng: ConfiguredRandomGenerator,
 }
 
 impl RandomSampler {
@@ -181,7 +181,7 @@ impl RandomSampler {
     pub fn new(ids: Vec<SessionId>, root: RngRoot) -> Result<Self> {
         Ok(Self {
             ids: validate_ids(ids)?,
-            rng: RustRandomGenerator::from_seed(root.derive_seed("dataset.sampler.random")),
+            rng: root.derive_generator("dataset.sampler.random"),
         })
     }
 
@@ -236,14 +236,14 @@ impl Sampler for SequentialSampler {
 pub struct ShuffleSampler {
     ids: Vec<SessionId>,
     index: usize,
-    rng: RustRandomGenerator,
+    rng: ConfiguredRandomGenerator,
 }
 
 impl ShuffleSampler {
     /// Construct from authored identifiers and shuffle the first cycle immediately.
     pub fn new(ids: Vec<SessionId>, root: RngRoot) -> Result<Self> {
         let mut ids = validate_ids(ids)?;
-        let mut rng = RustRandomGenerator::from_seed(root.derive_seed("dataset.sampler.shuffle"));
+        let mut rng: ConfiguredRandomGenerator = root.derive_generator("dataset.sampler.shuffle");
         rng.shuffle(&mut ids);
         Ok(Self { ids, index: 0, rng })
     }

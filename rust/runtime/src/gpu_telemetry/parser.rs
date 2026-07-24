@@ -11,7 +11,9 @@ use std::collections::BTreeMap;
 
 use crate::gpu_telemetry::custom_metrics::CustomDcgmField;
 use crate::gpu_telemetry::fields::dcgm_metric_spec;
-use crate::gpu_telemetry::model::{GpuMetadata, GpuScrape, GpuTelemetryRecord};
+use crate::gpu_telemetry::model::{
+    GpuMetadata, GpuScrape, GpuTelemetryRecord, NVIDIA_GPU_TELEMETRY_PLATFORM,
+};
 use crate::gpu_telemetry::source::GpuTelemetryError;
 use crate::server_metrics::prom_text::{parse_metric_and_labels, sample_value_split};
 
@@ -129,6 +131,7 @@ impl GpuTelemetryDecoder for DcgmPrometheusDecoder {
                             hostname: pending.labels.get("Hostname").cloned(),
                             namespace: pending.labels.get("namespace").cloned(),
                             pod_name: pending.labels.get("pod").cloned(),
+                            platform: NVIDIA_GPU_TELEMETRY_PLATFORM.to_string(),
                         },
                         metrics: pending.metrics,
                     }
@@ -202,11 +205,19 @@ DCGM_FI_DEV_GPU_UTIL{gpu="1",UUID="GPU-b",modelName="H200"} NaN
         let record = &scrape.records[0];
         assert_eq!(record.timestamp_ns, 42);
         assert_eq!(record.metadata.gpu_uuid, "GPU-a");
-        assert_eq!(record.metrics["gpu_power_usage"], 250.0);
-        assert_eq!(record.metrics["energy_consumption"], 2.0);
-        assert_eq!(record.metrics["gpu_memory_used"], 1.073_741_824);
-        assert_eq!(record.metrics["sm_utilization"], 75.0);
-        assert_eq!(record.metrics["power_violation"], 2.0);
+        assert_eq!(
+            record.metadata.platform,
+            crate::gpu_telemetry::model::NVIDIA_GPU_TELEMETRY_PLATFORM
+        );
+        assert_eq!(record.metrics["nvidia_power_usage"], 250.0);
+        assert_eq!(record.metrics["nvidia_energy_consumption"], 2.0);
+        assert_eq!(record.metrics["nvidia_memory_used"], 1.073_741_824);
+        assert_eq!(record.metrics["nvidia_sm_utilization"], 75.0);
+        assert_eq!(record.metrics["nvidia_power_violation"], 2.0);
+        assert!(
+            !record.metrics.contains_key("gpu_power_usage"),
+            "legacy unprefixed names must never be emitted"
+        );
     }
 
     #[test]

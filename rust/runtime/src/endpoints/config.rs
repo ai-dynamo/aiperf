@@ -24,6 +24,31 @@ pub enum RequestContentType {
     MultipartFormData,
 }
 
+/// Endpoint-local reset-KV-cache hook policy.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ResetKvCacheConfig {
+    /// Optional request timeout, in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<f64>,
+    /// Optional origin-relative request path override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+/// Endpoint-local server-profiler hook policy.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ServerProfilerConfig {
+    /// Optional request timeout, in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<f64>,
+    /// Optional origin-relative request path override for profiler start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_path: Option<String>,
+    /// Optional origin-relative request path override for profiler stop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_path: Option<String>,
+}
+
 /// Authored endpoint policy with identity selected separately by [`crate::endpoints::EndpointId`].
 ///
 /// [`EndpointConfig`] adds the protocol-v1 closed-enum identity.
@@ -33,6 +58,12 @@ pub struct RawEndpointConfig {
     pub urls: Vec<String>,
     /// Optional path override.
     pub path: Option<String>,
+    /// Optional reset-KV-cache hook policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_kv_cache: Option<ResetKvCacheConfig>,
+    /// Optional server-profiler hook policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_profiler: Option<ServerProfilerConfig>,
     /// Whether streaming is requested.
     pub streaming: bool,
     /// Request content type override or derived value.
@@ -77,6 +108,8 @@ impl Default for RawEndpointConfig {
         Self {
             urls: Vec::new(),
             path: None,
+            reset_kv_cache: None,
+            server_profiler: None,
             streaming: false,
             request_content_type: None,
             template: None,
@@ -104,6 +137,8 @@ impl fmt::Debug for RawEndpointConfig {
             .debug_struct("RawEndpointConfig")
             .field("urls", &self.urls)
             .field("path", &self.path)
+            .field("reset_kv_cache", &self.reset_kv_cache)
+            .field("server_profiler", &self.server_profiler)
             .field("streaming", &self.streaming)
             .field("request_content_type", &self.request_content_type)
             .field("template", &self.template)
@@ -138,6 +173,12 @@ pub struct EndpointConfig {
     pub urls: Vec<String>,
     /// Optional path override.
     pub path: Option<String>,
+    /// Optional reset-KV-cache hook policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_kv_cache: Option<ResetKvCacheConfig>,
+    /// Optional server-profiler hook policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_profiler: Option<ServerProfilerConfig>,
     /// Whether streaming is enabled after validation.
     pub streaming: bool,
     /// Request content type override or derived value.
@@ -184,6 +225,8 @@ impl fmt::Debug for EndpointConfig {
             .field("endpoint_type", &self.endpoint_type)
             .field("urls", &self.urls)
             .field("path", &self.path)
+            .field("reset_kv_cache", &self.reset_kv_cache)
+            .field("server_profiler", &self.server_profiler)
             .field("streaming", &self.streaming)
             .field("request_content_type", &self.request_content_type)
             .field("template", &self.template)
@@ -219,6 +262,8 @@ impl From<&EndpointConfig> for RawEndpointConfig {
         Self {
             urls: config.urls.clone(),
             path: config.path.clone(),
+            reset_kv_cache: config.reset_kv_cache.clone(),
+            server_profiler: config.server_profiler.clone(),
             streaming: config.streaming,
             request_content_type: config.request_content_type,
             template: config.template.clone(),
@@ -245,6 +290,8 @@ impl From<EndpointConfig> for RawEndpointConfig {
         Self {
             urls: config.urls,
             path: config.path,
+            reset_kv_cache: config.reset_kv_cache,
+            server_profiler: config.server_profiler,
             streaming: config.streaming,
             request_content_type: config.request_content_type,
             template: config.template,
@@ -273,6 +320,8 @@ impl EndpointConfig {
             endpoint_type,
             urls: raw.urls,
             path: raw.path,
+            reset_kv_cache: raw.reset_kv_cache,
+            server_profiler: raw.server_profiler,
             streaming: raw.streaming,
             request_content_type: raw.request_content_type,
             template: raw.template,
@@ -342,6 +391,27 @@ impl RawEndpointConfig {
             return Err(EndpointError::InvalidConfig(
                 "endpoint.path must start with a leading slash".to_string(),
             ));
+        }
+        if let Some(config) = &self.reset_kv_cache {
+            validate_control_hook_timeout(
+                config.timeout_seconds,
+                "endpoint.reset_kv_cache.timeout_seconds",
+            )?;
+            if let Some(path) = &config.path {
+                validate_origin_relative_path(path, "endpoint.reset_kv_cache.path")?;
+            }
+        }
+        if let Some(config) = &self.server_profiler {
+            validate_control_hook_timeout(
+                config.timeout_seconds,
+                "endpoint.server_profiler.timeout_seconds",
+            )?;
+            if let Some(path) = &config.start_path {
+                validate_origin_relative_path(path, "endpoint.server_profiler.start_path")?;
+            }
+            if let Some(path) = &config.stop_path {
+                validate_origin_relative_path(path, "endpoint.server_profiler.stop_path")?;
+            }
         }
         let legacy_template = self
             .extra
@@ -487,4 +557,55 @@ fn validate_url(raw: &str) -> EndpointResult<()> {
         )));
     }
     Ok(())
+}
+
+fn validate_control_hook_timeout(value: Option<f64>, field: &str) -> EndpointResult<()> {
+    if let Some(value) = value
+        && (!value.is_finite() || value < 0.0)
+    {
+        return Err(EndpointError::InvalidConfig(format!(
+            "{field} must be finite and non-negative"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_origin_relative_path(raw: &str, field: &str) -> EndpointResult<()> {
+    if raw != raw.trim() {
+        return Err(EndpointError::InvalidConfig(format!(
+            "{field} must not have leading or trailing whitespace"
+        )));
+    }
+    if raw.chars().any(char::is_whitespace) {
+        return Err(EndpointError::InvalidConfig(format!(
+            "{field} must not contain whitespace"
+        )));
+    }
+    if !raw.starts_with('/') || raw.starts_with("//") || raw.contains("://") {
+        return Err(EndpointError::InvalidConfig(format!(
+            "{field} must be an origin-relative path beginning with '/'"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn endpoint_control_hook_paths_must_be_relative() {
+        let error = RawEndpointConfig {
+            urls: vec!["http://127.0.0.1:8000".to_string()],
+            reset_kv_cache: Some(ResetKvCacheConfig {
+                path: Some("http://bad.example/reset_prefix_cache".to_string()),
+                ..ResetKvCacheConfig::default()
+            }),
+            ..RawEndpointConfig::default()
+        }
+        .validate_against(true, false, "chat", false)
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("relative"), "{error}");
+    }
 }

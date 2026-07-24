@@ -21,9 +21,9 @@ Guard: keep the native-Rust architecture map in lockstep with specs and crates.
 Enforces the "Keeping these docs current" mandate in the four agent instruction
 files. A change FAILS if it:
 
-  * changes any ``specs/*.md`` (other than ``specs/README.md``) without also
-    updating its canonical entry in ``specs/README.md``; and, for a spec ADD /
-    REMOVE / RENAME, without also updating the canonical index in ``llms.txt``.
+  * changes any ``docs/specs/*.md`` (other than ``docs/specs/README.md``) without
+    also updating its canonical entry in ``docs/specs/README.md``; and, for a spec
+    ADD / REMOVE / RENAME, without also updating the canonical index in ``llms.txt``.
   * ADDS / REMOVES / RENAMES a crate (a ``rust/<name>/Cargo.toml``) without
     updating all four agent instruction files (the crate-topology table) AND
     ``llms.txt`` (the crate table).
@@ -52,10 +52,10 @@ AGENT_FILES = {
     ".github/copilot-instructions.md",
     ".cursor/rules/python.mdc",
 }
-SPECS_INDEX = "specs/README.md"
+SPECS_INDEX = "docs/specs/README.md"
 LLMS = "llms.txt"
 
-_SPEC_MD = re.compile(r"^specs/.+\.md$")
+_SPEC_MD = re.compile(r"^docs/specs/.+\.md$")
 _CRATE_MANIFEST = re.compile(r"^rust/[^/]+/Cargo\.toml$")
 
 
@@ -101,7 +101,7 @@ def main() -> int:
     if os.environ.get("DOCS_GUARD_SKIP"):
         sys.stderr.write(
             "check-docs-current: SKIPPED via DOCS_GUARD_SKIP — the architecture "
-            "map may now be stale; update specs/README.md + llms.txt manually.\n"
+            "map may now be stale; update docs/specs/README.md + llms.txt manually.\n"
         )
         return 0
 

@@ -24,10 +24,14 @@ pub use custom_metrics::{
     CustomDcgmField, CustomMetricsError, LoadedCustomMetrics, load_custom_dcgm_metrics,
 };
 pub use fields::{
-    AMD_METRICS, DCGM_METRICS, GpuMetricKind, GpuMetricSpec, RuntimeGpuMetricSpec, amd_metric_spec,
-    dcgm_metric_spec, metric_spec,
+    AMD_METRICS, DCGM_METRICS, GpuMetricKind, GpuMetricSpec, LEGACY_NVIDIA_METRIC_ALIASES,
+    RuntimeGpuMetricSpec, amd_metric_spec, dcgm_metric_spec, metric_spec,
+    normalize_legacy_nvidia_metric_names,
 };
-pub use model::{GpuBoundarySnapshot, GpuMetadata, GpuScrape, GpuSeriesKey, GpuTelemetryRecord};
+pub use model::{
+    AMD_GPU_TELEMETRY_PLATFORM, GpuBoundarySnapshot, GpuMetadata, GpuScrape, GpuSeriesKey,
+    GpuTelemetryRecord, NVIDIA_GPU_TELEMETRY_PLATFORM, UNKNOWN_GPU_TELEMETRY_PLATFORM,
+};
 pub use parser::{DcgmPrometheusDecoder, GpuTelemetryDecoder};
 pub use python_source::{
     PYTHON_GPU_TELEMETRY_PROTOCOL_VERSION, PythonGpuTelemetryConfig, PythonGpuTelemetrySource,

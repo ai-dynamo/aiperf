@@ -8,9 +8,9 @@ from pathlib import Path
 
 import orjson
 import pytest
-from tests.aiperf_mock_server.config import MockServerConfig
 
 from aiperf.timing.strategies.adaptive_scale import AdaptiveScaleStrategy
+from tests.aiperf_mock_server.config import MockServerConfig
 from tests.component_integration.timing.conftest import defaults
 from tests.harness.fake_transport import FakeTransport
 from tests.harness.utils import AIPerfCLI
@@ -25,20 +25,54 @@ def _load_jsonl(path: Path) -> list[dict]:
 
 
 @pytest.mark.component_integration
-def test_adaptive_scale_profile_writes_controller_artifacts(cli: AIPerfCLI) -> None:
-    """Exercise CLI -> config -> TimingConfig -> AdaptiveScaleStrategy wiring."""
+def test_adaptive_scale_profile_writes_controller_artifacts(
+    cli: AIPerfCLI, tmp_path: Path
+) -> None:
+    """Exercise YAML config -> TimingConfig -> AdaptiveScaleStrategy wiring."""
+    config_path = tmp_path / "adaptive_scale_smoke.yaml"
+    config_path.write_text(
+        f"""
+schemaVersion: "2.0"
+
+benchmark:
+  model: {defaults.model}
+  endpoint:
+    url: http://localhost:8000
+    type: chat
+    streaming: true
+  dataset:
+    type: synthetic
+    entries: 1000
+    prompts:
+      isl: 550
+      osl: 8
+  phases:
+    - name: profiling
+      kind: profiling
+      type: concurrency
+      concurrency: 4
+      duration: 2.5
+      adaptive_scale:
+        enabled: true
+        control:
+          variable: concurrency
+          min: 1
+          max: 4
+        assessment_period: 1.0
+        min_completed_requests: 1
+        sustain_duration: 1.0
+      sla:
+        request_latency:
+          p95:
+            le: 10000
+""".lstrip(),
+        encoding="utf-8",
+    )
+
     result = cli.run_sync(
         f"""
         aiperf profile \
-            --model {defaults.model} \
-            --streaming \
-            --concurrency 4 \
-            --benchmark-duration 2.5 \
-            --adaptive-scale \
-            --adaptive-sustain-duration 1.0 \
-            --adaptive-assessment-period 1.0 \
-            --adaptive-scale-sla request_latency:p95:le:10000 \
-            --osl 8 \
+            --config "{config_path}" \
             --extra-inputs ignore_eos:true \
             --ui {defaults.ui}
         """,
@@ -49,8 +83,9 @@ def test_adaptive_scale_profile_writes_controller_artifacts(cli: AIPerfCLI) -> N
     assert result.request_count > 0
     assert result.json.was_cancelled is False
 
-    event_path = result.artifacts_dir / "adaptive_scale_events.jsonl"
-    summary_path = result.artifacts_dir / "adaptive_scale_summary.json"
+    phase_dir = result.artifacts_dir / "phases" / "profiling"
+    event_path = phase_dir / "adaptive_scale_events.jsonl"
+    summary_path = phase_dir / "adaptive_scale_summary.json"
     assert event_path.exists()
     assert summary_path.exists()
 
@@ -162,7 +197,9 @@ benchmark:
     assert result.request_count > 0
     assert result.json.was_cancelled is False
 
-    events = _load_jsonl(result.artifacts_dir / "adaptive_scale_events.jsonl")
+    events = _load_jsonl(
+        result.artifacts_dir / "phases" / "profiling" / "adaptive_scale_events.jsonl"
+    )
     boundary_events = [
         event for event in events if event["event"] == "boundary_discovered"
     ]
@@ -195,7 +232,12 @@ benchmark:
     assert boundary["sla_value"] > boundary["sla_bound"]
 
     summary = orjson.loads(
-        (result.artifacts_dir / "adaptive_scale_summary.json").read_bytes()
+        (
+            result.artifacts_dir
+            / "phases"
+            / "profiling"
+            / "adaptive_scale_summary.json"
+        ).read_bytes()
     )
     assert summary["boundary_value"] == boundary["boundary_value"]
     assert summary["first_failing_value"] == boundary["first_failing_value"]

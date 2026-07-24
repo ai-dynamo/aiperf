@@ -1,0 +1,23 @@
+flowchart TD
+    DAG["dag_jsonl"]
+    WEKA["weka_trace"]
+    DYNO["dynamo_trace"]
+    CATALOG["GraphCatalog"]
+    BUILDER["GraphBuilder"]
+    RECORDED["recorded::trie / lower_recorded_graph"]
+    PLAN["GraphTracePlan"]
+    POOL["SegmentPool"]
+    STORE["frozen SegmentStore"]
+    BUNDLE["GraphInputBundle"]
+
+    DAG -->|"compile_dag_jsonl_input"| CATALOG
+    CATALOG -->|"lower_catalog"| BUILDER
+    BUILDER -->|"lower_root"| PLAN
+    WEKA -->|"compile_weka_trace_input"| RECORDED
+    DYNO -->|"compile_dynamo_trace_input"| RECORDED
+    RECORDED -->|"graph_plan"| PLAN
+    CATALOG -->|"intern authored content"| POOL
+    RECORDED -->|"intern reconstructed content"| POOL
+    POOL -->|"freeze once"| STORE
+    PLAN -->|"plans"| BUNDLE
+    STORE -->|"shared handles"| BUNDLE

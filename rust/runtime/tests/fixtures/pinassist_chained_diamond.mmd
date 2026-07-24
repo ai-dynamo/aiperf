@@ -1,0 +1,38 @@
+flowchart TD
+    START([START]) --> root1{{"root1 · think-time<br/>no request"}}
+
+    %% ---------- Round 1 : fan out two branches ----------
+    root1 --> a1["A branch · shopping chain<br/>route → plan → brandmap → summarize ★"]
+    root1 --> b1["B branch · safety guard"]
+
+    %% ---------- root2 : AND-wait BOTH tails, then think ----------
+    a1 --> root2{{"root2 · AND-wait A1 &amp; B1<br/>then think-time · no request"}}
+    b1 --> root2
+
+    %% ---------- Round 2 ----------
+    root2 --> a2["A branch · shopping chain<br/>route → plan → brandmap → summarize ★"]
+    root2 --> b2["B branch · safety guard"]
+
+    %% ---------- root3 : AND-wait again ----------
+    a2 --> root3{{"root3 · AND-wait A2 &amp; B2<br/>then think-time · no request"}}
+    b2 --> root3
+    root3 --> END([END])
+
+    %% ---------- latency lens ----------
+    subgraph L["latency lens"]
+        direction LR
+        Luser["user-facing latency<br/>→ each ★ summarize (per round)"]
+        Lgate["next-round gate<br/>→ max(A_k, B_k) — safety CAN delay it"]
+    end
+
+    classDef root   fill:#ffe0b2,stroke:#ef6c00,color:#4e2600,stroke-dasharray:5 3,stroke-width:2px
+    classDef term   fill:#bbdefb,stroke:#1565c0,color:#0d47a1,stroke-width:3px
+    classDef guard  fill:#ffe0b2,stroke:#ef6c00,color:#4e2600
+    classDef stad   fill:#bbdefb,stroke:#1565c0,color:#0d47a1,stroke-width:3px
+    classDef legend fill:#eceff1,stroke:#607d8b,color:#263238
+
+    class root1,root2,root3 root
+    class a1,a2 term
+    class b1,b2 guard
+    class START,END stad
+    class Luser,Lgate legend

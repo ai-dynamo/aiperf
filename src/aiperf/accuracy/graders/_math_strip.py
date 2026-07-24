@@ -17,8 +17,8 @@ One minor deviation from the upstream remains:
 
 Written-number conversion uses the same guarded ``word2number`` call as
 Qwen2.5-Math. The import remains optional so importing the inherited Python
-package without ``aiperf[accuracy]`` is safe; the canonical Rust-launched
-worker pins and verifies the dependency before loading a benchmark.
+package without ``aiperf[accuracy]`` is safe; the Rust-launched worker pins
+and verifies the dependency before loading a benchmark.
 
 Reference:
     trt-llm-benchmark-recipe/src/accuracy/aime/parser.py:212 (strip_string)

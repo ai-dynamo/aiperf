@@ -15,11 +15,17 @@ from unittest.mock import MagicMock
 import orjson
 import pytest
 
+from dev.benchmarks.dataset_format_catalog import (
+    EXCLUDED_FORMATS,
+    SUPPORTED_FORMATS,
+    FormatCase,
+    SourceEnvelope,
+)
 from dev.benchmarks.dataset_load_compare import (
     ADAPTER_TIMEOUT_S,
     NON_EMPTY_OPTIONS_REASON,
-    FormatCase,
     Sample,
+    _partition_documented_skips,
     _run_adapter,
     build_report,
     generate_fixtures,
@@ -57,7 +63,12 @@ def _sample(
 
 def test_sample_and_format_case_are_immutable(tmp_path: Path) -> None:
     sample = _sample("python")
-    case = FormatCase("single_turn", tmp_path / "input.jsonl", "fixture", {})
+    case = FormatCase(
+        format="single_turn",
+        fixture_id="fixture",
+        options={},
+        source=SourceEnvelope(kind="local_file", path=str(tmp_path / "input.jsonl")),
+    )
 
     with pytest.raises(FrozenInstanceError):
         sample.elapsed_ns = 10  # type: ignore[misc]
@@ -69,30 +80,12 @@ def test_generate_fixtures_is_byte_deterministic(tmp_path: Path) -> None:
     first = generate_fixtures(tmp_path / "first")
     second = generate_fixtures(tmp_path / "second")
 
-    assert [case.format for case in first] == [
-        "single_turn",
-        "multi_turn",
-        "raw_payload",
-        "inputs_json",
-        "random_pool",
-        "mooncake_trace",
-        "bailian_trace",
-        "burst_gpt_trace",
-        "sagemaker_data_capture",
-    ]
-    assert [case.path.read_bytes() for case in first] == [
-        case.path.read_bytes() for case in second
+    assert [case.format for case in first] == list(SUPPORTED_FORMATS)[:13]
+    assert [case.path.read_bytes() for case in first if case.path is not None] == [
+        case.path.read_bytes() for case in second if case.path is not None
     ]
     assert [case.fixture_id for case in first] == [
-        "generated-single_turn",
-        "generated-multi_turn",
-        "generated-raw_payload",
-        "generated-inputs_json",
-        "generated-random_pool",
-        "generated-mooncake_trace",
-        "generated-bailian_trace",
-        "generated-burst_gpt_trace",
-        "generated-sagemaker_data_capture",
+        f"generated-{name}" for name in SUPPORTED_FORMATS[:13]
     ]
 
 
@@ -185,14 +178,8 @@ def test_generate_fixtures_uses_approved_local_shapes(tmp_path: Path) -> None:
         },
     ]
     assert all("hash_ids" not in row for row in bailian)
-    assert burst_gpt == (
-        "Timestamp,Request tokens,Response tokens\n"
-        "0,3,16\n"
-        "1,2,16\n"
-    )
-    captured_input = orjson.loads(
-        sagemaker[0]["captureData"]["endpointInput"]["data"]
-    )
+    assert burst_gpt == ("Timestamp,Request tokens,Response tokens\n0,3,16\n1,2,16\n")
+    captured_input = orjson.loads(sagemaker[0]["captureData"]["endpointInput"]["data"])
     captured_output = orjson.loads(
         sagemaker[0]["captureData"]["endpointOutput"]["data"]
     )
@@ -234,14 +221,35 @@ def test_generate_fixtures_applies_row_and_token_controls(tmp_path: Path) -> Non
         orjson.loads(line)
         for line in cases["raw_payload"].path.read_bytes().splitlines()
     ]
-    assert all(
-        len(row["messages"][0]["content"].split()) == 6 for row in raw_payload
-    )
+    assert all(len(row["messages"][0]["content"].split()) == 6 for row in raw_payload)
     assert all(
         len(payload["messages"][0]["content"].split()) == 6
         for session in inputs_json["data"]
         for payload in session["payloads"]
     )
+
+
+def test_generate_fixtures_scales_inline_synthetic_shapes_with_token_controls(
+    tmp_path: Path,
+) -> None:
+    cases = {
+        case.format: case
+        for case in generate_fixtures(tmp_path, rows=4, tokens_per_row=50)
+    }
+
+    synthetic_inline = cases["synthetic"].source.inline
+    rankings_inline = cases["synthetic_rankings"].source.inline
+
+    assert synthetic_inline is not None
+    assert rankings_inline is not None
+    assert synthetic_inline["synthetic_config"]["entries"] == 4
+    assert synthetic_inline["synthetic_config"]["prompts"]["input_tokens"] == 50.0
+    assert rankings_inline["synthetic_config"]["entries"] == 4
+    assert rankings_inline["synthetic_config"]["rankings"] == {
+        "passages": 2.0,
+        "passage_tokens": 20.0,
+        "query_tokens": 10.0,
+    }
 
 
 def test_sagemaker_generated_timestamps_remain_valid_beyond_one_minute(
@@ -373,14 +381,9 @@ def test_parse_manifest_returns_supported_cases_and_explicit_skips(
 
     cases, skips = parse_manifest(manifest)
 
-    assert cases == [
-        FormatCase(
-            format="single_turn",
-            path=fixture,
-            fixture_id="manifest-0-single_turn",
-            options={},
-        )
-    ]
+    assert len(cases) == 1
+    assert cases[0].format == "single_turn"
+    assert cases[0].path == fixture.resolve()
     assert skips == [
         {
             "format": "multi_turn",
@@ -389,10 +392,10 @@ def test_parse_manifest_returns_supported_cases_and_explicit_skips(
         {
             "format": "sharegpt",
             "reason": (
-                "public/Hugging Face datasets are skipped because equivalent "
-                "generated local Python/Rust pipelines are not yet proven"
+                "sharegpt requires a schema-v2 source envelope; "
+                "legacy path-only manifests support local fixtures only"
             ),
-        }
+        },
     ]
 
 
@@ -421,32 +424,49 @@ def test_parse_manifest_gives_precise_generated_pipeline_skip_reasons(
         {
             "format": "sharegpt",
             "reason": (
-                "public/Hugging Face datasets are skipped because equivalent "
-                "generated local Python/Rust pipelines are not yet proven"
+                "sharegpt requires a schema-v2 source envelope; "
+                "legacy path-only manifests support local fixtures only"
             ),
         },
         {
             "format": "hf_asr",
-            "reason": (
-                "public/Hugging Face datasets are skipped because equivalent "
-                "generated local Python/Rust pipelines are not yet proven"
-            ),
+            "reason": NON_EMPTY_OPTIONS_REASON,
         },
         {
             "format": "synthetic",
             "reason": (
-                "synthetic datasets are skipped because equivalent generated "
-                "local Python/Rust pipelines are not yet proven"
+                "synthetic requires a schema-v2 source envelope; "
+                "legacy path-only manifests support local fixtures only"
             ),
         },
-        {
-            "format": "accuracy",
-            "reason": (
-                "accuracy datasets are skipped because equivalent generated "
-                "local Python/Rust pipelines are not yet proven"
-            ),
-        },
+        {"format": "accuracy", "reason": EXCLUDED_FORMATS["accuracy"]},
     ]
+
+
+def test_partition_documented_skips_removes_unrunnable_families() -> None:
+    cases = [
+        FormatCase(
+            format="single_turn",
+            fixture_id="single_turn",
+            options={},
+            source=SourceEnvelope(kind="local_file", path="/tmp/x.jsonl"),
+        ),
+        FormatCase(
+            format="hf_asr",
+            fixture_id="hf_asr",
+            options={"audio_column": "audio"},
+            source=SourceEnvelope(
+                kind="public_cached",
+                public={"pin_key": "gigaspeech"},
+            ),
+        ),
+    ]
+    skips: list[dict[str, str]] = []
+    runnable = _partition_documented_skips(cases, skips)
+    assert [case.format for case in runnable] == ["single_turn"]
+    assert len(skips) == 1
+    assert skips[0]["format"] == "hf_asr"
+    assert "gated" in skips[0]["reason"]
 
 
 def test_build_report_serializes_skips_and_speedup() -> None:
@@ -457,12 +477,13 @@ def test_build_report_serializes_skips_and_speedup() -> None:
         skips=[{"format": "sharegpt", "reason": "not equivalent"}],
         failures=[],
         options={"runs": 1},
+        cases=[],
     )
 
     encoded = orjson.dumps(report)
     decoded = orjson.loads(encoded)
 
-    assert decoded["schema_version"] == 1
+    assert decoded["schema_version"] == 2
     assert decoded["skips"] == [{"format": "sharegpt", "reason": "not equivalent"}]
     assert decoded["formats"]["single_turn"]["rust_speedup"] == 2.0
     assert len(decoded["raw_samples"]) == 2
@@ -474,7 +495,10 @@ def test_run_comparison_alternates_adapter_order_and_removes_warmups(
     tmp_path: Path,
 ) -> None:
     case = FormatCase(
-        "single_turn", tmp_path / "fixture.jsonl", "fixture", {"key": "value"}
+        format="single_turn",
+        fixture_id="fixture",
+        options={},
+        source=SourceEnvelope(kind="local_file", path=str(tmp_path / "fixture.jsonl")),
     )
     calls: list[str] = []
 
@@ -505,7 +529,10 @@ def test_run_comparison_alternates_adapter_order_and_removes_warmups(
 
 def test_run_comparison_passes_the_complete_adapter_contract(tmp_path: Path) -> None:
     case = FormatCase(
-        "single_turn", tmp_path / "fixture.jsonl", "fixture", {"key": "value"}
+        format="single_turn",
+        fixture_id="fixture",
+        options={},
+        source=SourceEnvelope(kind="local_file", path=str(tmp_path / "fixture.jsonl")),
     )
     commands: list[list[str]] = []
 
@@ -531,19 +558,25 @@ def test_run_comparison_passes_the_complete_adapter_contract(tmp_path: Path) -> 
     )
 
     command = commands[0]
-    assert command[1:] == [
+    assert command[1:5] == [
         "--format",
         "single_turn",
-        "--path",
-        str(case.path),
         "--options-json",
-        '{"key":"value"}',
+        "{}",
+    ]
+    assert command[5] == "--source-json"
+    assert '"kind":"local_file"' in command[6]
+    assert command[7:] == [
         "--fixture-id",
         "fixture",
         "--seed",
         "42",
         "--model",
         "test-model",
+        "--tokenizer",
+        "builtin",
+        "--path",
+        str(case.path),
     ]
 
 
@@ -570,6 +603,7 @@ def test_main_returns_nonzero_when_no_format_succeeds(
             "1",
             "--output",
             str(output),
+            "--skip-public-prefetch",
         ],
         adapter_commands={"python": ["python"], "rust": ["rust"]},
         runner=runner,
@@ -604,6 +638,7 @@ def test_build_report_excludes_format_on_count_mismatch_failure() -> None:
         skips=[],
         failures=failures,
         options={"runs": 1},
+        cases=[],
     )
 
     assert "single_turn" not in report["formats"]
@@ -619,6 +654,7 @@ def test_build_report_excludes_format_on_nonpositive_elapsed() -> None:
         skips=[],
         failures=[],
         options={"runs": 1},
+        cases=[],
     )
 
     assert "single_turn" not in report["formats"]
@@ -628,7 +664,35 @@ def test_build_report_excludes_format_on_nonpositive_elapsed() -> None:
 
 
 def _adapter_case(tmp_path: Path) -> FormatCase:
-    return FormatCase("single_turn", tmp_path / "fixture.jsonl", "fixture", {})
+    return FormatCase(
+        format="single_turn",
+        fixture_id="fixture",
+        options={},
+        source=SourceEnvelope(kind="local_file", path=str(tmp_path / "fixture.jsonl")),
+    )
+
+
+def _synthetic_adapter_case() -> FormatCase:
+    return FormatCase(
+        format="synthetic",
+        fixture_id="fixture",
+        options={},
+        source=SourceEnvelope(
+            kind="inline_synthetic",
+            inline={
+                "marker": "__aiperf_synthetic",
+                "synthetic_config": {
+                    "entries": 3,
+                    "turns": 1.0,
+                    "prompts": {
+                        "input_tokens": 12.0,
+                        "output_tokens": 8.0,
+                        "batch_size": 1,
+                    },
+                },
+            },
+        ),
+    )
 
 
 def test_run_adapter_rejects_bad_json(tmp_path: Path) -> None:
@@ -642,6 +706,7 @@ def test_run_adapter_rejects_bad_json(tmp_path: Path) -> None:
         seed=42,
         model="test-model",
         runner=runner,
+        offline=False,
     )
 
     assert sample.error is not None
@@ -664,6 +729,7 @@ def test_run_adapter_rejects_wrong_line_count(tmp_path: Path) -> None:
         seed=42,
         model="test-model",
         runner=runner,
+        offline=False,
     )
 
     assert sample.error is not None
@@ -687,6 +753,7 @@ def test_run_adapter_rejects_identity_mismatch(tmp_path: Path) -> None:
         seed=42,
         model="test-model",
         runner=runner,
+        offline=False,
     )
 
     assert sample.error is not None
@@ -710,6 +777,7 @@ def test_run_adapter_rejects_nonzero_without_error_field(tmp_path: Path) -> None
         seed=42,
         model="test-model",
         runner=runner,
+        offline=False,
     )
 
     assert sample.error == "boom"
@@ -727,10 +795,128 @@ def test_run_adapter_handles_timeout_expired(tmp_path: Path) -> None:
         seed=42,
         model="test-model",
         runner=runner,
+        offline=False,
     )
 
     assert sample.error is not None
     assert "timed out" in sample.error.lower()
+
+
+def test_run_adapter_forwards_tokenizer_and_counting_flags(tmp_path: Path) -> None:
+    seen_command: list[str] = []
+
+    def runner(command: list[str], **kwargs: object) -> SimpleNamespace:
+        seen_command[:] = command
+        return SimpleNamespace(
+            returncode=0,
+            stdout=orjson.dumps(
+                _sample("python", fixture_id="fixture").to_dict()
+            ).decode(),
+            stderr="",
+        )
+
+    sample = _run_adapter(
+        "python",
+        ["python"],
+        _adapter_case(tmp_path),
+        seed=42,
+        model="test-model",
+        tokenizer="HuggingFaceTB/SmolLM2-135M-Instruct",
+        apply_chat_template=True,
+        exact_isl=True,
+        runner=runner,
+        offline=False,
+    )
+
+    assert sample.error is None
+    assert "--tokenizer" in seen_command
+    assert "HuggingFaceTB/SmolLM2-135M-Instruct" in seen_command
+    assert "--apply-chat-template" in seen_command
+    assert "--exact-isl" in seen_command
+
+
+@pytest.mark.parametrize("implementation", ["python", "rust"])
+def test_run_adapter_defaults_synthetic_rng_backend_to_python(
+    monkeypatch: pytest.MonkeyPatch, implementation: str
+) -> None:
+    monkeypatch.delenv("AIPERF_RNG_BACKEND", raising=False)
+    seen_env: dict[str, str] = {}
+
+    def runner(command: list[str], **kwargs: object) -> SimpleNamespace:
+        env = kwargs.get("env")
+        assert isinstance(env, dict)
+        seen_env.update({str(key): str(value) for key, value in env.items()})
+        sample = Sample(
+            implementation=implementation,
+            format="synthetic",
+            fixture_id="fixture",
+            row_count=3,
+            conversation_count=3,
+            turn_count=3,
+            total_input_tokens=36,
+            elapsed_ns=100,
+            error=None,
+        )
+        return SimpleNamespace(
+            returncode=0,
+            stdout=orjson.dumps(sample.to_dict()).decode(),
+            stderr="",
+        )
+
+    sample = _run_adapter(
+        implementation,
+        ["python"],
+        _synthetic_adapter_case(),
+        seed=42,
+        model="test-model",
+        runner=runner,
+        offline=False,
+    )
+
+    assert sample.error is None
+    assert seen_env["AIPERF_RNG_BACKEND"] == "python"
+
+
+@pytest.mark.parametrize("implementation", ["python", "rust"])
+def test_run_adapter_preserves_explicit_rng_backend_for_synthetic(
+    monkeypatch: pytest.MonkeyPatch, implementation: str
+) -> None:
+    monkeypatch.setenv("AIPERF_RNG_BACKEND", "python")
+    seen_env: dict[str, str] = {}
+
+    def runner(command: list[str], **kwargs: object) -> SimpleNamespace:
+        env = kwargs.get("env")
+        assert isinstance(env, dict)
+        seen_env.update({str(key): str(value) for key, value in env.items()})
+        sample = Sample(
+            implementation=implementation,
+            format="synthetic",
+            fixture_id="fixture",
+            row_count=3,
+            conversation_count=3,
+            turn_count=3,
+            total_input_tokens=36,
+            elapsed_ns=100,
+            error=None,
+        )
+        return SimpleNamespace(
+            returncode=0,
+            stdout=orjson.dumps(sample.to_dict()).decode(),
+            stderr="",
+        )
+
+    sample = _run_adapter(
+        implementation,
+        ["python"],
+        _synthetic_adapter_case(),
+        seed=42,
+        model="test-model",
+        runner=runner,
+        offline=False,
+    )
+
+    assert sample.error is None
+    assert seen_env["AIPERF_RNG_BACKEND"] == "python"
 
 
 def test_default_adapter_commands_always_builds_rust_example(

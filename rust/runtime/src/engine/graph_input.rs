@@ -29,8 +29,8 @@ use serde_json::{Map, Value, value::RawValue};
 
 use crate::engine::execute::distribution;
 use crate::engine::protocol::{
-    DistributionSpec, FileDatasetSpec, PublicDatasetSourceSpec, PublicDatasetSpec,
-    TraceSynthesisSpec,
+    DistributionSpec, FileDatasetSpec, PromptSelectionSpec, PublicDatasetSourceSpec,
+    PublicDatasetSpec, TraceSynthesisSpec,
 };
 
 /// Recorded-graph trajectory-start (`t*`) window bound to a prepared input.
@@ -605,6 +605,8 @@ struct RecordedFileInput {
     #[serde(default)]
     osl: Option<DistributionSpec>,
     #[serde(default)]
+    prompts: Option<PromptSelectionSpec>,
+    #[serde(default)]
     options: Map<String, Value>,
 }
 
@@ -620,6 +622,7 @@ impl From<FileDatasetSpec> for RecordedFileInput {
             entries: spec.entries,
             random_seed: spec.random_seed,
             osl: spec.osl,
+            prompts: spec.prompts,
             options: spec.options,
         }
     }
@@ -702,6 +705,7 @@ fn prepare_recorded_file(
     let mut load = LoadConfig::new(source);
     load.options = input.options;
     let synthesis = input.synthesis;
+    let prompts = input.prompts;
     let allow_dataset_wrap = synthesis
         .as_ref()
         .and_then(|value| value.allow_dataset_wrap)
@@ -735,7 +739,7 @@ fn prepare_recorded_file(
             ),
         });
     let corpus = PromptCorpus::parse(
-        synthesis
+        prompts
             .as_ref()
             .and_then(|value| value.corpus.as_deref())
             .unwrap_or("coding"),
@@ -828,7 +832,14 @@ fn prepare_recorded_public(
             max_context_length: None,
             max_osl: None,
             idle_gap_cap_seconds: Some(60.0),
-            prompt_corpus: PromptCorpus::Coding,
+            prompt_corpus: PromptCorpus::parse(
+                input
+                    .prompts
+                    .as_ref()
+                    .and_then(|value| value.corpus.as_deref())
+                    .unwrap_or("coding"),
+            )
+            .map_err(|error| anyhow!(error.to_string()))?,
             content_root_seed: context.run_random_seed.unwrap_or_else(|| {
                 RngRoot::new(None).derive_seed_or_entropy("dataset.recorded_graph.content")
             }),
@@ -1172,7 +1183,9 @@ mod tests {
                 "output_len_multiplier": 1.0,
                 "max_osl": 3,
                 "allow_dataset_wrap": true,
-                "idle_gap_cap_seconds": 60.0,
+                "idle_gap_cap_seconds": 60.0
+            },
+            "prompts": {
                 "corpus": "sonnet"
             }
         }));
@@ -1196,6 +1209,92 @@ mod tests {
         );
         assert_eq!(prepared.random_seed, Some(91));
         assert!(prepared.allow_dataset_wrap);
+    }
+
+    #[tokio::test]
+    async fn weka_adapter_accepts_random_prompt_corpus() {
+        let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
+        let input = raw(json!({
+            "type": "file",
+            "format": "weka_trace",
+            "sampling": "sequential",
+            "records": {
+                "id": "root",
+                "models": ["m"],
+                "block_size": 16,
+                "hash_id_scope": "global",
+                "requests": [{
+                    "t": 0,
+                    "type": "n",
+                    "model": "m",
+                    "in": 16,
+                    "out": 7,
+                    "hash_ids": [1]
+                }]
+            },
+            "synthesis": {
+                "speedup_ratio": 1.0,
+                "prefix_len_multiplier": 1.0,
+                "prefix_root_multiplier": 1,
+                "prompt_len_multiplier": 1.0,
+                "output_len_multiplier": 1.0,
+                "max_osl": 3,
+                "allow_dataset_wrap": true,
+                "idle_gap_cap_seconds": 60.0
+            },
+            "prompts": {
+                "corpus": "random"
+            }
+        }));
+
+        let prepared = resolver
+            .load(
+                &input,
+                &GraphInputContext {
+                    tokenizer: &TiktokenTokenizer::builtin(),
+                    run_random_seed: Some(42),
+                },
+            )
+            .await
+            .expect("direct WEKA compiler with random prompt corpus");
+        assert_eq!(prepared.bundle.metadata.format, "weka_trace");
+        assert_eq!(prepared.bundle.metadata.root_count, 1);
+        assert_eq!(prepared.bundle.metadata.node_count, 1);
+        assert_eq!(
+            prepared.bundle.plans[0].graph.nodes["root:0"].max_tokens,
+            Some(3)
+        );
+        assert_eq!(
+            prepared.bundle.plans[0].graph.nodes["root:0"].items.len(),
+            1
+        );
+    }
+
+    #[test]
+    fn recorded_public_prompt_corpus_is_resolved_from_prompts() {
+        let prepared = prepare_recorded_public(
+            PublicDatasetSpec {
+                name: "weka-public".into(),
+                format: "weka_trace".into(),
+                source: PublicDatasetSourceSpec::Url {
+                    url: "https://example.invalid/weka.json".into(),
+                },
+                sampling: "sequential".into(),
+                entries: Some(1),
+                random_seed: None,
+                options: Map::new(),
+                prompts: Some(PromptSelectionSpec {
+                    corpus: Some("random".into()),
+                }),
+            },
+            "weka_trace",
+            &GraphInputContext {
+                tokenizer: &TiktokenTokenizer::builtin(),
+                run_random_seed: Some(42),
+            },
+        )
+        .expect("public recorded input with prompt corpus");
+        assert_eq!(prepared.input.prompt_corpus, PromptCorpus::Random);
     }
 
     #[tokio::test]
@@ -1320,7 +1419,9 @@ mod tests {
                 "prefix_len_multiplier": 1.0,
                 "prefix_root_multiplier": 1,
                 "prompt_len_multiplier": 1.0,
-                "output_len_multiplier": 1.0,
+                "output_len_multiplier": 1.0
+            },
+            "prompts": {
                 "corpus": "sonnet"
             }
         }));

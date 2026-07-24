@@ -43,7 +43,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow, ensure};
 
-use crate::clock::{Clock, RealClock};
+use crate::clock::Clock;
 use crate::engine::protocol::PhaseSpec;
 use crate::engine::turn_execution::{ExecutionBackendConfig, PreparedEndpointTableFactory};
 use crate::phase_runtime::ScheduledPhaseSidecar;
@@ -71,10 +71,17 @@ pub(crate) async fn run_global_hop(
         "global-hop execution requires at least one worker"
     );
 
-    // The coordinator's reactor-local clock on the shared real-clock timeline,
-    // exactly as each sharded worker builds — never `coordinator_clock`, which is
-    // the caller's object used only for the sidecar phase-window stamps below.
-    let clock: Rc<dyn Clock> = RealClock::from_anchor(shared.real_clock_anchor);
+    // The single coordinator scheduling loop runs on the caller's reactor, so it
+    // uses the injected `coordinator_clock` directly — the reactor-local clock
+    // the caller already built and drives. Honoring the injected clock (rather
+    // than reconstructing a `RealClock` from the anchor) keeps the coordinator on
+    // whichever timeline the run selected: a `SimClock` for a virtual-clock
+    // `workers == 1` global-hop run drives the same object the pump advances,
+    // instead of a live `RealClock` that would silently ignore virtual time. The
+    // per-turn hop backend still hands each worker thread its own reactor-local
+    // `RealClock` from `shared.real_clock_anchor` (a `!Send` clock cannot cross
+    // the thread boundary); only this coordinator loop follows the injected clock.
+    let clock = coordinator_clock.clone();
 
     // Full cell partition (thread_id 0 of 1 worker): the single coordinator
     // pipeline owns the whole cell's ordinal share, tiling this cell's slice of

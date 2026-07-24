@@ -7,6 +7,13 @@
 
 use std::collections::BTreeMap;
 
+/// Canonical platform identifier for NVIDIA GPU telemetry.
+pub const NVIDIA_GPU_TELEMETRY_PLATFORM: &str = "nvidia";
+/// Canonical platform identifier for AMD GPU telemetry.
+pub const AMD_GPU_TELEMETRY_PLATFORM: &str = "amd";
+/// Platform identifier used when a source does not report its vendor.
+pub const UNKNOWN_GPU_TELEMETRY_PLATFORM: &str = "unknown";
+
 /// Static identity and placement metadata for one GPU.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GpuMetadata {
@@ -26,6 +33,8 @@ pub struct GpuMetadata {
     pub namespace: Option<String>,
     /// Optional Kubernetes pod name.
     pub pod_name: Option<String>,
+    /// Canonical telemetry platform (`nvidia`, `amd`, or `unknown`).
+    pub platform: String,
 }
 
 /// Stable key for one GPU series at one source endpoint.
@@ -114,5 +123,34 @@ impl GpuBoundarySnapshot {
             .and_then(|values| values.get(name))
             .copied()
             .filter(|value| value.is_finite())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gpu_telemetry::fields::normalize_legacy_nvidia_metric_names;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn platform_constants_match_python() {
+        assert_eq!(NVIDIA_GPU_TELEMETRY_PLATFORM, "nvidia");
+        assert_eq!(AMD_GPU_TELEMETRY_PLATFORM, "amd");
+        assert_eq!(UNKNOWN_GPU_TELEMETRY_PLATFORM, "unknown");
+    }
+
+    #[test]
+    fn legacy_nvidia_aliases_normalize_at_ingest_only() {
+        let input = BTreeMap::from([
+            ("gpu_power_usage".to_string(), 75.5),
+            ("energy_consumption".to_string(), 1.25),
+            ("nvidia_sm_utilization".to_string(), 91.0),
+        ]);
+        let normalized = normalize_legacy_nvidia_metric_names(input);
+        assert_eq!(normalized["nvidia_power_usage"], 75.5);
+        assert_eq!(normalized["nvidia_energy_consumption"], 1.25);
+        assert_eq!(normalized["nvidia_sm_utilization"], 91.0);
+        assert!(!normalized.contains_key("gpu_power_usage"));
+        assert!(!normalized.contains_key("energy_consumption"));
     }
 }

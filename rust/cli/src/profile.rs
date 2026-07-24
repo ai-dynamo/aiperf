@@ -18,6 +18,20 @@ fn clear_prior_report(artifact_dir: &Path) {
     let _ = std::fs::remove_file(artifact_dir.join("native-v2.json"));
 }
 
+/// Validate control-hook transport compatibility, run any local pre-launch control
+/// hooks, and then drive one execution child to completion.
+fn run_benchmark_child(
+    run: &crate::model::BenchmarkRun,
+    runner: &Path,
+    child_pid: &crate::signals::ChildPid,
+) -> anyhow::Result<crate::execute::Terminal> {
+    crate::control_hooks::run_reset_kv_cache_before_run(run)?;
+    clear_prior_report(&run.artifact_dir);
+    let payload = serde_json::to_vec(run)
+        .map_err(|e| anyhow::anyhow!("failed to serialize the runner request: {e}"))?;
+    execute::run_once(runner, &payload, child_pid)
+}
+
 /// Run `aiperf profile <args>` natively. Returns the process exit code.
 pub fn run(args: &[String]) -> anyhow::Result<i32> {
     let flags = match ProfileFlags::parse_from_args(args) {
@@ -158,13 +172,10 @@ fn run_single(run: crate::model::BenchmarkRun) -> anyhow::Result<i32> {
     let artifact_dir = run.artifact_dir.clone();
     // Bind logging before execution so startup events reach the run artifact.
     crate::logging::set_log_file(&artifact_dir);
-    clear_prior_report(&artifact_dir);
     tracing::info!("Starting native AIPerf run");
-    let payload = serde_json::to_vec(&run)
-        .map_err(|e| anyhow::anyhow!("failed to serialize the runner request: {e}"))?;
     let runner = exec_bin::resolve()?;
     let child_pid = crate::signals::install();
-    let terminal = execute::run_once(&runner, &payload, &child_pid)?;
+    let terminal = run_benchmark_child(&run, &runner, &child_pid)?;
     if terminal.success {
         tracing::info!("Native AIPerf run completed");
         if let Some(path) = &terminal.report_path {
@@ -285,9 +296,7 @@ fn run_search_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
             "aiperf: [iter {iter}] concurrency={value} -> {}",
             dir.display()
         );
-        clear_prior_report(&dir);
-        let payload = serde_json::to_vec(&run)?;
-        let terminal = execute::run_once(&runner, &payload, &child_pid)?;
+        let terminal = run_benchmark_child(&run, &runner, &child_pid)?;
 
         // Read the report once: per-iteration feasibility (every SLA filter
         // satisfied) and the objective value recorded for search_history.json.
@@ -476,9 +485,7 @@ fn run_isotonic_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
             "aiperf: [iter {iter}] concurrency={value} -> {}",
             dir.display()
         );
-        clear_prior_report(&dir);
-        let payload = serde_json::to_vec(&run)?;
-        let terminal = execute::run_once(&runner, &payload, &child_pid)?;
+        let terminal = run_benchmark_child(&run, &runner, &child_pid)?;
 
         // Per-iteration feasibility + per-filter signed margins from the report.
         let mut feasible = false;
@@ -645,9 +652,7 @@ fn run_bayes_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
             "aiperf: [iter {iter}] concurrency={value} -> {}",
             dir.display()
         );
-        clear_prior_report(&dir);
-        let payload = serde_json::to_vec(&run)?;
-        let terminal = execute::run_once(&runner, &payload, &child_pid)?;
+        let terminal = run_benchmark_child(&run, &runner, &child_pid)?;
 
         let mut objective: Option<f64> = None;
         let mut sla_observed: Vec<Option<f64>> = vec![None; filters.len()];
@@ -826,9 +831,7 @@ fn run_goodput_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
             "aiperf: [iter {iter}] concurrency={value} -> {}",
             dir.display()
         );
-        clear_prior_report(&dir);
-        let payload = serde_json::to_vec(&run)?;
-        let terminal = execute::run_once(&runner, &payload, &child_pid)?;
+        let terminal = run_benchmark_child(&run, &runner, &child_pid)?;
 
         let mut objective: Option<f64> = None;
         let mut sla_observed: Vec<Option<f64>> = vec![None; filters.len()];
@@ -1111,9 +1114,7 @@ fn run_cells(
             total,
             cell.label,
         );
-        clear_prior_report(&cell.run.artifact_dir);
-        let payload = serde_json::to_vec(&cell.run)?;
-        let terminal = execute::run_once(&runner, &payload, &child_pid)?;
+        let terminal = run_benchmark_child(&cell.run, &runner, &child_pid)?;
         outcomes.push(sweep::aggregate::CellOutcome {
             label: cell.label.clone(),
             values: cell.run.variation.clone(),

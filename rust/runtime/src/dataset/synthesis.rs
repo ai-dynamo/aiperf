@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::rng::namespace::DATASET_SYNTHESIS_SYNTHESIZER;
-use crate::rng::{RngRoot, RustRandomGenerator};
+use crate::rng::{ConfiguredRandomGenerator, RandomGenerator, RngRoot};
 
 use crate::dataset::error::{DatasetError, Result};
 
@@ -112,7 +112,7 @@ pub trait TraceSynthesizer {
 /// Prefix-pattern synthesizer.
 pub struct PrefixTraceSynthesizer {
     config: TraceSynthesisConfig,
-    rng: RustRandomGenerator,
+    rng: ConfiguredRandomGenerator,
 }
 
 impl PrefixTraceSynthesizer {
@@ -121,7 +121,7 @@ impl PrefixTraceSynthesizer {
         config.validate()?;
         Ok(Self {
             config,
-            rng: RustRandomGenerator::from_seed(root.derive_seed(DATASET_SYNTHESIS_SYNTHESIZER)),
+            rng: root.derive_generator(DATASET_SYNTHESIS_SYNTHESIZER),
         })
     }
 

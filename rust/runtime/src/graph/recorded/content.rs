@@ -1,24 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Byte-exact corpus sampling for recorded trace reconstruction.
+//! Recorded-trace content synthesis for corpus-backed and random prompt corpora.
 //!
-//! Each KV block uses a per-block CPython MT19937 seeded from
-//! `sha256(f"{corpus_child_seed}:{trace_id}:{hash_id}")[:8]` draws a start offset
-//! via `randrange(corpus_len)`, and the block is `[sep] + corpus[start..]`
+//! `coding`/`sonnet` replay the existing byte-exact corpus-window scheme: each
+//! KV block uses a per-block CPython MT19937 seeded from
+//! `sha256(f"{corpus_child_seed}:{trace_id}:{hash_id}")[:8]`, draws a start
+//! offset via `randrange(corpus_len)`, and takes `[sep] + corpus[start..]`
 //! (wrapping), where `sep` is the tokenizer's block-separation token (BOS/EOS)
-//! and consumes one slot. `corpus_child_seed` is
-//! `rng.derive("dataset.coding_content.corpus")` — `sha256(f"{root}:{id}")[:8]`.
+//! and consumes one slot. `random` instead samples deterministic non-EOS token
+//! IDs directly from the tokenizer vocabulary under the same hash-scoped seed.
 //!
-//! Truncating a full `block_size` window to a message's partial-tail length is
-//! prefix-stable (the same seed yields the same start, so a shorter window is a
-//! prefix of the longer one).
+//! Truncating a full `block_size` realization to a message's partial-tail length
+//! remains prefix-stable: for one `(scope, hash)` pair, a shorter request is
+//! always a prefix of the longer one.
 
 use rustc_hash::FxHashMap;
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 use crate::dataset::TextTokenizer;
-use crate::rng::{PythonMt19937, PythonRandomGenerator, derive_seed_u64, namespace};
+use crate::rng::{
+    PythonMt19937, PythonRandomGenerator, RustRandomGenerator, derive_seed_u64, namespace,
+};
 
 use super::BlockHash;
 
@@ -51,6 +55,7 @@ pub(crate) struct CorpusShared<'a> {
     tokenizer: &'a dyn TextTokenizer,
     corpus: Vec<u32>,
     hash_seed: u64,
+    random: Option<RandomContentConfig>,
     /// Block-separation token prepended to every block
     /// (`tokenizer.block_separation_token_id`, i.e. BOS or EOS), consuming one
     /// slot of the window. `None` when the tokenizer exposes neither.
@@ -66,6 +71,14 @@ pub(crate) struct CorpusShared<'a> {
     python_parity: bool,
 }
 
+#[derive(Clone)]
+struct RandomContentConfig {
+    allowed_token_ids: Option<Arc<[u32]>>,
+    vocab_size: Option<u32>,
+    eos_token_id: Option<u32>,
+    replacement_token: u32,
+}
+
 impl<'a> CorpusShared<'a> {
     /// Tokenize the corpus and derive the hash seed exactly once.
     pub(crate) fn new(
@@ -73,18 +86,66 @@ impl<'a> CorpusShared<'a> {
         corpus: PromptCorpus,
         root_seed: u64,
     ) -> Result<Self, RecordedTraceError> {
-        let (tokens, hash_namespace) = match corpus {
+        let (tokens, hash_namespace, random) = match corpus {
             PromptCorpus::Sonnet => (
                 crate::dataset::corpus::tokenize_sonnet_corpus(tokenizer)
                     .map_err(|error| RecordedTraceError(error.to_string()))?,
                 namespace::DATASET_PROMPT_CORPUS,
+                None,
             ),
             PromptCorpus::Coding => (
-                super::coding::build_coding_corpus(tokenizer, root_seed)?,
+                crate::dataset::coding::build_coding_corpus(tokenizer, root_seed)
+                    .map_err(|error| RecordedTraceError(error.to_string()))?,
                 namespace::DATASET_CODING_CONTENT_CORPUS,
+                None,
             ),
+            PromptCorpus::Random => {
+                let allowed_token_ids = tokenizer.allowed_random_token_ids();
+                if allowed_token_ids
+                    .as_ref()
+                    .is_some_and(|tokens| tokens.is_empty())
+                {
+                    return Err(RecordedTraceError(format!(
+                        "tokenizer {:?} exposes no allowed token ids for recorded random prompts",
+                        tokenizer.name()
+                    )));
+                }
+                let vocab_size = tokenizer.vocab_size().filter(|size| *size > 0);
+                if allowed_token_ids.is_none() && vocab_size.is_none() {
+                    return Err(RecordedTraceError(format!(
+                        "tokenizer {:?} does not expose a usable vocabulary for recorded random prompts",
+                        tokenizer.name()
+                    )));
+                }
+                let eos_token_id = tokenizer
+                    .eos_token_id()
+                    .filter(|eos| vocab_size.is_none_or(|size| *eos < size));
+                let replacement_token = allowed_token_ids
+                    .as_deref()
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .chain(vocab_size.iter().copied().flat_map(|size| 0..size))
+                    .find(|token| Some(*token) != eos_token_id)
+                    .ok_or_else(|| {
+                        RecordedTraceError(format!(
+                            "tokenizer {:?} has no valid non-EOS token for recorded random prompts",
+                            tokenizer.name()
+                        ))
+                    })?;
+                (
+                    Vec::new(),
+                    namespace::DATASET_PROMPT_CORPUS,
+                    Some(RandomContentConfig {
+                        allowed_token_ids,
+                        vocab_size,
+                        eos_token_id,
+                        replacement_token,
+                    }),
+                )
+            }
         };
-        if tokens.is_empty() {
+        if random.is_none() && tokens.is_empty() {
             return Err(RecordedTraceError(
                 "recorded content corpus tokenized to an empty sequence".into(),
             ));
@@ -95,6 +156,7 @@ impl<'a> CorpusShared<'a> {
             // Hash synthesis uses the SHA-256-derived corpus child seed, not
             // the BLAKE3 RngRoot algebra.
             hash_seed: PythonRandomGenerator::derive_child_seed(root_seed, hash_namespace),
+            random,
             // WEKA per-turn windows carry no block
             // separator: each block is a full `block_size`-token window (verified
             // against the real sent prompt — the reconstruction is byte-exact only
@@ -176,15 +238,26 @@ impl RecordedContentSynthesizer for CorpusContentSynthesizer<'_> {
             let key = (*hash, block_size);
             if !self.blocks[scope].contains_key(&key) {
                 let hash_str = hash.to_string();
-                let block = sample_block(
-                    &self.shared.corpus,
-                    self.shared.hash_seed,
-                    scope,
-                    &hash_str,
-                    block_size,
-                    self.shared.sep_token,
-                    self.shared.python_parity,
-                );
+                let block = if let Some(random) = self.shared.random.clone() {
+                    sample_random_block(
+                        random,
+                        self.shared.hash_seed,
+                        scope,
+                        &hash_str,
+                        block_size,
+                        self.shared.sep_token,
+                    )
+                } else {
+                    sample_block(
+                        &self.shared.corpus,
+                        self.shared.hash_seed,
+                        scope,
+                        &hash_str,
+                        block_size,
+                        self.shared.sep_token,
+                        self.shared.python_parity,
+                    )
+                };
                 self.blocks
                     .get_mut(scope)
                     .expect("scope cache present")
@@ -198,6 +271,9 @@ impl RecordedContentSynthesizer for CorpusContentSynthesizer<'_> {
     fn tail_tokens(&self, count: usize, seed: &str) -> Vec<u32> {
         if count == 0 {
             return Vec::new();
+        }
+        if let Some(random) = self.shared.random.clone() {
+            return sample_random_tail(random, self.shared.hash_seed, seed, count);
         }
         let corpus = &self.shared.corpus;
         let modulus = corpus.len().saturating_sub(count).max(1);
@@ -268,6 +344,73 @@ fn sample_block(
     block
 }
 
+fn sample_random_block(
+    config: RandomContentConfig,
+    hash_seed: u64,
+    scope: &str,
+    hash: &str,
+    block_size: usize,
+    sep: Option<u32>,
+) -> Vec<u32> {
+    let mut block = Vec::with_capacity(block_size);
+    let mut window_len = block_size;
+    if let Some(sep_token) = sep {
+        block.push(sep_token);
+        window_len = window_len.saturating_sub(1);
+    }
+    let seed = derive_seed_u64(&format!("{hash_seed}:{scope}:{hash}"));
+    let mut rng = RustRandomGenerator::from_seed(Some(seed));
+    block.extend(sample_random_tokens(config, &mut rng, window_len));
+    block
+}
+
+fn sample_random_tail(
+    config: RandomContentConfig,
+    hash_seed: u64,
+    seed: &str,
+    count: usize,
+) -> Vec<u32> {
+    let derived = derive_seed_u64(&format!("{hash_seed}:{seed}"));
+    let mut rng = RustRandomGenerator::from_seed(Some(derived));
+    sample_random_tokens(config, &mut rng, count)
+}
+
+fn sample_random_tokens(
+    config: RandomContentConfig,
+    rng: &mut RustRandomGenerator,
+    count: usize,
+) -> Vec<u32> {
+    let mut tokens = Vec::with_capacity(count);
+    for _ in 0..count {
+        let sampled = rng
+            .randrange_u64(
+                0,
+                config.allowed_token_ids.as_ref().map_or_else(
+                    || {
+                        u64::from(
+                            config
+                                .vocab_size
+                                .expect("recorded random content validates a non-empty vocabulary"),
+                        )
+                    },
+                    |tokens| tokens.len() as u64,
+                ),
+            )
+            .expect("recorded random content validates a non-empty vocabulary");
+        let sampled = config
+            .allowed_token_ids
+            .as_ref()
+            .map_or(sampled as u32, |tokens| tokens[sampled as usize]);
+        let token = if Some(sampled) == config.eos_token_id {
+            config.replacement_token
+        } else {
+            sampled
+        };
+        tokens.push(token);
+    }
+    tokens
+}
+
 fn wrapping_window(corpus: &[u32], start: usize, count: usize) -> Vec<u32> {
     let mut out = Vec::with_capacity(count);
     let mut position = start;
@@ -282,7 +425,11 @@ fn wrapping_window(corpus: &[u32], start: usize, count: usize) -> Vec<u32> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::dataset::TiktokenTokenizer;
+    use crate::dataset::error::{DatasetError, Result};
+    use crate::dataset::tokenizer::TextTokenizer;
 
     use super::*;
 
@@ -358,5 +505,66 @@ mod tests {
         assert_eq!(local_a, local_a_again);
         assert_ne!(global, local_a);
         assert_ne!(local_a, local_b);
+    }
+
+    struct AllowedOnlyTokenizer;
+
+    impl TextTokenizer for AllowedOnlyTokenizer {
+        fn encode(&self, text: &str) -> Result<Vec<u32>> {
+            if text.chars().all(|c| c == 'a') {
+                Ok(vec![1; text.chars().count()])
+            } else {
+                Err(DatasetError::Tokenizer(format!(
+                    "unexpected text for allowed-only tokenizer: {text:?}"
+                )))
+            }
+        }
+
+        fn decode(&self, token_ids: &[u32]) -> Result<String> {
+            if token_ids.iter().all(|id| *id == 1) {
+                Ok("a".repeat(token_ids.len()))
+            } else {
+                Err(DatasetError::Tokenizer(format!(
+                    "disallowed token ids in decode: {token_ids:?}"
+                )))
+            }
+        }
+
+        fn decode_lossy(&self, token_ids: &[u32]) -> Result<String> {
+            self.decode(token_ids)
+        }
+
+        fn bos_token_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn eos_token_id(&self) -> Option<u32> {
+            Some(9)
+        }
+
+        fn vocab_size(&self) -> Option<u32> {
+            Some(10)
+        }
+
+        fn allowed_random_token_ids(&self) -> Option<Arc<[u32]>> {
+            Some(Arc::from(vec![1_u32]))
+        }
+
+        fn name(&self) -> &str {
+            "allowed-only"
+        }
+    }
+
+    #[test]
+    fn recorded_random_generation_respects_allowed_token_filter() {
+        let tokenizer = AllowedOnlyTokenizer;
+        let owned = CorpusContentSynthesizer::new(&tokenizer, PromptCorpus::Random, 42).unwrap();
+        let mut content = owned.as_synthesizer();
+
+        let tokens = content.block_tokens(&[7_i128], 8, None).unwrap();
+        assert_eq!(tokens, vec![1; 8]);
+
+        let tail = content.tail_tokens(6, "tail-seed");
+        assert_eq!(tail, vec![1; 6]);
     }
 }

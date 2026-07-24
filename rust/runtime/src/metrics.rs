@@ -498,6 +498,10 @@ impl PendingRequest {
             conversation_id: self.metadata.conversation_id,
             dimensions: self.metadata.dimensions,
             phase: self.metadata.phase,
+            phase_index: None,
+            phase_name: None,
+            phase_kind: None,
+            profiling_index: None,
             start_ns,
             end_ns,
             admit_ns: self

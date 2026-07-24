@@ -502,7 +502,7 @@ impl TurnRecordProcessor for AccuracyRecordProcessor {
             start_ns: outcome.start_ns,
             end_ns: outcome.end_ns,
             terminal: outcome.terminal,
-            response_text: outcome.response_text.clone(),
+            response_text: grading_response_text(outcome),
         };
         self.captures.borrow_mut().push(capture);
         Ok(())
@@ -558,6 +558,17 @@ pub struct AccuracyRunReport {
     pub records: Vec<AccuracyRecord>,
     /// Transport/provider failures. Failed requests remain in the denominator.
     pub failures: Vec<AccuracyFailure>,
+}
+
+/// Text passed to accuracy graders: visible content only, never reasoning channel.
+fn grading_response_text(outcome: &crate::scheduled::TurnDispatchOutcome) -> String {
+    if let Some(content) = &outcome.model_response.content {
+        return content.clone();
+    }
+    if outcome.model_response.reasoning.is_some() {
+        return String::new();
+    }
+    outcome.response_text.clone()
 }
 
 /// Batch captured responses through the canonical evaluator and build reports.

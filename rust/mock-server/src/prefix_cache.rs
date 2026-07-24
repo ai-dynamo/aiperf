@@ -150,6 +150,11 @@ impl BlockCache {
         self.order.insert(m.evict_key(self.policy), hash);
         self.blocks.insert(hash, m);
     }
+
+    fn clear(&mut self) {
+        self.blocks.clear();
+        self.order.clear();
+    }
 }
 
 /// Upper bound on blocks hashed per request. With `block_tokens=1` (SGLang's
@@ -242,6 +247,11 @@ impl PrefixCache {
         let cached = prompt_tokens * matched / total.max(1);
         cached.min(prompt_tokens - 1)
     }
+
+    /// Drop all cached prefix blocks while retaining the configured policy.
+    pub fn clear(&self) {
+        self.cache.lock().clear();
+    }
 }
 
 #[cfg(test)]
@@ -267,6 +277,19 @@ mod tests {
             (60..64).contains(&again),
             "warm repeat should be near-full, got {again}"
         );
+    }
+
+    #[test]
+    fn clear_drops_all_warm_prefixes() {
+        let pc = cache(4, 10_000);
+        let text = "the quick brown fox jumps over the lazy dog and keeps running far away";
+        assert_eq!(pc.cached_tokens(text, 64, 0), 0);
+        assert!(
+            (60..64).contains(&pc.cached_tokens(text, 64, 0)),
+            "warm repeat should be near-full before clear"
+        );
+        pc.clear();
+        assert_eq!(pc.cached_tokens(text, 64, 0), 0);
     }
 
     #[test]

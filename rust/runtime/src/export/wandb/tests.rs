@@ -262,7 +262,10 @@ fn wandb_python() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    let candidate = PathBuf::from("/home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/python");
+    let candidate = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../.venv/bin/python"
+    ));
     if candidate.exists() {
         // Confirm wandb actually imports before relying on it.
         let ok = Command::new(&candidate)

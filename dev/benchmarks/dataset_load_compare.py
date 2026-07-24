@@ -1,12 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Compare equivalent Python and Rust dataset load/compose/tokenize paths."""
+"""Compare equivalent Python and Rust dataset load/compose/tokenize paths.
+
+See ``dev/benchmarks/README.md`` for tokenizer, chat-template, exact-ISL, and
+synthetic-parity usage notes.
+"""
 
 from __future__ import annotations
 
 import argparse
 import math
+import os
 import platform
 import statistics
 import subprocess
@@ -18,44 +23,30 @@ from pathlib import Path
 
 import orjson
 
-SCHEMA_VERSION = 1
+from dev.benchmarks.dataset_fixtures import generate_format_cases
+from dev.benchmarks.dataset_format_catalog import (
+    EXCLUDED_FORMATS,
+    SUPPORTED_FORMATS,
+    FormatCase,
+    SourceEnvelope,
+    documented_skip_for,
+    parity_fields_for,
+    profile_for,
+    unsupported_format_reason,
+)
+from dev.benchmarks.dataset_public_cache import (
+    OFFLINE_ENV,
+    prefetch_public_cases,
+    source_json_for_adapters,
+)
+
+SCHEMA_VERSION = 2
 DEFAULT_SEED = 42
 DEFAULT_MODEL = "test-model"
 ADAPTER_TIMEOUT_S = 120
 NON_EMPTY_OPTIONS_REASON = (
-    "non-empty options are unsupported until cross-stack option mapping is verified"
+    "non-empty options are not in the verified cross-stack option mapping"
 )
-SUPPORTED_FORMATS = (
-    "single_turn",
-    "multi_turn",
-    "raw_payload",
-    "inputs_json",
-    "random_pool",
-    "mooncake_trace",
-    "bailian_trace",
-    "burst_gpt_trace",
-    "sagemaker_data_capture",
-)
-PARITY_FIELDS = (
-    "row_count",
-    "conversation_count",
-    "turn_count",
-    "total_input_tokens",
-)
-UNVERIFIED_FORMAT_REASON = "format is not in the verified Python/Rust intersection"
-PUBLIC_HF_SKIP_REASON = (
-    "public/Hugging Face datasets are skipped because equivalent generated local "
-    "Python/Rust pipelines are not yet proven"
-)
-SYNTHETIC_SKIP_REASON = (
-    "synthetic datasets are skipped because equivalent generated local Python/Rust "
-    "pipelines are not yet proven"
-)
-ACCURACY_SKIP_REASON = (
-    "accuracy datasets are skipped because equivalent generated local Python/Rust "
-    "pipelines are not yet proven"
-)
-PUBLIC_HF_FORMATS = frozenset({"sharegpt", "hf_asr"})
 
 
 @dataclass(frozen=True)
@@ -105,226 +96,35 @@ class Sample:
         return asdict(self)
 
 
-@dataclass(frozen=True)
-class FormatCase:
-    """A format, input path, identity, and loader options to benchmark."""
-
-    format: str
-    path: Path
-    fixture_id: str
-    options: dict[str, object]
-
-
-def _unsupported_format_reason(format_name: str) -> str:
-    if format_name in PUBLIC_HF_FORMATS:
-        return PUBLIC_HF_SKIP_REASON
-    if format_name == "synthetic":
-        return SYNTHETIC_SKIP_REASON
-    if format_name == "accuracy":
-        return ACCURACY_SKIP_REASON
-    return UNVERIFIED_FORMAT_REASON
-
-
-def _write_jsonl(path: Path, records: Sequence[object]) -> None:
-    path.write_bytes(b"".join(orjson.dumps(record) + b"\n" for record in records))
-
-
 def generate_fixtures(
     directory: Path,
     *,
     rows: int | None = None,
     tokens_per_row: int | None = None,
+    include_public: bool = False,
 ) -> list[FormatCase]:
     """Generate the deterministic, semantically verified fixture catalog."""
-    directory.mkdir(parents=True, exist_ok=True)
-    if rows is None and tokens_per_row is None:
-        single_turn = [
-            {"text": "alpha beta gamma"},
-            {"session_id": "s-a", "text": "turn one"},
-            {"session_id": "s-a", "text": "turn two"},
-        ]
-        multi_turn = [
-            {"session_id": "m1", "turns": [{"text": "q1"}, {"text": "q2"}]},
-            {"session_id": "m2", "turns": [{"text": "only"}]},
-        ]
-        raw_payload = [
-            {
-                "messages": [{"role": "user", "content": "hi"}],
-                "model": DEFAULT_MODEL,
-                "max_tokens": 16,
-            },
-            {
-                "messages": [{"role": "user", "content": "bye"}],
-                "model": DEFAULT_MODEL,
-                "max_tokens": 16,
-            },
-        ]
-        inputs_json = {
-            "data": [
-                {"session_id": "session-001", "payloads": raw_payload},
-                {"session_id": "session-002", "payloads": [raw_payload[0]]},
-            ]
-        }
-        random_pool = [{"text": "alpha beta gamma"}]
-        mooncake_trace = [
-            {"timestamp": 0, "text_input": "alpha beta gamma", "output_length": 16},
-            {"timestamp": 1, "text_input": "turn one", "output_length": 16},
-            {"timestamp": 2, "text_input": "turn two", "output_length": 16},
-        ]
-        bailian_trace = [
-            {
-                "chat_id": 1,
-                "parent_chat_id": -1,
-                "timestamp": 0,
-                "input_length": 3,
-                "output_length": 16,
-                "type": "text",
-                "turn": 1,
-            },
-            {
-                "chat_id": 2,
-                "parent_chat_id": 1,
-                "timestamp": 1,
-                "input_length": 2,
-                "output_length": 16,
-                "type": "text",
-                "turn": 2,
-            },
-        ]
-        burst_gpt_trace = [(0, 3, 16), (1, 2, 16)]
-        sagemaker_texts = ["alpha beta gamma"]
-    else:
-        if rows is None or rows <= 0:
-            raise ValueError("rows must be positive")
-        if tokens_per_row is None or tokens_per_row <= 0:
-            raise ValueError("tokens_per_row must be positive")
-        text = " ".join(["token"] * tokens_per_row)
-        single_turn = [
-            {"session_id": f"single-{index:06d}", "text": text}
-            for index in range(rows)
-        ]
-        multi_turn = [
-            {
-                "session_id": f"multi-{index:06d}",
-                "turns": [{"text": text}],
-            }
-            for index in range(rows)
-        ]
-        raw_payload = [
-            {
-                "messages": [{"role": "user", "content": text}],
-                "model": DEFAULT_MODEL,
-                "max_tokens": 16,
-            }
-            for _ in range(rows)
-        ]
-        inputs_json = {
-            "data": [
-                {
-                    "session_id": "session-001",
-                    "payloads": raw_payload,
-                }
-            ]
-        }
-        # A one-row literal pool makes sampling deterministic across the Python
-        # and Rust RNG implementations without claiming stream-level parity.
-        random_pool = [{"text": text}]
-        mooncake_trace = [
-            {"timestamp": index, "text_input": text, "output_length": 16}
-            for index in range(rows)
-        ]
-        bailian_trace = [
-            {
-                "chat_id": index + 1,
-                "parent_chat_id": -1 if index == 0 else index,
-                "timestamp": index,
-                "input_length": tokens_per_row,
-                "output_length": 16,
-                "type": "text",
-                "turn": index + 1,
-            }
-            for index in range(rows)
-        ]
-        burst_gpt_trace = [
-            (index, tokens_per_row, 16) for index in range(rows)
-        ]
-        sagemaker_texts = [text] * rows
-
-    sagemaker_data_capture = []
-    for index, capture_text in enumerate(sagemaker_texts):
-        captured_input = orjson.dumps(
-            {
-                "messages": [{"role": "user", "content": capture_text}],
-                "max_tokens": 16,
-            }
-        ).decode()
-        captured_output = orjson.dumps(
-            {"usage": {"completion_tokens": 2}}
-        ).decode()
-        sagemaker_data_capture.append(
-            {
-                "captureData": {
-                    "endpointInput": {"data": captured_input, "encoding": "JSON"},
-                    "endpointOutput": {"data": captured_output, "encoding": "JSON"},
-                },
-                "eventMetadata": {
-                    "eventId": f"event-{index}",
-                    "inferenceTime": "2026-07-20T00:00:00Z",
-                },
-            }
-        )
-
-    paths = {
-        "single_turn": directory / "single_turn.jsonl",
-        "multi_turn": directory / "multi_turn.jsonl",
-        "raw_payload": directory / "raw_payload.jsonl",
-        "inputs_json": directory / "inputs.json",
-        "random_pool": directory / "random_pool.jsonl",
-        "mooncake_trace": directory / "mooncake_trace.jsonl",
-        "bailian_trace": directory / "bailian_trace.jsonl",
-        "burst_gpt_trace": directory / "burst_gpt_trace.csv",
-        "sagemaker_data_capture": directory / "sagemaker_data_capture.jsonl",
-    }
-    _write_jsonl(paths["single_turn"], single_turn)
-    _write_jsonl(paths["multi_turn"], multi_turn)
-    _write_jsonl(paths["raw_payload"], raw_payload)
-    paths["inputs_json"].write_bytes(orjson.dumps(inputs_json) + b"\n")
-    _write_jsonl(paths["random_pool"], random_pool)
-    _write_jsonl(paths["mooncake_trace"], mooncake_trace)
-    _write_jsonl(paths["bailian_trace"], bailian_trace)
-    paths["burst_gpt_trace"].write_text(
-        "Timestamp,Request tokens,Response tokens\n"
-        + "".join(
-            f"{timestamp},{input_length},{output_length}\n"
-            for timestamp, input_length, output_length in burst_gpt_trace
-        ),
-        encoding="utf-8",
+    return generate_format_cases(
+        directory,
+        rows=rows,
+        tokens_per_row=tokens_per_row,
+        include_public=include_public,
     )
-    _write_jsonl(paths["sagemaker_data_capture"], sagemaker_data_capture)
-
-    return [
-        FormatCase(
-            format=name,
-            path=paths[name],
-            fixture_id=f"generated-{name}",
-            options={},
-        )
-        for name in SUPPORTED_FORMATS
-    ]
 
 
 def parse_manifest(
     manifest_path: Path,
 ) -> tuple[list[FormatCase], list[dict[str, str]]]:
-    """Parse a schema-v1 manifest and explicitly skip unverified formats."""
+    """Parse a schema-v2 manifest and explicitly skip unverified formats."""
     try:
         document = orjson.loads(manifest_path.read_bytes())
     except (OSError, orjson.JSONDecodeError) as error:
         raise ValueError(f"cannot read manifest {manifest_path}: {error}") from error
     if not isinstance(document, dict):
         raise ValueError("manifest root must be an object")
-    if document.get("schema_version") != SCHEMA_VERSION:
-        raise ValueError(f"manifest schema_version must be {SCHEMA_VERSION}")
+    schema_version = document.get("schema_version")
+    if schema_version not in (1, SCHEMA_VERSION):
+        raise ValueError(f"manifest schema_version must be 1 or {SCHEMA_VERSION}")
     entries = document.get("entries")
     if not isinstance(entries, list):
         raise ValueError("manifest entries must be a list")
@@ -334,42 +134,77 @@ def parse_manifest(
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             raise ValueError(f"manifest entry {index} must be an object")
-        if set(entry) != {"format", "path", "options"}:
-            raise ValueError(
-                f"manifest entry {index} must contain format, path, and options"
-            )
-        format_name = entry["format"]
-        input_path = entry["path"]
-        options = entry["options"]
+        format_name = entry.get("format")
         if not isinstance(format_name, str) or not format_name:
             raise ValueError(f"manifest entry {index} has invalid format")
-        if not isinstance(input_path, str) or not input_path:
-            raise ValueError(f"manifest entry {index} has invalid path")
-        if not isinstance(options, dict):
-            raise ValueError(f"manifest entry {index} options must be an object")
-        if format_name not in SUPPORTED_FORMATS:
+        if format_name in EXCLUDED_FORMATS or format_name not in SUPPORTED_FORMATS:
             skips.append(
-                {"format": format_name, "reason": _unsupported_format_reason(format_name)}
+                {
+                    "format": format_name,
+                    "reason": unsupported_format_reason(format_name),
+                }
             )
             continue
-        if options:
+
+        profile = profile_for(format_name)
+        if profile is None:
+            skips.append(
+                {
+                    "format": format_name,
+                    "reason": unsupported_format_reason(format_name),
+                }
+            )
+            continue
+
+        options = entry.get("options", {})
+        if not isinstance(options, dict):
+            raise ValueError(f"manifest entry {index} options must be an object")
+        if options != profile.verified_options:
             skips.append({"format": format_name, "reason": NON_EMPTY_OPTIONS_REASON})
             continue
-        path = Path(input_path)
-        if not path.is_absolute():
-            path = manifest_path.parent / path
+        if schema_version == 1 and profile.source_kind != "local_file":
+            skips.append(
+                {
+                    "format": format_name,
+                    "reason": (
+                        f"{format_name} requires a schema-v2 source envelope; "
+                        "legacy path-only manifests support local fixtures only"
+                    ),
+                }
+            )
+            continue
+
+        if schema_version == SCHEMA_VERSION and "source" in entry:
+            source_raw = entry["source"]
+            if not isinstance(source_raw, dict):
+                raise ValueError(f"manifest entry {index} source must be an object")
+            source = SourceEnvelope.from_dict(source_raw)
+            if source.kind == "local_file" and source.path:
+                path = Path(source.path)
+                if not path.is_absolute():
+                    path = manifest_path.parent / path
+                source = SourceEnvelope(kind="local_file", path=str(path.resolve()))
+        else:
+            input_path = entry.get("path")
+            if not isinstance(input_path, str) or not input_path:
+                raise ValueError(f"manifest entry {index} has invalid path")
+            path = Path(input_path)
+            if not path.is_absolute():
+                path = manifest_path.parent / path
+            source = SourceEnvelope(kind="local_file", path=str(path.resolve()))
+
         cases.append(
             FormatCase(
                 format=format_name,
-                path=path.resolve(),
                 fixture_id=f"manifest-{index}-{format_name}",
-                options=dict(options),
+                options=dict(profile.verified_options),
+                source=source,
             )
         )
     return cases, skips
 
 
-def summarize_samples(samples: Sequence[Sample]) -> dict[str, int | float]:
+def summarize_samples(samples: Sequence[Sample]) -> dict[str, int | float | None]:
     """Summarize timings with median and nearest-rank p95 statistics."""
     if not samples:
         raise ValueError("cannot summarize an empty sample set")
@@ -405,28 +240,48 @@ def validate_parity(left: Sample, right: Sample) -> None:
         raise ValueError(
             f"fixture_id mismatch: {left.fixture_id!r} != {right.fixture_id!r}"
         )
-    for field in PARITY_FIELDS:
+    for field in parity_fields_for(left.format):
         left_value = getattr(left, field)
         right_value = getattr(right, field)
         if left_value != right_value:
             raise ValueError(f"{field} mismatch: {left_value} != {right_value}")
 
 
-def _adapter_arguments(case: FormatCase, *, seed: int, model: str) -> list[str]:
-    return [
+def _adapter_arguments(
+    case: FormatCase,
+    *,
+    seed: int,
+    model: str,
+    tokenizer: str,
+    apply_chat_template: bool,
+    exact_isl: bool,
+) -> list[str]:
+    path = case.path
+    arguments = [
         "--format",
         case.format,
-        "--path",
-        str(case.path),
         "--options-json",
         orjson.dumps(case.options).decode(),
+        "--source-json",
+        source_json_for_adapters(case),
         "--fixture-id",
         case.fixture_id,
         "--seed",
         str(seed),
         "--model",
         model,
+        "--tokenizer",
+        tokenizer,
     ]
+    if apply_chat_template:
+        arguments.append("--apply-chat-template")
+    if exact_isl:
+        arguments.append("--exact-isl")
+    if path is not None:
+        arguments.extend(["--path", str(path)])
+    else:
+        arguments.extend(["--path", ""])
+    return arguments
 
 
 def _error_sample(implementation: str, case: FormatCase, message: str) -> Sample:
@@ -451,8 +306,30 @@ def _run_adapter(
     seed: int,
     model: str,
     runner: Callable[..., object],
+    offline: bool,
+    tokenizer: str = "builtin",
+    apply_chat_template: bool = False,
+    exact_isl: bool = False,
 ) -> Sample:
-    full_command = [*command, *_adapter_arguments(case, seed=seed, model=model)]
+    full_command = [
+        *command,
+        *_adapter_arguments(
+            case,
+            seed=seed,
+            model=model,
+            tokenizer=tokenizer,
+            apply_chat_template=apply_chat_template,
+            exact_isl=exact_isl,
+        ),
+    ]
+    env = os.environ.copy()
+    if case.source.kind == "inline_synthetic":
+        # Synthetic cross-language comparisons should default both adapters to the
+        # Python-compatible RNG lane so prompt sampling, prefix reuse, and timing
+        # draws share one authored reference path unless the caller overrides it.
+        env.setdefault("AIPERF_RNG_BACKEND", "python")
+    if offline and case.source.kind == "public_cached":
+        env.update(OFFLINE_ENV)
     try:
         completed = runner(
             full_command,
@@ -460,6 +337,7 @@ def _run_adapter(
             text=True,
             check=False,
             timeout=ADAPTER_TIMEOUT_S,
+            env=env,
         )
     except subprocess.TimeoutExpired as error:
         return _error_sample(
@@ -517,6 +395,10 @@ def run_comparison(
     runner: Callable[..., object] = subprocess.run,
     seed: int = DEFAULT_SEED,
     model: str = DEFAULT_MODEL,
+    tokenizer: str = "builtin",
+    apply_chat_template: bool = False,
+    exact_isl: bool = False,
+    offline_public: bool = True,
 ) -> tuple[list[Sample], list[dict[str, object]]]:
     """Run adapters in alternating order and return measured samples only."""
     if warmups < 0:
@@ -539,7 +421,11 @@ def run_comparison(
                     case,
                     seed=seed,
                     model=model,
+                    tokenizer=tokenizer,
+                    apply_chat_template=apply_chat_template,
+                    exact_isl=exact_isl,
                     runner=runner,
+                    offline=offline_public,
                 )
             if iteration < warmups:
                 continue
@@ -578,6 +464,7 @@ def build_report(
     skips: Sequence[Mapping[str, str]],
     failures: Sequence[Mapping[str, object]],
     options: Mapping[str, object],
+    cases: Sequence[FormatCase],
     rust_binary_identity: str | None = None,
 ) -> dict[str, object]:
     """Build the versioned machine-readable benchmark report."""
@@ -617,13 +504,25 @@ def build_report(
             continue
         python_summary = summarize_samples(per_implementation["python"])
         rust_summary = summarize_samples(per_implementation["rust"])
+        profile = profile_for(format_name)
         formats[format_name] = {
             "python": python_summary,
             "rust": rust_summary,
             "rust_speedup": (
                 python_summary["median_elapsed_ns"] / rust_summary["median_elapsed_ns"]
             ),
+            "public_aliases": list(profile.public_aliases) if profile else [],
+            "source_kind": profile.source_kind if profile else None,
         }
+
+    catalog = {
+        case.format: {
+            "fixture_id": case.fixture_id,
+            "options": dict(case.options),
+            "source": case.source.to_dict(),
+        }
+        for case in cases
+    }
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -633,6 +532,7 @@ def build_report(
             "python_version": platform.python_version(),
             "rust_binary_identity": rust_binary_identity,
         },
+        "catalog": catalog,
         "raw_samples": [sample.to_dict() for sample in samples],
         "formats": formats,
         "skips": [dict(skip) for skip in skips],
@@ -642,10 +542,7 @@ def build_report(
 
 def _default_adapter_commands() -> dict[str, list[str]]:
     repository_root = Path(__file__).resolve().parents[2]
-    rust_binary = (
-        repository_root / "rust/target/release/examples/dataset_load_bench"
-    )
-    # Rebuild every invocation so a stale release example is never timed.
+    rust_binary = repository_root / "rust/target/release/examples/dataset_load_bench"
     subprocess.run(
         [
             "cargo",
@@ -690,8 +587,16 @@ def _parser() -> argparse.ArgumentParser:
         "--output", type=Path, default=Path("dataset-load-comparison.json")
     )
     parser.add_argument("--keep-fixtures", action="store_true")
+    parser.add_argument(
+        "--skip-public-prefetch",
+        action="store_true",
+        help="Skip untimed public-source prefetch (local/synthetic cases only)",
+    )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--tokenizer", default="builtin")
+    parser.add_argument("--apply-chat-template", action="store_true")
+    parser.add_argument("--exact-isl", action="store_true")
     return parser
 
 
@@ -704,9 +609,12 @@ def _select_cases(
         return list(cases)
     available = {case.format for case in cases}
     for format_name in requested:
-        if format_name not in SUPPORTED_FORMATS:
+        if format_name in EXCLUDED_FORMATS or format_name not in SUPPORTED_FORMATS:
             skips.append(
-                {"format": format_name, "reason": _unsupported_format_reason(format_name)}
+                {
+                    "format": format_name,
+                    "reason": unsupported_format_reason(format_name),
+                }
             )
         elif format_name not in available:
             skips.append(
@@ -719,12 +627,32 @@ def _select_cases(
     return [case for case in cases if case.format in requested_set]
 
 
+def _partition_documented_skips(
+    cases: Sequence[FormatCase],
+    skips: list[dict[str, str]],
+) -> list[FormatCase]:
+    """Drop supported-but-unrunnable families, recording their documented reason.
+
+    These families (for example streaming datasets that cannot be materialized
+    offline) are removed before prefetch and timing so they neither hit the
+    network nor produce a misleading failure.
+    """
+    runnable: list[FormatCase] = []
+    for case in cases:
+        reason = documented_skip_for(case.format)
+        if reason is None:
+            runnable.append(case)
+        else:
+            skips.append({"format": case.format, "reason": reason})
+    return runnable
+
+
 def _print_console_report(report: Mapping[str, object]) -> None:
     formats = report["formats"]
     assert isinstance(formats, dict)
     if formats:
         print(
-            f"{'format':<16} {'python median':>14} {'rust median':>14} {'speedup':>10}"
+            f"{'format':<24} {'python median':>14} {'rust median':>14} {'speedup':>10}"
         )
     for format_name, value in formats.items():
         assert isinstance(value, dict)
@@ -733,7 +661,7 @@ def _print_console_report(report: Mapping[str, object]) -> None:
         assert isinstance(python_summary, dict)
         assert isinstance(rust_summary, dict)
         print(
-            f"{format_name:<16} "
+            f"{format_name:<24} "
             f"{python_summary['median_elapsed_ns']:>14.0f} "
             f"{rust_summary['median_elapsed_ns']:>14.0f} "
             f"{value['rust_speedup']:>9.2f}x"
@@ -755,16 +683,24 @@ def _execute(
     runner: Callable[..., object],
 ) -> int:
     skips: list[dict[str, str]] = []
+    include_public = not args.skip_public_prefetch
     if args.manifest is None:
         cases = generate_fixtures(
             fixture_directory,
             rows=args.rows,
             tokens_per_row=args.tokens_per_row,
+            include_public=include_public,
         )
     else:
         cases, manifest_skips = parse_manifest(args.manifest)
         skips.extend(manifest_skips)
     cases = _select_cases(cases, args.formats, skips)
+    cases = _partition_documented_skips(cases, skips)
+    if include_public:
+        cases, prefetch_skips = prefetch_public_cases(
+            cases, seed=args.seed, row_limit=args.rows
+        )
+        skips.extend(prefetch_skips)
 
     samples, failures = run_comparison(
         cases,
@@ -774,6 +710,9 @@ def _execute(
         runner=runner,
         seed=args.seed,
         model=args.model,
+        tokenizer=args.tokenizer,
+        apply_chat_template=args.apply_chat_template,
+        exact_isl=args.exact_isl,
     )
     report = build_report(
         samples=samples,
@@ -786,9 +725,14 @@ def _execute(
             "warmups": args.warmups,
             "runs": args.runs,
             "manifest": (None if args.manifest is None else str(args.manifest)),
+            "skip_public_prefetch": args.skip_public_prefetch,
             "seed": args.seed,
             "model": args.model,
+            "tokenizer": args.tokenizer,
+            "apply_chat_template": args.apply_chat_template,
+            "exact_isl": args.exact_isl,
         },
+        cases=cases,
         rust_binary_identity=" ".join(adapter_commands["rust"]),
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)

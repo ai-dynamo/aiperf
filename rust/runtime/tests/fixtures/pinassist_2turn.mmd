@@ -1,0 +1,73 @@
+flowchart TD
+    START([START])
+
+    %% ===================== Turn 1 =====================
+    subgraph T1["Turn 1 — PinAssist pipeline"]
+        direction TB
+        r1["route<br/>classify intent"]
+        s1["safety<br/>guard"]
+        p1["plan"]
+        te1["tool_exec<br/>replay · 80ms"]
+        bm1["brandmap"]
+        pp1["preprocess<br/>replay · 5ms"]
+        sm1["summarize ★<br/>terminal_for_user"]
+        rd1["redirect ★<br/>terminal_for_user"]
+    end
+
+    START --> r1
+    START --> s1
+    r1 -->|shopping| p1
+    r1 -.->|non_shopping| root2
+    p1 --> te1 --> bm1 --> pp1 --> sm1
+    s1 -.->|unsafe| rd1
+
+    %% ============ root2 — no-request think coordinator ============
+    sm1 --> root2["root2 · think-time<br/>no request — lowered onto<br/>turn-2 min_start_delay_us"]
+
+    %% ===================== Turn 2 =====================
+    subgraph T2["Turn 2 — PinAssist pipeline"]
+        direction TB
+        r2["route"]
+        s2["safety<br/>guard"]
+        p2["plan"]
+        te2["tool_exec<br/>replay · 80ms"]
+        bm2["brandmap"]
+        pp2["preprocess<br/>replay · 5ms"]
+        sm2["summarize ★<br/>terminal_for_user"]
+        rd2["redirect ★<br/>terminal_for_user"]
+    end
+
+    root2 --> r2
+    root2 --> s2
+    r2 -->|shopping| p2
+    p2 --> te2 --> bm2 --> pp2 --> sm2
+    s2 -.->|unsafe| rd2
+
+    %% ===================== joins into END =====================
+    sm2 --> END([END])
+    rd2 --> END
+    s2 -->|safe| END
+    rd1 --> END
+    s1 -->|safe| END
+
+    %% ===================== latency lens =====================
+    subgraph L["latency lens"]
+        direction LR
+        Luser["user-facing latency<br/>→ last ★ terminal_for_user"]
+        Lfull["full-trace latency<br/>→ END (incl. safety guard)"]
+    end
+
+    classDef llm    fill:#bbdefb,stroke:#1565c0,color:#0d47a1
+    classDef term   fill:#bbdefb,stroke:#1565c0,color:#0d47a1,stroke-width:3px
+    classDef replay fill:#fff9c4,stroke:#f9a825,color:#5d4037
+    classDef delay  fill:#fff9c4,stroke:#f9a825,stroke-dasharray:5 3,color:#5d4037
+    classDef guard  fill:#ffe0b2,stroke:#ef6c00,color:#4e2600
+    classDef legend fill:#eceff1,stroke:#607d8b,color:#263238
+
+    class r1,p1,bm1,r2,p2,bm2 llm
+    class sm1,rd1,sm2,rd2 term
+    class te1,pp1,te2,pp2 replay
+    class root2 delay
+    class s1,s2 guard
+    class START,END term
+    class Luser,Lfull legend

@@ -647,6 +647,25 @@ class TestDualAxisPlots:
         assert fig.data[0].line.shape == "hv"
         assert fig.data[1].fill == "tozeroy"
 
+    def test_gpu_dual_axis_plot_subtitle_in_title(self, plot_generator, gpu_metrics_df):
+        """A subtitle is rendered under the title text."""
+        throughput_df = gpu_metrics_df[["timestamp_s", "throughput"]].copy()
+        gpu_df = gpu_metrics_df[["timestamp_s", "gpu_utilization"]].copy()
+
+        fig = plot_generator.create_dual_axis_plot(
+            df_primary=throughput_df,
+            df_secondary=gpu_df,
+            x_col_primary="timestamp_s",
+            x_col_secondary="timestamp_s",
+            y1_metric="throughput",
+            y2_metric="gpu_utilization",
+            title="Throughput with GPU Utilization",
+            subtitle="not comparable across vendors",
+        )
+
+        assert "Throughput with GPU Utilization" in fig.layout.title.text
+        assert "not comparable across vendors" in fig.layout.title.text
+
     def test_gpu_dual_axis_plot_custom_labels(self, plot_generator, gpu_metrics_df):
         """Test GPU dual-axis plot with custom labels."""
         title = "Throughput with GPU Utilization"

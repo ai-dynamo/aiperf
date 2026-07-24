@@ -13,13 +13,15 @@
 //! `native-v2.json`, and fails the run loudly if any cell exits non-zero. The
 //! controller exposes cellular execution as one protocol-v2 run.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use crate::cellular::{
     ColumnStorePartition, MetricsHeartbeat, RecordsShardPartition, TDigest,
     merge_records_by_concatenation, merge_records_in_global_order, merge_store_partitions,
 };
+use crate::clock::{Clock, RealClock, RealClockAnchor};
 use crate::metrics_core::report::NativeReport;
 use crate::metrics_core::{ExportContext, MetricsAccumulator, MetricsConfig, PERCENTILES};
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -33,9 +35,23 @@ use crate::engine::cellular_kind::CellularRunKind;
 #[cfg(feature = "cellular")]
 use crate::cellular::transport::connect::{BindSpec, build_velo};
 #[cfg(feature = "cellular")]
-use crate::cellular::{CellMessage, ControllerTransport, SpecFor, VeloControllerTransport};
+use crate::cellular::transport::CellPhaseSignal;
+#[cfg(feature = "cellular")]
+use crate::cellular::{
+    CellMessage, ControllerTransport, SpecFor, VeloControllerTransport,
+};
 #[cfg(feature = "cellular")]
 use crate::engine::cell_launcher::{CellLaunchContext, select_launcher};
+#[cfg(feature = "cellular")]
+use crate::engine::control_hooks::{
+    PreparedEndpointControlHooks, PreparedServerProfilerHook,
+    prepare_endpoint_control_hooks_from_profile_value, run_reset_kv_cache, start_server_profiler,
+    stop_server_profiler,
+};
+#[cfg(feature = "cellular")]
+use crate::engine::control_plane_http::{
+    ControlPlaneClientPolicy, ControlPlaneHttpProviderFactory, NativeControlPlaneHttpProviderFactory,
+};
 
 /// Env toggle for barrier-free start: the controller
 /// triggers START immediately instead of gathering all N cell registrations first
@@ -44,11 +60,11 @@ use crate::engine::cell_launcher::{CellLaunchContext, select_launcher};
 /// completed-event cache), so each starts on its own registration.
 pub const CELL_BARRIER_FREE_ENV: &str = "AIPERF_CELL_BARRIER_FREE";
 
-/// Env toggle routing the run-wide START through the monotonic
-/// phaser control plane instead of the single-shot velo event: the controller binds a
-/// `PhaserServer` and `advance`s `Started`; cells subscribe with `PhaserClient` and
-/// await generation 1. Default off (the event-based START). The phaser generalizes
-/// START to phase transitions and dataset-availability signals.
+/// Env toggle routing the run-wide START through the monotonic phaser control plane
+/// instead of the single-shot velo event: the controller always binds the phaser so
+/// later exact phase gates can reuse it, and this flag selects whether cells use that
+/// phaser for the initial START wait (`Started` at generation 1). Default off (the
+/// event-based START).
 pub const CELL_PHASER_START_ENV: &str = "AIPERF_CELL_PHASER_START";
 
 /// Env toggle standing up ONE per-run velo [hub](crate::hub) as the cellular anchor
@@ -174,6 +190,168 @@ fn emit_live_progress(log_path: Option<&Path>, heartbeats: &BTreeMap<u32, Metric
     }
 }
 
+#[cfg(feature = "cellular")]
+fn envelope_requests_control_hooks(envelope: &serde_json::Value) -> bool {
+    envelope.pointer("/run/cfg/endpoint/reset_kv_cache").is_some()
+        || envelope.pointer("/run/cfg/endpoint/server_profiler").is_some()
+}
+
+#[cfg(feature = "cellular")]
+fn validate_control_hook_transport(envelope: &serde_json::Value) -> Result<()> {
+    if !envelope_requests_control_hooks(envelope) {
+        return Ok(());
+    }
+    match envelope
+        .pointer("/run/cfg/transport/type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("http")
+    {
+        "http" | "grpc" => Ok(()),
+        "dry_run" => bail!(
+            "endpoint.reset_kv_cache / endpoint.server_profiler require a live HTTP or gRPC target; \
+             the dry_run transport has no server control plane"
+        ),
+        "dynosim_offline" | "dynosim_online" => bail!(
+            "endpoint.reset_kv_cache / endpoint.server_profiler are unsupported for dynosim transports; \
+             they require a live server control plane"
+        ),
+        transport => bail!(
+            "endpoint.reset_kv_cache / endpoint.server_profiler are unsupported for transport {transport:?}"
+        ),
+    }
+}
+
+#[cfg(feature = "cellular")]
+fn prepare_controller_control_hooks(
+    envelope: &serde_json::Value,
+) -> Result<Option<PreparedEndpointControlHooks>> {
+    validate_control_hook_transport(envelope)?;
+    let Some(endpoint_profile) = envelope.pointer("/run/cfg/endpoint") else {
+        return Ok(None);
+    };
+    if !envelope_requests_control_hooks(envelope) {
+        return Ok(None);
+    }
+    let clock: Rc<dyn Clock> = RealClock::from_anchor(RealClockAnchor::now());
+    let provider = NativeControlPlaneHttpProviderFactory::default()
+        .prepare(clock.clone(), ControlPlaneClientPolicy::default());
+    let hooks = prepare_endpoint_control_hooks_from_profile_value(
+        clock,
+        provider.as_ref(),
+        endpoint_profile,
+    )?;
+    Ok(Some(hooks))
+}
+
+#[cfg(feature = "cellular")]
+struct CellularProfilerCoordinator {
+    hook: PreparedServerProfilerHook,
+    active_phase: Option<String>,
+    phase_released: bool,
+    ready_cells: BTreeSet<u32>,
+    complete_cells: BTreeSet<u32>,
+}
+
+#[cfg(feature = "cellular")]
+impl CellularProfilerCoordinator {
+    fn new(hook: PreparedServerProfilerHook) -> Self {
+        Self {
+            hook,
+            active_phase: None,
+            phase_released: false,
+            ready_cells: BTreeSet::new(),
+            complete_cells: BTreeSet::new(),
+        }
+    }
+
+    async fn on_signal(
+        &mut self,
+        phaser: &crate::cellular::phaser::Phaser,
+        cell_count: u32,
+        cell_id: u32,
+        phase: &str,
+        signal: CellPhaseSignal,
+    ) -> Result<()> {
+        if self.active_phase.is_none() {
+            self.active_phase = Some(phase.to_owned());
+            self.phase_released = false;
+            self.ready_cells.clear();
+            self.complete_cells.clear();
+        }
+        ensure!(
+            self.active_phase.as_deref() == Some(phase),
+            "controller-owned server profiler received phase signal for {phase:?} while {:?} is active",
+            self.active_phase
+        );
+        match signal {
+            CellPhaseSignal::Ready => {
+                self.ready_cells.insert(cell_id);
+                if !self.phase_released && self.ready_cells.len() == cell_count as usize {
+                    start_server_profiler(&self.hook)
+                        .await
+                        .with_context(|| format!("starting controller-owned server profiler for phase {phase:?}"))?;
+                    phaser.advance(crate::cellular::phaser::PhaseTransition::PhaseAdvance(
+                        phase.to_owned(),
+                    ));
+                    self.phase_released = true;
+                }
+            }
+            CellPhaseSignal::Complete => {
+                ensure!(
+                    self.phase_released,
+                    "controller-owned server profiler received a completion for phase {phase:?} before the phase gate opened"
+                );
+                self.complete_cells.insert(cell_id);
+                if self.complete_cells.len() == cell_count as usize {
+                    if let Err(error) = stop_server_profiler(&self.hook).await {
+                        tracing::warn!(
+                            phase,
+                            error = format!("{error:#}"),
+                            "controller-owned server profiler stop failed after profiling drain"
+                        );
+                    }
+                    self.active_phase = None;
+                    self.phase_released = false;
+                    self.ready_cells.clear();
+                    self.complete_cells.clear();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// True while the profiling gate has opened and stop has not run yet.
+    fn needs_stop(&self) -> bool {
+        self.phase_released
+    }
+
+    /// Stop the profiler if start already ran and stop has not.
+    ///
+    /// Used after every cell partition has arrived: partition shipping implies the
+    /// cell finished its profiling phase, so this is a safe drain barrier when
+    /// Complete signals are delayed or lost on the fire-and-forget control path.
+    async fn ensure_stopped(&mut self, phase_fallback: &str) {
+        if !self.phase_released {
+            return;
+        }
+        let phase = self
+            .active_phase
+            .clone()
+            .unwrap_or_else(|| phase_fallback.to_owned());
+        if let Err(error) = stop_server_profiler(&self.hook).await {
+            tracing::warn!(
+                phase = phase.as_str(),
+                error = format!("{error:#}"),
+                "controller-owned server profiler stop failed after cellular drain"
+            );
+        }
+        self.active_phase = None;
+        self.phase_released = false;
+        self.ready_cells.clear();
+        self.complete_cells.clear();
+    }
+}
+
 /// Runs one benchmark across `cell_count` cells and writes the merged report to
 /// `report_path`. Blocks until every cell ships. Requires the `velo` feature (the
 /// cell transport).
@@ -186,6 +364,7 @@ pub fn run_cellular(
 ) -> Result<CellularRunOutcome> {
     ensure!(cell_count >= 1, "cell_count must be at least 1");
     validate_cellular_run_shape(envelope)?;
+    validate_control_hook_transport(envelope)?;
     // The dataset-shape gate above runs before the kind is known; the kind then names
     // the scheduled-vs-graph run once and owns its four differing behaviours (phase
     // validation, ordinal bases, record merge, session-budget slicing). The scheduled
@@ -212,14 +391,6 @@ pub fn run_cellular(
     // Barrier-free start skips the O(N) registration rendezvous.
     let barrier_free = matches!(
         std::env::var(CELL_BARRIER_FREE_ENV)
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .as_str(),
-        "1" | "true" | "on" | "yes"
-    );
-    // Phaser-driven START is opt-in; the default uses the event.
-    let phaser_start = matches!(
-        std::env::var(CELL_PHASER_START_ENV)
             .unwrap_or_default()
             .to_ascii_lowercase()
             .as_str(),
@@ -337,13 +508,16 @@ pub fn run_cellular(
 
     // The controller is off the per-request hot path; a small multi-thread runtime
     // drives the transport accept/read tasks and the child processes concurrently.
+    // Control-plane HTTP (reset_kv_cache / server_profiler) still needs a LocalSet
+    // because the Hyper client connection pool uses spawn_local.
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()
         .context("building controller runtime")?;
+    let local = tokio::task::LocalSet::new();
 
-    runtime.block_on(async move {
+    local.block_on(&runtime, async move {
         let temp_root =
             std::env::temp_dir().join(format!("aiperf-cellular-{}", std::process::id()));
         // Cleans the scratch tree on every exit path, including a bail. On a bail this
@@ -355,6 +529,8 @@ pub fn run_cellular(
         let _scratch = ScratchTreeGuard(temp_root.clone());
         std::fs::create_dir_all(&temp_root)
             .with_context(|| format!("creating cellular scratch {}", temp_root.display()))?;
+        let mut endpoint_control_hooks =
+            prepare_controller_control_hooks(envelope).context("preparing controller control hooks")?;
 
         // Start the artifact upload server before launching cells; a k8s pod
         // may start and upload before the controller's collect loop). Cells POST their
@@ -453,27 +629,25 @@ pub fn run_cellular(
             .context("creating cellular start event")?;
         let start_handle = start_event.handle();
 
-        // When phaser START is selected, bind the phaser control plane
-        // on the controller velo BEFORE it moves into the transport, so cells can
-        // subscribe. `advance(Started)` below drives the run-wide START through the
-        // monotonic phaser. The server (held for the run) keeps its handlers alive via its
-        // own velo clone independent of the transport.
+        // Bind the phaser control plane on the controller velo BEFORE it moves into the
+        // transport, so cells can subscribe for start or later named phase gates.
+        // `advance(Started)` below still drives the run-wide START through the monotonic
+        // phaser when cells opt into it. The server (held for the run) keeps its
+        // handlers alive via its own velo clone independent of the transport.
         //
         // In hub mode the phaser plane is instead mounted as the `/phaser` hub plugin
         // (below), which binds the identical `PhaserServer` on the same hub velo — so skip
-        // the standalone bind here and let `build_cellular_hub` own it. The phaser itself
-        // is created either way so the `advance` calls below are unchanged.
-        let phaser = phaser_start.then(crate::cellular::phaser::Phaser::new);
-        let _phaser_server = match &phaser {
-            Some(phaser) if !hub_mode => Some(
+        // the standalone bind here and let `build_cellular_hub` own it.
+        let phaser = crate::cellular::phaser::Phaser::new();
+        let _phaser_server = (!hub_mode)
+            .then(|| {
                 crate::cellular::transport::phaser_velo::PhaserServer::bind(
                     velo.clone(),
                     phaser.clone(),
                 )
-                .context("binding phaser control plane")?,
-            ),
-            _ => None,
-        };
+            })
+            .transpose()
+            .context("binding phaser control plane")?;
 
         // Bind the dataset service, generate the
         // dataset's request-ids once, broadcast them chunk-by-chunk (advancing the phaser
@@ -540,11 +714,9 @@ pub fn run_cellular(
                     })
                     .collect();
                 let chunk_id = publisher.add(requests);
-                if let Some(phaser) = &phaser {
-                    phaser.advance(
-                        crate::cellular::phaser::PhaseTransition::ShardsAvailable(chunk_id + 1),
-                    );
-                }
+                phaser.advance(crate::cellular::phaser::PhaseTransition::ShardsAvailable(
+                    chunk_id + 1,
+                ));
                 start = end;
             }
             publisher.finalize();
@@ -609,7 +781,7 @@ pub fn run_cellular(
                 start_handle,
                 cell_coordinate.clone(),
                 artifact_mount,
-                phaser.clone(),
+                Some(phaser.clone()),
                 dataset_publisher_for_hub.take(),
             )
             .await
@@ -782,15 +954,21 @@ pub fn run_cellular(
                 }
             }
         }
+        if let Some(reset) = endpoint_control_hooks
+            .as_ref()
+            .and_then(|hooks| hooks.reset_kv_cache.as_ref())
+        {
+            run_reset_kv_cache(reset)
+                .await
+                .context("executing controller-owned endpoint.reset_kv_cache before cellular START")?;
+        }
         start_event
             .trigger()
             .context("triggering cellular benchmark start")?;
-        // Drive run-wide START through the monotonic phaser
-        // (generation 1 = Started). Cells that subscribed with `PhaserClient` wake here;
-        // a cell registering after this sees the completed generation via replay.
-        if let Some(phaser) = &phaser {
-            phaser.advance(crate::cellular::phaser::PhaseTransition::Started);
-        }
+        // Record run-wide START on the monotonic phaser. Cells that subscribed with
+        // `PhaserClient` for start-gating wake here; a cell subscribing later sees the
+        // completed transition via replay.
+        phaser.advance(crate::cellular::phaser::PhaseTransition::Started);
 
         // Collect exactly one partition per cell (plus the latest heartbeat), with a
         // generous deadline so a cell that never ships (a k8s pod with no child to
@@ -819,6 +997,10 @@ pub fn run_cellular(
         };
         // In the flat topology this is one partition per cell; with aggregators it is one
         // MERGED partition per aggregator (`expected_partitions == aggregator count`).
+        let mut profiler = endpoint_control_hooks
+            .take()
+            .and_then(|hooks| hooks.server_profiler)
+            .map(CellularProfilerCoordinator::new);
         while collected(&partitions, &store_partitions) < expected_partitions as usize {
             tokio::select! {
                 biased;
@@ -829,6 +1011,13 @@ pub fn run_cellular(
                         heartbeats.insert(cell_id, *heartbeat);
                         // Emit the running cross-cell aggregate for live CR-status progress.
                         emit_live_progress(live_progress_log.as_deref(), &heartbeats);
+                    }
+                    Some(CellMessage::PhaseSignal { cell_id, phase, signal }) => {
+                        if let Some(profiler) = profiler.as_mut() {
+                            profiler
+                                .on_signal(&phaser, cell_count, cell_id, &phase, signal)
+                                .await?;
+                        }
                     }
                     None => bail!(
                         "transport closed with {} of {expected_partitions} partitions",
@@ -841,6 +1030,13 @@ pub fn run_cellular(
                     collected(&partitions, &store_partitions)
                 ),
             }
+        }
+        if let Some(profiler) = profiler.as_mut()
+            && profiler.needs_stop()
+        {
+            // Prefer Complete-driven stop when every cell reported finish; otherwise
+            // fall back to the partition drain barrier (cells are fully done).
+            profiler.ensure_stopped("profiling").await;
         }
 
         // A metrics-only exact-fold run ships folded stores, appended by cell_id
@@ -1188,8 +1384,9 @@ async fn build_cellular_hub(
         None
     };
 
-    // `/phaser` plugin (optional): mounts the phaser control plane on the hub velo when
-    // phaser START is selected. The phaser is `advance`d by the bootstrap independently.
+    // `/phaser` plugin (optional): mounts the phaser control plane on the hub velo.
+    // The bootstrap advances it independently for START, dataset fan-out, and later
+    // controller-owned phase gates.
     if let Some(phaser) = phaser {
         hub.register(Box::new(PhaserHubPlugin::new(phaser)))
             .context("mounting /phaser hub plugin")?;

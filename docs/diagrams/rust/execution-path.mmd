@@ -1,0 +1,21 @@
+flowchart TD
+    CONFIG["Config v2"] --> PROFILE["aiperf profile"]
+    PROFILE --> LOAD["Resolve flags + Config v2"]
+    LOAD --> PROJECT["Project protocol-v2 benchmark request"]
+    PROJECT --> EXEC["Re-exec same binary: aiperf --execute"]
+    EXEC --> ROLE{"Internal role"}
+
+    ROLE -->|"default"| APP["Application bootstrap"]
+    ROLE -->|"--cell"| CELL["Cell role"]
+    ROLE -->|"--aggregator"| AGG["Aggregator role"]
+
+    APP --> FREEZE["Freeze registry capabilities"]
+    FREEZE --> SELECT{"Selected workload + transport"}
+
+    SELECT --> WORKLOAD["Workload execution: request-rate / concurrency / user-centric / fixed-schedule / graph"]
+    SELECT --> TRANSPORT["Transport execution: http / grpc / dry_run / dynosim_offline / dynosim_online"]
+
+    WORKLOAD --> DISPATCH["Request dispatch + observation"]
+    TRANSPORT --> DISPATCH
+    DISPATCH --> METRICS["Worker-local measurement / shared metrics accumulation"]
+    METRICS --> EXPORT["Report + exporters"]

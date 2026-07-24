@@ -1,0 +1,24 @@
+flowchart TD
+    SRUN["srun aiperf slurm run"]
+    ENV["SLURM_*"]
+    TOPO["SlurmTopology::from_env"]
+    ADDRESS["tcp://rank0-host:AIPERF_CONTROLLER_PORT"]
+    RANK0["rank 0 controller"]
+    LAUNCH["SlurmLauncher"]
+    CELLS["nonzero-rank cells"]
+    CELL["aiperf --cell"]
+    MERGE["Flat-star result collection"]
+    REPORT["Merged report"]
+
+    SRUN -->|"every allocation task"| ENV
+    ENV -->|"maps proc_id + ntasks"| TOPO
+    TOPO -->|"first step/node/job host + port"| ADDRESS
+    TOPO -->|"SLURM_PROCID == 0"| RANK0
+    TOPO -->|"ranks 1..ntasks → cell_id = rank - 1"| CELLS
+    RANK0 -->|"expects; does not spawn"| LAUNCH
+    CELLS -->|"already launched by srun; expected by"| LAUNCH
+    CELLS -->|"sets AIPERF_CELL_*"| CELL
+    CELL -->|"dials controller coordinate"| ADDRESS
+    ADDRESS -->|"register / envelope / terminal partition"| RANK0
+    RANK0 -->|"one partition per cell"| MERGE
+    MERGE -->|"no aggregator tier"| REPORT

@@ -312,6 +312,7 @@ fn gpu_series(gpu: &str, uuid: &str, endpoint: &str, stats: ReportStats) -> Metr
             ("gpu".to_owned(), gpu.to_owned()),
             ("gpu_uuid".to_owned(), uuid.to_owned()),
             ("model_name".to_owned(), "NVIDIA H200".to_owned()),
+            ("platform".to_owned(), "nvidia".to_owned()),
             ("hostname".to_owned(), "localhost".to_owned()),
         ])),
         endpoint_url: Some(endpoint.to_owned()),
@@ -336,7 +337,7 @@ fn telemetry_data_projects_gpu_series_grouped_by_endpoint_and_gpu() {
     const ENDPOINT: &str = "http://127.0.0.1:9400/dcgm1/metrics";
     let metrics = BTreeMap::from([
         (
-            "energy_consumption".to_owned(),
+            "nvidia_energy_consumption".to_owned(),
             MetricEntry {
                 metric_type: "counter",
                 unit: "MJ".to_owned(),
@@ -365,7 +366,7 @@ fn telemetry_data_projects_gpu_series_grouped_by_endpoint_and_gpu() {
             },
         ),
         (
-            "gpu_power_usage".to_owned(),
+            "nvidia_power_usage".to_owned(),
             MetricEntry {
                 metric_type: "distribution",
                 unit: "W".to_owned(),
@@ -410,17 +411,18 @@ fn telemetry_data_projects_gpu_series_grouped_by_endpoint_and_gpu() {
     assert_eq!(gpu0["gpu_index"], 0);
     assert_eq!(gpu0["gpu_name"], "NVIDIA H200");
     assert_eq!(gpu0["gpu_uuid"], "GPU-A");
+    assert_eq!(gpu0["platform"], "nvidia");
     assert_eq!(gpu0["hostname"], "localhost");
 
     let gpu0_metrics = gpu0["metrics"].as_object().unwrap();
-    // Report BTreeMap order is alphabetical: energy_consumption before gpu_power_usage.
+    // Report BTreeMap order is alphabetical: nvidia_energy_consumption before nvidia_power_usage.
     assert_eq!(
         gpu0_metrics.keys().collect::<Vec<_>>(),
-        vec!["energy_consumption", "gpu_power_usage"]
+        vec!["nvidia_energy_consumption", "nvidia_power_usage"]
     );
 
     // Gauge: {unit,avg,p1..p99,min,max,std,count}; no sum.
-    let gauge = gpu0_metrics["gpu_power_usage"].as_object().unwrap();
+    let gauge = gpu0_metrics["nvidia_power_usage"].as_object().unwrap();
     assert_eq!(gauge["unit"], "W");
     assert_eq!(gauge["avg"], 300.0);
     assert_eq!(gauge["min"], 100.0);
@@ -431,7 +433,9 @@ fn telemetry_data_projects_gpu_series_grouped_by_endpoint_and_gpu() {
     assert!(!gauge.contains_key("sum"), "gauges never carry sum");
 
     // Counter: {unit,avg,min,max,sum} all equal to the total; no distribution keys.
-    let counter = gpu0_metrics["energy_consumption"].as_object().unwrap();
+    let counter = gpu0_metrics["nvidia_energy_consumption"]
+        .as_object()
+        .unwrap();
     assert_eq!(counter["unit"], "MJ");
     assert_eq!(counter["avg"], 0.5);
     assert_eq!(counter["min"], 0.5);

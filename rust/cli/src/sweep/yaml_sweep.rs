@@ -328,27 +328,64 @@ fn is_named_dict_list(arr: &[Value]) -> bool {
 
 /// Find the list entry named `name`, with the `phases.profiling` recipe fallback
 /// (unique non-warmup phase). Returns the index into `arr`.
-fn find_named_index(arr: &[Value], name: &str, parent_key: &str) -> Option<usize> {
+fn find_named_index(
+    arr: &[Value],
+    name: &str,
+    parent_key: &str,
+    full_path: &str,
+) -> anyhow::Result<usize> {
     if let Some(i) = arr
         .iter()
         .position(|it| it.get("name").and_then(Value::as_str) == Some(name))
     {
-        return Some(i);
+        return Ok(i);
     }
     if name != "profiling" || parent_key != "phases" {
-        return None;
+        anyhow::bail!(
+            "sweep path {full_path:?}: no entry named {name:?} found \
+             (existing: {:?})",
+            arr.iter()
+                .filter_map(|it| it.get("name").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+        );
     }
-    let candidates: Vec<usize> = arr
+    let candidates: Vec<(usize, &str)> = arr
         .iter()
         .enumerate()
-        .filter(|(_, it)| it.get("name").and_then(Value::as_str) != Some("warmup"))
-        .map(|(i, _)| i)
+        .filter_map(|(index, item)| {
+            let phase_name = item.get("name").and_then(Value::as_str).unwrap_or("");
+            let kind = item.get("kind").and_then(Value::as_str);
+            let is_profiling = kind == Some("profiling")
+                || (kind.is_none() && phase_name != "warmup")
+                || (kind.is_none() && phase_name.is_empty());
+            is_profiling.then_some((index, phase_name))
+        })
         .collect();
-    if candidates.len() == 1 {
-        Some(candidates[0])
-    } else {
-        None
+    if candidates.len() > 1 {
+        let names: Vec<&str> = candidates.iter().map(|(_, name)| *name).collect();
+        let suffix = full_path
+            .strip_prefix("phases.profiling.")
+            .map(|tail| format!(".{tail}"))
+            .unwrap_or_default();
+        let name_example = format!("phases.{}{suffix}", names[0]);
+        let index_example = format!("phases.0{suffix}");
+        anyhow::bail!(
+            "sweep path {full_path:?} is ambiguous: {} profiling phases exist ({}). \
+             Use an explicit phase name like {name_example:?} or a numeric index like {index_example:?}.",
+            candidates.len(),
+            names.join(", ")
+        );
     }
+    if candidates.len() == 1 {
+        return Ok(candidates[0].0);
+    }
+    anyhow::bail!(
+        "sweep path {full_path:?}: no entry named {name:?} found \
+         (existing: {:?})",
+        arr.iter()
+            .filter_map(|it| it.get("name").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+    )
 }
 
 /// Write `value` at a dotted path, traversing maps by key and named lists by
@@ -361,9 +398,7 @@ fn set_nested_value(data: &mut Value, path: &str, value: Value) -> anyhow::Resul
         if current.is_array() && is_named_dict_list(current.as_array().unwrap()) {
             let parent = if i > 0 { keys[i - 1] } else { "" };
             let arr = current.as_array().unwrap();
-            let idx = find_named_index(arr, key, parent).ok_or_else(|| {
-                anyhow::anyhow!("sweep path {path:?}: no entry named {key:?} found")
-            })?;
+            let idx = find_named_index(arr, key, parent, path)?;
             current = &mut current[idx];
             continue;
         }
@@ -380,8 +415,7 @@ fn set_nested_value(data: &mut Value, path: &str, value: Value) -> anyhow::Resul
             ""
         };
         let arr = current.as_array().unwrap();
-        let idx = find_named_index(arr, last, parent)
-            .ok_or_else(|| anyhow::anyhow!("sweep path {path:?}: no entry named {last:?} found"))?;
+        let idx = find_named_index(arr, last, parent, path)?;
         if let Some(obj) = current[idx].as_object_mut() {
             obj.insert(last.to_string(), value);
         }
@@ -396,6 +430,26 @@ fn set_nested_value(data: &mut Value, path: &str, value: Value) -> anyhow::Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sweep_profiling_alias_rejects_ambiguous_workflows() {
+        let base = serde_json::json!({
+            "benchmark": {"phases": [
+                {"name": "low", "kind": "profiling", "type": "concurrency", "concurrency": 1, "requests": 2},
+                {"name": "storm", "kind": "profiling", "type": "concurrency", "concurrency": 1, "requests": 2},
+            ]},
+            "sweep": {
+                "type": "grid",
+                "parameters": {"phases.profiling.concurrency": [4]},
+            },
+        });
+        let message = match parse(&base).unwrap().unwrap().expand(&base) {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("expected ambiguous sweep expansion to fail"),
+        };
+        assert!(message.contains("ambiguous"));
+        assert!(message.contains("low, storm"));
+    }
 
     #[test]
     fn alias_and_grid_expand() {

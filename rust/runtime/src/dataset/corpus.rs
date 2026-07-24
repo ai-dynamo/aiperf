@@ -19,6 +19,7 @@
 
 use crate::dataset::error::Result;
 use crate::dataset::tokenizer::TextTokenizer;
+use rayon::prelude::*;
 
 /// The embedded Shakespeare corpus (genai-perf's canonical synthetic source).
 ///
@@ -42,8 +43,8 @@ pub fn tokenize_sonnet_corpus(tokenizer: &dyn TextTokenizer) -> Result<Vec<u32>>
 /// a caller-supplied corpus on the same reproducibility contract as the default
 /// Shakespeare source rather than encoding the raw string wholesale (which would
 /// merge line boundaries and cross-chunk BPE merges differently).
-pub fn tokenize_corpus_chunked(corpus: &str, tokenizer: &dyn TextTokenizer) -> Result<Vec<u32>> {
-    let mut tokens = Vec::new();
+fn build_corpus_chunks(corpus: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
     let mut buffer: Vec<&str> = Vec::new();
     let mut chars = 0_usize;
 
@@ -55,13 +56,25 @@ pub fn tokenize_corpus_chunked(corpus: &str, tokenizer: &dyn TextTokenizer) -> R
         buffer.push(line);
         chars = chars.saturating_add(line.chars().count());
         if chars >= MAX_CHARS_PER_CHUNK {
-            tokens.extend(tokenizer.encode(&buffer.join(" "))?);
+            chunks.push(buffer.join(" "));
             buffer.clear();
             chars = 0;
         }
     }
     if !buffer.is_empty() {
-        tokens.extend(tokenizer.encode(&buffer.join(" "))?);
+        chunks.push(buffer.join(" "));
+    }
+    chunks
+}
+
+pub fn tokenize_corpus_chunked(corpus: &str, tokenizer: &dyn TextTokenizer) -> Result<Vec<u32>> {
+    let tokenized_chunks: Vec<Result<Vec<u32>>> = build_corpus_chunks(corpus)
+        .into_par_iter()
+        .map(|chunk| tokenizer.encode(&chunk))
+        .collect();
+    let mut tokens = Vec::new();
+    for chunk_tokens in tokenized_chunks {
+        tokens.extend(chunk_tokens?);
     }
     Ok(tokens)
 }
@@ -70,6 +83,40 @@ pub fn tokenize_corpus_chunked(corpus: &str, tokenizer: &dyn TextTokenizer) -> R
 mod tests {
     use super::*;
     use crate::dataset::tokenizer::TiktokenTokenizer;
+
+    #[test]
+    fn build_corpus_chunks_matches_python_line_filtering_and_flush_rules() {
+        let corpus = "  alpha  \n\nbeta\n  \nγδ\n";
+        assert_eq!(
+            build_corpus_chunks(corpus),
+            vec!["alpha beta γδ".to_string()]
+        );
+    }
+
+    #[test]
+    fn build_corpus_chunks_flushes_after_threshold_crossing_in_input_order() {
+        let first = "a".repeat(MAX_CHARS_PER_CHUNK - 1);
+        let second = "bb".to_string();
+        let corpus = format!("{first}\n{second}\nthird");
+        assert_eq!(
+            build_corpus_chunks(&corpus),
+            vec![format!("{first} {second}"), "third".to_string()]
+        );
+    }
+
+    #[test]
+    fn tokenize_corpus_chunked_matches_sequential_chunk_reference() {
+        let tokenizer = TiktokenTokenizer::builtin();
+        let corpus = "alpha\nbeta\n\n gamma \n";
+        let sequential: Vec<u32> = build_corpus_chunks(corpus)
+            .into_iter()
+            .flat_map(|chunk| tokenizer.encode(&chunk).unwrap())
+            .collect();
+        assert_eq!(
+            tokenize_corpus_chunked(corpus, &tokenizer).unwrap(),
+            sequential
+        );
+    }
 
     #[test]
     fn sonnet_corpus_is_embedded_and_substantial() {

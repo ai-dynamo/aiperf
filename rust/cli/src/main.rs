@@ -35,6 +35,7 @@ unsafe extern "C" {
 }
 
 fn main() {
+    aiperf_cli::diagnostics::register_sigusr1_faulthandler();
     let argv: Vec<String> = std::env::args().skip(1).collect();
 
     aiperf_cli::logging::init(&argv);

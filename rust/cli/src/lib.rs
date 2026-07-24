@@ -13,7 +13,9 @@ pub mod cellular_role;
 pub mod chat;
 pub mod compare;
 pub mod config;
+pub mod control_hooks;
 pub mod delegate;
+pub mod diagnostics;
 pub mod dispatch;
 pub mod exec_bin;
 pub mod execute;
@@ -26,6 +28,7 @@ pub mod k8s;
 pub mod load;
 pub mod logging;
 pub mod model;
+pub mod phase_validate;
 pub mod profile;
 #[cfg(feature = "search-pyo3")]
 pub mod pyfit;

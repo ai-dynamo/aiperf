@@ -12,19 +12,22 @@ use aiperf_runtime::engine::protocol::DispatchMode;
 use crate::flags::ProfileFlags;
 use crate::model::artifacts::Artifacts;
 use crate::model::dataset::{
-    AudioSpec, Dataset, Distribution, ImageSpec, PrefixPrompts, Prompts, Sampling, Synthetic,
-    VideoAudio, VideoSpec,
+    AudioSpec, Dataset, Distribution, ImageSpec, PrefixPrompts, PromptSelection, Prompts, Sampling,
+    Synthetic, VideoAudio, VideoSpec,
 };
 use crate::model::endpoint::{
-    ConnectionReuse, Endpoint, EndpointType, RequestContentType, WaitForModelMode,
+    ConnectionReuse, Endpoint, EndpointType, RequestContentType, ResetKvCacheConfig,
+    ServerProfilerConfig, WaitForModelMode,
 };
 use crate::model::metrics::Metrics;
 use crate::model::models::{ModelItem, ModelStrategy, Models};
-use crate::model::phase::{AdaptiveScale, Phase, PhaseCommon, PhaseKind, SlaFilter};
+use crate::model::phase::{AdaptiveScale, Phase, PhaseCommon, PhaseKind, PhaseRole, SlaFilter};
+use crate::model::rate_series::RateSeries;
 use crate::model::runtime::Runtime;
 use crate::model::tokenizer::Tokenizer;
 use crate::model::transport::Transport;
 use crate::model::{BenchmarkConfig, BenchmarkRun, Resolved};
+use crate::phase_validate::{apply_cli_loadgen_overlays, normalize_and_validate_phases};
 
 /// Exact-match placeholder words used as an entire model name.
 const FAKE_MODEL_EXACT: &[&str] = &[
@@ -75,6 +78,12 @@ const DEFAULT_ISL_MEAN: f64 = 550.0;
 pub(crate) const DEFAULT_ENTRIES: u32 = 100;
 /// Default request bound when no count/duration/schedule bounds the run.
 const DEFAULT_REQUEST_COUNT: u64 = 10;
+
+fn authored_prompt_selection(corpus: Option<&str>) -> Option<PromptSelection> {
+    corpus.map(|corpus| PromptSelection {
+        corpus: Some(corpus.to_string()),
+    })
+}
 
 /// A leading warmup phase's axes.
 pub(crate) struct Warmup {
@@ -166,6 +175,10 @@ pub(crate) struct Inputs {
     pub session_header: Option<String>,
     /// Custom request path appended to the endpoint URL (`endpoint.path`).
     pub endpoint_path: Option<String>,
+    /// Optional reset-KV-cache hook policy (`endpoint.reset_kv_cache`).
+    pub reset_kv_cache: Option<ResetKvCacheConfig>,
+    /// Optional server-profiler hook policy (`endpoint.server_profiler`).
+    pub server_profiler: Option<ServerProfilerConfig>,
     /// Per-record export formats (`artifacts.records`; default `["jsonl"]`,
     /// empty = summary-only).
     pub records_formats: Vec<String>,
@@ -272,6 +285,8 @@ pub(crate) struct Inputs {
     pub prefix_reuse_fraction: Option<f64>,
     /// Fraction of a reusing prompt's input length occupied by the shared prefix.
     pub prefix_reuse_ratio: Option<f64>,
+    /// Authored prompt corpus selector for synthesized prompt content.
+    pub prompt_corpus: Option<String>,
     /// Bounded-memory sketch metric retention.
     pub sketch_metrics: bool,
     /// Closed-loop steady-state summary for concurrency-target runs.
@@ -288,11 +303,15 @@ pub(crate) struct Inputs {
     pub video_spec: Option<VideoSpec>,
     /// Adaptive-scale controller (present when --adaptive-scale is set).
     pub adaptive_scale: Option<AdaptiveScale>,
+    /// Piecewise-linear request-rate schedule (mutually exclusive with scalar rate).
+    pub request_rate_series: Option<RateSeries>,
     /// Shared-prefix / prefix-pool policy.
     pub prefix_prompts: Option<PrefixPrompts>,
     /// Dry-run dataset-analysis emission (present when `--dry-run` is set without
     /// `--no-dataset-analysis`).
     pub dataset_analysis: Option<DatasetAnalysisInputs>,
+    /// Explicit ordered phase list from YAML (`phases:`); overrides warmup/profiling axes.
+    pub phases_override: Option<Vec<Phase>>,
     pub artifact_dir: PathBuf,
 }
 
@@ -329,6 +348,71 @@ pub(crate) fn export_level_formats(level: Option<&str>) -> anyhow::Result<(Vec<S
     })
 }
 
+pub(crate) fn reset_kv_cache_from_flags(flags: &ProfileFlags) -> Option<ResetKvCacheConfig> {
+    (flags.reset_kv_cache
+        || flags.reset_kv_cache_timeout_seconds.is_some()
+        || flags.reset_kv_cache_path.is_some())
+    .then(|| ResetKvCacheConfig {
+        timeout_seconds: flags.reset_kv_cache_timeout_seconds,
+        path: flags.reset_kv_cache_path.clone(),
+    })
+}
+
+pub(crate) fn server_profiler_from_flags(flags: &ProfileFlags) -> Option<ServerProfilerConfig> {
+    (flags.server_profiler
+        || flags.server_profiler_timeout_seconds.is_some()
+        || flags.server_profiler_start_path.is_some()
+        || flags.server_profiler_stop_path.is_some())
+    .then(|| ServerProfilerConfig {
+        timeout_seconds: flags.server_profiler_timeout_seconds,
+        start_path: flags.server_profiler_start_path.clone(),
+        stop_path: flags.server_profiler_stop_path.clone(),
+    })
+}
+
+pub(crate) fn overlay_reset_kv_cache_config(
+    target: &mut Option<ResetKvCacheConfig>,
+    overlay: Option<ResetKvCacheConfig>,
+) {
+    let Some(overlay) = overlay else {
+        return;
+    };
+    match target {
+        Some(existing) => {
+            if overlay.timeout_seconds.is_some() {
+                existing.timeout_seconds = overlay.timeout_seconds;
+            }
+            if overlay.path.is_some() {
+                existing.path = overlay.path;
+            }
+        }
+        None => *target = Some(overlay),
+    }
+}
+
+pub(crate) fn overlay_server_profiler_config(
+    target: &mut Option<ServerProfilerConfig>,
+    overlay: Option<ServerProfilerConfig>,
+) {
+    let Some(overlay) = overlay else {
+        return;
+    };
+    match target {
+        Some(existing) => {
+            if overlay.timeout_seconds.is_some() {
+                existing.timeout_seconds = overlay.timeout_seconds;
+            }
+            if overlay.start_path.is_some() {
+                existing.start_path = overlay.start_path;
+            }
+            if overlay.stop_path.is_some() {
+                existing.stop_path = overlay.stop_path;
+            }
+        }
+        None => *target = Some(overlay),
+    }
+}
+
 pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     reject_sweep("--concurrency", flags.concurrency.as_deref())?;
     reject_sweep("--request-count", flags.request_count.as_deref())?;
@@ -360,6 +444,15 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     let concurrency = parse_single::<u32>("--concurrency", flags.concurrency.as_deref())?;
     let request_count = parse_single::<u64>("--request-count", flags.request_count.as_deref())?;
     let request_rate = parse_single::<f64>("--request-rate", flags.request_rate.as_deref())?;
+    let user_centric_cli = match (flags.user_centric_rate, flags.num_users) {
+        (Some(rate), Some(users)) => Some((rate, users)),
+        _ => None,
+    };
+    let request_rate_series = resolve_request_rate_series(
+        flags.request_rate_series.as_ref(),
+        request_rate,
+        user_centric_cli.is_some(),
+    )?;
     let benchmark_duration =
         parse_single::<f64>("--benchmark-duration", flags.benchmark_duration.as_deref())?;
     let num_conversations =
@@ -552,6 +645,8 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         turn_delay_ms,
         session_header: flags.session_header.clone(),
         endpoint_path: flags.custom_endpoint.clone(),
+        reset_kv_cache: reset_kv_cache_from_flags(flags),
+        server_profiler: server_profiler_from_flags(flags),
         records_formats,
         export_raw,
         export_trace: flags.export_http_trace,
@@ -588,10 +683,8 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             (Some(rate), delay) => Some((rate, delay.unwrap_or(0.0))),
             _ => None,
         },
-        user_centric: match (flags.user_centric_rate, flags.num_users) {
-            (Some(rate), Some(users)) => Some((rate, users)),
-            _ => None,
-        },
+        user_centric: user_centric_cli,
+        request_rate_series,
         request_count,
         benchmark_duration,
         grace_period: flags.benchmark_grace_period,
@@ -631,6 +724,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         isl_block_size: flags.isl_block_size,
         prefix_reuse_fraction: flags.prefix_reuse_fraction,
         prefix_reuse_ratio: flags.prefix_reuse_ratio,
+        prompt_corpus: flags.prompt_corpus.clone(),
         sketch_metrics: flags.sketch_metrics,
         steady_state: flags.steady_state,
         steady_state_fraction: flags.steady_state_fraction,
@@ -657,6 +751,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
                 per_conversation: flags.dataset_analysis_per_conversation,
             }
         }),
+        phases_override: None,
         artifact_dir: flags
             .artifact_dir
             .clone()
@@ -762,8 +857,12 @@ fn validate_baseten_only_trace_flags(inputs: &Inputs) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
+pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     validate_baseten_only_trace_flags(&inputs)?;
+    let loadgen_overlay = crate::phase_validate::LoadgenOverlay::from_inputs(&inputs);
+    if let Some(ref mut phases) = inputs.phases_override {
+        apply_cli_loadgen_overlays(phases, &loadgen_overlay)?;
+    }
     let primary_model = inputs.model_names[0].clone();
 
     let models = Models {
@@ -807,6 +906,8 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         request_content_type: inputs.request_content_type,
         template: None,
         response_field: None,
+        reset_kv_cache: inputs.reset_kv_cache,
+        server_profiler: inputs.server_profiler,
     };
 
     // Placeholder-only model sets use the offline builtin tokenizer unless overridden.
@@ -863,6 +964,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             sampling: Sampling(inputs.sampling.clone()),
             entries: inputs.dataset_entries,
             random_seed: inputs.dataset_random_seed,
+            prompts: authored_prompt_selection(inputs.prompt_corpus.as_deref()),
         })
     } else if inputs.input_file.is_some() || inputs.inline_records.is_some() {
         if inputs.uuid_and_strip && endpoint_type_for_dataset_validation != "chat" {
@@ -923,6 +1025,9 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 if !inputs.force_min_tokens {
                     o.insert("force_min_tokens".to_string(), serde_json::json!(false));
                 }
+                if let Some(block_size) = inputs.isl_block_size {
+                    o.insert("block_size".to_string(), serde_json::json!(block_size));
+                }
                 o
             },
             // Path-backed and inline-record datasets are mutually exclusive.
@@ -936,6 +1041,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             },
             random_seed: inputs.dataset_random_seed,
             osl: inputs.osl.clone(),
+            prompts: authored_prompt_selection(inputs.prompt_corpus.as_deref()),
             records: inputs.inline_records.clone(),
             synthesis: inputs.synthesis.clone(),
         })
@@ -948,6 +1054,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 num_prefix_prompts: None,
                 prefix_prompt_length: None,
                 block_size: inputs.isl_block_size,
+                corpus: inputs.prompt_corpus.clone(),
                 sequence_distribution: inputs.sequence_distribution.clone(),
                 prefix_reuse_fraction: inputs.prefix_reuse_fraction,
                 prefix_reuse_ratio: inputs.prefix_reuse_ratio,
@@ -983,6 +1090,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         Phase {
             common: PhaseCommon {
                 name: "profiling".to_string(),
+                kind: Some(PhaseRole::Profiling),
                 exclude_from_results: false,
                 seamless: false,
                 requests: inputs.request_count,
@@ -996,6 +1104,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 cancellation: None,
                 agentic_cache_warmup_duration: None,
                 adaptive_scale: None,
+                rate_series: None,
             },
             kind: PhaseKind::UserCentric {
                 rate,
@@ -1007,6 +1116,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         Phase {
             common: PhaseCommon {
                 name: "profiling".to_string(),
+                kind: Some(PhaseRole::Profiling),
                 exclude_from_results: false,
                 seamless: false,
                 requests: inputs.request_count,
@@ -1020,6 +1130,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 cancellation: None,
                 agentic_cache_warmup_duration: None,
                 adaptive_scale: None,
+                rate_series: None,
             },
             kind: PhaseKind::FixedSchedule {
                 auto_offset,
@@ -1028,12 +1139,24 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             },
         }
     } else {
+        // `--request-rate-series` alone selects a rate-controlled phase whose
+        // bootstrap QPS is the series' first point (mutually exclusive with
+        // `--request-rate` at flag resolve time).
+        let effective_rate = inputs.request_rate.or_else(|| {
+            inputs
+                .request_rate_series
+                .as_ref()
+                .map(|series| series.initial_qps())
+        });
         let mut phase = build_phase(
             "profiling",
             false,
             inputs.concurrency.unwrap_or(1),
-            inputs.request_rate,
-            inputs.rate_mode.as_deref(),
+            effective_rate,
+            inputs
+                .rate_mode
+                .as_deref()
+                .or_else(|| inputs.request_rate_series.is_some().then_some("constant")),
             inputs.smoothness,
             inputs.concurrency,
             effective_requests,
@@ -1049,39 +1172,46 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         phase.common.cancellation = inputs
             .cancellation
             .map(|(rate, delay)| crate::model::phase::Cancellation { rate, delay });
+        phase.common.rate_series = inputs.request_rate_series.clone();
         phase
     };
-    let mut phases = Vec::new();
-    if let Some(warmup) = inputs.warmup {
-        let concurrency = warmup.concurrency.or(inputs.concurrency);
-        let mut wp = build_phase(
-            "warmup",
-            true,
-            concurrency.unwrap_or(1),
-            warmup.rate,
-            warmup.rate_mode.as_deref(),
-            None,
-            concurrency,
-            warmup.requests,
-            warmup.sessions,
-            warmup.duration,
-            warmup.grace_period,
-        );
-        wp.common.prefill_concurrency = warmup.prefill_concurrency;
-        wp.common.concurrency_ramp = warmup.concurrency_ramp.map(linear_ramp);
-        wp.common.rate_ramp = warmup.rate_ramp.map(linear_ramp);
-        wp.common.prefill_ramp = warmup.prefill_ramp.map(linear_ramp);
-        wp.common.agentic_cache_warmup_duration = inputs.agentic_cache_warmup_duration;
-        phases.push(wp);
-    } else if let Some(dur) = inputs.agentic_cache_warmup_duration {
-        // A cache-warmup duration requires a phase even when no warmup is authored.
-        let mut wp = build_phase(
-            "warmup", true, 1, None, None, None, None, None, None, None, None,
-        );
-        wp.common.agentic_cache_warmup_duration = Some(dur);
-        phases.push(wp);
-    }
-    phases.push(profiling);
+    let mut phases = match inputs.phases_override.take() {
+        Some(authored) => authored,
+        None => {
+            let mut phases = Vec::new();
+            if let Some(warmup) = inputs.warmup {
+                let concurrency = warmup.concurrency.or(inputs.concurrency);
+                let mut wp = build_phase(
+                    "warmup",
+                    true,
+                    concurrency.unwrap_or(1),
+                    warmup.rate,
+                    warmup.rate_mode.as_deref(),
+                    None,
+                    concurrency,
+                    warmup.requests,
+                    warmup.sessions,
+                    warmup.duration,
+                    warmup.grace_period,
+                );
+                wp.common.prefill_concurrency = warmup.prefill_concurrency;
+                wp.common.concurrency_ramp = warmup.concurrency_ramp.map(linear_ramp);
+                wp.common.rate_ramp = warmup.rate_ramp.map(linear_ramp);
+                wp.common.prefill_ramp = warmup.prefill_ramp.map(linear_ramp);
+                wp.common.agentic_cache_warmup_duration = inputs.agentic_cache_warmup_duration;
+                phases.push(wp);
+            } else if let Some(dur) = inputs.agentic_cache_warmup_duration {
+                let mut wp = build_phase(
+                    "warmup", true, 1, None, None, None, None, None, None, None, None,
+                );
+                wp.common.agentic_cache_warmup_duration = Some(dur);
+                phases.push(wp);
+            }
+            phases.push(profiling);
+            phases
+        }
+    };
+    normalize_and_validate_phases(&mut phases)?;
 
     let endpoint_type = endpoint.endpoint_type.0.clone();
     let endpoint_urls = endpoint.urls.clone();
@@ -1320,9 +1450,15 @@ fn build_phase(
             concurrency: concurrency.unwrap_or(default_concurrency),
         }
     };
+    let role = if exclude_from_results {
+        PhaseRole::Warmup
+    } else {
+        PhaseRole::Profiling
+    };
     Phase {
         common: PhaseCommon {
             name: name.to_string(),
+            kind: Some(role),
             exclude_from_results,
             seamless: false,
             requests,
@@ -1336,9 +1472,28 @@ fn build_phase(
             cancellation: None,
             agentic_cache_warmup_duration: None,
             adaptive_scale: None,
+            rate_series: None,
         },
         kind,
     }
+}
+
+/// Resolve `--request-rate-series` against mutually exclusive scalar rate flags.
+pub(crate) fn resolve_request_rate_series(
+    path: Option<&PathBuf>,
+    scalar_rate: Option<f64>,
+    user_centric: bool,
+) -> anyhow::Result<Option<RateSeries>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    if scalar_rate.is_some() {
+        anyhow::bail!("--request-rate and --request-rate-series are mutually exclusive");
+    }
+    if user_centric {
+        anyhow::bail!("--request-rate-series is not supported with user-centric scheduling");
+    }
+    Ok(Some(RateSeries::from_json_path(path)?))
 }
 
 /// Parse repeatable `Name:value` header flags, splitting on the first colon.
@@ -1995,7 +2150,10 @@ fn reject_sweep(flag: &str, value: Option<&str>) -> anyhow::Result<()> {
 }
 
 /// Parse a single scalar from a sweep-capable flag (comma-lists already rejected).
-fn parse_single<T: std::str::FromStr>(flag: &str, value: Option<&str>) -> anyhow::Result<Option<T>>
+pub(crate) fn parse_single<T: std::str::FromStr>(
+    flag: &str,
+    value: Option<&str>,
+) -> anyhow::Result<Option<T>>
 where
     T::Err: std::fmt::Display,
 {
@@ -2221,6 +2379,87 @@ mod tests {
     }
 
     #[test]
+    fn prompt_corpus_flag_projects_synthetic_dataset() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--prompt-corpus",
+                "coding",
+            ]);
+            let run = super::resolve(&flags).expect("resolve run");
+            let value = serde_json::to_value(&run).expect("serialize run");
+            assert_eq!(
+                value["cfg"]["datasets"][0]["prompts"]["corpus"],
+                serde_json::json!("coding")
+            );
+        });
+    }
+
+    #[test]
+    fn prompt_corpus_flag_projects_file_dataset_prompts() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--input-file",
+                "trace.jsonl",
+                "--custom-dataset-type",
+                "mooncake_trace",
+                "--prompt-corpus",
+                "random",
+            ]);
+            let run = super::resolve(&flags).expect("resolve run");
+            let value = serde_json::to_value(&run).expect("serialize run");
+            assert_eq!(
+                value["cfg"]["datasets"][0]["type"],
+                serde_json::json!("file")
+            );
+            assert_eq!(
+                value["cfg"]["datasets"][0]["prompts"]["corpus"],
+                serde_json::json!("random")
+            );
+            assert_eq!(
+                value["cfg"]["datasets"][0]["synthesis"]["corpus"],
+                serde_json::Value::Null
+            );
+        });
+    }
+
+    #[test]
+    fn prompt_corpus_flag_projects_public_dataset_prompts() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--public-dataset",
+                "sharegpt",
+                "--prompt-corpus",
+                "coding",
+            ]);
+            let run = super::resolve(&flags).expect("resolve run");
+            let value = serde_json::to_value(&run).expect("serialize run");
+            assert_eq!(
+                value["cfg"]["datasets"][0]["type"],
+                serde_json::json!("public")
+            );
+            assert_eq!(
+                value["cfg"]["datasets"][0]["prompts"]["corpus"],
+                serde_json::json!("coding")
+            );
+        });
+    }
+
+    #[test]
     fn baseten_extra_input_collisions_are_rejected_and_opt_outable() {
         run_on_big_stack(baseten_extra_input_collisions_are_rejected_and_opt_outable_body);
     }
@@ -2271,5 +2510,40 @@ mod tests {
         if let Err(error) = super::resolve(&flags) {
             assert!(!error.to_string().contains("overwritten per-turn"));
         }
+    }
+
+    #[test]
+    fn endpoint_control_hook_flags_project_endpoint_overrides() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--reset-kv-cache-timeout-seconds",
+                "3.5",
+                "--reset-kv-cache-path",
+                "/reset_prefix_cache",
+                "--server-profiler-timeout-seconds",
+                "10",
+                "--server-profiler-start-path",
+                "/start_profile",
+                "--server-profiler-stop-path",
+                "/stop_profile",
+            ]);
+            let run = super::resolve(&flags).expect("resolve run");
+            let endpoint = run.cfg.endpoint.expect("endpoint present");
+            let reset_kv_cache = endpoint.reset_kv_cache.expect("reset_kv_cache enabled");
+            assert_eq!(reset_kv_cache.timeout_seconds, Some(3.5));
+            assert_eq!(reset_kv_cache.path.as_deref(), Some("/reset_prefix_cache"));
+            let server_profiler = endpoint.server_profiler.expect("server_profiler enabled");
+            assert_eq!(server_profiler.timeout_seconds, Some(10.0));
+            assert_eq!(
+                server_profiler.start_path.as_deref(),
+                Some("/start_profile")
+            );
+            assert_eq!(server_profiler.stop_path.as_deref(), Some("/stop_profile"));
+        });
     }
 }

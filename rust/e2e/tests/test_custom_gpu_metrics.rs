@@ -205,8 +205,8 @@ async fn test_custom_metrics_deduplication() {
                 .and_then(|m| m.as_object())
                 .expect("metrics object");
 
-            assert!(metrics.contains_key("gpu_utilization"));
-            assert!(metrics.contains_key("gpu_power_usage"));
+            assert!(metrics.contains_key("nvidia_gpu_utilization"));
+            assert!(metrics.contains_key("nvidia_power_usage"));
 
             assert!(metrics.contains_key("sm_clock"));
             assert!(metrics.contains_key("mem_clock"));

@@ -50,6 +50,31 @@ pub enum RequestContentType {
     MultipartFormData,
 }
 
+/// Endpoint-local reset-KV-cache hook policy.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ResetKvCacheConfig {
+    /// Optional request timeout, in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<f64>,
+    /// Optional origin-relative request path override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+/// Endpoint-local server-profiler hook policy.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ServerProfilerConfig {
+    /// Optional request timeout, in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<f64>,
+    /// Optional origin-relative request path override for profiler start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_path: Option<String>,
+    /// Optional origin-relative request path override for profiler stop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_path: Option<String>,
+}
+
 /// The typed `endpoint` section.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Endpoint {
@@ -108,6 +133,12 @@ pub struct Endpoint {
     /// Optional response field to extract (paired with `template`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_field: Option<String>,
+    /// Optional reset-KV-cache hook policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_kv_cache: Option<ResetKvCacheConfig>,
+    /// Optional server-profiler hook policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_profiler: Option<ServerProfilerConfig>,
 }
 
 #[cfg(test)]

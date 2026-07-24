@@ -1,0 +1,26 @@
+flowchart TD
+    EXT["AIPerfExtension"] --> REG["AIPerfRegistry"]
+    REG --> APP["Application bootstrap"]
+    APP --> CLOCK["Clock: RealClock | SimClock"]
+    APP --> PHASE["Phase orchestration"]
+    PHASE --> WL["Workload runtime"]
+    APP --> BUILDER["ExecutionSinkBuilder"]
+    HTTP["http"]
+    GRPC["grpc"]
+    DRY["dry_run"]
+    DYNO["dynosim_offline / dynosim_online"]
+
+    HTTP --> BUILDER
+    GRPC --> BUILDER
+    DRY --> BUILDER
+    DYNO --> BUILDER
+    BUILDER --> WORKER["WorkerSink"]
+    WL --> REQ["Dispatchable request"]
+    REQ --> SINK["RequestSink<R>"]
+    WORKER -->|"drives"| SINK
+    MEASURE["transport::measure"] -->|"configures"| OBS["RequestObserver"]
+    SINK -->|"response reduction"| REDUCE["transport::reduce"]
+    REDUCE -->|"reduced events"| OBS
+    SINK -->|"arrival / admission / terminal events"| OBS
+    OBS --> METRICS["metrics / report"]
+    METRICS --> EXPORT["exporters"]

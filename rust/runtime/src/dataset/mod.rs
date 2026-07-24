@@ -10,6 +10,7 @@
 //! so sharing a [`Dataset`] across worker threads shares the payload bytes too.
 
 pub mod analysis;
+pub(crate) mod coding;
 pub mod compose;
 pub mod corpus;
 pub mod dataset;

@@ -558,6 +558,7 @@ mod tests {
     use super::*;
     use crate::cellular::transport::connect::{BindSpec, build_velo, connect_controller};
     use std::io::Write;
+    use std::process::Command;
 
     /// A deterministic pseudo-random payload of `len` bytes (no allocator noise).
     fn sample_bytes(len: usize) -> Vec<u8> {
@@ -581,12 +582,52 @@ mod tests {
         Some(resident_pages * 4096)
     }
 
+    const RSS_TEST_CHILD_ENV: &str = "AIPERF_ARTIFACT_VELO_RSS_CHILD";
+    const RSS_TEST_NAME: &str = "engine::artifact_stream_velo::tests::velo_stream_large_artifact_round_trips_with_bounded_memory";
+
+    fn run_rss_transfer_test_in_child() {
+        let current_exe = std::env::current_exe().expect("current test binary");
+        let output = Command::new(&current_exe)
+            .arg("--exact")
+            .arg(RSS_TEST_NAME)
+            .arg("--nocapture")
+            .env(RSS_TEST_CHILD_ENV, "1")
+            .env("RUST_TEST_THREADS", "1")
+            .output()
+            .expect("spawn isolated RSS child");
+        assert!(
+            output.status.success(),
+            "isolated RSS child failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     // Stream a large (≥50 MB) synthetic artifact over two REAL velo instances on
     // loopback TCP and assert: (1) the receiver reassembles byte-identical, and
     // (2) the transfer's live memory growth is bounded (O(window·chunk)), not
     // O(file) — the whole file is never resident on either end.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn velo_stream_large_artifact_round_trips_with_bounded_memory() {
+    #[test]
+    fn velo_stream_large_artifact_round_trips_with_bounded_memory() {
+        // The RSS bound is process-wide (`/proc/self/statm`), so the parent libtest
+        // process can be polluted by unrelated concurrent unit tests. Run the real
+        // transfer in an exact-filtered child process so the measurement isolates the
+        // artifact stream itself rather than suite background allocation noise.
+        if std::env::var_os(RSS_TEST_CHILD_ENV).is_none() {
+            run_rss_transfer_test_in_child();
+            return;
+        }
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .expect("artifact-stream RSS runtime");
+        runtime.block_on(async {
+            velo_stream_large_artifact_round_trips_with_bounded_memory_impl().await;
+        });
+    }
+
+    async fn velo_stream_large_artifact_round_trips_with_bounded_memory_impl() {
         let dir = tempfile::tempdir().unwrap();
 
         // A 64 MB incompressible-ish artifact spanning ~1000 chunks.

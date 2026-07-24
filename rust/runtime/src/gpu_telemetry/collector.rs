@@ -127,8 +127,10 @@ mod tests {
                     hostname: None,
                     namespace: None,
                     pod_name: None,
+                    platform: crate::gpu_telemetry::model::NVIDIA_GPU_TELEMETRY_PLATFORM
+                        .to_string(),
                 },
-                metrics: BTreeMap::from([("energy_consumption".to_string(), call as f64)]),
+                metrics: BTreeMap::from([("nvidia_energy_consumption".to_string(), call as f64)]),
             };
             Ok(Some(GpuScrape {
                 timestamp_ns: call as i64,

@@ -22,8 +22,9 @@
 //! "big")`, exactly as `_RNGManager.derive`.
 //!
 //! [`PythonRandomGenerator`] was originally scoped to the subset of methods the
-//! procedural coding corpus (`crate::graph::recorded::coding`) needs; it now
-//! implements the full [`crate::rng::RandomGenerator`] trait. The BLAKE3 plus
+//! procedural coding corpus (`crate::dataset::coding`) needs; it now
+//! implements the full [`crate::rng::RandomGenerator`] trait plus the runtime
+//! extension surface needed by generic dataset/timing code. The BLAKE3 plus
 //! `rand_pcg` native stream (`crate::rng::generator::RustRandomGenerator`) is
 //! intentionally a different, unrelated backend — this one exists purely for
 //! byte-exact parity with `random_generator.py`. Committed golden vectors
@@ -31,12 +32,14 @@
 //! methods are pinned against a local CPython/numpy interpreter in this file's
 //! tests.
 
+use rand::Rng;
 use sha2::{Digest, Sha256};
 
 use crate::rng::RandomGenerator;
 use crate::rng::compat::numpy_generator::NumpyGenerator;
 use crate::rng::compat::python_mt::PythonMt19937;
 use crate::rng::error::{Result, RngError};
+use crate::rng::random_generator::RuntimeRandomGenerator;
 
 /// `random_generator.py`'s composite: a CPython-MT generator and a numpy-PCG64
 /// generator, both seeded from one child seed with disjoint operation sets.
@@ -59,6 +62,11 @@ impl PythonRandomGenerator {
         }
     }
 
+    /// Construct from an explicit seed or a freshly sampled entropy seed.
+    pub fn from_seed_or_entropy(seed: Option<u64>) -> Self {
+        Self::from_child_seed(seed.unwrap_or_else(|| rand::rng().random()))
+    }
+
     /// Derive a child generator from a root seed and a dotted identifier, exactly
     /// as `_RNGManager.derive`: `child_seed = big-endian u64 of the first 8 bytes
     /// of sha256(f"{root_seed}:{identifier}")`.
@@ -79,6 +87,11 @@ impl PythonRandomGenerator {
     /// The child seed this generator was constructed from.
     pub const fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// Replace both backends with one deterministic child seed.
+    pub fn reseed(&mut self, seed: u64) {
+        *self = Self::from_child_seed(seed);
     }
 }
 
@@ -272,6 +285,112 @@ impl RandomGenerator for PythonRandomGenerator {
     fn gammavariate(&mut self, alpha: f64, beta: f64) -> Result<f64> {
         self.mt.gammavariate(alpha, beta)
     }
+}
+
+impl RuntimeRandomGenerator for PythonRandomGenerator {
+    fn seed(&self) -> Option<u64> {
+        Some(self.seed)
+    }
+
+    fn reseed(&mut self, seed: u64) {
+        Self::reseed(self, seed);
+    }
+
+    fn random_u64(&mut self) -> u64 {
+        (u64::from(self.mt.next_u32()) << 32) | u64::from(self.mt.next_u32())
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        let bytes = self.np.bytes(dest.len());
+        dest.copy_from_slice(&bytes);
+    }
+
+    fn randrange_u64(&mut self, lo: u64, hi: u64) -> Result<u64> {
+        if lo >= hi {
+            return Err(RngError::EmptyRange {
+                what: "randrange_u64",
+            });
+        }
+        Ok(lo + self.mt.randbelow(hi - lo))
+    }
+
+    fn weighted_choice<T: Clone>(&mut self, values: &[T], weights: Option<&[f64]>) -> Result<T> {
+        let Some(weights) = weights else {
+            return self.choice(values).cloned();
+        };
+        validate_weight_total(values.len(), weights)?;
+        Ok(values[self.numpy_choice_weighted(weights)].clone())
+    }
+
+    fn normal_checked(&mut self, loc: f64, scale: f64) -> Result<f64> {
+        validate_normal_parameters(loc, scale)?;
+        Ok(self.normal(loc, scale))
+    }
+
+    fn normal_batch_checked(&mut self, loc: f64, scale: f64, size: usize) -> Result<Vec<f64>> {
+        validate_normal_parameters(loc, scale)?;
+        Ok(self.normal_batch(loc, scale, size))
+    }
+
+    fn integers_checked(&mut self, low: i64, high: Option<i64>, size: usize) -> Result<Vec<i64>> {
+        let (lo, hi) = match high {
+            Some(high) => (low, high),
+            None => (0, low),
+        };
+        if lo >= hi {
+            return Err(RngError::EmptyRange { what: "integers" });
+        }
+        Ok(self.integers_batch(lo, hi, size))
+    }
+}
+
+fn validate_normal_parameters(loc: f64, scale: f64) -> Result<()> {
+    if scale < 0.0 || !scale.is_finite() {
+        return Err(RngError::InvalidParameter {
+            what: "scale",
+            value: scale,
+        });
+    }
+    if !loc.is_finite() {
+        return Err(RngError::InvalidParameter {
+            what: "loc",
+            value: loc,
+        });
+    }
+    Ok(())
+}
+
+fn validate_weight_total(value_len: usize, weights: &[f64]) -> Result<()> {
+    if weights.len() != value_len {
+        return Err(RngError::InvalidWeights {
+            reason: "weights length must match values length",
+        });
+    }
+    if weights.is_empty() {
+        return Err(RngError::InvalidWeights {
+            reason: "weights cannot be empty",
+        });
+    }
+    if weights
+        .iter()
+        .any(|weight| !weight.is_finite() || *weight < 0.0)
+    {
+        return Err(RngError::InvalidWeights {
+            reason: "weights must be finite and non-negative",
+        });
+    }
+    let total: f64 = weights.iter().sum();
+    if !total.is_finite() {
+        return Err(RngError::InvalidWeights {
+            reason: "weights must have a finite sum",
+        });
+    }
+    if total <= 0.0 {
+        return Err(RngError::InvalidWeights {
+            reason: "weights must sum to a positive value",
+        });
+    }
+    Ok(())
 }
 
 /// Python's `//` floor division: rounds toward negative infinity regardless of

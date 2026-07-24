@@ -23,6 +23,7 @@ pub mod intervals;
 pub mod phase;
 pub mod ramping;
 pub mod rate_gate;
+pub mod rate_series;
 pub mod slots;
 pub mod stop;
 pub mod url_selection;

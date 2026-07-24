@@ -489,6 +489,22 @@ class FileDataset(BaseConfig):
         ),
     ]
 
+    block_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            gt=0,
+            description="Token block size for hash-based prompt reconstruction from "
+            "`hash_ids` in trace datasets. Overrides the loader's `default_block_size` "
+            "plugin metadata. Governs how the recorded `input_length` is partitioned "
+            "into cache blocks (mooncake_trace and other hash-reconstructing loaders); "
+            "it has no effect on loaders that replay literal recorded prompts "
+            "(baseten_trace). Set this when a trace was recorded at a block size "
+            "different from its loader default, e.g. a Mooncake-format trace recorded at "
+            "block size 16. None uses the loader default.",
+        ),
+    ]
+
     @model_validator(mode="after")
     def _validate_source_xor(self) -> FileDataset:
         path_set = self.path is not None

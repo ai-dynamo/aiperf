@@ -23,6 +23,7 @@ pub mod cell_origin;
 #[cfg(feature = "cellular")]
 pub mod cellular_controller;
 pub mod cellular_kind;
+pub mod control_hooks;
 pub mod control_plane_http;
 pub mod coordinator;
 pub mod dataset_analysis_writer;
@@ -46,6 +47,8 @@ pub mod network_latency;
 #[cfg(feature = "dynosim")]
 pub mod offline_execution;
 pub mod online_execution;
+pub mod phase_identity;
+pub mod phase_manifest;
 pub mod protocol;
 pub mod protocol_v2;
 pub mod readiness;
@@ -53,6 +56,7 @@ pub mod record_lane;
 pub mod records;
 pub mod redaction;
 pub mod registry;
+pub mod server_profiler;
 pub mod server_metrics;
 pub mod shard_artifacts;
 pub mod sharded_scheduled;

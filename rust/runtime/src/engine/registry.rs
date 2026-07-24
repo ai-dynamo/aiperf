@@ -12,7 +12,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use crate::endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType};
+use crate::endpoints::{
+    EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType, ResetKvCacheConfig,
+    ServerProfilerConfig,
+};
 use crate::extensions::{
     AIPerfExtension, AIPerfRegistry, DuplicateName, ExtensionError, RegistryId,
 };
@@ -891,6 +894,26 @@ impl Debug for StaticAccuracyWorkloadConfigV2 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ResetKvCacheConfigV2 {
+    #[serde(default, alias = "timeoutSeconds")]
+    timeout_seconds: Option<f64>,
+    #[serde(default)]
+    path: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ServerProfilerConfigV2 {
+    #[serde(default, alias = "timeoutSeconds")]
+    timeout_seconds: Option<f64>,
+    #[serde(default, alias = "startPath")]
+    start_path: Option<String>,
+    #[serde(default, alias = "stopPath")]
+    stop_path: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EndpointProfileConfigV2 {
     id: String,
     #[serde(rename = "type")]
@@ -898,6 +921,10 @@ struct EndpointProfileConfigV2 {
     urls: Vec<String>,
     #[serde(default)]
     path: Option<String>,
+    #[serde(default, alias = "resetKvCache")]
+    reset_kv_cache: Option<ResetKvCacheConfigV2>,
+    #[serde(default, alias = "serverProfiler")]
+    server_profiler: Option<ServerProfilerConfigV2>,
     #[serde(default)]
     streaming: bool,
     #[serde(default)]
@@ -1242,6 +1269,15 @@ pub fn validate_endpoint_profiles_v2(
         let raw = RawEndpointConfig {
             urls: config.urls,
             path: config.path,
+            reset_kv_cache: config.reset_kv_cache.map(|config| ResetKvCacheConfig {
+                timeout_seconds: config.timeout_seconds,
+                path: config.path,
+            }),
+            server_profiler: config.server_profiler.map(|config| ServerProfilerConfig {
+                timeout_seconds: config.timeout_seconds,
+                start_path: config.start_path,
+                stop_path: config.stop_path,
+            }),
             streaming: config.streaming,
             request_content_type: config.request_content_type,
             template: config.template,
@@ -1914,6 +1950,31 @@ mod tests {
             error.contains("connection_limit must be positive"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn endpoint_control_hook_paths_must_be_relative() {
+        let run: AuthoredRunSpecV2 = serde_json::from_value(serde_json::json!({
+            "identity": {"benchmark_id": "hook-path-invalid"},
+            "artifact_target": "/tmp/hook-path-invalid",
+            "transport": {"type": "http", "config": {}},
+            "workload": {"type": "scheduled", "config": {}},
+            "resources": {
+                "models": {"items": [{"name": "model"}]},
+                "endpoints": {"profiles": [{
+                    "id": "default",
+                    "type": "chat",
+                    "urls": ["http://example.test"],
+                    "reset_kv_cache": {"path": "http://bad.example/reset_prefix_cache"}
+                }]}
+            }
+        }))
+        .unwrap();
+
+        let error = validate_endpoint_profiles_v2(&run, &EndpointRegistry::builtin().unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("relative"), "{error}");
     }
 
     #[test]

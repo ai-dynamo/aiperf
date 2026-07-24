@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Enforces the native-Rust "Keeping these docs current" mandate: a PR that
-# touches specs/ or adds/removes a crate must also update the architecture map
-# (specs/README.md, llms.txt, and — for crate changes — the four agent files).
+# touches docs/specs/ or adds/removes a crate must also update the architecture map
+# (docs/specs/README.md, llms.txt, and — for crate changes — the four agent files).
 # The guard logic lives in tools/check_docs_current.py; this workflow just runs
 # it against the PR's merge-base with main. Self-contained (no uv/env build) so
 # it stays fast and independent of the Python package's CI.
@@ -16,7 +16,7 @@ on:
       - 'pull-request/*'
     paths:
       - 'rust/**'
-      - 'specs/**'
+      - 'docs/specs/**'
       - 'llms.txt'
       - 'AGENTS.md'
       - 'CLAUDE.md'
@@ -26,7 +26,7 @@ on:
 
 jobs:
   docs-guard:
-    name: Docs in lockstep with specs/crates
+    name: Docs in lockstep with docs/specs/crates
     runs-on: prod-aiperf-default-v1
     steps:
       - uses: actions/checkout@v6

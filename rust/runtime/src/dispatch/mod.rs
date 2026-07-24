@@ -6,9 +6,7 @@
 //! This module has no direct engine, router, KV, HTTP, or gRPC dependency of
 //! its own; transports elsewhere in this crate define their request types and
 //! implement [`Dispatchable`](sink::Dispatchable) against it. The separation
-//! is a module-level convention (not a compiler-enforced crate boundary) —
-//! see `specs/loadgen-core-merge.md` for why this was formerly a standalone
-//! crate and why that boundary was retired.
+//! is a module-level convention, not a compiler-enforced crate boundary.
 //!
 //! - [`collector`] — `TraceCollector` and the report/record/status types.
 //! - [`sink`] — `Dispatchable`, `RequestSink<R>`, `RequestObserver`.

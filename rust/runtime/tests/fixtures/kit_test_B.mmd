@@ -1,0 +1,45 @@
+flowchart TD
+  %% Document-analysis agent — extraction with up to 3 rounds
+
+  start([START]):::stad --> plan["draft plan · llm · out=plan"]:::llm
+
+  plan --> loop(["extraction rounds · loop ×3"]):::loop
+
+  %% ---- round body: fan-out parallel extraction workers (each = a model call)
+  loop -->|round| w1["worker A · llm · @plan · out=secA"]:::llm
+  loop -->|round| w2["worker B · llm · @plan · out=secB"]:::llm
+  loop -->|round| w3["worker C · llm · @plan · out=secC"]:::llm
+
+  %% ---- non-model knowledge-base lookup (~50ms), part of each round
+  loop -->|round| kb["kb lookup · tool_exec · replay · tool=50ms · out=kb"]:::replay
+
+  %% ---- fan-in: wait for ALL workers + kb before merging
+  w1 --> join{{"join · barrier · in=[secA,secB,secC,kb] · join=all"}}:::barrier
+  w2 --> join
+  w3 --> join
+  kb --> join
+
+  join --> merge["merge results · llm · @secA · @secB · @secC · @kb · out=merged"]:::llm
+
+  %% ---- judge completeness
+  merge --> judge{"judge complete? · router"}:::gate
+  judge -->|incomplete| loop
+  judge -->|complete| summary["final summary · llm · @merged · ★terminal"]:::term
+
+  summary --> done([END]):::stad
+
+  %% ---------------------------------------------------------------- STYLES
+  classDef stad   fill:#bbdefb,stroke:#1565c0,color:#0d47a1,stroke-width:3px
+  classDef llm    fill:#bbdefb,stroke:#1565c0,color:#0d47a1
+  classDef term   fill:#bbdefb,stroke:#1565c0,color:#0d47a1,stroke-width:3px
+  classDef replay fill:#fff9c4,stroke:#f9a825,color:#5d4037
+  classDef delay  fill:#fff9c4,stroke:#f9a825,stroke-dasharray:5 3,color:#5d4037
+  classDef barrier fill:#ffe0b2,stroke:#ef6c00,color:#4e2600,stroke-width:2px
+  classDef gate   fill:#fffde7,stroke:#f9a825,color:#5d4037
+  classDef guard  fill:#ffe0b2,stroke:#ef6c00,color:#4e2600
+  classDef spawn  fill:#ede7f6,stroke:#6a1b9a,stroke-dasharray:5 3,color:#4a148c
+  classDef await  fill:#ede7f6,stroke:#6a1b9a,color:#4a148c
+  classDef loop   fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
+  classDef subg   fill:#d1c4e9,stroke:#6a1b9a,color:#311b92
+  classDef chan   fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+  classDef legend fill:#eceff1,stroke:#607d8b,color:#263238

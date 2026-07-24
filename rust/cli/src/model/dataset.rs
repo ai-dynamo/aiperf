@@ -67,6 +67,9 @@ pub struct Prompts {
     /// Input-token block size (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block_size: Option<u32>,
+    /// Prompt corpus selector (present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corpus: Option<String>,
     /// Mixed ISL/OSL sequence distribution (`--seq-dist`; present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sequence_distribution: Option<Vec<SeqDistEntry>>,
@@ -76,6 +79,14 @@ pub struct Prompts {
     /// Shared-prefix fraction of each reusing prompt's length (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_reuse_ratio: Option<f64>,
+}
+
+/// Shared prompt-source selection for non-synthetic dataset kinds.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PromptSelection {
+    /// Prompt corpus selector (present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corpus: Option<String>,
 }
 
 /// One weighted `(isl, osl)` pair of a mixed sequence distribution.
@@ -254,6 +265,9 @@ pub struct FileDataset {
     /// Output sequence length distribution (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub osl: Option<Distribution>,
+    /// Shared prompt-source selection (present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<PromptSelection>,
     /// Inline records, passed through verbatim when `path` is absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub records: Option<serde_json::Value>,
@@ -281,6 +295,9 @@ pub struct PublicDataset {
     /// Deterministic sampling seed (present when set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub random_seed: Option<u64>,
+    /// Shared prompt-source selection (present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<PromptSelection>,
 }
 
 /// One typed dataset (discriminated by `type`).
@@ -316,6 +333,7 @@ mod tests {
                 num_prefix_prompts: None,
                 prefix_prompt_length: None,
                 block_size: None,
+                corpus: Some("coding".into()),
                 sequence_distribution: None,
                 prefix_reuse_fraction: None,
                 prefix_reuse_ratio: None,
@@ -339,5 +357,6 @@ mod tests {
             serde_json::json!({"mean":550.0,"stddev":0.0})
         );
         assert_eq!(v["prompts"]["isl"].get("value"), None);
+        assert_eq!(v["prompts"]["corpus"], serde_json::json!("coding"));
     }
 }

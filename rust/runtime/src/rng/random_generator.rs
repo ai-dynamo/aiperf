@@ -1,20 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! The `RandomGenerator` trait: AIPerf's Python-parity random-operation
-//! contract, mirroring `src/aiperf/common/random_generator.py`'s
-//! `RandomGenerator` class method-for-method.
+//! Generic random-operation traits shared by AIPerf's runtime backends.
 //!
-//! [`crate::rng::compat::python_random::PythonRandomGenerator`] is the sole
-//! implementer: a composite of one CPython Mersenne Twister
-//! ([`crate::rng::compat::python_mt::PythonMt19937`]) and one numpy-compatible
-//! PCG64 ([`crate::rng::compat::numpy_generator::NumpyGenerator`]), seeded
-//! together and dispatching operations exactly as the Python class dispatches
-//! between `self._python_rng` and `self._numpy_rng`. This trait is
-//! deliberately distinct from [`crate::rng::generator::RustRandomGenerator`]
-//! (BLAKE3 + `rand_pcg`, AIPerf's native scheduling/sampling substrate) — the
-//! two are unrelated backends serving different purposes, matching Python's
-//! own `"python"` vs `"rust_parity"` `Environment.RNG.BACKEND` split.
+//! [`RandomGenerator`] mirrors `src/aiperf/common/random_generator.py`'s
+//! high-level method set closely enough that the Python-compatible backend can
+//! implement it byte-exactly, while the native Rust backend can implement the
+//! same call surface for backend-agnostic dataset/timing code.
+//!
+//! [`RuntimeRandomGenerator`] extends that shared surface with a handful of
+//! native runtime capabilities such as raw-byte filling, `u64` range sampling,
+//! and explicit reseeding. Callers should depend on the narrowest trait that
+//! satisfies their needs.
 
 use crate::rng::error::Result;
 
@@ -114,4 +111,41 @@ pub trait RandomGenerator {
     /// `RandomGenerator.gammavariate(alpha, beta)`. Rejects `alpha <= 0` or
     /// `beta <= 0`.
     fn gammavariate(&mut self, alpha: f64, beta: f64) -> Result<f64>;
+}
+
+/// Runtime-facing RNG capability set used by generic dataset and timing code.
+///
+/// This extends [`RandomGenerator`] only for operations that the native runtime
+/// needs beyond the Python `RandomGenerator` API: deriving raw entropy values,
+/// reseeding hash-scoped streams, filling media buffers, and using checked
+/// result-returning helpers for validated numeric draws.
+pub trait RuntimeRandomGenerator: RandomGenerator {
+    /// Return the deterministic seed when this generator has one.
+    fn seed(&self) -> Option<u64>;
+
+    /// Replace the generator state with `seed`.
+    fn reseed(&mut self, seed: u64);
+
+    /// Generate one uniformly distributed `u64`.
+    fn random_u64(&mut self) -> u64;
+
+    /// Fill `dest` with random bytes.
+    fn fill_bytes(&mut self, dest: &mut [u8]);
+
+    /// Uniform integer from `[lo, hi)`.
+    fn randrange_u64(&mut self, lo: u64, hi: u64) -> Result<u64>;
+
+    /// Select one element uniformly when `weights` is `None`, otherwise by
+    /// cumulative weights.
+    fn weighted_choice<T: Clone>(&mut self, values: &[T], weights: Option<&[f64]>) -> Result<T>;
+
+    /// Checked normal draw with the backend's native scalar normal semantics.
+    fn normal_checked(&mut self, loc: f64, scale: f64) -> Result<f64>;
+
+    /// Checked batch normal draws.
+    fn normal_batch_checked(&mut self, loc: f64, scale: f64, size: usize) -> Result<Vec<f64>>;
+
+    /// Checked NumPy-style integer draws over `[low, high)` or `[0, low)` when
+    /// `high` is `None`.
+    fn integers_checked(&mut self, low: i64, high: Option<i64>, size: usize) -> Result<Vec<i64>>;
 }

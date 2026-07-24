@@ -1,0 +1,28 @@
+flowchart TD
+    RUN["run_cellular"]
+    CTX["CellLaunchContext"]
+    LAUNCH["CellLauncher"]
+    CELL["aiperf --cell"]
+    PART["ModuloCellPartition"]
+    ISSUER["CellularAutonomousIssuer"]
+    RAW["RecordsShardPartition"]
+    FOLD["ColumnStorePartition"]
+    SCHEDULED["merge_records_in_global_order"]
+    GRAPH["merge_records_by_concatenation"]
+    STORE["merge_store_partitions"]
+    REPORT["Merged report"]
+
+    RUN -->|"builds"| CTX
+    CTX -->|"launches / expects"| LAUNCH
+    LAUNCH -->|"local child or external cell"| CELL
+    CELL -->|"reads cell_id + cell_count"| PART
+    PART -->|"assigns dense ordinals"| ISSUER
+    ISSUER -->|"scheduled / graph execution"| CELL
+    CELL -->|"retain path ships raw records"| RAW
+    CELL -.->|"exact-fold / sketch ships store"| FOLD
+    RAW -->|"scheduled: global ordinal re-ingest"| SCHEDULED
+    RAW -->|"graph: cell_id concat + renumber"| GRAPH
+    FOLD -->|"cell_id ordered append_store"| STORE
+    SCHEDULED -->|"byte-exact scheduled metrics"| REPORT
+    GRAPH -->|"topology-deterministic graph metrics"| REPORT
+    STORE -->|"folded metrics; summary merge"| REPORT

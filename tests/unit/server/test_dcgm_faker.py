@@ -3,6 +3,9 @@
 """Unit tests for DCGMFaker using real telemetry parsing logic."""
 
 import pytest
+from pytest import approx
+
+from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
 from tests.aiperf_mock_server.dcgm_faker import (
     GPU_CONFIGS,
     METRIC_MAPPINGS,
@@ -10,9 +13,6 @@ from tests.aiperf_mock_server.dcgm_faker import (
     FakeGPU,
     GPUConfig,
 )
-from pytest import approx
-
-from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
 
 
 class TestGPUConfig:
@@ -219,22 +219,22 @@ class TestDCGMFakerTelemetryCollector:
             # Verify TelemetryMetrics are correctly scaled
             telemetry = record.telemetry_data
             assert telemetry is not None
-            assert telemetry.gpu_power_usage == approx(gpu.power, abs=0.01)
-            assert telemetry.gpu_utilization == approx(gpu.util, abs=0.01)
-            assert telemetry.gpu_temperature == approx(gpu.temp, abs=0.01)
-            assert telemetry.energy_consumption == approx(
+            assert telemetry.nvidia_power_usage == approx(gpu.power, abs=0.01)
+            assert telemetry.nvidia_gpu_utilization == approx(gpu.util, abs=0.01)
+            assert telemetry.nvidia_temperature == approx(gpu.temp, abs=0.01)
+            assert telemetry.nvidia_energy_consumption == approx(
                 gpu.energy * 1e-9, abs=0.01
             )  # mJ to MJ
-            assert telemetry.gpu_memory_used == approx(
+            assert telemetry.nvidia_memory_used == approx(
                 gpu.mem_used * 1.048576 * 1e-3, abs=0.01
             )  # MiB to GB
-            assert telemetry.xid_errors == approx(gpu.xid, abs=0.01)
-            assert telemetry.power_violation == approx(gpu.power_viol, abs=0.01)
+            assert telemetry.nvidia_xid_errors == approx(gpu.xid, abs=0.01)
+            assert telemetry.nvidia_power_violation == approx(gpu.power_viol, abs=0.01)
 
             # Verify values are in reasonable ranges
-            assert 0 <= telemetry.gpu_utilization <= 100
-            assert 0 < telemetry.gpu_power_usage <= gpu.cfg.max_power_w
-            assert 0 < telemetry.gpu_temperature <= 100
+            assert 0 <= telemetry.nvidia_gpu_utilization <= 100
+            assert 0 < telemetry.nvidia_power_usage <= gpu.cfg.max_power_w
+            assert 0 < telemetry.nvidia_temperature <= 100
 
     def test_load_affects_telemetry_records(self):
         """Test that load changes affect TelemetryRecords when parsed by real collector."""
@@ -254,10 +254,12 @@ class TestDCGMFakerTelemetryCollector:
         high_telemetry = high_records[0].telemetry_data
 
         # High load should produce higher values
-        assert high_telemetry.gpu_power_usage > low_telemetry.gpu_power_usage
-        assert high_telemetry.gpu_temperature > low_telemetry.gpu_temperature
-        assert high_telemetry.gpu_utilization > low_telemetry.gpu_utilization
-        assert high_telemetry.gpu_memory_used > low_telemetry.gpu_memory_used
+        assert high_telemetry.nvidia_power_usage > low_telemetry.nvidia_power_usage
+        assert high_telemetry.nvidia_temperature > low_telemetry.nvidia_temperature
+        assert (
+            high_telemetry.nvidia_gpu_utilization > low_telemetry.nvidia_gpu_utilization
+        )
+        assert high_telemetry.nvidia_memory_used > low_telemetry.nvidia_memory_used
 
     def test_metrics_clamped_to_bounds(self):
         """Test that all metrics are clamped to [0, max] bounds."""
@@ -274,11 +276,11 @@ class TestDCGMFakerTelemetryCollector:
                 t = record.telemetry_data
 
                 # All metrics should be non-negative
-                assert t.gpu_utilization >= 0
-                assert t.gpu_power_usage >= 0
-                assert t.gpu_temperature >= 0
-                assert t.gpu_memory_used >= 0
+                assert t.nvidia_gpu_utilization >= 0
+                assert t.nvidia_power_usage >= 0
+                assert t.nvidia_temperature >= 0
+                assert t.nvidia_memory_used >= 0
 
                 # All metrics should not exceed their max values
-                assert t.gpu_utilization <= 100
-                assert t.gpu_temperature <= 100
+                assert t.nvidia_gpu_utilization <= 100
+                assert t.nvidia_temperature <= 100

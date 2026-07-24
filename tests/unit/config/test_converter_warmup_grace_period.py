@@ -16,6 +16,8 @@ the user sees which flag combination is incompatible.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from aiperf.config.flags._converter_warmup import build_warmup
@@ -108,3 +110,36 @@ class TestWarmupGracePeriodSuccessPaths:
         loadgen = CLIConfig(warmup_grace_period=5.0)
         with pytest.raises(ValueError, match="--warmup-grace-period.*without any"):
             build_warmup(_make_user(loadgen))
+
+
+class TestWarmupRateRampRequiresWarmupRate:
+    """Warmup must not inherit rate ramping unless it has a scalar rate."""
+
+    def test_explicit_warmup_rate_ramp_without_rate_raises(self):
+        loadgen = CLIConfig(
+            warmup_request_count=10,
+            warmup_request_rate_ramp_duration=5.0,
+        )
+
+        with pytest.raises(ValueError, match="--warmup-request-rate-ramp-duration"):
+            build_warmup(_make_user(loadgen))
+
+    def test_main_rate_series_ramp_not_inherited_by_concurrency_warmup(
+        self, tmp_path: Path
+    ):
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":5},{"time_s":10,"qps":15}]}',
+            encoding="utf-8",
+        )
+        loadgen = CLIConfig(
+            request_rate_series=json_path,
+            request_rate_ramp_duration=5.0,
+            warmup_request_count=10,
+        )
+
+        warmup = build_warmup(_make_user(loadgen))
+
+        assert warmup is not None
+        assert warmup["requests"] == 10
+        assert "rate_ramp" not in warmup

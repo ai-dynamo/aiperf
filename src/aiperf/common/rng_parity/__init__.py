@@ -11,7 +11,7 @@ This subpackage reproduces ``rust/aiperf/src/rng/`` bit-for-bit against
 configured sampling distributions (:mod:`~aiperf.common.rng_parity.dist`), and the
 hash-id generator (:mod:`~aiperf.common.rng_parity.hash_id`).
 
-It is selected at runtime by ``AIPERF_RNG_BACKEND=rust_parity`` so seeded Python and Rust
+It is selected at runtime by ``AIPERF_RNG_BACKEND=rust`` so seeded Python and Rust
 produce identical streams in tests. See
 ``~/.aiperf/docs/superpowers/specs/2026-07-14-python-parity-rng-design.md``.
 """

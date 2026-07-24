@@ -1,0 +1,16 @@
+flowchart TD
+    USER["User / CI"]
+    CLI["aiperf binary / crate: aiperf-cli"]
+    PY["Python frontend surface / src/aiperf/"]
+    RT["aiperf-runtime / shared runtime library"]
+    MOCK["aiperf-mock-server / standalone target"]
+    PYEXT["pyext / packaging-only aiperf._native module"]
+    E2E["aiperf-e2e-tests / end-to-end harness"]
+
+    USER --> CLI
+    CLI -->|"native profile / config / execute"| RT
+    CLI -.->|"delegates non-native commands"| PY
+    MOCK -->|"reuses runtime modules"| RT
+    E2E -->|"spawns / verifies"| CLI
+    E2E -->|"targets"| MOCK
+    PYEXT -.->|"packages native binary + module"| CLI

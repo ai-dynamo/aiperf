@@ -12,6 +12,7 @@ use rand_distr::{Distribution, Exp, Gamma, Normal};
 use rand_pcg::Pcg64;
 
 use crate::rng::error::{Result, RngError};
+use crate::rng::random_generator::{RandomGenerator, RuntimeRandomGenerator};
 
 const NORMAL_REJECTION_LIMIT: usize = 10_000;
 const U64_CARDINALITY: u128 = (u64::MAX as u128) + 1;
@@ -455,6 +456,154 @@ impl RustRandomGenerator {
         } else {
             u128::from(self.rng.random_range(0..len as u64))
         }
+    }
+}
+
+impl RandomGenerator for RustRandomGenerator {
+    fn random(&mut self) -> f64 {
+        Self::random(self)
+    }
+
+    fn choice<'a, T>(&mut self, seq: &'a [T]) -> Result<&'a T> {
+        Self::choice(self, seq)
+    }
+
+    fn randrange(&mut self, stop: i64) -> Result<i64> {
+        Self::randbelow(self, stop)
+    }
+
+    fn randrange_step(&mut self, start: i64, stop: i64, step: i64) -> Result<i64> {
+        Self::randrange(self, start, stop, step)
+    }
+
+    fn randint(&mut self, a: i64, b: i64) -> Result<i64> {
+        Self::randint(self, a, b)
+    }
+
+    fn uniform(&mut self, a: f64, b: f64) -> f64 {
+        Self::uniform(self, a, b)
+    }
+
+    fn choices<T: Clone>(&mut self, population: &[T], k: usize) -> Result<Vec<T>> {
+        Self::choices(self, population, k)
+    }
+
+    fn sample<T: Clone>(&mut self, population: &[T], k: usize) -> Result<Vec<T>> {
+        Self::sample(self, population, k)
+    }
+
+    fn shuffle<T>(&mut self, values: &mut [T]) {
+        Self::shuffle(self, values);
+    }
+
+    fn random_batch(&mut self, size: usize) -> Vec<f64> {
+        Self::random_batch(self, size)
+    }
+
+    fn integers(&mut self, low: i64, high: i64) -> i64 {
+        Self::integers(self, low, Some(high), 1)
+            .expect("RandomGenerator::integers requires a valid bounded range")[0]
+    }
+
+    fn integers_batch(&mut self, low: i64, high: i64, size: usize) -> Vec<i64> {
+        Self::integers(self, low, Some(high), size)
+            .expect("RandomGenerator::integers_batch requires a valid bounded range")
+    }
+
+    fn normal(&mut self, loc: f64, scale: f64) -> f64 {
+        Self::normal(self, loc, scale).expect("RandomGenerator::normal requires valid parameters")
+    }
+
+    fn normal_batch(&mut self, loc: f64, scale: f64, size: usize) -> Vec<f64> {
+        Self::normal_batch(self, loc, scale, size)
+            .expect("RandomGenerator::normal_batch requires valid parameters")
+    }
+
+    fn numpy_choice_uniform(&mut self, pop_size: i64, size: usize) -> Vec<i64> {
+        Self::integers(self, 0, Some(pop_size), size)
+            .expect("RandomGenerator::numpy_choice_uniform requires a valid population size")
+    }
+
+    fn numpy_choice_weighted(&mut self, weights: &[f64]) -> usize {
+        self.weighted_index(weights.len(), weights)
+            .expect("RandomGenerator::numpy_choice_weighted requires valid weights")
+    }
+
+    fn numpy_choice_weighted_batch(&mut self, weights: &[f64], size: usize) -> Vec<usize> {
+        validated_weight_total(weights.len(), weights)
+            .expect("RandomGenerator::numpy_choice_weighted_batch requires valid weights");
+        let cumulative = cumulative_weights(weights);
+        (0..size)
+            .map(|_| self.weighted_index_cached(&cumulative))
+            .collect()
+    }
+
+    fn numpy_choice_weighted_without_replacement(
+        &mut self,
+        weights: &[f64],
+        size: usize,
+    ) -> Result<Vec<usize>> {
+        let values: Vec<_> = (0..weights.len()).collect();
+        Self::numpy_choice(self, &values, size, Some(weights), false)
+    }
+
+    fn sample_normal(&mut self, mean: f64, stddev: f64, lower: f64, upper: f64) -> Result<f64> {
+        Self::sample_normal(self, mean, stddev, lower, upper)
+    }
+
+    fn sample_positive_normal(&mut self, mean: f64, stddev: f64) -> Result<f64> {
+        Self::sample_positive_normal(self, mean, stddev)
+    }
+
+    fn sample_positive_normal_integer(&mut self, mean: f64, stddev: f64) -> Result<i64> {
+        Self::sample_positive_normal_integer(self, mean, stddev)
+    }
+
+    fn expovariate(&mut self, lambd: f64) -> f64 {
+        Self::expovariate(self, lambd)
+            .expect("RandomGenerator::expovariate requires a finite positive rate")
+    }
+
+    fn gammavariate(&mut self, alpha: f64, beta: f64) -> Result<f64> {
+        Self::gammavariate(self, alpha, beta)
+    }
+}
+
+impl RuntimeRandomGenerator for RustRandomGenerator {
+    fn seed(&self) -> Option<u64> {
+        Self::seed(self)
+    }
+
+    fn reseed(&mut self, seed: u64) {
+        Self::reseed(self, seed);
+    }
+
+    fn random_u64(&mut self) -> u64 {
+        Self::random_u64(self)
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        Self::fill_bytes(self, dest);
+    }
+
+    fn randrange_u64(&mut self, lo: u64, hi: u64) -> Result<u64> {
+        Self::randrange_u64(self, lo, hi)
+    }
+
+    fn weighted_choice<T: Clone>(&mut self, values: &[T], weights: Option<&[f64]>) -> Result<T> {
+        Self::weighted_choice(self, values, weights)
+    }
+
+    fn normal_checked(&mut self, loc: f64, scale: f64) -> Result<f64> {
+        Self::normal(self, loc, scale)
+    }
+
+    fn normal_batch_checked(&mut self, loc: f64, scale: f64, size: usize) -> Result<Vec<f64>> {
+        Self::normal_batch(self, loc, scale, size)
+    }
+
+    fn integers_checked(&mut self, low: i64, high: Option<i64>, size: usize) -> Result<Vec<i64>> {
+        Self::integers(self, low, high, size)
     }
 }
 

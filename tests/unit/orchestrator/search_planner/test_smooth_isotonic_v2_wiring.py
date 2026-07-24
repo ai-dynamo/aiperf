@@ -29,11 +29,16 @@ from aiperf.orchestrator.search_planner.smooth_isotonic import (
 )
 
 
-def _base_config(*, profiling_requests: int | None = None) -> BenchmarkConfig:
+def _base_config(
+    *,
+    profiling_requests: int | None = None,
+    profiling_name: str = "profiling",
+) -> BenchmarkConfig:
     """Real ``BenchmarkConfig`` with one ``profiling`` concurrency phase."""
     profiling: dict[str, object] = {
-        "name": "profiling",
+        "name": profiling_name,
         "type": "concurrency",
+        "kind": "profiling",
         "concurrency": 1,
     }
     if profiling_requests is not None:
@@ -93,11 +98,15 @@ def _adaptive_cfg(
 def _make_planner(
     *,
     profiling_requests: int | None = None,
+    profiling_name: str = "profiling",
     sla_precision: str = "normal",
     sla_warmup_seconds: float | None = None,
 ) -> SmoothIsotonicSLAPlanner:
     return SmoothIsotonicSLAPlanner(
-        _base_config(profiling_requests=profiling_requests),
+        _base_config(
+            profiling_requests=profiling_requests,
+            profiling_name=profiling_name,
+        ),
         _adaptive_cfg(
             sla_precision=sla_precision,
             sla_warmup_seconds=sla_warmup_seconds,
@@ -170,6 +179,17 @@ def test_sla_precision_does_not_override_user_set_requests() -> None:
     )
     mutated = planner._mutate_base(7)
     assert _profiling_phase(mutated).requests == 42  # type: ignore[attr-defined]
+
+
+def test_sla_precision_matches_named_phase_by_kind() -> None:
+    planner = _make_planner(
+        profiling_name="storm",
+        sla_precision="normal",
+        sla_warmup_seconds=0,
+    )
+    mutated = planner._mutate_base(7)
+    assert mutated.phases[0].name == "storm"
+    assert mutated.phases[0].requests == 1000  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------

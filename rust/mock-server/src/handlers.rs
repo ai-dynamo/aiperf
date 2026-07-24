@@ -3129,6 +3129,21 @@ fn prom_response(body: Vec<u8>) -> Response {
         .expect("response")
 }
 
+pub async fn reset_prefix_cache(State(state): State<Arc<AppState>>) -> StatusCode {
+    state.reset_prefix_cache();
+    StatusCode::OK
+}
+
+pub async fn start_profile(State(state): State<Arc<AppState>>) -> StatusCode {
+    state.profiler_state().note_start();
+    StatusCode::OK
+}
+
+pub async fn stop_profile(State(state): State<Arc<AppState>>) -> StatusCode {
+    state.profiler_state().note_stop();
+    StatusCode::OK
+}
+
 pub async fn aiperf_mock_metrics(State(state): State<Arc<AppState>>) -> Response {
     state
         .recorder

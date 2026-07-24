@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-use crate::rng::RustRandomGenerator;
+use crate::rng::{ConfiguredRandomGenerator, RandomGenerator};
 use async_trait::async_trait;
 use bytes::Bytes;
 use serde::Deserialize;
@@ -266,11 +266,9 @@ impl Composer for RandomPoolComposer {
                 .or_default()
                 .push(PoolEntry::parse(row.value, &row.origin)?);
         }
-        let mut rng = RustRandomGenerator::from_seed(
-            config
-                .rng_root
-                .derive_seed("dataset.loader.random_pool.sampling"),
-        );
+        let mut rng: ConfiguredRandomGenerator = config
+            .rng_root
+            .derive_generator("dataset.loader.random_pool.sampling");
         let sampled = if batches.all_unit() {
             sample_associated(&pools, num_conversations, &mut rng)?
         } else {
@@ -329,7 +327,7 @@ struct SampledGroup {
 fn sample_associated(
     pools: &BTreeMap<String, Vec<PoolEntry>>,
     count: usize,
-    rng: &mut RustRandomGenerator,
+    rng: &mut ConfiguredRandomGenerator,
 ) -> Result<Vec<Vec<SampledGroup>>> {
     let mut output = vec![Vec::new(); count];
     for (pool_name, entries) in pools {
@@ -369,7 +367,7 @@ fn sample_flattened(
     pools: &BTreeMap<String, Vec<PoolEntry>>,
     count: usize,
     batches: BatchSizes,
-    rng: &mut RustRandomGenerator,
+    rng: &mut ConfiguredRandomGenerator,
 ) -> Result<Vec<Vec<SampledGroup>>> {
     let mut flat = HashMap::<MediaKind, Vec<String>>::new();
     for entries in pools.values() {

@@ -18,7 +18,7 @@ use std::rc::Rc;
 
 use crate::clock::Clock;
 use crate::rng::namespace::TIMING_RAMP_POISSON;
-use crate::rng::{RngRoot, RustRandomGenerator};
+use crate::rng::{ConfiguredRandomGenerator, RandomGenerator, RngRoot};
 use tokio::task::JoinHandle;
 
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
@@ -438,13 +438,11 @@ impl PoissonRamp {
         if !expected_rate.is_finite() || expected_rate <= 0.0 {
             return Err(RampConfigError::InvalidPoissonRate(expected_rate));
         }
-        let mut rng = RustRandomGenerator::from_seed(root.derive_seed(TIMING_RAMP_POISSON));
+        let mut rng: ConfiguredRandomGenerator = root.derive_generator(TIMING_RAMP_POISSON);
         let mut raw_intervals = Vec::new();
         let mut cumulative = 0.0;
         while cumulative < duration_seconds {
-            let interval = rng
-                .expovariate(expected_rate)
-                .expect("validated finite positive Poisson rate");
+            let interval = rng.expovariate(expected_rate);
             raw_intervals.push(interval);
             cumulative += interval;
         }

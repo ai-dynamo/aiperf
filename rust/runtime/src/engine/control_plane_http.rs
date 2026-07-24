@@ -650,10 +650,23 @@ impl ControlPlaneHttpProviderFactory for NativeControlPlaneHttpProviderFactory {
 }
 
 /// Minimal owned request allowed by a profile-bound control handle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControlPlaneMethod {
+    /// Issue one GET request.
+    Get,
+    /// Issue one POST request with an empty body.
+    Post,
+}
+
+/// Minimal owned request allowed by a profile-bound control handle.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ControlPlaneRequest {
     /// Stable request identity for transport tracing only.
     pub request_id: String,
+    /// One allowed HTTP verb for this control-plane request.
+    pub method: ControlPlaneMethod,
+    /// Path resolved against the prepared control-plane origin.
+    pub path: String,
 }
 
 /// Allowlisted control response and exact entity bytes.
@@ -698,7 +711,7 @@ pub struct ControlPlaneTransportTimings {
 /// One profile-bound local HTTP handle.
 #[async_trait(?Send)]
 pub trait ControlPlaneHttp: Debug {
-    /// Execute one GET under an absolute, dynamically lowerable Clock deadline.
+    /// Execute one request under an absolute, dynamically lowerable Clock deadline.
     async fn execute(
         &self,
         request: ControlPlaneRequest,
@@ -855,7 +868,8 @@ impl ControlPlaneHttp for NativeControlPlaneHttp {
         cancellation: LocalCancellationSignal,
     ) -> Result<ControlPlaneResponse, ControlPlaneHttpError> {
         validate_request_id(&request.request_id)?;
-        let mut config = RequestConfig::new(self.url.clone())
+        let url = join_relative_path(&self.url, &request.path)?;
+        let mut config = RequestConfig::new(url)
             .header("Accept", self.accept.clone())
             .header("Accept-Encoding", self.accept_encoding.clone())
             .request_id(request.request_id)
@@ -864,8 +878,17 @@ impl ControlPlaneHttp for NativeControlPlaneHttp {
             config = config.header("Authorization", format!("Bearer {}", secret.expose()));
         }
 
-        let get = self.transport.get(&config);
-        tokio::pin!(get);
+        let request_fut = async {
+            match request.method {
+                ControlPlaneMethod::Get => self.transport.get(&config).await,
+                ControlPlaneMethod::Post => {
+                    self.transport
+                        .send_request_bytes(&config, Bytes::new(), false, |_| {})
+                        .await
+                }
+            }
+        };
+        tokio::pin!(request_fut);
         let mut revision = cancellation.revision();
         let record = loop {
             let effective_deadline_ns = absolute_deadline_ns.min(cancellation.deadline_ns());
@@ -877,7 +900,7 @@ impl ControlPlaneHttp for NativeControlPlaneHttp {
             tokio::pin!(sleep);
             tokio::select! {
                 biased;
-                record = &mut get => break record,
+                record = &mut request_fut => break record,
                 next_revision = cancellation.changed(revision) => revision = next_revision,
                 () = &mut sleep => {
                     return Err(ControlPlaneHttpError::deadline(cancellation.is_stopped()));
@@ -1045,6 +1068,29 @@ fn validate_request_id(value: &str) -> Result<(), ControlPlaneHttpError> {
         });
     }
     Ok(())
+}
+
+fn join_relative_path(base_url: &str, path: &str) -> Result<String, ControlPlaneHttpError> {
+    if path.is_empty()
+        || !path.starts_with('/')
+        || path.chars().any(char::is_whitespace)
+        || path.contains(['?', '#'])
+    {
+        return Err(ControlPlaneHttpError {
+            kind: ControlPlaneHttpErrorKind::InvalidRequest,
+            message: "control-plane request path is invalid".to_owned(),
+            timings: None,
+        });
+    }
+    let mut url = Url::parse(base_url).map_err(|error| ControlPlaneHttpError {
+        kind: ControlPlaneHttpErrorKind::InvalidRequest,
+        message: format!("control-plane base URL is invalid: {error}"),
+        timings: None,
+    })?;
+    url.set_path(path);
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.into())
 }
 
 fn bounded_error(message: &str) -> String {
@@ -1440,5 +1486,15 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn control_request_path_replaces_the_prepared_url_path() {
+        assert_eq!(
+            join_relative_path("https://example.test/metrics?old=1", "/start_profile").unwrap(),
+            "https://example.test/start_profile"
+        );
+        assert!(join_relative_path("https://example.test/metrics", "start_profile").is_err());
+        assert!(join_relative_path("https://example.test/metrics", "/bad path").is_err());
     }
 }

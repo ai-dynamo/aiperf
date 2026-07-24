@@ -36,6 +36,7 @@ from aiperf.common.models import (
     TelemetryRecord,
 )
 from aiperf.gpu_telemetry.constants import (
+    NVIDIA_GPU_TELEMETRY_PLATFORM,
     PYNVML_SOURCE_IDENTIFIER,
 )
 from aiperf.gpu_telemetry.protocols import TErrorCallback, TRecordCallback
@@ -47,10 +48,10 @@ __all__ = ["PyNVMLTelemetryCollector"]
 class ScalingFactors:
     """Unit conversion scaling factors for NVML metrics."""
 
-    gpu_power_usage = 1e-3  # mW -> W
-    energy_consumption = 1e-9  # mJ -> MJ
-    gpu_memory_used = 1e-9  # bytes -> GB
-    power_violation = 1e-3  # ns -> µs
+    nvidia_power_usage = 1e-3  # mW -> W
+    nvidia_energy_consumption = 1e-9  # mJ -> MJ
+    nvidia_memory_used = 1e-9  # bytes -> GB
+    nvidia_power_violation = 1e-3  # ns -> µs
 
 
 @dataclass(slots=True)
@@ -250,6 +251,7 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
                 pci_bus_id=pci_bus_id,
                 device=f"nvidia{index}",
                 hostname="localhost",
+                platform=NVIDIA_GPU_TELEMETRY_PLATFORM,
             ),
         )
 
@@ -392,28 +394,28 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
                 # Power usage (milliwatts -> watts)
                 with contextlib.suppress(NVMLError):
                     power_mw = pynvml.nvmlDeviceGetPowerUsage(handle)
-                    telemetry_data.gpu_power_usage = (
-                        power_mw * ScalingFactors.gpu_power_usage
+                    telemetry_data.nvidia_power_usage = (
+                        power_mw * ScalingFactors.nvidia_power_usage
                     )
 
                 # Total energy consumption (millijoules -> megajoules)
                 with contextlib.suppress(NVMLError):
                     energy_mj = pynvml.nvmlDeviceGetTotalEnergyConsumption(handle)
-                    telemetry_data.energy_consumption = (
-                        energy_mj * ScalingFactors.energy_consumption
+                    telemetry_data.nvidia_energy_consumption = (
+                        energy_mj * ScalingFactors.nvidia_energy_consumption
                     )
 
                 # GPU and memory utilization (percent)
                 with contextlib.suppress(NVMLError):
                     util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-                    telemetry_data.gpu_utilization = float(util.gpu)
-                    telemetry_data.mem_utilization = float(util.memory)
+                    telemetry_data.nvidia_gpu_utilization = float(util.gpu)
+                    telemetry_data.nvidia_memory_utilization = float(util.memory)
 
                 # Memory used (bytes -> gigabytes)
                 with contextlib.suppress(NVMLError):
                     mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                    telemetry_data.gpu_memory_used = (
-                        mem_info.used * ScalingFactors.gpu_memory_used
+                    telemetry_data.nvidia_memory_used = (
+                        mem_info.used * ScalingFactors.nvidia_memory_used
                     )
 
                 # Temperature (Celsius)
@@ -421,22 +423,22 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
                     temp = pynvml.nvmlDeviceGetTemperature(
                         handle, pynvml.NVML_TEMPERATURE_GPU
                     )
-                    telemetry_data.gpu_temperature = float(temp)
+                    telemetry_data.nvidia_temperature = float(temp)
 
                 # Video decoder utilization (percent)
                 with contextlib.suppress(NVMLError):
                     dec_util, _ = pynvml.nvmlDeviceGetDecoderUtilization(handle)
-                    telemetry_data.decoder_utilization = float(dec_util)
+                    telemetry_data.nvidia_decoder_utilization = float(dec_util)
 
                 # Video encoder utilization (percent)
                 with contextlib.suppress(NVMLError):
                     enc_util, _ = pynvml.nvmlDeviceGetEncoderUtilization(handle)
-                    telemetry_data.encoder_utilization = float(enc_util)
+                    telemetry_data.nvidia_encoder_utilization = float(enc_util)
 
                 # JPEG decoder utilization (percent)
                 with contextlib.suppress(NVMLError):
                     jpg_util, _ = pynvml.nvmlDeviceGetJpgUtilization(handle)
-                    telemetry_data.jpg_utilization = float(jpg_util)
+                    telemetry_data.nvidia_jpg_utilization = float(jpg_util)
 
                 # SM utilization: prefer GPM (device-level) over process enumeration
                 sm_util: float | None = None
@@ -456,15 +458,15 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
                         )
 
                 if sm_util is not None:
-                    telemetry_data.sm_utilization = min(float(sm_util), 100.0)
+                    telemetry_data.nvidia_sm_utilization = min(float(sm_util), 100.0)
 
                 # Power violation / throttling duration (nanoseconds -> microseconds)
                 with contextlib.suppress(NVMLError):
                     violation = pynvml.nvmlDeviceGetViolationStatus(
                         handle, pynvml.NVML_PERF_POLICY_POWER
                     )
-                    telemetry_data.power_violation = (
-                        violation.violationTime * ScalingFactors.power_violation
+                    telemetry_data.nvidia_power_violation = (
+                        violation.violationTime * ScalingFactors.nvidia_power_violation
                     )
 
                 # Create record if any metrics were collected

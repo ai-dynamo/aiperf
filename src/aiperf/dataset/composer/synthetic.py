@@ -187,6 +187,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             )
 
         text = Text(name="text")
+        total_input_tokens = 0
 
         # Sample ISL/OSL pair for this request (cached for consistency)
         turn_id = id(turn)
@@ -205,6 +206,9 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 content = f"{prefix} {content}"
 
             text.contents.append(content)
+            total_input_tokens += len(self.tokenizer.encode(content))
+
+        turn.input_tokens = total_input_tokens
 
         return text
 

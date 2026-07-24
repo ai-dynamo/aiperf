@@ -88,6 +88,14 @@ def _warmup_ramps(w: dict[str, Any], cli: CLIConfig, s: set[str]) -> None:
     if pr is not None:
         w["prefill_ramp"] = {"duration": pr}
     if rr is not None:
+        if "rate" not in w:
+            if "warmup_request_rate_ramp_duration" in s:
+                raise ValueError(
+                    "--warmup-request-rate-ramp-duration requires warmup "
+                    "rate-controlled scheduling. Pass --warmup-request-rate, "
+                    "or drop --warmup-request-rate-ramp-duration."
+                )
+            return
         w["rate_ramp"] = {"duration": rr}
 
 
@@ -166,9 +174,7 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
             "warmup_duration": "--warmup-duration",
         }
         offending = [
-            flag
-            for field, flag in cap_flags.items()
-            if getattr(cli, field) is not None
+            flag for field, flag in cap_flags.items() if getattr(cli, field) is not None
         ]
         if offending:
             raise ValueError(

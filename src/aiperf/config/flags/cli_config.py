@@ -1135,9 +1135,10 @@ class CLIConfig(BaseConfig):
             ge=1,
             description="Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached "
             "block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length "
-            "equals `(num_hash_ids - 1) * block_size + final_block_size`. Only supported with synthetic datasets: with `--input-file` the flag is "
-            "rejected at convert time, and trace replay loaders always use the `default_block_size` from their plugin metadata "
-            "(16 for `bailian_trace`, 64 for `baseten_trace`, 512 for `mooncake_trace`).",
+            "equals `(num_hash_ids - 1) * block_size + final_block_size`. With `--input-file` this overrides the trace loader's "
+            "`default_block_size` plugin metadata (16 for `bailian_trace`, 512 for `mooncake_trace`) for loaders that reconstruct prompts from "
+            "`hash_ids`; it has no effect on `baseten_trace`, which replays literal recorded prompts. Set it when a trace was recorded at a block "
+            "size different from its loader default (e.g. a Mooncake-format trace recorded at 16).",
         ),
         CLIParameter(
             name=(
@@ -2014,114 +2015,13 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
-    adaptive_scale: Annotated[
-        bool,
+    request_rate_series: Annotated[
+        Path | None,
         Field(
-            description=(
-                "Enable stable single-run adaptive scale control. Use "
-                "--adaptive-scale-control variable:min,max:type to choose the "
-                "controlled variable and bounds, and --adaptive-scale-sla "
-                "metric:stat:op:threshold to define pass/fail criteria. Also "
-                "requires --benchmark-duration and --adaptive-sustain-duration."
-            ),
-        ),
-        CLIParameter(name=("--adaptive-scale",), group=Groups.LOAD_GENERATOR),
-    ] = False
-
-    adaptive_sustain_duration: Annotated[
-        float | None,
-        Field(
-            gt=0,
-            description="Duration in seconds to sustain load near the discovered adaptive scale boundary.",
+            description="JSON file containing request-rate points for piecewise-linear request-rate control.",
         ),
         CLIParameter(
-            name=("--adaptive-sustain-duration",), group=Groups.LOAD_GENERATOR
-        ),
-    ] = None
-
-    adaptive_assessment_period: Annotated[
-        float | None,
-        Field(
-            ge=1.0,
-            description="Duration in seconds for each adaptive scale SLA assessment window.",
-        ),
-        CLIParameter(
-            name=("--adaptive-assessment-period", "--adaptive-scale-assessment-period"),
-            group=Groups.LOAD_GENERATOR,
-        ),
-    ] = None
-
-    adaptive_scale_control: Annotated[
-        str | None,
-        Field(
-            default=None,
-            description=(
-                "Compact adaptive scale control spec in variable:min,max:type "
-                "form. The variable is one of concurrency, prefill_concurrency, "
-                "request_rate, or users; min and max are required explicit "
-                "bounds; type is int for discrete controls and float for rate "
-                "controls. Examples: concurrency:1,1000:int, "
-                "prefill_concurrency:1,8:int, request_rate:1,200:float, "
-                "users:10,500:int. Do not combine this with expanded "
-                "--adaptive-control-* flags."
-            ),
-        ),
-        CLIParameter(name=("--adaptive-scale-control",), group=Groups.LOAD_GENERATOR),
-    ] = None
-
-    adaptive_control_variable: Annotated[
-        str | None,
-        Field(
-            default=None,
-            description="Adaptive scale control variable: concurrency, prefill_concurrency, request_rate, or users.",
-        ),
-        CLIParameter(
-            name=("--adaptive-control-variable",), group=Groups.LOAD_GENERATOR
-        ),
-    ] = None
-
-    adaptive_control_min: Annotated[
-        float | None,
-        Field(
-            gt=0,
-            default=None,
-            description="Minimum adaptive scale control value.",
-        ),
-        CLIParameter(name=("--adaptive-control-min",), group=Groups.LOAD_GENERATOR),
-    ] = None
-
-    adaptive_control_max: Annotated[
-        float | None,
-        Field(
-            gt=0,
-            default=None,
-            description="Maximum adaptive scale control value. Inferred from the phase target when omitted.",
-        ),
-        CLIParameter(name=("--adaptive-control-max",), group=Groups.LOAD_GENERATOR),
-    ] = None
-
-    adaptive_scale_sla: Annotated[
-        list[str] | None,
-        Field(
-            default=None,
-            description=(
-                "SLA filter for adaptive scale. Format: "
-                "'metric_tag:stat:op:threshold'. Latency-family metrics "
-                "(request_latency, time_to_first_token/ttft, "
-                "inter_token_latency/itl/tpot) support percentile stats; "
-                "window scalar/rate metrics (request_throughput, "
-                "output_token_throughput, goodput, "
-                "goodput_ratio, success_rate, "
-                "error_rate, cancellation_rate) support {avg, min, max}. "
-                "Full metric/stat table: "
-                "[Adaptive SLA metric support]"
-                "(tutorials/yaml-config.md#adaptive-sla-metric-support). "
-                "op in {lt, le, gt, ge}; threshold is a float. Repeatable. "
-                "Example: --adaptive-scale-sla 'request_latency:p95:le:30000'."
-            ),
-        ),
-        CLIParameter(
-            name=("--adaptive-scale-sla",),
+            name=("--request-rate-series",),
             group=Groups.LOAD_GENERATOR,
         ),
     ] = None

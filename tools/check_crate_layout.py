@@ -17,7 +17,7 @@
 
 """
 Enforce the crate identity/layout policy from
-``specs/repository-layout.md``.
+``docs/specs/repository-layout.md``.
 
 The policy separates *package identity* (globally meaningful, keeps the
 ``aiperf`` namespace) from *workspace path* (local, drops the redundant
@@ -114,7 +114,7 @@ def main() -> None:
     if violations:
         print(
             f"ERROR: {len(violations)} crate layout violation(s) "
-            f"(see specs/repository-layout.md):\n"
+            f"(see docs/specs/repository-layout.md):\n"
         )
         for v in violations:
             print(f"  - {v}")

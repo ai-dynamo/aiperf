@@ -557,7 +557,7 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
     // Keep handles before constructing the client so the phaser can subscribe over
     // the same fetch instance.
     let phaser_start = matches!(
-        std::env::var("AIPERF_CELL_PHASER_START")
+        std::env::var(crate::engine::cellular_controller::CELL_PHASER_START_ENV)
             .unwrap_or_default()
             .to_ascii_lowercase()
             .as_str(),
@@ -595,6 +595,67 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
     // per-shard dataset download + run setup skews each cell's local run start.
     crate::engine::cell_origin::capture_cell_shared_origin();
     Ok(reply.envelope)
+}
+
+/// Await a named controller-owned phase gate over the cellular phaser.
+///
+/// This opens a short-lived velo control-plane client on the caller's runtime, so later
+/// phase-bound hooks can block on replay/live phaser semantics without sharing a velo
+/// instance across the cell's execute runtime.
+#[cfg(feature = "cellular")]
+pub async fn await_controller_phase_advance(phase: &str) -> Result<()> {
+    use crate::cellular::transport::connect::{build_velo, connect_controller};
+    use crate::cellular::transport::phaser_velo::PhaserClient;
+    use anyhow::Context;
+
+    let coordinate = std::env::var(CELL_CONTROLLER_ADDR_ENV)
+        .context("cell has no AIPERF_CELL_CONTROLLER_ADDR")?;
+    let cell_id = ModuloCellPartition::from_env()
+        .context("cell has no partition env (AIPERF_CELL_ID/_COUNT)")?
+        .cell_id();
+    let velo = build_velo(cell_bind(&coordinate, "phase-await")).await?;
+    let controller = connect_controller(&velo, &coordinate)
+        .await
+        .map_err(|error| anyhow::anyhow!("cell {cell_id} connect controller: {error}"))?;
+    let mut sub = PhaserClient::subscribe(velo, &controller)
+        .await
+        .map_err(|error| anyhow::anyhow!("cell {cell_id} phaser subscribe: {error}"))?;
+    sub.await_phase_advance(phase)
+        .await
+        .map(|_| ())
+        .map_err(|error| anyhow::anyhow!("cell {cell_id} phaser await phase {phase}: {error}"))
+}
+
+/// Send a named per-cell phase signal back to the controller over the cellular control
+/// transport.
+#[cfg(feature = "cellular")]
+pub async fn send_controller_phase_signal(
+    phase: &str,
+    signal: crate::cellular::transport::CellPhaseSignal,
+) -> Result<()> {
+    use crate::cellular::transport::connect::{build_velo, connect_controller};
+    use crate::cellular::{CellClient, CellMessage, VeloCellClient};
+    use anyhow::Context;
+
+    let coordinate = std::env::var(CELL_CONTROLLER_ADDR_ENV)
+        .context("cell has no AIPERF_CELL_CONTROLLER_ADDR")?;
+    let cell_id = ModuloCellPartition::from_env()
+        .context("cell has no partition env (AIPERF_CELL_ID/_COUNT)")?
+        .cell_id();
+    let velo = build_velo(cell_bind(&coordinate, "phase-signal")).await?;
+    let controller = connect_controller(&velo, &coordinate)
+        .await
+        .map_err(|error| anyhow::anyhow!("cell {cell_id} connect controller: {error}"))?;
+    let mut client = VeloCellClient::connect(velo, controller)
+        .map_err(|error| anyhow::anyhow!("cell {cell_id} connect: {error}"))?;
+    client
+        .send(&CellMessage::PhaseSignal {
+            cell_id,
+            phase: phase.to_owned(),
+            signal,
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("cell {cell_id} ship phase signal: {error}"))
 }
 
 /// Build this cell's owned dataset index and dispatch its owned slice. When

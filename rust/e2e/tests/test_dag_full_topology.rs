@@ -7,8 +7,10 @@ use common::*;
 
 use serde_json::Value;
 
-const FIXTURE: &str =
-    "/home/anthony/nvidia/projects/aiperf/ajc/rust/tests/fixtures/dag/full.dag.jsonl";
+const FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/dag/full.dag.jsonl"
+);
 
 const ROOT_SYS: &str = "root system prompt";
 const ROOT_USER: &str = "root user prompt";

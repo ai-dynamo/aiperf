@@ -9,7 +9,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
-use crate::rng::{RngRoot, RustRandomGenerator};
+use crate::rng::{ConfiguredRandomGenerator, RngRoot, RuntimeRandomGenerator};
 use bytes::Bytes;
 
 use super::audio::generate_noise_wav;
@@ -23,8 +23,8 @@ use crate::dataset::model::MediaKind;
 /// Rust-native frame synthesizer and FFmpeg encoder.
 pub struct NativeVideoGenerator {
     config: SyntheticVideoConfig,
-    noise_rng: RustRandomGenerator,
-    audio_rng: RustRandomGenerator,
+    noise_rng: ConfiguredRandomGenerator,
+    audio_rng: ConfiguredRandomGenerator,
     publisher: Arc<dyn SyntheticMediaPublisher>,
 }
 
@@ -43,8 +43,8 @@ impl NativeVideoGenerator {
         validate(&config)?;
         Ok(Self {
             config,
-            noise_rng: RustRandomGenerator::from_seed(root.derive_seed("dataset.video.noise")),
-            audio_rng: RustRandomGenerator::from_seed(root.derive_seed("dataset.video.audio")),
+            noise_rng: root.derive_generator("dataset.video.noise"),
+            audio_rng: root.derive_generator("dataset.video.audio"),
             publisher,
         })
     }

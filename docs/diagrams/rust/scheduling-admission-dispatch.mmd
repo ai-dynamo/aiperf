@@ -1,0 +1,30 @@
+flowchart TD
+    MODE["DispatchMode: sharded | global | global-hop"]
+    PART["Cell × thread partition"]
+    SPLIT["two_level_partition"]
+    SLICE["slice_phase_for_thread"]
+    SHARD["Sharded worker schedules"]
+    ADMIT["GlobalAdmission"]
+    SLOTS["GlobalSlotPool"]
+    RATE["GlobalRateGate"]
+    HOP["global-hop coordinator loop"]
+    EXEC["ThreadPerCoreExecutor"]
+    WORKERS["Worker OS threads"]
+    MERGE["merge_shards"]
+
+    MODE -->|"sharded or global"| PART
+    PART -->|"nests cell ownership"| SPLIT
+    SPLIT -->|"slices phase budget"| SLICE
+    MODE -->|"sharded: local 1/W caps + rate"| SHARD
+    SLICE -->|"per-thread phase plan"| SHARD
+    MODE -->|"global: shared per-cell gate"| ADMIT
+    ADMIT -->|"concurrency admission"| SLOTS
+    ADMIT -->|"rate base-grid claims"| RATE
+    SLOTS -->|"shared slots across threads"| SHARD
+    RATE -->|"shared fire offsets"| SHARD
+    MODE -->|"global-hop: one full-cell schedule"| HOP
+    HOP -->|"round-robin measured turns"| EXEC
+    EXEC -->|"bounded mpsc + oneshot"| WORKERS
+    SHARD -->|"worker-local records"| MERGE
+    WORKERS -->|"global-order records"| MERGE
+    ADMIT -.->|"not used by global-hop"| HOP

@@ -92,7 +92,7 @@ impl SlotInner {
 /// `SlotPool` in `Global` mode carries the same debt-tracked graceful-drain
 /// semantics as `Local` (see [`GlobalSlotPool::set_limit`]), so concurrency
 /// ramps are exact under `global`/`global-hop` dispatch — a limit decrease
-/// never transiently over-admits (see `specs/global-exact-dispatch.md`).
+/// never transiently over-admits.
 enum SlotPoolBackend {
     Local(Rc<SlotInner>),
     Global(Arc<GlobalSlotPool>),

@@ -1283,6 +1283,29 @@ console_exporter:
       Console exporter for primary benchmark metrics. Displays formatted metric
       tables to stdout for user-facing results. Always loaded.
 
+  gpu_vendor_disclaimer:
+    class: aiperf.exporters.console_gpu_vendor_disclaimer_exporter:ConsoleGpuVendorDisclaimerExporter
+    description: |
+      Console banner warning that the GPU sections below it (power efficiency
+      and per-GPU telemetry) are vendor-specific and not directly comparable
+      across platforms. Rendered ahead of all GPU blocks when telemetry is
+      enabled.
+
+  power_efficiency_nvidia:
+    class: aiperf.exporters.console_power_efficiency_exporter:ConsoleNvidiaPowerEfficiencyExporter
+    description: |
+      Console exporter for NVIDIA cross-GPU power efficiency totals (power,
+      energy, tokens/joule, energy/user). Renders a vendor-attributed section
+      separate from the main metrics table. Shown when NVIDIA GPU telemetry is
+      available.
+
+  power_efficiency_amd:
+    class: aiperf.exporters.console_power_efficiency_exporter:ConsoleAmdPowerEfficiencyExporter
+    description: |
+      Console exporter for AMD cross-GPU power efficiency totals (power, energy,
+      tokens/joule, energy/user). Renders a vendor-attributed section separate
+      from the main metrics table. Shown when AMD GPU telemetry is available.
+
   telemetry:
     class: aiperf.exporters.gpu_telemetry_console_exporter:GPUTelemetryConsoleExporter
     description: |

@@ -21,7 +21,7 @@ Source-of-truth locations:
 - Standalone mock target: `rust/mock-server/`.
 - Python package and delegated command implementation: `src/aiperf/`.
 - Repository architecture index: `llms.txt`.
-- Design records index: `specs/README.md`.
+- Design records index: `docs/specs/README.md`.
 
 Ground architecture claims in executable code and manifests. Design records provide context but do not establish runtime behavior.
 
@@ -37,7 +37,7 @@ The runtime supports these configurations through shared clock, workload, transp
 
 HTTP uses clock-injected Hyper and supports HTTP/1, h2c, UDS, TLS, and SSE. HTTP also supports the AWS SageMaker Runtime `InvokeEndpoint`/`InvokeEndpointWithResponseStream` API, the latter framed as AWS `application/vnd.amazon.eventstream` binary frames (not SSE) on the wire, translated to/from the shared SSE-record aggregation path by client- and mock-server-side adapters. gRPC uses clock-injected Tonic and supports KServe OIP and NVIDIA Riva ASR, TTS, and NLP endpoint families. HTTP and gRPC connection establishment retries pre-send connect failures with clock-driven linear backoff, gated by the authored `max_connect_retries` endpoint-profile field (default 0). Registered endpoint, transport, workload, exporter, dataset, sampler, and actuator capabilities are frozen in `Application` at bootstrap; unknown identifiers fail closed.
 
-Scheduled workloads provide request-rate, concurrency, user-centric, and fixed-schedule operation. Phase execution applies warmup and profiling lifecycle policy, grace, cancellation, drain, and force escalation through shared phase orchestration. Graph inputs include `dag_jsonl`, `weka_trace`, and `dynamo_trace`; the engine resolves them into the graph and segment-store path. Synthetic prompt generation supports direct prefix-reuse targeting (`--prefix-reuse-fraction`/`--prefix-reuse-ratio`), emitting a shared token-identical warm prefix across a configurable fraction of prompts while holding input length exact.
+Scheduled workloads provide request-rate, concurrency, user-centric, and fixed-schedule operation. Phase execution applies warmup and profiling lifecycle policy, grace, cancellation, drain, and force escalation through shared phase orchestration. Graph inputs include `dag_jsonl`, `weka_trace`, and `dynamo_trace`; the engine resolves them into the graph and segment-store path. Synthetic prompt generation supports named `sonnet`, `coding`, and tokenizer-driven `random` corpora plus direct prefix-reuse targeting (`--prompt-corpus`, `--prefix-reuse-fraction`/`--prefix-reuse-ratio`), emitting a shared token-identical warm prefix across a configurable fraction of prompts while holding input length exact; count/hash-based trace synthesis reads that same authored `dataset.prompts.corpus` space, and recorded-graph reconstruction accepts it too, defaulting to `coding` when omitted.
 
 The native execution model is thread-per-core:
 
@@ -131,13 +131,13 @@ Other active implementation seams include `SegmentStore`, `PromptMaterializer`, 
 Activate the project environment before repository commands:
 
 ```bash
-source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+source .venv/bin/activate
 ```
 
 Core Rust commands:
 
 ```bash
-source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+source .venv/bin/activate
 cd rust
 cargo build
 cargo build --release
@@ -154,7 +154,7 @@ cargo fmt --check
 Feature-bearing builds:
 
 ```bash
-source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+source .venv/bin/activate
 cd rust
 cargo build -p aiperf-cli --features dynosim
 cargo test -p aiperf-runtime --features dynosim --lib
@@ -168,7 +168,7 @@ cargo build -p aiperf-cli --features pyo3-embed
 Packaging and installation:
 
 ```bash
-source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+source .venv/bin/activate
 make native-cli
 make bundle-cli
 make wheel
@@ -180,7 +180,7 @@ make install-app
 Product commands:
 
 ```bash
-source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+source .venv/bin/activate
 aiperf config init --template minimal --output benchmark.yaml
 aiperf config validate benchmark.yaml
 aiperf config expand --config benchmark.yaml
@@ -193,7 +193,7 @@ The native profile command accepts comma-separated axes for grid or zip sweeps a
 Standalone mock target:
 
 ```bash
-source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+source .venv/bin/activate
 cd rust
 cargo run -p aiperf-mock-server -- --fast
 ```
@@ -215,7 +215,7 @@ Unit tests and summary-only checks do not satisfy this product-level requirement
 Before completing changes to these instructions, run:
 
 ```bash
-source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+source .venv/bin/activate
 /usr/bin/python3 tools/check_agent_files_sync.py
 /usr/bin/python3 tools/check_docs_current.py
 ```
@@ -236,6 +236,6 @@ Preserve each file's preamble. Edit all four bodies together and run `/usr/bin/p
 Keep architecture documentation synchronized with code in the same change:
 
 - Update all four agent files and `llms.txt` when crate topology, the clock or dispatch seams, CLI/config behavior, build commands, or supported execution behavior changes.
-- `specs/` holds canonical current-truth design records: edit a spec in place when its subsystem changes, rename or delete a spec when it becomes obsolete, and update `specs/README.md` and `llms.txt` in the same change. Verify each spec claim against the code, and run `/usr/bin/python3 tools/check_agent_files_sync.py` and `/usr/bin/python3 tools/check_docs_current.py`.
+- `docs/specs/` holds canonical current-truth design records: edit a spec in place when its subsystem changes, rename or delete a spec when it becomes obsolete, and update `docs/specs/README.md` and `llms.txt` in the same change. Verify each spec claim against the code, and run `/usr/bin/python3 tools/check_agent_files_sync.py` and `/usr/bin/python3 tools/check_docs_current.py`.
 - Run `/usr/bin/python3 tools/check_docs_current.py` for documentation and topology changes.
 - Commit architecture documentation with the code or design change it describes.

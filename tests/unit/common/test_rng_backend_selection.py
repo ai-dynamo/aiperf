@@ -29,15 +29,15 @@ def test_default_backend_is_python():
     assert generator.seed == expected
 
 
-def test_rust_parity_backend_uses_pcg64_and_blake3():
-    manager = _RNGManager(42, backend="rust_parity")
+def test_rust_backend_uses_pcg64_and_blake3():
+    manager = _RNGManager(42, backend="rust")
     generator = manager.derive("dataset.loader")
     assert isinstance(generator, ParityRandomGenerator)
     assert generator.seed == RngRoot(42).derive_seed("dataset.loader")
 
 
-def test_rust_parity_seedless_is_entropy_backed():
-    manager = _RNGManager(None, backend="rust_parity")
+def test_rust_backend_seedless_is_entropy_backed():
+    manager = _RNGManager(None, backend="rust")
     a = manager.derive("dataset.loader")
     b = manager.derive("dataset.loader")
     assert isinstance(a, ParityRandomGenerator)
@@ -45,9 +45,9 @@ def test_rust_parity_seedless_is_entropy_backed():
     assert [a.random_u64(), a.random_u64()] != [b.random_u64(), b.random_u64()]
 
 
-def test_rust_parity_derivation_is_reproducible():
-    first = _RNGManager(7, backend="rust_parity").derive("timing.request_rate")
-    second = _RNGManager(7, backend="rust_parity").derive("timing.request_rate")
+def test_rust_backend_derivation_is_reproducible():
+    first = _RNGManager(7, backend="rust").derive("timing.request_rate")
+    second = _RNGManager(7, backend="rust").derive("timing.request_rate")
     assert [first.random_u64() for _ in range(8)] == [
         second.random_u64() for _ in range(8)
     ]

@@ -5,11 +5,25 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from aiperf.common.models import Conversation, ModelEndpointInfo, Text, Turn
 from dev.benchmarks import dataset_load_python
+from dev.benchmarks.dataset_format_catalog import SourceEnvelope
 from dev.benchmarks.dataset_load_compare import generate_fixtures
+
+
+def _local_source(path: Path) -> SourceEnvelope:
+    return SourceEnvelope(kind="local_file", path=str(path))
+
+
+def _source_json(path: Path) -> str:
+    import json
+
+    return json.dumps(_local_source(path).to_dict(), separators=(",", ":"))
+
 
 RAW_PAYLOADS = [
     {
@@ -91,6 +105,7 @@ def test_run_sample_reports_deterministic_counts(
     first = dataset_load_python.run_sample(
         format_name=format_name,
         path=path,
+        source=_local_source(path),
         options={},
         fixture_id=f"{format_name}-fixture",
         seed=42,
@@ -99,6 +114,7 @@ def test_run_sample_reports_deterministic_counts(
     second = dataset_load_python.run_sample(
         format_name=format_name,
         path=path,
+        source=_local_source(path),
         options={},
         fixture_id=f"{format_name}-fixture",
         seed=42,
@@ -108,7 +124,11 @@ def test_run_sample_reports_deterministic_counts(
     assert first.implementation == "python"
     assert first.format == format_name
     assert first.fixture_id == f"{format_name}-fixture"
-    assert (first.row_count, first.conversation_count, first.turn_count) == expected_counts
+    assert (
+        first.row_count,
+        first.conversation_count,
+        first.turn_count,
+    ) == expected_counts
     if format_name in {"raw_payload", "inputs_json"}:
         assert first.total_input_tokens is None
     else:
@@ -150,7 +170,8 @@ def test_run_sample_reports_new_format_counts_and_token_semantics(
     sample = dataset_load_python.run_sample(
         format_name=format_name,
         path=case.path,
-        options={},
+        source=case.source,
+        options=case.options,
         fixture_id=case.fixture_id,
         seed=42,
         model="test-model",
@@ -171,16 +192,135 @@ def test_trace_loader_construction_matches_custom_composer_contract(
     tokenizer = dataset_load_python.Tokenizer.from_pretrained("builtin")
     run = dataset_load_python._benchmark_run(seed=42, model="test-model")
 
-    mooncake = dataset_load_python._create_loader(
-        "mooncake_trace", cases["mooncake_trace"].path, run, tokenizer
+    mooncake = dataset_load_python._create_file_loader(
+        "mooncake_trace", cases["mooncake_trace"].path, run, tokenizer, {}
     )
-    bailian = dataset_load_python._create_loader(
-        "bailian_trace", cases["bailian_trace"].path, run, tokenizer
+    bailian = dataset_load_python._create_file_loader(
+        "bailian_trace", cases["bailian_trace"].path, run, tokenizer, {}
     )
 
     assert mooncake.prompt_generator.tokenizer is tokenizer
     assert bailian.prompt_generator.tokenizer is tokenizer
     assert bailian._block_size == 16
+
+
+def test_count_extracted_tokens_prefers_chat_template_over_flat_text() -> None:
+    class FakeInnerTokenizer:
+        chat_template = "{{ messages }}"
+
+        @staticmethod
+        def apply_chat_template(
+            messages: list[dict[str, str]],
+            *,
+            tokenize: bool,
+            add_generation_prompt: bool,
+        ) -> list[int]:
+            assert tokenize is True
+            assert add_generation_prompt is True
+            assert messages == [{"role": "user", "content": "hello"}]
+            return [11, 12, 13, 14]
+
+    class FakeTokenizer:
+        def __init__(self) -> None:
+            self._tokenizer = FakeInnerTokenizer()
+
+        @staticmethod
+        def encode(text: str) -> list[int]:
+            return text.split()
+
+    extracted = SimpleNamespace(
+        pretokenised_token_count=2,
+        texts=["flat text should not be used"],
+        tool_texts=["tool schema"],
+        messages=[{"role": "user", "content": "hello"}],
+    )
+
+    total = dataset_load_python._count_extracted_tokens(
+        extracted,
+        FakeTokenizer(),
+        apply_chat_template=True,
+    )
+
+    assert total == 2 + 4 + 2
+
+
+def test_chat_template_token_count_accepts_input_ids_mapping() -> None:
+    class FakeInnerTokenizer:
+        chat_template = "{{ messages }}"
+
+        @staticmethod
+        def apply_chat_template(
+            messages: list[dict[str, str]],
+            *,
+            tokenize: bool,
+            add_generation_prompt: bool,
+        ) -> dict[str, list[int]]:
+            assert tokenize is True
+            assert add_generation_prompt is True
+            assert messages == [{"role": "user", "content": "hello"}]
+            return {"input_ids": [7, 8, 9]}
+
+    class FakeTokenizer:
+        def __init__(self) -> None:
+            self._tokenizer = FakeInnerTokenizer()
+
+    assert (
+        dataset_load_python._chat_template_token_count(
+            FakeTokenizer(),
+            [{"role": "user", "content": "hello"}],
+        )
+        == 3
+    )
+
+
+def test_count_input_tokens_uses_chat_template_for_structured_turns() -> None:
+    run = dataset_load_python._benchmark_run(seed=42, model="test-model")
+
+    class FakeInnerTokenizer:
+        chat_template = "{{ messages }}"
+
+        @staticmethod
+        def apply_chat_template(
+            messages: list[dict[str, str]],
+            *,
+            tokenize: bool,
+            add_generation_prompt: bool,
+        ) -> list[int]:
+            assert tokenize is True
+            assert add_generation_prompt is True
+            assert messages == [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "ctx"},
+                {"role": "user", "content": "hello"},
+            ]
+            return [1, 2, 3, 4, 5]
+
+    class FakeTokenizer:
+        def __init__(self) -> None:
+            self._tokenizer = FakeInnerTokenizer()
+
+        @staticmethod
+        def encode(text: str) -> list[int]:
+            return text.split()
+
+    chat_endpoint = dataset_load_python.ChatEndpoint(ModelEndpointInfo.from_run(run))
+    conversations = [
+        Conversation(
+            session_id="s1",
+            system_message="sys",
+            user_context_message="ctx",
+            turns=[Turn(role="user", texts=[Text(contents=["hello"])])],
+        )
+    ]
+
+    total = dataset_load_python._count_input_tokens(
+        conversations,
+        FakeTokenizer(),
+        apply_chat_template=True,
+        chat_endpoint=chat_endpoint,
+    )
+
+    assert total == 5
 
 
 def test_main_initializes_rng_for_fresh_trace_adapter_process(
@@ -200,6 +340,8 @@ def test_main_initializes_rng_for_fresh_trace_adapter_process(
             str(cases["mooncake_trace"].path),
             "--options-json",
             "{}",
+            "--source-json",
+            _source_json(cases["mooncake_trace"].path),
             "--fixture-id",
             "fresh-process",
             "--seed",
@@ -226,6 +368,8 @@ def test_main_emits_exact_one_line_sample_schema_for_unknown_format(
             str(tmp_path / "unused.jsonl"),
             "--options-json",
             "{}",
+            "--source-json",
+            _source_json(tmp_path / "unused.jsonl"),
             "--fixture-id",
             "unknown-fixture",
             "--seed",
@@ -300,6 +444,7 @@ def test_tokenizer_initializes_before_timing(
     sample = dataset_load_python.run_sample(
         format_name="single_turn",
         path=path,
+        source=_local_source(path),
         options={},
         fixture_id="timing",
         seed=42,
@@ -310,6 +455,40 @@ def test_tokenizer_initializes_before_timing(
     assert events[:3] == ["tokenizer:builtin", "encode:warm", "clock"]
     assert events[-1] == "clock"
     assert "clock" in events[2:]
+
+
+def test_run_sample_uses_requested_tokenizer_name(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "single.jsonl"
+    _write_jsonl(path, [{"text": "hello"}])
+    names: list[str] = []
+    real_from_pretrained = dataset_load_python.Tokenizer.from_pretrained
+
+    def tracked_from_pretrained(name: str):
+        names.append(name)
+        return real_from_pretrained("builtin")
+
+    monkeypatch.setattr(
+        dataset_load_python.Tokenizer,
+        "from_pretrained",
+        tracked_from_pretrained,
+    )
+
+    sample = dataset_load_python.run_sample(
+        format_name="single_turn",
+        path=path,
+        source=_local_source(path),
+        options={},
+        fixture_id="tokenizer-name",
+        seed=42,
+        model="test-model",
+        tokenizer_name="openai-community/gpt2",
+    )
+
+    assert sample.error is None
+    assert names == ["openai-community/gpt2"]
 
 
 def test_main_emits_success_sample_schema(
@@ -327,6 +506,8 @@ def test_main_emits_success_sample_schema(
             str(path),
             "--options-json",
             "{}",
+            "--source-json",
+            _source_json(path),
             "--fixture-id",
             "success-fixture",
             "--seed",
@@ -378,6 +559,8 @@ def test_main_rejects_nonempty_options_with_structured_error(
             str(path),
             "--options-json",
             '{"text_field":"text"}',
+            "--source-json",
+            _source_json(path),
             "--fixture-id",
             "options-fixture",
             "--seed",
@@ -390,6 +573,6 @@ def test_main_rejects_nonempty_options_with_structured_error(
     captured = capsys.readouterr()
     assert exit_code == 1
     record = json.loads(captured.out)
-    assert record["error"] == dataset_load_python.NON_EMPTY_OPTIONS_REASON
+    assert "verified mapping" in record["error"]
     assert record["elapsed_ns"] == 0
     assert record["row_count"] == 0

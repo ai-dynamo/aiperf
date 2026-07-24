@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! The cross-node communication seam — heartbeats and partitions from cells to the
-//! controller.
+//! The cross-node communication seam — heartbeats, phase signals, and partitions from
+//! cells to the controller.
 //!
 //! - [`CellClient`] (the cell) sends messages. It is **async** — the velo impl
 //!   ([`velo_transport::VeloCellClient`]) drives an async messaging client. A cell
-//!   sends a handful of heartbeats plus one final partition, never on its
+//!   sends a handful of control messages plus one final partition, never on its
 //!   per-request hot path.
 //! - [`ControllerTransport`] (the controller) receives a merged stream of every
 //!   cell's messages. The velo impl ([`velo_transport::VeloControllerTransport`])
@@ -36,9 +36,19 @@ pub mod phaser_velo;
 #[cfg(feature = "cellular")]
 pub mod velo_transport;
 
-/// One self-attributing message from a cell to the controller. A cell sends its
-/// final heartbeat then its partition, and closes; the controller counts partitions
-/// to termination, so no explicit hello/goodbye framing is needed.
+/// One per-cell phase-barrier signal surfaced to the controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CellPhaseSignal {
+    /// The cell has reached the named phase barrier and is waiting for controller action.
+    Ready,
+    /// The cell has completed the named phase and is acknowledging it to the controller.
+    Complete,
+}
+
+/// One self-attributing message from a cell to the controller. A cell sends a small
+/// number of fire-and-forget control messages plus its terminal partition, and closes;
+/// the controller counts partitions to termination, so no explicit hello/goodbye
+/// framing is needed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CellMessage {
     /// The cell's final counters + saturation + latency sketches. Boxed so it does
@@ -48,6 +58,16 @@ pub enum CellMessage {
         cell_id: u32,
         /// The cell's counters + saturation + latency sketches.
         heartbeat: Box<MetricsHeartbeat>,
+    },
+    /// A control-plane phase signal the controller later aggregates into exact
+    /// cross-cell phase barriers.
+    PhaseSignal {
+        /// The reporting cell's identifier.
+        cell_id: u32,
+        /// The named phase gate the signal belongs to.
+        phase: String,
+        /// Which barrier point the cell is reporting.
+        signal: CellPhaseSignal,
     },
     /// The cell's records-shard partition, sent once at run end. The partition
     /// carries its own `cell_id`.
@@ -70,6 +90,8 @@ pub enum CellMessage {
 pub const HANDLER_REGISTER: &str = "aiperf.cell.register";
 /// velo handler name: cell → controller heartbeat (fire-and-forget `am_send`).
 pub const HANDLER_HEARTBEAT: &str = "aiperf.cell.heartbeat";
+/// velo handler name: cell → controller phase signal (fire-and-forget `am_send`).
+pub const HANDLER_PHASE_SIGNAL: &str = "aiperf.cell.phase_signal";
 /// velo handler name: cell → controller records-shard partition ship (unary; the
 /// reply is an rmp [`CellAck`]).
 pub const HANDLER_PARTITION: &str = "aiperf.cell.partition";

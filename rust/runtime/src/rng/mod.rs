@@ -7,6 +7,7 @@
 //! using BLAKE3, then consumed through `Pcg64` wrappers.
 
 pub mod compat;
+pub mod configured;
 pub mod derive;
 pub mod dist;
 pub mod error;
@@ -17,7 +18,10 @@ pub mod random_generator;
 
 pub use compat::python_mt::PythonMt19937;
 pub use compat::python_random::PythonRandomGenerator;
-pub use derive::{RngRoot, derive_seed_parts, derive_seed_u64};
+pub use configured::{
+    ConfiguredRandomGenerator, RuntimeRngBackend, configured_runtime_rng_backend,
+};
+pub use derive::{DerivedRandomGenerator, RngRoot, derive_seed_parts, derive_seed_u64};
 pub use dist::{
     DistributionSampler, EmpiricalDistribution, EmpiricalPoint, FixedDistribution,
     LogNormalDistribution, MultimodalDistribution, NormalDistribution, PeakEntry,
@@ -27,4 +31,4 @@ pub use dist::{
 pub use error::{Result, RngError};
 pub use generator::RustRandomGenerator;
 pub use hash_id::HashIdRandomGenerator;
-pub use random_generator::RandomGenerator;
+pub use random_generator::{RandomGenerator, RuntimeRandomGenerator};

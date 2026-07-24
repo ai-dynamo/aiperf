@@ -7,7 +7,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
-use crate::rng::{RngRoot, RustRandomGenerator};
+use crate::rng::{ConfiguredRandomGenerator, RandomGenerator, RngRoot, RuntimeRandomGenerator};
 use bytes::Bytes;
 
 use super::{
@@ -25,9 +25,9 @@ const SUPPORTED_DEPTHS: &[u16] = &[8, 16, 24, 32];
 /// Rust-native Gaussian-noise audio generator.
 pub struct NativeAudioGenerator {
     config: SyntheticAudioConfig,
-    duration_rng: RustRandomGenerator,
-    format_rng: RustRandomGenerator,
-    data_rng: RustRandomGenerator,
+    duration_rng: ConfiguredRandomGenerator,
+    format_rng: ConfiguredRandomGenerator,
+    data_rng: ConfiguredRandomGenerator,
     publisher: Arc<dyn SyntheticMediaPublisher>,
 }
 
@@ -46,11 +46,9 @@ impl NativeAudioGenerator {
         validate_config(&config)?;
         Ok(Self {
             config,
-            duration_rng: RustRandomGenerator::from_seed(
-                root.derive_seed("dataset.audio.duration"),
-            ),
-            format_rng: RustRandomGenerator::from_seed(root.derive_seed("dataset.audio.format")),
-            data_rng: RustRandomGenerator::from_seed(root.derive_seed("dataset.audio.data")),
+            duration_rng: root.derive_generator("dataset.audio.duration"),
+            format_rng: root.derive_generator("dataset.audio.format"),
+            data_rng: root.derive_generator("dataset.audio.data"),
             publisher,
         })
     }
@@ -158,7 +156,7 @@ pub fn transcode_audio_to_wav(raw: &[u8]) -> Result<(Bytes, f64)> {
 }
 
 pub(crate) fn generate_noise_wav(
-    rng: &mut RustRandomGenerator,
+    rng: &mut impl RuntimeRandomGenerator,
     duration_seconds: f64,
     sample_rate_hz: u32,
     bit_depth: u16,
@@ -209,7 +207,7 @@ pub(crate) fn generate_noise_wav(
 
     for _ in 0..samples {
         let sample = rng
-            .normal(0.0, 0.3)
+            .normal_checked(0.0, 0.3)
             .map_err(|error| DatasetError::Validation(error.to_string()))?
             .clamp(-1.0, 1.0);
         match bit_depth {

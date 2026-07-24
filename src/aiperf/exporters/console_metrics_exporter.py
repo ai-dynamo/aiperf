@@ -85,7 +85,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         self._endpoint_type = (
             exporter_config.cfg.endpoint.type if exporter_config else None
         )
-        self.stat_keys = tuple(stat_keys) if stat_keys else self.DEFAULT_STAT_KEYS
+        self.stat_keys = tuple(stat_keys) if stat_keys else tuple(self.STAT_COLUMN_KEYS)
         self.box = box
         if title is not None:
             self.title = title
