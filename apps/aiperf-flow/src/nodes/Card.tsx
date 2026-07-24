@@ -17,10 +17,11 @@ export function CardNode({ data }: NodeProps<CardNodeType>): React.JSX.Element {
   return (
     <div
       className={clsx(
-        "min-w-[180px] max-w-[260px] rounded-lg border border-l-2 px-4 py-3 shadow-sm",
+        // Soft, floating 3D card: rounded, full (non-strip) border, and a soft elevation shadow.
+        // A role's `roleClassName` (in data.className) upgrades the border + shadow to its color.
+        "min-w-[180px] max-w-[260px] rounded-xl border px-4 py-3 shadow-md transition-shadow",
         surfaceClassName("elevated"),
         strokeClassName(data.strokeRole ?? "primary"),
-        "border-l-accent-primary",
         data.className,
       )}
     >

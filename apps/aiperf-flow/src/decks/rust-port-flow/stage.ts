@@ -38,20 +38,38 @@ const ROLE_COLOR: Record<NodeRole, CategoryRole> = {
   neutral: "gray",
 };
 
-// Static literal map so Tailwind's scanner emits every class (never interpolate — see SKILL.md).
-const ROLE_BORDER_LEFT: Record<NodeRole, string> = {
-  storage: "!border-l-category-blue",
-  compute: "!border-l-category-green",
-  transport: "!border-l-category-cyan",
-  control: "!border-l-category-purple",
-  media: "!border-l-category-orange",
-  server: "!border-l-category-yellow",
-  neutral: "!border-l-category-gray",
+// Static literal maps so Tailwind's scanner emits every class (never interpolate — see SKILL.md).
+// A soft FULL border in the role color (all four sides, not a hard left strip)…
+const ROLE_BORDER: Record<NodeRole, string> = {
+  storage: "!border-category-blue/60",
+  compute: "!border-category-green/60",
+  transport: "!border-category-cyan/60",
+  control: "!border-category-purple/60",
+  media: "!border-category-orange/60",
+  server: "!border-category-yellow/60",
+  neutral: "!border-category-gray/60",
 };
 
-/** Class string for a node of the given semantic role: category tint fill + colored left border. */
+// …plus a soft drop shadow: a dark elevation shadow for the 3D float, and a low, diffuse glow in the
+// role color so each box reads as a shadowed COLOR box (not a color strip). Values are single
+// literal strings (underscore = space) so Tailwind emits them verbatim.
+const ROLE_SHADOW: Record<NodeRole, string> = {
+  storage: "!shadow-[0_10px_28px_-12px_rgba(0,0,0,0.72),0_2px_16px_-6px_var(--color-category-blue)]",
+  compute: "!shadow-[0_10px_28px_-12px_rgba(0,0,0,0.72),0_2px_16px_-6px_var(--color-category-green)]",
+  transport: "!shadow-[0_10px_28px_-12px_rgba(0,0,0,0.72),0_2px_16px_-6px_var(--color-category-cyan)]",
+  control: "!shadow-[0_10px_28px_-12px_rgba(0,0,0,0.72),0_2px_16px_-6px_var(--color-category-purple)]",
+  media: "!shadow-[0_10px_28px_-12px_rgba(0,0,0,0.72),0_2px_16px_-6px_var(--color-category-orange)]",
+  server: "!shadow-[0_10px_28px_-12px_rgba(0,0,0,0.72),0_2px_16px_-6px_var(--color-category-yellow)]",
+  neutral: "!shadow-[0_10px_28px_-12px_rgba(0,0,0,0.72),0_2px_16px_-6px_var(--color-category-gray)]",
+};
+
+/**
+ * Class string for a node of the given semantic role: a soft-tinted fill, a full soft colored
+ * border (no left strip), and a soft dark-elevation + role-colored drop shadow — a floating 3D
+ * "shadowed color box".
+ */
 export function roleClassName(role: NodeRole): string {
-  return `${categoryBgTintClassName(ROLE_COLOR[role])} ${ROLE_BORDER_LEFT[role]}`;
+  return `${categoryBgTintClassName(ROLE_COLOR[role])} ${ROLE_BORDER[role]} ${ROLE_SHADOW[role]}`;
 }
 
 /**

@@ -17,10 +17,10 @@ export function PanelNode({ data }: NodeProps<PanelNodeType>): React.JSX.Element
   return (
     <div
       className={clsx(
-        "min-w-[150px] max-w-[260px] rounded-lg border border-l-2 px-4 py-3 shadow-sm",
+        // Soft floating 3D card; full (non-strip) border. `roleClassName` upgrades to a role color.
+        "min-w-[150px] max-w-[260px] rounded-xl border px-4 py-3 shadow-md transition-shadow",
         surfaceClassName(data.surfaceRole ?? "elevated"),
         strokeClassName(data.strokeRole ?? "secondary"),
-        "border-l-accent-primary",
         data.className,
       )}
     >
