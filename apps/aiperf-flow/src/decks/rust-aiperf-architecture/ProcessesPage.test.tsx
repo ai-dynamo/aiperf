@@ -4,30 +4,25 @@
  */
 
 import { render, screen } from "@testing-library/react";
-import { ReactFlowProvider } from "@xyflow/react";
 import { describe, expect, it } from "vitest";
 import { ProcessesPage } from "./ProcessesPage.js";
 
 describe("ProcessesPage", () => {
-  it("renders the intro and library nodes", () => {
-    render(
-      <ReactFlowProvider>
-        <ProcessesPage />
-      </ReactFlowProvider>,
-    );
+  it("renders the intro and the hub", () => {
+    render(<ProcessesPage />);
     expect(screen.getByText("Crates and boundaries")).toBeInTheDocument();
-    expect(screen.getAllByText("loadgen-core").length).toBeGreaterThan(0);
-    expect(screen.getByText("e2e harness")).toBeInTheDocument();
+    // The hub renders in both the wide (ring) and narrow (stacked) layouts.
+    expect(screen.getAllByText("How is the workspace wired?").length).toBeGreaterThan(0);
   });
 
-  it("renders the dependency-direction and packaging notes", () => {
-    render(
-      <ReactFlowProvider>
-        <ProcessesPage />
-      </ReactFlowProvider>,
-    );
-    expect(screen.getByText("Dependency direction")).toBeInTheDocument();
-    expect(screen.getByText("Packaging")).toBeInTheDocument();
+  it("renders spoke cards", () => {
+    render(<ProcessesPage />);
+    expect(screen.getAllByText("loadgen-core").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("External boundaries").length).toBeGreaterThan(0);
+  });
+
+  it("renders the evidence anchors", () => {
+    render(<ProcessesPage />);
     expect(screen.getByText("rust/aiperf/src/lib.rs")).toBeInTheDocument();
   });
 });

@@ -3,53 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Edge, Node } from "@xyflow/react";
-import { Grid } from "../../layout/Grid.js";
-import { Callout } from "../../prose/Callout.js";
-import { bandHeader, card, dashed, DeckDiagram, EvidenceRow, flow, panel, PageIntro } from "./shared.js";
+import { HubSpoke, Diagram, NodeChip, MiniArrow, MiniBars } from "../../chalk/index.js";
+import { EvidenceRow, PageIntro } from "./shared.js";
 
-// Ported from the MetricsView page: measurement and exports.
-
-const nodes: Node[] = [
-  bandHeader("b-hot", "Hot-path observations", 0, 0),
-  panel("sink", "RequestSink<R>", "transport completes request", 0, 60),
-  card("callbacks", "RequestObserver callbacks", undefined, "arrival · admit · token · usage · terminal", 300, 60),
-  panel("tee", "ObserverTee", "preserve event order", 640, 60),
-  card("records", "records", undefined, "optional raw", 900, 60),
-
-  bandHeader("b-accum", "Worker-local accumulation", 0, 200),
-  card("collector", "CollectorObserver", undefined, "timing trace + request lifecycle", 0, 260),
-  card("native", "NativeMetricsObserver", undefined, "catalog RecordIngest facts", 340, 260),
-  card("storage", "storage policy", undefined, "exact retain or t-digest sketch", 680, 260),
-
-  bandHeader("b-drain", "Post-drain reduction", 0, 400),
-  panel("partitions", "worker partitions", "plain data after callbacks stop", 0, 460),
-  card("accumulator", "MetricsAccumulator", undefined, "merge stores + derived metrics", 300, 460),
-  card("sidechannels", "side channels", undefined, "GPU · server · network", 620, 460),
-  card("report", "NativeReport", undefined, "typed schema v2", 900, 460),
-
-  bandHeader("b-persist", "Persistence and fan-out", 0, 600),
-  card("json", "native-v2.json", undefined, "durable report commit", 0, 660),
-  panel("compat", "compat reports", "aiperf JSON + CSV + console", 280, 660),
-  panel("columnar", "columnar artifacts", "records + server metrics", 560, 660),
-  card("exporters", "network exporters", undefined, "OTLP · MLflow · W&B", 840, 660),
-];
-
-const edges: Edge[] = [
-  flow("sink", "callbacks"),
-  flow("callbacks", "tee"),
-  dashed("tee", "records"),
-  flow("tee", "collector"),
-  flow("tee", "native"),
-  flow("native", "storage"),
-  flow("partitions", "accumulator"),
-  flow("sidechannels", "report"),
-  flow("accumulator", "report"),
-  flow("report", "json"),
-  flow("json", "compat"),
-  flow("compat", "columnar"),
-  dashed("columnar", "exporters"),
-];
+// Systems Chalk hub-and-spoke of AIPerf's measurement plane: request callbacks feed worker-local
+// collectors, fold into a finalized report, and fan out to exporters. Each spoke is one beat.
 
 /** MetricsView: measurement as an event stream, finalized into a report exporters consume. */
 export function MetricsPage(): React.JSX.Element {
@@ -60,19 +18,107 @@ export function MetricsPage(): React.JSX.Element {
         native metrics; side channels join later, and exporters consume the finalized report.
       </PageIntro>
 
-      <DeckDiagram nodes={nodes} edges={edges} height={600} />
-
-      <Grid columns={3} gap={16}>
-        <Callout tone="info" title="Exact mode">
-          Retained rows support raw records, timeslices, and byte-exact percentile reporting.
-        </Callout>
-        <Callout tone="info" title="Sketch mode">
-          Rows are folded and dropped; counts and extrema stay exact while percentiles are approximate.
-        </Callout>
-        <Callout tone="warning" title="Separate artifact path">
-          Per-record files are written at capture sites because those rows do not live in the finalized report.
-        </Callout>
-      </Grid>
+      <HubSpoke
+        hub={{
+          kicker: "AIPERF · MEASUREMENT",
+          title: "How is each request measured?",
+          body: "An event stream folded per worker, finalized once, then fanned out.",
+        }}
+        liveWire={0}
+        spokes={[
+          {
+            accent: "blue",
+            badge: 1,
+            title: "Hot-path observations",
+            diagram: (
+              <Diagram>
+                <NodeChip>SINK</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>OBSERVER</NodeChip>
+              </Diagram>
+            ),
+            children: "RequestSink<R> completion drives RequestObserver: arrival · admit · token · usage · terminal.",
+          },
+          {
+            accent: "cyan",
+            badge: 2,
+            title: "ObserverTee",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>TEE</NodeChip>
+                <MiniArrow />
+                <NodeChip>records</NodeChip>
+              </Diagram>
+            ),
+            children: "The tee preserves event order and forks optional raw records off the hot path.",
+          },
+          {
+            accent: "green",
+            badge: 3,
+            title: "CollectorObserver",
+            diagram: (
+              <Diagram>
+                <NodeChip>token</NodeChip>
+                <MiniArrow />
+                <MiniBars heights={[30, 58, 88, 70]} />
+              </Diagram>
+            ),
+            children: "Worker-local timing trace plus per-request lifecycle, accumulated without contention.",
+          },
+          {
+            accent: "purple",
+            badge: 4,
+            title: "NativeMetricsObserver",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>INGEST</NodeChip>
+                <MiniArrow />
+                <NodeChip>exact · sketch</NodeChip>
+              </Diagram>
+            ),
+            children: "Catalogs RecordIngest facts under the storage policy: exact retain or t-digest sketch.",
+          },
+          {
+            accent: "yellow",
+            badge: 5,
+            title: "MetricsAccumulator",
+            diagram: (
+              <Diagram>
+                <MiniBars heights={[44, 72, 100, 60]} />
+                <MiniArrow />
+                <NodeChip accent>derived</NodeChip>
+              </Diagram>
+            ),
+            children: "After drain, worker partitions merge into derived metrics; GPU · server · network join here.",
+          },
+          {
+            accent: "red",
+            badge: 6,
+            title: "NativeReport",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>REPORT</NodeChip>
+                <MiniArrow />
+                <NodeChip>native-v2.json</NodeChip>
+              </Diagram>
+            ),
+            children: "One typed schema-v2 commit, plus compat aiperf JSON · CSV · console and columnar records.",
+          },
+          {
+            accent: "orange",
+            badge: 7,
+            title: "Network exporters",
+            diagram: (
+              <Diagram>
+                <NodeChip>OTLP</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>W&B</NodeChip>
+              </Diagram>
+            ),
+            children: "OTLP · MLflow · W&B sinks stream the finalized report to external systems.",
+          },
+        ]}
+      />
 
       <EvidenceRow
         items={[

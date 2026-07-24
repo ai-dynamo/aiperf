@@ -4,31 +4,25 @@
  */
 
 import { render, screen } from "@testing-library/react";
-import { ReactFlowProvider } from "@xyflow/react";
 import { describe, expect, it } from "vitest";
 import { FeaturesPage } from "./FeaturesPage.js";
 
 describe("FeaturesPage", () => {
-  it("renders the intro and feature nodes", () => {
-    render(
-      <ReactFlowProvider>
-        <FeaturesPage />
-      </ReactFlowProvider>,
-    );
+  it("renders the intro and the hub", () => {
+    render(<FeaturesPage />);
     expect(screen.getByText("Feature composition")).toBeInTheDocument();
-    expect(screen.getByText("aiperf-cli default = []")).toBeInTheDocument();
-    expect(screen.getByText("dynamo-full")).toBeInTheDocument();
-    expect(screen.getByText("cell count policy")).toBeInTheDocument();
+    // The hub renders in both the wide (ring) and narrow (stacked) layouts.
+    expect(screen.getAllByText("What can this image do?").length).toBeGreaterThan(0);
   });
 
-  it("renders the callouts and evidence anchors", () => {
-    render(
-      <ReactFlowProvider>
-        <FeaturesPage />
-      </ReactFlowProvider>,
-    );
-    expect(screen.getByText("Fail closed")).toBeInTheDocument();
-    expect(screen.getByText("DynoSim dependency")).toBeInTheDocument();
-    expect(screen.getByText("Makefile")).toBeInTheDocument();
+  it("renders spoke cards", () => {
+    render(<FeaturesPage />);
+    expect(screen.getAllByText("Lean base").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("velo").length).toBeGreaterThan(0);
+  });
+
+  it("renders the evidence anchors", () => {
+    render(<FeaturesPage />);
+    expect(screen.getByText("rust/cli/Cargo.toml")).toBeInTheDocument();
   });
 });

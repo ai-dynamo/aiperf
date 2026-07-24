@@ -3,47 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Edge, Node } from "@xyflow/react";
-import { Grid } from "../../layout/Grid.js";
-import { Callout } from "../../prose/Callout.js";
-import { bandHeader, card, dashed, DeckDiagram, EvidenceRow, flow, panel, PageIntro } from "./shared.js";
+import { HubSpoke, Diagram, NodeChip, MiniArrow } from "../../chalk/index.js";
+import { EvidenceRow, PageIntro } from "./shared.js";
 
-// Ported from the ProtocolView page: one child lifecycle across the process boundary.
-
-const nodes: Node[] = [
-  bandHeader("b-parent", "Parent process", 0, 0),
-  panel("profile", "profile / sweep / search", undefined, 0, 60),
-  card("request", "RunnerRequest v2", undefined, "operation + AuthoredRunSpecV2", 280, 60),
-  panel("resolve", "exec_bin::resolve", "override or current_exe", 580, 60),
-  card("spawn", "spawn child", undefined, "--execute", 840, 60),
-
-  bandHeader("b-child", "Execution child", 0, 220),
-  card("stdin", "stdin to EOF", undefined, "strict JSON decode", 0, 280),
-  panel("bootstrap", "bootstrap", "protocol=2 · validate|execute", 280, 280),
-  card("app", "RunnerApplication", undefined, "frozen distribution universe", 560, 280),
-  card("coordinator", "Coordinator", undefined, "validate → prepare", 840, 280),
-  card("validate-op", "validate operation", undefined, "side-effect-free result", 300, 420),
-  card("execute-op", "execute operation", undefined, "run + commit report", 700, 420),
-
-  bandHeader("b-terminal", "Terminal contract", 0, 560),
-  panel("stderr", "stderr", "diagnostics and lifecycle only", 0, 620),
-  card("stdout", "stdout", undefined, "exactly one typed JSONL envelope", 300, 620),
-  panel("parent-parse", "parent parses terminal", "success · report_path · error", 640, 620),
-];
-
-const edges: Edge[] = [
-  flow("profile", "request"),
-  flow("request", "resolve"),
-  flow("resolve", "spawn"),
-  flow("spawn", "stdin"),
-  flow("stdin", "bootstrap"),
-  flow("bootstrap", "app"),
-  flow("app", "coordinator"),
-  dashed("coordinator", "validate-op"),
-  flow("coordinator", "execute-op"),
-  flow("execute-op", "stdout"),
-  flow("stdout", "parent-parse"),
-];
+// Systems Chalk hub-and-spoke of one child lifecycle: the parent resolves current_exe(), spawns
+// aiperf --execute, writes one protocol-v2 envelope, and waits for one terminal JSON line. Each
+// spoke is one beat of the parent → child → terminal-contract story from the old ProtocolView.
 
 /** ProtocolView: fresh process boundary per benchmark via self re-exec. */
 export function ProtocolPage(): React.JSX.Element {
@@ -55,19 +20,106 @@ export function ProtocolPage(): React.JSX.Element {
         one terminal JSON line.
       </PageIntro>
 
-      <DeckDiagram nodes={nodes} edges={edges} height={600} />
-
-      <Grid columns={3} gap={16}>
-        <Callout tone="info" title="Isolation">
-          Signals and panics are contained in the child; the parent remains the presentation shell.
-        </Callout>
-        <Callout tone="info" title="Capabilities">
-          The linked catalog is composed in-process; it is not a public CLI subcommand.
-        </Callout>
-        <Callout tone="warning" title="Override">
-          <code>AIPERF_EXEC_BIN</code> may point development runs at a differently featured executable.
-        </Callout>
-      </Grid>
+      <HubSpoke
+        hub={{
+          kicker: "AIPERF · SELF RE-EXEC",
+          title: "How is a run isolated?",
+          body: "Parent spawns one --execute child, one envelope in, one terminal line out.",
+        }}
+        spokes={[
+          {
+            accent: "blue",
+            badge: 1,
+            title: "Parent request",
+            diagram: (
+              <Diagram>
+                <NodeChip>profile</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>RunnerRequest v2</NodeChip>
+              </Diagram>
+            ),
+            children: "profile / sweep / search build a RunnerRequest v2: operation + AuthoredRunSpecV2.",
+          },
+          {
+            accent: "cyan",
+            badge: 2,
+            title: "Resolve and spawn",
+            diagram: (
+              <Diagram>
+                <NodeChip>resolve</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>--execute</NodeChip>
+              </Diagram>
+            ),
+            children: "exec_bin::resolve picks the override or current_exe, then spawns the child with --execute.",
+          },
+          {
+            accent: "purple",
+            badge: 3,
+            title: "stdin and bootstrap",
+            diagram: (
+              <Diagram>
+                <NodeChip>stdin EOF</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>protocol=2</NodeChip>
+              </Diagram>
+            ),
+            children: "The child reads stdin to EOF, strict-JSON-decodes, and bootstraps in validate|execute mode.",
+          },
+          {
+            accent: "green",
+            badge: 4,
+            title: "Frozen application",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>RunnerApplication</NodeChip>
+                <MiniArrow />
+                <NodeChip>Coordinator</NodeChip>
+              </Diagram>
+            ),
+            children: "RunnerApplication freezes the distribution universe; the Coordinator runs validate → prepare.",
+          },
+          {
+            accent: "yellow",
+            badge: 5,
+            title: "Validate or execute",
+            diagram: (
+              <Diagram>
+                <NodeChip>validate</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>execute</NodeChip>
+              </Diagram>
+            ),
+            children: "A side-effect-free validate operation, or an execute operation that runs and commits the report.",
+          },
+          {
+            accent: "orange",
+            badge: 6,
+            title: "stdout envelope",
+            diagram: (
+              <Diagram>
+                <NodeChip>execute</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>JSONL</NodeChip>
+              </Diagram>
+            ),
+            children: "stdout carries exactly one typed JSONL envelope; stderr is diagnostics and lifecycle only.",
+          },
+          {
+            accent: "red",
+            badge: 7,
+            title: "Terminal contract",
+            diagram: (
+              <Diagram>
+                <NodeChip>stdout</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>parent parse</NodeChip>
+              </Diagram>
+            ),
+            children: "The parent parses the terminal line: success · report_path · error, containing child signals and panics.",
+          },
+        ]}
+      />
 
       <EvidenceRow
         items={[

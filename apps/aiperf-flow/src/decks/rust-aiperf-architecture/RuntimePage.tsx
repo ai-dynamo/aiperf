@@ -3,60 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Edge, Node } from "@xyflow/react";
-import { Grid } from "../../layout/Grid.js";
-import { Callout } from "../../prose/Callout.js";
-import { bandHeader, card, dashed, DeckDiagram, EvidenceRow, flow, panel, PageIntro } from "./shared.js";
+import { HubSpoke, Diagram, NodeChip, RoundNode, DbNode, MiniArrow, MiniBars } from "../../chalk/index.js";
+import { EvidenceRow, PageIntro } from "./shared.js";
 
-// Ported from the RuntimeView page: one request end-to-end. Four bands from author/bootstrap
-// through validate/prepare, run/dispatch, and reduce/commit.
-
-const nodes: Node[] = [
-  bandHeader("b1", "1 · Author and bootstrap", 0, 0),
-  panel("config", "Config v2 / flags", undefined, 0, 60),
-  card("spec", "AuthoredRunSpecV2", undefined, "serialized to execution-child stdin", 280, 60),
-  card("app", "RunnerApplication::stock", undefined, "freeze registries + resolvers + factories", 580, 60),
-
-  bandHeader("b2", "2 · Validate and prepare", 0, 200),
-  panel("coordinator", "Coordinator", "resolve IDs; fail closed", 0, 260),
-  card("workload-f", "Workload factory", undefined, "scheduled · graph", 280, 260),
-  card("transport-f", "Transport factory", undefined, "http · grpc · dynosim", 560, 260),
-  card("prepared-op", "Prepared operation", undefined, "one-shot executable", 840, 260),
-
-  bandHeader("b3", "3 · Run phases and dispatch requests", 0, 400),
-  card("phase", "Phase runtime", undefined, "warmup → profiling", 0, 460),
-  card("driver", "Workload driver", undefined, "scheduled or graph", 280, 460),
-  panel("admission", "Admission + pacing", "SlotPool · arrivals · stop", 560, 460),
-  card("endpoint", "Prepared endpoint", undefined, "request body + parser", 840, 460),
-  card("clock", "Clock", undefined, "RealClock or SimClock", 0, 600),
-  card("dispatch", "RequestSink<R>::dispatch", undefined, "HTTP · gRPC · DirectRequest", 340, 600),
-  card("observer", "RequestObserver", undefined, "arrival · admit · token · usage · terminal", 700, 600),
-
-  bandHeader("b4", "4 · Reduce, join side channels, commit", 0, 740),
-  panel("capture", "Per-worker capture", "records or t-digest sketch", 0, 800),
-  card("accumulator", "Metrics accumulator", undefined, "merge once after drain", 300, 800),
-  card("sidechannels", "Side channels", undefined, "GPU · server · network", 580, 800),
-  card("exporters", "Native exporters", undefined, "commit report + artifacts", 860, 800),
-];
-
-const edges: Edge[] = [
-  flow("config", "spec"),
-  flow("spec", "app"),
-  flow("coordinator", "workload-f"),
-  flow("workload-f", "transport-f"),
-  flow("transport-f", "prepared-op"),
-  flow("app", "coordinator"),
-  flow("phase", "driver"),
-  flow("driver", "admission"),
-  flow("admission", "endpoint"),
-  dashed("admission", "dispatch"),
-  flow("endpoint", "dispatch"),
-  flow("dispatch", "observer"),
-  flow("observer", "capture"),
-  flow("capture", "accumulator"),
-  flow("sidechannels", "exporters"),
-  flow("accumulator", "exporters"),
-];
+// Systems Chalk hub-and-spoke of the one-run hot path: frozen registries and strict DTOs at
+// startup, then transport-native request execution on local observer graphs, then a single
+// commit of native-v2.json plus compatibility exports. Each spoke is one beat of that run.
 
 /** RuntimeView: the one-run hot path from frozen registries to committed report. */
 export function RuntimePage(): React.JSX.Element {
@@ -68,19 +20,107 @@ export function RuntimePage(): React.JSX.Element {
         <code>native-v2.json</code> plus compatibility exports.
       </PageIntro>
 
-      <DeckDiagram nodes={nodes} edges={edges} height={640} />
-
-      <Grid columns={3} gap={16}>
-        <Callout tone="info" title="Startup vs hot path">
-          Type erasure and registry lookups happen during validation/preparation, not per token.
-        </Callout>
-        <Callout tone="info" title="Timing authority">
-          Arrival, admission, token, cancellation, and phase timing come from the injected <code>Clock</code>.
-        </Callout>
-        <Callout tone="success" title="Lock avoidance">
-          Worker-local <code>Rc/RefCell</code> observer state avoids an <code>Arc/Mutex</code> on each token.
-        </Callout>
-      </Grid>
+      <HubSpoke
+        hub={{
+          kicker: "AIPERF · ONE RUN",
+          title: "What happens per run?",
+          body: "Freeze registries, dispatch on local observers, commit once.",
+        }}
+        spokes={[
+          {
+            accent: "blue",
+            badge: 1,
+            title: "Author and bootstrap",
+            diagram: (
+              <Diagram>
+                <NodeChip>Config v2</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>stock</NodeChip>
+              </Diagram>
+            ),
+            children: "AuthoredRunSpecV2 on stdin; RunnerApplication::stock freezes registries, resolvers, factories.",
+          },
+          {
+            accent: "cyan",
+            badge: 2,
+            title: "Validate and prepare",
+            diagram: (
+              <Diagram>
+                <NodeChip>Coordinator</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>Prepared op</NodeChip>
+              </Diagram>
+            ),
+            children: "Coordinator resolves IDs and fails closed; workload/transport factories yield a one-shot op.",
+          },
+          {
+            accent: "purple",
+            badge: 3,
+            title: "Phase runtime",
+            diagram: (
+              <Diagram>
+                <NodeChip>warmup</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>profiling</NodeChip>
+              </Diagram>
+            ),
+            children: "Phase runtime drives warmup → profiling; the workload driver runs scheduled or graph work.",
+          },
+          {
+            accent: "green",
+            badge: 4,
+            title: "Admission and pacing",
+            diagram: (
+              <Diagram>
+                <RoundNode>1</RoundNode>
+                <RoundNode accent>2</RoundNode>
+                <MiniArrow />
+                <NodeChip>endpoint</NodeChip>
+              </Diagram>
+            ),
+            children: "SlotPool, arrivals, and stop pace the prepared endpoint's request body + parser.",
+          },
+          {
+            accent: "orange",
+            badge: 5,
+            title: "Clock authority",
+            diagram: (
+              <Diagram>
+                <NodeChip>RealClock</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>SimClock</NodeChip>
+              </Diagram>
+            ),
+            children: "Arrival, admission, token, cancellation, and phase timing all come from the injected Clock.",
+          },
+          {
+            accent: "red",
+            badge: 6,
+            title: "Dispatch and observe",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>dispatch</NodeChip>
+                <MiniArrow />
+                <NodeChip>Observer</NodeChip>
+              </Diagram>
+            ),
+            children: "RequestSink<R>::dispatch over HTTP/gRPC feeds a local RequestObserver: arrival→token→usage→terminal.",
+          },
+          {
+            accent: "yellow",
+            badge: 7,
+            title: "Reduce and commit",
+            diagram: (
+              <Diagram>
+                <DbNode accent>capture</DbNode>
+                <MiniArrow />
+                <MiniBars heights={[38, 72, 100, 82]} />
+              </Diagram>
+            ),
+            children: "Per-worker capture merges once after drain; the accumulator + side channels commit report + artifacts.",
+          },
+        ]}
+      />
 
       <EvidenceRow
         items={[

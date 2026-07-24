@@ -4,33 +4,25 @@
  */
 
 import { render, screen } from "@testing-library/react";
-import { ReactFlowProvider } from "@xyflow/react";
 import { describe, expect, it } from "vitest";
 import { SeamsPage } from "./SeamsPage.js";
 
 describe("SeamsPage", () => {
-  it("renders the intro and both sub-diagram headings", () => {
-    render(
-      <ReactFlowProvider>
-        <SeamsPage />
-      </ReactFlowProvider>,
-    );
+  it("renders the intro and the hub", () => {
+    render(<SeamsPage />);
     expect(screen.getByText("Extension internals")).toBeInTheDocument();
-    expect(screen.getByText("Compile-time extension universe")).toBeInTheDocument();
-    expect(screen.getByText("Execution substitution")).toBeInTheDocument();
-    expect(screen.getByText("Cellular scaling wraps the same run core")).toBeInTheDocument();
+    // The hub renders in both the wide (ring) and narrow (stacked) layouts.
+    expect(screen.getAllByText("Where does it stay open?").length).toBeGreaterThan(0);
   });
 
-  it("renders the wide cellular-scaling nodes, callouts, and evidence anchors", () => {
-    render(
-      <ReactFlowProvider>
-        <SeamsPage />
-      </ReactFlowProvider>,
-    );
-    expect(screen.getAllByText("optional aggregators").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("controller process").length).toBeGreaterThan(0);
-    expect(screen.getByText("No runtime plugin discovery")).toBeInTheDocument();
-    expect(screen.getByText("No pair matrix")).toBeInTheDocument();
+  it("renders spoke cards", () => {
+    render(<SeamsPage />);
+    expect(screen.getAllByText("Extension registration").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Cellular scaling").length).toBeGreaterThan(0);
+  });
+
+  it("renders the evidence anchors", () => {
+    render(<SeamsPage />);
     expect(screen.getByText("rust/aiperf/src/extensions/mod.rs")).toBeInTheDocument();
   });
 });

@@ -3,49 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Edge, Node } from "@xyflow/react";
-import { Grid } from "../../layout/Grid.js";
-import { Callout } from "../../prose/Callout.js";
-import { bandHeader, card, dashed, DeckDiagram, EvidenceRow, flow, panel, PageIntro } from "./shared.js";
+import { HubSpoke, Diagram, NodeChip, RoundNode, MiniArrow } from "../../chalk/index.js";
+import { EvidenceRow, PageIntro } from "./shared.js";
 
-// Ported from the CellularView page: multi-process scale.
-
-const nodes: Node[] = [
-  bandHeader("b-promote", "Controller promotion", 0, 0),
-  panel("execute", "aiperf --execute", "detect cells > 1", 0, 60),
-  card("launcher", "cell launcher", undefined, "partition budgets + envelope", 300, 60),
-  card("controller", "controller transport", undefined, "Velo endpoints + lifecycle", 620, 60),
-
-  bandHeader("b-cell", "Cell execution", 0, 200),
-  card("cell0", "aiperf --cell 0", undefined, "fetch sliced envelope", 0, 260),
-  card("celln", "aiperf --cell N", undefined, "fetch sliced envelope", 0, 380),
-  card("ordinary", "ordinary execute path", undefined, "prepare · phases · dispatch · metrics", 320, 320),
-  panel("recordpart", "records partition", "global-order merge input", 660, 240),
-  card("folded", "folded store", undefined, "exact-fold or sketch input", 660, 360),
-  card("heartbeats", "heartbeats", undefined, "progress + health", 660, 480),
-
-  bandHeader("b-merge", "Hierarchical merge", 0, 620),
-  panel("messages", "cell messages", "partitions + artifacts", 0, 680),
-  card("aggregators", "optional aggregators", undefined, "merge subtree stores", 300, 680),
-  card("ctrlmerge", "controller merge", undefined, "global order or associative store merge", 620, 680),
-
-  bandHeader("b-commit", "Single commit point", 0, 820),
-  panel("sidecars", "sidecars on primary cell only", undefined, 0, 880),
-  card("final", "final report + exporters", undefined, undefined, 340, 880),
-];
-
-const edges: Edge[] = [
-  flow("execute", "launcher"),
-  flow("launcher", "controller"),
-  flow("cell0", "ordinary"),
-  flow("celln", "ordinary"),
-  flow("ordinary", "recordpart"),
-  flow("ordinary", "folded"),
-  dashed("ordinary", "heartbeats"),
-  flow("messages", "aggregators"),
-  flow("aggregators", "ctrlmerge"),
-  flow("ctrlmerge", "final"),
-];
+// Systems Chalk hub-and-spoke of AIPerf's cellular scale-out: cells > 1 promotes the execution child
+// into a controller over Velo, cells run the ordinary engine, and one controller merge commits.
 
 /** CellularView: cells > 1 promotes the child into a controller over Velo. */
 export function CellularPage(): React.JSX.Element {
@@ -56,14 +18,109 @@ export function CellularPage(): React.JSX.Element {
         envelopes over Velo, run the ordinary single-process engine, and return mergeable partitions.
       </PageIntro>
 
-      <DeckDiagram nodes={nodes} edges={edges} height={640} />
-
-      <Grid columns={4} gap={16}>
-        <Callout tone="info" title="S1">Issuance authority assigns aggregate dispatch ordinals.</Callout>
-        <Callout tone="info" title="S2">Records shards expose mergeable partitions.</Callout>
-        <Callout tone="info" title="S3">Metrics heartbeats carry live snapshots.</Callout>
-        <Callout tone="info" title="S4">Cell partitions define deterministic ownership.</Callout>
-      </Grid>
+      <HubSpoke
+        hub={{
+          kicker: "AIPERF · CELLULAR",
+          title: "How does one run scale out?",
+          body: "cells > 1 promotes the child to a controller fanning work over Velo.",
+        }}
+        liveWire={0}
+        spokes={[
+          {
+            accent: "blue",
+            badge: 1,
+            title: "Controller promotion",
+            diagram: (
+              <Diagram>
+                <NodeChip>--execute</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>controller</NodeChip>
+              </Diagram>
+            ),
+            children: "aiperf --execute detects cells > 1: the cell launcher partitions budgets and opens Velo endpoints.",
+          },
+          {
+            accent: "cyan",
+            badge: 2,
+            title: "cell launcher",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>envelope</NodeChip>
+                <MiniArrow />
+                <RoundNode>0</RoundNode>
+                <RoundNode accent>N</RoundNode>
+              </Diagram>
+            ),
+            children: "Sliced envelopes fan out to each cell, carrying its budget partition and dispatch ordinals.",
+          },
+          {
+            accent: "green",
+            badge: 3,
+            title: "aiperf --cell 0",
+            diagram: (
+              <Diagram>
+                <RoundNode accent>0</RoundNode>
+                <MiniArrow />
+                <NodeChip>execute path</NodeChip>
+              </Diagram>
+            ),
+            children: "Each cell fetches its envelope and runs the ordinary engine: prepare · phases · dispatch · metrics.",
+          },
+          {
+            accent: "purple",
+            badge: 4,
+            title: "Mergeable partitions",
+            diagram: (
+              <Diagram>
+                <NodeChip>records</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>folded store</NodeChip>
+              </Diagram>
+            ),
+            children: "Cells emit a global-order records partition and an exact-fold or sketch folded store.",
+          },
+          {
+            accent: "yellow",
+            badge: 5,
+            title: "heartbeats",
+            diagram: (
+              <Diagram>
+                <RoundNode accent>N</RoundNode>
+                <MiniArrow />
+                <NodeChip>controller</NodeChip>
+              </Diagram>
+            ),
+            children: "Cells stream progress and health snapshots back to the controller during the run.",
+          },
+          {
+            accent: "orange",
+            badge: 6,
+            title: "controller merge",
+            diagram: (
+              <Diagram>
+                <RoundNode>0</RoundNode>
+                <RoundNode accent>N</RoundNode>
+                <MiniArrow />
+                <NodeChip accent>merge</NodeChip>
+              </Diagram>
+            ),
+            children: "Optional aggregators fold subtrees; the controller does global-order or associative store merge.",
+          },
+          {
+            accent: "red",
+            badge: 7,
+            title: "Single commit point",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>merge</NodeChip>
+                <MiniArrow />
+                <NodeChip>report + exporters</NodeChip>
+              </Diagram>
+            ),
+            children: "Sidecars run on the primary cell only; one final report plus exporters commit once.",
+          },
+        ]}
+      />
 
       <EvidenceRow
         items={[

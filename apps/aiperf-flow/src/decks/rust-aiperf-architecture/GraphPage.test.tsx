@@ -4,31 +4,25 @@
  */
 
 import { render, screen } from "@testing-library/react";
-import { ReactFlowProvider } from "@xyflow/react";
 import { describe, expect, it } from "vitest";
 import { GraphPage } from "./GraphPage.js";
 
 describe("GraphPage", () => {
-  it("renders the intro and graph nodes", () => {
-    render(
-      <ReactFlowProvider>
-        <GraphPage />
-      </ReactFlowProvider>,
-    );
+  it("renders the intro and the hub", () => {
+    render(<GraphPage />);
     expect(screen.getByText("Trace replay path")).toBeInTheDocument();
-    expect(screen.getByText("GraphInputAdapterResolver")).toBeInTheDocument();
-    expect(screen.getByText("TStarSampler")).toBeInTheDocument();
-    expect(screen.getByText("graph executor")).toBeInTheDocument();
+    // The hub renders in both the wide (ring) and narrow (stacked) layouts.
+    expect(screen.getAllByText("How are traces replayed?").length).toBeGreaterThan(0);
   });
 
-  it("renders the callouts and evidence anchors", () => {
-    render(
-      <ReactFlowProvider>
-        <GraphPage />
-      </ReactFlowProvider>,
-    );
-    expect(screen.getByText("One compiler")).toBeInTheDocument();
-    expect(screen.getByText("Warmup failure")).toBeInTheDocument();
+  it("renders spoke cards", () => {
+    render(<GraphPage />);
+    expect(screen.getAllByText("Resolve source").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Execute graph").length).toBeGreaterThan(0);
+  });
+
+  it("renders the evidence anchors", () => {
+    render(<GraphPage />);
     expect(screen.getByText("rust/aiperf/src/graph/executor.rs")).toBeInTheDocument();
   });
 });

@@ -3,44 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Edge, Node } from "@xyflow/react";
-import { Grid } from "../../layout/Grid.js";
-import { Stack } from "../../layout/Stack.js";
-import { Callout } from "../../prose/Callout.js";
-import { bandHeader, card, dashed, DeckDiagram, EvidenceRow, flow, panel, PageIntro } from "./shared.js";
+import { HubSpoke, Diagram, NodeChip, MiniArrow } from "../../chalk/index.js";
+import { EvidenceRow, PageIntro } from "./shared.js";
 
-// Ported from the ProcessesView page: crates and boundaries. Solid arrows are compile-time
-// dependencies or self re-exec; dashed arrows are runtime network or optional feature paths.
-
-const nodes: Node[] = [
-  bandHeader("b-roles", "Executable process roles", 0, 0),
-  card("entry", "aiperf entry point", undefined, "profile · config · chat · validate…", 0, 60),
-  card("execute", "aiperf --execute", undefined, "same binary · stdio v2 · isolated child", 300, 60),
-  card("mock", "aiperf-mock-server", undefined, "HTTP/SSE · gRPC · TLS · UDS", 620, 60),
-
-  bandHeader("b-libs", "Libraries", 0, 220),
-  card("aiperf", "aiperf", undefined, "runtime composition + runner_protocol + 16 absorbed modules", 0, 280),
-  card("loadgen", "loadgen-core", undefined, "Dispatchable · RequestSink · RequestObserver", 360, 280),
-  panel("pyext", "pyext", "packaging-only pyo3 cdylib", 0, 400),
-  panel("e2e", "e2e harness", "product-level integration tests", 360, 400),
-
-  bandHeader("b-external", "External runtime boundaries", 0, 540),
-  card("http", "HTTP / gRPC servers", undefined, undefined, 0, 600),
-  card("mocker", "Dynamo mocker", undefined, undefined, 300, 600),
-  card("pyeval", "Python evaluators", undefined, undefined, 600, 600),
-];
-
-const edges: Edge[] = [
-  flow("entry", "execute"),
-  flow("execute", "aiperf"),
-  flow("entry", "aiperf"),
-  flow("mock", "aiperf"),
-  flow("aiperf", "loadgen"),
-  dashed("e2e", "aiperf"),
-  dashed("aiperf", "http"),
-  dashed("aiperf", "mocker"),
-  dashed("aiperf", "pyeval"),
-];
+// Systems Chalk hub-and-spoke of the crate topology: compile-time dependency direction
+// (aiperf-cli → aiperf → loadgen-core) plus the runtime network / optional-feature boundaries.
+// Each spoke is one executable role, library, or external boundary from the old ProcessesView.
 
 /** ProcessesView: crate topology and the compile-time vs runtime boundaries. */
 export function ProcessesPage(): React.JSX.Element {
@@ -51,25 +19,106 @@ export function ProcessesPage(): React.JSX.Element {
         feature paths. The large <code>aiperf</code> library absorbs the former multi-crate runtime modules.
       </PageIntro>
 
-      <DeckDiagram nodes={nodes} edges={edges} height={560} />
-
-      <Grid columns="1.2fr 1fr" gap={16}>
-        <Stack gap={8}>
-          <div className="rounded-lg border border-stroke-secondary px-4 py-3 text-sm shadow-sm">
-            <div className="font-semibold">Dependency direction</div>
-            <p className="mt-1 text-ink-secondary">
-              <code>aiperf-cli</code> → <code>aiperf</code> → <code>loadgen-core</code>. The entry point re-execs the
-              current <code>aiperf</code> binary with <code>--execute</code>. <code>aiperf-mock-server</code> →{" "}
-              <code>aiperf</code>; execute mode and mock do not depend on each other.
-            </p>
-          </div>
-        </Stack>
-        <Callout tone="info" title="Packaging">
-          <code>pyext</code> is the wheel's compiled binding target and is not in the execution path. The workspace
-          still contains and packages the older <code>aiperf-runner</code> crate, but the default CLI path self
-          re-execs.
-        </Callout>
-      </Grid>
+      <HubSpoke
+        hub={{
+          kicker: "AIPERF · CRATE TOPOLOGY",
+          title: "How is the workspace wired?",
+          body: "aiperf-cli → aiperf → loadgen-core, with dashed runtime boundaries.",
+        }}
+        spokes={[
+          {
+            accent: "blue",
+            badge: 1,
+            title: "aiperf entry point",
+            diagram: (
+              <Diagram>
+                <NodeChip>CONFIG</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>aiperf</NodeChip>
+              </Diagram>
+            ),
+            children: "The aiperf-cli binary: profile · config · chat · validate and the other native commands.",
+          },
+          {
+            accent: "cyan",
+            badge: 2,
+            title: "aiperf --execute",
+            diagram: (
+              <Diagram>
+                <NodeChip>aiperf</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>--execute</NodeChip>
+              </Diagram>
+            ),
+            children: "The same binary, re-exec'd as an isolated child over stdio protocol v2.",
+          },
+          {
+            accent: "green",
+            badge: 3,
+            title: "aiperf library",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>aiperf</NodeChip>
+                <MiniArrow />
+                <NodeChip>16 modules</NodeChip>
+              </Diagram>
+            ),
+            children: "Runtime composition + runner_protocol, absorbing the 16 former multi-crate runtime modules.",
+          },
+          {
+            accent: "purple",
+            badge: 4,
+            title: "loadgen-core",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>Dispatchable</NodeChip>
+                <MiniArrow />
+                <NodeChip>RequestSink</NodeChip>
+              </Diagram>
+            ),
+            children: "The dispatch seam: Dispatchable · RequestSink · RequestObserver, depended on by aiperf.",
+          },
+          {
+            accent: "yellow",
+            badge: 5,
+            title: "aiperf-mock-server",
+            diagram: (
+              <Diagram>
+                <NodeChip>HTTP/SSE</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>gRPC · TLS · UDS</NodeChip>
+              </Diagram>
+            ),
+            children: "Standalone inference target → aiperf; execute mode and mock do not depend on each other.",
+          },
+          {
+            accent: "orange",
+            badge: 6,
+            title: "Packaging and tests",
+            diagram: (
+              <Diagram>
+                <NodeChip>pyext</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>e2e</NodeChip>
+              </Diagram>
+            ),
+            children: "pyext is the wheel's pyo3 cdylib binding, off the execution path; e2e drives product integration.",
+          },
+          {
+            accent: "red",
+            badge: 7,
+            title: "External boundaries",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>HTTP/gRPC</NodeChip>
+                <MiniArrow />
+                <NodeChip>mocker · pyeval</NodeChip>
+              </Diagram>
+            ),
+            children: "Dashed runtime edges reach HTTP/gRPC servers, the Dynamo mocker, and Python evaluators.",
+          },
+        ]}
+      />
 
       <EvidenceRow
         items={[

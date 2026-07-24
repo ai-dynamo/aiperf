@@ -3,50 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Edge, Node } from "@xyflow/react";
-import { Grid } from "../../layout/Grid.js";
-import { Callout } from "../../prose/Callout.js";
-import { bandHeader, card, dashed, DeckDiagram, EvidenceRow, flow, panel, PageIntro } from "./shared.js";
+import { HubSpoke, Diagram, NodeChip, RoundNode, MiniArrow, MiniBars } from "../../chalk/index.js";
+import { EvidenceRow, PageIntro } from "./shared.js";
 
-// Ported from the ScheduledView page: the paced workload path.
-
-const nodes: Node[] = [
-  bandHeader("b-prepare", "Prepare data and policy", 0, 0),
-  panel("input", "dataset input", "synthetic · file · public", 0, 60),
-  card("loader", "loader", undefined, "Dataset + conversations", 280, 60),
-  panel("sampler", "sampler", "sequential · shuffle · random", 560, 60),
-  card("spec", "NativeRunSpec", undefined, "phases · limits · arrival · endpoint profiles", 840, 60),
-
-  bandHeader("b-drive", "Drive phases and arrivals", 0, 200),
-  card("orchestrator", "PhaseOrchestrator", undefined, "warmup → profiling", 0, 260),
-  card("policy", "workload policy", undefined, "request-rate · user-centric · fixed", 280, 260),
-  panel("arrival", "arrival schedule", "constant · Poisson · Gamma · burst", 560, 260),
-  card("slotpool", "SlotPool + StopChecker", undefined, "admission · request/duration bounds", 840, 260),
-
-  bandHeader("b-place", "Place and dispatch", 0, 400),
-  panel("turn", "PreparedTurn", "materialized conversation turn", 0, 460),
-  card("dispatcher", "TurnDispatcher", undefined, "placement abstraction", 280, 460),
-  panel("table", "worker-local endpoint table", "prepare_worker once", 560, 460),
-  card("sink", "RequestSink<R>", undefined, "HTTP · gRPC · DirectRequest", 840, 460),
-
-  bandHeader("b-topology", "Worker topology", 0, 600),
-  panel("w1", "workers = 1", "coordinator current-thread runtime", 0, 660),
-  card("wn", "workers > 1", undefined, "OS threads · current_thread + LocalSet", 300, 660),
-];
-
-const edges: Edge[] = [
-  flow("input", "loader"),
-  flow("loader", "sampler"),
-  flow("sampler", "spec"),
-  flow("orchestrator", "policy"),
-  flow("policy", "arrival"),
-  flow("arrival", "slotpool"),
-  flow("turn", "dispatcher"),
-  flow("dispatcher", "table"),
-  flow("table", "sink"),
-  dashed("sink", "w1"),
-  flow("sink", "wn"),
-];
+// Systems Chalk hub-and-spoke of the ScheduledView: the paced workload path from dataset lowering,
+// through phase/arrival policy and bounded admission, to prepared-turn dispatch and worker topology.
 
 /** ScheduledView: the paced workload path from dataset lowering to worker topology. */
 export function ScheduledPage(): React.JSX.Element {
@@ -58,21 +19,109 @@ export function ScheduledPage(): React.JSX.Element {
         grace, and drain; continuations receive FIFO priority.
       </PageIntro>
 
-      <DeckDiagram nodes={nodes} edges={edges} height={600} />
-
-      <Grid columns={3} gap={16}>
-        <Callout tone="info" title="Same workload ID">
-          Transport selection does not create separate HTTP, gRPC, and DynoSim workload registrations.
-        </Callout>
-        <Callout tone="info" title="Accuracy">
-          Static accuracy is configuration on the scheduled path, with canonical Python evaluators behind a subprocess
-          seam.
-        </Callout>
-        <Callout tone="success" title="Local hot path">
-          Each worker co-locates scheduler, prepared endpoints, transport, and observers without per-token cross-thread
-          locking.
-        </Callout>
-      </Grid>
+      <HubSpoke
+        hub={{
+          kicker: "AIPERF · SCHEDULED",
+          title: "How is load paced?",
+          body: "Datasets lowered, phases driven, slots bounded, turns dispatched.",
+        }}
+        spokes={[
+          {
+            accent: "blue",
+            badge: 1,
+            title: "Lower dataset",
+            diagram: (
+              <Diagram>
+                <NodeChip>INPUT</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>LOADER</NodeChip>
+              </Diagram>
+            ),
+            children: "Synthetic, file, or public inputs become dataset conversations through the loader.",
+          },
+          {
+            accent: "cyan",
+            badge: 2,
+            title: "Sample turns",
+            diagram: (
+              <Diagram>
+                <NodeChip>SAMPLER</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>NativeRunSpec</NodeChip>
+              </Diagram>
+            ),
+            children:
+              "Sequential, shuffle, or random sampling resolves into phases, limits, arrival, and endpoint profiles.",
+          },
+          {
+            accent: "green",
+            badge: 3,
+            title: "Drive phases",
+            diagram: (
+              <Diagram>
+                <NodeChip>warmup</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>PhaseOrchestrator</NodeChip>
+              </Diagram>
+            ),
+            children: "The PhaseOrchestrator runs warmup then profiling, carrying ramp, cancellation, grace, and drain.",
+          },
+          {
+            accent: "yellow",
+            badge: 4,
+            title: "Arrival policy",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>policy</NodeChip>
+                <MiniArrow />
+                <MiniBars heights={[40, 68, 52, 90]} />
+              </Diagram>
+            ),
+            children: "Request-rate, user-centric, or fixed policy drives constant, Poisson, Gamma, or burst arrivals.",
+          },
+          {
+            accent: "red",
+            badge: 5,
+            title: "Bound admission",
+            diagram: (
+              <Diagram>
+                <RoundNode>1</RoundNode>
+                <RoundNode accent>2</RoundNode>
+                <NodeChip>SlotPool + StopChecker</NodeChip>
+              </Diagram>
+            ),
+            children: "The SlotPool admits work while the StopChecker enforces request and duration bounds.",
+          },
+          {
+            accent: "purple",
+            badge: 6,
+            title: "Dispatch turns",
+            diagram: (
+              <Diagram>
+                <NodeChip>PreparedTurn</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>RequestSink</NodeChip>
+              </Diagram>
+            ),
+            children:
+              "The TurnDispatcher places materialized turns onto a worker-local HTTP, gRPC, or DirectRequest sink.",
+          },
+          {
+            accent: "orange",
+            badge: 7,
+            title: "Worker topology",
+            diagram: (
+              <Diagram>
+                <NodeChip>workers = 1</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>workers &gt; 1</NodeChip>
+              </Diagram>
+            ),
+            children:
+              "One worker shares the coordinator runtime; workers > 1 run OS threads with current_thread + LocalSet.",
+          },
+        ]}
+      />
 
       <EvidenceRow
         items={[

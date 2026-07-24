@@ -3,73 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Edge, Node } from "@xyflow/react";
-import { Grid } from "../../layout/Grid.js";
-import { Divider } from "../../layout/Divider.js";
-import { Callout } from "../../prose/Callout.js";
-import { card, DeckDiagram, EvidenceRow, flow, panel, PageIntro } from "./shared.js";
+import { HubSpoke, Diagram, NodeChip, RoundNode, MiniArrow } from "../../chalk/index.js";
+import { EvidenceRow, PageIntro } from "./shared.js";
 
-// Ported from the SeamsView page: extension internals. Two side-by-side sub-diagrams
-// (compile-time extension universe, execution substitution) plus a wide cellular-scaling diagram.
-
-const extensionNodes: Node[] = [
-  card("extension", "AIPerfExtension", undefined, "transactional registration", 0, 0),
-  card("registry", "AIPerfRegistry", undefined, "frozen once per executable image", 0, 130),
-  panel("datasets", "datasets", "loaders + samplers", 300, 0),
-  panel("endpoints", "endpoints", "body + response", 300, 100),
-  panel("exporters", "exporters", "report sinks", 300, 200),
-  panel("transports", "transports", "HTTP · gRPC · DynoSim", 300, 300),
-  panel("workloads", "workloads", "scheduled · graph…", 300, 400),
-];
-
-const extensionEdges: Edge[] = [
-  flow("extension", "registry"),
-  flow("registry", "datasets"),
-  flow("registry", "endpoints"),
-  flow("registry", "exporters"),
-  flow("registry", "transports"),
-  flow("registry", "workloads"),
-];
-
-const substitutionNodes: Node[] = [
-  card("executor", "Workload / graph executor", undefined, "transport-neutral orchestration", 0, 180),
-  card("clock", "Clock", undefined, "RealClock | SimClock", 320, 60),
-  card("requestsink", "RequestSink<R>", undefined, "transport-native R", 320, 300),
-  panel("http", "HTTP / SSE", "Hyper", 600, 0),
-  panel("grpc", "gRPC", "Tonic", 600, 120),
-  panel("dynosim", "DynoSim", "DirectRequest", 600, 240),
-  card("observer", "RequestObserver event stream", undefined, undefined, 900, 180),
-];
-
-const substitutionEdges: Edge[] = [
-  flow("executor", "clock"),
-  flow("executor", "requestsink"),
-  flow("requestsink", "http"),
-  flow("requestsink", "grpc"),
-  flow("requestsink", "dynosim"),
-  flow("http", "observer"),
-  flow("grpc", "observer"),
-  flow("dynosim", "observer"),
-];
-
-const cellularNodes: Node[] = [
-  card("controller", "controller process", undefined, "slice budgets + distribute envelope", 0, 160),
-  card("cell0", "cell 0", undefined, "ordinary execute path", 340, 0),
-  card("cell1", "cell 1", undefined, "ordinary execute path", 340, 160),
-  card("celln", "cell N", undefined, "ordinary execute path", 340, 320),
-  card("aggregators", "optional aggregators", undefined, "merge folded stores", 700, 160),
-  card("final", "final report", undefined, "controller commit", 1000, 160),
-];
-
-const cellularEdges: Edge[] = [
-  flow("controller", "cell0"),
-  flow("controller", "cell1"),
-  flow("controller", "celln"),
-  flow("cell0", "aggregators"),
-  flow("cell1", "aggregators"),
-  flow("celln", "aggregators"),
-  flow("aggregators", "final"),
-];
+// Systems Chalk hub-and-spoke of AIPerf's extension seams: a frozen registry at the center, ringed by
+// the trait/impl substitution points that stay open around one single-run core. Ported from SeamsView.
 
 /** SeamsView: compile-time composition and execution-path substitution around one run core. */
 export function SeamsPage(): React.JSX.Element {
@@ -80,37 +18,108 @@ export function SeamsPage(): React.JSX.Element {
         substitution on the execution path. Cellular mode scales around the same single-run core.
       </PageIntro>
 
-      <Grid columns="1fr 1fr" gap={16}>
-        <div>
-          <h3 className="mb-2 text-base font-semibold">Compile-time extension universe</h3>
-          <DeckDiagram nodes={extensionNodes} edges={extensionEdges} height={420} />
-        </div>
-        <div>
-          <h3 className="mb-2 text-base font-semibold">Execution substitution</h3>
-          <DeckDiagram nodes={substitutionNodes} edges={substitutionEdges} height={420} />
-        </div>
-      </Grid>
-
-      <Divider />
-
-      <div>
-        <h3 className="mb-2 text-base font-semibold">Cellular scaling wraps the same run core</h3>
-        <DeckDiagram nodes={cellularNodes} edges={cellularEdges} height={360} />
-      </div>
-
-      <Grid columns={3} gap={16}>
-        <Callout tone="info" title="No runtime plugin discovery">
-          Extensions are statically linked and duplicate names fail registration transactionally.
-        </Callout>
-        <Callout tone="info" title="No pair matrix">
-          Transport and workload registries are independent; workloads resolve an execution factory from the prepared
-          transport.
-        </Callout>
-        <Callout tone="warning" title="Cellular gate">
-          Cross-process cells use the opt-in <code>velo</code> feature. Lean builds preserve <code>cells=1</code> and
-          reject larger runs.
-        </Callout>
-      </Grid>
+      <HubSpoke
+        hub={{
+          kicker: "AIPERF · REGISTRY SEAMS",
+          title: "Where does it stay open?",
+          body: "AIPerfRegistry freezes once per image; traits substitute around one run core.",
+        }}
+        spokes={[
+          {
+            accent: "purple",
+            badge: 1,
+            title: "Extension registration",
+            diagram: (
+              <Diagram>
+                <NodeChip>AIPerfExtension</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>AIPerfRegistry</NodeChip>
+              </Diagram>
+            ),
+            children: "AIPerfExtension registers transactionally into AIPerfRegistry, frozen once per executable image.",
+          },
+          {
+            accent: "green",
+            badge: 2,
+            title: "Datasets & endpoints",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>datasets</NodeChip>
+                <MiniArrow />
+                <NodeChip>endpoints</NodeChip>
+              </Diagram>
+            ),
+            children: "Loaders + samplers and endpoint body/response factories resolve from the frozen registry.",
+          },
+          {
+            accent: "blue",
+            badge: 3,
+            title: "RequestSink<R>",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>RequestSink&lt;R&gt;</NodeChip>
+                <MiniArrow />
+                <NodeChip>HTTP · gRPC</NodeChip>
+              </Diagram>
+            ),
+            children: "Transport-neutral orchestration drives a transport-native R: HTTP/SSE Hyper, gRPC Tonic, DynoSim.",
+          },
+          {
+            accent: "cyan",
+            badge: 4,
+            title: "Clock injection",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>Clock</NodeChip>
+                <MiniArrow />
+                <NodeChip>Real | Sim</NodeChip>
+              </Diagram>
+            ),
+            children: "The executor substitutes RealClock or SimClock without touching the workload/graph orchestration.",
+          },
+          {
+            accent: "yellow",
+            badge: 5,
+            title: "RequestObserver",
+            diagram: (
+              <Diagram>
+                <NodeChip>HTTP · gRPC</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>RequestObserver</NodeChip>
+              </Diagram>
+            ),
+            children: "Every transport folds into one RequestObserver event stream for measurement; registries stay independent.",
+          },
+          {
+            accent: "orange",
+            badge: 6,
+            title: "Cellular scaling",
+            diagram: (
+              <Diagram>
+                <RoundNode>0</RoundNode>
+                <RoundNode accent>1</RoundNode>
+                <RoundNode>N</RoundNode>
+                <MiniArrow />
+                <NodeChip>aggregators</NodeChip>
+              </Diagram>
+            ),
+            children: "The controller slices budgets to cell 0..N (ordinary execute paths); aggregators merge folded stores.",
+          },
+          {
+            accent: "red",
+            badge: 7,
+            title: "Controller commit",
+            diagram: (
+              <Diagram>
+                <NodeChip>aggregators</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>final report</NodeChip>
+              </Diagram>
+            ),
+            children: "Cross-process cells use the opt-in velo feature; the controller commits the final report.",
+          },
+        ]}
+      />
 
       <EvidenceRow
         items={[

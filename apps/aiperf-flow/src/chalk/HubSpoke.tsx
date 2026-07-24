@@ -131,13 +131,17 @@ function HubCard({
         "grid w-[250px] place-items-center rounded-[18px] border px-5 py-4 text-center",
         "border-[color:color-mix(in_srgb,var(--color-category-purple)_50%,transparent)]",
         "shadow-[0_18px_60px_rgba(0,0,0,0.34)]",
-        // subtle violet→cyan wash over the elevated surface
-        "bg-[linear-gradient(145deg,color-mix(in_srgb,var(--color-category-purple)_20%,transparent),color-mix(in_srgb,var(--color-category-cyan)_6%,transparent)),var(--color-surface-elevated)]",
         // cyan connection ports on the left/right edges
         "relative before:absolute before:top-1/2 before:left-[-6px] before:h-2 before:w-2 before:-translate-y-1/2 before:rounded-full before:border-2 before:border-accent-primary before:bg-surface-page before:content-['']",
         "after:absolute after:top-1/2 after:right-[-6px] after:h-2 after:w-2 after:-translate-y-1/2 after:rounded-full after:border-2 after:border-accent-primary after:bg-surface-page after:content-['']",
         className,
       )}
+      // Violet→cyan wash over the elevated surface (mockup's .hub background). Inline so the nested
+      // color-mix()/commas render reliably (a Tailwind arbitrary-value gradient mis-parses them).
+      style={{
+        backgroundImage:
+          "linear-gradient(145deg, color-mix(in srgb, var(--color-category-purple) 24%, transparent), color-mix(in srgb, var(--color-category-cyan) 7%, transparent)), linear-gradient(var(--color-surface-elevated), var(--color-surface-elevated))",
+      }}
     >
       {hub.kicker !== undefined && (
         <div className="font-mono text-[10px] font-bold tracking-[0.18em] text-category-purple">

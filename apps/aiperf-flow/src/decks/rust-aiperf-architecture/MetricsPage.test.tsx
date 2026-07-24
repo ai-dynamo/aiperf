@@ -4,31 +4,25 @@
  */
 
 import { render, screen } from "@testing-library/react";
-import { ReactFlowProvider } from "@xyflow/react";
 import { describe, expect, it } from "vitest";
 import { MetricsPage } from "./MetricsPage.js";
 
 describe("MetricsPage", () => {
-  it("renders the intro and measurement nodes", () => {
-    render(
-      <ReactFlowProvider>
-        <MetricsPage />
-      </ReactFlowProvider>,
-    );
+  it("renders the intro and the hub", () => {
+    render(<MetricsPage />);
     expect(screen.getByText("Measurement and exports")).toBeInTheDocument();
-    expect(screen.getByText("ObserverTee")).toBeInTheDocument();
-    expect(screen.getByText("MetricsAccumulator")).toBeInTheDocument();
-    expect(screen.getByText("NativeReport")).toBeInTheDocument();
+    // The hub renders in both the wide (ring) and narrow (stacked) layouts.
+    expect(screen.getAllByText("How is each request measured?").length).toBeGreaterThan(0);
   });
 
-  it("renders the callouts and evidence anchors", () => {
-    render(
-      <ReactFlowProvider>
-        <MetricsPage />
-      </ReactFlowProvider>,
-    );
-    expect(screen.getByText("Exact mode")).toBeInTheDocument();
-    expect(screen.getByText("Separate artifact path")).toBeInTheDocument();
+  it("renders spoke cards with their titles", () => {
+    render(<MetricsPage />);
+    expect(screen.getAllByText("MetricsAccumulator").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("NativeReport").length).toBeGreaterThan(0);
+  });
+
+  it("renders the evidence anchors", () => {
+    render(<MetricsPage />);
     expect(screen.getByText("rust/aiperf/src/report.rs")).toBeInTheDocument();
   });
 });

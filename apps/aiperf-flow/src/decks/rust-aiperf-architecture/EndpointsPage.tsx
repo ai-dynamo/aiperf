@@ -3,49 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Edge, Node } from "@xyflow/react";
-import { Grid } from "../../layout/Grid.js";
-import { Callout } from "../../prose/Callout.js";
-import { bandHeader, card, chip, dashed, DeckDiagram, EvidenceRow, flow, panel, PageIntro } from "./shared.js";
+import { HubSpoke, Diagram, NodeChip, DbNode, MiniArrow } from "../../chalk/index.js";
+import { EvidenceRow, PageIntro } from "./shared.js";
 
-// Ported from the EndpointsView page: dialect preparation.
-
-const nodes: Node[] = [
-  bandHeader("b-startup", "Startup validation", 0, 0),
-  panel("profiles", "endpoint profiles", "id + model + raw config", 0, 60),
-  card("registry", "EndpointRegistry", undefined, "factory lookup by EndpointId", 280, 60),
-  panel("strict", "strict validation", "raw → effective config", 580, 60),
-  card("identities", "profile identities", undefined, "stable dense EndpointKey", 840, 60),
-
-  bandHeader("b-worker", "Worker preparation", 0, 200),
-  panel("factory", "PreparedEndpointTableFactory", "shared startup blueprint", 0, 260),
-  card("prepare", "prepare_worker()", undefined, "worker-local tokenizer + bindings", 340, 260),
-  card("table", "PreparedEndpointTable", undefined, "dense lookup by EndpointKey", 660, 260),
-
-  bandHeader("b-perturn", "Per-turn request and response", 0, 400),
-  panel("turn", "PreparedTurn", "content + token counts", 0, 460),
-  card("dialect", "Endpoint dialect", undefined, "format payload · headers · parser", 280, 460),
-  card("binding", "transport binding", undefined, "HTTP URI/body or gRPC tensors", 580, 460),
-  card("observations", "observations", undefined, "tokens · usage · endpoint metrics", 860, 460),
-
-  bandHeader("b-families", "Dialect families", 0, 600),
-  chip("f-openai", "OpenAI + Anthropic", 0, 660),
-  chip("f-kserve", "KServe HTTP/gRPC", 220, 660),
-  chip("f-riva", "NVIDIA Riva", 420, 660),
-  chip("f-vllm", "vLLM + specialized", 600, 660),
-];
-
-const edges: Edge[] = [
-  flow("profiles", "registry"),
-  flow("registry", "strict"),
-  flow("strict", "identities"),
-  flow("factory", "prepare"),
-  flow("prepare", "table"),
-  flow("turn", "dialect"),
-  flow("dialect", "binding"),
-  flow("binding", "observations"),
-  dashed("observations", "dialect"),
-];
+// Systems Chalk hub-and-spoke of the EndpointsView: dialects own payload/response semantics, and
+// each worker builds a dense prepared table so per-turn dispatch skips registry/config work.
 
 /** EndpointsView: dialects own payload/response semantics; workers build dense prepared tables. */
 export function EndpointsPage(): React.JSX.Element {
@@ -56,19 +18,107 @@ export function EndpointsPage(): React.JSX.Element {
         builds a dense prepared table so request dispatch avoids repeated registry and configuration work.
       </PageIntro>
 
-      <DeckDiagram nodes={nodes} edges={edges} height={600} />
-
-      <Grid columns={3} gap={16}>
-        <Callout tone="info" title="Open registry">
-          New dialects register factories; the core transport does not gain an endpoint-type switch.
-        </Callout>
-        <Callout tone="info" title="Transport-native binding">
-          HTTP and gRPC share endpoint identity but prepare different wire representations.
-        </Callout>
-        <Callout tone="success" title="Usage authority">
-          Endpoint parsers reconcile provider usage and token classification before emitting observer facts.
-        </Callout>
-      </Grid>
+      <HubSpoke
+        hub={{
+          kicker: "AIPERF · ENDPOINTS",
+          title: "How are dialects prepared?",
+          body: "Profiles validated once, tables built per worker, dialects own the wire.",
+        }}
+        spokes={[
+          {
+            accent: "blue",
+            badge: 1,
+            title: "Resolve profiles",
+            diagram: (
+              <Diagram>
+                <NodeChip>profiles</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>EndpointRegistry</NodeChip>
+              </Diagram>
+            ),
+            children: "Endpoint profiles (id + model + raw config) look up a factory by EndpointId in the registry.",
+          },
+          {
+            accent: "cyan",
+            badge: 2,
+            title: "Strict validation",
+            diagram: (
+              <Diagram>
+                <NodeChip>raw</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>EndpointKey</NodeChip>
+              </Diagram>
+            ),
+            children: "Strict validation lowers raw to effective config, yielding stable dense profile identities.",
+          },
+          {
+            accent: "green",
+            badge: 3,
+            title: "Prepare worker table",
+            diagram: (
+              <Diagram>
+                <NodeChip>prepare_worker()</NodeChip>
+                <MiniArrow />
+                <DbNode accent>PreparedEndpointTable</DbNode>
+              </Diagram>
+            ),
+            children:
+              "The PreparedEndpointTableFactory blueprint builds a worker-local tokenizer and a dense-lookup table.",
+          },
+          {
+            accent: "yellow",
+            badge: 4,
+            title: "Format per turn",
+            diagram: (
+              <Diagram>
+                <NodeChip>PreparedTurn</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>dialect</NodeChip>
+              </Diagram>
+            ),
+            children: "Per turn the endpoint dialect formats the payload, headers, and response parser from content + tokens.",
+          },
+          {
+            accent: "purple",
+            badge: 5,
+            title: "Bind transport",
+            diagram: (
+              <Diagram>
+                <NodeChip>HTTP URI</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>gRPC tensors</NodeChip>
+              </Diagram>
+            ),
+            children: "HTTP and gRPC share endpoint identity but bind different wire representations.",
+          },
+          {
+            accent: "red",
+            badge: 6,
+            title: "Emit observations",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>parser</NodeChip>
+                <MiniArrow />
+                <NodeChip>tokens · usage</NodeChip>
+              </Diagram>
+            ),
+            children: "Parsers reconcile provider usage and token classification into tokens, usage, and endpoint metrics.",
+          },
+          {
+            accent: "orange",
+            badge: 7,
+            title: "Dialect families",
+            diagram: (
+              <Diagram>
+                <NodeChip>OpenAI + Anthropic</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>KServe · Riva · vLLM</NodeChip>
+              </Diagram>
+            ),
+            children: "Families span OpenAI + Anthropic, KServe HTTP/gRPC, NVIDIA Riva, and vLLM + specialized endpoints.",
+          },
+        ]}
+      />
 
       <EvidenceRow
         items={[
