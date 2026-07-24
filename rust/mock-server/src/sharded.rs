@@ -106,8 +106,8 @@ impl Collector for ShardedHistogram {
         let (upper_bounds, mut cum): (Vec<f64>, Vec<u64>) = {
             let hist = families[0].get_metric()[0].get_histogram();
             (
-                hist.get_bucket().iter().map(Bucket::get_upper_bound).collect(),
-                hist.get_bucket().iter().map(Bucket::get_cumulative_count).collect(),
+                hist.get_bucket().iter().map(Bucket::upper_bound).collect(),
+                hist.get_bucket().iter().map(Bucket::cumulative_count).collect(),
             )
         };
         let mut sample_count = families[0].get_metric()[0].get_histogram().get_sample_count();
@@ -119,7 +119,7 @@ impl Collector for ShardedHistogram {
             sample_count += hist.get_sample_count();
             sample_sum += hist.get_sample_sum();
             for (i, bucket) in hist.get_bucket().iter().enumerate() {
-                cum[i] += bucket.get_cumulative_count();
+                cum[i] += bucket.cumulative_count();
             }
         }
 
@@ -168,8 +168,8 @@ mod tests {
         assert!((merged.get_sample_sum() - expect.get_sample_sum()).abs() < 1e-9);
         assert_eq!(merged.get_bucket().len(), expect.get_bucket().len());
         for (m, e) in merged.get_bucket().iter().zip(expect.get_bucket()) {
-            assert_eq!(m.get_cumulative_count(), e.get_cumulative_count());
-            assert_eq!(m.get_upper_bound(), e.get_upper_bound());
+            assert_eq!(m.cumulative_count(), e.cumulative_count());
+            assert_eq!(m.upper_bound(), e.upper_bound());
         }
     }
 }
