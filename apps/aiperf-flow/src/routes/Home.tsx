@@ -30,6 +30,12 @@ export const DECKS: readonly DeckListing[] = [
       "One binary, two roles — eleven pages spanning process boundaries, runtime seams, scheduled/graph workloads, cellular scaling, and extension points.",
   },
   {
+    path: "/rust-port-why",
+    title: "Why Rust · Executive Overview",
+    description:
+      "A management-facing pitch for reimplementing AIPerf in Rust: the shared-core case with Dynamo, retiring the GIL-driven multiprocess control plane, and an honest read on where the performance win is real (and where it isn't).",
+  },
+  {
     path: "/rust-port-flow",
     title: "Rust Port · Request Lifecycle",
     description:

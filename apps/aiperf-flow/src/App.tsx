@@ -21,6 +21,7 @@ import { OfflineCosimulationDeck } from "./decks/offline-cosimulation/OfflineCos
 import { RustAiperfArchitectureDeck } from "./decks/rust-aiperf-architecture/RustAiperfArchitectureDeck.js";
 import { RustArchitectureInternalsDeck } from "./decks/rust-architecture-internals/RustArchitectureInternalsDeck.js";
 import { RustPortFlowDeck } from "./decks/rust-port-flow/RustPortFlowDeck.js";
+import { RustPortWhyDeck } from "./decks/rust-port-why/RustPortWhyDeck.js";
 import { SegmentPoolsDeck } from "./decks/segment-pools/SegmentPoolsDeck.js";
 import { SlurmArchitectureDeck } from "./decks/slurm-architecture/SlurmArchitectureDeck.js";
 import { SlurmExplainedStepByStepDeck } from "./decks/slurm-explained-step-by-step/SlurmExplainedStepByStepDeck.js";
@@ -58,6 +59,7 @@ export function App(): React.JSX.Element {
         <Route path="/rust-aiperf-architecture" element={<RustAiperfArchitectureDeck />} />
         <Route path="/rust-architecture-internals" element={<RustArchitectureInternalsDeck />} />
         <Route path="/rust-port-flow" element={<RustPortFlowDeck />} />
+        <Route path="/rust-port-why" element={<RustPortWhyDeck />} />
         <Route path="/slurm-architecture" element={<SlurmArchitectureDeck />} />
         <Route path="/slurm-explained-step-by-step" element={<SlurmExplainedStepByStepDeck />} />
         <Route path="/step-dispatch-emit-system" element={<StepDispatchEmitSystemDeck />} />
