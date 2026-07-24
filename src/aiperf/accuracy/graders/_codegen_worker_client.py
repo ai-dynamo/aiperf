@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import signal
 import sys
 from collections import deque
 from typing import Any
@@ -34,6 +36,18 @@ _STREAM_LIMIT = 16 * 1024 * 1024
 # Bound the retained worker-stderr diagnostics so a chatty worker can't grow
 # memory unbounded; the tail is logged on fault to explain why a worker died.
 _STDERR_TAIL_LINES = 64
+
+
+def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
+    """SIGKILL the worker's whole process group so lighteval's forked sandbox
+    grandchildren die with it, not just the worker. Falls back to killing the
+    worker alone where process groups are unavailable (e.g. Windows)."""
+    if hasattr(os, "killpg"):
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            return
+    with contextlib.suppress(ProcessLookupError):
+        proc.kill()
 
 
 class CodegenWorkerError(Exception):
@@ -89,6 +103,9 @@ class CodegenGradingWorker:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 limit=_STREAM_LIMIT,
+                # Own process group so _kill can reap lighteval's forked sandbox
+                # grandchildren, not just the worker (no-op on Windows).
+                start_new_session=True,
             )
         except Exception as exc:
             self._start_failures += 1
@@ -187,11 +204,9 @@ class CodegenGradingWorker:
         proc, self._proc = self._proc, None
         task, self._stderr_task = self._stderr_task, None
         if proc is not None and proc.returncode is None:
-            try:
-                proc.kill()
+            _kill_process_group(proc)
+            with contextlib.suppress(ProcessLookupError):
                 await proc.wait()
-            except ProcessLookupError:
-                pass
         tail: list[str] = []
         if task is not None:
             # The dead worker's stderr hits EOF, so the drain task finishes; bound

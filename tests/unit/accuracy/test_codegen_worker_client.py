@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import textwrap
 from pathlib import Path
@@ -303,5 +304,24 @@ class TestStderrDiagnostics:
                     [{"input_output": "{}"}], [["x"]], timeout=30
                 )
             assert any("WORKER_DIAG_MARKER" in msg for msg in logged), logged
+        finally:
+            await worker.aclose()
+
+
+class TestProcessGroup:
+    @pytest.mark.skipif(
+        not hasattr(os, "getpgid"), reason="process groups unavailable on this platform"
+    )
+    async def test_worker_is_spawned_as_process_group_leader(self, tmp_path) -> None:
+        """start_new_session=True makes the worker its own process-group leader, so
+        _kill can killpg the whole group (worker + lighteval's forked sandbox
+        grandchildren) instead of leaking the children when the worker dies."""
+        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_OK))
+        try:
+            await worker.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
+            pid = worker._proc.pid  # type: ignore[union-attr]
+            # A session leader's process-group id equals its own pid; without
+            # start_new_session the worker would share the test runner's group.
+            assert os.getpgid(pid) == pid
         finally:
             await worker.aclose()
