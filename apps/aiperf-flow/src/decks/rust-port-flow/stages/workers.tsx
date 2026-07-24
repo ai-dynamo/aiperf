@@ -22,6 +22,7 @@
 import type { Edge, Node } from "@xyflow/react";
 import { roleClassName } from "../stage.js";
 import type { StageDef } from "../stage.js";
+import { Diagram, NodeChip, RoundNode, DbNode, MiniArrow } from "../../../chalk/index.js";
 
 /** The drillable level-1 sub-cell node id, which is ALSO the `leaves` key it zooms into. */
 const WORKER_LEAF_ID = "workers-thread";
@@ -36,6 +37,15 @@ const level1Nodes: Node[] = [
       title: "run_sharded_scheduled",
       subtitle: "coordinator · main thread",
       detail: "Spawns W sub-cells over an mpsc; merge stays on main.",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>coord</NodeChip>
+          <MiniArrow />
+          <RoundNode>w₁</RoundNode>
+          <RoundNode>w₂</RoundNode>
+          <RoundNode>wₙ</RoundNode>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -46,6 +56,14 @@ const level1Nodes: Node[] = [
     data: {
       title: "RealClockAnchor",
       detail: "One Copy monotonic origin; workers rebuild a local RealClock.",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>t₀ origin</NodeChip>
+          <MiniArrow />
+          <RoundNode>w₁</RoundNode>
+          <RoundNode>wₙ</RoundNode>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -56,6 +74,14 @@ const level1Nodes: Node[] = [
     data: {
       title: "GlobalAdmission",
       detail: "Shared Arc<GlobalSlotPool>/GlobalRateGate — one cell-level cap.",
+      diagram: (
+        <Diagram>
+          <RoundNode>w₁</RoundNode>
+          <RoundNode>wₙ</RoundNode>
+          <MiniArrow />
+          <DbNode accent>Arc gate</DbNode>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -67,6 +93,14 @@ const level1Nodes: Node[] = [
       title: "sub-cell worker × W",
       subtitle: "thread-per-core",
       detail: "Own current_thread runtime + LocalSet + sink. Click to open.",
+      diagram: (
+        <Diagram>
+          <RoundNode accent>rt</RoundNode>
+          <NodeChip>LocalSet</NodeChip>
+          <MiniArrow />
+          <NodeChip>sink</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("compute"),
     },
   },
@@ -78,6 +112,14 @@ const level1Nodes: Node[] = [
       title: "merge_shards",
       subtitle: "sort, don't renumber",
       detail: "Concatenates shards, sorts by request_index — never renumbers.",
+      diagram: (
+        <Diagram>
+          <NodeChip>shard₁</NodeChip>
+          <NodeChip>shardₙ</NodeChip>
+          <MiniArrow />
+          <DbNode accent>sort idx</DbNode>
+        </Diagram>
+      ),
       className: roleClassName("compute"),
     },
   },
@@ -117,6 +159,13 @@ const workerThreadNodes: Node[] = [
     data: {
       title: "current_thread runtime",
       detail: "Builder::new_current_thread().enable_all().build()",
+      diagram: (
+        <Diagram>
+          <RoundNode accent>rt</RoundNode>
+          <MiniArrow />
+          <NodeChip>1 thread</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("compute"),
     },
   },
@@ -127,6 +176,13 @@ const workerThreadNodes: Node[] = [
     data: {
       title: "LocalSet",
       detail: "block_on(local.run_until(execute_scheduled_shard(…)))",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>local.run</NodeChip>
+          <MiniArrow />
+          <NodeChip>!Send task</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("compute"),
     },
   },
@@ -137,6 +193,13 @@ const workerThreadNodes: Node[] = [
     data: {
       title: "reactor-local RealClock",
       detail: "!Send Rc<RealClock> from the anchor; Sim clock forces workers==1.",
+      diagram: (
+        <Diagram>
+          <NodeChip>anchor t₀</NodeChip>
+          <MiniArrow />
+          <RoundNode accent>Rc</RoundNode>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -147,6 +210,13 @@ const workerThreadNodes: Node[] = [
     data: {
       title: "co-located transport sink",
       detail: "workers==1 keeps the sink on the caller's reactor — byte-unchanged.",
+      diagram: (
+        <Diagram>
+          <RoundNode>rt</RoundNode>
+          <MiniArrow />
+          <NodeChip accent>sink</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("transport"),
     },
   },
@@ -158,6 +228,13 @@ const workerThreadNodes: Node[] = [
       title: "execute_scheduled_shard",
       subtitle: "worker_id",
       detail: "Runs the shard, stamping globally-unique two-level ordinals.",
+      diagram: (
+        <Diagram>
+          <NodeChip>req</NodeChip>
+          <MiniArrow />
+          <NodeChip accent>(w, i) ord</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("compute"),
     },
   },

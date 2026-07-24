@@ -21,6 +21,7 @@ import type { Edge, Node } from "@xyflow/react";
 import { roleClassName } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
 import type { StageDef } from "../stage.js";
+import { Diagram, NodeChip, DbNode, MiniArrow } from "../../../chalk/index.js";
 
 /** Level-1 seam nodes: the trait, the `is_virtual()` selector, both backends, and the consumer. */
 const subgraphNodes: Node[] = [
@@ -32,6 +33,14 @@ const subgraphNodes: Node[] = [
       title: "trait Clock",
       subtitle: "clock/clock.rs",
       detail: "now_ns · sleep · is_virtual · drive — one time source",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>Clock</NodeChip>
+          <MiniArrow />
+          <NodeChip>now_ns</NodeChip>
+          <NodeChip>sleep</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -52,6 +61,13 @@ const subgraphNodes: Node[] = [
       title: "RealClock",
       subtitle: "false → real reactor",
       detail: "monotonic Instant + timerfd sleeps on current-thread tokio",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>Instant</NodeChip>
+          <MiniArrow />
+          <NodeChip>timerfd</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -63,6 +79,13 @@ const subgraphNodes: Node[] = [
       title: "SimClock",
       subtitle: "true → simulation driver",
       detail: "integer-ns virtual time, deterministic (at_ns, seq_no) order",
+      diagram: (
+        <Diagram>
+          <NodeChip>at_ns</NodeChip>
+          <MiniArrow />
+          <DbNode accent>BinaryHeap</DbNode>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -74,6 +97,13 @@ const subgraphNodes: Node[] = [
       title: "Transport timing",
       subtitle: "one nanosecond timeline",
       detail: "now_ns · sleep · with_timeout — never Instant/SystemTime::now",
+      diagram: (
+        <Diagram>
+          <NodeChip>now_ns</NodeChip>
+          <MiniArrow />
+          <NodeChip accent>with_timeout</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -97,6 +127,13 @@ const realLeafNodes: Node[] = [
     data: {
       title: "RealClockAnchor",
       detail: "Copy monotonic origin (Instant); one shared timeline",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>t₀ Instant</NodeChip>
+          <MiniArrow />
+          <NodeChip>elapsed</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -107,6 +144,13 @@ const realLeafNodes: Node[] = [
     data: {
       title: "now_ns()",
       detail: "start.elapsed().as_nanos() as i64 — monotonic, not wall",
+      diagram: (
+        <Diagram>
+          <NodeChip>elapsed</NodeChip>
+          <MiniArrow />
+          <NodeChip accent>i64 ns</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -117,6 +161,13 @@ const realLeafNodes: Node[] = [
     data: {
       title: "timerfd_sleep_ns",
       detail: "one-shot CLOCK_MONOTONIC timerfd via AsyncFd (Linux)",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>timerfd</NodeChip>
+          <MiniArrow />
+          <NodeChip>AsyncFd</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -127,6 +178,13 @@ const realLeafNodes: Node[] = [
     data: {
       title: "tokio::time fallback",
       detail: "non-Linux / timerfd failure → coarser 1 ms wheel",
+      diagram: (
+        <Diagram>
+          <NodeChip>non-Linux</NodeChip>
+          <MiniArrow />
+          <NodeChip accent>1 ms wheel</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("neutral"),
     },
   },
@@ -147,6 +205,14 @@ const simLeafNodes: Node[] = [
     data: {
       title: "now_ns · seq · heap",
       detail: "Cell now_ns, Cell seq, BinaryHeap<Sleeper> of wakers",
+      diagram: (
+        <Diagram>
+          <NodeChip>now_ns</NodeChip>
+          <NodeChip>seq</NodeChip>
+          <MiniArrow />
+          <DbNode accent>heap</DbNode>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -157,6 +223,13 @@ const simLeafNodes: Node[] = [
     data: {
       title: "schedule(at_ns, waker)",
       detail: "park Sleeper { at_ns, seq_no, waker }; seq_no = reg order",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>Sleeper</NodeChip>
+          <MiniArrow />
+          <DbNode>heap</DbNode>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -167,6 +240,13 @@ const simLeafNodes: Node[] = [
     data: {
       title: "(at_ns, seq_no) order",
       detail: "Ord: earliest deadline first, ties by seq — deterministic",
+      diagram: (
+        <Diagram>
+          <NodeChip>at_ns</NodeChip>
+          <MiniArrow />
+          <NodeChip accent>seq tie</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -177,6 +257,13 @@ const simLeafNodes: Node[] = [
     data: {
       title: "advance_to(ns)",
       detail: "fast-forward to next event; drain_due wakes sleepers",
+      diagram: (
+        <Diagram>
+          <DbNode>heap</DbNode>
+          <MiniArrow />
+          <NodeChip accent>wake due</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },

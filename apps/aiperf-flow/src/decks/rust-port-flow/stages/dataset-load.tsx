@@ -20,6 +20,7 @@ import { roleClassName } from "../stage.js";
 import type { NodeRole } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
 import type { StageDef } from "../stage.js";
+import { Diagram, NodeChip, DbNode, MiniArrow } from "../../../chalk/index.js";
 
 /** A tinted `card` node for a level-1/level-2 subgraph, colored by its semantic node role. */
 function card(
@@ -29,12 +30,13 @@ function card(
   subtitle: string,
   detail: string,
   role: NodeRole,
+  diagram?: React.ReactNode,
 ): Node {
   return {
     id,
     type: "card",
     position,
-    data: { title, subtitle, detail, className: roleClassName(role) },
+    data: { title, subtitle, detail, className: roleClassName(role), diagram },
   };
 }
 
@@ -60,6 +62,13 @@ const subgraphNodes: Node[] = [
     "loaders",
     "Each loader (HF, trace, synthetic, raw) reads RawRows.",
     "compute",
+    (
+      <Diagram>
+        <NodeChip accent>loader</NodeChip>
+        <MiniArrow />
+        <NodeChip>RawRows</NodeChip>
+      </Diagram>
+    ),
   ),
   card(
     "pool",
@@ -68,6 +77,13 @@ const subgraphNodes: Node[] = [
     "mutable interner",
     "Write side: arena Vec<Segment> + SegmentId→Handle map.",
     "storage",
+    (
+      <Diagram>
+        <NodeChip>RawRows</NodeChip>
+        <MiniArrow />
+        <DbNode accent>arena</DbNode>
+      </Diagram>
+    ),
   ),
   card(
     "intern",
@@ -76,6 +92,13 @@ const subgraphNodes: Node[] = [
     "content-address",
     "Interns a Payload under a prefix parent → dense Handle.",
     "compute",
+    (
+      <Diagram>
+        <NodeChip>Payload</NodeChip>
+        <MiniArrow />
+        <NodeChip accent>Handle</NodeChip>
+      </Diagram>
+    ),
   ),
   card(
     "domains",
@@ -84,6 +107,13 @@ const subgraphNodes: Node[] = [
     "SegmentDomain",
     "message · text · raw · token-ids · media · trace-hash — disjoint.",
     "storage",
+    (
+      <Diagram>
+        <NodeChip accent>domain</NodeChip>
+        <MiniArrow />
+        <NodeChip>BLAKE3</NodeChip>
+      </Diagram>
+    ),
   ),
   card(
     "hashing",
@@ -92,6 +122,13 @@ const subgraphNodes: Node[] = [
     "payload_id + dedup",
     "Child hash folds parent's content hash; repeats dedup.",
     "compute",
+    (
+      <Diagram>
+        <NodeChip>parent</NodeChip>
+        <MiniArrow />
+        <NodeChip accent>payload_id</NodeChip>
+      </Diagram>
+    ),
   ),
   card(
     "freeze",
@@ -100,6 +137,13 @@ const subgraphNodes: Node[] = [
     "seal the arena",
     "Drops the write map, hands back an immutable store.",
     "compute",
+    (
+      <Diagram>
+        <DbNode>pool</DbNode>
+        <MiniArrow />
+        <DbNode accent>frozen</DbNode>
+      </Diagram>
+    ),
   ),
   card(
     "store",
@@ -108,6 +152,13 @@ const subgraphNodes: Node[] = [
     "frozen arena",
     "Dense Box<[Segment]>; bytes live once, shared read-only.",
     "storage",
+    (
+      <Diagram>
+        <DbNode accent>Segment[]</DbNode>
+        <MiniArrow />
+        <NodeChip>read-only</NodeChip>
+      </Diagram>
+    ),
   ),
   card(
     "turn",
@@ -116,6 +167,13 @@ const subgraphNodes: Node[] = [
     "body: SmallVec<[Handle; 1]>",
     "Large values are Handles into the store — indices, not bytes.",
     "storage",
+    (
+      <Diagram>
+        <NodeChip accent>Handle</NodeChip>
+        <MiniArrow />
+        <DbNode>store</DbNode>
+      </Diagram>
+    ),
   ),
 ];
 
@@ -134,12 +192,24 @@ const subgraphEdges: Edge[] = [
 // ---------------------------------------------------------------------------
 
 const domainLeafNodes: Node[] = [
-  card("dom-message", { x: 0, y: 0 }, "message", "SegmentDomain::Message", "Pre-serialized endpoint message; formats as an array.", "storage"),
-  card("dom-text-only", { x: 300, y: 0 }, "text-only", "SegmentDomain::TextOnly", "Plain text field; spliced verbatim at dispatch.", "storage"),
-  card("dom-raw", { x: 600, y: 0 }, "raw", "SegmentDomain::Raw", "Prebuilt body; leading raw handle bypasses formatting.", "storage"),
-  card("dom-token-ids", { x: 0, y: 150 }, "token-ids", "SegmentDomain::TokenIds", "Pre-tokenized input IDs — token-native dispatch.", "storage"),
-  card("dom-media", { x: 300, y: 150 }, "media", "SegmentDomain::Media", "Binary/encoded multimodal content, folded into identity.", "media"),
-  card("dom-trace-hash-ids", { x: 600, y: 150 }, "trace-hash-ids", "SegmentDomain::TraceHashIds", "Source-trace block ids on a Turn's trace_hash_ids.", "storage"),
+  card("dom-message", { x: 0, y: 0 }, "message", "SegmentDomain::Message", "Pre-serialized endpoint message; formats as an array.", "storage", (
+    <Diagram><NodeChip accent>message</NodeChip><MiniArrow /><NodeChip>[array]</NodeChip></Diagram>
+  )),
+  card("dom-text-only", { x: 300, y: 0 }, "text-only", "SegmentDomain::TextOnly", "Plain text field; spliced verbatim at dispatch.", "storage", (
+    <Diagram><NodeChip accent>text</NodeChip><MiniArrow /><NodeChip>splice</NodeChip></Diagram>
+  )),
+  card("dom-raw", { x: 600, y: 0 }, "raw", "SegmentDomain::Raw", "Prebuilt body; leading raw handle bypasses formatting.", "storage", (
+    <Diagram><NodeChip accent>raw</NodeChip><MiniArrow /><NodeChip>body</NodeChip></Diagram>
+  )),
+  card("dom-token-ids", { x: 0, y: 150 }, "token-ids", "SegmentDomain::TokenIds", "Pre-tokenized input IDs — token-native dispatch.", "storage", (
+    <Diagram><NodeChip accent>tokens</NodeChip><MiniArrow /><NodeChip>u32 ids</NodeChip></Diagram>
+  )),
+  card("dom-media", { x: 300, y: 150 }, "media", "SegmentDomain::Media", "Binary/encoded multimodal content, folded into identity.", "media", (
+    <Diagram><NodeChip accent>media</NodeChip><MiniArrow /><DbNode>blob</DbNode></Diagram>
+  )),
+  card("dom-trace-hash-ids", { x: 600, y: 150 }, "trace-hash-ids", "SegmentDomain::TraceHashIds", "Source-trace block ids on a Turn's trace_hash_ids.", "storage", (
+    <Diagram><NodeChip accent>trace</NodeChip><MiniArrow /><NodeChip>hash_ids</NodeChip></Diagram>
+  )),
 ];
 
 // ---------------------------------------------------------------------------
@@ -154,6 +224,13 @@ const hashingLeafNodes: Node[] = [
     "prefix fold",
     "Folds parent's content hash in; shared prefixes → shared ids.",
     "compute",
+    (
+      <Diagram>
+        <NodeChip>parent</NodeChip>
+        <MiniArrow />
+        <NodeChip accent>fold</NodeChip>
+      </Diagram>
+    ),
   ),
   card(
     "hash-payload",
@@ -162,6 +239,13 @@ const hashingLeafNodes: Node[] = [
     "BLAKE3",
     "Hashes version + domain tag + parent hash + payload → SegmentId.",
     "compute",
+    (
+      <Diagram>
+        <NodeChip>BLAKE3</NodeChip>
+        <MiniArrow />
+        <NodeChip accent>SegmentId</NodeChip>
+      </Diagram>
+    ),
   ),
   card(
     "hash-dedup",
@@ -170,6 +254,13 @@ const hashingLeafNodes: Node[] = [
     "dedup",
     "Known SegmentId returns its Handle; else append a dense index.",
     "compute",
+    (
+      <Diagram>
+        <NodeChip>SegmentId</NodeChip>
+        <MiniArrow />
+        <DbNode accent>ids map</DbNode>
+      </Diagram>
+    ),
   ),
   card(
     "hash-handle",
@@ -178,6 +269,13 @@ const hashingLeafNodes: Node[] = [
     "dense index",
     "Public address is a dense arena index; map lives until freeze().",
     "storage",
+    (
+      <Diagram>
+        <NodeChip accent>Handle</NodeChip>
+        <MiniArrow />
+        <NodeChip>idx u32</NodeChip>
+      </Diagram>
+    ),
   ),
 ];
 

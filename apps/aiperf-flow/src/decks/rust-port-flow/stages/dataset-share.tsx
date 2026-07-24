@@ -25,6 +25,7 @@ import type { Edge, Node } from "@xyflow/react";
 import { roleClassName } from "../stage.js";
 import type { NodeRole, StageDef } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
+import { Diagram, NodeChip, DbNode, MiniArrow, RoundNode } from "../../../chalk/index.js";
 
 /** A `card` node colored by semantic role — the emphasized boxes in this stage's subgraph. */
 function card(
@@ -35,18 +36,27 @@ function card(
   x: number,
   y: number,
   role: NodeRole,
+  diagram?: React.ReactNode,
 ): Node {
   return {
     id,
     type: "card",
     position: { x, y },
-    data: { title, subtitle, detail, className: roleClassName(role) },
+    data: { title, subtitle, detail, className: roleClassName(role), diagram },
   };
 }
 
 /** A `panel` node — a plainer worker/step box, colored by semantic role. */
-function panel(id: string, title: string, detail: string, x: number, y: number, role: NodeRole): Node {
-  return { id, type: "panel", position: { x, y }, data: { title, detail, className: roleClassName(role) } };
+function panel(
+  id: string,
+  title: string,
+  detail: string,
+  x: number,
+  y: number,
+  role: NodeRole,
+  diagram?: React.ReactNode,
+): Node {
+  return { id, type: "panel", position: { x, y }, data: { title, detail, className: roleClassName(role), diagram } };
 }
 
 
@@ -86,6 +96,13 @@ const subgraphNodes: Node[] = [
     0,
     80,
     "storage",
+    (
+      <Diagram>
+        <DbNode accent>Segment[]</DbNode>
+        <MiniArrow />
+        <NodeChip>bytes×1</NodeChip>
+      </Diagram>
+    ),
   ),
   card(
     "share-arc",
@@ -95,6 +112,13 @@ const subgraphNodes: Node[] = [
     300,
     80,
     "storage",
+    (
+      <Diagram>
+        <NodeChip accent>Arc</NodeChip>
+        <MiniArrow />
+        <NodeChip>clone</NodeChip>
+      </Diagram>
+    ),
   ),
   card(
     "share-turns",
@@ -104,6 +128,13 @@ const subgraphNodes: Node[] = [
     600,
     80,
     "storage",
+    (
+      <Diagram>
+        <NodeChip>Turn</NodeChip>
+        <MiniArrow />
+        <NodeChip accent>Handle</NodeChip>
+      </Diagram>
+    ),
   ),
   panel(
     "share-w0",
@@ -112,6 +143,13 @@ const subgraphNodes: Node[] = [
     900,
     -30,
     "compute",
+    (
+      <Diagram>
+        <RoundNode accent>W0</RoundNode>
+        <MiniArrow />
+        <NodeChip>build_body</NodeChip>
+      </Diagram>
+    ),
   ),
   panel(
     "share-w1",
@@ -120,6 +158,13 @@ const subgraphNodes: Node[] = [
     900,
     80,
     "compute",
+    (
+      <Diagram>
+        <RoundNode accent>W1</RoundNode>
+        <MiniArrow />
+        <DbNode>store</DbNode>
+      </Diagram>
+    ),
   ),
   panel(
     "share-wn",
@@ -128,6 +173,13 @@ const subgraphNodes: Node[] = [
     900,
     190,
     "compute",
+    (
+      <Diagram>
+        <RoundNode accent>W-1</RoundNode>
+        <MiniArrow />
+        <DbNode>arena</DbNode>
+      </Diagram>
+    ),
   ),
   // A `card` (not a handleless `chip`): it is the source of the dashed edge to content_server, so
   // it must expose React Flow handles for the connection to resolve.
@@ -139,6 +191,13 @@ const subgraphNodes: Node[] = [
     300,
     320,
     "media",
+    (
+      <Diagram>
+        <NodeChip accent>media</NodeChip>
+        <MiniArrow />
+        <NodeChip>URL</NodeChip>
+      </Diagram>
+    ),
   ),
   card(
     CONTENT_SERVER_LEAF,
@@ -148,6 +207,13 @@ const subgraphNodes: Node[] = [
     600,
     320,
     "media",
+    (
+      <Diagram>
+        <NodeChip accent>HTTP</NodeChip>
+        <MiniArrow />
+        <NodeChip>/media</NodeChip>
+      </Diagram>
+    ),
   ),
 ];
 
@@ -170,6 +236,13 @@ const contentServerNodes: Node[] = [
     0,
     60,
     "media",
+    (
+      <Diagram>
+        <NodeChip accent>cfg</NodeChip>
+        <MiniArrow />
+        <NodeChip>sidecar</NodeChip>
+      </Diagram>
+    ),
   ),
   card(
     "cs-server",
@@ -179,6 +252,13 @@ const contentServerNodes: Node[] = [
     0,
     180,
     "media",
+    (
+      <Diagram>
+        <NodeChip accent>HTTP</NodeChip>
+        <MiniArrow />
+        <DbNode>dir</DbNode>
+      </Diagram>
+    ),
   ),
   card(
     "cs-pub",
@@ -188,6 +268,13 @@ const contentServerNodes: Node[] = [
     0,
     300,
     "media",
+    (
+      <Diagram>
+        <NodeChip accent>image</NodeChip>
+        <MiniArrow />
+        <NodeChip>URL</NodeChip>
+      </Diagram>
+    ),
   ),
   header("cs-vs", "Two disjoint concerns", "text sharing vs media delivery", 380, 0, "neutral"),
   card(
@@ -198,6 +285,13 @@ const contentServerNodes: Node[] = [
     380,
     90,
     "storage",
+    (
+      <Diagram>
+        <NodeChip accent>Handle</NodeChip>
+        <MiniArrow />
+        <DbNode>arena</DbNode>
+      </Diagram>
+    ),
   ),
   card(
     "cs-media",
@@ -207,6 +301,13 @@ const contentServerNodes: Node[] = [
     380,
     220,
     "media",
+    (
+      <Diagram>
+        <NodeChip accent>HTTP</NodeChip>
+        <MiniArrow />
+        <NodeChip>media URL</NodeChip>
+      </Diagram>
+    ),
   ),
 ];
 

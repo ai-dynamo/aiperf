@@ -15,6 +15,7 @@ import type { Edge, Node } from "@xyflow/react";
 import { roleClassName } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
 import type { StageDef } from "../stage.js";
+import { Diagram, NodeChip, DbNode, MiniArrow, MiniBars } from "../../../chalk/index.js";
 
 // Node ids that double as level-2 leaf keys (a click on one of these drills a level deeper). Kept
 // stage-prefixed so they stay unique across every stage's leaves in the assembled ZoomTree.
@@ -31,6 +32,13 @@ const subgraphNodes: Node[] = [
       title: "aiperf-cli",
       subtitle: "front door · cli/main.rs",
       detail: "Parses argv, resolves Config v2, drives one exec child.",
+      diagram: (
+        <Diagram>
+          <NodeChip>argv</NodeChip>
+          <MiniArrow />
+          <NodeChip accent>Config v2</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -42,6 +50,13 @@ const subgraphNodes: Node[] = [
       title: "EnvelopeV2",
       subtitle: "protocol-v2 · stdio",
       detail: "protocol_version + Execute op + BenchmarkRunWireV2.",
+      diagram: (
+        <Diagram>
+          <NodeChip>Config v2</NodeChip>
+          <MiniArrow />
+          <NodeChip accent>Envelope</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("transport"),
     },
   },
@@ -53,6 +68,13 @@ const subgraphNodes: Node[] = [
       title: "aiperf --execute",
       subtitle: "re-exec of current_exe()",
       detail: "Re-execs current_exe(); feeds the envelope over stdin.",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>current_exe</NodeChip>
+          <MiniArrow />
+          <NodeChip>child</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -64,6 +86,13 @@ const subgraphNodes: Node[] = [
       title: "Coordinator",
       subtitle: "composition root",
       detail: "handle(): registries meet once, RunContext frozen.",
+      diagram: (
+        <Diagram>
+          <NodeChip>registries</NodeChip>
+          <MiniArrow />
+          <NodeChip accent>RunContext</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -75,6 +104,13 @@ const subgraphNodes: Node[] = [
       title: "RunTerminalV2",
       subtitle: "one-line stdout response",
       detail: "success + report_path, or a typed DiagnosticV2 failure.",
+      diagram: (
+        <Diagram>
+          <NodeChip>child</NodeChip>
+          <MiniArrow />
+          <NodeChip accent>stdout</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("transport"),
     },
   },
@@ -86,6 +122,13 @@ const subgraphNodes: Node[] = [
       title: "Three orthogonal seams",
       subtitle: "Time · Transport · Workload",
       detail: "Wired once at the root; each varies independently.",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>Time</NodeChip>
+          <NodeChip>Transport</NodeChip>
+          <NodeChip>Workload</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -109,6 +152,13 @@ const selfExecLeafNodes: Node[] = [
       title: "execute::run_once",
       subtitle: "parent · cli/execute.rs",
       detail: "Spawns the --execute child, writes EnvelopeV2 to stdin.",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>parent</NodeChip>
+          <MiniArrow />
+          <NodeChip>stdin</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -120,6 +170,13 @@ const selfExecLeafNodes: Node[] = [
       title: "aiperf --execute child",
       subtitle: "execute_mode::dispatch",
       detail: "Reads a BenchmarkRun from stdin; op from argv MODE.",
+      diagram: (
+        <Diagram>
+          <NodeChip>stdin</NodeChip>
+          <MiniArrow />
+          <NodeChip accent>BenchmarkRun</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -131,6 +188,13 @@ const selfExecLeafNodes: Node[] = [
       title: "Coordinator::handle(EnvelopeV2)",
       subtitle: "composition root",
       detail: "Registries meet once; RunContext → pair adapters.",
+      diagram: (
+        <Diagram>
+          <NodeChip>registries</NodeChip>
+          <MiniArrow />
+          <NodeChip accent>RunContext</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -141,6 +205,13 @@ const selfExecLeafNodes: Node[] = [
     data: {
       title: "RunTerminalV2 → stdout",
       detail: "One line back: success + report_path, or a failure.",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>Terminal</NodeChip>
+          <MiniArrow />
+          <NodeChip>stdout</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("transport"),
     },
   },
@@ -163,6 +234,13 @@ const seamsLeafNodes: Node[] = [
       title: "RunContext (frozen)",
       subtitle: "handed to the pair adapters",
       detail: "Frozen once; the three seams below vary independently.",
+      diagram: (
+        <Diagram>
+          <DbNode accent>RunContext</DbNode>
+          <MiniArrow />
+          <NodeChip>frozen</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -173,6 +251,13 @@ const seamsLeafNodes: Node[] = [
     data: {
       title: "Time · trait Clock",
       detail: "RealClock (wall) vs SimClock (virtual ns).",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>RealClock</NodeChip>
+          <MiniArrow />
+          <NodeChip>SimClock</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },
@@ -183,6 +268,13 @@ const seamsLeafNodes: Node[] = [
     data: {
       title: "Transport · trait WorkerSink",
       detail: "ExecutionSinkBuilder + one of HTTP/gRPC/dry-run/dynosim.",
+      diagram: (
+        <Diagram>
+          <NodeChip>Builder</NodeChip>
+          <MiniArrow />
+          <NodeChip accent>Sink</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("transport"),
     },
   },
@@ -193,6 +285,13 @@ const seamsLeafNodes: Node[] = [
     data: {
       title: "Workload · trait Workload",
       detail: "RequestRateWorkload & friends generate the schedule.",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>schedule</NodeChip>
+          <MiniArrow />
+          <MiniBars heights={[100, 60, 100, 60]} />
+        </Diagram>
+      ),
       className: roleClassName("control"),
     },
   },

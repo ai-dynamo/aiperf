@@ -21,6 +21,7 @@ import type { Edge, Node } from "@xyflow/react";
 import { roleClassName } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
 import type { StageDef } from "../stage.js";
+import { Diagram, NodeChip, DbNode, MiniArrow, MiniBars } from "../../../chalk/index.js";
 
 /** Leaf id: the clickable node that drills into the exact-fold vs t-digest-merge comparison. */
 const EXACT_VS_SKETCH_LEAF = "aggExactVsSketch";
@@ -39,6 +40,13 @@ function aggregationNodes(): Node[] {
         subtitle: "worker-local",
         detail: "Per-worker record accumulation on the run clock origin.",
         className: roleClassName("compute"),
+        diagram: (
+          <Diagram>
+            <NodeChip accent>observe</NodeChip>
+            <MiniArrow />
+            <DbNode>store</DbNode>
+          </Diagram>
+        ),
       },
     },
     {
@@ -50,6 +58,13 @@ function aggregationNodes(): Node[] {
         subtitle: "metrics_core",
         detail: "MetricsAccumulator ragged columns; NaN = sparse sentinel.",
         className: roleClassName("storage"),
+        diagram: (
+          <Diagram>
+            <MiniBars heights={[30, 100, 55, 80, 20]} />
+            <MiniArrow />
+            <DbNode accent>cols</DbNode>
+          </Diagram>
+        ),
       },
     },
     {
@@ -61,6 +76,13 @@ function aggregationNodes(): Node[] {
         subtitle: "authoritative",
         detail: "Partitions replayed in global order — exact from records.",
         className: roleClassName("compute"),
+        diagram: (
+          <Diagram>
+            <NodeChip accent>exact</NodeChip>
+            <MiniArrow />
+            <NodeChip>global order</NodeChip>
+          </Diagram>
+        ),
       },
     },
     {
@@ -72,6 +94,13 @@ function aggregationNodes(): Node[] {
         subtitle: "cellular::sketch::TDigest",
         detail: "Mergeable p*/stddev estimate (NOT DDSketch); extrema exact.",
         className: roleClassName("compute"),
+        diagram: (
+          <Diagram>
+            <NodeChip accent>p50·p90·p99</NodeChip>
+            <MiniArrow />
+            <MiniBars heights={[50, 90, 99]} />
+          </Diagram>
+        ),
       },
     },
     {
@@ -83,6 +112,12 @@ function aggregationNodes(): Node[] {
         subtitle: "click to compare",
         detail: "Exact folds for reports; sketches for mergeable heartbeats.",
         className: roleClassName("compute"),
+        diagram: (
+          <Diagram>
+            <NodeChip accent>exact</NodeChip>
+            <NodeChip>sketch</NodeChip>
+          </Diagram>
+        ),
       },
     },
     {
@@ -94,6 +129,13 @@ function aggregationNodes(): Node[] {
         subtitle: "order-independent",
         detail: "Column-store replay + associative TDigest::merge.",
         className: roleClassName("compute"),
+        diagram: (
+          <Diagram>
+            <DbNode>shard</DbNode>
+            <MiniArrow />
+            <NodeChip accent>merge</NodeChip>
+          </Diagram>
+        ),
       },
     },
     {
@@ -105,6 +147,13 @@ function aggregationNodes(): Node[] {
         subtitle: "metrics_core::report",
         detail: "Builds NativeReport (version, summary, metric map), no IO.",
         className: roleClassName("compute"),
+        diagram: (
+          <Diagram>
+            <NodeChip>summary</NodeChip>
+            <MiniArrow />
+            <NodeChip accent>NativeReport</NodeChip>
+          </Diagram>
+        ),
       },
     },
     {
@@ -116,6 +165,13 @@ function aggregationNodes(): Node[] {
         subtitle: "nine sinks",
         detail: "Ordered Exporters: file writers before network uploaders.",
         className: roleClassName("media"),
+        diagram: (
+          <Diagram>
+            <NodeChip accent>JSON·CSV</NodeChip>
+            <MiniArrow />
+            <NodeChip>9 sinks</NodeChip>
+          </Diagram>
+        ),
       },
     },
     {
@@ -127,6 +183,13 @@ function aggregationNodes(): Node[] {
         subtitle: "report_path",
         detail: "Writes native-v2.json; emits terminal with report_path.",
         className: roleClassName("control"),
+        diagram: (
+          <Diagram>
+            <DbNode accent>native-v2.json</DbNode>
+            <MiniArrow />
+            <NodeChip>path</NodeChip>
+          </Diagram>
+        ),
       },
     },
   ];
@@ -159,6 +222,13 @@ function exactVsSketchLeafNodes(): Node[] {
         subtitle: "column store",
         detail: "Shard partitions replayed in order — bit-exact from records.",
         className: roleClassName("compute"),
+        diagram: (
+          <Diagram>
+            <DbNode>shard</DbNode>
+            <MiniArrow />
+            <NodeChip accent>bit-exact</NodeChip>
+          </Diagram>
+        ),
       },
     },
     {
@@ -170,6 +240,13 @@ function exactVsSketchLeafNodes(): Node[] {
         subtitle: "from records",
         detail: "Metrics from retained records; no terminal estimation.",
         className: roleClassName("storage"),
+        diagram: (
+          <Diagram>
+            <DbNode>records</DbNode>
+            <MiniArrow />
+            <NodeChip accent>report</NodeChip>
+          </Diagram>
+        ),
       },
     },
     {
@@ -181,6 +258,13 @@ function exactVsSketchLeafNodes(): Node[] {
         subtitle: "cellular::sketch",
         detail: "Concat centroids + compress; min/max exact; associative.",
         className: roleClassName("compute"),
+        diagram: (
+          <Diagram>
+            <MiniBars heights={[40, 85, 60, 95]} />
+            <MiniArrow />
+            <NodeChip accent>compress</NodeChip>
+          </Diagram>
+        ),
       },
     },
     {
@@ -192,6 +276,13 @@ function exactVsSketchLeafNodes(): Node[] {
         subtitle: "streaming estimate",
         detail: "Percentiles + stddev become streaming estimates; counts/sums/extrema exact.",
         className: roleClassName("compute"),
+        diagram: (
+          <Diagram>
+            <NodeChip>♥</NodeChip>
+            <MiniArrow />
+            <NodeChip accent>p* estimate</NodeChip>
+          </Diagram>
+        ),
       },
     },
   ];

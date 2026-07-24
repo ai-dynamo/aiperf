@@ -23,6 +23,7 @@ import type { FlowStep } from "../../../interactive/index.js";
 import { Grid } from "../../../layout/Grid.js";
 import { Callout } from "../../../prose/Callout.js";
 import type { StageDef } from "../stage.js";
+import { Diagram, NodeChip, RoundNode, MiniArrow, MiniBars } from "../../../chalk/index.js";
 
 /** A card node colored by semantic role, laid out at a fixed spine position. */
 function card(
@@ -33,12 +34,13 @@ function card(
   role: NodeRole,
   x: number,
   y = 0,
+  diagram?: React.ReactNode,
 ): Node {
   return {
     id,
     type: "card",
     position: { x, y },
-    data: { title, subtitle, detail, className: roleClassName(role) },
+    data: { title, subtitle, detail, className: roleClassName(role), ...(diagram !== undefined ? { diagram } : {}) },
   };
 }
 
@@ -73,6 +75,12 @@ const subgraphNodes: Node[] = [
     "execute() drains scheduled work via Rc<ScheduledRuntime>.",
     "control",
     0,
+    0,
+    <Diagram>
+      <NodeChip accent>SCHEDULE</NodeChip>
+      <MiniArrow />
+      <NodeChip>turn</NodeChip>
+    </Diagram>,
   ),
   card(
     HP_ADMISSION,
@@ -81,6 +89,12 @@ const subgraphNodes: Node[] = [
     "Concurrency credit + run bounds — click to open.",
     "control",
     COL,
+    0,
+    <Diagram>
+      <RoundNode accent>1</RoundNode>
+      <RoundNode>2</RoundNode>
+      <RoundNode>3</RoundNode>
+    </Diagram>,
   ),
   card(
     HP_DISPATCH,
@@ -89,6 +103,12 @@ const subgraphNodes: Node[] = [
     "One PreparedTurn to the chosen sink — click to open.",
     "transport",
     COL * 2,
+    0,
+    <Diagram>
+      <NodeChip accent>PreparedTurn</NodeChip>
+      <MiniArrow />
+      <NodeChip>sink</NodeChip>
+    </Diagram>,
   ),
   card(
     HP_SINK,
@@ -97,6 +117,11 @@ const subgraphNodes: Node[] = [
     "The only transport-specific step; rest is shared.",
     "transport",
     COL * 3,
+    0,
+    <Diagram>
+      <NodeChip accent>HTTP</NodeChip>
+      <NodeChip>gRPC</NodeChip>
+    </Diagram>,
   ),
   card(
     HP_REDUCE,
@@ -105,6 +130,12 @@ const subgraphNodes: Node[] = [
     "Folds each ParsedResponse; latches TTFT on first token.",
     "compute",
     COL * 4,
+    0,
+    <Diagram>
+      <NodeChip accent>TTFT</NodeChip>
+      <MiniArrow />
+      <NodeChip>t₁·t₂·t₃</NodeChip>
+    </Diagram>,
   ),
   card(
     HP_MEASURE,
@@ -113,6 +144,12 @@ const subgraphNodes: Node[] = [
     "Records one terminal into NativeMetricsObserver.",
     "compute",
     COL * 5,
+    0,
+    <Diagram>
+      <MiniBars heights={[42, 68, 90, 100]} />
+      <MiniArrow />
+      <NodeChip accent>record</NodeChip>
+    </Diagram>,
   ),
 ];
 
@@ -134,6 +171,12 @@ const admissionLeafNodes: Node[] = [
     "Hands out concurrency credits (admit_ns); waits for a slot.",
     "control",
     0,
+    0,
+    <Diagram>
+      <RoundNode accent>◍</RoundNode>
+      <MiniArrow />
+      <NodeChip>admit_ns</NodeChip>
+    </Diagram>,
   ),
   card(
     "hp-stopchecker",
@@ -142,6 +185,11 @@ const admissionLeafNodes: Node[] = [
     "Enforces request-count / duration stop bounds.",
     "control",
     COL,
+    0,
+    <Diagram>
+      <NodeChip accent>count</NodeChip>
+      <NodeChip>duration</NodeChip>
+    </Diagram>,
   ),
 ];
 
@@ -157,6 +205,12 @@ const dispatchLeafNodes: Node[] = [
     "Runs one owned PreparedTurn, retaining terminal facts.",
     "transport",
     0,
+    0,
+    <Diagram>
+      <NodeChip accent>PreparedTurn</NodeChip>
+      <MiniArrow />
+      <NodeChip>terminal</NodeChip>
+    </Diagram>,
   ),
   card(
     "hp-on-first-token",
@@ -165,6 +219,12 @@ const dispatchLeafNodes: Node[] = [
     "Invoked once with TTFT in ns — the first-token observation.",
     "compute",
     COL,
+    0,
+    <Diagram>
+      <NodeChip accent>TTFT ns</NodeChip>
+      <MiniArrow />
+      <NodeChip>Fn(i64)</NodeChip>
+    </Diagram>,
   ),
   card(
     "hp-first-token-latch",
@@ -173,6 +233,12 @@ const dispatchLeafNodes: Node[] = [
     "Fires on_first_token(at_ns - start_ns) on first content.",
     "compute",
     COL * 2,
+    0,
+    <Diagram>
+      <NodeChip>false</NodeChip>
+      <MiniArrow />
+      <NodeChip accent>latched</NodeChip>
+    </Diagram>,
   ),
 ];
 
