@@ -1049,7 +1049,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             credit_context, request_info, first_token_callback
         )
 
-        self._maybe_store_response(session, record)
+        self._finalize_session_response(session, credit_context, record)
 
     async def _try_payload_bytes_fast_path(
         self,
@@ -1113,24 +1113,64 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             credit_context.error = record.error
         return True
 
-    def _maybe_store_response(
-        self, session: UserSession, record: RequestRecord
+    def _process_responses_for_record(
+        self,
+        record: RequestRecord,
+        *,
+        capture_assistant_turn: bool,
+    ) -> tuple[list[ParsedResponse], Turn | None]:
+        """Process responses while preserving protocol-only third-party endpoints.
+
+        The fallback supports ``EndpointProtocol`` implementations that do not
+        inherit ``BaseEndpoint`` and therefore lack its optional replay helpers.
+        """
+        endpoint = self.inference_client.endpoint
+        process_responses = getattr(endpoint, "process_responses", None)
+        if callable(process_responses):
+            return process_responses(
+                record, capture_assistant_turn=capture_assistant_turn
+            )
+
+        parsed_responses = endpoint.extract_response_data(record)
+        build_assistant_turn = getattr(endpoint, "build_assistant_turn", None)
+        assistant_turn = (
+            build_assistant_turn(record)
+            if capture_assistant_turn and callable(build_assistant_turn)
+            else None
+        )
+        return parsed_responses, assistant_turn
+
+    def _finalize_session_response(
+        self,
+        session: UserSession,
+        credit_context: CreditContext,
+        record: RequestRecord,
     ) -> None:
-        """Store the assistant turn on the session when the mode retains history."""
-        if session.should_store_response() and (
-            resp_turn := self.inference_client.endpoint.build_assistant_turn(record)
-        ):
-            session.store_response(resp_turn)
+        """Store the assistant turn (when retained) and populate metrics from a
+        single response-processing pass, shared with the payload-bytes path."""
+        parsed_responses, assistant_turn = self._process_responses_for_record(
+            record,
+            capture_assistant_turn=session.should_store_response(),
+        )
+        if assistant_turn is not None:
+            session.store_response(assistant_turn)
+        self._populate_response_metrics(credit_context, record, parsed_responses)
 
     def _populate_response_metrics(
-        self, credit_context: CreditContext, record: RequestRecord
+        self,
+        credit_context: CreditContext,
+        record: RequestRecord,
+        parsed_responses: list[ParsedResponse] | None = None,
     ) -> None:
         """Derive latency/OSL/ITL from ``record`` onto ``credit_context``.
 
         Shared by the normal session path and the payload-bytes fast path so
         both emit identical CreditReturn timing fields from the same record.
         """
-        parsed_responses = self._parsed_responses_for_record(record)
+        if parsed_responses is None:
+            parsed_responses = self.inference_client.endpoint.extract_response_data(
+                record
+            )
         content_perf_ns = self._content_response_perf_ns_for_record(
             record, parsed_responses
         )
@@ -1147,16 +1187,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             credit_context.output_sequence_length,
         )
 
-    def _parsed_responses_for_record(
-        self, record: RequestRecord
-    ) -> list[ParsedResponse]:
-        parsed_responses: list[ParsedResponse] = []
-        for response in record.responses:
-            parsed = self.inference_client.endpoint.parse_response(response)
-            if parsed is not None:
-                parsed_responses.append(parsed)
-        return parsed_responses
-
     def _content_response_perf_ns_for_record(
         self,
         record: RequestRecord,
@@ -1164,7 +1194,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     ) -> list[int]:
         """Return perf timestamps for parsed responses with meaningful content."""
         if parsed_responses is None:
-            parsed_responses = self._parsed_responses_for_record(record)
+            parsed_responses = self.inference_client.endpoint.extract_response_data(
+                record
+            )
         return [parsed.perf_ns for parsed in parsed_responses if parsed.data]
 
     def _request_latency_ns_for_record(
@@ -1197,7 +1229,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     ) -> float | None:
         """Return ITL using the records-pipeline output sequence formula."""
         if parsed_responses is None:
-            parsed_responses = self._parsed_responses_for_record(record)
+            parsed_responses = self.inference_client.endpoint.extract_response_data(
+                record
+            )
         if content_perf_ns is None:
             content_perf_ns = self._content_response_perf_ns_for_record(
                 record, parsed_responses
@@ -1342,12 +1376,15 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         request_info: RequestInfo,
         first_token_callback: FirstTokenCallback | None,
     ) -> RequestRecord:
-        """Send request, record result, and propagate errors to credit context."""
+        """Send request, record result, and propagate errors to credit context.
+
+        Metrics/response storage are handled once by the caller
+        (``_finalize_session_response``) from a single response-processing pass.
+        """
         self.task_stats.total += 1
         record = await self.inference_client.send_request(
             request_info, first_token_callback=first_token_callback
         )
-        self._populate_response_metrics(credit_context, record)
         await self._send_inference_result_message(record)
         credit_context.record_emitted = True
         if record.error is not None:

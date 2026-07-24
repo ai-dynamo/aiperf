@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -137,9 +138,15 @@ def setup_mock_endpoint(worker: Worker, monkeypatch, parse_response_return):
     mock_endpoint = Mock()
     if isinstance(parse_response_return, list):
         mock_endpoint.parse_response = Mock(side_effect=parse_response_return)
+        parsed_responses = [
+            response for response in parse_response_return if response is not None
+        ]
     else:
         mock_endpoint.parse_response = Mock(return_value=parse_response_return)
-    mock_endpoint.extract_response_data = Mock()  # Should NOT be called
+        parsed_responses = (
+            [parse_response_return] if parse_response_return is not None else []
+        )
+    mock_endpoint.extract_response_data = Mock(return_value=parsed_responses)
     monkeypatch.setattr(worker.inference_client, "endpoint", mock_endpoint)
     return mock_endpoint
 
@@ -215,6 +222,77 @@ class TestWorkerFirstTokenCallback:
 
 
 @pytest.mark.asyncio
+class TestWorkerResponseProcessing:
+    """Verify optimized and protocol-compatible response processing."""
+
+    async def test_process_responses_for_record_optimized_endpoint_uses_fast_path(
+        self: "TestWorkerResponseProcessing",
+        monkeypatch: pytest.MonkeyPatch,
+        mock_worker: Worker,
+    ) -> None:
+        parsed_responses = [
+            ParsedResponse(perf_ns=150, data=TextResponseData(text="response"))
+        ]
+        assistant_turn = Turn(role="assistant")
+        process_responses = Mock(return_value=(parsed_responses, assistant_turn))
+        extract_response_data = Mock()
+        endpoint = SimpleNamespace(
+            process_responses=process_responses,
+            extract_response_data=extract_response_data,
+        )
+        monkeypatch.setattr(mock_worker.inference_client, "endpoint", endpoint)
+        record = RequestRecord(start_perf_ns=100)
+
+        result = mock_worker._process_responses_for_record(
+            record, capture_assistant_turn=True
+        )
+
+        assert result == (parsed_responses, assistant_turn)
+        process_responses.assert_called_once_with(record, capture_assistant_turn=True)
+        extract_response_data.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("capture_assistant_turn", "include_builder", "expected_builder_calls"),
+        [
+            param(False, True, 0, id="capture-disabled"),
+            param(True, False, 0, id="builder-unavailable"),
+            param(True, True, 1, id="builder-available"),
+        ],
+    )  # fmt: skip
+    async def test_process_responses_for_record_protocol_endpoint_uses_extraction(
+        self: "TestWorkerResponseProcessing",
+        monkeypatch: pytest.MonkeyPatch,
+        mock_worker: Worker,
+        capture_assistant_turn: bool,
+        include_builder: bool,
+        expected_builder_calls: int,
+    ) -> None:
+        parsed_responses = [
+            ParsedResponse(perf_ns=150, data=TextResponseData(text="response"))
+        ]
+        assistant_turn = Turn(role="assistant")
+        extract_response_data = Mock(return_value=parsed_responses)
+        build_assistant_turn = Mock(return_value=assistant_turn)
+        endpoint_attributes = {"extract_response_data": extract_response_data}
+        if include_builder:
+            endpoint_attributes["build_assistant_turn"] = build_assistant_turn
+        endpoint = SimpleNamespace(**endpoint_attributes)
+        monkeypatch.setattr(mock_worker.inference_client, "endpoint", endpoint)
+        record = RequestRecord(start_perf_ns=100)
+
+        result = mock_worker._process_responses_for_record(
+            record, capture_assistant_turn=capture_assistant_turn
+        )
+
+        expected_turn = (
+            assistant_turn if capture_assistant_turn and include_builder else None
+        )
+        assert result == (parsed_responses, expected_turn)
+        extract_response_data.assert_called_once_with(record)
+        assert build_assistant_turn.call_count == expected_builder_calls
+
+
+@pytest.mark.asyncio
 class TestWorkerRequestLatency:
     async def test_request_latency_uses_last_parsed_content_response(
         self: "TestWorkerRequestLatency",
@@ -226,7 +304,7 @@ class TestWorkerRequestLatency:
             ParsedResponse(perf_ns=200, data=None),
             ParsedResponse(perf_ns=250, data=TextResponseData(text="last")),
         ]
-        setup_mock_endpoint(mock_worker, monkeypatch, parse_returns)
+        endpoint = setup_mock_endpoint(mock_worker, monkeypatch, parse_returns)
         record = RequestRecord(
             start_perf_ns=100,
             responses=[
@@ -237,6 +315,7 @@ class TestWorkerRequestLatency:
         )
 
         assert mock_worker._request_latency_ns_for_record(record) == 150
+        endpoint.extract_response_data.assert_called_once_with(record)
 
     async def test_request_latency_is_none_without_content_response(
         self: "TestWorkerRequestLatency",

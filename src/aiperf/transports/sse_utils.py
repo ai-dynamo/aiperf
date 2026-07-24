@@ -6,11 +6,14 @@ import time
 from collections.abc import AsyncIterator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.enums import SSEEventType, SSEFieldType
 from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.models import SSEMessage
 
 _logger = AIPerfLogger(__name__)
+_SSE_COMMENT_FIELD_NAME = "comment"
+_SSE_DATA_FIELD_NAME = "data"
+_SSE_ERROR_EVENT_VALUE = "error"
+_SSE_EVENT_FIELD_NAME = "event"
 
 
 class AsyncSSEStreamReader:
@@ -84,15 +87,23 @@ class AsyncSSEStreamReader:
         If so, look for any comment field and raise an SSEResponseError
         with that comment as the error message, otherwise use the full message.
         """
+        if (
+            len(message.packets) == 1
+            and message.packets[0].name == _SSE_DATA_FIELD_NAME
+        ):
+            return
+
         has_error_event = any(
-            packet.name == SSEFieldType.EVENT and packet.value == SSEEventType.ERROR
+            packet.name.casefold() == _SSE_EVENT_FIELD_NAME
+            and packet.value is not None
+            and packet.value.casefold() == _SSE_ERROR_EVENT_VALUE
             for packet in message.packets
         )
 
         if has_error_event:
             error_message = None
             for packet in message.packets:
-                if packet.name == SSEFieldType.COMMENT:
+                if packet.name == _SSE_COMMENT_FIELD_NAME:
                     error_message = packet.value
                     break
 
