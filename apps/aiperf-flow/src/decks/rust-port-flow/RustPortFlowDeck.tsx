@@ -273,7 +273,7 @@ export function RustPortFlowDeck(): React.JSX.Element {
                         <PipelineCanvas
                           nodes={ctx.node.nodes}
                           edges={ctx.node.edges}
-                          height={340}
+                          heightClass="h-[68vh] min-h-[480px]"
                           onNodeClick={(id) => ctx.drill(id)}
                           layout={STAGE_LAYOUT}
                         />

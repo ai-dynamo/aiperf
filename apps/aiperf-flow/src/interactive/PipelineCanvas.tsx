@@ -28,6 +28,11 @@ export interface PipelineCanvasProps {
   edges: Edge[];
   /** Fixed canvas height in px (React Flow needs a sized container). Defaults to 420. */
   height?: number;
+  /**
+   * Tailwind height class(es) for a responsive/viewport-relative canvas (e.g. `"h-[72vh]"`).
+   * Takes precedence over `height` when set — use it so the diagram grows with the screen.
+   */
+  heightClass?: string;
   /** Called with a node's id when it is clicked — wire this to a `ZoomStage`'s `drill`. */
   onNodeClick?: (nodeId: string) => void;
   /** `fitView` padding fraction. Defaults to 0.2. */
@@ -85,13 +90,17 @@ export function PipelineCanvas({
   nodes,
   edges,
   height = 420,
+  heightClass,
   onNodeClick,
   fitViewPadding = 0.2,
   layout = "off",
   className,
 }: PipelineCanvasProps): React.JSX.Element {
   return (
-    <div className={className} style={{ height }}>
+    <div
+      className={heightClass ? `${heightClass} ${className ?? ""}` : className}
+      style={heightClass ? undefined : { height }}
+    >
       <ReactFlowProvider>
         {layout === "off" ? (
           <ReactFlow
