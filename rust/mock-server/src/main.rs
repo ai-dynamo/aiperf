@@ -5,6 +5,12 @@
 
 use std::net::SocketAddr;
 
+// mimalloc as the global allocator: the request hot path is allocation-heavy
+// across all worker threads, and mimalloc's per-thread heaps avoid the arena
+// lock contention that made glibc malloc ~28% of server CPU under load.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use aiperf_mock_server::listener::{LISTEN_BACKLOG, build_listener};
 use aiperf_mock_server::{MockServerConfig, balancer, build_router, tls};
 use clap::Parser;

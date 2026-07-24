@@ -35,6 +35,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
 parking_lot = "0.12"
+# Global allocator for the `aiperf-mock-server` binary. Under saturating load
+# the request hot path is allocation-heavy (per-request request-id/model/content
+# strings, response buffers, hyper framing) across all worker threads; profiling
+# showed glibc malloc's arena locking as ~28% of server CPU. mimalloc's
+# per-thread heaps remove that contention. Matches the main `aiperf` binary.
+mimalloc = "0.1"
 futures = { workspace = true }
 bytes = { workspace = true }
 axum = { workspace = true, features = ["macros", "multipart"] }
