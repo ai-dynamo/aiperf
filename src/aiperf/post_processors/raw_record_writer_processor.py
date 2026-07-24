@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import contextlib
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import aiofiles
@@ -19,14 +20,20 @@ from aiperf.common.models import (
     MetricRecordMetadata,
     ParsedResponseRecord,
     RawRecordInfo,
+    RawRecordSummaryInfo,
 )
 from aiperf.common.redact import redact_headers
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
+from aiperf.records.raw_record_summary import build_raw_record_summary_info
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.post_processors.record_observer_context import RecordObserverContext
+
+
+class RawRecordSummaryWriter(BufferedJSONLWriterMixin[RawRecordSummaryInfo]):
+    """Writes compact raw response summaries beside full raw exports."""
 
 
 class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
@@ -61,6 +68,7 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         # Sanitize service_id for filename (replace special chars)
         safe_id = self.service_id.replace("/", "_").replace(":", "_").replace(" ", "_")
         output_file = output_dir / f"raw_records_{safe_id}.jsonl"
+        summary_output_file = output_dir / f"raw_record_summaries_{safe_id}.jsonl"
 
         # Initialize the buffered writer mixin
         super().__init__(
@@ -70,6 +78,14 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
             run=run,
             **kwargs,
         )
+        self._summary_writer = RawRecordSummaryWriter(
+            output_file=summary_output_file,
+            batch_size=Environment.RECORD.RAW_EXPORT_BATCH_SIZE,
+            service_id=service_id,
+            run=run,
+            **kwargs,
+        )
+        self.attach_child_lifecycle(self._summary_writer)
 
         # Counter of records dropped by the fast-path due to non-JSON
         # payload_bytes or serialisation failures. Exposed so operators can
@@ -80,6 +96,11 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
             f"RawRecordWriter initialized: {self.output_file} - "
             "FULL request/response data will be exported (files may be large)"
         )
+
+    @property
+    def summary_output_file(self) -> Path:
+        """Path to this processor's compact raw summary fragment."""
+        return self._summary_writer.output_file
 
     def _build_export_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
@@ -169,6 +190,17 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
 
         # Write using the buffered writer mixin (handles batching and flushing)
         await self.buffered_write(record_export)
+        await self._summary_writer.buffered_write(
+            build_raw_record_summary_info(
+                ctx.record,
+                ctx.metadata,
+            )
+        )
+
+    async def flush_buffer(self) -> None:
+        """Flush both the full raw export and compact summary fragments."""
+        await super().flush_buffer()
+        await self._summary_writer.flush_buffer()
 
 
 class RawRecordAggregator(AIPerfLoggerMixin):
@@ -182,6 +214,9 @@ class RawRecordAggregator(AIPerfLoggerMixin):
                 f"RawRecordAggregator is disabled for export level {self.exporter_config.cfg.artifacts.export_level}"
             )
         self.output_file = exporter_config.cfg.artifacts.profile_export_raw_jsonl_file
+        self.summary_output_file = (
+            exporter_config.cfg.artifacts.profile_export_raw_summary_jsonl_file
+        )
         self.output_dir = (
             exporter_config.cfg.artifacts.artifact_directory
             / OutputDefaults.RAW_RECORDS_FOLDER
@@ -199,24 +234,53 @@ class RawRecordAggregator(AIPerfLoggerMixin):
             return
 
         raw_record_files = list(self.output_dir.glob("raw_records_*.jsonl"))
-        if not raw_record_files:
+        raw_summary_files = list(self.output_dir.glob("raw_record_summaries_*.jsonl"))
+        if not raw_record_files and not raw_summary_files:
             return
 
-        self.output_file.unlink(missing_ok=True)
-        self.info(
-            f"Aggregating {len(raw_record_files)} raw record files from {self.output_dir} to {self.output_file}"
+        record_count = await self._aggregate_files(
+            raw_record_files,
+            self.output_file,
+            "raw records",
         )
-        record_count = 0
-        async with aiofiles.open(self.output_file, "w") as export_file:
-            for file in raw_record_files:
-                async with aiofiles.open(file) as f:
-                    async for line in f:
-                        if line.strip():
-                            record_count += 1
-                            await export_file.write(line)
-                file.unlink(missing_ok=True)
+        summary_count = await self._aggregate_files(
+            raw_summary_files,
+            self.summary_output_file,
+            "raw record summaries",
+        )
 
         with contextlib.suppress(OSError):
             self.output_dir.rmdir()
 
         self.info(f"Aggregated {record_count} raw records to {self.output_file}")
+        if summary_count:
+            self.info(
+                f"Aggregated {summary_count} raw record summaries to "
+                f"{self.summary_output_file}"
+            )
+
+    async def _aggregate_files(
+        self,
+        files: list[Path],
+        output_file: Path,
+        label: str,
+    ) -> int:
+        """Concatenate non-empty JSONL lines and remove staging fragments."""
+        if not files:
+            return 0
+
+        output_file.unlink(missing_ok=True)
+        self.info(
+            f"Aggregating {len(files)} {label} files from {self.output_dir} "
+            f"to {output_file}"
+        )
+        record_count = 0
+        async with aiofiles.open(output_file, "w") as export_file:
+            for file in files:
+                async with aiofiles.open(file) as fragment:
+                    async for line in fragment:
+                        if line.strip():
+                            record_count += 1
+                            await export_file.write(line)
+                file.unlink(missing_ok=True)
+        return record_count

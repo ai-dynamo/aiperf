@@ -1097,16 +1097,16 @@ Seconds to wait after the request is fully sent before cancelling. A delay of 0 
 
 #### `--output-artifact-dir`, `--artifact-dir` `<str>`
 
-Output directory for all benchmark artifacts including metrics (`.csv`, `.json`, `.jsonl`), raw data (`_raw.jsonl`), GPU telemetry (`_gpu_telemetry.jsonl`), and time-sliced metrics (`_timeslices.csv/json`). Directory created if it doesn't exist. All output file paths are constructed relative to this directory.
+Output directory for all benchmark artifacts including metrics (`.csv`, `.json`, `.jsonl`), raw data (`_raw.jsonl`), raw summaries (`_raw_summary.jsonl`), GPU telemetry (`_gpu_telemetry.jsonl`), and time-sliced metrics (`_timeslices.csv/json`). Directory created if it doesn't exist. All output file paths are constructed relative to this directory.
 <br/>_Default: `artifacts`_
 
 #### `--profile-export-prefix`, `--profile-export-file` `<str>`
 
-Base filename for ALL exported files. With prefix='foo' every output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`, `foo_gpu_telemetry.jsonl`, and `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), historical per-file names are used: `profile_export_aiperf.{csv,json}` for the summary, `profile_export.jsonl` and `profile_export_raw.jsonl` for records, `gpu_telemetry_export.jsonl`, and `server_metrics_export.*`. Known suffixes (e.g. `_raw.jsonl`, `_timeslices.csv`, `_server_metrics.parquet`) are stripped from the supplied value.
+Base filename for ALL exported files. With prefix='foo' every output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`, `foo_raw_summary.jsonl`, `foo_gpu_telemetry.jsonl`, and `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), historical per-file names are used: `profile_export_aiperf.{csv,json}` for the summary, `profile_export.jsonl`, `profile_export_raw.jsonl`, and `profile_export_raw_summary.jsonl` for records, `gpu_telemetry_export.jsonl`, and `server_metrics_export.*`. Known suffixes (e.g. `_raw_summary.jsonl`, `_raw.jsonl`, `_timeslices.csv`, `_server_metrics.parquet`) are stripped from the supplied value.
 
 #### `--export-level`, `--profile-export-level` `<str>`
 
-Controls which output files are generated. `summary`: Only aggregate metrics files (`.csv`, `.json`). `records`: Includes per-request metrics (`.jsonl`). `raw`: Includes raw request/response data (`_raw.jsonl`).
+Controls which output files are generated. `summary`: Only aggregate metrics files (`.csv`, `.json`). `records`: Includes per-request metrics (`.jsonl`). `raw`: Includes raw request/response data (`_raw.jsonl`) and compact raw response summaries (`_raw_summary.jsonl`).
 
 **Choices:**
 
@@ -2548,16 +2548,16 @@ Seconds to wait after the request is fully sent before cancelling. A delay of 0 
 
 #### `--output-artifact-dir`, `--artifact-dir` `<str>`
 
-Output directory for all benchmark artifacts including metrics (`.csv`, `.json`, `.jsonl`), raw data (`_raw.jsonl`), GPU telemetry (`_gpu_telemetry.jsonl`), and time-sliced metrics (`_timeslices.csv/json`). Directory created if it doesn't exist. All output file paths are constructed relative to this directory.
+Output directory for all benchmark artifacts including metrics (`.csv`, `.json`, `.jsonl`), raw data (`_raw.jsonl`), raw summaries (`_raw_summary.jsonl`), GPU telemetry (`_gpu_telemetry.jsonl`), and time-sliced metrics (`_timeslices.csv/json`). Directory created if it doesn't exist. All output file paths are constructed relative to this directory.
 <br/>_Default: `artifacts`_
 
 #### `--profile-export-prefix`, `--profile-export-file` `<str>`
 
-Base filename for ALL exported files. With prefix='foo' every output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`, `foo_gpu_telemetry.jsonl`, and `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), historical per-file names are used: `profile_export_aiperf.{csv,json}` for the summary, `profile_export.jsonl` and `profile_export_raw.jsonl` for records, `gpu_telemetry_export.jsonl`, and `server_metrics_export.*`. Known suffixes (e.g. `_raw.jsonl`, `_timeslices.csv`, `_server_metrics.parquet`) are stripped from the supplied value.
+Base filename for ALL exported files. With prefix='foo' every output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`, `foo_raw_summary.jsonl`, `foo_gpu_telemetry.jsonl`, and `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), historical per-file names are used: `profile_export_aiperf.{csv,json}` for the summary, `profile_export.jsonl`, `profile_export_raw.jsonl`, and `profile_export_raw_summary.jsonl` for records, `gpu_telemetry_export.jsonl`, and `server_metrics_export.*`. Known suffixes (e.g. `_raw_summary.jsonl`, `_raw.jsonl`, `_timeslices.csv`, `_server_metrics.parquet`) are stripped from the supplied value.
 
 #### `--export-level`, `--profile-export-level` `<str>`
 
-Controls which output files are generated. `summary`: Only aggregate metrics files (`.csv`, `.json`). `records`: Includes per-request metrics (`.jsonl`). `raw`: Includes raw request/response data (`_raw.jsonl`).
+Controls which output files are generated. `summary`: Only aggregate metrics files (`.csv`, `.json`). `records`: Includes per-request metrics (`.jsonl`). `raw`: Includes raw request/response data (`_raw.jsonl`) and compact raw response summaries (`_raw_summary.jsonl`).
 
 **Choices:**
 

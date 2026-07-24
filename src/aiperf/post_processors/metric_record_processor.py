@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from aiperf.common.enums import MetricType
+from aiperf.common.enums import ExportLevel, MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.messages import MetricRecordsData
 from aiperf.common.models import ParsedResponseRecord
@@ -14,6 +14,7 @@ from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
+from aiperf.records.raw_record_summary import build_raw_record_summary
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -81,5 +82,10 @@ class MetricRecordProcessor(BaseMetricsProcessor):
             metadata=metadata,
             metrics=record_metrics,
             trace_data=record.request.trace_data,
+            raw_summary=(
+                build_raw_record_summary(record)
+                if self.run.cfg.artifacts.export_level == ExportLevel.RAW
+                else None
+            ),
             error=record.request.error,
         )

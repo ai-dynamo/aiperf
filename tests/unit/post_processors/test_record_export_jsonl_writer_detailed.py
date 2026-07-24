@@ -16,6 +16,8 @@ from aiperf.common.models.record_models import (
     MetricRecordInfo,
     MetricRecordMetadata,
     MetricValue,
+    RawRecordSummary,
+    RawRecordSummaryNvext,
 )
 from aiperf.common.models.trace_models import AioHttpTraceData
 from aiperf.config.flags.cli_config import CLIConfig
@@ -238,6 +240,51 @@ class TestRecordExportJSONLWriterProcessResult:
         assert record.error is None
         assert "request_latency" in record.metrics
         assert "output_token_count" in record.metrics
+
+    @pytest.mark.asyncio
+    async def test_process_record_embeds_raw_summary(
+        self,
+        run_records_export,
+        mock_metric_registry: Mock,
+    ):
+        raw_summary = RawRecordSummary(
+            request_id="cmpl-123",
+            status=200,
+            data_chunk_count=2,
+            finish_reason="stop",
+            first_chunk_ms=10.0,
+            last_chunk_ms=25.0,
+            stream_decode_ms=15.0,
+            nvext=RawRecordSummaryNvext(
+                worker_id="decode-worker-0",
+                timing={"prefill_wait_time_ms": 2.5, "ttft_ms": 42.0},
+            ),
+        )
+        message = create_metric_records_data(
+            x_request_id="test-record-123",
+            conversation_id="conv-456",
+            results=[{"request_latency_ns": 1_000_000}],
+        )
+        message.raw_summary = raw_summary
+        processor = RecordExportJSONLWriter(
+            service_id="records-manager",
+            run=run_records_export,
+        )
+
+        async with aiperf_lifecycle(processor):
+            with patch.object(
+                MetricRecordDict,
+                "to_display_dict",
+                return_value={
+                    "request_latency": MetricValue(value=1.0, unit="ms"),
+                },
+            ):
+                await processor.process_record(message)
+
+        record = MetricRecordInfo.model_validate_json(
+            processor.output_file.read_text().splitlines()[0]
+        )
+        assert record.raw_summary == raw_summary
 
     @pytest.mark.asyncio
     async def test_process_record_with_empty_display_metrics(

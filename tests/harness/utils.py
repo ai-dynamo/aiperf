@@ -17,6 +17,7 @@ from aiperf.common.models import (
     JsonExportData,
     MetricRecordInfo,
     RawRecordInfo,
+    RawRecordSummaryInfo,
     ServerMetricsExportData,
     SessionPayloads,
     SlimRecord,
@@ -109,6 +110,7 @@ class AIPerfResults:
         self.inputs = self._load_inputs()
         self.jsonl = self._load_jsonl_records()
         self.raw_records = self._load_raw_records()
+        self.raw_record_summaries = self._load_raw_record_summaries()
         self.log = self._load_text_file("**/logs/aiperf*.log")
 
         # Server metrics outputs
@@ -185,6 +187,19 @@ class AIPerfResults:
                     records.append(RawRecordInfo.model_validate_json(line))
         return records
 
+    def _load_raw_record_summaries(self) -> list[RawRecordSummaryInfo] | None:
+        """Load compact raw response summaries as Pydantic models."""
+        file_path = self._find_file("**/*raw_summary.jsonl")
+        if not file_path:
+            return None
+
+        records = []
+        with open(file_path, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    records.append(RawRecordSummaryInfo.model_validate_json(line))
+        return records
+
     def _load_server_metrics_json(self) -> ServerMetricsExportData | None:
         """Load server metrics JSON export as Pydantic model."""
         file_path = self._find_file("**/*server_metrics_export.json")
@@ -257,6 +272,11 @@ class AIPerfResults:
             assert all(isinstance(r, RawRecordInfo) for r in self.raw_records), (
                 "All raw records should be RawRecordInfo"
             )
+
+        if self.raw_record_summaries:
+            assert all(
+                isinstance(r, RawRecordSummaryInfo) for r in self.raw_record_summaries
+            ), "All raw record summaries should be RawRecordSummaryInfo"
 
     @property
     def request_count(self) -> int:

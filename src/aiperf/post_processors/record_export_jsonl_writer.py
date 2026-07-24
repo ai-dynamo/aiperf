@@ -83,6 +83,7 @@ class RecordExportJSONLWriter(
                 metadata=record_data.metadata,
                 metrics=display_metrics,
                 trace_data=export_trace_data,
+                raw_summary=record_data.raw_summary,
                 error=record_data.error,
             )
 

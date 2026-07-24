@@ -1471,6 +1471,69 @@ class ParsedResponseRecord:
             self.request.error = ErrorDetails.from_exception(err)
 
 
+class RawRecordSummaryNvext(AIPerfBaseModel):
+    """Compact Dynamo nvext fields extracted from raw response packets."""
+
+    timing: dict[str, Any] | None = Field(
+        default=None,
+        description="The Dynamo nvext.timing object extracted from response packets, if present.",
+    )
+    worker_id: str | None = Field(
+        default=None,
+        description="The Dynamo nvext.worker_id extracted from response packets, if present.",
+    )
+
+
+class RawRecordSummary(AIPerfBaseModel):
+    """Compact raw response metadata extracted from raw response packets."""
+
+    request_id: str | None = Field(
+        default=None,
+        description="The response-level request or completion ID, if present in a raw response packet.",
+    )
+    status: int | None = Field(
+        default=None,
+        ge=0,
+        description="The HTTP status code of the response.",
+    )
+    data_chunk_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of non-empty, non-[DONE] raw response data chunks observed for the request.",
+    )
+    finish_reason: str | None = Field(
+        default=None,
+        description="The last non-empty finish_reason found in response packets, if present.",
+    )
+    first_chunk_ms: FiniteFloat | None = Field(
+        default=None,
+        ge=0,
+        description="Milliseconds from request start to the first data chunk, if available.",
+    )
+    last_chunk_ms: FiniteFloat | None = Field(
+        default=None,
+        ge=0,
+        description="Milliseconds from request start to the last data chunk, if available.",
+    )
+    stream_decode_ms: FiniteFloat | None = Field(
+        default=None,
+        ge=0,
+        description="Milliseconds between the first and last data chunk timestamps, if available.",
+    )
+    nvext: RawRecordSummaryNvext | None = Field(
+        default=None,
+        description="Compact Dynamo nvext fields extracted from response packets, if present.",
+    )
+
+
+class RawRecordSummaryInfo(RawRecordSummary):
+    """Standalone compact per-request raw response summary."""
+
+    metadata: MetricRecordMetadata = Field(
+        description="Metadata matching the corresponding profile_export.jsonl row for joins.",
+    )
+
+
 class MetricRecordInfo(AIPerfBaseModel):
     """The full info of a metric record including the metadata, metrics, and error for export."""
 
@@ -1487,6 +1550,12 @@ class MetricRecordInfo(AIPerfBaseModel):
         description="Comprehensive trace data captured via a trace config with wall-clock timestamps. "
         "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
         "The type of the trace data is determined by the transport and library used.",
+    )
+    raw_summary: SerializeAsAny[RawRecordSummary] | None = Field(
+        default=None,
+        description="Compact raw response metadata extracted when raw export is enabled. "
+        "Includes response chunk timing, finish reason, and Dynamo nvext timing "
+        "without retaining full packet payloads.",
     )
     error: ErrorDetails | None = Field(
         default=None,

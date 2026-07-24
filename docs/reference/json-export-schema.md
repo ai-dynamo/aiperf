@@ -56,6 +56,31 @@ A run with 20 requests against a streaming chat endpoint produces entries shaped
 
 Note that `request_throughput` (derived) and `request_count` (aggregate) carry only `unit` + `avg` — no `count`, no `sum`, no percentiles. `request_latency` (record) carries the full set.
 
+## Raw response summaries
+
+With `--export-level raw`, AIPerf writes the full request/response dump to
+`profile_export_raw.jsonl` and a compact per-request sidecar to
+`profile_export_raw_summary.jsonl`. The compact fields are also embedded under
+`raw_summary` in the corresponding `profile_export.jsonl` row. The embedded
+object relies on the row's top-level `metadata`; each standalone sidecar row
+includes its own copy of `metadata` so it remains independently joinable.
+
+Compact summary fields:
+
+| Field | Type | Notes |
+|---|---|---|
+| `metadata` | object | Sidecar only. Matches the corresponding `profile_export.jsonl` metadata, including request, correlation, conversation, session, turn, and worker IDs. |
+| `request_id` | string | Backend `request_id` or `id`, if present. |
+| `status` | int | HTTP response status, if available. |
+| `data_chunk_count` | int | Non-empty, non-`[DONE]` raw data chunks. |
+| `finish_reason` | string | Last non-empty finish reason found in the response packets. |
+| `first_chunk_ms`, `last_chunk_ms`, `stream_decode_ms` | number | Perf-counter-derived chunk offsets in milliseconds. |
+| `nvext.timing` | object | Dynamo `nvext.timing` fields, if present. |
+| `nvext.worker_id` | string | Dynamo worker ID, if present. |
+
+Optional fields are omitted. With `--profile-export-prefix foo`, the sidecar is
+named `foo_raw_summary.jsonl`.
+
 ## Top-level fields
 
 In addition to the per-metric stats blocks, `profile_export_aiperf.json` includes top-level provenance:

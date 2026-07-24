@@ -57,6 +57,7 @@ class OutputDefaults:
     )
     PROFILE_EXPORT_JSONL_FILE = Path("profile_export.jsonl")
     PROFILE_EXPORT_RAW_JSONL_FILE = Path("profile_export_raw.jsonl")
+    PROFILE_EXPORT_RAW_SUMMARY_JSONL_FILE = Path("profile_export_raw_summary.jsonl")
     PROFILE_EXPORT_CONSOLE_TXT_FILE = Path("profile_export_console.txt")
     PROFILE_EXPORT_GPU_TELEMETRY_JSONL_FILE = Path("gpu_telemetry_export.jsonl")
     SERVER_METRICS_EXPORT_JSONL_FILE = Path("server_metrics_export.jsonl")
@@ -96,12 +97,15 @@ class ArtifactsConfig(BaseConfig):
             description="Base filename override applied to ALL profile and server-metrics "
             "exports. With prefix='foo' every output becomes `foo.csv`, `foo.json`, "
             "`foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`, "
+            "`foo_raw_summary.jsonl`, "
             "`foo_gpu_telemetry.jsonl`, `foo_server_metrics.{jsonl,json,csv,parquet}`. "
             "When unset (the default), historical per-file names are used: "
             "`profile_export_aiperf.csv/json`, `profile_export.jsonl`, "
-            "`profile_export_raw.jsonl`, `gpu_telemetry_export.jsonl`, "
+            "`profile_export_raw.jsonl`, `profile_export_raw_summary.jsonl`, "
+            "`gpu_telemetry_export.jsonl`, "
             "`server_metrics_export.{jsonl,json,csv,parquet}`. Known suffixes "
-            "(`_raw.jsonl`, `_timeslices.{csv,json}`, `_gpu_telemetry.jsonl`, "
+            "(`_raw_summary.jsonl`, `_raw.jsonl`, `_timeslices.{csv,json}`, "
+            "`_gpu_telemetry.jsonl`, "
             "`_server_metrics.{jsonl,json,csv,parquet}`, `.csv`/`.json`/`.jsonl`/`.parquet`) "
             "are stripped from the supplied value so `--profile-export-prefix foo_raw.jsonl` "
             "still yields a clean `foo` base.",
@@ -254,6 +258,7 @@ class ArtifactsConfig(BaseConfig):
         "_timeslices.csv",
         "_timeslices.json",
         "_console.txt",
+        "_raw_summary.jsonl",
         "_raw.jsonl",
         ".parquet",
         ".csv",
@@ -327,6 +332,17 @@ class ArtifactsConfig(BaseConfig):
         """Path for the raw request/response JSONL export file."""
         base = self._base()
         name = f"{base}_raw.jsonl" if base else "profile_export_raw.jsonl"
+        return self.dir / name
+
+    @property
+    def profile_export_raw_summary_jsonl_file(self) -> Path:
+        """Path for the compact raw response summary JSONL export file."""
+        base = self._base()
+        name = (
+            f"{base}_raw_summary.jsonl"
+            if base
+            else OutputDefaults.PROFILE_EXPORT_RAW_SUMMARY_JSONL_FILE.name
+        )
         return self.dir / name
 
     @property
