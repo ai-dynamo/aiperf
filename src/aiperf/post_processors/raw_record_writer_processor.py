@@ -4,17 +4,15 @@
 
 from __future__ import annotations
 
-import contextlib
 from typing import TYPE_CHECKING
 
-import aiofiles
 import orjson
 
 from aiperf.common.enums import ExportLevel
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
 from aiperf.common.finite import scrub_non_finite
-from aiperf.common.mixins import AIPerfLoggerMixin, BufferedJSONLWriterMixin
+from aiperf.common.mixins import BufferedJSONLWriterMixin
 from aiperf.common.models import (
     MetricRecordMetadata,
     ParsedResponseRecord,
@@ -23,13 +21,16 @@ from aiperf.common.models import (
 from aiperf.common.redact import redact_headers
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
+from aiperf.post_processors.shard_writer import ShardAggregatorMixin, ShardWriterMixin
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.post_processors.record_observer_context import RecordObserverContext
 
 
-class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
+class RawRecordWriterProcessor(
+    ShardWriterMixin, BufferedJSONLWriterMixin[RawRecordInfo]
+):
     """Writes raw request/response data with per-record metrics to JSONL files.
 
     Each RecordProcessor instance writes to its own file to avoid contention
@@ -53,14 +54,13 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
                 f"RawRecordWriter processor is disabled for export level {self.run.cfg.artifacts.export_level}"
             )
 
-        # Construct output file path: raw_records/raw_records_processor_{id}.jsonl
-        output_dir = self.run.cfg.artifacts.dir / OutputDefaults.RAW_RECORDS_FOLDER
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Each processor writes to its own file - avoids locking/contention
-        # Sanitize service_id for filename (replace special chars)
-        safe_id = self.service_id.replace("/", "_").replace(":", "_").replace(" ", "_")
-        output_file = output_dir / f"raw_records_{safe_id}.jsonl"
+        output_file = self.shard_output_file(
+            self.run.cfg.artifacts.dir,
+            OutputDefaults.RAW_RECORDS_FOLDER,
+            prefix="raw_records",
+            ext="jsonl",
+            service_id=service_id,
+        )
 
         # Initialize the buffered writer mixin
         super().__init__(
@@ -171,8 +171,8 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         await self.buffered_write(record_export)
 
 
-class RawRecordAggregator(AIPerfLoggerMixin):
-    """Aggregator for raw records."""
+class RawRecordAggregator(ShardAggregatorMixin):
+    """Merges per-processor raw-record JSONL shards into the final raw export."""
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs):
         super().__init__(**kwargs)
@@ -182,7 +182,7 @@ class RawRecordAggregator(AIPerfLoggerMixin):
                 f"RawRecordAggregator is disabled for export level {self.exporter_config.cfg.artifacts.export_level}"
             )
         self.output_file = exporter_config.cfg.artifacts.profile_export_raw_jsonl_file
-        self.output_dir = (
+        self.shard_dir = (
             exporter_config.cfg.artifacts.artifact_directory
             / OutputDefaults.RAW_RECORDS_FOLDER
         )
@@ -194,29 +194,8 @@ class RawRecordAggregator(AIPerfLoggerMixin):
         )
 
     async def export(self) -> None:
-        """Aggregate the raw records."""
-        if self.exporter_config.cfg.artifacts.export_level != ExportLevel.RAW:
-            return
-
-        raw_record_files = list(self.output_dir.glob("raw_records_*.jsonl"))
-        if not raw_record_files:
-            return
-
-        self.output_file.unlink(missing_ok=True)
-        self.info(
-            f"Aggregating {len(raw_record_files)} raw record files from {self.output_dir} to {self.output_file}"
+        """Concatenate every ``raw_records_*.jsonl`` shard into the final export."""
+        count = await self._concat_shards(
+            self.shard_dir, "raw_records_*.jsonl", self.output_file
         )
-        record_count = 0
-        async with aiofiles.open(self.output_file, "w") as export_file:
-            for file in raw_record_files:
-                async with aiofiles.open(file) as f:
-                    async for line in f:
-                        if line.strip():
-                            record_count += 1
-                            await export_file.write(line)
-                file.unlink(missing_ok=True)
-
-        with contextlib.suppress(OSError):
-            self.output_dir.rmdir()
-
-        self.info(f"Aggregated {record_count} raw records to {self.output_file}")
+        self.info(f"Aggregated {count} raw records to {self.output_file}")
