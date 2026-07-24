@@ -530,33 +530,6 @@ class TestCreateRequestInfo:
             drop_perf_ns=0,
         )
 
-    async def test_create_request_info_plumbs_finality_from_credit(self, mock_worker):
-        # Real Credit struct (not a MagicMock, which would auto-create the
-        # attributes and mask a missed plumb) carrying both finality facts.
-        credit_context = CreditContext(
-            credit=Credit(
-                id=1,
-                phase=CreditPhase.PROFILING,
-                conversation_id="test-conv",
-                x_correlation_id="test-correlation",
-                turn_index=0,
-                num_turns=1,
-                issued_at_ns=0,
-                is_parent_final=True,
-                is_tree_final=True,
-            ),
-            drop_perf_ns=0,
-        )
-
-        request_info = mock_worker._create_request_info(
-            x_request_id="request-id",
-            credit_context=credit_context,
-            turns=[Turn()],
-        )
-
-        assert request_info.is_parent_final is True
-        assert request_info.is_tree_final is True
-
     async def test_create_request_info_plumbs_phase_fields_from_credit(
         self, mock_worker
     ):

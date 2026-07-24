@@ -160,44 +160,6 @@ class SessionTreeRegistry:
         """True when this registry is tracking ``root_corr`` (engagement gate)."""
         return root_corr in self._trees
 
-    def root_terminal(self, root_correlation_id: str) -> bool | None:
-        """True when the tree's root has returned its terminal turn; None if unknown.
-
-        Queried at credit-issue time while the tree is still live (a descendant
-        being issued keeps it in ``_trees``). A fully drained tree has been
-        popped and reads as unknown/None.
-        """
-        state = self._trees.get(root_correlation_id)
-        if state is None:
-            return None
-        return not state.root_pending
-
-    def is_last_tree_request(
-        self,
-        root_correlation_id: str,
-        *,
-        is_final_turn: bool,
-        is_root_credit: bool,
-        has_branches: bool,
-    ) -> bool:
-        """Conservative: True only when this credit is provably the tree's last request.
-
-        ``has_branches`` means "this turn declares ANY branch (FORK or SPAWN)
-        and will therefore spawn descendants on its return". It must NOT be the
-        FORK-only ``has_forks`` flag: SPAWN children register with this registry
-        only at return-intercept, AFTER the issuer stamped finality, so a
-        spawning final turn would otherwise read as last while its children are
-        pending (wrong-True, violating the conservative contract).
-        """
-        if not is_final_turn or has_branches:
-            return False
-        state = self._trees.get(root_correlation_id)
-        if state is None:
-            return False
-        if is_root_credit:
-            return state.outstanding <= 0
-        return (not state.root_pending) and state.outstanding == 1
-
     def register_descendants(self, root_corr: str, n: int = 1) -> None:
         """Add ``n`` descendants (spawned or snapshot-seeded) to a tree.
 

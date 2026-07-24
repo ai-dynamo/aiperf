@@ -77,12 +77,6 @@ class Credit(
     ``agent_depth``.
     """
     has_forks: bool = False
-    is_parent_final: bool | None = None
-    """Parent conversation had already returned its final turn at issue time.
-    None for roots / when not determinable. Issue-time stamp, never copied."""
-    is_tree_final: bool = False
-    """Provably the last request the whole session tree will send (conservative
-    False when indeterminate). Issue-time stamp from SessionTreeRegistry."""
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
     """DAG branch mode for this credit. Ignored when parent_correlation_id is None
     (i.e. for root sessions). FORK = inherit parent turn_list; SPAWN =
