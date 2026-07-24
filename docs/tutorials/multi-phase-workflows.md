@@ -168,7 +168,7 @@ sweep:
 
 ## Seamless Transitions
 
-By default, AIPerf waits for a phase's in-flight requests to finish before moving to the next phase. Set `seamless: true` on a later phase when the next phase should start immediately after the previous phase stops issuing new work:
+By default, AIPerf waits for a phase's in-flight requests to finish before moving to the next phase. Set `seamless: true` on phase N when phase N should start immediately after phase N−1 stops issuing new work:
 
 ```yaml
 phases:
@@ -185,3 +185,7 @@ phases:
 ```
 
 `seamless` cannot be set on the first phase because there is no previous phase to transition from.
+
+For flat multi-turn datasets, non-final root sessions that are still live at the boundary continue in phase N. AIPerf preserves their conversation ID, correlation ID, turn index, worker affinity, and accumulated worker-side context. Their session-concurrency slot and session accounting transfer from phase N−1 to phase N; completed requests remain attributed to the phase that issued them.
+
+DAG child sessions are never transferred between phases. DAG-shaped datasets keep their existing branch-orchestration path instead of using root-session handoff.

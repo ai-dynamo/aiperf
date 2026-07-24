@@ -81,6 +81,15 @@ class TimingStrategyProtocol(Protocol):
         """
         ...
 
+    async def handle_phase_handoff(self, credit: Credit) -> None:
+        """Continue a live root session as a session owned by this phase.
+
+        The returned credit belongs to the outgoing phase. Implementations
+        preserve its conversation and routing identity while dispatching the
+        next turn with new-phase accounting.
+        """
+        ...
+
 
 @runtime_checkable
 class CreditResultAwareStrategyProtocol(Protocol):

@@ -142,9 +142,16 @@ class CreditIssuer:
         # Session concurrency: one slot per conversation, acquired on first turn only.
         # Controls how many multi-turn conversations can be active simultaneously.
         if is_first_turn:
-            acquired = await self._concurrency_manager.acquire_session_slot(
-                self._phase_key, self._stop_checker.can_start_new_session
-            )
+            if turn.handoff_source_phase is not None:
+                acquired = await self._concurrency_manager.transfer_session_slot(
+                    turn.handoff_source_phase,
+                    self._phase_key,
+                    self._stop_checker.can_start_new_session,
+                )
+            else:
+                acquired = await self._concurrency_manager.acquire_session_slot(
+                    self._phase_key, self._stop_checker.can_start_new_session
+                )
             if not acquired:
                 return False
 
@@ -177,6 +184,10 @@ class CreditIssuer:
             None: No slots available, credit NOT issued. Retry later.
         """
         is_first_turn = turn.is_session_start
+        if turn.handoff_source_phase is not None:
+            raise RuntimeError(
+                "seamless handoff turns require blocking credit issuance"
+            )
 
         # Select appropriate check function based on turn type
         can_proceed_fn = (

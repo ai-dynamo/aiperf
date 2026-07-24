@@ -209,6 +209,16 @@ class TestCreditCounter:
         c.increment_returned(is_final_turn=True, cancelled=True)
         assert c.in_flight_sessions == 1
 
+    def test_handed_off_session_leaves_source_in_flight_accounting(self) -> None:
+        c = CreditCounter(cfg())
+        c.increment_sent(turn(conv="source", idx=0, num=5))
+
+        c.increment_handed_off_session()
+
+        assert c.sent_sessions == 1
+        assert c.completed_sessions == 0
+        assert c.in_flight_sessions == 0
+
     def test_in_flight_prefills(self) -> None:
         c = CreditCounter(cfg())
         for _ in range(3):

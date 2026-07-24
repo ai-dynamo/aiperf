@@ -10,9 +10,10 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
-from aiperf.common.enums import ConversationContextMode
+from aiperf.common.enums import ConversationContextMode, CreditPhase
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.models.dataset_models import DatasetMetadata
+from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.workers.session_manager import UserSession, UserSessionManager
 
@@ -329,6 +330,37 @@ class TestUserSessionTurnList:
         turns = session.turn_list
         assert len(turns) == 1
         assert turns[0].messages[0]["content"] == "Q2"
+
+    def test_message_array_phase_handoff_replaces_with_self_contained_turn(
+        self,
+    ) -> None:
+        session = _make_session(
+            context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
+        session.advance_turn(1)
+        source_credit = Credit(
+            id=1,
+            phase=CreditPhase.WARMUP,
+            phase_index=0,
+            conversation_id=session.conversation.session_id,
+            x_correlation_id=session.x_correlation_id,
+            turn_index=1,
+            num_turns=3,
+            issued_at_ns=0,
+        )
+        handoff = TurnToSend.from_previous_credit(
+            source_credit,
+            as_session_start=True,
+            handoff_source_phase=0,
+        )
+
+        session.advance_turn(handoff.turn_index)
+
+        assert handoff.x_correlation_id == session.x_correlation_id
+        assert handoff.turn_index == 2
+        assert handoff.start_turn_index == 2
+        assert len(session.turn_list) == 1
+        assert session.turn_list[0].messages[0]["content"] == "Q2"
 
     def test_message_array_single_turn(self) -> None:
         session = _make_session(

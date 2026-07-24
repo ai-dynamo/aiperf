@@ -106,6 +106,7 @@ def make_credit(
     phase: CreditPhase = CreditPhase.PROFILING,
     phase_index: int | None = None,
     agent_depth: int = 0,
+    parent_correlation_id: str | None = None,
 ) -> Credit:
     """Create a Credit for testing."""
     return Credit(
@@ -118,6 +119,7 @@ def make_credit(
         num_turns=num_turns,
         issued_at_ns=time.time_ns(),
         agent_depth=agent_depth,
+        parent_correlation_id=parent_correlation_id,
     )
 
 
@@ -414,6 +416,148 @@ class TestNextTurnDispatch:
         credit_return2 = make_credit_return(credit2)
         await registered_handler.on_credit_return("worker-1", credit_return2)
         mock_strategy.handle_credit_return.assert_not_called()
+
+
+class TestPhaseHandoff:
+    """Tests for live-session transfer across runtime-indexed phases."""
+
+    async def test_same_kind_runtime_phases_handoff_non_final_root(
+        self, callback_handler
+    ) -> None:
+        source_progress = MagicMock()
+        source_progress.increment_returned.return_value = False
+        source_progress.all_credits_returned_event = asyncio.Event()
+        source_progress.in_flight_sessions = 0
+        source_strategy = MagicMock(handle_credit_return=AsyncMock())
+        target_strategy = MagicMock(handle_phase_handoff=AsyncMock())
+
+        callback_handler.register_phase(
+            phase=CreditPhase.PROFILING,
+            phase_index=0,
+            progress=source_progress,
+            lifecycle=MagicMock(
+                is_sending_complete=True, is_complete=False, is_started=True
+            ),
+            stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=False)),
+            strategy=source_strategy,
+        )
+        callback_handler.register_phase(
+            phase=CreditPhase.PROFILING,
+            phase_index=1,
+            progress=MagicMock(),
+            lifecycle=MagicMock(
+                is_sending_complete=False, is_complete=False, is_started=True
+            ),
+            stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=True)),
+            strategy=target_strategy,
+        )
+        callback_handler.start_phase_handoff(0, 1)
+        credit = make_credit(phase_index=0, turn_index=2, num_turns=5)
+
+        await callback_handler.on_credit_return("worker-1", make_credit_return(credit))
+
+        source_progress.increment_handed_off_session.assert_called_once()
+        source_strategy.handle_credit_return.assert_not_called()
+        target_strategy.handle_phase_handoff.assert_awaited_once_with(credit)
+
+    async def test_return_before_target_start_is_drained_after_registration(
+        self, callback_handler
+    ) -> None:
+        source_progress = MagicMock()
+        source_progress.increment_returned.return_value = False
+        source_progress.all_credits_returned_event = asyncio.Event()
+        source_progress.in_flight_sessions = 0
+        callback_handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            phase_index=0,
+            progress=source_progress,
+            lifecycle=MagicMock(
+                is_sending_complete=True, is_complete=False, is_started=True
+            ),
+            stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=False)),
+            strategy=MagicMock(handle_credit_return=AsyncMock()),
+        )
+        callback_handler.start_phase_handoff(0, 1)
+        credit = make_credit(
+            phase=CreditPhase.WARMUP,
+            phase_index=0,
+            turn_index=3,
+            num_turns=8,
+        )
+
+        await callback_handler.on_credit_return("worker-1", make_credit_return(credit))
+
+        target_strategy = MagicMock(handle_phase_handoff=AsyncMock())
+        callback_handler.register_phase(
+            phase=CreditPhase.PROFILING,
+            phase_index=1,
+            progress=MagicMock(),
+            lifecycle=MagicMock(
+                is_sending_complete=False, is_complete=False, is_started=True
+            ),
+            stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=True)),
+            strategy=target_strategy,
+        )
+        await callback_handler.drain_pending_handoffs(1)
+
+        target_strategy.handle_phase_handoff.assert_awaited_once_with(credit)
+
+    @pytest.mark.parametrize(
+        "agent_depth,parent_correlation_id,allow_session_handoff",
+        [
+            (1, "root", True),
+            (0, "root", True),
+            (0, None, False),
+        ],
+    )
+    async def test_dag_and_non_root_sessions_stay_on_source_path(
+        self,
+        callback_handler,
+        agent_depth: int,
+        parent_correlation_id: str | None,
+        allow_session_handoff: bool,
+    ) -> None:
+        source_progress = MagicMock()
+        source_progress.increment_returned.return_value = False
+        source_progress.all_credits_returned_event = asyncio.Event()
+        source_progress.in_flight_sessions = 0
+        source_strategy = MagicMock(handle_credit_return=AsyncMock())
+        target_strategy = MagicMock(handle_phase_handoff=AsyncMock())
+        callback_handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            phase_index=0,
+            progress=source_progress,
+            lifecycle=MagicMock(
+                is_sending_complete=True, is_complete=False, is_started=True
+            ),
+            stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=True)),
+            strategy=source_strategy,
+            allow_session_handoff=allow_session_handoff,
+        )
+        callback_handler.register_phase(
+            phase=CreditPhase.PROFILING,
+            phase_index=1,
+            progress=MagicMock(),
+            lifecycle=MagicMock(
+                is_sending_complete=False, is_complete=False, is_started=True
+            ),
+            stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=True)),
+            strategy=target_strategy,
+        )
+        callback_handler.start_phase_handoff(0, 1)
+        credit = make_credit(
+            phase=CreditPhase.WARMUP,
+            phase_index=0,
+            turn_index=1,
+            num_turns=3,
+            agent_depth=agent_depth,
+            parent_correlation_id=parent_correlation_id,
+        )
+
+        await callback_handler.on_credit_return("worker-1", make_credit_return(credit))
+
+        target_strategy.handle_phase_handoff.assert_not_called()
+        source_strategy.handle_credit_return.assert_awaited_once_with(credit)
 
 
 # =============================================================================

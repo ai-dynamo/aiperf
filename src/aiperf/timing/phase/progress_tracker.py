@@ -137,6 +137,10 @@ class PhaseProgressTracker:
         """
         self._counter.increment_prefill_released()
 
+    def increment_handed_off_session(self) -> None:
+        """Remove one live root session from this phase's slot accounting."""
+        self._counter.increment_handed_off_session()
+
     # =========================================================================
     # Freezing Methods
     # =========================================================================

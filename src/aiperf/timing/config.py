@@ -93,7 +93,8 @@ class TimingConfig(AIPerfBaseModel):
         stable identity metadata: absolute ``phase_index``, profiling-only
         ``profiling_index``, ``phase_name``, and ``phase_kind``. A phase-local
         cancellation config is attached to each timing phase; omitted per-phase
-        cancellation inherits the run default.
+        cancellation inherits the run default. User-facing ``seamless`` on
+        phase N is translated to the outgoing runner switch on phase N-1.
         """
         cfg = run.cfg
 
@@ -114,6 +115,8 @@ class TimingConfig(AIPerfBaseModel):
                 if phase.kind == "profiling"
                 else warmup_default_cancellation
             )
+            if phase.seamless and configs:
+                configs[-1] = configs[-1].model_copy(update={"seamless": True})
             configs.append(
                 _build_phase_config(
                     phase,
@@ -180,10 +183,9 @@ class CreditPhaseConfig(AIPerfBaseModel):
     )
     seamless: bool = Field(
         default=False,
-        description="Whether the credit phase should be seamless. "
-        "Seamless phases start immediately after the previous phase sends all credits, "
-        "without waiting for all credits to return. This can be used to maintain concurrency "
-        "during phase transitions.",
+        description="Internal outgoing-phase seamless switch. When True, this "
+        "phase returns after sending completes and drains returns in the "
+        "background while the next phase starts.",
     )
     concurrency: int | None = Field(
         default=None,
@@ -457,8 +459,8 @@ def _build_warmup_config(
 
     When the phase doesn't set ``grace_period``, default to infinity (wait
     forever for in-flight requests). This differs from the CreditPhaseConfig
-    field default of None (disabled) because warmup should always complete all
-    in-flight requests before transitioning to profiling.
+    field default of None (disabled) because warmup should always account for
+    all in-flight requests, even when the next phase starts during that drain.
     """
     grace_period = phase.grace_period
     if grace_period is None:
@@ -525,7 +527,7 @@ def _build_profiling_config(
         request_rate=_phase_request_rate(phase),
         arrival_pattern=_phase_arrival_pattern(phase),
         arrival_smoothness=getattr(phase, "smoothness", None),
-        seamless=phase.seamless,
+        seamless=False,
         grace_period_sec=phase.grace_period,
         trajectory_start_min_ratio=phase.trajectory_start_min_ratio,
         trajectory_start_max_ratio=phase.trajectory_start_max_ratio,

@@ -14,10 +14,12 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from aiperf.common.constants import MILLIS_PER_SECOND
 from aiperf.common.mixins import AIPerfLoggerMixin
+from aiperf.common.phase import phase_runtime_key
 from aiperf.credit.structs import Credit, TurnToSend
 
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
+    from aiperf.common.models import TurnMetadata
     from aiperf.credit.issuer import CreditIssuer
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource
@@ -157,15 +159,31 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         # sticky router defers parent-entry eviction until DAG children drain
         # (dropping it premature-evicts a fork-bearing parent's later turns).
         turn = TurnToSend.from_previous_credit(credit, next_meta)
+        self._schedule_continuation(turn, next_meta)
 
-        if next_meta.timestamp_ms is not None:
+    async def handle_phase_handoff(self, credit: Credit) -> None:
+        """Schedule the first continuation owned by this phase."""
+        if credit.is_final_turn:
+            return
+        next_meta = self._conversation_source.get_next_turn_metadata(credit)
+        turn = TurnToSend.from_previous_credit(
+            credit,
+            next_meta,
+            as_session_start=True,
+            handoff_source_phase=phase_runtime_key(credit.phase, credit.phase_index),
+        )
+        self._schedule_continuation(turn, next_meta)
+
+    def _schedule_continuation(self, turn: TurnToSend, meta: TurnMetadata) -> None:
+        """Schedule ``turn`` according to its trace timing metadata."""
+        if meta.timestamp_ms is not None:
             self._scheduler.schedule_at_perf_sec(
-                self._timestamp_to_perf_sec(next_meta.timestamp_ms),
+                self._timestamp_to_perf_sec(meta.timestamp_ms),
                 self._credit_issuer.issue_credit(turn),
             )
-        elif next_meta.delay_ms is not None:
+        elif meta.delay_ms is not None:
             self._scheduler.schedule_later(
-                next_meta.delay_ms / MILLIS_PER_SECOND,
+                meta.delay_ms / MILLIS_PER_SECOND,
                 self._credit_issuer.issue_credit(turn),
             )
         else:

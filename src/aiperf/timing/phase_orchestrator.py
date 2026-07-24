@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from aiperf.common.hooks import on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
+from aiperf.common.phase import PhaseRuntimeKey, phase_runtime_key
 from aiperf.credit.callback_handler import CreditCallbackHandler
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -189,14 +190,22 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         3. Runner handles setup, execution, and cleanup
 
         Seamless Mode:
-            With seamless=True, a phase can start before the previous phase
-            completes waiting for returns. This allows smooth phase transitions
-            without gaps in request issuance. Multiple runners may be active
-            simultaneously (old phase waiting for returns while new phase sends).
+            Internal seamless=True belongs to the outgoing phase. Its live
+            root sessions transfer into the next phase as returns arrive while
+            the old runner drains in the background.
         """
+        background_runners: list[PhaseRunner] = []
         for i, phase_config in enumerate(self._ordered_phase_configs):
             is_final_phase = i == len(self._ordered_phase_configs) - 1
             is_seamless_non_final = phase_config.seamless and not is_final_phase
+            source_key = phase_runtime_key(phase_config.phase, phase_config.phase_index)
+
+            if is_seamless_non_final:
+                target_config = self._ordered_phase_configs[i + 1]
+                self._callback_handler.start_phase_handoff(
+                    source_key,
+                    phase_runtime_key(target_config.phase, target_config.phase_index),
+                )
 
             runner = PhaseRunner(
                 config=phase_config,
@@ -215,7 +224,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             # when background return wait completes
             if is_seamless_non_final:
                 runner.set_phase_complete_callback(
-                    self._phase_runner_cleanup_callback(runner)
+                    self._phase_runner_cleanup_callback(runner, source_key)
                 )
 
             # Track active runner (multiple possible with seamless mode)
@@ -232,13 +241,21 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
 
             # Remove from active runners when fully complete
             # For seamless phases, this happens after returns complete (background task)
-            if not is_seamless_non_final:
+            if is_seamless_non_final:
+                background_runners.append(runner)
+            else:
                 self._active_runners.remove(runner)
 
-    def _phase_runner_cleanup_callback(self, runner: PhaseRunner) -> Callable[[], None]:
+        for runner in background_runners:
+            await runner.wait_for_completion()
+
+    def _phase_runner_cleanup_callback(
+        self, runner: PhaseRunner, source_key: PhaseRuntimeKey
+    ) -> Callable[[], None]:
         """Create callback that removes runner from active list when phase completes."""
 
         def cleanup() -> None:
+            self._callback_handler.clear_phase_handoff(source_key)
             if runner in self._active_runners:
                 self._active_runners.remove(runner)
                 self.debug(f"Removed completed runner for phase {runner.phase}")

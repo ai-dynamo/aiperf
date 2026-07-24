@@ -321,6 +321,31 @@ class TestGlobalPhaseConcurrencyLimiter:
         assert await lim.acquire(P, lambda: True) is True
 
     @pytest.mark.asyncio
+    async def test_transfer_moves_phase_slot_without_reacquiring_global(self) -> None:
+        lim = GlobalPhaseConcurrencyLimiter()
+        lim.configure_for_phase(0, 1)
+        assert await lim.acquire(0, lambda: True)
+        lim.configure_for_phase(1, 1)
+
+        assert await lim.transfer(0, 1, lambda: True)
+
+        assert lim.get_held_slots(0) == 0
+        assert lim.get_held_slots(1) == 1
+        assert lim.global_stats.acquire_count == 1
+
+    @pytest.mark.asyncio
+    async def test_transfer_to_unlimited_phase_releases_source_slot(self) -> None:
+        lim = GlobalPhaseConcurrencyLimiter()
+        lim.configure_for_phase(0, 1)
+        assert await lim.acquire(0, lambda: True)
+        lim.configure_for_phase(1, None)
+
+        assert await lim.transfer(0, 1, lambda: True)
+
+        assert lim.get_held_slots(0) == 0
+        assert lim.global_stats.release_count == 1
+
+    @pytest.mark.asyncio
     async def test_held_slots_tracking(self) -> None:
         lim = GlobalPhaseConcurrencyLimiter()
         lim.configure_for_phase(P, 10)
@@ -406,6 +431,20 @@ class TestConcurrencyManager:
         await asyncio.sleep(0.05)
         assert task.done()
         await _cancel(task)
+
+    @pytest.mark.asyncio
+    async def test_transfer_session_slot_uses_runtime_phase_keys(self) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(0, 1, None)
+        assert await m.acquire_session_slot(0, lambda: True)
+        m.configure_for_phase(1, 1, None)
+
+        assert await m.transfer_session_slot(0, 1, lambda: True)
+
+        source = m.get_session_stats(0)
+        target = m.get_session_stats(1)
+        assert source is not None and source.release_count == 1
+        assert target is not None and target.acquire_count == 1
 
     @pytest.mark.asyncio
     async def test_acquire_prefill_slot_disabled_calls_check(self) -> None:

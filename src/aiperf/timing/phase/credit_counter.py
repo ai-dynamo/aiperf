@@ -35,6 +35,7 @@ class CreditCounter:
         self._sent_sessions: int = 0
         self._completed_sessions: int = 0
         self._cancelled_sessions: int = 0
+        self._handed_off_sessions: int = 0
         self._total_session_turns: int = 0
         self._prefills_released: int = 0  # TTFTs received + returns without TTFT
 
@@ -107,7 +108,12 @@ class CreditCounter:
     @property
     def in_flight_sessions(self) -> int:
         """Sessions started but not yet finished (no final turn returned)."""
-        return self._sent_sessions - self._completed_sessions - self._cancelled_sessions
+        return (
+            self._sent_sessions
+            - self._completed_sessions
+            - self._cancelled_sessions
+            - self._handed_off_sessions
+        )
 
     @property
     def in_flight(self) -> int:
@@ -287,6 +293,10 @@ class CreditCounter:
                 self._request_errors += 1
 
         return self.check_all_returned_or_cancelled()
+
+    def increment_handed_off_session(self) -> None:
+        """Remove one live root session from this phase's slot accounting."""
+        self._handed_off_sessions += 1
 
     def check_all_returned_or_cancelled(self) -> bool:
         """True if all sent credits have been returned or cancelled."""

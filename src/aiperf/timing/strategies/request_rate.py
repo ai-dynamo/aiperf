@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from aiperf.common import random_generator as rng
 from aiperf.common.constants import MILLIS_PER_SECOND, NANOS_PER_SECOND
 from aiperf.common.mixins import AIPerfLoggerMixin
+from aiperf.common.phase import phase_runtime_key
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin import plugins
@@ -19,6 +20,7 @@ from aiperf.timing.intervals import IntervalGeneratorConfig
 
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
+    from aiperf.common.models import TurnMetadata
     from aiperf.credit.issuer import CreditIssuer
     from aiperf.timing.branch_orchestrator import BranchOrchestrator
     from aiperf.timing.config import CreditPhaseConfig
@@ -275,7 +277,25 @@ class RequestRateStrategy(AIPerfLoggerMixin):
 
         meta = self._conversation_source.get_next_turn_metadata(credit)
         turn = TurnToSend.from_previous_credit(credit, meta)
+        await self._dispatch_or_queue_continuation(credit, turn, meta)
 
+    async def handle_phase_handoff(self, credit: Credit) -> None:
+        """Queue the first continuation owned by this phase."""
+        if credit.is_final_turn:
+            return
+        meta = self._conversation_source.get_next_turn_metadata(credit)
+        turn = TurnToSend.from_previous_credit(
+            credit,
+            meta,
+            as_session_start=True,
+            handoff_source_phase=phase_runtime_key(credit.phase, credit.phase_index),
+        )
+        await self._dispatch_or_queue_continuation(credit, turn, meta)
+
+    async def _dispatch_or_queue_continuation(
+        self, credit: Credit, turn: TurnToSend, meta: TurnMetadata
+    ) -> None:
+        """Dispatch or queue one continuation according to rate-mode rules."""
         if credit.agent_depth > 0:
             if meta.delay_ms is not None:
                 self._scheduler.schedule_later(

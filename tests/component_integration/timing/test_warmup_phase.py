@@ -17,6 +17,8 @@ CRITICAL: Warmup and profiling phases have SEPARATE credit tracking.
 Each phase should balance independently.
 """
 
+from pathlib import Path
+
 import pytest
 
 from aiperf.common.enums import CreditPhase
@@ -238,6 +240,69 @@ class TestWarmupPhaseTransition:
         # Both should be sequential
         assert warmup_ids == set(range(10))
         assert profiling_ids == set(range(12))
+
+    def test_yaml_seamless_profiling_continues_live_warmup_sessions(
+        self, cli: AIPerfCLI, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "seamless_handoff.yaml"
+        config_path.write_text(
+            f"""
+schemaVersion: "2.0"
+
+benchmark:
+  model: {defaults.model}
+  endpoint:
+    url: http://localhost:8000
+    type: chat
+    streaming: true
+  dataset:
+    type: synthetic
+    entries: 5
+    prompts:
+      isl: 8
+      osl: 20
+    turns: 100
+  phases:
+    - name: warmup
+      type: concurrency
+      concurrency: 5
+      requests: 5
+    - name: profiling
+      type: concurrency
+      concurrency: 5
+      requests: 10
+      seamless: true
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+        result = cli.run_sync(
+            f"""
+            aiperf profile \
+                --config "{config_path}" \
+                --ui {defaults.ui}
+            """,
+            timeout=30.0,
+        )
+        credits = [
+            payload.payload
+            for payload in result.runner_result.sent_payloads
+            if isinstance(payload.payload, Credit)
+        ]
+        warmup = [credit for credit in credits if credit.phase_index == 0]
+        profiling = [credit for credit in credits if credit.phase_index == 1]
+        warmup_sessions = {credit.x_correlation_id for credit in warmup}
+        carried = [
+            credit
+            for credit in profiling
+            if credit.x_correlation_id in warmup_sessions and credit.turn_index > 0
+        ]
+
+        assert len(warmup) == 5
+        assert len(profiling) == 10
+        assert carried
+        carried_starts = [credit for credit in carried if credit.is_session_start]
+        assert {credit.x_correlation_id for credit in carried_starts} == warmup_sessions
 
 
 @pytest.mark.component_integration

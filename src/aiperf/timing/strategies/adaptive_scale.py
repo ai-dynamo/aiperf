@@ -286,6 +286,12 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
             return
         await super().handle_credit_return(credit)
 
+    async def handle_phase_handoff(self, credit: Credit) -> None:
+        if self._user_strategy is not None:
+            await self._user_strategy.handle_phase_handoff(credit)
+            return
+        await super().handle_phase_handoff(credit)
+
     def set_target_users(self, value: int) -> None:
         self._target_users = value
         if self._user_strategy is not None:

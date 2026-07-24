@@ -236,6 +236,11 @@ class PhaseRunner(TaskManagerMixin):
         """
         self._on_phase_complete = callback
 
+    async def wait_for_completion(self) -> None:
+        """Wait for a seamless phase's background return drain, if present."""
+        if self._return_wait_task is not None:
+            await self._return_wait_task
+
     def _is_phase_complete(self) -> bool:
         """Return True if the request-count cap has been reached AND no DAG
         children are still in flight.
@@ -384,6 +389,7 @@ class PhaseRunner(TaskManagerMixin):
             lifecycle=self._lifecycle,
             stop_checker=self._stop_checker,
             strategy=strategy,
+            allow_session_handoff=self._branch_orchestrator is None,
         )
         if self._branch_orchestrator is not None:
             self._callback_handler.set_branch_orchestrator(self._branch_orchestrator)
@@ -436,6 +442,7 @@ class PhaseRunner(TaskManagerMixin):
         stats = self._progress.create_stats(self._lifecycle)
         self.notice(self._format_phase_started(stats))
         await self._phase_publisher.publish_phase_start(self._config, stats)
+        await self._callback_handler.drain_pending_handoffs(self._phase_key)
 
         self._progress_task = self.execute_async(self._progress_report_loop())
 

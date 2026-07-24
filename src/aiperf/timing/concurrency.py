@@ -218,6 +218,10 @@ class GlobalPhaseConcurrencyLimiter:
         """Whether concurrency limiting is enabled for this limiter."""
         return self._enabled
 
+    def is_configured(self, phase: PhaseRuntimeKey) -> bool:
+        """Return whether ``phase`` owns a phase-specific limiter."""
+        return phase in self._phase_limits
+
     def configure_for_phase(self, phase: PhaseRuntimeKey, limit: int | None) -> None:
         """Configure limits for a new phase.
 
@@ -282,6 +286,51 @@ class GlobalPhaseConcurrencyLimiter:
                 phase_limit.release()
             if acquired_global:
                 self._global_limit.release()
+            raise
+
+    async def transfer(
+        self,
+        source_phase: PhaseRuntimeKey,
+        target_phase: PhaseRuntimeKey,
+        can_proceed_fn: Callable[[], bool],
+    ) -> bool:
+        """Move one held slot across phase-specific limiters.
+
+        When both phases are limited, global ownership remains held while the
+        source phase slot is exchanged for a target phase slot. Boundaries
+        between limited and unlimited phases release or acquire global
+        ownership as needed.
+        """
+        source_configured = self.is_configured(source_phase)
+        target_configured = self.is_configured(target_phase)
+
+        if not source_configured:
+            if not target_configured:
+                return can_proceed_fn()
+            return await self.acquire(target_phase, can_proceed_fn)
+
+        if not target_configured:
+            self.release(source_phase)
+            return can_proceed_fn()
+
+        self._phase_limits[source_phase].release()
+        acquired_target = False
+        try:
+            if not can_proceed_fn():
+                self._global_limit.release()
+                return False
+
+            await self._phase_limits[target_phase].acquire()
+            acquired_target = True
+            if not can_proceed_fn():
+                self._phase_limits[target_phase].release()
+                self._global_limit.release()
+                return False
+            return True
+        except Exception:
+            if acquired_target:
+                self._phase_limits[target_phase].release()
+            self._global_limit.release()
             raise
 
     def try_acquire(
@@ -462,6 +511,17 @@ class ConcurrencyManager:
             return can_proceed_fn()
         return await self._session_limiter.acquire(phase, can_proceed_fn)
 
+    async def transfer_session_slot(
+        self,
+        source_phase: PhaseRuntimeKey,
+        target_phase: PhaseRuntimeKey,
+        can_proceed_fn: Callable[[], bool],
+    ) -> bool:
+        """Transfer a live session slot to the phase continuing the session."""
+        return await self._session_limiter.transfer(
+            source_phase, target_phase, can_proceed_fn
+        )
+
     def try_acquire_session_slot(
         self, phase: PhaseRuntimeKey, can_proceed_fn: Callable[[], bool]
     ) -> bool:
@@ -492,7 +552,7 @@ class ConcurrencyManager:
         Args:
             phase: The credit phase to release the slot for.
         """
-        if self._session_limiter.enabled:
+        if self._session_limiter.is_configured(phase):
             self._session_limiter.release(phase)
 
     async def acquire_prefill_slot(
@@ -549,7 +609,7 @@ class ConcurrencyManager:
         Args:
             phase: The credit phase to release the slot for.
         """
-        if self._prefill_limiter.enabled:
+        if self._prefill_limiter.is_configured(phase):
             self._prefill_limiter.release(phase)
 
     def release_stuck_slots(self, phase: PhaseRuntimeKey) -> tuple[int, int]:
@@ -565,13 +625,13 @@ class ConcurrencyManager:
             Tuple of (session_slots_released, prefill_slots_released)
         """
         session_released = 0
-        if self._session_limiter.enabled:
+        if self._session_limiter.is_configured(phase):
             session_released = self._session_limiter.get_held_slots(phase)
             for _ in range(session_released):
                 self._session_limiter.release(phase)
 
         prefill_released = 0
-        if self._prefill_limiter.enabled:
+        if self._prefill_limiter.is_configured(phase):
             prefill_released = self._prefill_limiter.get_held_slots(phase)
             for _ in range(prefill_released):
                 self._prefill_limiter.release(phase)

@@ -7,8 +7,10 @@ import pytest
 from pydantic import ValidationError
 
 from aiperf.common.enums import CreditPhase
+from aiperf.config.config import BenchmarkConfig
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.phases import ConcurrencyPhase, ConstantPhase
+from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.plugin.enums import ArrivalPattern, PhaseType, TimingMode
 from aiperf.timing.config import (
     CreditPhaseConfig,
@@ -17,6 +19,28 @@ from aiperf.timing.config import (
     _phase_request_rate,
 )
 from tests.unit.conftest import make_run_from_cli
+
+
+def _run_from_phases(phases: list[dict[str, Any]]) -> BenchmarkRun:
+    cfg = BenchmarkConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets=[
+            {
+                "name": "main",
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        ],
+        phases=phases,
+    )
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=cfg,
+        artifact_dir=Path("/tmp/aiperf-test"),
+        cli_command=None,
+    )
 
 
 def make_phase_config(**overrides) -> CreditPhaseConfig:
@@ -133,6 +157,40 @@ class TestTimingConfig:
         assert pc.timing_mode == TimingMode.REQUEST_RATE
         assert pc.concurrency is None
         assert pc.request_rate is None
+
+    def test_yaml_seamless_marks_outgoing_phase_runtime(self) -> None:
+        run = _run_from_phases(
+            [
+                {
+                    "name": "warmup",
+                    "type": "concurrency",
+                    "concurrency": 5,
+                    "requests": 10,
+                },
+                {
+                    "name": "baseline",
+                    "kind": "profiling",
+                    "type": "concurrency",
+                    "concurrency": 5,
+                    "requests": 20,
+                    "seamless": True,
+                },
+                {
+                    "name": "final",
+                    "kind": "profiling",
+                    "type": "concurrency",
+                    "concurrency": 5,
+                    "requests": 20,
+                    "seamless": True,
+                },
+            ]
+        )
+
+        warmup, baseline, final = TimingConfig.from_run(run).phase_configs
+
+        assert warmup.phase_index == 0 and warmup.seamless is True
+        assert baseline.phase_index == 1 and baseline.seamless is True
+        assert final.phase_index == 2 and final.seamless is False
 
     def test_full_request_rate_config(self) -> None:
         pc = make_phase_config(

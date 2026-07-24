@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import CreditPhase
+from aiperf.credit.phase_handoff import PhaseHandoffCoordinator
 from aiperf.timing.concurrency import PhaseRuntimeKey
 
 if TYPE_CHECKING:
@@ -48,6 +49,7 @@ class PhaseCallbackContext:
     stop_checker: StopConditionChecker
     strategy: TimingStrategyProtocol
     concurrency_manager: ConcurrencyManager
+    allow_session_handoff: bool = True
     handle_credit_result: Callable[[CreditReturn], Awaitable[None]] | None = None
     handle_first_token: Callable[[FirstToken], Awaitable[None]] | None = None
 
@@ -89,6 +91,7 @@ class CreditCallbackHandler:
         self._concurrency_manager = concurrency_manager
         self._phase_handlers: dict[PhaseRuntimeKey, PhaseCallbackContext] = {}
         self._branch_orchestrator: BranchOrchestrator | None = None
+        self._phase_handoffs = PhaseHandoffCoordinator()
 
     def set_branch_orchestrator(self, orchestrator: BranchOrchestrator | None) -> None:
         """Inject (or detach) the DAG branch orchestrator.
@@ -163,6 +166,7 @@ class CreditCallbackHandler:
         lifecycle: PhaseLifecycle,
         stop_checker: StopConditionChecker,
         strategy: TimingStrategyProtocol,
+        allow_session_handoff: bool = True,
     ) -> None:
         """Register phase for callback handling.
 
@@ -185,6 +189,7 @@ class CreditCallbackHandler:
             stop_checker=stop_checker,
             strategy=strategy,
             concurrency_manager=self._concurrency_manager,
+            allow_session_handoff=allow_session_handoff,
             handle_credit_result=handle_credit_result
             if inspect.iscoroutinefunction(handle_credit_result)
             else None,
@@ -195,6 +200,20 @@ class CreditCallbackHandler:
         _logger.debug(
             lambda: f"Registered callback handler for phase {phase} key={key}"
         )
+
+    def start_phase_handoff(
+        self, source_phase: PhaseRuntimeKey, target_phase: PhaseRuntimeKey
+    ) -> None:
+        """Route live source sessions into ``target_phase`` at the boundary."""
+        self._phase_handoffs.start(source_phase, target_phase)
+
+    def clear_phase_handoff(self, source_phase: PhaseRuntimeKey) -> None:
+        """Stop routing returns owned by ``source_phase``."""
+        self._phase_handoffs.clear(source_phase)
+
+    async def drain_pending_handoffs(self, target_phase: PhaseRuntimeKey) -> None:
+        """Dispatch returns that arrived before the target phase started."""
+        await self._phase_handoffs.drain(target_phase, self._phase_handlers)
 
     async def on_credit_return(
         self, worker_id: str, credit_return: CreditReturn
@@ -216,10 +235,21 @@ class CreditCallbackHandler:
         if handler is None:
             return
 
+        handoff_target = self._phase_handoffs.target_for(credit, handler)
+        if handoff_target is not None:
+            handler.progress.increment_handed_off_session()
+
         self._count_and_release(credit, credit_return, handler)
 
         if handler.handle_credit_result is not None:
             await handler.handle_credit_result(credit_return)
+
+        if handoff_target is not None:
+            await self._phase_handoffs.dispatch_or_queue(
+                credit, handoff_target, self._phase_handlers
+            )
+            self._maybe_signal_dag_completion(handler)
+            return
 
         # 4b. DAG child completion hook.
         # When a child session's final turn returns, notify the orchestrator

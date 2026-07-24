@@ -62,6 +62,9 @@ class MockStrategy:
     async def handle_credit_return(self, credit: Credit) -> None:
         self.handle_credit_return_calls.append(credit)
 
+    async def handle_phase_handoff(self, credit: Credit) -> None:
+        self.handle_credit_return_calls.append(credit)
+
 
 @dataclass
 class MockRateSettableStrategy(MockStrategy):
@@ -92,6 +95,7 @@ def mock_callback() -> MagicMock:
     m = MagicMock()
     m.register_phase = m.unregister_phase = MagicMock()
     m.on_credit_return = m.on_first_token = AsyncMock()
+    m.drain_pending_handoffs = AsyncMock()
     return m
 
 
@@ -319,6 +323,8 @@ class TestPhaseRunnerLifecycle:
             await r.run(is_final_phase=True)
             cb.register_phase.assert_called_once()
             assert cb.register_phase.call_args.kwargs["phase"] == CreditPhase.PROFILING
+            assert cb.register_phase.call_args.kwargs["allow_session_handoff"] is True
+            cb.drain_pending_handoffs.assert_awaited_once_with(CreditPhase.PROFILING)
 
     async def test_run_configures_concurrency_manager(
         self,

@@ -44,6 +44,7 @@ def mock_concurrency():
     """Mock concurrency manager."""
     mock = MagicMock()
     mock.acquire_session_slot = AsyncMock(return_value=True)
+    mock.transfer_session_slot = AsyncMock(return_value=True)
     mock.acquire_prefill_slot = AsyncMock(return_value=True)
     mock.release_session_slot = MagicMock()
     return mock
@@ -102,6 +103,8 @@ def make_turn(
     conversation_id: str = "conv1",
     turn_index: int = 0,
     num_turns: int = 1,
+    start_turn_index: int = 0,
+    handoff_source_phase: int | CreditPhase | None = None,
 ) -> TurnToSend:
     """Create a TurnToSend for testing."""
     return TurnToSend(
@@ -109,6 +112,8 @@ def make_turn(
         x_correlation_id=f"corr-{conversation_id}",
         turn_index=turn_index,
         num_turns=num_turns,
+        start_turn_index=start_turn_index,
+        handoff_source_phase=handoff_source_phase,
     )
 
 
@@ -145,6 +150,40 @@ class TestBasicCreditIssuance:
         mock_concurrency.acquire_session_slot.assert_not_called()
         mock_concurrency.acquire_prefill_slot.assert_called_once()
         mock_router.send_credit.assert_called_once()
+
+    async def test_handoff_session_start_transfers_slot_and_preserves_turn(
+        self, credit_issuer, mock_concurrency, mock_router
+    ) -> None:
+        turn = make_turn(
+            turn_index=4,
+            num_turns=8,
+            start_turn_index=4,
+            handoff_source_phase=0,
+        )
+
+        await credit_issuer.issue_credit(turn)
+
+        mock_concurrency.acquire_session_slot.assert_not_called()
+        mock_concurrency.transfer_session_slot.assert_awaited_once_with(
+            0,
+            CreditPhase.PROFILING,
+            credit_issuer._stop_checker.can_start_new_session,
+        )
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.turn_index == 4
+        assert sent_credit.start_turn_index == 4
+        assert sent_credit.x_correlation_id == turn.x_correlation_id
+
+    async def test_try_issue_credit_rejects_handoff_turn(self, credit_issuer) -> None:
+        turn = make_turn(
+            turn_index=4,
+            num_turns=8,
+            start_turn_index=4,
+            handoff_source_phase=0,
+        )
+
+        with pytest.raises(RuntimeError, match="blocking credit issuance"):
+            await credit_issuer.try_issue_credit(turn)
 
     async def test_issue_credit_creates_correct_credit_struct(
         self, credit_issuer, mock_router, mock_progress
