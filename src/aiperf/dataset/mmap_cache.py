@@ -78,6 +78,12 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v26: weka inter-turn delays are now always end-to-start
+    # (t_k - (t_{k-1} + api_{k-1}), floored at 0) instead of start-to-start.
+    # The use_end_to_start_delays flag was removed, so Turn.delay decodes to
+    # different values for the same key. The flag's removal from the key payload
+    # already forces old weka entries to miss, but the content changed, so bump
+    # explicitly per this file's contract rather than relying on that coincidence.
     # v25: same-model reduction sidecars are still classified as auxiliary for
     # scheduling, but no longer emit the extra reduction session-id flavor.
     # They now use plain ::aux:, so cached Weka manifests need rebuilt session
@@ -107,10 +113,11 @@ MANIFEST_VERSION = (
     # structure baked into the mmap -- omitting them served stale bytes when
     # they changed.
     # v20: cache key now includes random_seed / dataset_random_seed /
-    # prompt_corpus / osl_fallback. These bake into the decoded mmap (base seed
-    # drives per-block hash_id token derivation; corpus + OSL fallback select
-    # the reconstructed tokens), so omitting them let two runs differing only in
-    # those serve each other's stale bytes. Invalidates pre-v20 entries.
+    # corpus (prompts.corpus) / osl_fallback. These bake into the decoded mmap
+    # (base seed drives per-block hash_id token derivation; corpus + OSL
+    # fallback select the reconstructed tokens), so omitting them let two runs
+    # differing only in those serve each other's stale bytes. Invalidates
+    # pre-v20 entries.
     # v19: worker-group grouping now requires BOTH a shared fork point AND
     # temporal overlap (the corpus research + graph adapter prescription:
     # overlapping intervals AND a shared prefix). Workers are scoped by fork
@@ -167,21 +174,23 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    25
+    26
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
 
 # Custom-dataset types whose per-turn payloads are verbatim and/or huge: trace
-# replays (mooncake / sagemaker / burst_gpt / bailian) and verbatim-payload
-# modes (raw_payload / inputs_json). These are the ONLY datasets the mmap
-# cache stores (they are large and expensive to tokenize) and the ones for
-# which inputs.json generation is skipped (the dump would be huge or just
+# replays (mooncake / sagemaker / burst_gpt / bailian), verbatim-payload modes
+# (raw_payload / inputs_json), and weka KV-replay. These are the ONLY datasets
+# the mmap cache stores (they are large and expensive to tokenize) and the ones
+# for which inputs.json generation is skipped (the dump would be huge or just
 # the verbatim source bytes). The cache gate keys off the CONFIG dataset type
-# (pre-load), so an auto-detected trace (no explicit trace format) is NOT
-# cached -- a re-tokenize perf miss, never a correctness issue (a cache HIT
-# only occurs for explicitly-typed datasets whose key matched at populate
-# time).
+# (pre-load), while the inputs.json skip keys off the loader's DETECTED type
+# (post-load): for an explicitly-typed dataset they agree (cached <-> skipped);
+# an auto-detected trace (no --custom-dataset-type) is correctly skipped but
+# NOT cached (the gate sees the default config type) -- a re-tokenize perf miss,
+# never a correctness issue (a cache HIT only occurs for explicitly-typed
+# datasets whose key matched at populate time).
 TRACE_VERBATIM_DATASET_TYPES = frozenset(
     {
         "mooncake_trace",
@@ -190,6 +199,7 @@ TRACE_VERBATIM_DATASET_TYPES = frozenset(
         "sagemaker_data_capture",
         "raw_payload",
         "inputs_json",
+        "weka_trace",
     }
 )
 
@@ -198,18 +208,24 @@ def is_trace_or_verbatim_dataset(
     custom_dataset_type: object | None,
     public_dataset: object | None,
 ) -> bool:
-    """Whether a dataset is a trace / verbatim type.
+    """Whether a dataset is a trace / verbatim / weka type.
 
-    True for the custom-dataset types in ``TRACE_VERBATIM_DATASET_TYPES``.
-    These are the datasets that use the mmap cache and skip inputs.json;
-    everything else is treated as a cheap non-trace dataset that is never
-    cached and always emits inputs.json. ``public_dataset`` is accepted so
-    trace-shaped public datasets can opt in later; none qualify today.
+    True for the custom-dataset types in ``TRACE_VERBATIM_DATASET_TYPES`` and for
+    the HF-hosted weka public datasets (``weka_hf`` and the
+    ``semianalysis_cc_traces_weka*`` family). These are the datasets that use the
+    mmap cache and skip inputs.json; everything else is treated as a cheap
+    non-trace dataset that is never cached and always emits inputs.json.
     """
-    return (
+    if (
         custom_dataset_type is not None
         and str(custom_dataset_type) in TRACE_VERBATIM_DATASET_TYPES
-    )
+    ):
+        return True
+    if public_dataset is not None:
+        name = str(public_dataset)
+        if name == "weka_hf" or name.startswith("semianalysis_cc_traces_weka"):
+            return True
+    return False
 
 
 # Re-exported with cache_dir resolver pre-bound.
@@ -251,8 +267,8 @@ def hash_dir_contents(path: Path) -> str:
     """Return a sha256 over the relative paths and bytes of every file under ``path``.
 
     Walks ``path`` recursively in sorted order so the digest is stable regardless
-    of filesystem traversal order. Used so directory inputs (e.g. a
-    one-file-per-trace corpus directory) get a content-addressed cache key that
+    of filesystem traversal order. Used so directory inputs (e.g. the weka_trace
+    one-file-per-trace corpus) get a content-addressed cache key that
     differentiates two directories with the same name but different contents.
     """
     h = hashlib.sha256()
@@ -305,7 +321,7 @@ def compute_cache_key(
         input_file: Path to the user-supplied input file or directory, or None
             for synthetic. Directories are hashed via :func:`hash_dir_contents`
             so two directories with the same name but different contents (e.g.
-            distinct trace corpora under tmp_path) produce distinct keys.
+            distinct weka_trace corpora under tmp_path) produce distinct keys.
         public_dataset: Public-dataset name (None when not used).
         custom_dataset_type: Custom-dataset-type identifier (None when not used).
         tokenizer_identity: Stable dict identifying the tokenizer.
@@ -494,6 +510,32 @@ def _restore_file(src: Path, dst: Path) -> str:
     return method
 
 
+def invalidate(cache_key: str) -> bool:
+    """Delete a cache entry so a later ``populate`` can heal a poisoned key.
+
+    Used when a HIT's manifest is readable but its side-data (e.g.
+    ``dataset_metadata_json``) fails validation: run-dir restore files are
+    unlinked and the entry itself must also go, otherwise ``populate`` sees
+    an existing ``manifest.json`` and permanently skips rewriting the key.
+
+    Args:
+        cache_key: Content+settings hash returned by ``compute_cache_key``.
+
+    Returns:
+        True when an entry directory existed and was removed; False otherwise.
+    """
+    entry_dir = cache_dir() / cache_key
+    if not entry_dir.exists():
+        return False
+    shutil.rmtree(entry_dir, ignore_errors=True)
+    removed = not entry_dir.exists()
+    if removed:
+        _logger.info(f"Invalidated mmap cache entry {cache_key}")
+    else:
+        _logger.warning(f"Failed to fully remove mmap cache entry {cache_key}")
+    return removed
+
+
 def restore_to_run_dir(
     hit: CacheHit, run_data_path: Path, run_index_path: Path
 ) -> None:
@@ -577,9 +619,24 @@ def populate(
         try:
             os.replace(tmp_dir, final_dir)
         except OSError:
-            # Another writer beat us; leave their entry, drop ours.
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            return final_dir if final_dir.exists() else None
+            # os.replace onto a non-empty directory fails (ENOTEMPTY). A
+            # complete entry (has manifest) means a concurrent writer won:
+            # leave their entry, drop ours. A partial entry (no manifest) is a
+            # crashed/old-layout leftover that the module contract says to
+            # overwrite, so reclaim it and retry once; otherwise every future
+            # populate for this key no-ops and the corpus is re-tokenized
+            # forever.
+            manifest_present = (final_dir / MANIFEST_FILENAME).exists()
+            if final_dir.exists() and not manifest_present:
+                shutil.rmtree(final_dir, ignore_errors=True)
+                try:
+                    os.replace(tmp_dir, final_dir)
+                except OSError:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                    return final_dir if final_dir.exists() else None
+            else:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                return final_dir if final_dir.exists() else None
         _logger.info(f"Populated mmap cache entry {final_dir}")
         return final_dir
     except Exception as e:
@@ -629,7 +686,9 @@ def _public_dataset_source_from_run(run: BenchmarkRun) -> dict[str, object] | No
 
     public_dataset = str(public_dataset_type)
     metadata = plugins.get_public_dataset_loader_metadata(public_dataset)
-    hf_dataset_name = metadata.hf_dataset_name
+    hf_dataset_name = getattr(dataset, "hf_weka_dataset", None) or (
+        metadata.hf_dataset_name
+    )
     if hf_dataset_name is None:
         return {"plugin": public_dataset}
 
@@ -706,13 +765,14 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
             else None
         ),
         "public_dataset_source": _public_dataset_source_from_run(run),
-        # The base seed feeds token derivation for trace datasets, and the
-        # per-record OSL fallback + prompt corpus select which tokens are
-        # reconstructed -- all bake into the cached mmap, so two runs differing
-        # only in these must NOT share a cache entry.
+        # The base seed feeds per-block hash_id token derivation for trace/weka
+        # datasets (HashIdRandomGenerator.reseed_for_hash_id mixes it into every
+        # decoded block), and the per-record OSL fallback + prompts.corpus select
+        # which tokens are reconstructed -- all bake into the cached mmap, so two
+        # runs differing only in these must NOT share a cache entry.
         "random_seed": getattr(run, "random_seed", None),
         "dataset_random_seed": getattr(dataset, "random_seed", None),
-        "prompt_corpus": getattr(dataset, "prompt_corpus", None),
+        "corpus": getattr(prompts, "corpus", None),
         "osl_fallback": osl_dump,
         # Pre-encode single-turn conversations to PAYLOAD_BYTES at build time:
         # flips the stored mmap FORMAT (CONVERSATION vs PAYLOAD_BYTES) and the
@@ -753,6 +813,25 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         "trace_idle_gap_cap_seconds": getattr(
             dataset, "trace_idle_gap_cap_seconds", None
         ),
+        "weka_split_flattened_agents": (
+            Environment.DATASET.WEKA_SPLIT_FLATTENED_AGENTS
+        ),
+        "weka_aux_max_requests": Environment.DATASET.WEKA_AUX_MAX_REQUESTS,
+        "weka_aux_isl_ratio": Environment.DATASET.WEKA_AUX_ISL_RATIO,
+        "weka_aux_isl_floor": Environment.DATASET.WEKA_AUX_ISL_FLOOR,
+        "weka_aux_cross_model": Environment.DATASET.WEKA_AUX_CROSS_MODEL,
+        "weka_aux_reduction_osl_max": (Environment.DATASET.WEKA_AUX_REDUCTION_OSL_MAX),
+        "weka_aux_reduction_ratio": Environment.DATASET.WEKA_AUX_REDUCTION_RATIO,
+        "weka_worker_group_min": Environment.DATASET.WEKA_WORKER_GROUP_MIN,
+        "weka_tool_shaped_messages": (Environment.DATASET.WEKA_TOOL_SHAPED_MESSAGES),
+        # Join-seam stitching knobs: gate whether a far-future continuation is
+        # stitched onto an existing LCP chain vs spawned as a new conversation
+        # (weka_trace.py -> detect_agent_chains), so they change session
+        # structure / child ids / turn boundaries baked into the cached mmap.
+        "weka_seam_max_gap_seconds": Environment.DATASET.WEKA_SEAM_MAX_GAP_SECONDS,
+        "weka_seam_min_overlap_ratio": (
+            Environment.DATASET.WEKA_SEAM_MIN_OVERLAP_RATIO
+        ),
         # Full synthesis dump: max_isl/max_osl caps AND the speedup_ratio /
         # *_multiplier transforms, all of which rewrite the decoded trace bytes.
         "synthesis": synthesis_dump,
@@ -790,12 +869,12 @@ def compute_cache_key_from_run(run: BenchmarkRun) -> str | None:
     if not has_source:
         return None
 
-    # Only trace / verbatim datasets use the mmap cache. Non-trace datasets
-    # are cheap to (re)build and must re-emit inputs.json on every run, so
-    # they always take the miss path. Keys off the CONFIG dataset type (see
-    # TRACE_VERBATIM_DATASET_TYPES); DatasetManager._should_skip_inputs_json
-    # uses the same predicate so cached datasets and skipped inputs.json stay
-    # in lockstep.
+    # Only trace / verbatim / weka datasets use the mmap cache. Non-trace
+    # datasets are cheap to (re)build and must re-emit inputs.json on every run,
+    # so they always take the miss path. Keys off the CONFIG type here; the
+    # inputs.json skip (DatasetManager._should_skip_inputs_json) keys off the
+    # loader's DETECTED type, so an auto-detected trace is skipped-but-uncached
+    # (perf miss, not a correctness issue -- see TRACE_VERBATIM_DATASET_TYPES).
     if not is_trace_or_verbatim_dataset(custom_dataset_type, public_dataset_type):
         return None
 

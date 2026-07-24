@@ -1016,13 +1016,14 @@ class SystemController(SignalHandlerMixin, BaseService):
         # ShutdownCommand is fire-and-forget on the pub/sub bus: BaseComponentService's
         # SHUTDOWN handler raises asyncio.CancelledError instead of returning, so the
         # CommandHandlerMixin wrapper never publishes an ack we could await. Child
-        # processes also ignore SIGTERM (see bootstrap.py), so process.terminate()
-        # in shutdown_all_services() does nothing useful — only a successful
-        # message-bus delivery here results in graceful shutdown rather than the
-        # eventual SIGKILL fallback. This grace period gives ZMQ inproc/IPC pub/sub
-        # time to deliver the broadcast to every subscriber before we start joining
-        # processes. 500ms is empirically sufficient under normal load and well
-        # under the per-process join timeout in _wait_for_process.
+        # processes also ignore SIGTERM (see bootstrap.py), so
+        # MultiProcessServiceManager._wait_for_process skips terminate()+join and
+        # goes straight to kill() for any process still alive after this grace —
+        # only a successful message-bus delivery here results in graceful
+        # shutdown rather than SIGKILL. This grace period gives ZMQ inproc/IPC
+        # pub/sub time to deliver the broadcast to every subscriber before we
+        # start killing stragglers. 500ms is empirically sufficient under normal
+        # load.
         # When the API server is enabled AND still alive, extend the wait so the
         # API process can honor its POST_COMPLETE_GRACE window before
         # _wait_for_process SIGKILLs it. If the API never registered or has

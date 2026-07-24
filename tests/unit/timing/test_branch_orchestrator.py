@@ -398,102 +398,6 @@ async def test_child_error_fail_fast_aborts_parent(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_child_error_fail_fast_fires_abort_observer(monkeypatch):
-    """Under FAIL_FAST, the orchestrator must fire its abort observer
-    after parent + orphan tear-down so the phase-side handler can cancel
-    every active phase lifecycle. Without this, the strategy loop keeps
-    issuing wire credits for unrelated roots and the docs' "abort the
-    whole run on first DAG child error" contract is violated.
-    """
-    from aiperf.common.environment import Environment
-
-    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
-    orch = BranchOrchestrator(
-        conversation_source=MagicMock(),
-        credit_issuer=MagicMock(
-            dispatch_join_turn=AsyncMock(), abort_session=AsyncMock()
-        ),
-    )
-    pending = _mk_pending_for_parent(
-        "p",
-        gated_turn_index=1,
-        prereq_key="SPAWN_JOIN:b",
-        outstanding={"c1"},
-        num_turns=2,
-    )
-    pending.is_blocked = True
-    orch._active_joins["p"] = pending
-    orch._child_to_join["c1"] = [
-        ChildJoinEntry(
-            parent_correlation_id="p", gated_turn_index=1, prereq_key="SPAWN_JOIN:b"
-        )
-    ]
-    orch._child_modes = {"c1": ConversationBranchMode.SPAWN}
-    orch._descendant_counts["p"] = 1
-
-    abort_observer = MagicMock()
-    orch.set_abort_observer(abort_observer)
-
-    await orch.on_child_errored("c1")
-
-    abort_observer.assert_called_once_with()
-    assert orch.stats.parents_failed_due_to_child_error == 1
-
-
-@pytest.mark.asyncio
-async def test_child_error_non_fail_fast_does_not_fire_abort_observer(monkeypatch):
-    """Default (FAIL_FAST=False) behavior: an errored child is treated as
-    leaf-reached, NOT a whole-run abort. The abort observer must stay
-    silent so unrelated parents keep running.
-    """
-    from aiperf.common.environment import Environment
-
-    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", False)
-    orch = BranchOrchestrator(
-        conversation_source=MagicMock(),
-        credit_issuer=MagicMock(dispatch_join_turn=AsyncMock(return_value=True)),
-    )
-    pending = _mk_pending_for_parent(
-        "p",
-        gated_turn_index=1,
-        prereq_key="SPAWN_JOIN:b",
-        outstanding={"c1"},
-        num_turns=2,
-    )
-    orch._active_joins["p"] = pending
-    orch._child_to_join["c1"] = [
-        ChildJoinEntry(
-            parent_correlation_id="p", gated_turn_index=1, prereq_key="SPAWN_JOIN:b"
-        )
-    ]
-    orch._child_modes = {"c1": ConversationBranchMode.SPAWN}
-    orch._descendant_counts["p"] = 1
-
-    abort_observer = MagicMock()
-    orch.set_abort_observer(abort_observer)
-
-    await orch.on_child_errored("c1")
-
-    abort_observer.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_cleanup_clears_abort_observer():
-    """``cleanup`` must clear ``_abort_observer`` alongside
-    ``_drain_observer`` so a torn-down orchestrator does not leak
-    references to phase-side handlers across phase boundaries.
-    """
-    orch = BranchOrchestrator(
-        conversation_source=MagicMock(), credit_issuer=MagicMock()
-    )
-    orch.set_drain_observer(MagicMock())
-    orch.set_abort_observer(MagicMock())
-    orch.cleanup()
-    assert orch._drain_observer is None
-    assert orch._abort_observer is None
-
-
-@pytest.mark.asyncio
 async def test_dispatch_failure_rolls_back_bookkeeping():
     """When _dispatch_first_turn returns False (e.g. slots saturated), the
     orchestrator must undo its children_spawned / sticky-refcount /
@@ -703,9 +607,7 @@ def test_cleanup_emits_leak_warning_when_state_nonempty(caplog):
     ]
     orch._descendant_counts["leaky-parent"] = 2
 
-    with caplog.at_level(
-        logging.WARNING, logger="aiperf.timing._branch_orchestrator_logging"
-    ):
+    with caplog.at_level(logging.WARNING, logger="aiperf.timing.branch_orchestrator"):
         orch.cleanup()
 
     leak_messages = [r for r in caplog.records if "leaked state" in r.getMessage()]

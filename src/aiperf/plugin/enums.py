@@ -31,7 +31,7 @@ APIRouterType = plugins.create_enum(PluginType.API_ROUTER, "APIRouterType", modu
 
 TimingModeStr: TypeAlias = str
 TimingMode = plugins.create_enum(PluginType.TIMING_STRATEGY, "TimingMode", module=__name__)
-"""Dynamic enum for timing strategy. Example: TimingMode.ADAPTIVE_SCALE, TimingMode.REQUEST_RATE, TimingMode.USER_CENTRIC_RATE"""
+"""Dynamic enum for timing strategy. Example: TimingMode.ADAPTIVE_SCALE, TimingMode.FIXED_SCHEDULE, TimingMode.USER_CENTRIC_RATE"""
 
 ArrivalPatternStr: TypeAlias = str
 ArrivalPattern = plugins.create_enum(PluginType.ARRIVAL_PATTERN, "ArrivalPattern", module=__name__)
@@ -59,11 +59,11 @@ ComposerType = plugins.create_enum(PluginType.DATASET_COMPOSER, "ComposerType", 
 
 CustomDatasetTypeStr: TypeAlias = str
 CustomDatasetType = plugins.create_enum(PluginType.CUSTOM_DATASET_LOADER, "CustomDatasetType", module=__name__)
-"""Dynamic enum for custom dataset loader. Example: CustomDatasetType.BAILIAN_TRACE, CustomDatasetType.SPEED_BENCH_SUMMARIZATION, CustomDatasetType.SPEED_BENCH_WRITING"""
+"""Dynamic enum for custom dataset loader. Example: CustomDatasetType.BAILIAN_TRACE, CustomDatasetType.SPEED_BENCH_THROUGHPUT_16K, CustomDatasetType.WEKA_TRACE"""
 
 PublicDatasetTypeStr: TypeAlias = str
 PublicDatasetType = plugins.create_enum(PluginType.PUBLIC_DATASET_LOADER, "PublicDatasetType", module=__name__)
-"""Dynamic enum for public dataset loader. Example: PublicDatasetType.AIMO, PublicDatasetType.LLAVA_ONEVISION, PublicDatasetType.VOXPOPULI"""
+"""Dynamic enum for public dataset loader. Example: PublicDatasetType.AIMO, PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_062126_256K, PublicDatasetType.WEKA_HF"""
 
 EndpointTypeStr: TypeAlias = str
 EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType", module=__name__)
@@ -83,7 +83,7 @@ RecordObserverType = plugins.create_enum(PluginType.RECORD_OBSERVER, "RecordObse
 
 AccumulatorTypeStr: TypeAlias = str
 AccumulatorType = plugins.create_enum(PluginType.ACCUMULATOR, "AccumulatorType", module=__name__)
-"""Dynamic enum for accumulator. Example: AccumulatorType.ACCURACY, AccumulatorType.METRIC_RESULTS, AccumulatorType.SERVER_METRICS"""
+"""Dynamic enum for accumulator. Example: AccumulatorType.ACCURACY, AccumulatorType.METRIC_RESULTS, AccumulatorType.THEORETICAL_PREFIX_CACHE"""
 
 StreamExporterTypeStr: TypeAlias = str
 StreamExporterType = plugins.create_enum(PluginType.STREAM_EXPORTER, "StreamExporterType", module=__name__)
@@ -184,7 +184,7 @@ def _build_phasetype_members() -> dict[str, str]:
             members[alias.upper()] = alias
     return members
 PhaseType = create_enum("PhaseType", _build_phasetype_members(), module=__name__)
-"""Load generation type for benchmark phases. Example: PhaseType.CONCURRENCY, PhaseType.CONSTANT, PhaseType.FIXED_SCHEDULE"""
+"""Load generation type for benchmark phases. Example: PhaseType.AGENTIC_REPLAY, PhaseType.CONCURRENCY, PhaseType.CONSTANT"""
 
 DatasetFormatStr: TypeAlias = str
 def _build_datasetformat_members() -> dict[str, str]:

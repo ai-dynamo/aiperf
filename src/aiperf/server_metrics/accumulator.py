@@ -106,6 +106,11 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         self._slice_duration: float | None = self.run.cfg.artifacts.slice_duration
         # Lightweight timestamp storage for query_time_range() (analyzer support)
         self._timestamps_ns = GrowableArray(initial_capacity=1024, dtype=np.int64)
+        # Latest WARMUP-tagged scrape timestamp. The end-of-warmup scrape is
+        # captured after the warmup CREDIT_PHASE_COMPLETE message, so it lands
+        # strictly after warmup_end_ns and would otherwise be excluded from
+        # warmup aggregation.
+        self._last_warmup_record_ns: int | None = None
 
     def get_hierarchy_for_export(self) -> ServerMetricsHierarchy:
         """Get server metrics hierarchy for export purposes.
@@ -125,6 +130,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             record: ServerMetricsRecord containing Prometheus metrics and metadata
         """
         self._timestamps_ns.append(record.timestamp_ns)
+        if record.benchmark_phase == CreditPhase.WARMUP:
+            self._last_warmup_record_ns = max(
+                self._last_warmup_record_ns or 0, record.timestamp_ns
+            )
         self._server_metrics_hierarchy.add_record(record)
 
     async def process_record(self, record: ServerMetricsRecord) -> None:
@@ -154,6 +163,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         Reads the profiling window from ``ctx.start_ns/ctx.end_ns`` (excludes
         warmup; reference points before start_ns drive counter/histogram deltas)
         and the warmup window from ``ctx.warmup_start_ns/ctx.warmup_end_ns``.
+        Exported ``warmup_end_ns`` is the aggregation window end (may extend
+        past the credit-phase complete timestamp to include the end-of-warmup
+        scrape) so ``phase_time_ranges["warmup"]`` matches
+        ``warmup_endpoint_summaries``.
 
         Returns:
             ServerMetricsResults containing endpoint summaries with computed statistics,
@@ -187,6 +200,16 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 include_final_collection=not ctx.is_phase_scoped,
             )
         warmup_endpoint_summaries = None
+        # Prefer a single consistent end for aggregation + export
+        # (phase_time_ranges["warmup"]): extend past credit-phase complete to
+        # include the dedicated end-of-warmup scrape when present.
+        warmup_summary_end_ns = warmup_end_ns
+        if self._last_warmup_record_ns is not None:
+            warmup_summary_end_ns = (
+                self._last_warmup_record_ns
+                if warmup_end_ns is None
+                else max(warmup_end_ns, self._last_warmup_record_ns)
+            )
         if (
             warmup_start_ns is not None
             and warmup_end_ns is not None
@@ -200,7 +223,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             if not warmup_endpoint_summaries:
                 warmup_endpoint_summaries = self._compute_endpoint_summaries(
                     warmup_start_ns,
-                    warmup_end_ns,
+                    warmup_summary_end_ns,
                     self._slice_duration,
                     include_final_collection=False,
                 )
@@ -216,12 +239,29 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             endpoints_successful=endpoint_list,
             error_summary=error_summary or [],
             warmup_start_ns=warmup_start_ns,
-            warmup_end_ns=warmup_end_ns,
+            warmup_end_ns=warmup_summary_end_ns,
         )
 
         # Export Parquet file directly from accumulator if format is enabled.
-        # Widen the export window to include the final per-endpoint collection,
-        # which may land after end_ns (e.g. a scrape completing post-benchmark).
+        # The Parquet is a single whole-run artifact: skip phase-scoped exports
+        # (phase_index set) so per-phase windows don't overwrite it in a
+        # multi-phase run. Mirrors the multi-phase guard from main (#1150).
+        if ctx.phase_index is None:
+            await self._export_parquet_widened(start_ns, end_ns)
+
+        return results
+
+    async def _export_parquet_widened(self, start_ns: int, end_ns: int) -> None:
+        """Export the Parquet artifact over the collection-widened window.
+
+        Widens the window to include the final per-endpoint collection, which
+        may land after end_ns (e.g. a scrape completing post-benchmark). Skips
+        degenerate windows: TimeRangeFilter rejects start >= end, and a raise
+        here propagates out of export_results and is swallowed into a None
+        result (records_manager _publish_server_metrics_results), losing ALL
+        server metrics. Mirrors the guards at the per-endpoint / warmup /
+        json_exporter sites.
+        """
         export_end_ns = max(
             end_ns,
             *(
@@ -229,17 +269,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 for time_series in self._server_metrics_hierarchy.endpoints.values()
             ),
         )
-        # Skip degenerate windows: TimeRangeFilter rejects start >= end, and a
-        # raise here propagates out of export_results and is swallowed into a
-        # None result (records_manager _publish_server_metrics_results), losing
-        # ALL server metrics. Mirrors the guards at the per-endpoint / warmup /
-        # json_exporter sites.
-        if ctx.phase_index is None and start_ns < export_end_ns:
+        if start_ns < export_end_ns:
             await self._export_parquet_if_enabled(
                 TimeRangeFilter(start_ns=start_ns, end_ns=export_end_ns)
             )
-
-        return results
 
     def _compute_endpoint_summaries(
         self,

@@ -15,6 +15,7 @@ and ``datasets.main.prompts.osl``).
 from __future__ import annotations
 
 import pytest
+from pytest import param
 
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -85,29 +86,27 @@ def test_decode_itl_curve_default_step_counts_match_spec():
 # ---- Adversarial cases ----
 
 
-def test_decode_itl_curve_concurrency_lo_eq_hi_raises():
-    with pytest.raises(ValueError, match=r"concurrency-min.*must be <"):
-        DecodeITLCurve().expand(make_ctx(concurrency_min=10, concurrency_max=10))
-
-
-def test_decode_itl_curve_osl_lo_eq_hi_raises():
-    with pytest.raises(ValueError, match=r"hi .* must be > lo"):
-        DecodeITLCurve().expand(make_ctx(osl_min=128, osl_max=128))
-
-
-def test_decode_itl_curve_concurrency_lo_gt_hi_raises():
-    with pytest.raises(ValueError, match=r"concurrency-min.*must be <"):
-        DecodeITLCurve().expand(make_ctx(concurrency_min=200, concurrency_max=4))
-
-
-def test_decode_itl_curve_zero_concurrency_steps_raises():
-    with pytest.raises(ValueError, match="steps must be >= 2"):
-        DecodeITLCurve().expand(make_ctx(concurrency_steps=0))
-
-
-def test_decode_itl_curve_zero_osl_steps_raises():
-    with pytest.raises(ValueError, match="steps must be >= 2"):
-        DecodeITLCurve().expand(make_ctx(osl_steps=1))
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        param(
+            {"concurrency_min": 10, "concurrency_max": 10},
+            r"concurrency-min.*must be <",
+            id="concurrency_lo_eq_hi",
+        ),
+        param(
+            {"concurrency_min": 200, "concurrency_max": 4},
+            r"concurrency-min.*must be <",
+            id="concurrency_lo_gt_hi",
+        ),
+        param({"osl_min": 128, "osl_max": 128}, r"hi .* must be > lo", id="osl_lo_eq_hi"),
+        param({"concurrency_steps": 0}, "steps must be >= 2", id="zero_concurrency_steps"),
+        param({"osl_steps": 1}, "steps must be >= 2", id="zero_osl_steps"),
+    ],
+)  # fmt: skip
+def test_decode_itl_curve_invalid_grid_raises(overrides, match):
+    with pytest.raises(ValueError, match=match):
+        DecodeITLCurve().expand(make_ctx(**overrides))
 
 
 def test_decode_itl_curve_unknown_override_keys_silently_ignored():

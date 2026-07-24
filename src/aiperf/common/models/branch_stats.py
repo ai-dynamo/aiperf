@@ -15,6 +15,7 @@ class BranchStatsDict(TypedDict):
     children_completed: int
     children_errored: int
     children_truncated: int
+    children_delayed: int
     parents_suspended: int
     parents_resumed: int
     parents_failed_due_to_child_error: int
@@ -49,6 +50,13 @@ class BranchStats(AIPerfBaseModel):
         "The child completed at least one turn but its remaining turns did "
         "not dispatch; tallied separately from children_completed so "
         "observability stays accurate.",
+    )
+    children_delayed: int = Field(
+        default=0,
+        ge=0,
+        description="Number of SPAWN child sessions whose turn-0 dispatch was "
+        "scheduled at its recorded offset from the branch spawn (child turn-0 "
+        "timestamp past the branch start) instead of dispatching immediately.",
     )
     parents_suspended: int = Field(
         default=0,
