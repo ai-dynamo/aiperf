@@ -3,47 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Edge, Node } from "@xyflow/react";
-import { Grid } from "../../layout/Grid.js";
-import { Callout } from "../../prose/Callout.js";
-import { bandHeader, card, dashed, DeckDiagram, EvidenceRow, flow, panel, PageIntro } from "./shared.js";
+import { HubSpoke, Diagram, NodeChip, RoundNode, DbNode, MiniArrow, MiniBars } from "../../chalk/index.js";
+import { EvidenceRow, PageIntro } from "./shared.js";
 
-// Ported from the SystemView page of the Rust AIPerf architecture Cursor canvas. Four bands:
-// author/launch, execute-one-run, dispatch target, and artifacts/integrations.
-
-const nodes: Node[] = [
-  bandHeader("b-author", "Author and launch", 0, 0),
-  panel("user", "User / automation", "Config v2 + CLI flags", 0, 60),
-  card("aiperf", "aiperf", undefined, "native aiperf-cli entry point", 300, 60),
-  panel("peripheral", "Peripheral commands", "native or delegated to Python", 620, 60),
-
-  bandHeader("b-execute", "Execute one run", 0, 200),
-  card("execute", "aiperf --execute", undefined, "same binary re-exec · strict protocol v2", 300, 260),
-  card("cell", "aiperf --cell", undefined, "optional cells > 1 over velo", 620, 260),
-
-  bandHeader("b-dispatch", "Dispatch target", 0, 420),
-  card("real", "Real inference server", undefined, "OpenAI · Anthropic · KServe · Riva", 0, 480),
-  card("mock", "aiperf-mock-server", undefined, "standalone online test target", 300, 480),
-  card("dyno", "Dynamo SteppableReplay", undefined, "in-process dynosim feature", 620, 480),
-
-  bandHeader("b-artifacts", "Artifacts and integrations", 0, 640),
-  card("report", "native-v2 report", undefined, "typed schema", 0, 700),
-  panel("files", "JSON / CSV / Parquet", "per-record + summary", 300, 700),
-  panel("integrations", "OTLP · MLflow · W&B", "network exporters", 620, 700),
-];
-
-const edges: Edge[] = [
-  flow("user", "aiperf"),
-  dashed("aiperf", "peripheral"),
-  flow("aiperf", "execute"),
-  dashed("execute", "cell"),
-  flow("execute", "real"),
-  flow("execute", "mock"),
-  dashed("execute", "dyno"),
-  flow("execute", "report"),
-  flow("report", "files"),
-  dashed("files", "integrations"),
-];
+// Systems Chalk hub-and-spoke of AIPerf's product landscape: one native binary, re-exec'd per run,
+// dispatching load to a target and emitting typed artifacts. Each spoke is one beat of that story.
 
 /** SystemView: AIPerf's product landscape — one native binary, re-exec'd per run. */
 export function SystemPage(): React.JSX.Element {
@@ -55,20 +19,108 @@ export function SystemPage(): React.JSX.Element {
         only an independently launched test target.
       </PageIntro>
 
-      <DeckDiagram nodes={nodes} edges={edges} height={620} />
-
-      <Grid columns={3} gap={16}>
-        <Callout tone="info" title="Product boundary">
-          The entry-point process authors and launches. The same <code>aiperf</code> binary, re-exec'd in internal
-          execute mode, is the only process that dispatches benchmark load.
-        </Callout>
-        <Callout tone="info" title="Same online path">
-          Real and mock online runs use the same HTTP/gRPC clients; only the target address changes.
-        </Callout>
-        <Callout tone="warning" title="Feature gate">
-          DynoSim is compiled through the execution binary's <code>dynosim</code> feature; it is not a separate command.
-        </Callout>
-      </Grid>
+      <HubSpoke
+        hub={{
+          kicker: "AIPERF · ONE BINARY",
+          title: "What runs the benchmark?",
+          body: "One native binary, re-exec'd as --execute for each run.",
+        }}
+        spokes={[
+          {
+            accent: "blue",
+            badge: 1,
+            title: "Author and launch",
+            diagram: (
+              <Diagram>
+                <NodeChip>CONFIG</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>aiperf</NodeChip>
+              </Diagram>
+            ),
+            children: "Config v2 + CLI flags resolve into one launch of the native aiperf-cli entry point.",
+          },
+          {
+            accent: "cyan",
+            badge: 2,
+            title: "Re-exec per run",
+            diagram: (
+              <Diagram>
+                <NodeChip>aiperf</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>--execute</NodeChip>
+              </Diagram>
+            ),
+            children: "The same binary re-execs itself over stdio in strict protocol-v2 execute mode.",
+          },
+          {
+            accent: "purple",
+            badge: 3,
+            title: "Cells scale out",
+            diagram: (
+              <Diagram>
+                <RoundNode>1</RoundNode>
+                <RoundNode accent>2</RoundNode>
+                <RoundNode>n</RoundNode>
+                <MiniArrow />
+                <NodeChip>velo</NodeChip>
+              </Diagram>
+            ),
+            children: "With cells > 1 the controller fans work across cell processes over the velo transport.",
+          },
+          {
+            accent: "green",
+            badge: 4,
+            title: "Dispatch target",
+            diagram: (
+              <Diagram>
+                <NodeChip>EXEC</NodeChip>
+                <MiniArrow />
+                <DbNode accent>HTTP</DbNode>
+              </Diagram>
+            ),
+            children: "Real server, aiperf-mock-server, or in-process Dynamo — same client, only the address changes.",
+          },
+          {
+            accent: "red",
+            badge: 5,
+            title: "Dispatch owns measurement",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>SINK</NodeChip>
+                <MiniArrow />
+                <MiniBars heights={[38, 72, 100, 82]} />
+              </Diagram>
+            ),
+            children: "The execution child is the only process that dispatches load and measures each request.",
+          },
+          {
+            accent: "yellow",
+            badge: 6,
+            title: "Typed artifacts",
+            diagram: (
+              <Diagram>
+                <NodeChip accent>REPORT</NodeChip>
+                <MiniArrow />
+                <NodeChip>JSON · CSV</NodeChip>
+              </Diagram>
+            ),
+            children: "A typed native-v2 report plus per-record JSON / CSV / Parquet outputs.",
+          },
+          {
+            accent: "cyan",
+            badge: 7,
+            title: "Network exporters",
+            diagram: (
+              <Diagram>
+                <NodeChip>OTLP</NodeChip>
+                <MiniArrow />
+                <NodeChip accent>W&B</NodeChip>
+              </Diagram>
+            ),
+            children: "OTLP, MLflow, and W&B sinks stream results to external systems.",
+          },
+        ]}
+      />
 
       <EvidenceRow
         items={[

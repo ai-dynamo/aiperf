@@ -4,31 +4,26 @@
  */
 
 import { render, screen } from "@testing-library/react";
-import { ReactFlowProvider } from "@xyflow/react";
 import { describe, expect, it } from "vitest";
 import { SystemPage } from "./SystemPage.js";
 
 describe("SystemPage", () => {
-  it("renders the intro and band nodes", () => {
-    render(
-      <ReactFlowProvider>
-        <SystemPage />
-      </ReactFlowProvider>,
-    );
+  it("renders the intro and the hub", () => {
+    render(<SystemPage />);
     expect(screen.getByText("One binary, two roles")).toBeInTheDocument();
-    expect(screen.getAllByText("aiperf --execute").length).toBeGreaterThan(0);
-    expect(screen.getByText("aiperf-mock-server")).toBeInTheDocument();
-    expect(screen.getByText("Dynamo SteppableReplay")).toBeInTheDocument();
+    // The hub renders in both the wide (ring) and narrow (stacked) layouts.
+    expect(screen.getAllByText("What runs the benchmark?").length).toBeGreaterThan(0);
   });
 
-  it("renders the callouts and evidence anchors", () => {
-    render(
-      <ReactFlowProvider>
-        <SystemPage />
-      </ReactFlowProvider>,
-    );
-    expect(screen.getByText("Product boundary")).toBeInTheDocument();
-    expect(screen.getByText("Feature gate")).toBeInTheDocument();
+  it("renders spoke cards with their mini-diagram labels", () => {
+    render(<SystemPage />);
+    expect(screen.getAllByText("Author and launch").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Dispatch target").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("--execute").length).toBeGreaterThan(0);
+  });
+
+  it("renders the evidence anchors", () => {
+    render(<SystemPage />);
     expect(screen.getByText("rust/cli/src/dispatch.rs")).toBeInTheDocument();
   });
 });
