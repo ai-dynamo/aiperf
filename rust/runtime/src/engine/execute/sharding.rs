@@ -429,6 +429,15 @@ pub(crate) async fn execute_scheduled_pipeline(
         });
         let shared_resources = native_scheduled_resources(&sliced_phases);
 
+        // Adaptive artifacts (adaptive_scale_events.jsonl / _summary.json) are the
+        // only thing the plan builder's `artifact_dir` drives, and every shard runs
+        // its own adaptive controller. Route them to this shard's private
+        // `.shard-<id>/` dir — exactly like the per-record lanes above — so 32
+        // controllers no longer race one shared file; the coordinator merges the
+        // per-shard adaptive files at finalize (see `concatenate_shard_artifacts`).
+        let shard_artifact_dir =
+            crate::engine::shard_artifacts::shard_dir(&shared.artifact_dir, shard_id);
+
         let mut plans = Vec::with_capacity(sliced_phases.len());
         let mut profiling_index = 0usize;
         for (phase_index, phase) in sliced_phases.iter().enumerate() {
@@ -452,7 +461,7 @@ pub(crate) async fn execute_scheduled_pipeline(
                 clock.clone(),
                 start_ns,
                 &shared.benchmark_id,
-                &shared.artifact_dir,
+                &shard_artifact_dir,
                 &shared.endpoint_urls,
                 &phase_resources,
                 shared

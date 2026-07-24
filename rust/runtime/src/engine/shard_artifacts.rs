@@ -99,6 +99,9 @@ pub(crate) fn concatenate_shard_artifacts(
     concatenate_artifacts(artifacts, artifact_dir, |relative| {
         shard_paths_for(artifact_dir, relative, workers)
     })?;
+    // Adaptive artifacts live outside `ArtifactSpec` (fixed names, one controller
+    // per shard) so they are merged here rather than in `concatenate_artifacts`.
+    concatenate_shard_adaptive_artifacts(artifact_dir, workers)?;
     for id in 0..workers {
         let dir = shard_dir(artifact_dir, id);
         if dir.exists() {
@@ -214,6 +217,38 @@ pub(crate) fn copy_cell_inputs_json(
 /// Byte-append each existing shard JSONL file into `final_path` in shard order. The
 /// final file is always created (matching the eager batch writer), so an all-empty
 /// run leaves an empty file rather than none.
+/// Merge the per-shard adaptive artifacts into the run-level files. Each shard
+/// runs its own adaptive controller writing `adaptive_scale_events.jsonl` /
+/// `adaptive_scale_summary.json` under its `.shard-<id>/` dir; the event streams
+/// concatenate into one JSONL (each shard file is newline-terminated per event),
+/// and the first shard's summary is promoted as the run-level representative
+/// (shard 0 owns cell partition 0). No-op when the run had no adaptive phase.
+fn concatenate_shard_adaptive_artifacts(artifact_dir: &Path, workers: usize) -> Result<()> {
+    const EVENTS: &str = "adaptive_scale_events.jsonl";
+    const SUMMARY: &str = "adaptive_scale_summary.json";
+
+    let event_shards: Vec<PathBuf> = (0..workers)
+        .map(|id| shard_dir(artifact_dir, id).join(EVENTS))
+        .filter(|path| path.exists())
+        .collect();
+    if event_shards.is_empty() {
+        // No shard produced adaptive artifacts: the run had no adaptive phase.
+        return Ok(());
+    }
+    concat_jsonl(&event_shards, &artifact_dir.join(EVENTS))?;
+
+    for id in 0..workers {
+        let shard_summary = shard_dir(artifact_dir, id).join(SUMMARY);
+        if shard_summary.exists() {
+            std::fs::copy(&shard_summary, artifact_dir.join(SUMMARY)).with_context(|| {
+                format!("promoting adaptive summary from shard {id} to the run artifact dir")
+            })?;
+            break;
+        }
+    }
+    Ok(())
+}
+
 fn concat_jsonl(shard_paths: &[PathBuf], final_path: &Path) -> Result<()> {
     if let Some(parent) = final_path.parent() {
         std::fs::create_dir_all(parent)
