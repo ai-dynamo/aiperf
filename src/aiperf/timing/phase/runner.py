@@ -586,7 +586,7 @@ class PhaseRunner(TaskManagerMixin):
 
         if self._was_cancelled:
             if not self._lifecycle.is_complete:
-                self._lifecycle.mark_complete(grace_period_triggered=True)
+                self._lifecycle.mark_complete(grace_period_triggered=False)
                 self._progress.freeze_completed_counts()
             self._progress.all_credits_returned_event.set()
             self._baseline_end_ns = (
