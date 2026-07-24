@@ -77,20 +77,26 @@ export async function layoutGraph(
   const layerSpacing = opts.layerSpacing ?? 90;
   const lanes = opts.laneOf ? partitionIndices(nodes, opts.laneOf) : undefined;
 
+  const rootOptions: Record<string, string> = {
+    "elk.algorithm": "layered",
+    "elk.direction": direction,
+    "elk.spacing.nodeNode": String(nodeSpacing),
+    "elk.layered.spacing.nodeNodeBetweenLayers": String(layerSpacing),
+  };
+  if (lanes) {
+    rootOptions["elk.partitioning.activate"] = "true";
+  }
+
   const graph = {
     id: "root",
-    layoutOptions: {
-      "elk.algorithm": "layered",
-      "elk.direction": direction,
-      "elk.spacing.nodeNode": String(nodeSpacing),
-      "elk.layered.spacing.nodeNodeBetweenLayers": String(layerSpacing),
-      ...(lanes ? { "elk.partitioning.activate": "true" } : {}),
-    },
+    layoutOptions: rootOptions,
     children: nodes.map((node) => {
       const { width, height } = nodeSize(node);
-      const partition =
-        opts.laneOf && lanes ? { "elk.partitioning.partition": String(lanes.get(opts.laneOf(node))) } : {};
-      return { id: node.id, width, height, layoutOptions: partition };
+      const layoutOptions: Record<string, string> = {};
+      if (opts.laneOf && lanes) {
+        layoutOptions["elk.partitioning.partition"] = String(lanes.get(opts.laneOf(node)));
+      }
+      return { id: node.id, width, height, layoutOptions };
     }),
     edges: edges.map((edge) => ({ id: edge.id, sources: [edge.source], targets: [edge.target] })),
   };

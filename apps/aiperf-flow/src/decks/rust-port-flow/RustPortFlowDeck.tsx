@@ -34,6 +34,14 @@ import {
   type TimelineEvent,
   type TimelineScale,
 } from "../../interactive/index.js";
+import type { ElkOptions } from "../../layout/graph/index.js";
+
+/**
+ * Stable ELK options for every stage/leaf drill-down canvas: left→right layered layout with
+ * measured node sizes. Module-level so its identity is stable across renders (the hook relayouts
+ * when `opts` identity changes). Replaces the stages' now-ignored hand-authored `position` hints.
+ */
+const STAGE_LAYOUT: ElkOptions = { direction: "RIGHT" };
 import {
   OVERVIEW_ID,
   buildTimelineModel,
@@ -267,6 +275,7 @@ export function RustPortFlowDeck(): React.JSX.Element {
                           edges={ctx.node.edges}
                           height={340}
                           onNodeClick={(id) => ctx.drill(id)}
+                          layout={STAGE_LAYOUT}
                         />
                         {stage && (
                           <Stack gap={12}>

@@ -32,4 +32,10 @@ describe("PipelineCanvas", () => {
     render(<PipelineCanvas nodes={NODES} edges={EDGES} />);
     expect(() => fireEvent.click(screen.getByText("Alpha stage"))).not.toThrow();
   });
+
+  it("renders every node in ELK layout mode", () => {
+    render(<PipelineCanvas nodes={NODES} edges={EDGES} layout={{ direction: "RIGHT" }} />);
+    expect(screen.getByText("Alpha stage")).toBeInTheDocument();
+    expect(screen.getByText("Beta stage")).toBeInTheDocument();
+  });
 });

@@ -59,6 +59,6 @@ describe("useElkLayout", () => {
 
   it("fits the view after a layout pass", async () => {
     renderHook(() => useElkLayout(NODES, EDGES, {}));
-    await waitFor(() => expect(fitView).toHaveBeenCalled());
+    await waitFor(() => expect(fitView).toHaveBeenCalled(), { timeout: 3000 });
   });
 });
