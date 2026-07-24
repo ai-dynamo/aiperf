@@ -219,6 +219,30 @@ class TestExtensibleStrEnum:
         assert SampleEnum.ALPHA.upper() == "ALPHA"
         assert SampleEnum.ALPHA.startswith("al")
 
+    def test_exact_match_fast_path(self):
+        """An exact string compares equal; normalized-equal still matches."""
+        assert SampleEnum.ALPHA == "alpha"
+        assert SampleEnum.ALPHA == "ALPHA"
+
+    def test_identity_fast_path(self):
+        """A member is equal to itself via the identity short-circuit."""
+        member = SampleEnum.ALPHA
+        assert member == member
+
+    def test_norm_value_cached_lazily(self, enum_with_extension):
+        """Normalized value/hash are cached lazily on first use.
+
+        Extension members are created via str.__new__ and skip __init__, so the
+        cache is populated on the first comparison/hash rather than eagerly.
+        """
+        ext = enum_with_extension.EXT
+        ext.__dict__.pop("_norm_value_", None)
+        ext.__dict__.pop("_norm_hash_", None)
+        assert ext == "EXT"  # non-exact -> normalization path caches
+        assert ext.__dict__.get("_norm_value_") == "ext"
+        assert hash(ext) == hash("ext")
+        assert ext.__dict__.get("_norm_hash_") == hash("ext")
+
 
 # =============================================================================
 # Registration Tests

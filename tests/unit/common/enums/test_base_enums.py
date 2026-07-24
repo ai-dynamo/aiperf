@@ -285,3 +285,70 @@ class TestEdgeCases:
 
         assert MultiDashEnum("foo__bar") == MultiDashEnum.MULTI
         assert MultiDashEnum.MULTI == "foo__bar"
+
+
+# =============================================================================
+# Normalization Caching Tests
+# =============================================================================
+
+
+class TestNormalizationCaching:
+    """Tests for the per-member cached normalized value/hash hot-path."""
+
+    def test_norm_value_cached_on_construction(self):
+        """Members precompute the normalized value once during construction."""
+        assert SampleEnum.FOO_BAR.__dict__.get("_norm_value_") == "foo_bar"
+        assert DashValueEnum.MY_VALUE.__dict__.get("_norm_value_") == "my_value"
+
+    def test_norm_hash_cached_on_construction(self):
+        """Members precompute the normalized hash once during construction."""
+        member = DashValueEnum.MY_VALUE
+        assert member.__dict__.get("_norm_hash_") == hash("my_value")
+        assert hash(member) == hash("my_value")
+
+    def test_exact_match_fast_path(self):
+        """An exact string match compares equal without normalization work."""
+        assert SampleEnum.FOO_BAR == "foo_bar"
+        # Non-exact but normalized-equal still matches via the fallback.
+        assert SampleEnum.FOO_BAR == "FOO-BAR"
+
+    def test_identity_fast_path(self):
+        """A member is equal to itself via the identity short-circuit."""
+        member = SampleEnum.ALPHA
+        assert member == member
+
+    def test_lazy_norm_value_fallback(self):
+        """A member missing the cached attr recomputes and caches lazily.
+
+        A non-exact (normalized-equal) compare misses the exact-match fast path
+        and forces the normalization fallback, which repopulates the cache.
+        """
+        member = SampleEnum.BETA
+        # Simulate a member that skipped __init__ (e.g. dynamic creation).
+        member.__dict__.pop("_norm_value_", None)
+        member.__dict__.pop("_norm_hash_", None)
+        assert member == "BETA"  # non-exact -> normalization path
+        assert member.__dict__.get("_norm_value_") == "beta"
+        assert hash(member) == hash("beta")
+        assert member.__dict__.get("_norm_hash_") == hash("beta")
+
+    def test_enum_vs_enum_uses_cached_norm(self):
+        """Cross-enum equality still holds using cached normalized values."""
+
+        class EnumA(CaseInsensitiveStrEnum):
+            ITEM = "foo_bar"
+
+        class EnumB(CaseInsensitiveStrEnum):
+            ITEM = "foo-bar"
+
+        assert EnumA.ITEM == EnumB.ITEM
+        assert hash(EnumA.ITEM) == hash(EnumB.ITEM)
+
+    def test_non_str_enum_not_equal(self):
+        """An Enum whose value is not a str does not compare equal."""
+        from enum import Enum
+
+        class IntEnum(Enum):
+            X = 1
+
+        assert SampleEnum.ALPHA != IntEnum.X
