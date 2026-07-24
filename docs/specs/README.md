@@ -29,6 +29,7 @@ read the record for the subsystem you are touching.
 | [extension-registry.md](extension-registry.md) | Static link-time extensibility: the `AIPerfRegistry`/`AIPerfExtension` composition seam, its capability categories, and the frozen bootstrap object graph. |
 | [runner-protocol.md](runner-protocol.md) | The Config-v2 front end ↔ execution boundary: the protocol-v2 stdio envelope, the `BenchmarkRun` vocabulary, dataset/transport path selection, and the in-process linked-capability catalog. |
 | [2026-07-24-rust-port-flow-deck-design.md](2026-07-24-rust-port-flow-deck-design.md) | Design for `apps/aiperf-flow`'s `rust-port-flow` deck: an interactive, zoomable, playable request-lifecycle explainer of the whole Rust port (nine stages, semantic-zoom drill-down, animated request particle, clock/transport seam toggles) plus the shared `src/interactive/` primitives it introduces. |
+| [2026-07-24-rust-port-flow-v2-swimlane-timeline.md](2026-07-24-rust-port-flow-v2-swimlane-timeline.md) | Swimlane-timeline redesign of the `rust-port-flow` deck: the request as one continuous line riding a time axis (the Clock seam) through subsystem lanes grouped in nested seam frames; supersedes the node-graph rendering while keeping the nine-stage content and the `ZoomStage`/`useFlowPlayer`/`SeamToggle` primitives. |
 
 ### Execution and scheduling
 

@@ -405,6 +405,11 @@ Whole system:
   — design for the `apps/aiperf-flow` `rust-port-flow` deck: an interactive,
   zoomable, playable request-lifecycle explainer of the whole Rust port, plus
   the shared `src/interactive/` primitives it introduces.
+- [`docs/specs/2026-07-24-rust-port-flow-v2-swimlane-timeline.md`](docs/specs/2026-07-24-rust-port-flow-v2-swimlane-timeline.md)
+  — swimlane-timeline redesign of that deck: the request as one line riding a
+  time axis (the Clock seam) through subsystem lanes in nested seam frames;
+  supersedes the node-graph rendering, keeps the nine-stage content and the
+  `ZoomStage`/`useFlowPlayer`/`SeamToggle` primitives.
 
 Execution and scheduling:
 
