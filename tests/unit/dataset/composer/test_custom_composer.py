@@ -43,9 +43,16 @@ MOCK_DAG_MODEL_CONTENT = """{"session_id": "root", "turns": [{"messages": [{"rol
 MOCK_MULTI_TURN_CONTENT = """{"session_id": "s1", "turns": [{"text": "Summarize.", "output_length": 100}, {"text": "Key points only."}, {"text": "Expand on point 2.", "output_length": 300}]}
 """
 
-MOCK_TRACE_CONTENT = """{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
-{"timestamp": 10535, "input_length": 672, "output_length": 52, "hash_ids": [46, 47]}
-{"timestamp": 27482, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
+# A hash_id identifies a fixed block of content: PromptGenerator hard-errors if
+# the same id is materialized at two sizes. The mock tokenizer's corpus is tiny
+# (~27 tokens, 1 token/word), so a multi-block trace whose leading block is the
+# full block_size (512) would truncate that block to the corpus and then fail
+# the fixed-size check on reuse. Use a single small block per row (m==1 makes
+# current_block_size == input_length, which fits the corpus) so hash_id 46
+# materializes consistently across rows.
+MOCK_TRACE_CONTENT = """{"timestamp": 0, "input_length": 20, "output_length": 52, "hash_ids": [46]}
+{"timestamp": 10535, "input_length": 20, "output_length": 52, "hash_ids": [46]}
+{"timestamp": 27482, "input_length": 20, "output_length": 52, "hash_ids": [46]}
 """
 
 
