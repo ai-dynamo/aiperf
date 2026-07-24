@@ -657,6 +657,29 @@ pub fn total_throughput_sweep_line(
     sweep_line_cumsum_compact(events)
 }
 
+/// Computes uniform image-sample throughput in samples/ns.
+///
+/// Each request submits `num_images` samples that resolve at `end`, so the whole
+/// batch is spread uniformly over `[start, end)` as `num_images / duration`.
+/// Unlike decode throughput no count is subtracted: every image is a sample.
+pub fn sample_throughput_sweep_line(
+    start_ns: &[f64],
+    end_ns: &[f64],
+    num_images: &[f64],
+) -> StepFn {
+    assert_aligned(start_ns.len(), &[end_ns.len(), num_images.len()]);
+    let mut events = Vec::with_capacity(start_ns.len() * 2);
+    for ((&start, &end), &images) in start_ns.iter().zip(end_ns).zip(num_images) {
+        let duration = end - start;
+        if !start.is_nan() && !images.is_nan() && duration > 0.0 && images >= 1.0 {
+            let rate = images / duration;
+            events.push(SweepEvent::new(start, rate));
+            events.push(SweepEvent::new(end, -rate));
+        }
+    }
+    sweep_line_cumsum_compact(events)
+}
+
 /// All request-derived sweep curves, computed once and re-windowed for summaries.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SweepLineCurves {
@@ -674,6 +697,8 @@ pub struct SweepLineCurves {
     pub total_throughput: StepFn,
     /// KV-cache tokens held across active requests.
     pub tokens_in_flight: StepFn,
+    /// Image-sample throughput in samples/ns.
+    pub sample_throughput: StepFn,
 }
 
 impl SweepLineCurves {
@@ -687,6 +712,7 @@ impl SweepLineCurves {
         end_ns: &[f64],
         input_tokens: &[f64],
         output_tokens: &[f64],
+        num_images: &[f64],
         icl: Option<IclSeries<'_>>,
     ) -> Self {
         assert_aligned(
@@ -696,8 +722,12 @@ impl SweepLineCurves {
                 end_ns.len(),
                 input_tokens.len(),
                 output_tokens.len(),
+                num_images.len(),
             ],
         );
+        // Image-sample throughput is a single cheap sweep pass independent of the
+        // prefill/decode phase split, so it is computed outside the parallel bundle.
+        let sample_throughput = sample_throughput_sweep_line(start_ns, end_ns, num_images);
         let compute_decode_throughput = || match icl.filter(|series| !series.is_empty()) {
             Some(series) => throughput_sweep_line_icl(generation_start_ns, output_tokens, series),
             None => throughput_sweep_line(generation_start_ns, end_ns, output_tokens),
@@ -825,6 +855,7 @@ impl SweepLineCurves {
             prefill_concurrency,
             total_throughput,
             tokens_in_flight,
+            sample_throughput,
         }
     }
 
@@ -874,6 +905,14 @@ impl SweepLineCurves {
             results.push(SweepMetricResult::from_stats(
                 EFFECTIVE_METRIC_SPECS[8],
                 compute_time_weighted_stats(&self.tokens_in_flight, window_start_ns, window_end_ns),
+            ));
+            results.push(SweepMetricResult::from_stats(
+                EFFECTIVE_METRIC_SPECS[9],
+                compute_time_weighted_stats(
+                    &self.sample_throughput,
+                    window_start_ns,
+                    window_end_ns,
+                ),
             ));
             results
         };
@@ -965,7 +1004,7 @@ impl SweepMetricSpec {
     }
 }
 
-const EFFECTIVE_METRIC_SPECS: [SweepMetricSpec; 9] = [
+const EFFECTIVE_METRIC_SPECS: [SweepMetricSpec; 10] = [
     SweepMetricSpec::new(
         "effective_concurrency",
         "Effective Concurrency",
@@ -1027,6 +1066,13 @@ const EFFECTIVE_METRIC_SPECS: [SweepMetricSpec; 9] = [
         "Tokens In Flight",
         "tokens",
         1.0,
+        MetricConsoleGroup::Effective,
+    ),
+    SweepMetricSpec::new(
+        "effective_image_samples_per_second",
+        "Effective Image Samples Per Second",
+        "images/sec",
+        NANOS_PER_SECOND,
         MetricConsoleGroup::Effective,
     ),
 ];
@@ -1315,16 +1361,22 @@ mod tests {
     }
 
     #[test]
-    fn full_bundle_emits_nine_effective_and_five_active_metrics() {
-        let curves = SweepLineCurves::compute(&[0.0], &[10.0], &[110.0], &[100.0], &[11.0], None);
+    fn full_bundle_emits_ten_effective_and_five_active_metrics() {
+        let curves =
+            SweepLineCurves::compute(&[0.0], &[10.0], &[110.0], &[100.0], &[11.0], &[4.0], None);
         let metrics = curves.compute_metrics(0.0, 110.0);
-        assert_eq!(metrics.len(), 14);
+        assert_eq!(metrics.len(), 15);
         assert_eq!(metrics[0].tag, "effective_concurrency");
-        assert_eq!(metrics[13].tag, "active_total_throughput");
+        assert_eq!(metrics[9].tag, "effective_image_samples_per_second");
+        assert_eq!(metrics[14].tag, "active_total_throughput");
+        // 4 images spread over [0, 110) ns, duration-weighted over the same window
+        // and scaled to per-second: 4 / 110ns * 1e9 = 36_363_636.36… images/sec.
+        let observed = metrics[9].avg.as_f64().expect("sample rate is finite");
+        assert!((observed - 4.0 / 110.0 * NANOS_PER_SECOND).abs() < 1e-6);
     }
 
     #[test]
-    fn metric_specs_preserve_all_fourteen_exact_identities() {
+    fn metric_specs_preserve_all_fifteen_exact_identities() {
         let observed = EFFECTIVE_METRIC_SPECS
             .into_iter()
             .chain(ACTIVE_METRIC_SPECS)
@@ -1403,6 +1455,13 @@ mod tests {
                     "Tokens In Flight",
                     "tokens",
                     1.0,
+                    MetricConsoleGroup::Effective,
+                ),
+                (
+                    "effective_image_samples_per_second",
+                    "Effective Image Samples Per Second",
+                    "images/sec",
+                    NANOS_PER_SECOND,
                     MetricConsoleGroup::Effective,
                 ),
                 (

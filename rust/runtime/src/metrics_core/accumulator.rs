@@ -1233,6 +1233,7 @@ impl MetricsAccumulator {
         };
         let input = numeric(MetricTag::InputSequenceLength);
         let output = numeric(MetricTag::OutputSequenceLength);
+        let num_images = numeric(MetricTag::NumImages);
 
         if let Some(replay) = self.store.inter_chunk_latency_replay()
             && !replay.values.is_empty()
@@ -1248,6 +1249,7 @@ impl MetricsAccumulator {
                 end.as_ref(),
                 input.as_ref(),
                 output.as_ref(),
+                num_images.as_ref(),
                 Some(icl),
             );
         }
@@ -1257,6 +1259,7 @@ impl MetricsAccumulator {
             end.as_ref(),
             input.as_ref(),
             output.as_ref(),
+            num_images.as_ref(),
             None,
         )
     }
@@ -1487,6 +1490,8 @@ fn derive_scalar(
         MetricTag::TotalOutputSequenceLength => get(MetricTag::OutputSequenceLength),
         MetricTag::TotalInputSequenceLength => get(MetricTag::InputSequenceLength),
         MetricTag::TotalErrorInputSequenceLength => get(MetricTag::ErrorInputSequenceLength),
+        MetricTag::TotalNumImages => get(MetricTag::NumImages),
+        MetricTag::ImageSamplesPerSecond => rate(get(MetricTag::TotalNumImages)?),
         MetricTag::TotalOutputTokens => get(MetricTag::OutputTokenCount),
         MetricTag::TotalReasoningTokens => get(MetricTag::ReasoningTokenCount),
         MetricTag::RequestThroughput => rate(get(MetricTag::RequestCount)?),
@@ -1544,6 +1549,7 @@ fn is_injected(tag: MetricTag) -> bool {
             | MetricTag::EffectiveTotalThroughput
             | MetricTag::EffectiveDecodeThroughputPerUser
             | MetricTag::EffectivePrefillThroughputPerUser
+            | MetricTag::EffectiveImageSamplesPerSecond
             | MetricTag::TokensInFlight
             | MetricTag::ActiveDecodeThroughput
             | MetricTag::ActivePrefillThroughput
@@ -1628,6 +1634,7 @@ fn sweep_tag(tag: &str) -> Option<MetricTag> {
         "effective_total_throughput" => MetricTag::EffectiveTotalThroughput,
         "effective_decode_throughput_per_user" => MetricTag::EffectiveDecodeThroughputPerUser,
         "effective_prefill_throughput_per_user" => MetricTag::EffectivePrefillThroughputPerUser,
+        "effective_image_samples_per_second" => MetricTag::EffectiveImageSamplesPerSecond,
         "tokens_in_flight" => MetricTag::TokensInFlight,
         "active_decode_throughput" => MetricTag::ActiveDecodeThroughput,
         "active_prefill_throughput" => MetricTag::ActivePrefillThroughput,
@@ -2372,6 +2379,8 @@ mod tests {
                             | MetricTag::TotalErrorInputSequenceLength
                             | MetricTag::TotalOutputTokens
                             | MetricTag::TotalReasoningTokens
+                            | MetricTag::TotalNumImages
+                            | MetricTag::ImageSamplesPerSecond
                             | MetricTag::RequestThroughput
                             | MetricTag::InputTokenThroughput
                             | MetricTag::OutputTokenThroughput

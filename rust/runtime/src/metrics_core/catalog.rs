@@ -107,6 +107,8 @@ pub enum MetricTag {
     NumImages,
     ImageThroughput,
     ImageLatency,
+    TotalNumImages,
+    ImageSamplesPerSecond,
     VideoInferenceTime,
     VideoPeakMemory,
     HttpReqBlocked,
@@ -133,6 +135,7 @@ pub enum MetricTag {
     EffectiveTotalThroughput,
     EffectiveDecodeThroughputPerUser,
     EffectivePrefillThroughputPerUser,
+    EffectiveImageSamplesPerSecond,
     TokensInFlight,
     ActiveDecodeThroughput,
     ActivePrefillThroughput,
@@ -247,6 +250,8 @@ impl MetricTag {
             Self::NumImages => "num_images",
             Self::ImageThroughput => "image_throughput",
             Self::ImageLatency => "image_latency",
+            Self::TotalNumImages => "total_num_images",
+            Self::ImageSamplesPerSecond => "image_samples_per_second",
             Self::VideoInferenceTime => "video_inference_time",
             Self::VideoPeakMemory => "video_peak_memory",
             Self::HttpReqBlocked => "http_req_blocked",
@@ -273,6 +278,7 @@ impl MetricTag {
             Self::EffectiveTotalThroughput => "effective_total_throughput",
             Self::EffectiveDecodeThroughputPerUser => "effective_decode_throughput_per_user",
             Self::EffectivePrefillThroughputPerUser => "effective_prefill_throughput_per_user",
+            Self::EffectiveImageSamplesPerSecond => "effective_image_samples_per_second",
             Self::TokensInFlight => "tokens_in_flight",
             Self::ActiveDecodeThroughput => "active_decode_throughput",
             Self::ActivePrefillThroughput => "active_prefill_throughput",
@@ -1259,6 +1265,24 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             [NumImages, RequestLatency]
         ),
         spec!(
+            TotalNumImages,
+            "Total Number of Images",
+            Image,
+            Derived,
+            None,
+            MetricFlags::SUPPORTS_IMAGE_ONLY | MetricFlags::LARGER_IS_BETTER,
+            [NumImages]
+        ),
+        spec!(
+            ImageSamplesPerSecond,
+            "Image Samples Per Second",
+            ImagesPerSecond,
+            Derived,
+            None,
+            MetricFlags::SUPPORTS_IMAGE_ONLY | MetricFlags::LARGER_IS_BETTER,
+            [TotalNumImages, BenchmarkDuration]
+        ),
+        spec!(
             VideoInferenceTime,
             "Video Inference Time",
             Second,
@@ -1497,6 +1521,17 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Derived,
             None,
             MetricFlags::NO_INDIVIDUAL_RECORDS | MetricFlags::LARGER_IS_BETTER,
+            []
+        ),
+        spec!(
+            EffectiveImageSamplesPerSecond,
+            "Effective Image Samples Per Second",
+            ImagesPerSecond,
+            Derived,
+            None,
+            MetricFlags::NO_INDIVIDUAL_RECORDS
+                | MetricFlags::SUPPORTS_IMAGE_ONLY
+                | MetricFlags::LARGER_IS_BETTER,
             []
         ),
         spec!(
@@ -2152,7 +2187,7 @@ mod tests {
     #[test]
     fn catalog_has_unique_acyclic_resolved_dependencies() {
         let order = validate_catalog().unwrap();
-        assert_eq!(CATALOG.len(), 120);
+        assert_eq!(CATALOG.len(), 123);
         assert!(order.contains(&MetricTag::RequestLatency));
         assert!(
             CATALOG
@@ -2163,11 +2198,13 @@ mod tests {
 
     #[test]
     fn catalog_identity_matches_the_source_grounded_snapshot() {
-        // Covers the 104 Python identities plus the 16 native sweep identities.
+        // Covers the 104 Python identities plus the native sweep identities.
         // Any intentional metadata change must be re-audited before updating this value.
         // Updated 2026-07-20: added DecodeDuration (client-observed interval from
         // the first to final content response; ports Python's
         // decode_duration_metric.py), hand-porting origin/main's fe999132f.
-        assert_eq!(catalog_fingerprint(), 12_500_847_112_264_108_415);
+        // Updated 2026-07-24: added TotalNumImages, ImageSamplesPerSecond (aggregate
+        // image-sample rate) and EffectiveImageSamplesPerSecond (sweep-line variant).
+        assert_eq!(catalog_fingerprint(), 529_320_713_813_550_582);
     }
 }
