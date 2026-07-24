@@ -1246,7 +1246,7 @@ mod tests {
 
     #[test]
     fn to_openmetrics_strips_counter_total_and_appends_eof() {
-        let m = AiperfMetrics::new();
+        let m = AIPerfMockMetrics::new();
         m.REQUESTS_TOTAL
             .with_label_values(&["/v1/chat/completions", "POST", "200"])
             .inc();
