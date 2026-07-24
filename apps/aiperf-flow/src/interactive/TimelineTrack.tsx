@@ -6,22 +6,21 @@
 //! `TimelineTrack` — the top-level swimlane-timeline SVG renderer. Given `lanes`, per-lane stage
 //! `regions`, point `events`, grouping `seamFrames`, and a `requestPath` (ordered event ids), it
 //! lays out a horizontal `TimeAxis`, the stacked `Lane` bands, the labeled `StageRegion` blocks
-//! positioned along x, the translucent `SeamFrame`s, and ONE weaving `RequestLine` polyline with an
-//! `EventMarker` per event. `activeEventId` (from `useFlowPlayer`) highlights the current
-//! region/marker; `scale` ("real" | "virtual", from the Clock toggle) controls the x-mapping —
-//! "real" spaces by wall-ms offsets, "virtual" evenly by event order. Domain-agnostic: it knows
+//! positioned along x, and the translucent `SeamFrame`s. It is an EVEN-SPACED stage flow: block x
+//! comes from event ORDER only (never wall-clock), so blocks stay uniform and readable. There is no
+//! connecting request line; the play head is a single `EventMarker` on the active event's stage.
+//! `activeEventId` (from `useFlowPlayer`) highlights the current region + shows that marker; `scale`
+//! ("real" | "virtual", from the Clock toggle) only reformats the tick labels. Domain-agnostic: it knows
 //! nothing about AIPerf; a deck supplies the data. Tones are derived from lane order so the caller's
 //! data model stays minimal. Respects `prefers-reduced-motion`.
 
 import { useMemo } from "react";
-import { useReducedMotion } from "motion/react";
 import type { CategoryRole } from "../theme/tokens.js";
 import { inkClassName } from "../theme/tokens.js";
 import { TimeAxis, type TimeAxisTick } from "./TimeAxis.js";
 import { Lane as LaneBand } from "./Lane.js";
 import { StageRegion as StageRegionBlock } from "./StageRegion.js";
 import { SeamFrame as SeamFrameBox } from "./SeamFrame.js";
-import { RequestLine } from "./RequestLine.js";
 import { EventMarker } from "./EventMarker.js";
 import {
   buildOffsetForOrder,
@@ -57,16 +56,16 @@ export interface TimelineTrackProps {
 }
 
 // Layout constants (viewBox pixel space; the SVG scales to its container via width="100%").
-const VIEW_W = 960;
-const GUTTER = 122; // left gutter for lane labels
-const RIGHT_PAD = 30;
+const VIEW_W = 1600;
+const GUTTER = 128; // left gutter for lane labels
+const RIGHT_PAD = 34;
 const AXIS_Y = 44; // baseline of the time axis
-const LANES_TOP = AXIS_Y + 20;
-const LANE_H = 46;
-const LANE_GAP = 6;
+const LANES_TOP = AXIS_Y + 22;
+const LANE_H = 58; // tall enough for a two-line wrapped stage label
+const LANE_GAP = 8;
 const REGION_INSET_Y = 6;
-const REGION_PAD_X = 7;
-const MIN_REGION_W = 74;
+const REGION_PAD_X = 8;
+const MIN_REGION_W = 96;
 
 const AXIS_LEFT = GUTTER;
 const AXIS_RIGHT = VIEW_W - RIGHT_PAD;
@@ -75,10 +74,10 @@ const AXIS_W = AXIS_RIGHT - AXIS_LEFT;
 // Minimum pixel gap enforced between consecutive event orders. Without this, wall-ms spacing bunches
 // the setup events (all within ~64ms) into the left edge, stacking their dots and labels illegibly.
 // The spread preserves order and keeps big real gaps (e.g. TTFT) proportionally wider.
-const MIN_EVENT_GAP = 44;
+const MIN_EVENT_GAP = 90;
 // A comfortable default width for a single-order stage block, capped by its neighbor.
-const DEFAULT_REGION_W = 104;
-const REGION_GAP = 8;
+const DEFAULT_REGION_W = 150;
+const REGION_GAP = 10;
 
 // Tones are derived from lane/seam order so the (domain-agnostic) data model needs no color field.
 const LANE_TONES: readonly CategoryRole[] = ["green", "purple", "yellow", "blue", "cyan", "orange", "red", "gray"];
@@ -115,8 +114,6 @@ export function TimelineTrack({
   onRegionClick,
   className,
 }: TimelineTrackProps): React.JSX.Element {
-  const prefersReduced = useReducedMotion() ?? false;
-
   const bounds = useMemo(() => timelineBounds(events), [events]);
   const offsetForOrder = useMemo(() => buildOffsetForOrder(events), [events]);
   const laneIndex = useMemo(() => {
@@ -137,8 +134,12 @@ export function TimelineTrack({
   // (wall-ms) events while preserving order and the *relative* size of the big real latency gaps.
   const orderX = useMemo(() => {
     const distinct = Array.from(new Set(events.map((e) => e.atOrder))).sort((a, b) => a - b);
+    // Even-spaced STAGE FLOW: positions come from event ORDER only, never wall-clock offsets, so the
+    // blocks are uniform and readable (the Clock seam still recolors the line + reformats the tick
+    // labels, but no longer crushes the setup stages into the left edge). `scale` intentionally
+    // unused for positioning; `"virtual"` == evenly by order.
     const raw = distinct.map(
-      (order) => AXIS_LEFT + fractionForOrder(order, scale, bounds, offsetForOrder) * AXIS_W,
+      (order) => AXIS_LEFT + fractionForOrder(order, "virtual", bounds, offsetForOrder) * AXIS_W,
     );
     const spread: number[] = [];
     for (let i = 0; i < raw.length; i++) {
@@ -186,29 +187,26 @@ export function TimelineTrack({
   };
   const xForEvent = (event: TimelineEvent): number => xForOrder(event.atOrder);
 
-  // Tile each lane's regions left→right so blocks never overlap: a block grows toward a comfortable
-  // default width but is clamped short of the next block in its lane (or the axis end).
+  // Even-spaced stage flow: every stage gets one uniform column (AXIS_W / N), assigned by narrative
+  // order across ALL stages, so blocks are generous and equal-width (labels fit on one line) and
+  // staircase across the lanes by their order — no wall-clock crushing, no per-lane tiling.
   const regionRects = (() => {
-    const byLane = new Map<string, StageRegion[]>();
-    for (const region of regions) {
-      const arr = byLane.get(region.laneId) ?? [];
-      arr.push(region);
-      byLane.set(region.laneId, arr);
-    }
+    const sorted = [...regions].sort((a, b) => a.startOrder - b.startOrder);
+    const n = sorted.length;
+    const colW = n > 0 ? AXIS_W / n : AXIS_W;
     const rects = new Map<string, { x: number; width: number }>();
-    for (const arr of byLane.values()) {
-      const sorted = [...arr].sort((a, b) => a.startOrder - b.startOrder);
-      sorted.forEach((region, i) => {
-        const left = Math.max(AXIS_LEFT - 6, xForOrder(region.startOrder) - REGION_PAD_X);
-        const spanRight = xForOrder(region.endOrder) + REGION_PAD_X;
-        const next = sorted[i + 1];
-        const hardRight = next !== undefined ? xForOrder(next.startOrder) - REGION_GAP : AXIS_RIGHT;
-        const right = Math.min(Math.max(spanRight, left + DEFAULT_REGION_W), hardRight);
-        rects.set(region.id, { x: left, width: Math.max(right - left, 10) });
+    sorted.forEach((region, i) => {
+      rects.set(region.id, {
+        x: AXIS_LEFT + i * colW + REGION_GAP / 2,
+        width: Math.max(colW - REGION_GAP, MIN_REGION_W),
       });
-    }
+    });
     return rects;
   })();
+  const regionCenterX = (regionId: string): number => {
+    const r = regionRects.get(regionId);
+    return r ? r.x + r.width / 2 : AXIS_LEFT;
+  };
   const laneCenterY = (laneId: string): number => {
     const idx = laneIndex.get(laneId) ?? 0;
     return laneRowTop(idx) + LANE_H / 2;
@@ -227,15 +225,6 @@ export function TimelineTrack({
     activeEvent !== undefined
       ? regions.find((r) => activeEvent.atOrder >= r.startOrder && activeEvent.atOrder <= r.endOrder)?.id
       : undefined;
-
-  // The request line points, in path order, weaving lane→lane.
-  const linePoints = requestPath
-    .map((id) => eventById.get(id))
-    .filter((event): event is TimelineEvent => event !== undefined)
-    .map((event) => ({ x: xForEvent(event), y: laneCenterY(event.laneId) }));
-
-  // The line color reflects the active scale (a legible cue for the Clock seam).
-  const lineTone: CategoryRole = scale === "virtual" ? "purple" : "green";
 
   const unitLabel = scale === "real" ? "RealClock · wall-ms" : "SimClock · virtual ticks";
 
@@ -285,9 +274,27 @@ export function TimelineTrack({
           const maxIdx = idxs.length > 0 ? Math.max(...idxs) : lanes.length - 1;
           const yTop = laneRowTop(minIdx) - 4;
           const yBottom = laneRowTop(maxIdx) + LANE_H + 4;
+          // Align the frame to the EVEN-COLUMN blocks it groups (not the order axis): union the
+          // rects of the regions inside its lane set + order span, so the frame hugs those columns.
           const [startOrder, endOrder] = frame.spanOrder ?? [bounds.minOrder, bounds.maxOrder];
-          const fx1 = clampX(xForOrder(startOrder) - REGION_PAD_X);
-          const fx2 = clampX(xForOrder(endOrder) + REGION_PAD_X);
+          const laneSet = frame.spanLaneIds ? new Set(frame.spanLaneIds) : undefined;
+          const covered = regions
+            .filter(
+              (r) =>
+                (laneSet === undefined || laneSet.has(r.laneId)) &&
+                r.endOrder >= startOrder &&
+                r.startOrder <= endOrder,
+            )
+            .map((r) => regionRects.get(r.id))
+            .filter((r): r is { x: number; width: number } => r !== undefined);
+          const fx1 =
+            covered.length > 0
+              ? Math.min(...covered.map((r) => r.x)) - REGION_PAD_X
+              : clampX(xForOrder(startOrder) - REGION_PAD_X);
+          const fx2 =
+            covered.length > 0
+              ? Math.max(...covered.map((r) => r.x + r.width)) + REGION_PAD_X
+              : clampX(xForOrder(endOrder) + REGION_PAD_X);
           return (
             <SeamFrameBox
               key={frame.id}
@@ -323,22 +330,17 @@ export function TimelineTrack({
         {/* Time axis (above the lanes). */}
         <TimeAxis x1={AXIS_LEFT} x2={AXIS_RIGHT} y={AXIS_Y} ticks={ticks} unitLabel={unitLabel} />
 
-        {/* The hero request line + event markers (top layer). */}
-        {linePoints.length >= 2 && (
-          <RequestLine points={linePoints} tone={lineTone} reducedMotion={prefersReduced} />
-        )}
-        {/* Dots for every event, but only the active event carries a text label — otherwise all 16
-            labels would collide. Play/step reveals each event's name as the head reaches it. */}
-        {events.map((event) => (
+        {/* No connecting request line: the play head is shown only as a single marker on the active
+            event's stage (paired with the region highlight + the caption above the track). */}
+        {activeEvent !== undefined && (
           <EventMarker
-            key={event.id}
-            x={xForEvent(event)}
-            y={laneCenterY(event.laneId)}
-            tone={laneTone(event.laneId)}
-            active={event.id === activeEventId}
-            label={event.id === activeEventId ? event.label : undefined}
+            x={activeRegionId !== undefined ? regionCenterX(activeRegionId) : xForEvent(activeEvent)}
+            y={laneCenterY(activeEvent.laneId)}
+            tone={laneTone(activeEvent.laneId)}
+            active
+            label={activeEvent.label}
           />
-        ))}
+        )}
       </svg>
       <p className={`mt-1 text-[11px] ${inkClassName("tertiary")}`}>
         One request riding the time axis through {lanes.length} subsystem lanes — click a stage block

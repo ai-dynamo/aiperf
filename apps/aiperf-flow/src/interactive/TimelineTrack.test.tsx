@@ -53,19 +53,19 @@ describe("TimelineTrack", () => {
     }
     expect(getByText("Dataset loading")).toBeInTheDocument();
     expect(getByText("Request hot-path")).toBeInTheDocument();
-    // One marker per event.
-    expect(container.querySelectorAll('[data-testid="event-marker"]').length).toBe(EVENTS.length);
+    // No connecting request line, and no stray event markers when idle (no active play head).
+    expect(container.querySelectorAll('[data-testid="request-line"]').length).toBe(0);
+    expect(container.querySelectorAll('[data-testid="event-marker"]').length).toBe(0);
     // One seam frame per SeamFrame.
     expect(container.querySelectorAll('[data-testid="seam-frame"]').length).toBe(SEAMS.length);
-    // Exactly one weaving request line.
-    expect(container.querySelectorAll('[data-testid="request-line"]').length).toBe(1);
   });
 
-  it("weaves ONE request line through the events in path order", () => {
-    const { container } = renderTrack();
-    const line = container.querySelector('[data-testid="request-line"]');
-    const pts = (line?.getAttribute("points") ?? "").split(" ");
-    expect(pts).toHaveLength(3);
+  it("shows only the active event's marker (the play head), no line", () => {
+    const { container } = renderTrack({ activeEventId: "issue" });
+    expect(container.querySelectorAll('[data-testid="request-line"]').length).toBe(0);
+    const markers = container.querySelectorAll('[data-testid="event-marker"]');
+    expect(markers.length).toBe(1);
+    expect(markers[0]!.getAttribute("data-active")).toBe("true");
   });
 
   it("switches the axis unit label with the scale", () => {
@@ -76,19 +76,18 @@ describe("TimelineTrack", () => {
     expect(real.getByText("RealClock · wall-ms")).toBeInTheDocument();
   });
 
-  it("places the middle event closer to the start on the real scale than on the virtual scale", () => {
-    // On the virtual scale the middle event sits at the midpoint; on the real scale its small wall-ms
-    // offset (10 of 200) pulls it far left — the x-mapping actually changes with the scale.
+  it("uses even (order-based) x-positions independent of the Clock scale (even-spaced stage flow)", () => {
+    // The overview is an even-spaced stage flow: block positions come from event ORDER only, so
+    // toggling the Clock scale reformats tick labels but does NOT move the blocks.
+    const regionXs = (c: HTMLElement): number[] =>
+      Array.from(c.querySelectorAll('[data-testid="stage-region"] rect'))
+        .map((r) => Number(r.getAttribute("x")))
+        .sort((a, b) => a - b);
     const virtual = renderTrack({ scale: "virtual" });
-    const vx = Number(
-      virtual.container.querySelector('[data-testid="request-line"]')?.getAttribute("points")?.split(" ")[1]?.split(",")[0],
-    );
+    const vx = regionXs(virtual.container);
     virtual.unmount();
     const real = renderTrack({ scale: "real" });
-    const rx = Number(
-      real.container.querySelector('[data-testid="request-line"]')?.getAttribute("points")?.split(" ")[1]?.split(",")[0],
-    );
-    expect(rx).toBeLessThan(vx);
+    expect(regionXs(real.container)).toEqual(vx);
   });
 
   it("drills into a stage when its region block is clicked", () => {
