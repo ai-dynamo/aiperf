@@ -494,7 +494,7 @@ class TestLookupAndPopulate:
         raw["version"] = 22
         manifest_path.write_bytes(orjson.dumps(raw))
 
-        assert mmap_cache.MANIFEST_VERSION == 25
+        assert mmap_cache.MANIFEST_VERSION == 26
         assert mmap_cache.lookup("pre-overlap-frontier", compressed=False) is None
 
     def test_lookup_compressed_mismatch_returns_none(self, tmp_path: Path) -> None:

@@ -808,8 +808,8 @@ def _apply_inter_turn_delay_cap(d: dict[str, Any], cli: CLIConfig) -> None:
 def _apply_trace_delay_flags(d: dict[str, Any], cli: CLIConfig) -> None:
     """Route trace-replay delay knobs onto ``FileDataset``/``PublicDataset``.
 
-    ``--ignore-trace-delays``, ``--use-think-time-only``,
-    ``--use-end-to-start-delays``, and ``--trace-idle-gap-cap-seconds`` live on
+    ``--ignore-trace-delays``, ``--use-think-time-only``, and
+    ``--trace-idle-gap-cap-seconds`` live on
     both FILE and PUBLIC dataset models and bake into ``Turn.delay`` /
     ``Turn.timestamp`` at load time. Without this route the CLI flags are
     silently dropped (YAML / scenario paths set the fields directly).

@@ -78,6 +78,12 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v26: weka inter-turn delays are now always end-to-start
+    # (t_k - (t_{k-1} + api_{k-1}), floored at 0) instead of start-to-start.
+    # The use_end_to_start_delays flag was removed, so Turn.delay decodes to
+    # different values for the same key. The flag's removal from the key payload
+    # already forces old weka entries to miss, but the content changed, so bump
+    # explicitly per this file's contract rather than relying on that coincidence.
     # v25: same-model reduction sidecars are still classified as auxiliary for
     # scheduling, but no longer emit the extra reduction session-id flavor.
     # They now use plain ::aux:, so cached Weka manifests need rebuilt session
@@ -168,7 +174,7 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    25
+    26
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
