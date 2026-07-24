@@ -221,6 +221,8 @@ navigation:
     path: reference/list-metric-aggregation.md
   - page: Vendor Usage Field Reference
     path: reference/vendor-usage-fields.md
+  - page: Per-Request Speculative-Decoding Acceptance
+    path: reference/spec-decode-acceptance.md
   - page: JSON Export Schema
     path: reference/json-export-schema.md
   - page: HTTP API Endpoints

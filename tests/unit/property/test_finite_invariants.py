@@ -364,6 +364,13 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # Per-metric values are constrained by the metrics system; no field-level
     # bound is meaningful on the container.
     "OutputFragment.metrics",
+    # SpecDecodeAcceptanceRecord: histograms/per-step arrays of non-negative
+    # counts. A field-level ge/le bound cannot apply to a dict/list container, so
+    # non-negativity is enforced on the element type (dict[NonNegativeInt,
+    # NonNegativeInt] / list[NonNegativeInt]); the scalar count fields carry ge=0.
+    "SpecDecodeAcceptanceRecord.acceptance_histogram",
+    "SpecDecodeAcceptanceRecord.per_step_accepted",
+    "SpecDecodeAcceptanceRecord.per_step_drafted",
 }
 
 
