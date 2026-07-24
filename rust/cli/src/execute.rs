@@ -75,6 +75,11 @@ pub fn run_once(
     // fork+exec, so unblock it in the child or its `tokio::signal` graceful-
     // cancel listener never observes the forwarded SIGINT.
     unblock_signals_in_child(&mut command);
+    // A SIGKILLed or OOM-killed front door never runs its Drop/wait cleanup, so
+    // without a kernel-backed parent-death signal the `--execute` child would be
+    // reparented to init and keep running headless. PR_SET_PDEATHSIG makes the
+    // kernel SIGKILL it the moment this parent dies.
+    set_parent_death_signal(&mut command);
     let mut child = command.spawn().map_err(|e| {
         anyhow::anyhow!(
             "failed to spawn aiperf --execute ({}): {e}",
@@ -147,6 +152,33 @@ fn unblock_signals_in_child(command: &mut Command) {
 
 #[cfg(not(unix))]
 fn unblock_signals_in_child(_command: &mut Command) {}
+
+/// Make the kernel SIGKILL this child if the parent (front door) dies before it
+/// can reap the child itself — closing the orphaned-process gap that
+/// `child.wait()`/Drop cannot cover on a hard parent kill (SIGKILL, OOM). Mirrors
+/// the mock-server balancer's `set_parent_death_signal`. Linux-only (`prctl`).
+#[cfg(target_os = "linux")]
+fn set_parent_death_signal(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    // SAFETY: `pre_exec` runs in the forked child before `exec`; `prctl` and
+    // `getppid`/`raise` are async-signal-safe and touch no shared state.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // Close the fork/prctl race: if the parent already exited, getppid()
+            // reads 1 (reparented to init) and we self-terminate immediately.
+            if libc::getppid() == 1 {
+                libc::raise(libc::SIGKILL);
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn set_parent_death_signal(_command: &mut Command) {}
 
 /// Parse stdout while enforcing the single-terminal-line contract.
 fn parse_terminal(stdout: &[u8], returncode: i32) -> anyhow::Result<Terminal> {

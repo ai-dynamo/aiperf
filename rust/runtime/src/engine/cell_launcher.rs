@@ -124,6 +124,10 @@ impl LocalLauncher {
             // these children; kill_on_drop then SIGKILLs each cell so a failed run
             // never leaves cells generating load.
             .kill_on_drop(true);
+        // kill_on_drop only fires on the controller's graceful Drop. A SIGKILLed
+        // or OOM-killed controller skips Drop entirely, so also arm a kernel-backed
+        // parent-death signal: the cell is SIGKILLed the moment the controller dies.
+        set_parent_death_signal(&mut command);
         if let Ok(bases) = serde_json::to_string(&ctx.phase_ordinal_bases) {
             command.env(CELL_PHASE_ORDINAL_BASES_ENV, bases);
         }
@@ -146,6 +150,29 @@ impl LocalLauncher {
         command
     }
 }
+
+/// Arm a kernel-backed parent-death signal so a cell is SIGKILLed the instant the
+/// controller dies, even on a hard controller kill (SIGKILL/OOM) that skips the
+/// `kill_on_drop` Drop path. Mirrors the mock-server balancer's guard. Linux-only.
+#[cfg(target_os = "linux")]
+fn set_parent_death_signal(command: &mut tokio::process::Command) {
+    // SAFETY: `pre_exec` runs in the forked child before `exec`; `prctl` and
+    // `getppid`/`raise` are async-signal-safe and touch no shared state.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::getppid() == 1 {
+                libc::raise(libc::SIGKILL);
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn set_parent_death_signal(_command: &mut tokio::process::Command) {}
 
 impl CellLauncher for LocalLauncher {
     fn launch(&self, ctx: &CellLaunchContext) -> Result<Vec<CellHandle>> {
