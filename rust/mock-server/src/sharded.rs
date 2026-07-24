@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use prometheus::HistogramOpts;
 use prometheus::Histogram;
 use prometheus::core::{Collector, Desc};
-use prometheus::proto::MetricFamily;
+use prometheus::proto::{Bucket, Histogram as ProtoHistogram, MetricFamily};
 
 /// Global monotonic source of per-thread shard ids. Each thread claims one id
 /// the first time it observes any `ShardedHistogram`, then reuses it for all of
@@ -96,28 +96,48 @@ impl Collector for ShardedHistogram {
     }
 
     fn collect(&self) -> Vec<MetricFamily> {
-        // Start from shard 0's exposition, then fold in the remaining shards'
-        // bucket counts, sample sum, and sample count. Prometheus histogram
-        // buckets are cumulative, and summing cumulative counts across disjoint
-        // shards yields the correct merged cumulative counts.
+        // Sum sample count/sum and per-bucket cumulative counts across every
+        // shard, then rebuild one merged Histogram. Prometheus histogram buckets
+        // are cumulative, and summing cumulative counts across disjoint shards
+        // yields the correct merged cumulative counts. Shard 0's exposition
+        // supplies the family name/type/labels and the bucket upper bounds.
         let mut families = self.shards[0].collect();
-        {
-            let family = &mut families[0];
-            let metric = &mut family.mut_metric()[0];
-            let merged = metric.mut_histogram();
-            for shard in &self.shards[1..] {
-                let shard_families = shard.collect();
-                let shard_hist = shard_families[0].get_metric()[0].get_histogram();
-                merged.set_sample_count(merged.get_sample_count() + shard_hist.get_sample_count());
-                merged.set_sample_sum(merged.get_sample_sum() + shard_hist.get_sample_sum());
-                let shard_buckets = shard_hist.get_bucket();
-                for (i, bucket) in merged.mut_bucket().iter_mut().enumerate() {
-                    bucket.set_cumulative_count(
-                        bucket.get_cumulative_count() + shard_buckets[i].get_cumulative_count(),
-                    );
-                }
+
+        let (upper_bounds, mut cum): (Vec<f64>, Vec<u64>) = {
+            let hist = families[0].get_metric()[0].get_histogram();
+            (
+                hist.get_bucket().iter().map(Bucket::get_upper_bound).collect(),
+                hist.get_bucket().iter().map(Bucket::get_cumulative_count).collect(),
+            )
+        };
+        let mut sample_count = families[0].get_metric()[0].get_histogram().get_sample_count();
+        let mut sample_sum = families[0].get_metric()[0].get_histogram().get_sample_sum();
+
+        for shard in &self.shards[1..] {
+            let shard_families = shard.collect();
+            let hist = shard_families[0].get_metric()[0].get_histogram();
+            sample_count += hist.get_sample_count();
+            sample_sum += hist.get_sample_sum();
+            for (i, bucket) in hist.get_bucket().iter().enumerate() {
+                cum[i] += bucket.get_cumulative_count();
             }
         }
+
+        let mut merged = ProtoHistogram::default();
+        merged.set_sample_count(sample_count);
+        merged.set_sample_sum(sample_sum);
+        let buckets: Vec<Bucket> = cum
+            .iter()
+            .zip(&upper_bounds)
+            .map(|(&count, &ub)| {
+                let mut b = Bucket::default();
+                b.set_cumulative_count(count);
+                b.set_upper_bound(ub);
+                b
+            })
+            .collect();
+        merged.set_bucket(buckets);
+        families[0].mut_metric()[0].set_histogram(merged);
         families
     }
 }
