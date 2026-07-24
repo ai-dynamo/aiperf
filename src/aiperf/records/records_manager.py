@@ -1767,6 +1767,20 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             for error in error_results:
                 self.error(f"Warmup metric summary error: {error}")
 
+        warmup_context_overflow_count = (
+            self._skipped_context_overflow_counts_by_phase.get(CreditPhase.WARMUP, 0)
+        )
+        if warmup_context_overflow_count:
+            records_results.append(
+                MetricResult(
+                    tag="context_overflow_count",
+                    header="Context Overflow Count",
+                    unit="requests",
+                    avg=float(warmup_context_overflow_count),
+                    count=1,
+                )
+            )
+
         return records_results or None
 
     async def _finalize_stream_exporters(self) -> None:
