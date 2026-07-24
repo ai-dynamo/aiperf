@@ -17,7 +17,7 @@
 //!    updates never get clobbered by (or clobber) the computed layout.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useReactFlow, useStore } from "@xyflow/react";
+import { useReactFlow } from "@xyflow/react";
 import type { Edge, Node, XYPosition } from "@xyflow/react";
 import { layoutGraph, fallbackLayout } from "./elkEngine.js";
 import type { ElkOptions } from "./elkEngine.js";
@@ -42,16 +42,6 @@ function positionMap(nodes: Node[]): Map<string, XYPosition> {
  */
 export function useElkLayout(inputNodes: Node[], edges: Edge[], opts: ElkOptions = {}): UseElkLayoutResult {
   const { getNodes, fitView } = useReactFlow();
-  // A signature of every node's measured footprint. It changes as React Flow measures the nodes
-  // (their real, text-wrapped sizes), which re-triggers layout so ELK reserves each box's true
-  // height/width — the fix for overlapping boxes when default sizes underestimated tall cards.
-  const sizeSignature = useStore((s) => {
-    let sig = "";
-    s.nodeLookup.forEach((n) => {
-      sig += `${n.id}:${Math.round(n.measured?.width ?? 0)}x${Math.round(n.measured?.height ?? 0)};`;
-    });
-    return sig;
-  });
   const [positions, setPositions] = useState<Map<string, XYPosition>>(new Map());
   const [laidOut, setLaidOut] = useState(false);
 
@@ -69,12 +59,15 @@ export function useElkLayout(inputNodes: Node[], edges: Edge[], opts: ElkOptions
     setLaidOut(false);
   }
 
-  // Driven by `sizeSignature`, NOT `useNodesInitialized` (which can stay false for nested/animated
-  // canvases, leaving the diagram unlaid-out and hidden forever). We lay out immediately with
-  // whatever sizes exist (default box sizes when unmeasured — still a real ELK layout, never blank)
-  // and re-run each time a measurement lands, so ELK ends up using every box's true footprint.
+  // Lay out immediately, then re-run at two fixed delays. NOT gated on `useNodesInitialized` (which
+  // can stay false for nested/animated canvases → blank forever) and NOT subscribed to the store
+  // (a size-signature subscription blanked the animated drill-down canvas in the real browser).
+  // The first pass uses whatever sizes exist (default box sizes when unmeasured — still a real ELK
+  // layout, never blank); the delayed passes catch React Flow's real measured (text-wrapped) sizes
+  // so boxes stop overlapping, and re-fit after the drill-in animation has settled.
   useEffect(() => {
     let cancelled = false;
+    let seeded = false;
 
     const run = (): void => {
       // Prefer React Flow's own node objects — they carry `.measured` sizes the input nodes lack.
@@ -82,14 +75,18 @@ export function useElkLayout(inputNodes: Node[], edges: Edge[], opts: ElkOptions
       const byId = new Map(measured.map((n) => [n.id, n]));
       const sized = inputNodes.map((n) => ({ ...n, measured: byId.get(n.id)?.measured }));
 
-      // Seed synchronously so the canvas is visible immediately, independent of ELK's async pass.
-      setPositions(positionMap(fallbackLayout(sized, edges, opts)));
-      setLaidOut(true);
+      // Seed synchronously on the first pass so the canvas is visible immediately.
+      if (!seeded) {
+        setPositions(positionMap(fallbackLayout(sized, edges, opts)));
+        setLaidOut(true);
+        seeded = true;
+      }
 
-      // Refine with ELK's layered/orthogonal routing; overwrite the seed when it resolves.
+      // Refine with ELK's layered/orthogonal routing; overwrite when it resolves, then fit.
       void layoutGraph(sized, edges, opts).then((laid) => {
         if (cancelled) return;
         setPositions(positionMap(laid));
+        setLaidOut(true);
         requestAnimationFrame(() => {
           if (!cancelled) fitView({ padding: 0.2 });
         });
@@ -97,17 +94,17 @@ export function useElkLayout(inputNodes: Node[], edges: Edge[], opts: ElkOptions
     };
 
     run();
-    requestAnimationFrame(() => {
-      if (!cancelled) fitView({ padding: 0.2 });
-    });
+    // Re-run once measurements have likely landed, and again after the drill-in animation settles.
+    const t1 = setTimeout(run, 250);
+    const t2 = setTimeout(run, 700);
     return () => {
       cancelled = true;
+      clearTimeout(t1);
+      clearTimeout(t2);
     };
-    // graphKey/optsKey/sizeSignature are stable string identities. sizeSignature re-runs layout as
-    // measurements land (real sizes → no overlap). Using optsKey (not the opts object) tolerates
-    // an inline opts={} at the call site without an infinite relayout loop.
+    // graphKey/optsKey are stable string identities; opts identity is intentionally not a dep.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graphKey, optsKey, sizeSignature]);
+  }, [graphKey, optsKey]);
 
   // Overlay computed positions onto the live input nodes so data updates always show through.
   const nodes = useMemo(

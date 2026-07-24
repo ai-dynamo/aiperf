@@ -17,9 +17,6 @@ vi.mock("@xyflow/react", async (importOriginal) => {
   return {
     ...actual,
     useReactFlow: () => ({ getNodes: () => measured, fitView }),
-    // Feed the store selector a nodeLookup Map built from the current `measured` nodes.
-    useStore: (selector: (s: { nodeLookup: Map<string, Node> }) => unknown) =>
-      selector({ nodeLookup: new Map(measured.map((n) => [n.id, n])) }),
   };
 });
 
