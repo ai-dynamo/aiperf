@@ -40,6 +40,7 @@ from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.export_models import JsonMetricResult, TelemetryExportData
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
+from aiperf.common.models.spec_decode_models import SpecDecodeAcceptanceRecord
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
 from aiperf.common.types import JsonObject, MetricTagT, PhaseKind
@@ -1421,6 +1422,12 @@ class ParsedResponse:
     metadata: dict[str, Any] = field(default_factory=dict)
     """Additional metadata from the response useful for analysis (rate limits, content filters, etc.)."""
 
+    spec_decode_stats: dict[str, Any] | None = None
+    """Raw per-choice speculative-decoding payload captured from the wire (e.g.
+    vLLM's ``choices[].speculative_decoding_stats``), or None when absent. Left
+    uninterpreted here; a ``SpecDecodeAdapterProtocol`` converts it into the
+    engine-neutral ``SpecDecodeAcceptanceRecord`` at record-assembly time."""
+
     def __post_init__(self) -> None:
         # Coerce raw dicts to Usage, since dataclass __init__ doesn't run
         # Pydantic validation like BaseModel did.
@@ -1481,6 +1488,14 @@ class ParsedResponseRecord:
 
     media_counts: MediaCounts = field(default_factory=MediaCounts)
     """Multimodal content-part counts derived once from the wire payload (images/audios/videos)."""
+
+    spec_decode_acceptance: SpecDecodeAcceptanceRecord | None = None
+    """Engine-neutral per-request speculative-decoding acceptance record, filled
+    by a ``SpecDecodeAdapterProtocol`` when the response carried spec-decode
+    stats. ``None`` when: spec decode is off or the request had no verify steps
+    (no payload); the request produced multiple sequences (``n > 1``, which is
+    suppressed); no registered adapter recognized the payload; or the payload
+    was malformed and the adapter rejected it."""
 
     @cached_property
     def final_usage(self) -> Usage | None:
