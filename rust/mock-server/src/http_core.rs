@@ -67,6 +67,8 @@ pub fn parse_head(buf: &[u8]) -> Result<Option<Head>, ()> {
 }
 
 const CHAT_PATHS: &[&str] = &["/v1/chat/completions", "/openai/v1/chat/completions"];
+const TEXT_PATHS: &[&str] = &["/v1/completions", "/openai/v1/completions"];
+const EMBED_PATHS: &[&str] = &["/v1/embeddings", "/openai/v1/embeddings"];
 
 /// Assemble an HTTP/1.1 response with the given status line, content type, and body.
 pub fn http_response(status: &str, content_type: &str, body: &[u8], keep_alive: bool) -> Vec<u8> {
@@ -85,22 +87,42 @@ pub fn http_response(status: &str, content_type: &str, body: &[u8], keep_alive: 
     out
 }
 
+fn bad_request(e: &serde_json::Error, keep_alive: bool) -> Vec<u8> {
+    let msg = format!("{{\"error\":\"invalid request: {e}\"}}");
+    http_response("422 Unprocessable Entity", "application/json", msg.as_bytes(), keep_alive)
+}
+
 /// Build the response bytes for one fully-received request.
 pub fn route(state: &AppState, head: &Head, buf: &[u8]) -> Vec<u8> {
     let path = &buf[head.path_start..head.path_end];
     let ka = head.keep_alive;
     if head.is_post {
+        let body = &buf[head.head_len..head.head_len + head.body_len];
         if CHAT_PATHS.iter().any(|p| path == p.as_bytes()) {
-            let body = &buf[head.head_len..head.head_len + head.body_len];
             return match serde_json::from_slice::<crate::models::ChatCompletionRequest>(body) {
                 Ok(req) => {
-                    let json = crate::handlers::render_chat_completion_nonstream_fast(state, &req);
-                    http_response("200 OK", "application/json", &json, ka)
+                    let (ct, out) = crate::handlers::render_chat_completion_fast(state, &req);
+                    http_response("200 OK", ct, &out, ka)
                 }
-                Err(e) => {
-                    let msg = format!("{{\"error\":\"invalid request: {e}\"}}");
-                    http_response("422 Unprocessable Entity", "application/json", msg.as_bytes(), ka)
+                Err(e) => bad_request(&e, ka),
+            };
+        }
+        if TEXT_PATHS.iter().any(|p| path == p.as_bytes()) {
+            return match serde_json::from_slice::<crate::models::CompletionRequest>(body) {
+                Ok(req) => {
+                    let (ct, out) = crate::handlers::render_text_completion_fast(state, &req);
+                    http_response("200 OK", ct, &out, ka)
                 }
+                Err(e) => bad_request(&e, ka),
+            };
+        }
+        if EMBED_PATHS.iter().any(|p| path == p.as_bytes()) {
+            return match serde_json::from_slice::<crate::models::EmbeddingRequest>(body) {
+                Ok(req) => {
+                    let out = crate::handlers::render_embeddings_fast(state, &req);
+                    http_response("200 OK", "application/json", &out, ka)
+                }
+                Err(e) => bad_request(&e, ka),
             };
         }
         return http_response(

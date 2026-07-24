@@ -403,15 +403,18 @@ pub async fn chat_completions(
     }
 }
 
-/// Non-streaming chat-completion generation as raw JSON bytes, without the
-/// tokio/axum request machinery — used by the io_uring (`--uring`) engine, which
-/// runs `--fast` semantics (zero simulated latency) so the `wait_for_tokens`
-/// await the axum handler performs is a no-op and is skipped here. Records the
-/// same metrics via `admit_fast`/`complete_fast` as the axum path.
-pub(crate) fn render_chat_completion_nonstream_fast(
+/// Chat-completion generation for the hand-rolled `--blocking`/`--uring`
+/// engines, without the tokio/axum request machinery. Handles both streaming
+/// (SSE, one pre-rendered body) and non-streaming, under `--fast` semantics
+/// (zero simulated latency, so no `wait_for_tokens` await). Returns the response
+/// content-type and body. Records the same metrics the axum `--fast` path does.
+///
+/// Not handled here (these engines target raw throughput): error injection,
+/// mid-stream failures, and null-object chunk injection.
+pub(crate) fn render_chat_completion_fast(
     state: &AppState,
     req: &ChatCompletionRequest,
-) -> Vec<u8> {
+) -> (&'static str, Vec<u8>) {
     let endpoint = "/v1/chat/completions";
     let start = Instant::now();
     state.recorder.init_model_config(&req.model);
@@ -423,6 +426,38 @@ pub(crate) fn render_chat_completion_nonstream_fast(
         ctx.tool_call = Some(spec);
     }
     let labeled = state.recorder.labeled(endpoint, &ctx.model);
+
+    if req.stream {
+        // Mirror the axum fast streaming path's metric sequence exactly.
+        let include_usage = req.include_usage();
+        state.recorder.record_streaming_start(endpoint, &ctx.model);
+        state.recorder.record_request_start(endpoint, &ctx.model);
+        state.recorder.record_llm_inflight_start(&ctx.model);
+        let total_tokens =
+            ctx.tokenized.reasoning_content_tokens.len() + ctx.tokenized.tokens.len();
+        if total_tokens > 0 {
+            state
+                .recorder
+                .record_zero_ttft_and_itls(&labeled, total_tokens - 1);
+            state
+                .recorder
+                .record_streamed_tokens_fast(&labeled, total_tokens as u64);
+        }
+        let body = render_chat_fast_body(&ctx, include_usage);
+        let latency = start.elapsed();
+        let info = LLMLatencyInfo {
+            e2e: latency,
+            prefill: std::time::Duration::ZERO,
+            decode: latency,
+        };
+        state
+            .recorder
+            .record_llm_success(endpoint, &ctx.model, latency.as_secs_f64(), &ctx.usage, &info);
+        state.recorder.record_llm_inflight_end(&ctx.model);
+        state.recorder.record_request_end(endpoint);
+        return ("text/event-stream", body.to_vec());
+    }
+
     state.recorder.admit_fast(&labeled);
     let latency = start.elapsed();
     let info = LLMLatencyInfo {
@@ -440,7 +475,112 @@ pub(crate) fn render_chat_completion_nonstream_fast(
         ctx.tokenized.text.len() as u64,
         resp_bytes,
     );
-    json_body
+    ("application/json", json_body)
+}
+
+/// Text-completion (`/v1/completions`) generation for the hand-rolled engines,
+/// streaming or not, under `--fast` semantics. Mirrors the axum path's metrics.
+pub(crate) fn render_text_completion_fast(
+    state: &AppState,
+    req: &crate::models::CompletionRequest,
+) -> (&'static str, Vec<u8>) {
+    let endpoint = "/v1/completions";
+    let start = Instant::now();
+    state.recorder.init_model_config(&req.model);
+    let req_gen = GenRequest::Completion(req);
+    let ctx = RequestCtx::build("cmpl", &req_gen, endpoint, start, state);
+    let labeled = state.recorder.labeled(endpoint, &ctx.model);
+    let latency_info = || {
+        let latency = start.elapsed();
+        (
+            latency,
+            LLMLatencyInfo {
+                e2e: latency,
+                prefill: std::time::Duration::ZERO,
+                decode: latency,
+            },
+        )
+    };
+
+    if req.stream {
+        let include_usage = req.include_usage();
+        state.recorder.record_streaming_start(endpoint, &ctx.model);
+        state.recorder.record_request_start(endpoint, &ctx.model);
+        state.recorder.record_llm_inflight_start(&ctx.model);
+        let count = ctx.tokenized.tokens.len();
+        if count > 0 {
+            state.recorder.record_zero_ttft_and_itls(&labeled, count - 1);
+            state
+                .recorder
+                .record_streamed_tokens_fast(&labeled, count as u64);
+        }
+        let body = render_text_fast_body(&ctx, include_usage);
+        let (latency, info) = latency_info();
+        state
+            .recorder
+            .record_llm_success(endpoint, &ctx.model, latency.as_secs_f64(), &ctx.usage, &info);
+        state.recorder.record_llm_inflight_end(&ctx.model);
+        state.recorder.record_request_end(endpoint);
+        return ("text/event-stream", body.to_vec());
+    }
+
+    state.recorder.record_request_start(endpoint, &ctx.model);
+    state.recorder.record_llm_inflight_start(&ctx.model);
+    let json_body =
+        serde_json::to_vec(&build_completion_response(&ctx)).unwrap_or_else(|_| b"{}".to_vec());
+    let (latency, info) = latency_info();
+    state.recorder.record_request_bytes(
+        endpoint,
+        ctx.tokenized.text.len() as u64,
+        json_body.len() as u64,
+    );
+    state
+        .recorder
+        .record_llm_success(endpoint, &ctx.model, latency.as_secs_f64(), &ctx.usage, &info);
+    state.recorder.record_llm_inflight_end(&ctx.model);
+    state.recorder.record_request_end(endpoint);
+    ("application/json", json_body)
+}
+
+/// Embeddings (`/v1/embeddings`) generation for the hand-rolled engines. Always
+/// non-streaming JSON; mirrors the axum path's metrics (`--fast` skips the
+/// simulated per-input processing latency).
+pub(crate) fn render_embeddings_fast(
+    state: &AppState,
+    req: &crate::models::EmbeddingRequest,
+) -> Vec<u8> {
+    let endpoint = "/v1/embeddings";
+    let start = Instant::now();
+    let req_gen = GenRequest::Embedding(req);
+    let ctx = RequestCtx::build("emb", &req_gen, endpoint, start, state);
+    let inputs = req.inputs();
+    state.recorder.record_request_start(endpoint, &req.model);
+    let data: Vec<Value> = inputs
+        .iter()
+        .enumerate()
+        .map(|(i, text)| {
+            json!({
+                "object": "embedding",
+                "index": i,
+                "embedding": generate_embedding(text, 768),
+            })
+        })
+        .collect();
+    let body = json!({
+        "object": "list",
+        "model": req.model,
+        "data": data,
+        "usage": ctx.usage,
+    });
+    state.recorder.record_embedding_success(
+        endpoint,
+        &req.model,
+        ctx.usage.prompt_tokens,
+        inputs.len(),
+        start.elapsed().as_secs_f64(),
+    );
+    state.recorder.record_request_end(endpoint);
+    serde_json::to_vec(&body).unwrap_or_else(|_| b"{}".to_vec())
 }
 
 /// Typed mirror of the `json!()`-built response this replaced. Serializing a
