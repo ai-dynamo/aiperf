@@ -64,6 +64,13 @@ class PromptGenerator(BaseGenerator):
         # This avoids redundant tokenizer.decode() calls for repeated hash_id combinations
         self._decoded_cache: dict[tuple[tuple[int, ...], int, int], str] = {}
 
+        # Some Mooncake exporters omit a short tokenizer-added remainder from
+        # hash_ids. Cache that synthetic remainder separately so duplicate rows
+        # still decode to byte-identical prompts without inventing a reusable hash.
+        self._unhashed_remainder_cache: dict[
+            tuple[tuple[int, ...], int, int], list[int]
+        ] = {}
+
         # TODO: move this under initialize() method
         # Initialize corpus if not already done
         if self._tokenized_corpus is None:
@@ -265,9 +272,16 @@ class PromptGenerator(BaseGenerator):
         """
         Build a token sequence without decoding. Used for batch parallel decode.
 
-        Each hash index in `hash_ids` corresponds to a block of `block_size` tokens.
-        If a hash index is found in `_cache`, its stored tokens are reused.
-        Otherwise, new tokens are sampled and stored in `_cache`.
+        Each effective hash index corresponds to a block of `block_size`
+        tokens. The final hashed block may be partial. A trace may differ from
+        the exact ``ceil(num_tokens / block_size)`` count by one block; this
+        accommodates Mooncake exporters that exclude a short tokenizer-added
+        remainder from ``hash_ids`` or hash a short suffix not included in
+        ``num_tokens``. A single trailing hash outside ``num_tokens`` is ignored.
+
+        Cached hash blocks are always materialized at full size and sliced when
+        a row uses only part of the final block. This preserves prefix identity
+        if a later full-context row extends a previously partial block.
 
         Args:
             num_tokens: The number of tokens required in the prompt.
@@ -280,39 +294,73 @@ class PromptGenerator(BaseGenerator):
         Raises:
             ConfigurationError: If the input parameters are not compatible.
         """
-        final_prompt: list[int] = []
-        current_block_size = block_size
-
-        # Sanity check the final block size
-        final_block_size = num_tokens - ((len(hash_ids) - 1) * block_size)
-        if final_block_size <= 0 or block_size < final_block_size:
+        if not hash_ids or num_tokens <= 0 or block_size <= 0:
             raise ConfigurationError(
                 f"Input length: {num_tokens}, Hash IDs: {hash_ids}, Block size: {block_size} "
-                f"are not compatible. The final hash block size: {final_block_size} must be "
-                f"greater than 0 and less than or equal to {block_size}."
+                "are not compatible. Input length and block size must be positive, "
+                "and at least one hash ID is required."
             )
 
-        for index, hash_id in enumerate(hash_ids):
-            # For the last hash ID, use the remaining tokens as the block size
-            if index == len(hash_ids) - 1:
-                current_block_size = final_block_size
+        expected_hash_count = (num_tokens + block_size - 1) // block_size
+        hash_count_delta = len(hash_ids) - expected_hash_count
+        if hash_count_delta < -1 or hash_count_delta > 1:
+            raise ConfigurationError(
+                f"Input length: {num_tokens}, Hash IDs: {hash_ids}, Block size: {block_size} "
+                "are not compatible. The hash count may differ from "
+                f"ceil(input_length / block_size)={expected_hash_count} by at most one."
+            )
 
+        # One extra hash represents a tokenizer-added suffix outside the
+        # recorded input length. It has no prompt tokens to reconstruct.
+        effective_hash_ids = (
+            hash_ids[:-1] if hash_count_delta == 1 else hash_ids
+        )
+
+        # Sanity-check the represented final block or one-block unhashed remainder.
+        final_block_size = num_tokens - (
+            (len(effective_hash_ids) - 1) * block_size
+        )
+        max_supported_size = 2 * block_size
+        if final_block_size <= 0 or final_block_size > max_supported_size:
+            raise ConfigurationError(
+                f"Input length: {num_tokens}, Hash IDs: {hash_ids}, Block size: {block_size} "
+                f"are not compatible. The final hash block plus any unhashed remainder: "
+                f"{final_block_size} must be greater than 0 and less than or equal to "
+                f"{max_supported_size}."
+            )
+
+        unhashed_remainder_size = max(0, final_block_size - block_size)
+        final_hashed_block_size = min(final_block_size, block_size)
+        final_prompt: list[int] = []
+
+        for index, hash_id in enumerate(effective_hash_ids):
             if hash_id not in self._cache:
-                # To ensure that the prompt doesn't merge chunks, we insert a BOS or EOS token
-                # at the beginning. Length is maintained and the prompt generates the expected
-                # number of tokens. If no BOS or EOS token is available, we don't insert one.
-                prompt_tokens: list[int] = []
-                if self.tokenizer.block_separation_token_id is not None:
-                    prompt_tokens += [self.tokenizer.block_separation_token_id]
-                    prompt_tokens += self._sample_tokens(current_block_size - 1)
-                else:
-                    prompt_tokens += self._sample_tokens(current_block_size)
+                self._cache[hash_id] = self._sample_token_block(block_size)
 
-                self._cache[hash_id] = prompt_tokens  # store to cache
+            current_block_size = (
+                final_hashed_block_size
+                if index == len(effective_hash_ids) - 1
+                else block_size
+            )
+            final_prompt.extend(self._cache[hash_id][:current_block_size])
 
-            final_prompt.extend(self._cache[hash_id])
+        if unhashed_remainder_size:
+            remainder_key = (tuple(hash_ids), num_tokens, block_size)
+            if remainder_key not in self._unhashed_remainder_cache:
+                self._unhashed_remainder_cache[remainder_key] = (
+                    self._sample_token_block(unhashed_remainder_size)
+                )
+            final_prompt.extend(self._unhashed_remainder_cache[remainder_key])
 
         return final_prompt
+
+    def _sample_token_block(self, num_tokens: int) -> list[int]:
+        """Sample one independently decodable token block of an exact size."""
+        if self.tokenizer.block_separation_token_id is None:
+            return self._sample_tokens(num_tokens)
+        return [self.tokenizer.block_separation_token_id] + self._sample_tokens(
+            num_tokens - 1
+        )
 
     def _sample_tokens(self, num_tokens: int) -> list[int]:
         """Generate a list of token IDs containing exactly `num_tokens` number of tokens

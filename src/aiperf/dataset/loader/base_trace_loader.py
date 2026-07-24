@@ -89,6 +89,9 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         # Synthesis lives on FileDataset.synthesis; max_isl filters traces and
         # max_osl caps final traces after optional synthesis.
         dataset = self.run.cfg.get_default_dataset()
+        self._context_mode_override: ConversationContextMode | None = getattr(
+            dataset, "context_mode", None
+        )
         synthesis = getattr(dataset, "synthesis", None)
         self._synthesis = synthesis
         self._max_isl = getattr(synthesis, "max_isl", None) if synthesis else None

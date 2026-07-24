@@ -653,6 +653,33 @@ class TestMooncakeTraceDatasetLoader:
             == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
         )
 
+    def test_dataset_context_mode_applies_to_unmodified_hash_rows(
+        self, mock_prompt_generator
+    ) -> None:
+        """A dataset-wide override avoids adding context_mode to every row."""
+        traces = [
+            MooncakeTrace(input_length=1024, hash_ids=[1, 2]),
+            MooncakeTrace(input_length=1536, hash_ids=[1, 2, 3]),
+        ]
+        cfg = CLIConfig.model_construct(
+            model_names=["test-model"],
+            input_file="dummy.jsonl",
+            custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            trace_context_mode=(
+                ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+            ),
+        )
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            run=make_run_from_cli(cfg),
+            prompt_generator=mock_prompt_generator,
+        )
+
+        assert (
+            loader._infer_context_mode(traces)
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
+
     @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     def test_convert_to_conversations_full_context_hashes_sets_context_mode(
         self, mock_parallel_decode, mock_prompt_generator, default_cfg

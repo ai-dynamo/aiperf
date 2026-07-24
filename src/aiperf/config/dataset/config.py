@@ -26,6 +26,7 @@ from pydantic import (
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import (
+    ConversationContextMode,
     DatasetFormat,
     DatasetType,
 )
@@ -502,6 +503,17 @@ class FileDataset(BaseConfig):
         ),
     ]
 
+    context_mode: Annotated[
+        ConversationContextMode | None,
+        Field(
+            default=None,
+            description="Dataset-wide conversation accumulation mode. Only supported "
+            "by mooncake_trace. Use message_array_with_responses when every row "
+            "already describes the request's complete prompt context; this avoids "
+            "rewriting large trace files to repeat context_mode on every row.",
+        ),
+    ]
+
     @model_validator(mode="after")
     def _validate_source_xor(self) -> FileDataset:
         path_set = self.path is not None
@@ -531,6 +543,29 @@ class FileDataset(BaseConfig):
         if records_set and isinstance(self.records, list) and not self.records:
             raise ValueError("`records:` must contain at least one record.")
 
+        return self
+
+    @model_validator(mode="after")
+    def _validate_context_mode(self) -> FileDataset:
+        """Restrict the dataset override to modes supported by Mooncake rows."""
+        if self.context_mode is None:
+            return self
+        supported = {
+            ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+            ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+        }
+        if self.context_mode not in supported:
+            raise ValueError(
+                "FileDataset context_mode must be 'deltas_without_responses' or "
+                "'message_array_with_responses'"
+            )
+        if (
+            "format" in self.model_fields_set
+            and self.format != DatasetFormat.MOONCAKE_TRACE
+        ):
+            raise ValueError(
+                "FileDataset context_mode is only supported with format: mooncake_trace"
+            )
         return self
 
     @model_validator(mode="after")

@@ -56,6 +56,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "hf_dataset_subset",
         "public_dataset",
         "random_seed",
+        "trace_context_mode",
         # ----- conversation modality -----
         "conversation_num",
         "conversation_num_dataset_entries",

@@ -254,6 +254,7 @@ _VERBATIM_DATASET_FIELDS = (
     ("dataset_sampling_strategy", "sampling", False),
     ("conversation_num_dataset_entries", "entries", True),
     ("trace_session_sample_ratio", "trace_session_sample_ratio", False),
+    ("trace_context_mode", "context_mode", False),
     ("max_idle_gap_cap_seconds", "max_idle_gap_cap_seconds", False),
     ("replay_speedup", "replay_speedup", False),
     ("open_loop_replay", "open_loop_replay", False),
@@ -606,6 +607,24 @@ def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
         )
 
 
+def _reject_mooncake_only_trace_flags(cli: CLIConfig) -> None:
+    """Reject the Mooncake context override where no loader can consume it."""
+    from aiperf.plugin.enums import CustomDatasetType
+
+    if (
+        "trace_context_mode" not in cli.model_fields_set
+        or cli.trace_context_mode is None
+    ):
+        return
+    if not cli.input_file or (
+        cli.custom_dataset_type is not None
+        and cli.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE
+    ):
+        raise ValueError(
+            "--trace-context-mode is only supported with a mooncake_trace input file."
+        )
+
+
 def _reject_baseten_trace_unsupported_synthesis(cli: CLIConfig) -> None:
     """Reject synthesis knobs that cannot apply to baseten_trace replay.
 
@@ -848,6 +867,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     needs_text = _determine_needs_text(cli)
     _reject_file_dataset_incompatible(cli)
     _reject_baseten_only_trace_flags(cli)
+    _reject_mooncake_only_trace_flags(cli)
     _reject_baseten_trace_unsupported_synthesis(cli)
     _reject_baseten_trace_extra_input_collisions(cli)
     if cli.dataset_filters and not cli.public_dataset:

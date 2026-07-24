@@ -234,16 +234,15 @@ class TestPromptGeneratorComprehensive:
             block_size=5,
         )
 
-        # Final block should have different size
-        assert len(generator._cache[3]) == 2  # Final block: 12 - (2 * 5) = 2
+        # Hash blocks are cached at full size, then the final block is sliced.
+        assert len(generator._cache[3]) == 5
 
     @pytest.mark.parametrize(
         "num_tokens, hash_ids, block_size, should_raise",
         [
             # Failing cases
-            (10, [1, 2, 3], 5, True),  # final_block_size = 0 (should fail)
-            (5, [1, 2, 3], 5, True),  # final_block_size = -5 (should fail)
-            (20, [1, 2], 5, True),  # final_block_size = 15 > block_size (should fail)
+            (5, [1, 2, 3], 5, True),  # Two extra hash blocks (should fail)
+            (20, [1, 2], 5, True),  # More than one unhashed block (should fail)
             (0, [1], 5, True),  # final_block_size = 0 (should fail)
             (10, [1, 2, 3], 0, True),  # block_size = 0 (should fail)
             (10, [1, 2, 3], -1, True),  # negative block_size (should fail)
@@ -254,6 +253,9 @@ class TestPromptGeneratorComprehensive:
             (5, [1], 5, False),  # final_block_size == block_size
             (3, [1], 5, False),  # final_block_size < block_size
             (12, [1, 2, 3], 5, False),  # final_block_size < block_size
+            (11, [1, 2], 5, False),  # One-token unhashed remainder
+            (15, [1, 2], 5, False),  # One full unhashed remainder block
+            (10, [1, 2, 3], 5, False),  # One trailing hash outside input_length
         ],
     )
     def test_generate_cached_prompt_configuration_errors(
@@ -828,6 +830,55 @@ class TestPromptGeneratorComprehensive:
         # Decoded cache should remain empty
         assert len(generator._decoded_cache) == 0
 
+    def test_build_token_sequence_extends_a_previously_partial_hash_block(
+        self, basic_config
+    ):
+        """A later full-context row can extend a formerly partial final block."""
+        tokenizer, prompts, prefix_prompts = basic_config
+        generator = _make_generator(
+            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
+        )
+
+        partial = generator._build_token_sequence(7, [1, 2], 5)
+        extended = generator._build_token_sequence(10, [1, 2], 5)
+
+        assert len(partial) == 7
+        assert len(extended) == 10
+        assert extended[:7] == partial
+        assert len(generator._cache[2]) == 5
+
+    def test_build_token_sequence_supports_one_unhashed_remainder_block(
+        self, basic_config
+    ):
+        """One-block-short Mooncake hash lists retain their exact input length."""
+        tokenizer, prompts, prefix_prompts = basic_config
+        generator = _make_generator(
+            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
+        )
+
+        first = generator._build_token_sequence(11, [1, 2], 5)
+        second = generator._build_token_sequence(11, [1, 2], 5)
+
+        assert len(first) == 11
+        assert second == first
+        assert len(generator._cache[1]) == 5
+        assert len(generator._cache[2]) == 5
+        assert len(generator._unhashed_remainder_cache[((1, 2), 11, 5)]) == 1
+
+    def test_build_token_sequence_ignores_one_trailing_hash_outside_input_length(
+        self, basic_config
+    ):
+        """A tokenizer-suffix hash with no recorded input tokens is not materialized."""
+        tokenizer, prompts, prefix_prompts = basic_config
+        generator = _make_generator(
+            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
+        )
+
+        tokens = generator._build_token_sequence(10, [1, 2, 3], 5)
+
+        assert len(tokens) == 10
+        assert set(generator._cache) == {1, 2}
+
     def test_build_token_sequence_same_validation_as_generate_cached(
         self, basic_config
     ):
@@ -839,4 +890,4 @@ class TestPromptGeneratorComprehensive:
 
         # This should raise same error as _generate_cached_prompt
         with pytest.raises(ConfigurationError):
-            generator._build_token_sequence(10, [1, 2, 3], 5)  # final_block_size = 0
+            generator._build_token_sequence(10, [1, 2, 3, 4], 5)

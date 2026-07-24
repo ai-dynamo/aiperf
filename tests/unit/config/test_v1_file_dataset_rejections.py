@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 from pytest import param
 
+from aiperf.common.enums import ConversationContextMode
 from aiperf.config.flags._converter_dataset import build_dataset
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.converter import convert_cli_to_aiperf
@@ -152,3 +153,41 @@ def test_isl_block_size_routes_to_file_dataset_block_size(mc_jsonl: Path) -> Non
     # Full envelope validates and preserves the override.
     aiperf_cfg = convert_cli_to_aiperf(user)
     assert aiperf_cfg.benchmark.datasets[0].block_size == 16
+
+
+def test_trace_context_mode_routes_to_file_dataset(mc_jsonl: Path) -> None:
+    """Full-context Mooncake traces can be configured without rewriting JSONL."""
+    user = _file_user(
+        mc_jsonl,
+        prompt_kwargs={
+            "trace_context_mode": (
+                ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+            )
+        },
+    )
+
+    out = build_dataset(user)
+    assert (
+        out["context_mode"] == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+    )
+
+    aiperf_cfg = convert_cli_to_aiperf(user)
+    assert (
+        aiperf_cfg.benchmark.datasets[0].context_mode
+        == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+    )
+
+
+def test_trace_context_mode_rejects_non_mooncake_file(mc_jsonl: Path) -> None:
+    """The override must not silently no-op on another file loader."""
+    user = CLIConfig(
+        model_names=["test-model"],
+        endpoint_type="chat",
+        **CLIConfig(request_count=5, concurrency=1).model_dump(exclude_unset=True),
+        input_file=str(mc_jsonl),
+        custom_dataset_type="single_turn",
+        trace_context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+    )
+
+    with pytest.raises(ValueError, match="only supported with a mooncake_trace"):
+        build_dataset(user)

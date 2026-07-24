@@ -94,8 +94,10 @@ Each turn is sent exactly as it appears in the dataset.
 Default for:
 - Mooncake traces with pre-built `messages` arrays
 
-Mooncake traces with synthetic prompts can opt into this mode by declaring it
-on every row in a session. In this form, `input_length` and `hash_ids` describe
+Mooncake traces with synthetic prompts can opt into this mode either with the
+dataset-wide `--trace-context-mode message_array_with_responses` flag or by
+declaring it on every row in a session. The flag is convenient for large trace
+files that already exist. In this form, `input_length` and `hash_ids` describe
 the complete prompt for that request rather than a per-turn delta:
 
 ```json
@@ -106,6 +108,13 @@ the complete prompt for that request rather than a per-turn delta:
 AIPerf still dispatches rows sharing a `session_id` sequentially, but it sends
 only the current row's synthesized prompt and does not merge the live response
 into the next request. Every row in a session must declare the same mode.
+
+Hash blocks are reconstructed at the configured Mooncake block size. AIPerf
+also accepts a hash count that differs by exactly one block from
+`ceil(input_length / block_size)`, as produced by exporters that count
+tokenizer-added affixes differently between `input_length` and `hash_ids`. A
+missing short remainder is synthesized without a reusable hash; a trailing hash
+outside `input_length` is ignored. Larger mismatches remain validation errors.
 
 ### `message_array_without_responses`
 

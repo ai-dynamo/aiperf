@@ -41,6 +41,7 @@ from aiperf.common.enums import (
     AudioFormat,
     ConnectionReuseStrategy,
     ConvergenceStat,
+    ConversationContextMode,
     ExportLevel,
     GPUTelemetryMode,
     ImageFormat,
@@ -628,6 +629,21 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--trace-session-sample-ratio",),
+            group=Groups.INPUT,
+        ),
+    ] = None
+
+    trace_context_mode: Annotated[
+        ConversationContextMode | None,
+        Field(
+            default=None,
+            description="Conversation accumulation mode for a Mooncake trace. Use "
+            "message_array_with_responses when each row contains the complete "
+            "prompt context (full block hashes), rather than a per-turn delta. "
+            "This dataset-wide override avoids editing every JSONL row.",
+        ),
+        CLIParameter(
+            name=("--trace-context-mode",),
             group=Groups.INPUT,
         ),
     ] = None

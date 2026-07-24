@@ -110,25 +110,39 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
         else:
             inferred_mode = None
 
-        declared_modes = {
+        row_modes = {
             trace.context_mode for trace in traces if trace.context_mode is not None
         }
-        if not declared_modes:
-            return inferred_mode
-        if len(declared_modes) != 1 or any(
-            trace.context_mode is None for trace in traces
-        ):
+        if len(row_modes) > 1:
             raise ValueError(
                 "Mooncake session context_mode must be identical and present on every row"
             )
 
-        declared_mode = declared_modes.pop()
-        if inferred_mode is not None and declared_mode != inferred_mode:
+        row_mode = next(iter(row_modes), None)
+        if (
+            row_mode is not None
+            and self._context_mode_override is None
+            and any(trace.context_mode is None for trace in traces)
+        ):
+            raise ValueError(
+                "Mooncake session context_mode must be identical and present on every row"
+            )
+        if (
+            row_mode is not None
+            and self._context_mode_override is not None
+            and row_mode != self._context_mode_override
+        ):
+            raise ValueError(
+                "Mooncake row context_mode conflicts with the dataset-wide override"
+            )
+
+        resolved_mode = self._context_mode_override or row_mode or inferred_mode
+        if inferred_mode is not None and resolved_mode != inferred_mode:
             raise ValueError(
                 "Mooncake messages/payload sessions require "
                 "context_mode='message_array_with_responses'"
             )
-        return declared_mode
+        return resolved_mode
 
     def _get_text_input(self, trace: MooncakeTrace) -> str | None:
         if trace.messages is not None or trace.payload is not None:

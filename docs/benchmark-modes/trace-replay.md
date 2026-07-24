@@ -109,6 +109,36 @@ aiperf profile \
 
 AIPerf refuses parameter sweeps (e.g. `--concurrency 1,2,4`) against an auto-promoted trace; either pin a single value or pass `--no-fixed-schedule` to keep your sweep semantics.
 
+### Full-context hashes at maximum throughput
+
+Some session traces store the complete block-hash array and complete
+`input_length` on every row. They are not per-turn deltas. Select replacement
+semantics at the dataset level so AIPerf sends only the current row's synthetic
+prompt and does not append prior live responses:
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --url localhost:8000 \
+    --input-file full_context_trace.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --trace-context-mode message_array_with_responses \
+    --no-fixed-schedule \
+    --concurrency 64 \
+    --request-count 10000
+```
+
+`--no-fixed-schedule` intentionally ignores the recorded timestamps and lets
+the selected concurrency drive throughput. Rows with the same `session_id`
+remain causally ordered, so session-level throughput and completion metrics
+still describe complete trajectories.
+
+Mooncake exporters can disagree with `input_length` by one hash block when
+tokenizer-added affixes are counted on only one side. AIPerf accepts this
+one-block difference while reconstructing the exact recorded input length;
+larger disagreements fail validation.
+
 ## Using Pre-formatted Messages
 
 Instead of synthetic prompts generated from `input_length` and `hash_ids`, you can provide an OpenAI-compatible `messages` array directly per trace entry. This is useful for replaying captured conversations (e.g., coding agent sessions) with exact prompt content.
