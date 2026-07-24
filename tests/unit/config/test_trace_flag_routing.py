@@ -308,3 +308,26 @@ class TestHfWekaDatasetConverterRouting:
         assert out["type"] == "public"
         assert out["dataset"] == PublicDatasetType.WEKA_HF
         assert out["hf_weka_dataset"] == "semianalysisai/cc-traces-weka-061526"
+
+
+class TestTraceDelayExclusivity:
+    """All three trace-delay flags set Turn.delay differently, so at most one
+    may be active. Regression for PR #1165 (lkomali): the prior validator only
+    rejected the ignore+think_time pair.
+    """
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"ignore_trace_delays": True, "use_think_time_only": True},
+            {"ignore_trace_delays": True, "use_end_to_start_delays": True},
+            {"use_think_time_only": True, "use_end_to_start_delays": True},
+        ],
+    )
+    def test_file_rejects_conflicting_delay_flags(self, kwargs) -> None:
+        from aiperf.config.dataset.config import FileDataset
+
+        # The delay-exclusivity validator runs before the source (path/records)
+        # validator, so a source is not needed to exercise it.
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            FileDataset(type="file", name="m", **kwargs)

@@ -615,10 +615,25 @@ class FileDataset(BaseConfig):
         self._use_end_to_start_delays_explicitly_set = (
             "use_end_to_start_delays" in self.model_fields_set
         )
-        if self.ignore_trace_delays and self.use_think_time_only:
+        # All three flags set Turn.delay differently (None / recorded think_time /
+        # end-to-start idle gap), so at most one may be active. The prior check
+        # only rejected the ignore+think_time pair, silently allowing
+        # ignore+end_to_start and think_time+end_to_start.
+        active_delay_modes = [
+            name
+            for name, on in (
+                ("--ignore-trace-delays", self.ignore_trace_delays),
+                ("--use-think-time-only", self.use_think_time_only),
+                ("--use-end-to-start-delays", self.use_end_to_start_delays),
+            )
+            if on
+        ]
+        if len(active_delay_modes) > 1:
             raise ValueError(
-                "ignore_trace_delays and use_think_time_only "
-                "(--ignore-trace-delays and --use-think-time-only) cannot be used together"
+                "trace-delay flags are mutually exclusive (each sets Turn.delay "
+                f"differently); got {active_delay_modes}. Set at most one of "
+                "--ignore-trace-delays, --use-think-time-only, "
+                "--use-end-to-start-delays."
             )
         return self
 
@@ -956,10 +971,25 @@ class PublicDataset(BaseConfig):
         self._use_end_to_start_delays_explicitly_set = (
             "use_end_to_start_delays" in self.model_fields_set
         )
-        if self.ignore_trace_delays and self.use_think_time_only:
+        # All three flags set Turn.delay differently (None / recorded think_time /
+        # end-to-start idle gap), so at most one may be active. The prior check
+        # only rejected the ignore+think_time pair, silently allowing
+        # ignore+end_to_start and think_time+end_to_start.
+        active_delay_modes = [
+            name
+            for name, on in (
+                ("--ignore-trace-delays", self.ignore_trace_delays),
+                ("--use-think-time-only", self.use_think_time_only),
+                ("--use-end-to-start-delays", self.use_end_to_start_delays),
+            )
+            if on
+        ]
+        if len(active_delay_modes) > 1:
             raise ValueError(
-                "ignore_trace_delays and use_think_time_only "
-                "(--ignore-trace-delays and --use-think-time-only) cannot be used together"
+                "trace-delay flags are mutually exclusive (each sets Turn.delay "
+                f"differently); got {active_delay_modes}. Set at most one of "
+                "--ignore-trace-delays, --use-think-time-only, "
+                "--use-end-to-start-delays."
             )
         return self
 
