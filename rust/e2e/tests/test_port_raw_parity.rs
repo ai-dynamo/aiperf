@@ -148,3 +148,123 @@ async fn port26_session_affinity_headers_absent_by_default_raw_parity() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// #18 — hoist leading system turn into conversation system prompt
+// ---------------------------------------------------------------------------
+
+/// The `messages` array of a record's request payload, as `role: text` strings.
+fn payload_messages(record: &Value) -> Vec<String> {
+    record
+        .get("payload")
+        .and_then(|p| p.get("messages"))
+        .and_then(Value::as_array)
+        .map(|msgs| {
+            msgs.iter()
+                .map(|m| {
+                    let role = m.get("role").and_then(Value::as_str).unwrap_or("");
+                    let content = match m.get("content") {
+                        Some(Value::String(s)) => s.clone(),
+                        // chat content can be an array of parts; join text parts.
+                        Some(Value::Array(parts)) => parts
+                            .iter()
+                            .filter_map(|p| p.get("text").and_then(Value::as_str))
+                            .collect::<Vec<_>>()
+                            .join(""),
+                        _ => String::new(),
+                    };
+                    format!("{role}: {content}")
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Deterministic per-record projection: session/turn identity + the full
+/// rendered `messages` role/text sequence. The hoist's observable effect is
+/// entirely here — the leading system prompt is prepended to every turn's
+/// messages and NO standalone system-only record exists.
+fn hoist_projection(records: &[Value]) -> Vec<String> {
+    sorted(
+        records
+            .iter()
+            .map(|r| {
+                json!({
+                    "conversation_id": r["metadata"]["conversation_id"],
+                    "turn_index": r["metadata"]["turn_index"],
+                    "messages": payload_messages(r),
+                })
+                .to_string()
+            })
+            .collect(),
+    )
+}
+
+#[tokio::test]
+async fn port18_leading_system_turn_hoist_raw_parity() {
+    let h = AIPerfHarness::new().await;
+    // Two sessions, each authored with a leading text-only system turn followed
+    // by two user turns. The system prompt must persist across both user turns
+    // and NOT appear as its own dispatched record.
+    let convo = |sid: &str| {
+        json!({
+            "session_id": sid,
+            "turns": [
+                {"role": "system", "text": "You are a helpful assistant."},
+                {"text": "What is deep learning?"},
+                {"text": "Explain it for a five year old."},
+            ]
+        })
+    };
+    let traces = vec![convo("s1"), convo("s2")];
+    let trace_file = write_jsonl(h.artifact_dir.path(), "multiturn_system.jsonl", &traces);
+    let args = format!(
+        "--model {DEFAULT_MODEL} --url {} --endpoint-type chat --streaming \
+         --input-file {} --custom-dataset-type multi_turn \
+         --num-conversations 2 --concurrency 1 --workers-max 1 --random-seed 42 \
+         --output-tokens-mean 4 --export-level raw --ui simple --tokenizer builtin",
+        h.mock.url,
+        trace_file.display()
+    );
+
+    let rust = h.run(&args);
+    assert!(rust.success(), "rust run failed:\n{}", rust.stderr);
+    let py = h.run_env(&args, &[("AIPERF_RUNTIME_ENGINE", "python")]);
+    assert!(py.success(), "python run failed:\n{}", py.stderr);
+
+    let rust_raw = rust.artifacts.raw_records();
+    let py_raw = py.artifacts.raw_records();
+    assert!(!rust_raw.is_empty(), "rust produced no raw records");
+
+    // Per engine: exactly 2 user turns per session (4 records), no standalone
+    // system-only record, and every record's messages LEAD with the hoisted
+    // system prompt.
+    for (label, recs) in [("rust", &rust_raw), ("python", &py_raw)] {
+        assert_eq!(
+            recs.len(),
+            4,
+            "{label}: expected 4 user-turn records (2 sessions x 2 turns), got {} \
+             (did a standalone system turn leak a record?)",
+            recs.len()
+        );
+        for (i, r) in recs.iter().enumerate() {
+            let msgs = payload_messages(r);
+            assert_eq!(
+                msgs.first().map(String::as_str),
+                Some("system: You are a helpful assistant."),
+                "{label} record {i}: messages do not lead with the hoisted system prompt: {msgs:?}"
+            );
+            assert!(
+                msgs.iter().filter(|m| m.starts_with("system:")).count() == 1,
+                "{label} record {i}: expected exactly one system message: {msgs:?}"
+            );
+        }
+    }
+
+    // Cross-engine byte-identical rendered-messages projection.
+    assert_eq!(
+        hoist_projection(&rust_raw),
+        hoist_projection(&py_raw),
+        "leading-system-turn hoist raw projection diverged between rust and python engines"
+    );
+}
