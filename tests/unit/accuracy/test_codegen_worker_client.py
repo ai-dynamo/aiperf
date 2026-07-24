@@ -111,6 +111,22 @@ _HANG_THEN_OK = """
 """
 
 
+# Responds OK to the first request (id==1), hangs on every later one.
+_OK_THEN_HANG = """
+    import sys, orjson, time
+    for line in sys.stdin.buffer:
+        line = line.strip()
+        if not line:
+            continue
+        req = orjson.loads(line)
+        if req["id"] != 1:
+            time.sleep(3600)
+        resp = {"id": req["id"], "ok": True, "metrics": {"pass@1": 1.0}}
+        sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
+        sys.stdout.buffer.flush()
+"""
+
+
 class TestTimeoutRestart:
     async def test_timeout_raises_and_next_grade_respawns(self, tmp_path) -> None:
         worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _HANG_THEN_OK))
@@ -131,10 +147,39 @@ class TestTimeoutRestart:
     async def test_timeout_on_proven_worker_does_not_count_as_start_failure(
         self, tmp_path
     ) -> None:
-        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_OK))
+        # First request succeeds (worker becomes proven); the second hangs and
+        # times out. A proven worker's timeout is a runtime fault, not a startup
+        # failure, so _start_failures must stay 0.
+        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _OK_THEN_HANG))
         try:
             await worker.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
             assert worker._worker_proven is True
+            with pytest.raises(CodegenWorkerError):
+                await worker.grade_codegen(
+                    [{"input_output": "{}"}], [["y"]], timeout=0.2
+                )
+            assert worker._start_failures == 0
+        finally:
+            await worker.aclose()
+
+
+class TestCancellation:
+    async def test_cancellation_kills_worker_and_propagates(self, tmp_path) -> None:
+        """A cancel while awaiting the worker (e.g. shutdown) kills the worker and
+        re-raises, rather than leaving it running with a pending request."""
+        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _HANG_THEN_OK))
+        try:
+            grade = asyncio.create_task(
+                worker.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
+            )
+            for _ in range(200):  # wait until the request is in flight (worker up)
+                if worker._proc is not None:
+                    break
+                await asyncio.sleep(0.01)
+            grade.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await grade
+            assert worker._proc is None  # cancellation killed the worker
         finally:
             await worker.aclose()
 

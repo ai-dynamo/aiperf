@@ -131,6 +131,12 @@ class CodegenGradingWorker:
             self._proc.stdin.write(orjson.dumps(req) + b"\n")
             await self._proc.stdin.drain()
             line = await asyncio.wait_for(self._proc.stdout.readline(), timeout)
+        except asyncio.CancelledError:
+            # Shutdown/cancellation while awaiting the worker: kill it (and its
+            # sandbox group) so a pending request can't desync the next grade or
+            # leave orphaned children, then propagate the cancellation.
+            await self._handle_fault()
+            raise
         except (TimeoutError, ConnectionError, BrokenPipeError, ValueError) as exc:
             # ValueError covers readline() overrunning the StreamReader limit
             # (asyncio.LimitOverrunError); route it through the fault path so the
@@ -218,4 +224,7 @@ class CodegenGradingWorker:
         return tail
 
     async def aclose(self) -> None:
-        await self._kill()
+        # Acquire the lock so teardown cannot race with an in-flight _request
+        # clearing/reading _proc across an await.
+        async with self._lock:
+            await self._kill()

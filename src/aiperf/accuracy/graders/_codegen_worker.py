@@ -14,6 +14,7 @@ multithreaded-fork hang. See issue #1145.
 
 from __future__ import annotations
 
+import math
 import multiprocessing as mp
 import os
 import sys
@@ -31,11 +32,15 @@ _MAX_ERROR_CHARS = 4096
 
 
 def handle_request(
-    req: dict[str, Any],
+    req: Any,
     codegen_fn: Callable[..., tuple[dict[str, Any], Any]],
 ) -> dict[str, Any]:
     """Run one grading request. Never raises: all failures become an error
     response so a single bad problem cannot kill the worker loop."""
+    if not isinstance(req, dict):
+        # A valid-but-non-object JSON frame (e.g. ``[]``) would raise on the
+        # ``.get`` below and kill the loop; return the promised error instead.
+        return {"id": None, "ok": False, "error": "malformed request: expected object"}
     req_id = req.get("id")
     try:
         evaluation_sample = req["evaluation_sample"]
@@ -81,10 +86,11 @@ def _coerce_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
 
 
 def _is_number(value: Any) -> bool:
+    # Metrics cross the JSONL boundary, so only finite values may pass; NaN/Inf
+    # are rejected per the repo's NaN/Inf discipline.
     try:
-        float(value)
-        return True
-    except (TypeError, ValueError):
+        return math.isfinite(float(value))
+    except (TypeError, ValueError, OverflowError):
         return False
 
 

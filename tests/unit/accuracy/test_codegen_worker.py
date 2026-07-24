@@ -66,6 +66,27 @@ class TestHandleRequest:
         assert resp["ok"] is False
         assert resp["error"]
 
+    def test_non_object_request_is_error_not_crash(self) -> None:
+        # A valid-but-non-object JSON frame must not raise (which would kill the
+        # worker loop); it returns the promised error response with id=None.
+        resp = worker.handle_request([1, 2, 3], _fake_codegen_ok)
+        assert resp["id"] is None
+        assert resp["ok"] is False
+        assert resp["error"]
+
+    def test_non_finite_metric_values_are_dropped(self) -> None:
+        # NaN/Inf must not cross the JSONL boundary (repo NaN/Inf discipline).
+        def _nan_inf(*_a: Any, **_k: Any) -> tuple[dict[str, Any], Any]:
+            return {"pass@1": float("nan"), "extra": float("inf"), "ok": 1.0}, {}
+
+        resp = worker.handle_request(
+            {"id": 9, "evaluation_sample": [{}], "generated_code": [["x"]]}, _nan_inf
+        )
+        assert resp["ok"] is True
+        assert "pass@1" not in resp["metrics"]
+        assert "extra" not in resp["metrics"]
+        assert resp["metrics"]["ok"] == 1.0
+
 
 class TestRunWorkerLoop:
     def _run(self, requests: list[bytes], codegen_fn) -> list[dict]:
@@ -102,14 +123,22 @@ class TestRunWorkerLoop:
 class TestForceFork:
     @pytest.mark.skipif(not _FORK_AVAILABLE, reason="fork unavailable")
     def test_sets_fork_start_method(self) -> None:
-        original = mp.get_start_method(allow_none=True)
-        try:
+        # Run in a subprocess: _force_fork mutates the process-global start
+        # method, so doing it in the pytest process could leak `fork` into later
+        # spawn-based tests (the finally can't restore a previously-unset method).
+        probe = textwrap.dedent(
+            """
+            import multiprocessing as mp
+            from aiperf.accuracy.graders import _codegen_worker as w
             mp.set_start_method("spawn", force=True)
-            worker._force_fork()
-            assert mp.get_start_method() == "fork"
-        finally:
-            if original is not None:
-                mp.set_start_method(original, force=True)
+            w._force_fork()
+            print(mp.get_start_method())
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", probe], capture_output=True, text=True, timeout=30
+        )
+        assert result.stdout.strip() == "fork", result.stderr
 
 
 class TestStdoutGuardSubprocess:
