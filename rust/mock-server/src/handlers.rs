@@ -3123,10 +3123,20 @@ fn image_stream(
     }
 }
 
-fn prom_response(body: Vec<u8>) -> Response {
+/// Render a Prometheus exposition body, honoring `--openmetrics`: when set, the
+/// body is converted to OpenMetrics text (with `# EOF` and suffix-less counter
+/// families) and served with the OpenMetrics content-type, matching the vLLM
+/// Rust frontend; otherwise classic `text/plain; version=0.0.4`.
+fn metrics_response(state: &AppState, mut body: Vec<u8>) -> Response {
+    let content_type = if state.config.openmetrics {
+        crate::prom::to_openmetrics(&mut body);
+        crate::prom::OPENMETRICS_CONTENT_TYPE
+    } else {
+        "text/plain; version=0.0.4"
+    };
     Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/plain; version=0.0.4")
+        .header(header::CONTENT_TYPE, content_type)
         .body(Body::from(body))
         .expect("response")
 }
@@ -3159,7 +3169,7 @@ pub async fn aiperf_mock_metrics(State(state): State<Arc<AppState>>) -> Response
     if state.accuracy.is_some() {
         crate::prom::append_accuracy_metrics(&mut body, &state.accuracy_live.snapshot());
     }
-    prom_response(body)
+    metrics_response(&state, body)
 }
 
 /// `GET /accuracy` — the live accuracy tally for the current run: how many
@@ -3195,33 +3205,33 @@ pub async fn accuracy_status(State(state): State<Arc<AppState>>) -> impl IntoRes
 }
 
 pub async fn vllm_metrics(State(state): State<Arc<AppState>>) -> Response {
-    prom_response(crate::prom::encode(&state.recorder.metrics.vllm.registry))
+    let body = crate::prom::encode(&state.recorder.metrics.vllm.registry);
+    metrics_response(&state, body)
 }
 
 pub async fn sglang_metrics(State(state): State<Arc<AppState>>) -> Response {
-    prom_response(crate::prom::encode(&state.recorder.metrics.sglang.registry))
+    let body = crate::prom::encode(&state.recorder.metrics.sglang.registry);
+    metrics_response(&state, body)
 }
 
 pub async fn trtllm_metrics(State(state): State<Arc<AppState>>) -> Response {
-    prom_response(crate::prom::encode(&state.recorder.metrics.trtllm.registry))
+    let body = crate::prom::encode(&state.recorder.metrics.trtllm.registry);
+    metrics_response(&state, body)
 }
 
 pub async fn dynamo_frontend_metrics(State(state): State<Arc<AppState>>) -> Response {
-    prom_response(crate::prom::encode(
-        &state.recorder.metrics.dynamo_frontend.registry,
-    ))
+    let body = crate::prom::encode(&state.recorder.metrics.dynamo_frontend.registry);
+    metrics_response(&state, body)
 }
 
 pub async fn dynamo_prefill_metrics(State(state): State<Arc<AppState>>) -> Response {
-    prom_response(crate::prom::encode(
-        &state.recorder.metrics.dynamo_prefill.registry,
-    ))
+    let body = crate::prom::encode(&state.recorder.metrics.dynamo_prefill.registry);
+    metrics_response(&state, body)
 }
 
 pub async fn dynamo_decode_metrics(State(state): State<Arc<AppState>>) -> Response {
-    prom_response(crate::prom::encode(
-        &state.recorder.metrics.dynamo_decode.registry,
-    ))
+    let body = crate::prom::encode(&state.recorder.metrics.dynamo_decode.registry);
+    metrics_response(&state, body)
 }
 
 fn dcgm_response(state: &AppState, idx: usize) -> Result<Response, AppError> {

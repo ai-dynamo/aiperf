@@ -1037,6 +1037,73 @@ pub fn encode(registry: &Registry) -> Vec<u8> {
     buf
 }
 
+/// OpenMetrics exposition content-type, matching what the vLLM Rust frontend's
+/// `/metrics` route serves (`prometheus_client` encoder + this header). The mock
+/// server otherwise emits classic Prometheus text (`text/plain; version=0.0.4`).
+pub const OPENMETRICS_CONTENT_TYPE: &str =
+    "application/openmetrics-text; version=1.0.0; charset=utf-8";
+
+/// Convert a classic Prometheus text exposition (as produced by [`encode`] and
+/// [`append_accuracy_metrics`]) into OpenMetrics text in place, so the mock can
+/// present its `/metrics` family like the vLLM Rust frontend does.
+///
+/// Two differences matter to a strict OpenMetrics parser and are handled here:
+///
+/// 1. A counter MetricFamily name must NOT carry the `_total` suffix — the
+///    suffix belongs on the sample line only. The tikv `TextEncoder` emits
+///    `# TYPE foo_total counter` / `# HELP foo_total ...`; we rewrite those
+///    metadata lines to the suffix-less family name while leaving the
+///    `foo_total{...} N` sample lines untouched.
+/// 2. The body must be terminated by a lone `# EOF` line.
+///
+/// Sample values, labels, histogram/gauge families, and ordering are otherwise
+/// already valid OpenMetrics, so they pass through unchanged.
+pub fn to_openmetrics(buf: &mut Vec<u8>) {
+    let text = String::from_utf8_lossy(buf);
+
+    // First pass: collect the `_total`-suffixed names declared as counters.
+    let mut counter_totals: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("# TYPE ") {
+            // `<name> <type>`
+            if let Some((name, kind)) = rest.rsplit_once(' ') {
+                if kind == "counter" && name.ends_with("_total") {
+                    counter_totals.insert(name);
+                }
+            }
+        }
+    }
+
+    // Second pass: strip `_total` from the family name on `# TYPE`/`# HELP`
+    // metadata lines for those counters; leave everything else verbatim.
+    let mut out = String::with_capacity(text.len() + 8);
+    for line in text.lines() {
+        let rewritten = rewrite_counter_meta(line, &counter_totals);
+        out.push_str(&rewritten);
+        out.push('\n');
+    }
+    out.push_str("# EOF\n");
+
+    *buf = out.into_bytes();
+}
+
+/// If `line` is a `# TYPE`/`# HELP` metadata line for a `_total`-named counter,
+/// return it with the `_total` suffix removed from the family name; otherwise
+/// return the line unchanged.
+fn rewrite_counter_meta(line: &str, counter_totals: &std::collections::HashSet<&str>) -> String {
+    for prefix in ["# TYPE ", "# HELP "] {
+        if let Some(rest) = line.strip_prefix(prefix) {
+            // `<name>` is the first whitespace-delimited token.
+            let name = rest.split(' ').next().unwrap_or("");
+            if counter_totals.contains(name) {
+                let base = &name[..name.len() - "_total".len()];
+                return format!("{prefix}{base}{}", &rest[name.len()..]);
+            }
+        }
+    }
+    line.to_string()
+}
+
 /// Escape a Prometheus label value (backslash, double-quote, newline).
 fn escape_label(v: &str) -> String {
     v.replace('\\', "\\\\")
@@ -1175,5 +1242,28 @@ mod tests {
         let text = String::from_utf8(body).unwrap();
         assert!(text.contains("vllm:kv_cache_usage_perc"));
         assert!(text.contains("0.5"));
+    }
+
+    #[test]
+    fn to_openmetrics_strips_counter_total_and_appends_eof() {
+        let m = AiperfMetrics::new();
+        m.REQUESTS_TOTAL
+            .with_label_values(&["/v1/chat/completions", "POST", "200"])
+            .inc();
+        let mut body = encode(&m.registry);
+        // Classic exposition: counter family metadata carries the `_total`
+        // suffix and there is no `# EOF` terminator.
+        let classic = String::from_utf8(body.clone()).unwrap();
+        assert!(classic.contains("# TYPE aiperf_mock_requests_total counter"));
+        assert!(!classic.contains("# EOF"));
+
+        to_openmetrics(&mut body);
+        let om = String::from_utf8(body).unwrap();
+        // OpenMetrics: suffix-less counter family in metadata, `_total` retained
+        // on the sample line, and a trailing `# EOF`.
+        assert!(om.contains("# TYPE aiperf_mock_requests counter"));
+        assert!(!om.contains("# TYPE aiperf_mock_requests_total counter"));
+        assert!(om.contains("aiperf_mock_requests_total{"));
+        assert!(om.ends_with("# EOF\n"));
     }
 }

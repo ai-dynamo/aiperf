@@ -549,6 +549,16 @@ pub struct MockServerConfig {
     #[arg(long, env = "MOCK_SERVER_NO_METRICS", default_value_t = false)]
     pub no_metrics: bool,
 
+    /// Serve the `/metrics` family as OpenMetrics text instead of classic
+    /// Prometheus text, matching the vLLM Rust frontend (which uses the
+    /// `prometheus-client` OpenMetrics encoder). Sets the
+    /// `application/openmetrics-text; version=1.0.0` content-type, terminates
+    /// the body with `# EOF`, and drops the `_total` suffix from counter
+    /// MetricFamily metadata (kept on sample lines). Has no effect with
+    /// `--no-metrics`.
+    #[arg(long, env = "MOCK_SERVER_OPENMETRICS", default_value_t = false)]
+    pub openmetrics: bool,
+
     /// Path to a JSONL accuracy dataset. Each line is an object with a prompt
     /// field (`prompt`/`question`/`input`/`text`) and a gold field
     /// (`ground_truth`/`answer`/`gold`/`target`), plus optional `task`,
