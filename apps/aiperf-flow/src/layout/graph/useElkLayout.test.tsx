@@ -49,12 +49,14 @@ describe("useElkLayout", () => {
     expect(result.current.nodes).toHaveLength(2);
   });
 
-  it("does not lay out until nodes are initialized", async () => {
+  it("lays out even when React Flow never reports nodes initialized", async () => {
+    // useNodesInitialized can stay false for nested/animated canvases; the layout must still run
+    // (with fallback/estimated sizes) so the diagram is never left blank.
     initialized = false;
     const { result } = renderHook(() => useElkLayout(NODES, EDGES, {}));
-    // Give any pending microtasks a chance; laidOut must stay false.
-    await new Promise((r) => setTimeout(r, 20));
-    expect(result.current.laidOut).toBe(false);
+    await waitFor(() => expect(result.current.laidOut).toBe(true));
+    const map = Object.fromEntries(result.current.nodes.map((n) => [n.id, n]));
+    expect(map.a!.position.x).toBeLessThan(map.b!.position.x);
   });
 
   it("fits the view after a layout pass", async () => {

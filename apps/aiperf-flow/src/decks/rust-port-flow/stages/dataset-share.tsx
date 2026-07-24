@@ -52,10 +52,6 @@ function panel(id: string, title: string, detail: string, x: number, y: number):
   return { id, type: "panel", position: { x, y }, data: { title, detail } };
 }
 
-/** A `chip` node — a compact label-only tag. */
-function chip(id: string, label: string, x: number, y: number): Node {
-  return { id, type: "chip", position: { x, y }, data: { label } };
-}
 
 /** A `header` node — a grouping heading. */
 function header(id: string, title: string, caption: string, x: number, y: number): Node {
@@ -130,7 +126,17 @@ const subgraphNodes: Node[] = [
     900,
     190,
   ),
-  chip("share-run", "Run-owned sidecar", 300, 320),
+  // A `card` (not a handleless `chip`): it is the source of the dashed edge to content_server, so
+  // it must expose React Flow handles for the connection to resolve.
+  card(
+    "share-run",
+    "Run-owned sidecar",
+    "media, not text",
+    "The content_server sidecar is owned by the run — media URLs, separate from dataset-text sharing.",
+    300,
+    320,
+    "orange",
+  ),
   card(
     CONTENT_SERVER_LEAF,
     "content_server",

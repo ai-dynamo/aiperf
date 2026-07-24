@@ -48,6 +48,10 @@ export function useElkLayout(inputNodes: Node[], edges: Edge[], opts: ElkOptions
 
   // Relayout only when the graph's structural identity changes (new level/subgraph), not on data.
   const graphKey = `${inputNodes.map((n) => n.id).join(",")}|${edges.map((e) => e.id).join(",")}`;
+  // Serialized options key so an inline `opts={}` at the call site does NOT re-run the effect every
+  // render (object identity churn) — that would be an infinite relayout loop. Only real option
+  // changes matter; `laneOf`'s identity is intentionally ignored (its presence is enough).
+  const optsKey = `${opts.direction ?? "RIGHT"}|${opts.nodeSpacing ?? ""}|${opts.layerSpacing ?? ""}|${opts.laneOf ? "lane" : ""}`;
   const lastKeyRef = useRef<string>("");
   if (lastKeyRef.current !== graphKey) {
     lastKeyRef.current = graphKey;
@@ -56,35 +60,45 @@ export function useElkLayout(inputNodes: Node[], edges: Edge[], opts: ElkOptions
     setLaidOut(false);
   }
 
+  // NOT gated on `nodesInitialized`: in practice it can stay false (nested/animated canvases), which
+  // would leave the diagram unlaid-out and hidden forever. Instead we lay out immediately with
+  // whatever sizes React Flow has measured so far (falling back to default box sizes when it has
+  // measured none) — that still yields a real ELK layout, never a blank canvas — and re-run when
+  // `nodesInitialized` flips true to refine with exact measured sizes.
   useEffect(() => {
-    if (!nodesInitialized) return;
     let cancelled = false;
-    // Prefer React Flow's own node objects — they carry `.measured` sizes the input nodes lack.
-    const measured = getNodes();
-    const byId = new Map(measured.map((n) => [n.id, n]));
-    const sized = inputNodes.map((n) => ({ ...n, measured: byId.get(n.id)?.measured }));
 
-    // Seed synchronously so the canvas is visible immediately, independent of ELK's async pass.
-    setPositions(positionMap(fallbackLayout(sized, edges, opts)));
-    setLaidOut(true);
+    const run = (): void => {
+      // Prefer React Flow's own node objects — they carry `.measured` sizes the input nodes lack.
+      const measured = getNodes();
+      const byId = new Map(measured.map((n) => [n.id, n]));
+      const sized = inputNodes.map((n) => ({ ...n, measured: byId.get(n.id)?.measured }));
+
+      // Seed synchronously so the canvas is visible immediately, independent of ELK's async pass.
+      setPositions(positionMap(fallbackLayout(sized, edges, opts)));
+      setLaidOut(true);
+
+      // Refine with ELK's layered/orthogonal routing; overwrite the seed when it resolves.
+      void layoutGraph(sized, edges, opts).then((laid) => {
+        if (cancelled) return;
+        setPositions(positionMap(laid));
+        requestAnimationFrame(() => {
+          if (!cancelled) fitView({ padding: 0.2 });
+        });
+      });
+    };
+
+    run();
     requestAnimationFrame(() => {
       if (!cancelled) fitView({ padding: 0.2 });
-    });
-
-    // Refine with ELK's layered/orthogonal routing; overwrite the seed when (if) it resolves.
-    void layoutGraph(sized, edges, opts).then((laid) => {
-      if (cancelled) return;
-      setPositions(positionMap(laid));
-      requestAnimationFrame(() => {
-        if (!cancelled) fitView({ padding: 0.2 });
-      });
     });
     return () => {
       cancelled = true;
     };
-    // graphKey captures inputNodes/edges identity; opts is expected stable per call site.
+    // graphKey/optsKey are stable string identities; nodesInitialized re-triggers a refine pass
+    // once real measurements exist. Using optsKey (not the opts object) tolerates inline opts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodesInitialized, graphKey, opts]);
+  }, [nodesInitialized, graphKey, optsKey]);
 
   // Overlay computed positions onto the live input nodes so data updates always show through.
   const nodes = useMemo(
