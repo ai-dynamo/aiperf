@@ -410,6 +410,12 @@ Whole system:
   time axis (the Clock seam) through subsystem lanes in nested seam frames;
   supersedes the node-graph rendering, keeps the nine-stage content and the
   `ZoomStage`/`useFlowPlayer`/`SeamToggle` primitives.
+- [`docs/specs/2026-07-23-aiperf-flow-elk-layout-engine.md`](docs/specs/2026-07-23-aiperf-flow-elk-layout-engine.md)
+  — app-wide ELK (`elkjs`) auto-layout seam for `apps/aiperf-flow`: replaces
+  every diagram's hand-picked `{x,y}` node positions with a measure→layout→apply
+  cycle driven by real React Flow node sizes, fixing smooshed boxes and
+  doubled-back edges; opt-in via `PipelineCanvas`'s `layout` prop / `AutoLayoutFlow`,
+  adopted by `rust-port-flow` first then rolled out to the rest.
 
 Execution and scheduling:
 
