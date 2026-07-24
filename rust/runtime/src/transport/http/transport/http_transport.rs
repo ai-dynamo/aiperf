@@ -23,6 +23,7 @@ use crate::transport::http::config::ClientConfig;
 use crate::transport::http::models::RequestConfig;
 use crate::transport::http::transport::headers::{
     build_headers, dynamo_session_id_from_correlation_id_enabled,
+    x_session_id_from_correlation_id_enabled, x_smg_routing_key_from_correlation_id_enabled,
 };
 use crate::transport::http::transport::url::build_url;
 
@@ -34,6 +35,8 @@ pub struct HttpTransport {
     user_agent: String,
     session_header: Option<String>,
     dynamo_session_id_from_correlation_id: bool,
+    x_session_id_from_correlation_id: bool,
+    x_smg_routing_key_from_correlation_id: bool,
 }
 
 impl HttpTransport {
@@ -58,6 +61,8 @@ impl HttpTransport {
             user_agent: "aiperf-transport-http/0".to_string(),
             session_header: None,
             dynamo_session_id_from_correlation_id: dynamo_session_id_from_correlation_id_enabled(),
+            x_session_id_from_correlation_id: x_session_id_from_correlation_id_enabled(),
+            x_smg_routing_key_from_correlation_id: x_smg_routing_key_from_correlation_id_enabled(),
         }
     }
 
@@ -208,6 +213,8 @@ impl HttpTransport {
             self.session_header.as_deref(),
             &self.user_agent,
             self.dynamo_session_id_from_correlation_id,
+            self.x_session_id_from_correlation_id,
+            self.x_smg_routing_key_from_correlation_id,
         );
         let mut record = RequestRecord {
             request_body: body.clone(),

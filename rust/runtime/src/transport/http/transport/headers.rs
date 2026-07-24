@@ -15,7 +15,30 @@ use crate::transport::http::models::RequestConfig;
 /// request, so `build_headers` itself stays a pure function of its
 /// arguments and is directly unit-testable without mutating process env.
 pub fn dynamo_session_id_from_correlation_id_enabled() -> bool {
-    std::env::var("AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID")
+    env_flag_enabled("AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID")
+}
+
+/// Read the `AIPERF_HTTP_X_SESSION_ID_FROM_CORRELATION_ID` opt-in toggle.
+/// When enabled, `X-Session-ID` is sent ADDITIVELY alongside the correlation
+/// header (distinct from `--session-header`, which RENAMES the single
+/// correlation header). Use this when an external router requires an
+/// `X-Session-ID` session-affinity header. Read once at transport construction.
+pub fn x_session_id_from_correlation_id_enabled() -> bool {
+    env_flag_enabled("AIPERF_HTTP_X_SESSION_ID_FROM_CORRELATION_ID")
+}
+
+/// Read the `AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID` opt-in toggle.
+/// When enabled, `X-SMG-Routing-Key` is sent ADDITIVELY with the stable
+/// correlation value for the SGLang Model Gateway manual routing policy
+/// (co-locates a session's requests on one worker). Read once at construction.
+pub fn x_smg_routing_key_from_correlation_id_enabled() -> bool {
+    env_flag_enabled("AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID")
+}
+
+/// Shared parse for the boolean session-affinity env toggles: `1`/`true`
+/// (case-insensitive, trimmed) enables; anything else (or unset) disables.
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
         .is_ok_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true"))
 }
 
@@ -29,6 +52,8 @@ pub fn build_headers(
     session_header: Option<&str>,
     user_agent: &str,
     dynamo_session_id_from_correlation_id: bool,
+    x_session_id_from_correlation_id: bool,
+    x_smg_routing_key_from_correlation_id: bool,
 ) -> BTreeMap<String, String> {
     let mut h: BTreeMap<String, String> = BTreeMap::new();
     h.insert("User-Agent".to_string(), user_agent.to_string());
@@ -56,6 +81,24 @@ pub fn build_headers(
     );
     h.entry("Content-Type".to_string())
         .or_insert_with(|| "application/json".to_string());
+
+    // Apply derived session-affinity headers last so they are authoritative and
+    // cannot be silently overwritten by endpoint or transport headers above.
+    // These are ADDITIVE (distinct from `session_header`, which RENAMES the
+    // single correlation header): some external routers require a dedicated
+    // session-affinity header ALONGSIDE the correlation header. Strip any
+    // caller-supplied variants case-insensitively first, since HTTP header
+    // names are case-insensitive and `h` is a plain string-keyed map.
+    if let Some(corr) = &cfg.correlation_id {
+        if x_session_id_from_correlation_id {
+            h.retain(|k, _| !k.eq_ignore_ascii_case("X-Session-ID"));
+            h.insert("X-Session-ID".to_string(), corr.clone());
+        }
+        if x_smg_routing_key_from_correlation_id {
+            h.retain(|k, _| !k.eq_ignore_ascii_case("X-SMG-Routing-Key"));
+            h.insert("X-SMG-Routing-Key".to_string(), corr.clone());
+        }
+    }
 
     // Apply derived Dynamo session headers last so they are authoritative and
     // cannot be overwritten by endpoint or transport headers above. Use this
@@ -87,7 +130,7 @@ mod tests {
     #[test]
     fn sets_user_agent_accept_and_content_type_for_streaming() {
         let cfg = RequestConfig::new("http://h/x");
-        let h = build_headers(&cfg, true, None, "aiperf/test", false);
+        let h = build_headers(&cfg, true, None, "aiperf/test", false, false, false);
         assert_eq!(h.get("User-Agent").map(String::as_str), Some("aiperf/test"));
         assert_eq!(
             h.get("Accept").map(String::as_str),
@@ -102,7 +145,7 @@ mod tests {
     #[test]
     fn non_streaming_accept_is_json() {
         let cfg = RequestConfig::new("http://h/x");
-        let h = build_headers(&cfg, false, None, "aiperf/test", false);
+        let h = build_headers(&cfg, false, None, "aiperf/test", false, false, false);
         assert_eq!(
             h.get("Accept").map(String::as_str),
             Some("application/json")
@@ -114,7 +157,7 @@ mod tests {
         let cfg = RequestConfig::new("http://h/x")
             .correlation_id("sess-1")
             .request_id("req-1");
-        let h = build_headers(&cfg, true, Some("X-Session"), "aiperf/test", false);
+        let h = build_headers(&cfg, true, Some("X-Session"), "aiperf/test", false, false, false);
         assert_eq!(h.get("X-Session").map(String::as_str), Some("sess-1"));
         assert_eq!(h.get("X-Request-ID").map(String::as_str), Some("req-1"));
     }
@@ -122,21 +165,21 @@ mod tests {
     #[test]
     fn endpoint_headers_win_over_base() {
         let cfg = RequestConfig::new("http://h/x").header("User-Agent", "override");
-        let h = build_headers(&cfg, true, None, "aiperf/test", false);
+        let h = build_headers(&cfg, true, None, "aiperf/test", false, false, false);
         assert_eq!(h.get("User-Agent").map(String::as_str), Some("override"));
     }
 
     #[test]
     fn dynamo_session_id_from_correlation_id_disabled_by_default() {
         let cfg = RequestConfig::new("http://h/x").correlation_id("sess-1");
-        let h = build_headers(&cfg, true, None, "aiperf/test", false);
+        let h = build_headers(&cfg, true, None, "aiperf/test", false, false, false);
         assert_eq!(h.get("X-Dynamo-Session-ID"), None);
     }
 
     #[test]
     fn dynamo_session_id_from_correlation_id_derives_session_header() {
         let cfg = RequestConfig::new("http://h/x").correlation_id("sess-1");
-        let h = build_headers(&cfg, true, None, "aiperf/test", true);
+        let h = build_headers(&cfg, true, None, "aiperf/test", true, false, false);
         assert_eq!(
             h.get("X-Dynamo-Session-ID").map(String::as_str),
             Some("sess-1")
@@ -149,7 +192,7 @@ mod tests {
         let cfg = RequestConfig::new("http://h/x")
             .correlation_id("child-1")
             .parent_correlation_id("parent-1");
-        let h = build_headers(&cfg, true, None, "aiperf/test", true);
+        let h = build_headers(&cfg, true, None, "aiperf/test", true, false, false);
         assert_eq!(
             h.get("X-Dynamo-Session-ID").map(String::as_str),
             Some("child-1")
@@ -161,6 +204,62 @@ mod tests {
     }
 
     #[test]
+    fn x_session_id_disabled_by_default() {
+        let cfg = RequestConfig::new("http://h/x").correlation_id("sess-1");
+        let h = build_headers(&cfg, true, None, "aiperf/test", false, false, false);
+        assert_eq!(h.get("X-Session-ID"), None);
+    }
+
+    #[test]
+    fn x_session_id_is_additive_with_correlation_header() {
+        // Additive: the correlation header stays under its own name AND
+        // X-Session-ID is sent with the same stable value.
+        let cfg = RequestConfig::new("http://h/x").correlation_id("sess-1");
+        let h = build_headers(&cfg, true, None, "aiperf/test", false, true, false);
+        assert_eq!(
+            h.get("X-Correlation-ID").map(String::as_str),
+            Some("sess-1")
+        );
+        assert_eq!(h.get("X-Session-ID").map(String::as_str), Some("sess-1"));
+    }
+
+    #[test]
+    fn x_session_id_overrides_caller_supplied_header_case_insensitively() {
+        let cfg = RequestConfig::new("http://h/x")
+            .correlation_id("sess-1")
+            .header("x-session-id", "stale");
+        let h = build_headers(&cfg, true, None, "aiperf/test", false, true, false);
+        assert_eq!(h.get("X-Session-ID").map(String::as_str), Some("sess-1"));
+        assert!(!h.contains_key("x-session-id"));
+    }
+
+    #[test]
+    fn x_smg_routing_key_disabled_by_default() {
+        let cfg = RequestConfig::new("http://h/x").correlation_id("sess-1");
+        let h = build_headers(&cfg, true, None, "aiperf/test", false, false, false);
+        assert_eq!(h.get("X-SMG-Routing-Key"), None);
+    }
+
+    #[test]
+    fn x_smg_routing_key_derives_from_correlation_id() {
+        let cfg = RequestConfig::new("http://h/x").correlation_id("sess-1");
+        let h = build_headers(&cfg, true, None, "aiperf/test", false, false, true);
+        assert_eq!(
+            h.get("X-SMG-Routing-Key").map(String::as_str),
+            Some("sess-1")
+        );
+    }
+
+    #[test]
+    fn session_affinity_headers_absent_without_correlation_id() {
+        // No correlation id => nothing to derive from, even when both flags on.
+        let cfg = RequestConfig::new("http://h/x");
+        let h = build_headers(&cfg, true, None, "aiperf/test", false, true, true);
+        assert_eq!(h.get("X-Session-ID"), None);
+        assert_eq!(h.get("X-SMG-Routing-Key"), None);
+    }
+
+    #[test]
     fn dynamo_session_id_from_correlation_id_overrides_caller_supplied_headers() {
         // Case-insensitive strip-then-set: a caller-supplied variant (any
         // case) must not survive alongside the derived value.
@@ -168,7 +267,7 @@ mod tests {
             .correlation_id("sess-1")
             .header("x-dynamo-session-id", "stale")
             .header("X-DYNAMO-PARENT-SESSION-ID", "stale-parent");
-        let h = build_headers(&cfg, true, None, "aiperf/test", true);
+        let h = build_headers(&cfg, true, None, "aiperf/test", true, false, false);
         assert_eq!(
             h.get("X-Dynamo-Session-ID").map(String::as_str),
             Some("sess-1")
