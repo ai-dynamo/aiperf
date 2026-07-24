@@ -4,9 +4,19 @@
  */
 
 import { fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 import { RustPortFlowDeck, STAGES } from "./RustPortFlowDeck.js";
 import { DECKS } from "../../routes/Home.js";
+
+/** The deck reads/writes the `?stage=` URL param, so it must render inside a router. */
+function renderDeck(initialEntry = "/rust-port-flow") {
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <RustPortFlowDeck />
+    </MemoryRouter>,
+  );
+}
 
 const STAGE_LABELS = [
   "Big Picture",
@@ -24,21 +34,21 @@ const LANE_LABELS = ["Dataset", "Scheduler / Workload", "Transport", "Server", "
 
 describe("RustPortFlowDeck (v2 swimlane-timeline)", () => {
   it("renders the timeline overview with all six subsystem lanes", () => {
-    render(<RustPortFlowDeck />);
+    renderDeck();
     for (const lane of LANE_LABELS) {
       expect(screen.getAllByText(lane).length).toBeGreaterThan(0);
     }
   });
 
   it("renders all nine spine stage region labels on the timeline", () => {
-    render(<RustPortFlowDeck />);
+    renderDeck();
     for (const label of STAGE_LABELS) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     }
   });
 
   it("renders the Workload + Transport seam frames grouping the track", () => {
-    render(<RustPortFlowDeck />);
+    renderDeck();
     // The Workload seam frames the scheduler admission segment; its label is unique to the frame.
     expect(screen.getAllByText("Workload").length).toBeGreaterThan(0);
     // The Transport seam frame shares its label with the lane + toggle — all present.
@@ -51,7 +61,7 @@ describe("RustPortFlowDeck (v2 swimlane-timeline)", () => {
   });
 
   it("renders the Clock and Transport seam toggles and play controls", () => {
-    render(<RustPortFlowDeck />);
+    renderDeck();
     expect(screen.getByRole("button", { name: "RealClock" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "SimClock" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "HTTP" })).toBeInTheDocument();
@@ -60,7 +70,7 @@ describe("RustPortFlowDeck (v2 swimlane-timeline)", () => {
   });
 
   it("rides the request line: Next advances the play head through the 16 request events", () => {
-    render(<RustPortFlowDeck />);
+    renderDeck();
     expect(screen.getAllByText("step 1/16").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getAllByText("step 2/16").length).toBeGreaterThan(0);
@@ -69,14 +79,14 @@ describe("RustPortFlowDeck (v2 swimlane-timeline)", () => {
   });
 
   it("rescales the timeline x-axis when the Clock seam changes (real wall-ms ↔ virtual ticks)", () => {
-    render(<RustPortFlowDeck />);
+    renderDeck();
     expect(screen.getByText("RealClock · wall-ms")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "SimClock" }));
     expect(screen.getByText("SimClock · virtual ticks")).toBeInTheDocument();
   });
 
   it("drills into a stage on region click, revealing its real source anchor", () => {
-    render(<RustPortFlowDeck />);
+    renderDeck();
     fireEvent.click(screen.getAllByText("Clock seam")[0]!);
     // Level-1 evidence row shows the verified Clock trait anchor.
     expect(screen.getByText("runtime/src/clock/clock.rs:12")).toBeInTheDocument();
@@ -85,7 +95,7 @@ describe("RustPortFlowDeck (v2 swimlane-timeline)", () => {
   });
 
   it("re-routes the dispatch event caption when the Transport seam changes", () => {
-    render(<RustPortFlowDeck />);
+    renderDeck();
     // Advance the play head to the transport dispatch event (path index 8 → step 9/16).
     for (let i = 0; i < 8; i++) {
       fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -96,12 +106,30 @@ describe("RustPortFlowDeck (v2 swimlane-timeline)", () => {
     expect(screen.getAllByText(/GrpcTransportSink \(Tonic, non-streaming\)/).length).toBeGreaterThan(0);
   });
 
+  it("deep-links into a stage from the ?stage= URL param", () => {
+    renderDeck("/rust-port-flow?stage=clock");
+    // The clock stage's drill content (its verified source anchor) is shown without any click.
+    expect(screen.getByText("runtime/src/clock/clock.rs:12")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back one level" })).toBeInTheDocument();
+  });
+
+  it("shows a Back button in a drill-down that returns to the overview", () => {
+    renderDeck();
+    fireEvent.click(screen.getAllByText("Clock seam")[0]!);
+    const back = screen.getByRole("button", { name: "Back one level" });
+    expect(back).toBeInTheDocument();
+    fireEvent.click(back);
+    // Back at the overview: the drill's source anchor is gone, no Back button remains.
+    expect(screen.queryByText("runtime/src/clock/clock.rs:12")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back one level" })).not.toBeInTheDocument();
+  });
+
   it("is registered on Home's deck listing", () => {
     expect(DECKS.some((deck) => deck.path === "/rust-port-flow")).toBe(true);
   });
 
   it("tiles stage blocks so none overlap within a lane (real wall-ms scale)", () => {
-    const { container } = render(<RustPortFlowDeck />);
+    const { container } = renderDeck();
     // Each stage block is a <g data-testid="stage-region"> wrapping one <rect>. Group the rects by
     // their y (which encodes the lane row) and assert the x-intervals in each row are disjoint —
     // this is the regression guard for the wall-ms "left-crush" that stacked the setup blocks.

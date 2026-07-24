@@ -14,7 +14,8 @@
 //! subgraph/leaves are now the stage's DRILL detail. Per-stage lane/events + drill detail live in one
 //! `stages/<id>` module each, so stage/lane agents extend the deck without editing this shell.
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { TopBar } from "../../shell/TopBar.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
@@ -152,6 +153,43 @@ export function RustPortFlowDeck(): React.JSX.Element {
   const tree = useMemo(() => buildZoomTree(STAGES), []);
   const model = useMemo(() => buildTimelineModel(STAGES), []);
 
+  // Drill state is mirrored in the `?stage=` URL param so a drilled view is a shareable deep link
+  // and browser back/forward walks the drill path. The param holds the post-overview ids joined by
+  // "/"; we rebuild the full path from the root, keeping only valid consecutive child steps.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const stageParam = searchParams.get("stage") ?? "";
+  const drillPath = useMemo(() => {
+    const path: string[] = [OVERVIEW_ID];
+    for (const seg of stageParam.split("/").filter(Boolean)) {
+      const parent = tree[path[path.length - 1]!];
+      if (parent?.children?.includes(seg) && tree[seg]) {
+        path.push(seg);
+      } else {
+        break;
+      }
+    }
+    return path;
+  }, [stageParam, tree]);
+
+  const handleNavigate = useCallback(
+    (path: readonly string[]) => {
+      const segments = path.slice(1).join("/");
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (segments) {
+            next.set("stage", segments);
+          } else {
+            next.delete("stage");
+          }
+          return next;
+        },
+        { replace: false },
+      );
+    },
+    [setSearchParams],
+  );
+
   // eventId → its owning stage + event, for captions and the active-event label.
   const eventOwner = useMemo(() => {
     const map = new Map<string, { stage: StageDef; event: TimelineEvent }>();
@@ -251,7 +289,12 @@ export function RustPortFlowDeck(): React.JSX.Element {
               tone={clock === "sim" ? "purple" : "green"}
             />
 
-            <ZoomStage tree={tree} rootId={OVERVIEW_ID}>
+            <ZoomStage
+              tree={tree}
+              rootId={OVERVIEW_ID}
+              initialPath={drillPath}
+              onNavigate={handleNavigate}
+            >
               {(ctx) => {
                 const isOverview = ctx.level === 0;
                 const stage = ctx.node.data;
