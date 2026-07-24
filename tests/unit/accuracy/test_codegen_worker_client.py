@@ -271,3 +271,37 @@ class TestMalformedResponse:
             assert worker._proc is None
         finally:
             await worker.aclose()
+
+
+# Writes a distinctive marker to stderr, flushes, then exits without responding.
+_STDERR_THEN_DIE = """
+    import sys
+    sys.stderr.write("WORKER_DIAG_MARKER: boom\\n")
+    sys.stderr.flush()
+    sys.exit(1)
+"""
+
+
+class TestStderrDiagnostics:
+    async def test_worker_stderr_tail_logged_on_fault(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """On a fault the worker's captured stderr tail is logged so operators can
+        see why it died, instead of a bare 'exited before responding'."""
+        import aiperf.accuracy.graders._codegen_worker_client as wc
+
+        logged: list[str] = []
+        monkeypatch.setattr(
+            wc._log, "debug", lambda m: logged.append(m() if callable(m) else m)
+        )
+        worker = CodegenGradingWorker(
+            worker_cmd=_write_worker(tmp_path, _STDERR_THEN_DIE)
+        )
+        try:
+            with pytest.raises(CodegenWorkerError):
+                await worker.grade_codegen(
+                    [{"input_output": "{}"}], [["x"]], timeout=30
+                )
+            assert any("WORKER_DIAG_MARKER" in msg for msg in logged), logged
+        finally:
+            await worker.aclose()

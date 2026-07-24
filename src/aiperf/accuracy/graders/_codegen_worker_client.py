@@ -12,7 +12,9 @@ enforces per-grade timeouts with kill+restart. See issue #1145 and
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
+from collections import deque
 from typing import Any
 
 import orjson
@@ -28,6 +30,10 @@ _DEFAULT_WORKER_CMD = [sys.executable, "-m", "aiperf.accuracy.graders._codegen_w
 # the reader generous headroom while still bounding memory. The worker also caps
 # its error strings, so this limit should never be reached in practice.
 _STREAM_LIMIT = 16 * 1024 * 1024
+
+# Bound the retained worker-stderr diagnostics so a chatty worker can't grow
+# memory unbounded; the tail is logged on fault to explain why a worker died.
+_STDERR_TAIL_LINES = 64
 
 
 class CodegenWorkerError(Exception):
@@ -48,6 +54,8 @@ class CodegenGradingWorker:
         self._next_id = 0
         self._start_failures = 0
         self._worker_proven = False
+        self._stderr_tail: deque[str] = deque(maxlen=_STDERR_TAIL_LINES)
+        self._stderr_task: asyncio.Task[None] | None = None
 
     async def grade_codegen(
         self,
@@ -73,17 +81,32 @@ class CodegenGradingWorker:
         if self._proc is not None and self._proc.returncode is None:
             return
         self._worker_proven = False
+        self._stderr_tail.clear()
         try:
             self._proc = await asyncio.create_subprocess_exec(
                 *self._cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
                 limit=_STREAM_LIMIT,
             )
         except Exception as exc:
             self._start_failures += 1
             raise CodegenWorkerError(f"failed to spawn grading worker: {exc}") from exc
+        # Drain stderr continuously so the pipe never fills (which would block the
+        # worker) and the last output is retained to explain a fault.
+        self._stderr_task = asyncio.create_task(self._drain_stderr(self._proc.stderr))
+
+    async def _drain_stderr(self, reader: asyncio.StreamReader | None) -> None:
+        """Continuously copy worker stderr into a bounded tail. Best-effort:
+        diagnostics must never disrupt grading, so all read errors are swallowed."""
+        if reader is None:
+            return
+        # Best-effort: a reader overrun or closed transport ends diagnostics
+        # silently; they must never disrupt grading.
+        with contextlib.suppress(Exception):
+            async for line in reader:
+                self._stderr_tail.append(line.decode("utf-8", "replace").rstrip("\n"))
 
     async def _request(self, req: dict[str, Any], timeout: float) -> dict[str, Any]:
         assert self._proc is not None and self._proc.stdin and self._proc.stdout
@@ -150,23 +173,34 @@ class CodegenGradingWorker:
         return metrics
 
     async def _handle_fault(self) -> None:
-        _log.debug(
-            lambda: f"codegen worker fault (proven={self._worker_proven}, "
-            f"start_failures={self._start_failures}); killing + respawning next grade"
-        )
         if not self._worker_proven:
             self._start_failures += 1
-        await self._kill()
+        tail = await self._kill()
+        _log.debug(
+            lambda: f"codegen worker fault (proven={self._worker_proven}, "
+            f"start_failures={self._start_failures}); killed + respawning next grade"
+            + (f"; stderr tail:\n{chr(10).join(tail)}" if tail else "")
+        )
 
-    async def _kill(self) -> None:
+    async def _kill(self) -> list[str]:
+        """Kill the worker and return its captured stderr tail (for diagnostics)."""
         proc, self._proc = self._proc, None
-        if proc is None or proc.returncode is not None:
-            return
-        try:
-            proc.kill()
-            await proc.wait()
-        except ProcessLookupError:
-            pass
+        task, self._stderr_task = self._stderr_task, None
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.kill()
+                await proc.wait()
+            except ProcessLookupError:
+                pass
+        tail: list[str] = []
+        if task is not None:
+            # The dead worker's stderr hits EOF, so the drain task finishes; bound
+            # the wait, then snapshot whatever it captured. wait_for cancels the
+            # task on timeout.
+            with contextlib.suppress(TimeoutError, asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=2.0)
+            tail = list(self._stderr_tail)
+        return tail
 
     async def aclose(self) -> None:
         await self._kill()
