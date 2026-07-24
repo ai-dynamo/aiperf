@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 from typing import Any
 
 import orjson
@@ -169,7 +170,7 @@ class TestStdoutGuardSubprocess:
 
 class TestProtocolFdIsolation:
     @pytest.mark.skipif(not hasattr(os, "fork"), reason="fork unavailable")
-    def test_protocol_fd_closed_in_forked_children(self, tmp_path) -> None:
+    def test_protocol_fd_closed_in_forked_children(self, tmp_path: Path) -> None:
         # lighteval forks sandbox children that run arbitrary generated code.
         # They must NOT inherit the protocol fd, or that code could write to the
         # client's JSONL response channel and spoof/desync grading.
