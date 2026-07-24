@@ -22,6 +22,7 @@ pub mod models;
 pub mod prefix_cache;
 pub mod prom;
 pub mod scheduler;
+pub mod sharded;
 pub mod state;
 pub mod throughput;
 pub mod tls;

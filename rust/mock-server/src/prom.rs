@@ -4,9 +4,11 @@
 //! Prometheus metric registries - one per exposed endpoint.
 
 use prometheus::{
-    Encoder, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec,
+    Encoder, Gauge, GaugeVec, HistogramOpts, HistogramVec, IntCounter, IntCounterVec,
     IntGauge, IntGaugeVec, Opts, Registry, TextEncoder,
 };
+
+use crate::sharded::ShardedHistogram;
 
 #[allow(non_snake_case)]
 pub struct AIPerfMockMetrics {
@@ -281,12 +283,12 @@ impl AIPerfMockMetrics {
 #[allow(non_snake_case)]
 pub struct VllmMetrics {
     pub registry: Registry,
-    pub E2E_REQUEST_LATENCY_SECONDS: Histogram,
-    pub TIME_TO_FIRST_TOKEN_SECONDS: Histogram,
-    pub INTER_TOKEN_LATENCY_SECONDS: Histogram,
+    pub E2E_REQUEST_LATENCY_SECONDS: ShardedHistogram,
+    pub TIME_TO_FIRST_TOKEN_SECONDS: ShardedHistogram,
+    pub INTER_TOKEN_LATENCY_SECONDS: ShardedHistogram,
     pub PROMPT_TOKENS: IntCounter,
     pub GENERATION_TOKENS: IntCounter,
-    pub REQUEST_QUEUE_TIME_SECONDS: Histogram,
+    pub REQUEST_QUEUE_TIME_SECONDS: ShardedHistogram,
     pub REQUEST_SUCCESS: IntCounter,
     pub NUM_REQUESTS_RUNNING: IntGauge,
     pub NUM_REQUESTS_WAITING: IntGauge,
@@ -297,7 +299,7 @@ pub struct VllmMetrics {
     pub EXTERNAL_PREFIX_CACHE_HITS: IntCounter,
     pub EXTERNAL_PREFIX_CACHE_QUERIES: IntCounter,
     pub CPU_CACHE_USAGE: Gauge,
-    pub ITERATION_TOKENS_TOTAL: Histogram,
+    pub ITERATION_TOKENS_TOTAL: ShardedHistogram,
 }
 
 impl VllmMetrics {
@@ -317,7 +319,7 @@ impl VllmMetrics {
         ];
 
         let m = Self {
-            E2E_REQUEST_LATENCY_SECONDS: Histogram::with_opts(
+            E2E_REQUEST_LATENCY_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "vllm:e2e_request_latency_seconds",
                     "Histogram of e2e request latency in seconds.",
@@ -325,7 +327,7 @@ impl VllmMetrics {
                 .buckets(vllm_latency.clone()),
             )
             .unwrap(),
-            TIME_TO_FIRST_TOKEN_SECONDS: Histogram::with_opts(
+            TIME_TO_FIRST_TOKEN_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "vllm:time_to_first_token_seconds",
                     "Histogram of time to first token in seconds.",
@@ -333,7 +335,7 @@ impl VllmMetrics {
                 .buckets(vllm_latency.clone()),
             )
             .unwrap(),
-            INTER_TOKEN_LATENCY_SECONDS: Histogram::with_opts(
+            INTER_TOKEN_LATENCY_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "vllm:inter_token_latency_seconds",
                     "Histogram of inter-token latency in seconds.",
@@ -351,7 +353,7 @@ impl VllmMetrics {
                 "Number of generation tokens processed.",
             ))
             .unwrap(),
-            REQUEST_QUEUE_TIME_SECONDS: Histogram::with_opts(
+            REQUEST_QUEUE_TIME_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "vllm:request_queue_time_seconds",
                     "Histogram of time spent in WAITING phase for request.",
@@ -409,7 +411,7 @@ impl VllmMetrics {
                 "CPU KV-cache usage. 1 means 100 percent usage.",
             ))
             .unwrap(),
-            ITERATION_TOKENS_TOTAL: Histogram::with_opts(
+            ITERATION_TOKENS_TOTAL: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "vllm:iteration_tokens_total",
                     "Histogram of number of tokens per engine_step.",
@@ -487,9 +489,9 @@ pub struct SglangMetrics {
     pub PROMPT_TOKENS: IntCounter,
     pub GENERATION_TOKENS: IntCounter,
     pub NUM_RETRACTED_REQS: IntCounter,
-    pub QUEUE_TIME_SECONDS: Histogram,
-    pub E2E_REQUEST_LATENCY_SECONDS: Histogram,
-    pub TIME_TO_FIRST_TOKEN_SECONDS: Histogram,
+    pub QUEUE_TIME_SECONDS: ShardedHistogram,
+    pub E2E_REQUEST_LATENCY_SECONDS: ShardedHistogram,
+    pub TIME_TO_FIRST_TOKEN_SECONDS: ShardedHistogram,
 }
 
 impl SglangMetrics {
@@ -553,7 +555,7 @@ impl SglangMetrics {
                 "The number of retracted (preempted) requests.",
             ))
             .unwrap(),
-            QUEUE_TIME_SECONDS: Histogram::with_opts(
+            QUEUE_TIME_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "sglang:queue_time_seconds",
                     "Histogram of queueing time in seconds.",
@@ -561,7 +563,7 @@ impl SglangMetrics {
                 .buckets(expo.clone()),
             )
             .unwrap(),
-            E2E_REQUEST_LATENCY_SECONDS: Histogram::with_opts(
+            E2E_REQUEST_LATENCY_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "sglang:e2e_request_latency_seconds",
                     "Histogram of end to end request latency in seconds.",
@@ -569,7 +571,7 @@ impl SglangMetrics {
                 .buckets(expo),
             )
             .unwrap(),
-            TIME_TO_FIRST_TOKEN_SECONDS: Histogram::with_opts(
+            TIME_TO_FIRST_TOKEN_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "sglang:time_to_first_token_seconds",
                     "Histogram of time to first token in seconds.",
@@ -625,10 +627,10 @@ impl SglangMetrics {
 #[allow(non_snake_case)]
 pub struct TrtllmMetrics {
     pub registry: Registry,
-    pub E2E_REQUEST_LATENCY_SECONDS: Histogram,
-    pub TIME_TO_FIRST_TOKEN_SECONDS: Histogram,
-    pub TIME_PER_OUTPUT_TOKEN_SECONDS: Histogram,
-    pub REQUEST_QUEUE_TIME_SECONDS: Histogram,
+    pub E2E_REQUEST_LATENCY_SECONDS: ShardedHistogram,
+    pub TIME_TO_FIRST_TOKEN_SECONDS: ShardedHistogram,
+    pub TIME_PER_OUTPUT_TOKEN_SECONDS: ShardedHistogram,
+    pub REQUEST_QUEUE_TIME_SECONDS: ShardedHistogram,
     pub REQUEST_SUCCESS: IntCounter,
 }
 
@@ -648,7 +650,7 @@ impl TrtllmMetrics {
             10.0, 20.0, 40.0, 80.0,
         ];
         let m = Self {
-            E2E_REQUEST_LATENCY_SECONDS: Histogram::with_opts(
+            E2E_REQUEST_LATENCY_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "trtllm:e2e_request_latency_seconds",
                     "Histogram of end to end request latency in seconds.",
@@ -656,7 +658,7 @@ impl TrtllmMetrics {
                 .buckets(trtllm_latency.clone()),
             )
             .unwrap(),
-            TIME_TO_FIRST_TOKEN_SECONDS: Histogram::with_opts(
+            TIME_TO_FIRST_TOKEN_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "trtllm:time_to_first_token_seconds",
                     "Histogram of time to first token in seconds.",
@@ -664,7 +666,7 @@ impl TrtllmMetrics {
                 .buckets(trtllm_ttft),
             )
             .unwrap(),
-            TIME_PER_OUTPUT_TOKEN_SECONDS: Histogram::with_opts(
+            TIME_PER_OUTPUT_TOKEN_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "trtllm:time_per_output_token_seconds",
                     "Histogram of time per output token in seconds.",
@@ -672,7 +674,7 @@ impl TrtllmMetrics {
                 .buckets(trtllm_tpot),
             )
             .unwrap(),
-            REQUEST_QUEUE_TIME_SECONDS: Histogram::with_opts(
+            REQUEST_QUEUE_TIME_SECONDS: ShardedHistogram::with_opts(
                 HistogramOpts::new(
                     "trtllm:request_queue_time_seconds",
                     "Histogram of time spent in WAITING phase for request.",
