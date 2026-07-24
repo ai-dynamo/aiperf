@@ -21,9 +21,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
     mut plan: NativeRunSpec,
     transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn GraphPlacementFactory,
-    control_plane_http: Arc<
-        dyn crate::engine::control_plane_http::ControlPlaneHttpProviderFactory,
-    >,
+    control_plane_http: Arc<dyn crate::engine::control_plane_http::ControlPlaneHttpProviderFactory>,
     registry: &AIPerfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
     readiness: Option<(
@@ -218,9 +216,7 @@ pub(crate) async fn prepare_and_execute_native(
     real_clock_anchor: RealClockAnchor,
     transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn GraphPlacementFactory,
-    control_plane_http: Arc<
-        dyn crate::engine::control_plane_http::ControlPlaneHttpProviderFactory,
-    >,
+    control_plane_http: Arc<dyn crate::engine::control_plane_http::ControlPlaneHttpProviderFactory>,
     registry: &AIPerfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
     readiness: Option<(
@@ -245,9 +241,12 @@ pub(crate) async fn prepare_and_execute_native(
             .await;
         }
     };
-    if let Err(error) =
-        attach_server_profiler_hook(&request, &mut sidecars, clock.clone(), control_plane_http.as_ref())
-    {
+    if let Err(error) = attach_server_profiler_hook(
+        &request,
+        &mut sidecars,
+        clock.clone(),
+        control_plane_http.as_ref(),
+    ) {
         sidecars.shutdown_run_resources().await;
         return finish_accuracy_lifecycle(
             Err(error.context("preparing endpoint-local server profiler hook")),
