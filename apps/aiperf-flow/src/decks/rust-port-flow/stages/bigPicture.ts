@@ -15,4 +15,7 @@ export const bigPictureStage: StageDef = {
   label: "Big Picture",
   caption: "The whole request lifecycle as one connected map — start here, then drill into any stage.",
   tone: "gray",
+  // v2 timeline: the pre-run origin marker in the Dataset lane — the run begins here.
+  lane: "dataset",
+  events: [{ id: "bp-run", label: "run", laneId: "dataset", atOrder: 0, realOffsetMs: 0 }],
 };

@@ -11,7 +11,15 @@
 import type { Edge, Node } from "@xyflow/react";
 import { categoryBgTintClassName } from "../../theme/tokens.js";
 import type { CategoryRole } from "../../theme/tokens.js";
-import type { ZoomTree } from "../../interactive/index.js";
+import type {
+  Lane,
+  LaneId,
+  RequestPath,
+  SeamFrame,
+  StageRegion,
+  TimelineEvent,
+  ZoomTree,
+} from "../../interactive/index.js";
 
 /** One verified source anchor (real `file:line`) shown in a stage's level-1 evidence row. */
 export interface StageEvidence {
@@ -43,6 +51,19 @@ export interface StageDef {
   caption: string;
   /** Category color accent for the stage. */
   tone: CategoryRole;
+  /**
+   * v2 swimlane-timeline: which lane this stage's region sits in (one of {@link RUST_PORT_LANE_IDS}).
+   * A stage agent picks the lane its subsystem lives in.
+   */
+  lane: LaneId;
+  /**
+   * v2 swimlane-timeline: the ordered event points the request line passes through for this stage.
+   * `atOrder` places the event on the (evenly-spaced) virtual axis; `realOffsetMs` its wall-ms offset
+   * for the RealClock scale. An event's `laneId` is usually `lane`, but may differ (e.g. an
+   * aggregate-lane stage that also emits export-lane events). Derived from the stage's real captions
+   * and type names — no placeholders. A lane agent enriches ONE stage's events here.
+   */
+  events: TimelineEvent[];
   /** Level-1 subgraph. Omit in a stub; the deck synthesizes a single-node seed from the caption. */
   subgraph?: StageSubgraph;
   /** Level-2+ subgraphs keyed by child id, for a stage that earns a deeper drill (e.g. Transport → HTTP). */
@@ -53,6 +74,83 @@ export interface StageDef {
 
 /** Id of the synthetic root node that holds the 9-stage overview diagram. */
 export const OVERVIEW_ID = "overview";
+
+// ────────────────────────────────────────────────────────────────────────────────────────────────
+// v2 swimlane-timeline model (the OVERVIEW is now a `TimelineTrack`, not a React Flow node graph).
+// ────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** The 6 rust-port swimlane ids, top→bottom in request-touch order (spec §"Lanes"). */
+export const RUST_PORT_LANE_IDS = [
+  "dataset",
+  "scheduler",
+  "transport",
+  "server",
+  "aggregate",
+  "export",
+] as const;
+
+/** Union of the 6 rust-port lane ids (a `LaneId` refinement for stage authors). */
+export type RustPortLaneId = (typeof RUST_PORT_LANE_IDS)[number];
+
+/** The 6 swimlanes rendered by `TimelineTrack`, top→bottom (spec §"Lanes"). */
+export const LANES: readonly Lane[] = [
+  { id: "dataset", label: "Dataset" },
+  { id: "scheduler", label: "Scheduler / Workload" },
+  { id: "transport", label: "Transport" },
+  { id: "server", label: "Server" },
+  { id: "aggregate", label: "Aggregate" },
+  { id: "export", label: "Export" },
+];
+
+/**
+ * The 3 nested seam frames (spec §"Seam frames"). `clock` spans the whole axis (its unit/scale is
+ * clock-mode dependent); `workload` frames the scheduler admission segment; `transport` frames the
+ * dispatch→server→reduce segment. `spanOrder` values reference the stages' event `atOrder`s.
+ */
+export const SEAM_FRAMES: readonly SeamFrame[] = [
+  { id: "clock", label: "Clock" },
+  { id: "workload", label: "Workload", spanLaneIds: ["scheduler"], spanOrder: [5, 6] },
+  { id: "transport", label: "Transport", spanLaneIds: ["transport", "server"], spanOrder: [8, 11] },
+];
+
+/** Everything a `TimelineTrack` needs, assembled from the stages' lane/event metadata. */
+export interface TimelineModel {
+  lanes: readonly Lane[];
+  regions: StageRegion[];
+  events: TimelineEvent[];
+  seamFrames: readonly SeamFrame[];
+  requestPath: RequestPath;
+}
+
+/**
+ * Assembles the swimlane-timeline model from the stage registry: one `StageRegion` per stage (its
+ * lane + the order-span of its events), the flat event list, the fixed lanes/seam-frames, and the
+ * `requestPath` (all events in ascending `atOrder`). A stage with no events contributes no region.
+ */
+export function buildTimelineModel(stages: readonly StageDef[]): TimelineModel {
+  const events: TimelineEvent[] = [];
+  const regions: StageRegion[] = [];
+  for (const stage of stages) {
+    if (stage.events.length === 0) {
+      continue;
+    }
+    for (const event of stage.events) {
+      events.push(event);
+    }
+    const orders = stage.events.map((e) => e.atOrder);
+    regions.push({
+      id: stage.id,
+      laneId: stage.lane,
+      label: stage.label,
+      startOrder: Math.min(...orders),
+      endOrder: Math.max(...orders),
+    });
+  }
+  const requestPath: RequestPath = [...events]
+    .sort((a, b) => a.atOrder - b.atOrder)
+    .map((e) => e.id);
+  return { lanes: LANES, regions, events, seamFrames: SEAM_FRAMES, requestPath };
+}
 
 const COL = 300;
 const ROW = 380;

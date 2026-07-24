@@ -20,12 +20,29 @@ const STAGE_LABELS = [
   "Aggregation → results",
 ];
 
-describe("RustPortFlowDeck", () => {
-  it("renders the overview with all nine spine stage labels", () => {
+const LANE_LABELS = ["Dataset", "Scheduler / Workload", "Transport", "Server", "Aggregate", "Export"];
+
+describe("RustPortFlowDeck (v2 swimlane-timeline)", () => {
+  it("renders the timeline overview with all six subsystem lanes", () => {
+    render(<RustPortFlowDeck />);
+    for (const lane of LANE_LABELS) {
+      expect(screen.getAllByText(lane).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("renders all nine spine stage region labels on the timeline", () => {
     render(<RustPortFlowDeck />);
     for (const label of STAGE_LABELS) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     }
+  });
+
+  it("renders the Workload + Transport seam frames grouping the track", () => {
+    render(<RustPortFlowDeck />);
+    // The Workload seam frames the scheduler admission segment; its label is unique to the frame.
+    expect(screen.getAllByText("Workload").length).toBeGreaterThan(0);
+    // The Transport seam frame shares its label with the lane + toggle — all present.
+    expect(screen.getAllByText("Transport").length).toBeGreaterThan(0);
   });
 
   it("exposes exactly nine stages, one per spine ordinal 0-8", () => {
@@ -42,16 +59,23 @@ describe("RustPortFlowDeck", () => {
     expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
   });
 
-  it("advances the play head through the pipeline when Next is clicked", () => {
+  it("rides the request line: Next advances the play head through the 16 request events", () => {
     render(<RustPortFlowDeck />);
-    expect(screen.getAllByText("step 1/9").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("step 1/16").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(screen.getAllByText("step 2/9").length).toBeGreaterThan(0);
-    // The now-active step caption names the real Runtime stage content.
+    expect(screen.getAllByText("step 2/16").length).toBeGreaterThan(0);
+    // Step 2 is the runtime self-exec event; its caption names the real re-exec composition root.
     expect(screen.getAllByText(/re-exec of the same binary/).length).toBeGreaterThan(0);
   });
 
-  it("drills into a stage on node click, revealing its real source anchor", () => {
+  it("rescales the timeline x-axis when the Clock seam changes (real wall-ms ↔ virtual ticks)", () => {
+    render(<RustPortFlowDeck />);
+    expect(screen.getByText("RealClock · wall-ms")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "SimClock" }));
+    expect(screen.getByText("SimClock · virtual ticks")).toBeInTheDocument();
+  });
+
+  it("drills into a stage on region click, revealing its real source anchor", () => {
     render(<RustPortFlowDeck />);
     fireEvent.click(screen.getAllByText("Clock seam")[0]!);
     // Level-1 evidence row shows the verified Clock trait anchor.
@@ -60,13 +84,13 @@ describe("RustPortFlowDeck", () => {
     expect(screen.getByRole("button", { name: "Big-picture request lifecycle" })).toBeInTheDocument();
   });
 
-  it("re-routes the transport step caption when the Transport seam changes", () => {
+  it("re-routes the dispatch event caption when the Transport seam changes", () => {
     render(<RustPortFlowDeck />);
-    // Jump the play head to the Transport stage (spine order 6).
-    for (let i = 0; i < 6; i++) {
+    // Advance the play head to the transport dispatch event (path index 8 → step 9/16).
+    for (let i = 0; i < 8; i++) {
       fireEvent.click(screen.getByRole("button", { name: "Next" }));
     }
-    expect(screen.getAllByText("step 7/9").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("step 9/16").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/TransportSink \(hyper, streaming\)/).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "gRPC" }));
     expect(screen.getAllByText(/GrpcTransportSink \(Tonic, non-streaming\)/).length).toBeGreaterThan(0);
@@ -74,36 +98,5 @@ describe("RustPortFlowDeck", () => {
 
   it("is registered on Home's deck listing", () => {
     expect(DECKS.some((deck) => deck.path === "/rust-port-flow")).toBe(true);
-  });
-
-  it("plays a full request lifecycle assembled from the real hot-path + aggregation fragments", () => {
-    render(<RustPortFlowDeck />);
-    // The lifecycle particle starts on the issue hop (10 hops: issue → … → terminal report).
-    expect(screen.getAllByText("hop 1/10").length).toBeGreaterThan(0);
-    expect(
-      screen.getAllByText(/RequestRateWorkload::execute issues the next scheduled turn/).length,
-    ).toBeGreaterThan(0);
-    // Advance to the SlotPool admission hop.
-    fireEvent.click(screen.getByRole("button", { name: "Next token" }));
-    expect(screen.getAllByText(/SlotPool grants a concurrency credit/).length).toBeGreaterThan(0);
-    // …to the Dispatcher hop, then the chosen (default HTTP) sink hop — SSE tokens + TTFT.
-    fireEvent.click(screen.getByRole("button", { name: "Next token" }));
-    fireEvent.click(screen.getByRole("button", { name: "Next token" }));
-    expect(screen.getAllByText(/TransportSink \(hyper\) streams SSE tokens/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("TransportSink (HTTP · hyper)").length).toBeGreaterThan(0);
-  });
-
-  it("reroutes the request-lifecycle sink hop when the Transport seam changes", () => {
-    render(<RustPortFlowDeck />);
-    // Swap the transport target, then step the lifecycle particle to its sink hop.
-    fireEvent.click(screen.getByRole("button", { name: "dynosim" }));
-    fireEvent.click(screen.getByRole("button", { name: "Next token" }));
-    fireEvent.click(screen.getByRole("button", { name: "Next token" }));
-    fireEvent.click(screen.getByRole("button", { name: "Next token" }));
-    // The same particle is now routed through the dynosim SteppableEngine sink.
-    expect(
-      screen.getAllByText(/NativeDynamoEngineFactory builds a SteppableEngine/).length,
-    ).toBeGreaterThan(0);
-    expect(screen.getAllByText("SteppableEngine (dynosim)").length).toBeGreaterThan(0);
   });
 });

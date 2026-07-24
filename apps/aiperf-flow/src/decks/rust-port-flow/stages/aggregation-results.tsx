@@ -261,6 +261,15 @@ export const aggregationResultsStage: StageDef = {
   caption:
     "Worker-local NativeMetricsObserver → metrics_core NaN-sparse column store → EXACT folds (final report is exact from records) vs t-digest sketch (cellular::sketch::TDigest, mergeable heartbeats; percentiles+stddev streaming, counts/sums/extrema exact) → deterministic boundary merge → NativeReporter → NativeReport → ExporterRegistry (nine sinks) → RunTerminalV2 report_path.",
   tone: "green",
+  // v2 timeline: the region sits in the Aggregate lane (measure, merge); the report/terminal events
+  // hop into the Export lane — the request's journey ends at RunTerminalV2's report_path.
+  lane: "aggregate",
+  events: [
+    { id: "ag-measure", label: "measure", laneId: "aggregate", atOrder: 12, realOffsetMs: 208 },
+    { id: "ag-merge", label: "merge", laneId: "aggregate", atOrder: 13, realOffsetMs: 212 },
+    { id: "ag-report", label: "report", laneId: "export", atOrder: 14, realOffsetMs: 216 },
+    { id: "ag-terminal", label: "terminal", laneId: "export", atOrder: 15, realOffsetMs: 220 },
+  ],
   subgraph: {
     nodes: aggregationNodes(),
     edges: aggregationEdges(),

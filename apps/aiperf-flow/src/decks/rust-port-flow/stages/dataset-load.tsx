@@ -237,6 +237,9 @@ export const datasetStage: StageDef = {
   caption:
     "Loaders → SegmentStore (six disjoint BLAKE3 content domains, prefix-folded hashing) → dense integer Handles → Turn/body freeze.",
   tone: "green",
+  // v2 timeline: dataset load/freeze in the Dataset lane — the SegmentStore freeze point.
+  lane: "dataset",
+  events: [{ id: "ds-freeze", label: "freeze", laneId: "dataset", atOrder: 3, realOffsetMs: 38 }],
   subgraph: {
     nodes: subgraphNodes,
     edges: subgraphEdges,

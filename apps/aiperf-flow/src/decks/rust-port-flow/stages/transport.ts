@@ -16,6 +16,8 @@ export const transportStage: StageDef = {
   caption:
     "A transport implements exactly two traits (WorkerSink + ExecutionSinkBuilder); everything else is shared. Four targets: HTTP (hyper, streaming), gRPC (Tonic, non-streaming), dry-run, dynosim (offline co-sim).",
   tone: "yellow",
+  lane: "transport",
+  events: [{ id: "tp-dispatch", label: "dispatch", laneId: "transport", atOrder: 8, realOffsetMs: 62 }],
   evidence: [
     { label: "trait WorkerSink", path: "runtime/src/engine/turn_execution.rs:74" },
     { label: "trait ExecutionSinkBuilder", path: "runtime/src/engine/turn_execution.rs:136" },

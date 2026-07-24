@@ -16,4 +16,6 @@ export const datasetStage: StageDef = {
   caption:
     "Loaders → SegmentStore (six disjoint BLAKE3 content domains, prefix-folded hashing) → dense integer Handles → Turn/body freeze.",
   tone: "green",
+  lane: "dataset",
+  events: [{ id: "ds-freeze", label: "freeze", laneId: "dataset", atOrder: 3, realOffsetMs: 38 }],
 };

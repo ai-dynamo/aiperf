@@ -158,6 +158,9 @@ export const transportStage: StageDef = {
   caption:
     "A transport implements exactly two traits (WorkerSink + ExecutionSinkBuilder); everything else is shared. Four targets: HTTP (TransportSink, hyper, streaming), gRPC (GrpcTransportSink, Tonic, non-streaming), dry-run, dynosim (offline co-sim).",
   tone: "yellow",
+  // v2 timeline: the Dispatcher→sink hop in the Transport lane (inside the Transport seam frame).
+  lane: "transport",
+  events: [{ id: "tp-dispatch", label: "dispatch", laneId: "transport", atOrder: 8, realOffsetMs: 62 }],
   subgraph: {
     nodes: seamNodes,
     edges: seamEdges,

@@ -227,6 +227,10 @@ export const clockStage: StageDef = {
   caption:
     "The Clock trait: RealClock (wall time) vs SimClock (integer-nanosecond virtual time, deterministic (at_ns, seq_no) ordering); Clock::is_virtual() selects real-reactor vs simulation driver.",
   tone: "orange",
+  // v2 timeline: the Clock seam times the transport hop — its region sits in the Transport lane, just
+  // before dispatch (the whole-axis Clock seam frame is the top-level grouping).
+  lane: "transport",
+  events: [{ id: "ck-select", label: "Clock", laneId: "transport", atOrder: 7, realOffsetMs: 61 }],
   subgraph: {
     nodes: subgraphNodes,
     edges: subgraphEdges,

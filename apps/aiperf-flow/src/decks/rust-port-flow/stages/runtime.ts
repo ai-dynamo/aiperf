@@ -237,6 +237,12 @@ export const runtimeStage: StageDef = {
   caption:
     "aiperf-cli → Config v2 → protocol-v2 EnvelopeV2 stdio → re-exec of the same binary in --execute mode (the composition root). Three orthogonal seams — Time / Transport / Workload — are wired here.",
   tone: "blue",
+  // v2 timeline: the composition root lives in the Scheduler lane — self-exec, then the 3 seams open.
+  lane: "scheduler",
+  events: [
+    { id: "rt-exec", label: "self-exec", laneId: "scheduler", atOrder: 1, realOffsetMs: 4 },
+    { id: "rt-seams", label: "open seams", laneId: "scheduler", atOrder: 2, realOffsetMs: 10 },
+  ],
   subgraph: {
     nodes: subgraphNodes,
     edges: subgraphEdges,

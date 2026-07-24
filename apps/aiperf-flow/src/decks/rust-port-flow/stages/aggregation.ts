@@ -16,6 +16,13 @@ export const aggregationStage: StageDef = {
   caption:
     "worker-local NativeMetricsObserver → metrics_core NaN-sparse column store → exact folds vs t-digest (cellular::sketch::TDigest) sketch → NativeReporter → NativeReport → ExporterRegistry (nine sinks) → RunTerminalV2.",
   tone: "green",
+  lane: "aggregate",
+  events: [
+    { id: "ag-measure", label: "measure", laneId: "aggregate", atOrder: 12, realOffsetMs: 208 },
+    { id: "ag-merge", label: "merge", laneId: "aggregate", atOrder: 13, realOffsetMs: 212 },
+    { id: "ag-report", label: "report", laneId: "export", atOrder: 14, realOffsetMs: 216 },
+    { id: "ag-terminal", label: "terminal", laneId: "export", atOrder: 15, realOffsetMs: 220 },
+  ],
   evidence: [
     { label: "struct NativeMetricsObserver", path: "runtime/src/metrics.rs:203" },
     { label: "TDigest (cellular::sketch)", path: "runtime/src/cellular/mod.rs:33" },

@@ -178,6 +178,12 @@ export const workersStage: StageDef = {
   caption:
     "coordinator → run_sharded_scheduled spawns W thread-per-core sub-cells (each its own current_thread runtime + LocalSet), a shared RealClockAnchor origin, a per-cell GlobalAdmission gate, merge_shards finalize (sort, don't renumber); workers == 1 is the byte-unchanged co-located path.",
   tone: "purple",
+  // v2 timeline: worker fan-out + admission in the Scheduler lane (the Workload seam frames admit).
+  lane: "scheduler",
+  events: [
+    { id: "wk-spawn", label: "spawn W", laneId: "scheduler", atOrder: 5, realOffsetMs: 52 },
+    { id: "wk-admit", label: "admit", laneId: "scheduler", atOrder: 6, realOffsetMs: 60 },
+  ],
   subgraph: {
     nodes: level1Nodes,
     edges: level1Edges,

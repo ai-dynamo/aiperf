@@ -16,4 +16,6 @@ export const sharingStage: StageDef = {
   caption:
     "The frozen SegmentStore: bytes live exactly once; turns carry Handles not bytes for zero-copy sharing across worker threads (content_server is a separate media sidecar).",
   tone: "cyan",
+  lane: "dataset",
+  events: [{ id: "sh-handles", label: "Handles", laneId: "dataset", atOrder: 4, realOffsetMs: 44 }],
 };

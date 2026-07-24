@@ -217,6 +217,9 @@ export const datasetShareStage: StageDef = {
   caption:
     "The frozen SegmentStore: bytes live exactly once; turns carry Handles not bytes for zero-copy sharing across worker threads (content_server is a separate media sidecar).",
   tone: TONE,
+  // v2 timeline: zero-copy Handle sharing stays in the Dataset lane — bytes live once, turns carry Handles.
+  lane: "dataset",
+  events: [{ id: "sh-handles", label: "Handles", laneId: "dataset", atOrder: 4, realOffsetMs: 44 }],
   subgraph: {
     nodes: subgraphNodes,
     edges: subgraphEdges,
