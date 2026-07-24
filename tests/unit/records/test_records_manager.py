@@ -346,6 +346,49 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         assert results is not None
         assert [r.phase_name for r in results] == ["warmup", "load"]
 
+    @staticmethod
+    def _warmup_summary_manager(
+        warmup_overflow: int, base_metrics: list[MetricResult]
+    ) -> RecordsManager:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.error = MagicMock()
+        manager._records_tracker = MagicMock()
+        manager._records_tracker.was_phase_cancelled = MagicMock(return_value=False)
+        manager._has_records_for_phase = MagicMock(return_value=True)
+        manager._summarize_metric_record_accumulators = AsyncMock(
+            return_value=(list(base_metrics), None, [], None)
+        )
+        manager._skipped_context_overflow_counts_by_phase = {
+            CreditPhase.WARMUP: warmup_overflow,
+            CreditPhase.PROFILING: 7,
+        }
+        return manager
+
+    @pytest.mark.asyncio
+    async def test_warmup_summary_injects_context_overflow_metric(self) -> None:
+        base = [MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0)]
+        manager = self._warmup_summary_manager(warmup_overflow=3, base_metrics=base)
+
+        results = await RecordsManager._summarize_warmup_metric_records(manager)
+
+        assert results is not None
+        overflow = [r for r in results if r.tag == "context_overflow_count"]
+        assert len(overflow) == 1
+        # WARMUP count (3) is surfaced, not the PROFILING count (7).
+        assert overflow[0].avg == 3.0
+        assert overflow[0].count == 1
+        assert overflow[0].unit == "requests"
+
+    @pytest.mark.asyncio
+    async def test_warmup_summary_omits_metric_when_no_overflow(self) -> None:
+        base = [MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0)]
+        manager = self._warmup_summary_manager(warmup_overflow=0, base_metrics=base)
+
+        results = await RecordsManager._summarize_warmup_metric_records(manager)
+
+        assert results is not None
+        assert all(r.tag != "context_overflow_count" for r in results)
+
     @pytest.mark.asyncio
     async def test_single_profiling_phase_does_not_build_duplicate_phase_results(
         self,
