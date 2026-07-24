@@ -305,13 +305,6 @@ class BranchOrchestrator:
         # a drain timeout's worth of wall clock per occurrence. Closing the
         # race at the source eliminates both costs.
         self._drain_observer = None
-        # Abort observer: sync callback fired under AIPERF_DAG_FAIL_FAST=true
-        # after _handle_child_errored_fail_fast tears down the parent + orphan
-        # siblings. The phase-side handler cancels every active phase lifecycle
-        # so the strategy loop stops issuing new wire credits, honoring the
-        # docs' "abort the whole run on first DAG child error" contract.
-        # Wired by CreditCallbackHandler.set_branch_orchestrator.
-        self._abort_observer = None
         self.stats = BranchStats()
         # Pre-built index: (conv_id, spawning_turn_idx) -> list of
         # (branch_id, gated_turn_idx, prereq_key). Built once at init from
@@ -1598,10 +1591,6 @@ class BranchOrchestrator:
         self._descendant_counts.pop(parent, None)
         self._parent_locks.pop(parent, None)
         self._notify_drain()
-        # After the parent + orphans are torn down, fire the abort observer so
-        # the phase side cancels every active phase lifecycle and the whole run
-        # stops rather than draining the remaining planned wires.
-        self._notify_abort()
 
     def _release_slot(self, parent_x_correlation_id: str) -> None:
         """Release per-parent orchestration state once the DAG has drained.
@@ -1615,25 +1604,6 @@ class BranchOrchestrator:
     def set_drain_observer(self, observer) -> None:
         """Register/detach the sync drain-observer callback. See ``__init__``."""
         self._drain_observer = observer
-
-    def set_abort_observer(self, observer) -> None:
-        """Register/detach the sync abort observer (fired on FAIL_FAST).
-
-        Wired by ``CreditCallbackHandler.set_branch_orchestrator``; the
-        registered observer cancels active phase lifecycles and signals
-        all-credits-returned so the run stops on the first DAG child error.
-        """
-        self._abort_observer = observer
-
-    def _notify_abort(self) -> None:
-        """Fire the registered abort observer (no-op if unset)."""
-        observer = self._abort_observer
-        if observer is None:
-            return
-        try:
-            observer()
-        except Exception as exc:
-            logger.warning("abort observer raised: %s", exc)
 
     def _notify_drain(self) -> None:
         """Fire the registered drain observer (no-op if unset)."""
@@ -1671,7 +1641,6 @@ class BranchOrchestrator:
             return
         self._cleaning_up = True
         self._drain_observer = None
-        self._abort_observer = None
         for task in self._delayed_dispatch_tasks:
             task.cancel()
         self._delayed_dispatch_tasks.clear()

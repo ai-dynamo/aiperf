@@ -86,7 +86,7 @@ Settings for DAG benchmark mode (`dag_jsonl` input type).
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_DAG_FAIL_FAST` | `False` | — | When True, abort the whole run on the first DAG child error (cancel pending siblings, raise to PhaseRunner, terminate phase). Default False - the orchestrator counts the error in BranchStats.children_errored, releases the join slot, drains pending siblings, and continues the run. Set via AIPERF_DAG_FAIL_FAST=1 for strict CI assertions. |
+| `AIPERF_DAG_FAIL_FAST` | `False` | — | When True, a single DAG child error aborts the parent and every orphan sibling under the same branch (releases sticky refcounts and calls issuer.abort_session); unrelated root sessions continue. Default False - the orchestrator counts the error in BranchStats.children_errored, releases the join slot, drains pending siblings, and continues. Set via AIPERF_DAG_FAIL_FAST=1 for strict CI assertions. |
 
 ## DATASET
 
