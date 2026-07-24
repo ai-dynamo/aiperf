@@ -216,7 +216,6 @@ class TestRecordsManagerMetricRecordDispatchErrors:
             CreditPhase.WARMUP: 0,
             CreditPhase.PROFILING: 0,
         }
-        manager._skipped_context_overflow_count = 0
         return manager
 
     def _records_message(self) -> RecordsMessage:
@@ -292,7 +291,10 @@ class TestRecordsManagerMetricRecordDispatchErrors:
 
         await manager._on_records(message)
 
-        assert manager._skipped_context_overflow_count == 1
+        assert (
+            manager._skipped_context_overflow_counts_by_phase[CreditPhase.PROFILING]
+            == 1
+        )
         manager._records_tracker.update_from_request.assert_called_once_with(
             message.metadata, None
         )
@@ -850,7 +852,6 @@ def _create_manager_for_timing_dispatch() -> RecordsManager:
         CreditPhase.WARMUP: 0,
         CreditPhase.PROFILING: 0,
     }
-    manager._skipped_context_overflow_count = 0
     return manager
 
 
@@ -1222,7 +1223,10 @@ class TestRecordsManagerAnalyzerMetrics:
         manager.service_id = "records-manager-test"
         manager._latest_branch_stats = None
         manager.publish = AsyncMock()
-        manager._skipped_context_overflow_count = 0
+        manager._skipped_context_overflow_counts_by_phase = {
+            CreditPhase.WARMUP: 0,
+            CreditPhase.PROFILING: 0,
+        }
 
         manager.run = MagicMock()
         manager.run.cfg.gpu_telemetry_disabled = True

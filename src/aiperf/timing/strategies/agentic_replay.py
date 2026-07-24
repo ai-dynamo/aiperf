@@ -552,7 +552,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
             for turn, _ in prepared:
                 await self.credit_issuer.issue_credit(turn)
-            await self._finish_initial_warmup_dispatch(prepared)
+            await self._finish_initial_warmup_dispatch()
             return
 
         # Global t*-alignment: a request that fired ``lead`` before its t*
@@ -579,23 +579,19 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 )
             else:
                 await self.credit_issuer.issue_credit(turn)
-        await self._start_accelerated_warmup_if_empty(prepared)
 
-    async def _finish_initial_warmup_dispatch(
-        self, prepared: list[tuple[TurnToSend, float | None]]
-    ) -> None:
-        """Finish burst warmup or enter cache pressure when no priming exists."""
-        if self._cache_warmup_duration is None:
-            if not self.lifecycle.is_sending_complete:
-                self.lifecycle.mark_sending_complete()
-            return
-        await self._start_accelerated_warmup_if_empty(prepared)
+    async def _finish_initial_warmup_dispatch(self) -> None:
+        """Mark sending complete for burst warmup with no cache-pressure stage.
 
-    async def _start_accelerated_warmup_if_empty(
-        self, prepared: list[tuple[TurnToSend, float | None]]
-    ) -> None:
-        if not prepared and self._cache_warmup_duration is not None:
-            await self._start_accelerated_warmup()
+        When a cache-pressure duration is set the accelerated substage is driven
+        by baseline credit returns (``_handle_warmup_return``), so there is
+        nothing to finalize here in that case.
+        """
+        if (
+            self._cache_warmup_duration is None
+            and not self.lifecycle.is_sending_complete
+        ):
+            self.lifecycle.mark_sending_complete()
 
     async def _start_accelerated_warmup(self) -> None:
         """Continue the sampled trajectories under compressed warmup traffic."""

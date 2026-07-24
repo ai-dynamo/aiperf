@@ -544,10 +544,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         self._accuracy_accumulator = self._accumulators.get(AccumulatorType.ACCURACY)
 
-        # Count of AGENTIC_REPLAY context-overflow records skipped from metric
-        # accumulation / stream export but still counted toward the phase target.
-        self._skipped_context_overflow_count = 0
-
         # Failed-request abort threshold (AGENTIC_REPLAY, A5 #7): abort the run
         # once the profiling failure ratio exceeds the configured threshold.
         profiling_phases = self.run.cfg.get_profiling_phases()
@@ -784,8 +780,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._skipped_context_overflow_counts_by_phase[phase] = (
             self._skipped_context_overflow_counts_by_phase.get(phase, 0) + 1
         )
-        if phase == CreditPhase.PROFILING:
-            self._skipped_context_overflow_count += 1
         # Intentional skip: count as success so --failed-request-threshold and
         # console error counts stay honest. message.error (if any) describes
         # the overflow classification, not a failed request.
@@ -1941,7 +1935,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 branch_stats=self._latest_branch_stats
                 if phase == CreditPhase.PROFILING
                 else None,
-                context_overflow_count=self._skipped_context_overflow_count,
+                context_overflow_count=self._skipped_context_overflow_counts_by_phase.get(
+                    phase, 0
+                ),
                 phase_records=phase_records,
             ),
             errors=error_results,

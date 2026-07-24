@@ -1494,17 +1494,6 @@ class _UISettings(BaseSettings):
         default=0.1,
         description="Progress spinner refresh rate in seconds (default: 10 FPS)",
     )
-    CONSOLE_EXPORT_WIDTH: int = Field(
-        ge=40,
-        le=10000,
-        default=140,
-        description=(
-            "Fixed column width used to render the post-run console exporter "
-            "tables. Applied both to the recording console that produces "
-            "profile_export_console.txt and to the live console when stdout "
-            "is not a tty (so non-tty CI logs match the saved artifact)."
-        ),
-    )
 
 
 class _WorkerSettings(BaseSettings):
