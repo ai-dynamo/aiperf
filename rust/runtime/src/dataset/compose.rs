@@ -174,6 +174,16 @@ pub struct ComposeConfig {
     /// validity is established before the segment pool is frozen, so endpoint
     /// adapters never parse or verify authored integer arrays on dispatch.
     pub requires_raw_token_ids: bool,
+    /// Whether a leading authored `system` turn should be hoisted into the
+    /// conversation-level system prompt instead of dispatched as its own turn.
+    ///
+    /// Set from the selected endpoint's
+    /// [`crate::endpoints::EndpointDescriptor::consumes_system_message`]: only
+    /// system-message-aware endpoints emit `conversation.system` on the wire,
+    /// so hoisting is gated on that capability. Only [`MultiTurnComposer`]
+    /// honors it; fixed-benchmark composers (e.g. SpeedBench) ignore it to keep
+    /// their authored message structure and per-turn metrics intact.
+    pub hoist_leading_system_message: bool,
     /// Format-specific composition settings validated by the selected composer.
     pub format_options: Map<String, Value>,
 }
@@ -198,6 +208,7 @@ impl ComposeConfig {
             prompt_generator: Arc::new(CorpusPromptGeneratorFactory::default()),
             trace_prompt_storage: Arc::new(MaterializedTracePromptStorage),
             requires_raw_token_ids: false,
+            hoist_leading_system_message: false,
             format_options: Map::new(),
         }
     }

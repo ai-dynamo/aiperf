@@ -843,6 +843,7 @@ impl DatasetInputAdapter for FileDatasetInputAdapter {
             context.tokenizer,
             context.trace_prompt_storage.clone(),
             context.endpoint_descriptor.requires_raw_token_ids,
+            context.endpoint_descriptor.consumes_system_message(),
         )
         .await?;
         dataset.validate_for_endpoint(context.endpoint_descriptor)?;

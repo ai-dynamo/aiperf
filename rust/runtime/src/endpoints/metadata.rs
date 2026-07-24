@@ -176,6 +176,25 @@ impl EndpointDescriptor {
         EndpointType::from_canonical_id(self.id)
     }
 
+    /// Whether this endpoint emits `conversation.system` as an on-the-wire
+    /// system message (chat, responses, messages, chat_embeddings). Dataset
+    /// composition uses this to gate hoisting a leading authored `system` turn
+    /// into the conversation-level system prompt: only these endpoints would
+    /// carry it on the wire, so on the others the system turn is left in place
+    /// rather than silently dropped. Mirrors Python
+    /// `EndpointMetadata.consumes_system_message`.
+    pub fn consumes_system_message(self) -> bool {
+        matches!(
+            self.legacy_type(),
+            Some(
+                EndpointType::Chat
+                    | EndpointType::Responses
+                    | EndpointType::Messages
+                    | EndpointType::ChatEmbeddings
+            )
+        )
+    }
+
     /// Whether this descriptor accepts the given input modality.
     pub fn supports_input(self, modality: Modality) -> bool {
         self.input_modalities.contains(&modality)

@@ -487,6 +487,16 @@ impl Composer for MultiTurnComposer {
         let mut conversations = Vec::<Conversation>::new();
         let mut positions = HashMap::<SessionId, usize>::new();
         let mut parents = Vec::<Option<Handle>>::new();
+        // A leading authored `system` turn eligible for hoisting is held here
+        // (not yet interned) until the NEXT turn of its session decides its
+        // fate: a following non-system turn commits the hoist into
+        // `conversation.system`; a second consecutive leading `system` turn, or
+        // no further turn at all, un-hoists it back to a normal dispatched turn
+        // (matching Python, which only merges `system_message` as a leading
+        // rendered system message during warmup). Deferring avoids interning
+        // then having to unwind the segment parent chain. Indexed by conversation
+        // position, parallel to `parents`.
+        let mut pending_system = Vec::<Option<SingleTurnRow>>::new();
 
         for raw in rows {
             let row = MultiTurnRow::parse(raw.value, &raw.origin)?;
@@ -503,17 +513,122 @@ impl Composer for MultiTurnComposer {
                         start_conversation(session_id.clone(), position, &mut state)?;
                     conversations.push(conversation);
                     parents.push(parent);
+                    pending_system.push(None);
                     positions.insert(session_id, position);
                     position
                 }
             };
             for authored_turn in row.turns {
+                if state.config.hoist_leading_system_message {
+                    if let Some(pending) = pending_system[position].take() {
+                        // A leading system turn is deferred; this turn resolves it.
+                        if authored_turn.role.as_deref() == Some("system") {
+                            // Second consecutive leading system turn: un-hoist the
+                            // deferred one as a normal turn, then fall through so
+                            // this one dispatches normally too.
+                            let turn =
+                                compose_simple_turn(pending, &mut parents[position], &mut state)?;
+                            conversations[position].turns.push(turn);
+                        } else {
+                            // Commit the hoist: intern the deferred system text at
+                            // the conversation level, then fall through to dispatch
+                            // this (non-system) turn normally.
+                            commit_system_hoist(
+                                &mut conversations[position],
+                                &pending,
+                                &mut parents[position],
+                                &mut state,
+                            )?;
+                        }
+                    } else if conversations[position].turns.is_empty()
+                        && conversations[position].system.is_none()
+                        && hoistable_system_text(&authored_turn).is_some()
+                    {
+                        // Defer this leading, text-only system turn.
+                        pending_system[position] = Some(authored_turn);
+                        continue;
+                    }
+                }
                 let turn = compose_simple_turn(authored_turn, &mut parents[position], &mut state)?;
+                conversations[position].turns.push(turn);
+            }
+        }
+
+        // Flush any still-deferred leading system turn: it was the session's only
+        // turn, so a conversation-level system message would leave it
+        // undispatchable. Restore it as a normal turn (pre-hoist behavior).
+        for position in 0..conversations.len() {
+            if let Some(pending) = pending_system[position].take() {
+                let turn = compose_simple_turn(pending, &mut parents[position], &mut state)?;
                 conversations[position].turns.push(turn);
             }
         }
         Ok(conversations)
     }
+}
+
+/// Plain text of a leading authored `system` turn eligible for hoisting into
+/// `conversation.system`, or `None` when the row does not qualify. Mirrors the
+/// guard in Python `MultiTurnDatasetLoader._try_hoist_system_message`: role is
+/// `system`, text only (no image/audio/video, no raw token ids), and no
+/// dispatch-time metadata (`timestamp`, `delay`, `output_length`, `extra`) —
+/// a conversation-level system message has no turn to carry those, so a system
+/// turn that sets any of them falls through to normal handling rather than
+/// silently dropping it.
+fn hoistable_system_text(row: &SingleTurnRow) -> Option<String> {
+    if row.role.as_deref() != Some("system")
+        || row.timestamp.is_some()
+        || row.delay.is_some()
+        || row.output_length.is_some()
+        || row.extra.is_some()
+        || row.raw_token_ids.is_some()
+        || row.image.is_some()
+        || row.images.is_some()
+        || row.audio.is_some()
+        || row.audios.is_some()
+        || row.video.is_some()
+        || row.videos.is_some()
+    {
+        return None;
+    }
+    let mut parts = Vec::<String>::new();
+    if let Some(text) = &row.text {
+        parts.push(text.clone());
+    }
+    match &row.texts {
+        Some(AuthoredBatch::Strings(strings)) => parts.extend(strings.iter().cloned()),
+        Some(AuthoredBatch::Groups(groups)) => {
+            for group in groups {
+                parts.extend(group.contents.iter().cloned());
+            }
+        }
+        None => {}
+    }
+    let text = parts.join("\n");
+    (!text.is_empty()).then_some(text)
+}
+
+/// Intern a deferred leading system turn's text as the conversation-level system
+/// message, mirroring how `start_conversation` interns `shared_system_prompt`.
+/// The interned segment becomes the new parent so subsequent turns chain onto it.
+fn commit_system_hoist(
+    conversation: &mut Conversation,
+    row: &SingleTurnRow,
+    parent: &mut Option<Handle>,
+    state: &mut ComposeState<'_>,
+) -> Result<()> {
+    let text = hoistable_system_text(row)
+        .expect("commit_system_hoist called only for a hoistable system turn");
+    let tokens = state.tokenizer.encode(&text)?;
+    let handle = state.segments.intern_text(
+        *parent,
+        "system",
+        Bytes::copy_from_slice(text.as_bytes()),
+        tokens.into_boxed_slice(),
+    )?;
+    conversation.system = Some(handle);
+    *parent = Some(handle);
+    Ok(())
 }
 
 fn start_conversation(

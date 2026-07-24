@@ -414,6 +414,7 @@ pub(crate) async fn build_file_dataset(
     tokenizer: &dyn TextTokenizer,
     trace_prompt_storage: Arc<dyn TracePromptStoragePolicy>,
     requires_raw_token_ids: bool,
+    consumes_system_message: bool,
 ) -> Result<Dataset> {
     ensure!(
         spec.path.is_some() ^ spec.records.is_some(),
@@ -425,6 +426,7 @@ pub(crate) async fn build_file_dataset(
         .unwrap_or(run_rng_root);
     let mut compose = compose_config(models, rng_root)?;
     compose.requires_raw_token_ids = requires_raw_token_ids;
+    compose.hoist_leading_system_message = consumes_system_message;
     compose.output_length_distribution = spec.osl.as_ref().map(distribution).transpose()?;
     compose.format_options = spec.options.clone();
     compose.trace_prompt_storage = trace_prompt_storage;
@@ -1075,6 +1077,7 @@ mod tests {
             tokenizer,
             Arc::new(crate::dataset::MaterializedTracePromptStorage),
             false,
+            false,
         )
         .await
         .unwrap()
@@ -1477,6 +1480,7 @@ mod tests {
             &TiktokenTokenizer::builtin(),
             Arc::new(MaterializedTracePromptStorage),
             false,
+            false,
         )
         .await
         .unwrap();
@@ -1501,6 +1505,7 @@ mod tests {
             RngRoot::new(Some(1)),
             &TiktokenTokenizer::builtin(),
             Arc::new(MaterializedTracePromptStorage),
+            false,
             false,
         )
         .await
