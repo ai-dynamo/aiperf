@@ -210,6 +210,17 @@ class Turn(AIPerfBaseModel):
         description="Pre-formatted OpenAI-compatible tool definitions. "
         "When set alongside raw_messages, injected into the API payload.",
     )
+    reset_context: bool = Field(
+        default=False,
+        description=(
+            "When True, the endpoint formatter discards messages accumulated "
+            "from prior turns in this conversation before applying this turn's "
+            "raw_messages. Used by delta-encoded multi-turn conversations to "
+            "express a non-monotonic context change (any source that needs to "
+            "rewrite an earlier prefix). Has no effect when raw_messages is "
+            "None."
+        ),
+    )
     raw_system: list[dict[str, Any]] | None = Field(
         default=None,
         description="Pre-formatted vendor-shaped ``system`` field (list of "
@@ -276,63 +287,6 @@ class Turn(AIPerfBaseModel):
             delay_ms=self.delay,
             branch_ids=list(self.branch_ids),
             prerequisites=list(self.prerequisites),
-        )
-
-    def copy_with_stripped_media(self) -> "Turn":
-        """Create a copy of this turn with multimodal data replaced by placeholders.
-
-        This preserves text data (needed for tokenization) and raw messages/tools
-        (needed for API payload reconstruction) but replaces potentially large
-        image/audio/video contents with small placeholder strings. Empty image
-        slots are preserved so cache-only UUID references remain distinguishable
-        from images whose content was present on the wire. This is more efficient
-        than a full deep copy followed by stripping.
-
-        Returns:
-            A new Turn with stripped multimodal contents and messages.
-        """
-        return Turn(
-            model=self.model,
-            role=self.role,
-            timestamp=self.timestamp,
-            delay=self.delay,
-            max_tokens=self.max_tokens,
-            raw_messages=list(self.raw_messages)
-            if self.raw_messages is not None
-            else None,
-            raw_tools=list(self.raw_tools) if self.raw_tools is not None else None,
-            raw_system=list(self.raw_system) if self.raw_system is not None else None,
-            texts=[Text(name=t.name, contents=list(t.contents)) for t in self.texts],
-            images=[
-                Image(
-                    name=img.name,
-                    contents=[
-                        f"image_{i}" if content else ""
-                        for i, content in enumerate(img.contents)
-                    ],
-                    uuids=list(img.uuids),
-                )
-                for img in self.images
-            ],
-            audios=[
-                Audio(
-                    name=aud.name,
-                    contents=[f"audio_{i}" for i in range(len(aud.contents))],
-                )
-                for aud in self.audios
-            ],
-            videos=[
-                Video(
-                    name=vid.name,
-                    contents=[f"video_{i}" for i in range(len(vid.contents))],
-                )
-                for vid in self.videos
-            ],
-            raw_payload=self.raw_payload,
-            extra_body=dict(self.extra_body) if self.extra_body is not None else None,
-            prerequisites=list(self.prerequisites),
-            branch_ids=list(self.branch_ids),
-            audio_duration_seconds=self.audio_duration_seconds,
         )
 
 
