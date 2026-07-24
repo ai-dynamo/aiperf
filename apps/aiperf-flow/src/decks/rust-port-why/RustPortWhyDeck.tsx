@@ -467,6 +467,63 @@ export function RustPortWhyDeck(): React.JSX.Element {
               </Grid>
             </Stack>
 
+            {/* ── Industry precedent (vLLM) ────────────────────────────────── */}
+            <Stack gap={16}>
+              <SectionHead
+                kicker="We are not alone — industry precedent"
+                title="vLLM already reached the same conclusion"
+              />
+              <Grid columns={2} gap={14}>
+                <ChalkCard
+                  accent="green"
+                  badge="FE"
+                  title="Their frontend — vllm-frontend-rs"
+                  diagram={
+                    <Diagram>
+                      <NodeChip>32× py</NodeChip>
+                      <MiniArrow />
+                      <RoundNode accent>1</RoundNode>
+                    </Diagram>
+                  }
+                >
+                  A drop-in, OpenAI-compatible Rust replacement for vLLM's Python FastAPI server (opt-in{" "}
+                  <code>VLLM_USE_RUST_FRONTEND=1</code>, vendored in vLLM 0.24.0). One Rust process matches or
+                  exceeds 32 Python API-server processes; default Python saturates at ~19% of Rust throughput
+                  with ~10× worse P50 TTFT.
+                </ChalkCard>
+                <ChalkCard
+                  accent="blue"
+                  badge="CL"
+                  title="Their client — vllm-bench"
+                  diagram={
+                    <Diagram>
+                      <NodeChip accent>bench</NodeChip>
+                      <MiniArrow />
+                      <NodeChip>endpoint</NodeChip>
+                    </Diagram>
+                  }
+                >
+                  vLLM also ships a high-performance Rust benchmark client for serving endpoints — AIPerf's exact
+                  category — using the same techniques AIPerf does: token-ID arrays that skip server-side
+                  tokenization, and cached token-length verification per model+server.
+                </ChalkCard>
+              </Grid>
+              <Callout tone="success" title="Their motivation is our argument, verbatim">
+                Python was chosen for accessibility and the ML ecosystem — reasonable while GPUs were the
+                bottleneck. As GPUs got faster, the asyncio frontend became a real share of CPU time, and more
+                Python processes{" "}
+                <span className={inkClassName("primary")}>
+                  “add operational complexity and still hit a ceiling.”
+                </span>{" "}
+                The reference open-source serving stack independently made the same call.
+              </Callout>
+              <Callout tone="neutral" title="Honest scope">
+                vLLM kept its Python GPU engine and the existing ZMQ seam — the Rust frontend slots in there.
+                AIPerf's runner is <span className={inkClassName("primary")}>already all-Rust on the product path</span>,
+                a step further than vLLM took it.
+              </Callout>
+            </Stack>
+
             {/* ── Bottom line ──────────────────────────────────────────────── */}
             <Framed surfaceRole="elevated">
               <Stack gap={8}>

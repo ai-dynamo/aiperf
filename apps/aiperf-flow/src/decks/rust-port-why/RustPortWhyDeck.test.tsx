@@ -97,6 +97,15 @@ describe("RustPortWhyDeck (executive overview)", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("cites the vLLM precedent — Rust frontend AND Rust benchmark client", () => {
+    renderDeck();
+    expect(screen.getByText(/vLLM already reached the same conclusion/i)).toBeInTheDocument();
+    expect(screen.getByText(/vllm-frontend-rs/i)).toBeInTheDocument();
+    expect(screen.getByText(/vllm-bench/i)).toBeInTheDocument();
+    // Their stated motivation mirrors AIPerf's own case.
+    expect(screen.getByText(/motivation is our argument, verbatim/i)).toBeInTheDocument();
+  });
+
   it("is registered on Home's deck listing", () => {
     expect(DECKS.some((deck) => deck.path === "/rust-port-why")).toBe(true);
   });
