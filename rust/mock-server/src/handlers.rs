@@ -388,7 +388,6 @@ pub async fn chat_completions(
 /// runs `--fast` semantics (zero simulated latency) so the `wait_for_tokens`
 /// await the axum handler performs is a no-op and is skipped here. Records the
 /// same metrics via `admit_fast`/`complete_fast` as the axum path.
-#[cfg(feature = "uring")]
 pub(crate) fn render_chat_completion_nonstream_fast(
     state: &AppState,
     req: &ChatCompletionRequest,

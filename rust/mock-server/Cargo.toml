@@ -75,14 +75,15 @@ tokio-rustls = "0.26"
 rustls-pemfile = "2"
 rcgen = "0.13"
 
-# io_uring thread-per-core engine for the real request hot path (`--uring`),
-# gated so the default build keeps only the tokio/hyper stack. monoio brings the
-# io_uring driver; httparse frames HTTP/1.1 requests in the hand-rolled server.
+# HTTP/1.1 request framing for the alternative hand-rolled engines (--blocking,
+# --uring). Small and already present transitively via hyper.
+httparse = "1"
+# io_uring thread-per-core engine (`--uring`), gated so the default build keeps
+# only the tokio/hyper stack. monoio brings the io_uring driver.
 monoio = { version = "0.2", features = ["iouring"], optional = true }
-httparse = { version = "1", optional = true }
 
 [features]
-uring = ["dep:monoio", "dep:httparse"]
+uring = ["dep:monoio"]
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json", "stream"] }

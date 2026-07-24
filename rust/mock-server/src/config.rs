@@ -558,6 +558,14 @@ pub struct MockServerConfig {
     #[arg(long, env = "MOCK_SERVER_URING", default_value_t = false)]
     pub uring: bool,
 
+    /// Serve the request hot path on a blocking thread-per-connection engine
+    /// (no async runtime; `SO_REUSEPORT` accept loops + one thread per
+    /// connection) instead of tokio/hyper. Same real non-streaming chat path
+    /// and `--fast` semantics as `--uring`; isolates async-runtime cost from
+    /// real per-request work. Always available (no extra build features).
+    #[arg(long, env = "MOCK_SERVER_BLOCKING", default_value_t = false)]
+    pub blocking: bool,
+
     /// Serve the `/metrics` family as OpenMetrics text instead of classic
     /// Prometheus text, matching the vLLM Rust frontend (which uses the
     /// `prometheus-client` OpenMetrics encoder). Sets the

@@ -26,6 +26,10 @@ fn main() -> anyhow::Result<()> {
         return aiperf_mock_server::fastmock::run(&config);
     }
 
+    if config.blocking {
+        return aiperf_mock_server::blocking::run(&config);
+    }
+
     if config.uring {
         #[cfg(feature = "uring")]
         {
