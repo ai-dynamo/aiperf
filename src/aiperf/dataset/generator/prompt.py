@@ -312,14 +312,10 @@ class PromptGenerator(BaseGenerator):
 
         # One extra hash represents a tokenizer-added suffix outside the
         # recorded input length. It has no prompt tokens to reconstruct.
-        effective_hash_ids = (
-            hash_ids[:-1] if hash_count_delta == 1 else hash_ids
-        )
+        effective_hash_ids = hash_ids[:-1] if hash_count_delta == 1 else hash_ids
 
         # Sanity-check the represented final block or one-block unhashed remainder.
-        final_block_size = num_tokens - (
-            (len(effective_hash_ids) - 1) * block_size
-        )
+        final_block_size = num_tokens - ((len(effective_hash_ids) - 1) * block_size)
         max_supported_size = 2 * block_size
         if final_block_size <= 0 or final_block_size > max_supported_size:
             raise ConfigurationError(

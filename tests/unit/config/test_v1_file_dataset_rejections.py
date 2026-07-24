@@ -160,16 +160,12 @@ def test_trace_context_mode_routes_to_file_dataset(mc_jsonl: Path) -> None:
     user = _file_user(
         mc_jsonl,
         prompt_kwargs={
-            "trace_context_mode": (
-                ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
-            )
+            "trace_context_mode": (ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES)
         },
     )
 
     out = build_dataset(user)
-    assert (
-        out["context_mode"] == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
-    )
+    assert out["context_mode"] == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
 
     aiperf_cfg = convert_cli_to_aiperf(user)
     assert (

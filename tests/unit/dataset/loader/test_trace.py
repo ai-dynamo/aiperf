@@ -665,9 +665,7 @@ class TestMooncakeTraceDatasetLoader:
             model_names=["test-model"],
             input_file="dummy.jsonl",
             custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
-            trace_context_mode=(
-                ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
-            ),
+            trace_context_mode=(ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES),
         )
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
