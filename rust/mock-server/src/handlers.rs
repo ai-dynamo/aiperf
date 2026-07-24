@@ -903,10 +903,13 @@ where
                 if rest.is_empty() || rest == b"[DONE]" {
                     continue;
                 }
-                let mut line = Vec::with_capacity(piece.len() + 1);
-                line.extend_from_slice(piece);
-                line.push(b'\n');
-                let frame = EventStreamMessage::payload_part(Bytes::from(line)).encode();
+                // The AWS `PayloadPart.Bytes` member carries the raw inner
+                // chat-completion-chunk JSON directly (see
+                // `EventStreamMessage::payload_part`) — not the SSE-framed
+                // `data: {...}\n` line. Emit the stripped payload so the frame
+                // matches the documented contract and real bare-JSON wire form.
+                let frame =
+                    EventStreamMessage::payload_part(Bytes::copy_from_slice(rest)).encode();
                 yield Ok::<Bytes, Infallible>(frame);
             }
         }
