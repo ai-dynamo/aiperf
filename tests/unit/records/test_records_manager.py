@@ -390,6 +390,53 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         assert all(r.tag != "context_overflow_count" for r in results)
 
     @pytest.mark.asyncio
+    async def test_warmup_summary_surfaces_overflow_when_all_requests_skipped(
+        self,
+    ) -> None:
+        """Even at 100% warmup overflow the count is still surfaced.
+
+        Context-overflow skips are recorded as success via
+        ``update_from_request(metadata, None)``, so ``_has_records_for_phase``
+        (which reads the records tracker's ``total_records``, not the metric
+        accumulator) returns True and the injection block is reached even when
+        the metric accumulator collected nothing.
+        """
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.error = MagicMock()
+
+        tracker = RecordsTracker()
+        for i in range(3):
+            tracker.update_from_request(
+                MetricRecordMetadata(
+                    session_num=i,
+                    request_start_ns=1,
+                    request_end_ns=2,
+                    worker_id="w0",
+                    record_processor_id="rp0",
+                    benchmark_phase=CreditPhase.WARMUP,
+                    phase_index=0,
+                    context_overflow_skip=True,
+                ),
+                None,
+            )
+        manager._records_tracker = tracker
+        # Metric accumulator collected nothing (every request was skipped).
+        manager._summarize_metric_record_accumulators = AsyncMock(
+            return_value=([], None, [], None)
+        )
+        manager._skipped_context_overflow_counts_by_phase = {
+            CreditPhase.WARMUP: 3,
+            CreditPhase.PROFILING: 0,
+        }
+
+        results = await RecordsManager._summarize_warmup_metric_records(manager)
+
+        assert results is not None
+        overflow = [r for r in results if r.tag == "context_overflow_count"]
+        assert len(overflow) == 1
+        assert overflow[0].avg == 3.0
+
+    @pytest.mark.asyncio
     async def test_single_profiling_phase_does_not_build_duplicate_phase_results(
         self,
     ) -> None:
