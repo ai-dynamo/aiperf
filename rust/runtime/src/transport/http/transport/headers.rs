@@ -157,7 +157,15 @@ mod tests {
         let cfg = RequestConfig::new("http://h/x")
             .correlation_id("sess-1")
             .request_id("req-1");
-        let h = build_headers(&cfg, true, Some("X-Session"), "aiperf/test", false, false, false);
+        let h = build_headers(
+            &cfg,
+            true,
+            Some("X-Session"),
+            "aiperf/test",
+            false,
+            false,
+            false,
+        );
         assert_eq!(h.get("X-Session").map(String::as_str), Some("sess-1"));
         assert_eq!(h.get("X-Request-ID").map(String::as_str), Some("req-1"));
     }

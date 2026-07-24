@@ -633,7 +633,10 @@ mod tests {
 
     #[test]
     fn zero_success_not_evaluable_with_no_filters() {
-        assert!(!can_evaluate_without_successes(&[], &zero_success_stats(5, 0)));
+        assert!(!can_evaluate_without_successes(
+            &[],
+            &zero_success_stats(5, 0)
+        ));
     }
 
     #[test]

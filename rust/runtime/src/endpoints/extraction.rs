@@ -204,7 +204,11 @@ fn walk_content_part(
 /// they go to `texts` only — adding them to `tool_texts` would double-count them
 /// on the chat-template ISL path. Otherwise (Responses `input` items with no
 /// role) they go to both ledgers via `append_tool_texts`.
-fn walk_item_tool_calls(item: &Map<String, Value>, result: &mut ExtractedPayload, in_messages: bool) {
+fn walk_item_tool_calls(
+    item: &Map<String, Value>,
+    result: &mut ExtractedPayload,
+    in_messages: bool,
+) {
     let Some(tool_calls) = item.get("tool_calls").and_then(Value::as_array) else {
         return;
     };

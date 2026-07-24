@@ -1045,7 +1045,11 @@ mod tests {
         );
     }
 
-    fn controller_with_filter(filter: SlaFilter, maximum: f64, sustain_ns: i64) -> RampUntilFailController {
+    fn controller_with_filter(
+        filter: SlaFilter,
+        maximum: f64,
+        sustain_ns: i64,
+    ) -> RampUntilFailController {
         let actuator = Rc::new(CellActuator {
             current: Cell::new(2.0),
             minimum: 2.0,
