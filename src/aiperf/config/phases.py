@@ -308,6 +308,17 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         if self.exclude_from_results != required:
             self.exclude_from_results = required
         if (
+            "exclude_from_results" in self.model_fields_set
+            and self.exclude_from_results != required
+        ):
+            raise ValueError(
+                f"Phase '{self.name}': exclude_from_results must be "
+                f"{required} for kind '{self.kind}' (warmup is always "
+                "excluded; profiling is always included)"
+            )
+        if self.exclude_from_results != required:
+            self.exclude_from_results = required
+        if (
             self.prefill_concurrency is not None
             and self.concurrency is not None
             and self.prefill_concurrency > self.concurrency
