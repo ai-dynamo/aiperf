@@ -31,7 +31,13 @@ export interface StageRegionProps {
   onClick?: () => void;
 }
 
-/** A clickable, labeled stage block on the timeline. */
+// Approx advance width (px) of one glyph at the 11px semibold label size — used to decide whether a
+// label fits its block, and how many chars survive truncation. Deliberately conservative.
+const CHAR_PX = 6.2;
+const LABEL_PAD_X = 12;
+
+/** A clickable, labeled stage block on the timeline. Labels truncate to fit; the full name is kept
+ * in a `<title>` (hover tooltip) whenever it is clipped, and always in the `aria-label`. */
 export function StageRegion({
   x,
   y,
@@ -42,6 +48,12 @@ export function StageRegion({
   active = false,
   onClick,
 }: StageRegionProps): React.JSX.Element {
+  const fits = label.length * CHAR_PX + LABEL_PAD_X <= width;
+  const maxChars = Math.floor((width - LABEL_PAD_X) / CHAR_PX);
+  // Only paint a label when at least a few characters survive; a sliver block stays unlabeled and
+  // relies on its lane gutter + the hover title + the drill affordance.
+  const showText = width >= 30 && maxChars >= 3;
+  const display = fits ? label : `${label.slice(0, Math.max(1, maxChars - 1))}…`;
   return (
     <g
       data-testid="stage-region"
@@ -51,6 +63,9 @@ export function StageRegion({
       onClick={onClick}
       className={onClick ? "cursor-zoom-in" : undefined}
     >
+      {/* Full name on hover, only when the visible text is clipped (so exactly one element ever
+          carries the full label — keeps getByText unambiguous). */}
+      {!fits && <title>{label}</title>}
       <rect
         x={x}
         y={y}
@@ -61,16 +76,18 @@ export function StageRegion({
         className={`${categoryFillClassName(tone)} ${categoryStrokeClassName(tone)}`}
         fillOpacity={active ? 0.32 : 0.16}
       />
-      <text
-        x={x + width / 2}
-        y={y + height / 2}
-        textAnchor="middle"
-        dominantBaseline="middle"
-        className={`pointer-events-none text-[11px] font-semibold ${inkClassName("primary")}`}
-        fill="currentColor"
-      >
-        {label}
-      </text>
+      {showText && (
+        <text
+          x={x + width / 2}
+          y={y + height / 2}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          className={`pointer-events-none text-[11px] font-semibold ${inkClassName("primary")}`}
+          fill="currentColor"
+        >
+          {display}
+        </text>
+      )}
     </g>
   );
 }

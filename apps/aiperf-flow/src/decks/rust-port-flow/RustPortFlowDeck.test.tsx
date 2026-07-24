@@ -99,4 +99,32 @@ describe("RustPortFlowDeck (v2 swimlane-timeline)", () => {
   it("is registered on Home's deck listing", () => {
     expect(DECKS.some((deck) => deck.path === "/rust-port-flow")).toBe(true);
   });
+
+  it("tiles stage blocks so none overlap within a lane (real wall-ms scale)", () => {
+    const { container } = render(<RustPortFlowDeck />);
+    // Each stage block is a <g data-testid="stage-region"> wrapping one <rect>. Group the rects by
+    // their y (which encodes the lane row) and assert the x-intervals in each row are disjoint —
+    // this is the regression guard for the wall-ms "left-crush" that stacked the setup blocks.
+    const rects = Array.from(
+      container.querySelectorAll<SVGRectElement>('[data-testid="stage-region"] > rect'),
+    ).map((r) => ({
+      x: Number(r.getAttribute("x")),
+      w: Number(r.getAttribute("width")),
+      y: Number(r.getAttribute("y")),
+    }));
+    expect(rects.length).toBe(STAGE_LABELS.length);
+    const byRow = new Map<number, { x: number; w: number }[]>();
+    for (const r of rects) {
+      const row = byRow.get(r.y) ?? [];
+      row.push({ x: r.x, w: r.w });
+      byRow.set(r.y, row);
+    }
+    for (const row of byRow.values()) {
+      const sorted = [...row].sort((a, b) => a.x - b.x);
+      for (let i = 1; i < sorted.length; i++) {
+        // The left edge of each block starts at/after the previous block's right edge.
+        expect(sorted[i]!.x).toBeGreaterThanOrEqual(sorted[i - 1]!.x + sorted[i - 1]!.w - 0.5);
+      }
+    }
+  });
 });

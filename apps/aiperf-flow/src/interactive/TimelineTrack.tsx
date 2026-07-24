@@ -26,7 +26,6 @@ import { EventMarker } from "./EventMarker.js";
 import {
   buildOffsetForOrder,
   eventOffsetMs,
-  fractionForEvent,
   fractionForOrder,
   timelineBounds,
   type Lane,
@@ -71,6 +70,15 @@ const MIN_REGION_W = 74;
 
 const AXIS_LEFT = GUTTER;
 const AXIS_RIGHT = VIEW_W - RIGHT_PAD;
+const AXIS_W = AXIS_RIGHT - AXIS_LEFT;
+
+// Minimum pixel gap enforced between consecutive event orders. Without this, wall-ms spacing bunches
+// the setup events (all within ~64ms) into the left edge, stacking their dots and labels illegibly.
+// The spread preserves order and keeps big real gaps (e.g. TTFT) proportionally wider.
+const MIN_EVENT_GAP = 44;
+// A comfortable default width for a single-order stage block, capped by its neighbor.
+const DEFAULT_REGION_W = 104;
+const REGION_GAP = 8;
 
 // Tones are derived from lane/seam order so the (domain-agnostic) data model needs no color field.
 const LANE_TONES: readonly CategoryRole[] = ["green", "purple", "yellow", "blue", "cyan", "orange", "red", "gray"];
@@ -124,10 +132,83 @@ export function TimelineTrack({
     return map;
   }, [events]);
 
-  const xForFraction = (f: number): number => AXIS_LEFT + f * (AXIS_RIGHT - AXIS_LEFT);
-  const xForEvent = (event: TimelineEvent): number => xForFraction(fractionForEvent(event, scale, bounds));
-  const xForOrder = (order: number): number =>
-    xForFraction(fractionForOrder(order, scale, bounds, offsetForOrder));
+  // Spread the distinct event orders across the axis with a guaranteed minimum gap, then compress
+  // uniformly back inside the axis if the enforced gaps overflowed. This de-collides clustered
+  // (wall-ms) events while preserving order and the *relative* size of the big real latency gaps.
+  const orderX = useMemo(() => {
+    const distinct = Array.from(new Set(events.map((e) => e.atOrder))).sort((a, b) => a - b);
+    const raw = distinct.map(
+      (order) => AXIS_LEFT + fractionForOrder(order, scale, bounds, offsetForOrder) * AXIS_W,
+    );
+    const spread: number[] = [];
+    for (let i = 0; i < raw.length; i++) {
+      spread[i] = i === 0 ? raw[i]! : Math.max(raw[i]!, spread[i - 1]! + MIN_EVENT_GAP);
+    }
+    const first = spread[0] ?? AXIS_LEFT;
+    const last = spread[spread.length - 1] ?? AXIS_RIGHT;
+    if (last > AXIS_RIGHT && last > first) {
+      const factor = AXIS_W / (last - first);
+      for (let i = 0; i < spread.length; i++) {
+        spread[i] = AXIS_LEFT + (spread[i]! - first) * factor;
+      }
+    }
+    const map = new Map<number, number>();
+    distinct.forEach((order, i) => map.set(order, spread[i]!));
+    return { distinct, xs: spread, map };
+  }, [events, scale, bounds, offsetForOrder]);
+
+  // x for an order coordinate: exact for real event orders, linearly interpolated between the two
+  // nearest event orders for in-between coordinates (seam-frame span bounds).
+  const xForOrder = (order: number): number => {
+    const { distinct, xs, map } = orderX;
+    const exact = map.get(order);
+    if (exact !== undefined) {
+      return exact;
+    }
+    if (distinct.length === 0) {
+      return AXIS_LEFT;
+    }
+    if (order <= distinct[0]!) {
+      return xs[0]!;
+    }
+    if (order >= distinct[distinct.length - 1]!) {
+      return xs[xs.length - 1]!;
+    }
+    for (let i = 0; i < distinct.length - 1; i++) {
+      const lo = distinct[i]!;
+      const hi = distinct[i + 1]!;
+      if (order >= lo && order <= hi) {
+        const t = hi === lo ? 0 : (order - lo) / (hi - lo);
+        return xs[i]! + t * (xs[i + 1]! - xs[i]!);
+      }
+    }
+    return xs[xs.length - 1]!;
+  };
+  const xForEvent = (event: TimelineEvent): number => xForOrder(event.atOrder);
+
+  // Tile each lane's regions left→right so blocks never overlap: a block grows toward a comfortable
+  // default width but is clamped short of the next block in its lane (or the axis end).
+  const regionRects = (() => {
+    const byLane = new Map<string, StageRegion[]>();
+    for (const region of regions) {
+      const arr = byLane.get(region.laneId) ?? [];
+      arr.push(region);
+      byLane.set(region.laneId, arr);
+    }
+    const rects = new Map<string, { x: number; width: number }>();
+    for (const arr of byLane.values()) {
+      const sorted = [...arr].sort((a, b) => a.startOrder - b.startOrder);
+      sorted.forEach((region, i) => {
+        const left = Math.max(AXIS_LEFT - 6, xForOrder(region.startOrder) - REGION_PAD_X);
+        const spanRight = xForOrder(region.endOrder) + REGION_PAD_X;
+        const next = sorted[i + 1];
+        const hardRight = next !== undefined ? xForOrder(next.startOrder) - REGION_GAP : AXIS_RIGHT;
+        const right = Math.min(Math.max(spanRight, left + DEFAULT_REGION_W), hardRight);
+        rects.set(region.id, { x: left, width: Math.max(right - left, 10) });
+      });
+    }
+    return rects;
+  })();
   const laneCenterY = (laneId: string): number => {
     const idx = laneIndex.get(laneId) ?? 0;
     return laneRowTop(idx) + LANE_H / 2;
@@ -220,25 +301,16 @@ export function TimelineTrack({
           );
         })}
 
-        {/* Stage region blocks. */}
+        {/* Stage region blocks (tiled per lane so they never overlap). */}
         {regions.map((region) => {
           const idx = laneIndex.get(region.laneId) ?? 0;
-          const xStart = xForOrder(region.startOrder);
-          const xEnd = xForOrder(region.endOrder);
-          const mid = (xStart + xEnd) / 2;
-          let rx = xStart - REGION_PAD_X;
-          let rw = xEnd - xStart + 2 * REGION_PAD_X;
-          if (rw < MIN_REGION_W) {
-            rx = mid - MIN_REGION_W / 2;
-            rw = MIN_REGION_W;
-          }
-          rx = Math.max(AXIS_LEFT - 6, Math.min(rx, AXIS_RIGHT - rw));
+          const rect = regionRects.get(region.id) ?? { x: AXIS_LEFT, width: DEFAULT_REGION_W };
           return (
             <StageRegionBlock
               key={region.id}
-              x={rx}
+              x={rect.x}
               y={laneRowTop(idx) + REGION_INSET_Y}
-              width={rw}
+              width={rect.width}
               height={LANE_H - 2 * REGION_INSET_Y}
               label={region.label}
               tone={laneTone(region.laneId)}
@@ -255,6 +327,8 @@ export function TimelineTrack({
         {linePoints.length >= 2 && (
           <RequestLine points={linePoints} tone={lineTone} reducedMotion={prefersReduced} />
         )}
+        {/* Dots for every event, but only the active event carries a text label — otherwise all 16
+            labels would collide. Play/step reveals each event's name as the head reaches it. */}
         {events.map((event) => (
           <EventMarker
             key={event.id}
@@ -262,7 +336,7 @@ export function TimelineTrack({
             y={laneCenterY(event.laneId)}
             tone={laneTone(event.laneId)}
             active={event.id === activeEventId}
-            label={event.label}
+            label={event.id === activeEventId ? event.label : undefined}
           />
         ))}
       </svg>

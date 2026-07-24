@@ -41,9 +41,10 @@ export function SeamFrame({ x, y, width, height, label, tone }: SeamFrameProps):
         className={`${categoryFillClassName(tone)} ${categoryStrokeClassName(tone)}`}
         fillOpacity={0.04}
       />
+      {/* Label rides just above the frame's top edge, so it never lands on a stage block's text. */}
       <text
-        x={x + 8}
-        y={y + 13}
+        x={x + 6}
+        y={y - 4}
         className={`text-[10px] font-semibold uppercase tracking-wide ${categoryClassName(tone)}`}
         fill="currentColor"
       >
