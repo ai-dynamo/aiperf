@@ -328,7 +328,13 @@ class TestMultiProcessServiceManager:
 
 
 class TestWaitForProcess:
-    """Test _wait_for_process graceful shutdown and SIGKILL escalation."""
+    """Test _wait_for_process force-kill after bus shutdown grace.
+
+    Children ``SIG_IGN`` SIGTERM (see ``bootstrap.py``), so this path must
+    not call ``terminate()`` then wait — that only burned
+    ``TASK_CANCEL_TIMEOUT_SHORT`` before ``kill()``. After ``kill()`` we
+    still ``join()`` to reap the zombie.
+    """
 
     @pytest.fixture
     def service_manager(self, benchmark_run) -> MultiProcessServiceManager:
@@ -339,13 +345,10 @@ class TestWaitForProcess:
 
     @pytest.fixture
     def _make_process_info(self) -> "callable":
-        def _factory(
-            *, is_alive_sequence: list[bool], pid: int = 12345
-        ) -> MultiProcessRunInfo:
+        def _factory(*, is_alive: bool = True, pid: int = 12345) -> MultiProcessRunInfo:
             mock_process = MagicMock(spec=Process)
-            mock_process.is_alive.side_effect = is_alive_sequence
+            mock_process.is_alive.return_value = is_alive
             mock_process.pid = pid
-            mock_process.join.return_value = None
             return MultiProcessRunInfo.model_construct(
                 process=mock_process,
                 service_type=ServiceType.DATASET_MANAGER,
@@ -381,29 +384,21 @@ class TestWaitForProcess:
         await service_manager._wait_for_process(info)
 
     @pytest.mark.asyncio
-    async def test_terminate_succeeds_no_kill(
+    async def test_alive_process_skips_terminate_goes_straight_to_kill(
         self, service_manager: MultiProcessServiceManager, _make_process_info
     ):
-        """Process that exits after SIGTERM should not be killed."""
-        # First is_alive=True (guard check), second is_alive=False (after join)
-        info = _make_process_info(is_alive_sequence=[True, False])
+        """Alive straggler is killed immediately; terminate must not run.
+
+        ``join()`` still runs *after* ``kill()`` so the child is reaped.
+        """
+        info = _make_process_info(is_alive=True)
+        # Initial is_alive gate is True; after kill the post-join check is False.
+        info.process.is_alive.side_effect = [True, False]
 
         await service_manager._wait_for_process(info)
 
-        info.process.terminate.assert_called_once()
-        info.process.join.assert_called_once()
-        info.process.kill.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_terminate_fails_escalates_to_kill(
-        self, service_manager: MultiProcessServiceManager, _make_process_info
-    ):
-        """Process still alive after join timeout should be killed with SIGKILL."""
-        # First is_alive=True (guard check), second is_alive=True (after join — still running)
-        info = _make_process_info(is_alive_sequence=[True, True])
-
-        await service_manager._wait_for_process(info)
-
-        info.process.terminate.assert_called_once()
-        info.process.join.assert_called_once()
+        info.process.terminate.assert_not_called()
         info.process.kill.assert_called_once()
+        info.process.join.assert_called_once()
+        method_names = [c[0] for c in info.process.method_calls]
+        assert method_names.index("kill") < method_names.index("join")

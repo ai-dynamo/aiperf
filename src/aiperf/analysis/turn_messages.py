@@ -117,9 +117,11 @@ def _disp_id(conv: str) -> str:
 def _find_raw_records(run_dir: Path) -> list[Path]:
     """Locate raw-record jsonl for ``run_dir``.
 
-    Accepts either a direct jsonl file or a run directory (a ``raw_records/``
-    shard folder, a single ``profile_export_raw.jsonl``, or a recursive
-    fallback for custom export-base names).
+    Accepts a direct jsonl file path, or a single run directory with either a
+    top-level ``raw_records/*.jsonl`` shard folder or
+    ``profile_export_raw.jsonl``. Does not recurse into nested run trees —
+    that would silently merge disjoint benchmarks into one viewer (mirrors
+    swim-lane's single-dir ``profile_export.jsonl`` lookup).
     """
     if run_dir.is_file():
         return [run_dir]
@@ -131,9 +133,7 @@ def _find_raw_records(run_dir: Path) -> list[Path]:
     single = run_dir / OutputDefaults.PROFILE_EXPORT_RAW_JSONL_FILE
     if single.is_file():
         return [single]
-    return sorted(run_dir.glob("**/raw_records/*.jsonl")) + sorted(
-        run_dir.glob("**/*_raw.jsonl")
-    )
+    return []
 
 
 def _flatten_record(r: dict) -> dict:

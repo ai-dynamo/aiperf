@@ -458,6 +458,11 @@ async def _export_one_variation_aggregate(
     aggregate_result.metadata["sweep_mode"] = str(_plan_iteration_order(plan))
     if model := _resolve_model_name_for_variation(plan, key):
         aggregate_result.metadata["model"] = model
+    # Stamp scenario-submission carrier keys per variation so each variation's
+    # aggregate JSON carries the same scenario submission_valid block.
+    from aiperf.cli_runner._aggregate import _stamp_scenario_submission_metadata
+
+    _stamp_scenario_submission_metadata(aggregate_result, group, plan)
 
     variation_dir_name = _variation_dir_name(key, variation_label, group)
     aggregate_dir = _per_variation_aggregate_dir(

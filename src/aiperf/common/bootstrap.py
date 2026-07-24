@@ -98,11 +98,13 @@ def bootstrap_and_run_service(
 
     # Ignore SIGINT and SIGTERM in child processes. SIGINT is ignored so only
     # the parent handles Ctrl+C. SIGTERM is ignored because graceful shutdown is
-    # handled via the message bus (ShutdownCommand); process.terminate() is only
-    # called after the message bus path has already timed out, and the manager
-    # falls through to SIGKILL after the join timeout anyway. Ignoring SIGTERM
-    # prevents SIGSEGV crashes that occur when SIGTERM arrives while C extension
-    # code (uvloop, zmq, aiohttp, orjson) is executing.
+    # handled via the message bus (ShutdownCommand); after that path's delivery
+    # grace, MultiProcessServiceManager goes straight to Process.kill()
+    # (SIGKILL) rather than Process.terminate()+join — terminate would be a
+    # no-op here and only burn the join timeout. Ignoring SIGTERM prevents
+    # SIGSEGV crashes that occur when SIGTERM arrives while C extension code
+    # (uvloop, zmq, aiohttp, orjson) is executing. For hang diagnosis, send
+    # SIGUSR1 (faulthandler dump) or SIGKILL; SIGTERM will not stop the child.
     if is_child_process:
         # Arm the parent-death guard FIRST, before anything else can leak time,
         # so a SIGKILL'd controller cannot orphan this process. SIGKILL is the

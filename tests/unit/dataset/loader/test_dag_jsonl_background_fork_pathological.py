@@ -128,7 +128,7 @@ class TestEmptyAndDegenerateFork:
         )
         convs = _load(text)
         b = _branches(convs, "r")[0]
-        assert b.background is True
+        assert b.is_background is True
         assert b.mode == ConversationBranchMode.FORK
 
 
@@ -297,7 +297,7 @@ class TestStackedBgForks:
         bs = _branches(convs, "r")
         assert len(bs) == 4
         for i, b in enumerate(bs):
-            assert b.background is True
+            assert b.is_background is True
             assert b.branch_id == f"r:{i}"
             assert b.child_conversation_ids == [f"c{i}"]
 
@@ -329,9 +329,9 @@ class TestNestedBgForks:
         assert sorted(c.session_id for c in convs) == ["a", "b", "r"]
         r_bs = _branches(convs, "r")
         a_bs = _branches(convs, "a")
-        assert r_bs[0].background is True
+        assert r_bs[0].is_background is True
         assert r_bs[0].child_conversation_ids == ["a"]
-        assert a_bs[0].background is True
+        assert a_bs[0].is_background is True
         assert a_bs[0].child_conversation_ids == ["b"]
 
 
@@ -365,7 +365,7 @@ class TestBgForkCoexistsWithSpawnJoin:
         assert len(r_bs) == 2
         bg = next(b for b in r_bs if b.mode == ConversationBranchMode.FORK)
         sp = next(b for b in r_bs if b.mode == ConversationBranchMode.SPAWN)
-        assert bg.background is True
+        assert bg.is_background is True
         assert bg.child_conversation_ids == ["side"]
-        assert sp.background is False  # SPAWN ignores background
+        assert sp.is_background is False  # SPAWN ignores background
         assert sp.child_conversation_ids == ["sync"]

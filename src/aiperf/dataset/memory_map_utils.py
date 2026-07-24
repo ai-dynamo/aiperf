@@ -23,6 +23,8 @@ Storage formats (``MemoryMapDatasetIndex.format``):
       and send them to the transport without deserialization.
 """
 
+from __future__ import annotations
+
 import asyncio
 import mmap
 import os
@@ -30,6 +32,7 @@ import tempfile
 import types
 import weakref
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +54,7 @@ from aiperf.common.models import (
     AIPerfBaseModel,
     Conversation,
     MemoryMapClientMetadata,
+    Turn,
 )
 
 _logger = AIPerfLogger(__name__)
@@ -181,7 +185,9 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
 
         if self._format == MemoryMapFormat.PAYLOAD_BYTES:
             # Pre-encode each turn's raw_payload and write the bytes directly;
-            # workers replay these verbatim with no deserialization.
+            # workers replay these verbatim with no deserialization. Persist
+            # turn scalars in the index so metric enrichment can restore
+            # max_tokens / scheduled_send_ms without the full Conversation.
             turn_offsets: list[PayloadOffset] = []
             for turn in conversation.turns:
                 payload_bytes = orjson.dumps(turn.raw_payload)
@@ -189,6 +195,8 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
                     PayloadOffset(
                         offset=self._current_offset,
                         size=len(payload_bytes),
+                        max_tokens=_resolve_turn_max_tokens(turn),
+                        timestamp=turn.timestamp,
                     )
                 )
                 self._current_offset += len(payload_bytes)
@@ -306,6 +314,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             format=self._format,
             conversation_count=len(self._session_ids),
             total_size_bytes=self._current_offset,
+            compressed=self._compress_only,
             compressed_data_file_path=self._compressed_data_path if self._compress_only else None,
             compressed_index_file_path=self._compressed_index_path if self._compress_only else None,
             compressed_size_bytes=self._compressed_size if self._compress_only else 0,
@@ -330,10 +339,20 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             raise RuntimeError(
                 "adopt_existing_files called on an already-finalized store."
             )
-        if not self._data_path.exists() or not self._index_path.exists():
+        # compress_only (Kubernetes) cache HIT restores only .dat.zst files;
+        # uncompressed dataset.dat / index.dat are never written.
+        if self._compress_only:
+            data_ok = self._compressed_data_path.exists()
+            index_ok = self._compressed_index_path.exists()
+            missing = (self._compressed_data_path, self._compressed_index_path)
+        else:
+            data_ok = self._data_path.exists()
+            index_ok = self._index_path.exists()
+            missing = (self._data_path, self._index_path)
+        if not data_ok or not index_ok:
             raise FileNotFoundError(
                 f"adopt_existing_files requires both files on disk: "
-                f"{self._data_path}, {self._index_path}"
+                f"{missing[0]}, {missing[1]}"
             )
         self._session_ids = list(session_ids)
         self._current_offset = total_size_bytes
@@ -438,6 +457,25 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
             None, self._client.get_payload_bytes, conversation_id, turn_index
         )
 
+    async def get_payload_turn(
+        self, conversation_id: str, turn_index: int
+    ) -> PayloadTurnData | None:
+        """Retrieve payload bytes plus turn scalars for metric enrichment.
+
+        Args:
+            conversation_id: The session ID of the conversation
+            turn_index: Turn index within the conversation
+
+        Returns:
+            ``PayloadTurnData`` or None when the dataset is not in
+            PAYLOAD_BYTES format or the turn has no payload.
+        """
+        if self._client is None or self._loop is None:
+            raise RuntimeError("Client store not initialized. Call initialize() first.")
+        return await self._loop.run_in_executor(
+            None, self._client.get_payload_turn, conversation_id, turn_index
+        )
+
     @on_stop
     async def _cleanup(self) -> None:
         """Close memory-mapped files."""
@@ -459,6 +497,98 @@ class PayloadOffset(AIPerfBaseModel):
 
     offset: int = Field(ge=0, description="Byte offset where payload data starts")
     size: int = Field(ge=0, description="Size of the payload data in bytes")
+    max_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Requested output length for this turn (from Turn.max_tokens or "
+            "wire JSON). Restored onto reconstructed Turns so OSL-mismatch "
+            "metrics stay live on the PAYLOAD_BYTES path."
+        ),
+    )
+    timestamp: int | float | None = Field(
+        default=None,
+        description=(
+            "Schedule timestamp in milliseconds from Turn.timestamp. Restored "
+            "onto reconstructed Turns so schedule-lag metrics stay live on "
+            "the PAYLOAD_BYTES path."
+        ),
+    )
+
+
+# Wire-body keys that encode the same Turn.max_tokens scalar across endpoints.
+_WIRE_MAX_TOKEN_KEYS: tuple[str, ...] = (
+    "max_tokens",
+    "max_completion_tokens",
+    "max_output_tokens",
+)
+
+
+@dataclass(slots=True)
+class PayloadTurnData:
+    """Pre-encoded payload bytes plus turn scalars for metric enrichment."""
+
+    payload_bytes: bytes
+    max_tokens: int | None = None
+    timestamp: int | float | None = None
+
+
+def max_tokens_from_wire_payload(payload: dict[str, Any] | None) -> int | None:
+    """Extract a positive max-tokens value from a wire JSON body, if present."""
+    if not isinstance(payload, dict):
+        return None
+    for key in _WIRE_MAX_TOKEN_KEYS:
+        value = payload.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int) and value >= 1:
+            return value
+    return None
+
+
+def apply_max_tokens_to_wire_payload(
+    payload: dict[str, Any], value: int
+) -> dict[str, Any]:
+    """Return a copy of a raw wire body with its output-length cap set to ``value``.
+
+    Overwrites every max-token key already present so the cap is honored across
+    endpoint dialects; when none is present, sets the canonical ``max_tokens``
+    key so an override still takes effect on the wire.
+    """
+    updated = dict(payload)
+    present = [key for key in _WIRE_MAX_TOKEN_KEYS if key in updated]
+    if present:
+        for key in present:
+            updated[key] = value
+    else:
+        # No cap recorded: pick the canonical key for the body's dialect so the
+        # server actually honors it. Responses bodies (keyed by "input") expect
+        # max_output_tokens; chat/completions bodies expect max_tokens.
+        canonical = "max_output_tokens" if "input" in updated else "max_tokens"
+        updated[canonical] = value
+    return updated
+
+
+def _resolve_turn_max_tokens(turn: Turn) -> int | None:
+    """Prefer Turn.max_tokens; fall back to wire-body keys in raw_payload."""
+    if turn.max_tokens is not None:
+        return turn.max_tokens
+    raw = turn.raw_payload
+    return max_tokens_from_wire_payload(raw if isinstance(raw, dict) else None)
+
+
+def turn_from_payload_turn(entry: PayloadTurnData) -> Turn:
+    """Rebuild a minimal Turn from PAYLOAD_BYTES entry data."""
+    raw_payload = orjson.loads(entry.payload_bytes)
+    max_tokens = entry.max_tokens
+    if max_tokens is None and isinstance(raw_payload, dict):
+        max_tokens = max_tokens_from_wire_payload(raw_payload)
+    return Turn(
+        role="user",
+        raw_payload=raw_payload,
+        max_tokens=max_tokens,
+        timestamp=entry.timestamp,
+    )
 
 
 class MemoryMapDatasetIndex(AIPerfBaseModel):
@@ -569,7 +699,7 @@ class MemoryMapDatasetClient:
             lambda: f"MemoryMapDatasetClient initialized successfully: data_file={self.data_file_path}, index_file={self.index_file_path}, conversations={len(self.index.conversation_ids)}, size={self.index.total_size} bytes"
         )
 
-    def __enter__(self) -> "MemoryMapDatasetClient":
+    def __enter__(self) -> MemoryMapDatasetClient:
         """Context manager entry."""
         return self
 
@@ -686,6 +816,48 @@ class MemoryMapDatasetClient:
         offset_info = turn_offsets[turn_index]
         return bytes(
             self.data_mmap[offset_info.offset : offset_info.offset + offset_info.size]
+        )
+
+    def get_payload_turn(
+        self, conversation_id: str, turn_index: int
+    ) -> PayloadTurnData | None:
+        """Get payload bytes plus turn scalars for a specific turn.
+
+        Scalars (``max_tokens``, ``timestamp``) are restored from the index
+        when present. When ``max_tokens`` is missing (legacy indexes or turns
+        that never set it on the Turn), it is recovered from wire JSON keys
+        ``max_tokens`` / ``max_completion_tokens`` / ``max_output_tokens``.
+
+        Args:
+            conversation_id: Conversation ID
+            turn_index: Turn index within the conversation
+
+        Returns:
+            ``PayloadTurnData`` or None when the dataset is not in
+            PAYLOAD_BYTES format or the turn has no payload.
+        """
+        if self.index.format != MemoryMapFormat.PAYLOAD_BYTES:
+            return None
+        turn_offsets = self.index.payload_offsets.get(conversation_id)
+        if turn_offsets is None or turn_index >= len(turn_offsets):
+            return None
+        offset_info = turn_offsets[turn_index]
+        payload_bytes = bytes(
+            self.data_mmap[offset_info.offset : offset_info.offset + offset_info.size]
+        )
+        max_tokens = offset_info.max_tokens
+        if max_tokens is None:
+            try:
+                raw = orjson.loads(payload_bytes)
+            except orjson.JSONDecodeError:
+                raw = None
+            max_tokens = max_tokens_from_wire_payload(
+                raw if isinstance(raw, dict) else None
+            )
+        return PayloadTurnData(
+            payload_bytes=payload_bytes,
+            max_tokens=max_tokens,
+            timestamp=offset_info.timestamp,
         )
 
     def close(self) -> None:

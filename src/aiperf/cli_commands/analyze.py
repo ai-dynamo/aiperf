@@ -18,3 +18,9 @@ app.command(
     name="swim-lane",
     help="Render a per-session swim-lane PNG with concurrency curve underneath.",
 )
+
+app.command(
+    "aiperf.cli_commands.turn_messages:app",
+    name="turn-messages",
+    help="Render a collapsible HTML viewer of per-turn input messages (needs --export-level raw).",
+)

@@ -6,7 +6,7 @@ from datetime import datetime
 import orjson
 
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import CreditPhase, PrometheusMetricType, ServerMetricsFormat
+from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.finite import scrub_non_finite
 from aiperf.common.models.server_metrics_models import (
@@ -109,24 +109,7 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
             url for url in self._server_metrics_results.endpoints_successful
         ]
 
-        # Only add phase ranges with start < end: TimeRangeFilter rejects
-        # degenerate windows, and a raise here would drop all server metrics.
-        phase_time_ranges: dict[str, TimeRangeFilter] = {}
-        if self._server_metrics_results.start_ns < self._server_metrics_results.end_ns:
-            phase_time_ranges[CreditPhase.PROFILING] = TimeRangeFilter(
-                start_ns=self._server_metrics_results.start_ns,
-                end_ns=self._server_metrics_results.end_ns,
-            )
-        if (
-            self._server_metrics_results.warmup_start_ns is not None
-            and self._server_metrics_results.warmup_end_ns is not None
-            and self._server_metrics_results.warmup_start_ns
-            < self._server_metrics_results.warmup_end_ns
-        ):
-            phase_time_ranges[CreditPhase.WARMUP] = TimeRangeFilter(
-                start_ns=self._server_metrics_results.warmup_start_ns,
-                end_ns=self._server_metrics_results.warmup_end_ns,
-            )
+        phase_time_ranges = self._build_phase_time_ranges()
 
         summary = ServerMetricsSummary(
             endpoints_configured=endpoints_configured,
@@ -162,6 +145,34 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
             scrub_non_finite(export_data.model_dump(mode="json", exclude_none=True)),
             option=orjson.OPT_INDENT_2,
         ).decode()
+
+    def _build_phase_time_ranges(self) -> dict[str, TimeRangeFilter]:
+        """Build per-phase export time ranges, skipping degenerate windows.
+
+        Warmup ``end_ns`` comes from ``ServerMetricsResults.warmup_end_ns``,
+        which is the same (possibly scrape-extended) end used for
+        ``warmup_endpoint_summaries`` aggregation.
+
+        TimeRangeFilter rejects start >= end, and a raise here would drop all
+        server metrics from the export.
+        """
+        results = self._server_metrics_results
+        ranges: dict[str, TimeRangeFilter] = {}
+        if results.start_ns < results.end_ns:
+            ranges["profiling"] = TimeRangeFilter(
+                start_ns=results.start_ns,
+                end_ns=results.end_ns,
+            )
+        if (
+            results.warmup_start_ns is not None
+            and results.warmup_end_ns is not None
+            and results.warmup_start_ns < results.warmup_end_ns
+        ):
+            ranges["warmup"] = TimeRangeFilter(
+                start_ns=results.warmup_start_ns,
+                end_ns=results.warmup_end_ns,
+            )
+        return ranges
 
     def _build_hybrid_metrics(
         self,

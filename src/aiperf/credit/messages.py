@@ -143,6 +143,8 @@ class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):
         credit_id: ID of the credit this TTFT is for.
         phase: Credit phase for routing to correct phase tracker.
         ttft_ns: Time to first token in nanoseconds (duration from request start).
+        phase_index: Concrete phase instance index used with ``phase`` to build the
+            runtime key that locates the registered phase handler and prefill slot.
     """
 
     credit_id: int

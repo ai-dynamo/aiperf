@@ -3,7 +3,7 @@
 import asyncio
 import time
 from contextlib import suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import orjson
 
@@ -26,6 +26,7 @@ from aiperf.common.models.record_models import (
     ToolCallResponseData,
     find_last_non_empty_usage,
 )
+from aiperf.common.scenario import is_context_overflow_response
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -146,6 +147,19 @@ class InferenceResultParser(CommunicationMixin):
 
         # Make sure any invalid request records are converted to error records for combined processing.
         request_record.create_error_from_invalid()
+
+        # Classify context-overflow errors per InferenceX AgentX RFC section 7.
+        # Runs unconditionally (cheap substring scan, allowlist-driven) so the
+        # ``context_overflow_count`` metric can aggregate even outside scenario
+        # mode -- useful for diagnostics. The boolean is consumed by
+        # ``ContextOverflowCountMetric`` via ``record.request.context_overflow``.
+        if request_record.has_error and request_record.error is not None:
+            try:
+                request_record.context_overflow = is_context_overflow_response(
+                    body=request_record.error.message,
+                )
+            except Exception:
+                request_record.context_overflow = False
 
         # One payload decode + walk per record, shared by the ISL tokeniser and
         # the MediaCounts builder. Both valid and error records go through this.
@@ -398,14 +412,8 @@ class InferenceResultParser(CommunicationMixin):
                 tokenizer, inputs.messages
             )
             if templated is not None:
-                # Tool text (replayed tool_calls / function_call items and
-                # tools schemas) is absent from the role/content ``messages``
-                # view, so it must be tokenised on top of the templated count.
-                tool_count = (
-                    await self._compute_token_count(
-                        tokenizer, inputs.tool_texts, separator=" "
-                    )
-                    or 0
+                tool_count = await self._compute_tool_texts_token_count(
+                    tokenizer, inputs
                 )
                 return templated + tool_count + pretokenised
 
@@ -422,10 +430,25 @@ class InferenceResultParser(CommunicationMixin):
         # Pure pre-tokenised input (e.g. token-id embeddings) carries no text.
         return pretokenised if pretokenised > 0 else None
 
+    async def _compute_tool_texts_token_count(
+        self, tokenizer: Tokenizer, inputs: ExtractedPayload
+    ) -> int:
+        """Count tool-derived text on top of the chat-template count.
+
+        Tool text (replayed ``tool_calls`` / ``function_call`` items and
+        ``tools`` schemas) is absent from the role/content ``messages`` view,
+        so the chat-template path must tokenise it separately; the bare-text
+        path already covers it via ``texts``.
+        """
+        return (
+            await self._compute_token_count(tokenizer, inputs.tool_texts, separator=" ")
+            or 0
+        )
+
     async def _compute_chat_template_token_count(
         self,
         tokenizer: Tokenizer,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
     ) -> int | None:
         """Tokenize ``messages`` through the HF tokenizer's chat template.
 

@@ -294,6 +294,39 @@ async def test_inherited_handle_credit_return_does_not_record_success_sample(
     assert stats.errors == 0
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_user_strategy", [False, True])
+async def test_handle_credit_return_accepts_error_kwarg(
+    tmp_path, use_user_strategy: bool
+) -> None:
+    # Regression (PR #1165 review): the callback handler calls
+    # handle_credit_return(credit, error=...) on the run's strategy. Every other
+    # strategy accepts the error kwarg; AdaptiveScaleStrategy did not, so every
+    # credit return under adaptive_scale raised TypeError. Cover both the plain
+    # path and the delegated (_user_strategy) path.
+    strategy = _strategy(tmp_path)
+    if use_user_strategy:
+        strategy._user_strategy = MagicMock()
+        strategy._user_strategy.handle_credit_return = AsyncMock()
+    credit = Credit(
+        id=1,
+        phase=CreditPhase.PROFILING,
+        conversation_id="c",
+        x_correlation_id="x",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=time.time_ns() - 5_000_000,
+    )
+
+    # Must not raise TypeError on the error keyword.
+    await strategy.handle_credit_return(credit, error="boom")
+
+    if use_user_strategy:
+        strategy._user_strategy.handle_credit_return.assert_awaited_once_with(
+            credit, error="boom"
+        )
+
+
 def test_unsupported_sla_metric_fails_during_strategy_construction(tmp_path) -> None:
     cfg = CreditPhaseConfig(
         phase=CreditPhase.PROFILING,
