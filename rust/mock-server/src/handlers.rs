@@ -383,6 +383,47 @@ pub async fn chat_completions(
     }
 }
 
+/// Non-streaming chat-completion generation as raw JSON bytes, without the
+/// tokio/axum request machinery — used by the io_uring (`--uring`) engine, which
+/// runs `--fast` semantics (zero simulated latency) so the `wait_for_tokens`
+/// await the axum handler performs is a no-op and is skipped here. Records the
+/// same metrics via `admit_fast`/`complete_fast` as the axum path.
+#[cfg(feature = "uring")]
+pub(crate) fn render_chat_completion_nonstream_fast(
+    state: &AppState,
+    req: &ChatCompletionRequest,
+) -> Vec<u8> {
+    let endpoint = "/v1/chat/completions";
+    let start = Instant::now();
+    state.recorder.init_model_config(&req.model);
+    let req_gen = GenRequest::Chat(req);
+    let mut ctx = RequestCtx::build("chatcmpl", &req_gen, endpoint, start, state);
+    if state.inject_tool_call() {
+        let (spec, tool_use_tokens) = ToolCallSpec::from_config(&state.config);
+        ctx.usage.tool_use_prompt_token_count = Some(tool_use_tokens);
+        ctx.tool_call = Some(spec);
+    }
+    let labeled = state.recorder.labeled(endpoint, &ctx.model);
+    state.recorder.admit_fast(&labeled);
+    let latency = start.elapsed();
+    let info = LLMLatencyInfo {
+        e2e: latency,
+        prefill: std::time::Duration::ZERO,
+        decode: latency,
+    };
+    let json_body = write_chat_response(&ctx);
+    let resp_bytes = json_body.len() as u64;
+    state.recorder.complete_fast(
+        &labeled,
+        latency.as_secs_f64(),
+        &ctx.usage,
+        &info,
+        ctx.tokenized.text.len() as u64,
+        resp_bytes,
+    );
+    json_body
+}
+
 /// Typed mirror of the `json!()`-built response this replaced. Serializing a
 /// typed struct directly skips building an intermediate `serde_json::Value`
 /// tree (a `String`/`Map`/`Vec` allocation per field) before serializing that

@@ -26,6 +26,19 @@ fn main() -> anyhow::Result<()> {
         return aiperf_mock_server::fastmock::run(&config);
     }
 
+    if config.uring {
+        #[cfg(feature = "uring")]
+        {
+            return aiperf_mock_server::uring::run(&config);
+        }
+        #[cfg(not(feature = "uring"))]
+        {
+            anyhow::bail!(
+                "--uring requires a build with `--features uring` (io_uring/monoio engine)"
+            );
+        }
+    }
+
     // `0` selects one child per available CPU; `1` serves directly.
     let processes = if config.processes == 0 {
         num_cpus::get().max(1)

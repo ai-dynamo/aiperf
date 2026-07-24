@@ -549,6 +549,15 @@ pub struct MockServerConfig {
     #[arg(long, env = "MOCK_SERVER_NO_METRICS", default_value_t = false)]
     pub no_metrics: bool,
 
+    /// Serve the request hot path on an io_uring thread-per-core engine
+    /// (monoio) instead of the tokio/hyper stack, to exceed the async runtime's
+    /// per-request scheduling ceiling. Requires a build with `--features uring`;
+    /// currently handles the non-streaming OpenAI chat-completions path with
+    /// full real behavior (parse, tokenize, metrics, deterministic response).
+    /// Implies `--fast` semantics on the served path (zero simulated latency).
+    #[arg(long, env = "MOCK_SERVER_URING", default_value_t = false)]
+    pub uring: bool,
+
     /// Serve the `/metrics` family as OpenMetrics text instead of classic
     /// Prometheus text, matching the vLLM Rust frontend (which uses the
     /// `prometheus-client` OpenMetrics encoder). Sets the
