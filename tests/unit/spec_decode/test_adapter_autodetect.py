@@ -74,3 +74,17 @@ def test_extract_suppresses_multi_sequence_stats() -> None:
         ParsedResponse(perf_ns=3, usage={"completion_tokens": 10}),
     ]
     assert InferenceResultParser._extract_spec_decode_acceptance(responses) is None
+
+
+def test_extract_treats_empty_dict_payload_as_absent() -> None:
+    """An empty ``{}`` payload is counted by truthiness (like the adapter), so a
+    real payload beside it still yields a record instead of tripping the n > 1
+    guard."""
+    responses = [
+        ParsedResponse(perf_ns=1, spec_decode_stats={}),
+        ParsedResponse(perf_ns=2, spec_decode_stats=SUMMARY_PAYLOAD),
+        ParsedResponse(perf_ns=3, usage={"completion_tokens": 5}),
+    ]
+    record = InferenceResultParser._extract_spec_decode_acceptance(responses)
+    assert record is not None
+    assert record.engine == "vllm"

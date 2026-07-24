@@ -327,8 +327,12 @@ class InferenceResultParser(CommunicationMixin):
         ``completion_tokens`` to a single sequence, so a mixed record is worse
         than none. ``n > 1`` non-streaming is suppressed upstream in
         ``BaseEndpoint.extract_spec_decode_stats``.
+
+        Counts payloads by truthiness (not ``is not None``) to match the
+        adapter's ``_find_spec_decode_payload``: an empty ``{}`` is treated as
+        absent at both sites, so it never spuriously trips the n > 1 guard.
         """
-        with_stats = [r for r in responses if r.spec_decode_stats is not None]
+        with_stats = [r for r in responses if r.spec_decode_stats]
         if len(with_stats) != 1:
             return None
         for _entry, AdapterClass in plugins.iter_all(PluginType.SPEC_DECODE_ADAPTER):
