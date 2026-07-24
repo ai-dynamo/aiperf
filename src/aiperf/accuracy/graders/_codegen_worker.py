@@ -169,10 +169,18 @@ def _start_death_watcher() -> None:
     whole life, holding no lock, so it does not reintroduce the multithreaded-fork
     hazard when lighteval forks from the main thread.
     """
+    # Process groups (killpg) are Unix-only; without them there is nothing to
+    # reap, so skip the watcher entirely (LCB can't run on Windows anyway).
+    if not hasattr(os, "killpg"):
+        return
     fd_str = os.environ.get(_DEATH_FD_ENV)
     if not fd_str:
         return
     death_fd = int(fd_str)
+    # Untrusted sandbox children shouldn't inherit the death fd either; close it
+    # in every forked child (the parent's watcher keeps its own copy).
+    if hasattr(os, "register_at_fork"):
+        os.register_at_fork(after_in_child=lambda: _close_fd_quietly(death_fd))
 
     def _watch() -> None:
         with contextlib.suppress(OSError):

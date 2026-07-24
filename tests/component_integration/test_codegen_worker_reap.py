@@ -94,8 +94,8 @@ async def test_death_watcher_reaps_session_when_parent_dies(tmp_path: Path) -> N
             import os, subprocess, sys, time
             os.setsid()  # own session so killpg(0) can't touch the test runner
             r, w = os.pipe()
-            os.environ["AIPERF_CODEGEN_DEATH_FD"] = str(r)
             from aiperf.accuracy.graders import _codegen_worker as wkr
+            os.environ[wkr._DEATH_FD_ENV] = str(r)
             wkr._start_death_watcher()
             child = subprocess.Popen(
                 [sys.executable, "-c", "import time; time.sleep(300)"],
