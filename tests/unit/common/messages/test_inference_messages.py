@@ -59,7 +59,7 @@ def test_inference_results_parsed_responses_round_trip_builtin_types():
         parsed_responses=payloads,
         last_response_perf_ns=10,
         raw_response_count=11,
-        responses_validated=True,
+        responses_compacted=True,
     )
 
     restored = InferenceResultsMessage.from_json(message.to_json_bytes())
@@ -73,7 +73,7 @@ def test_inference_results_parsed_responses_round_trip_builtin_types():
     assert restored_responses == responses
     assert restored.last_response_perf_ns == 10
     assert restored.raw_response_count == 11
-    assert restored.responses_validated is True
+    assert restored.responses_compacted is True
 
 
 def test_encode_parsed_responses_custom_data_returns_none():
@@ -100,4 +100,4 @@ def test_inference_results_legacy_message_defaults_to_raw_path():
     assert restored.parsed_responses is None
     assert restored.last_response_perf_ns is None
     assert restored.raw_response_count is None
-    assert restored.responses_validated is False
+    assert restored.responses_compacted is False

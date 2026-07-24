@@ -94,11 +94,13 @@ class ParsedResponsePayload:
             if data_type is None:
                 return None
 
+        # Encoding is terminal: the worker does not mutate parsed responses after
+        # publication, so sharing these references avoids hot-path defensive copies.
         return cls(
             perf_ns=response.perf_ns,
             data_type=data_type,
             data=data,
-            usage=dict(response.usage) if response.usage is not None else None,
+            usage=response.usage,
             sources=response.sources,
             metadata=response.metadata,
         )
@@ -152,9 +154,9 @@ class InferenceResultsMessage(BaseServiceMessage):
         ge=0,
         description="Number of raw responses received before optional compaction.",
     )
-    responses_validated: bool = Field(
+    responses_compacted: bool = Field(
         default=False,
-        description="Whether the worker validated the raw responses before compaction.",
+        description="Whether the worker validated and compacted the raw responses.",
     )
 
 

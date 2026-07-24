@@ -168,7 +168,7 @@ class TestRecordProcessorGenericShip:
             parsed_responses=payloads,
             last_response_perf_ns=2,
             raw_response_count=3,
-            responses_validated=True,
+            responses_compacted=True,
         )
 
         await RecordProcessor._process_and_forward_record(
@@ -179,7 +179,7 @@ class TestRecordProcessorGenericShip:
             message.record,
             parsed_responses=parsed_responses,
             raw_response_count=3,
-            responses_validated=True,
+            responses_compacted=True,
         )
 
 

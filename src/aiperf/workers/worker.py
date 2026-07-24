@@ -993,23 +993,23 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         Note: Uses execute_async() to avoid blocking on network I/O.
         """
         # All records will flow through here to be sent to the inference results push client.
-        responses_validated = record.valid
-        self.task_stats.task_finished(responses_validated)
+        record_valid = record.valid
+        self.task_stats.task_finished(record_valid)
 
         raw_response_count = len(record.responses) if record.responses else 0
         last_response_perf_ns = (
-            record.responses[-1].perf_ns
-            if responses_validated and record.responses
-            else None
+            record.responses[-1].perf_ns if record_valid and record.responses else None
         )
         parsed_response_payloads = None
         if (
-            responses_validated
+            record_valid
             and parsed_responses is not None
             and self.run.cfg.artifacts.export_level != ExportLevel.RAW
         ):
             parsed_response_payloads = encode_parsed_responses(parsed_responses)
             if parsed_response_payloads is not None:
+                # Only RAW export consumes RequestRecord.responses; non-RAW
+                # pipeline consumers use the parsed response payloads.
                 record.responses = None
 
         msg = InferenceResultsMessage(
@@ -1018,7 +1018,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             parsed_responses=parsed_response_payloads,
             last_response_perf_ns=last_response_perf_ns,
             raw_response_count=raw_response_count,
-            responses_validated=parsed_response_payloads is not None,
+            responses_compacted=parsed_response_payloads is not None,
         )
         self.execute_async(self.inference_results_push_client.push(msg))
 

@@ -126,7 +126,7 @@ class InferenceResultParser(CommunicationMixin):
         *,
         parsed_responses: list[ParsedResponse] | None = None,
         raw_response_count: int | None = None,
-        responses_validated: bool = False,
+        responses_compacted: bool = False,
     ) -> ParsedResponseRecord:
         """Handle an inference results message.
 
@@ -149,7 +149,7 @@ class InferenceResultParser(CommunicationMixin):
         )
 
         # Make sure any invalid request records are converted to error records for combined processing.
-        if not responses_validated:
+        if not responses_compacted:
             request_record.create_error_from_invalid()
 
         # One payload decode + walk per record, shared by the ISL tokeniser and

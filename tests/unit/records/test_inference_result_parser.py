@@ -230,7 +230,7 @@ async def test_parse_request_record_uses_worker_parsed_responses(
         request_record,
         parsed_responses=parsed_responses,
         raw_response_count=2,
-        responses_validated=True,
+        responses_compacted=True,
     )
 
     assert result.responses == parsed_responses
