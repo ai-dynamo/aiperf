@@ -84,8 +84,11 @@ def test_discriminator_nested_subagent_rejected():
         WekaSubagentEntry.model_validate(d)
 
 
-def test_discriminator_streaming_inside_subagent_rejected():
-    """Pin: the inner list accepts only WekaNormalRequest, so a type='s' streaming request is rejected on the Literal['n'] mismatch."""
+def test_discriminator_streaming_inside_subagent_accepted():
+    """A subagent's inner requests accept both normal and streaming API calls
+    (``list[WekaNormalRequest | WekaStreamingRequest]``), matching the top-level
+    trace which already allows streaming. A single streaming inner request must
+    not abort the whole dataset load under ``extra='forbid'``."""
     inner_streaming = {
         "t": 0.0,
         "type": "s",
@@ -95,8 +98,8 @@ def test_discriminator_streaming_inside_subagent_rejected():
         "ttft": 0.2,
     }
     d = _valid_subagent([inner_streaming])
-    with pytest.raises(ValidationError):
-        WekaSubagentEntry.model_validate(d)
+    entry = WekaSubagentEntry.model_validate(d)
+    assert [r.type for r in entry.requests] == ["s"]
 
 
 def test_discriminator_ttft_on_normal_request_rejected():

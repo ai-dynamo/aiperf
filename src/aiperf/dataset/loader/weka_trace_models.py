@@ -119,8 +119,10 @@ class WekaSubagentEntry(AIPerfBaseModel):
         "status='async_launched'.",
     )
     status: str = Field(description="'completed' or other terminal status.")
-    requests: list[WekaNormalRequest] = Field(
-        description="Inner requests of the subagent."
+    requests: list[
+        Annotated[WekaNormalRequest | WekaStreamingRequest, Field(discriminator="type")]
+    ] = Field(
+        description="Inner requests of the subagent (normal or streaming API calls)."
     )
     models: list[str] = Field(description="Models used by the subagent.")
     tool_tokens: int = Field(
