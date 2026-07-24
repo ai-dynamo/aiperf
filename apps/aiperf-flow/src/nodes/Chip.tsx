@@ -4,11 +4,17 @@
  */
 
 import type { NodeProps, Node } from "@xyflow/react";
+import { Handle, Position } from "@xyflow/react";
 import clsx from "clsx";
 import { surfaceClassName, strokeClassName, inkClassName } from "../theme/tokens.js";
 import type { ChipNodeData } from "./types.js";
 
 export type ChipNodeType = Node<ChipNodeData, "chip">;
+
+// Invisible, zero-footprint handles: present in the DOM so a chip can be an edge endpoint (a
+// junction/decision node like "is_virtual()?") without React Flow's "couldn't create edge for
+// handle id null" (#008) error, but with no visible connector dot so pure-label chips look unchanged.
+const HIDDEN_HANDLE_CLASS_NAME = "!h-0 !w-0 !min-h-0 !min-w-0 !border-0 !bg-transparent opacity-0";
 
 export function ChipNode({ data }: NodeProps<ChipNodeType>): React.JSX.Element {
   return (
@@ -21,7 +27,9 @@ export function ChipNode({ data }: NodeProps<ChipNodeType>): React.JSX.Element {
         data.className,
       )}
     >
+      <Handle type="target" position={Position.Left} className={HIDDEN_HANDLE_CLASS_NAME} />
       {data.label}
+      <Handle type="source" position={Position.Right} className={HIDDEN_HANDLE_CLASS_NAME} />
     </div>
   );
 }
