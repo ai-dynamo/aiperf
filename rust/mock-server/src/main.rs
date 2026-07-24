@@ -54,11 +54,24 @@ fn main() -> anyhow::Result<()> {
     } else {
         num_cpus::get()
     };
+    // Pin worker threads round-robin across the CPUs available to this process
+    // (honoring any taskset/cgroup cpuset). Removing cross-core migration keeps
+    // each worker's runqueue/connection state cache-hot, which lifts the
+    // scheduling-bound throughput ceiling of the unpinned multi-thread runtime.
+    let core_ids: Vec<core_affinity::CoreId> =
+        core_affinity::get_core_ids().unwrap_or_default();
+    let pin_counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .worker_threads(worker_threads)
         .max_blocking_threads(1024)
         .thread_name("aiperf-mock")
+        .on_thread_start(move || {
+            if !core_ids.is_empty() {
+                let idx = pin_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                core_affinity::set_for_current(core_ids[idx % core_ids.len()]);
+            }
+        })
         .build()?;
 
     runtime.block_on(async move { serve(config, worker_threads).await })

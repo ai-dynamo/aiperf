@@ -35,6 +35,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
 parking_lot = "0.12"
+# Pins tokio worker threads to distinct CPUs (respecting the process cpuset) to
+# cut cross-core migration / cache thrash under saturating load — the scheduling
+# overhead that caps the unpinned multi-thread runtime's throughput.
+core_affinity = "0.8"
 # Global allocator for the `aiperf-mock-server` binary. Under saturating load
 # the request hot path is allocation-heavy (per-request request-id/model/content
 # strings, response buffers, hyper framing) across all worker threads; profiling
