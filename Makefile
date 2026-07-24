@@ -18,7 +18,7 @@
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install install-app bundle-cli wheel docker docker-run first-time-setup \
 		ci-install check-mock-server-install \
-		test-verbose setup-venv install-mock-server mock-server-native test-ci test-all \
+		test-verbose setup-venv install-mock-server mock-server-native install-mock-amdsmi test-ci test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
@@ -225,6 +225,9 @@ install-mock-server: mock-server-native #? install the native Rust `aiperf-mock-
 	# the native `aiperf` binary on PATH.
 	cp $(RUST_TARGET)/release/aiperf-mock-server $(VENV_PATH)/bin/aiperf-mock-server
 	chmod +x $(VENV_PATH)/bin/aiperf-mock-server
+
+install-mock-amdsmi: #? install the fake amdsmi bindings for testing the AMD telemetry path (not part of default install).
+	$(activate_venv) && uv pip install -e "tests/aiperf_mock_amdsmi[dev]"
 
 check-mock-server-install: #? verify the native `aiperf-mock-server` command is installed and runnable.
 	$(activate_venv) && command -v aiperf-mock-server >/dev/null && aiperf-mock-server --help >/dev/null

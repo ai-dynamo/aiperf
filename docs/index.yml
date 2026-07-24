@@ -233,6 +233,8 @@ navigation:
     path: reference/api-endpoints.md
   - page: YAML Config Roadmap
     path: reference/yaml-config-roadmap.md
+  - page: Mocking a ROCm Environment
+    path: reference/mock-amdsmi.md
 
 - section: Server Metrics
   collapsed: true
