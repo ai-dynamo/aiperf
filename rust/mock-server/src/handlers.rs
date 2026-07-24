@@ -70,12 +70,32 @@ fn now_secs() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+/// A process-unique request-id number, cheaper than a v4 UUID on the hot path.
+///
+/// The response `id` only needs to be unique, not random. Each thread claims a
+/// distinct high-order ordinal once, then increments a thread-local counter — no
+/// per-request RNG and no cross-thread atomic contention. Unique for up to 2^40
+/// requests across up to 2^24 threads, far beyond any run.
+fn next_request_seq() -> u64 {
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static THREAD_ORDINAL: AtomicU64 = AtomicU64::new(0);
+    thread_local! {
+        static SEQ: Cell<u64> = Cell::new(THREAD_ORDINAL.fetch_add(1, Ordering::Relaxed) << 40);
+    }
+    SEQ.with(|c| {
+        let v = c.get();
+        c.set(v.wrapping_add(1));
+        v
+    })
+}
+
 fn make_request_id(prefix: &str) -> String {
-    format!("{prefix}-{}", uuid::Uuid::new_v4())
+    format!("{prefix}-{:016x}", next_request_seq())
 }
 
 fn make_anthropic_message_id() -> String {
-    format!("msg_{}", uuid::Uuid::new_v4())
+    format!("msg_{:016x}", next_request_seq())
 }
 
 fn maybe_inject_error(state: &AppState) -> Option<AppError> {
