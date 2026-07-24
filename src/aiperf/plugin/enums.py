@@ -79,7 +79,7 @@ RecordProcessorType = plugins.create_enum(PluginType.RECORD_PROCESSOR, "RecordPr
 
 RecordObserverTypeStr: TypeAlias = str
 RecordObserverType = plugins.create_enum(PluginType.RECORD_OBSERVER, "RecordObserverType", module=__name__)
-"""Dynamic enum for record observer. Example: RecordObserverType.OUTPUTS_JSON, RecordObserverType.RAW_RECORD_WRITER"""
+"""Dynamic enum for record observer. Example: RecordObserverType.OUTPUTS_JSON, RecordObserverType.RAW_RECORD_WRITER, RecordObserverType.RECORD_SHARD_JSONL"""
 
 AccumulatorTypeStr: TypeAlias = str
 AccumulatorType = plugins.create_enum(PluginType.ACCUMULATOR, "AccumulatorType", module=__name__)
@@ -87,7 +87,7 @@ AccumulatorType = plugins.create_enum(PluginType.ACCUMULATOR, "AccumulatorType",
 
 StreamExporterTypeStr: TypeAlias = str
 StreamExporterType = plugins.create_enum(PluginType.STREAM_EXPORTER, "StreamExporterType", module=__name__)
-"""Dynamic enum for stream exporter. Example: StreamExporterType.ACCURACY_JSONL_WRITER, StreamExporterType.OTEL_METRICS_STREAMER, StreamExporterType.SERVER_METRICS_JSONL_WRITER"""
+"""Dynamic enum for stream exporter. Example: StreamExporterType.ACCURACY_JSONL_WRITER, StreamExporterType.NETWORK_LATENCY_JSONL_WRITER, StreamExporterType.SERVER_METRICS_JSONL_WRITER"""
 
 AnalyzerTypeStr: TypeAlias = str
 AnalyzerType = plugins.create_enum(PluginType.ANALYZER, "AnalyzerType", module=__name__)
@@ -103,7 +103,7 @@ AccuracyBenchmarkType = plugins.create_enum(PluginType.ACCURACY_BENCHMARK, "Accu
 
 DataExporterTypeStr: TypeAlias = str
 DataExporterType = plugins.create_enum(PluginType.DATA_EXPORTER, "DataExporterType", module=__name__)
-"""Dynamic enum for data exporter. Example: DataExporterType.ACCURACY_CSV, DataExporterType.SERVER_METRICS_CSV, DataExporterType.WANDB"""
+"""Dynamic enum for data exporter. Example: DataExporterType.ACCURACY_CSV, DataExporterType.RECORD_SHARD_JSONL_AGGREGATOR, DataExporterType.WANDB"""
 
 ConsoleExporterTypeStr: TypeAlias = str
 ConsoleExporterType = plugins.create_enum(PluginType.CONSOLE_EXPORTER, "ConsoleExporterType", module=__name__)

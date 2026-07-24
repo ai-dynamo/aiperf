@@ -354,7 +354,7 @@ class TestProcessResultsStreamExporters:
         exp = _make_stub_stream_exporter()
         mgr = _make_manager_mock(
             accumulators={AccumulatorType.METRIC_RESULTS: acc},
-            stream_exporters={StreamExporterType.RECORD_EXPORT: exp},
+            stream_exporters={StreamExporterType.SERVER_METRICS_JSONL_WRITER: exp},
         )
 
         await mgr._process_results(phase=CreditPhase.PROFILING, cancelled=False)
@@ -416,7 +416,7 @@ class TestProcessResultsSingleFlight:
         exp = _make_stub_stream_exporter()
         mgr = _make_manager_mock(
             accumulators={AccumulatorType.METRIC_RESULTS: acc},
-            stream_exporters={StreamExporterType.RECORD_EXPORT: exp},
+            stream_exporters={StreamExporterType.SERVER_METRICS_JSONL_WRITER: exp},
         )
 
         first = await mgr._process_results(phase=CreditPhase.PROFILING, cancelled=False)

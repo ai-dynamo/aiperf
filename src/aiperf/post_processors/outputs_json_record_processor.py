@@ -116,7 +116,7 @@ class OutputsJsonRecordProcessor(
         response_text = "".join(parts) or None
 
         # Capture the allowlisted metrics straight off the producer output, in the
-        # same display units the records JSONL export uses (see RecordExportJSONLWriter).
+        # same display units the records JSONL export uses (see RecordShardJSONLWriter).
         # This keeps outputs.json self-contained: metrics no longer require the
         # records JSONL to have been written, so --export-level summary (or a YAML
         # records: false) still yields fully-populated per-request metrics.

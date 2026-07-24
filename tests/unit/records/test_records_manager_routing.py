@@ -145,7 +145,7 @@ class TestBuildRoutingTable:
             AccumulatorType.GPU_TELEMETRY: telemetry_acc,
         }
         manager._stream_exporters = {
-            StreamExporterType.RECORD_EXPORT: exporter,
+            StreamExporterType.SERVER_METRICS_JSONL_WRITER: exporter,
         }
         _set_plugin_entries(
             monkeypatch,
@@ -154,7 +154,7 @@ class TestBuildRoutingTable:
                 _make_entry("gpu_telemetry", ["gpu_telemetry"]),
             ],
             stream_exporter_entries=[
-                _make_entry("record_export", ["metric_records"]),
+                _make_entry("server_metrics_jsonl_writer", ["metric_records"]),
             ],
         )
 
@@ -369,7 +369,7 @@ class TestFinalizeStreamExporters:
         exp2 = StubStreamExporter()
         mgr = _make_finalize_manager_mock(
             {
-                StreamExporterType.RECORD_EXPORT: exp1,
+                StreamExporterType.SERVER_METRICS_JSONL_WRITER: exp1,
                 StreamExporterType.GPU_TELEMETRY_JSONL_WRITER: exp2,
             },
         )
@@ -393,7 +393,7 @@ class TestFinalizeStreamExporters:
         exp2 = StubStreamExporter()
         mgr = _make_finalize_manager_mock(
             {
-                StreamExporterType.RECORD_EXPORT: exp1,
+                StreamExporterType.SERVER_METRICS_JSONL_WRITER: exp1,
                 StreamExporterType.GPU_TELEMETRY_JSONL_WRITER: exp2,
             },
         )
@@ -413,7 +413,7 @@ class TestFinalizeStreamExporters:
         exp2.finalize.side_effect = ValueError("error 2")
         mgr = _make_finalize_manager_mock(
             {
-                StreamExporterType.RECORD_EXPORT: exp1,
+                StreamExporterType.SERVER_METRICS_JSONL_WRITER: exp1,
                 StreamExporterType.GPU_TELEMETRY_JSONL_WRITER: exp2,
             },
         )

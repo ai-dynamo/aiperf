@@ -1006,6 +1006,14 @@ record_processor:
 # One-to-many mapping: multiple observers loaded simultaneously.
 # =============================================================================
 record_observer:
+  record_shard_jsonl:
+    class: aiperf.post_processors.record_shard_jsonl_writer:RecordShardJSONLWriter
+    description: |
+      Computed per-record metrics JSONL writer. Each RecordProcessor writes its
+      own records_shards/records_{id}.jsonl shard; RecordShardJSONLAggregator
+      merges them into profile_export.jsonl. Enabled when export_level is
+      RECORDS or RAW.
+
   raw_record_writer:
     class: aiperf.post_processors.raw_record_writer_processor:RawRecordWriterProcessor
     description: |
@@ -1105,14 +1113,6 @@ stream_exporter:
     metadata:
       record_types: [metric_records, credit_phase_stats]
 
-  record_export:
-    class: aiperf.post_processors.record_export_jsonl_writer:RecordExportJSONLWriter
-    description: |
-      Record export JSONL writer that writes per-record metrics to JSONL files with
-      display unit conversion and filtering. Enabled when export_level is RECORDS.
-    metadata:
-      record_types: [metric_records]
-
   server_metrics_jsonl_writer:
     class: aiperf.server_metrics.jsonl_writer:ServerMetricsJSONLWriter
     description: |
@@ -1179,6 +1179,12 @@ data_exporter:
       Weights & Biases post-run exporter that uploads benchmark config, metrics,
       tags, and generated artifacts to a wandb project.
       Enabled when --wandb-project is configured.
+
+  record_shard_jsonl_aggregator:
+    class: aiperf.post_processors.record_shard_jsonl_writer:RecordShardJSONLAggregator
+    description: |
+      Merges per-processor computed-record JSONL shards (records_shards/records_*.jsonl)
+      into the final profile_export.jsonl. Enabled when export_level is RECORDS or RAW.
 
   raw_record_aggregator:
     class: aiperf.post_processors.raw_record_writer_processor:RawRecordAggregator
