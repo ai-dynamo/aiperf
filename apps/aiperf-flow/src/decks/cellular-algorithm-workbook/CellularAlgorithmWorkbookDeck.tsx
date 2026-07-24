@@ -34,7 +34,7 @@ export function CellularAlgorithmWorkbookDeck(): React.JSX.Element {
     <div className="flex h-screen flex-col bg-surface-chrome">
       <TopBar section="Cellular Algorithm Workbook" />
       <div className="border-b border-stroke-secondary bg-surface-page py-3">
-        <div className="mx-auto max-w-6xl px-10">
+        <div className="mx-auto max-w-6xl 2xl:max-w-[1728px] px-10">
           <div className="mb-2">
             <Eyebrow>Cellular execution · algorithm workbook</Eyebrow>
             <h1 className={`text-2xl font-semibold ${inkClassName("primary")}`}>Reason from gate to artifact</h1>
@@ -48,7 +48,7 @@ export function CellularAlgorithmWorkbookDeck(): React.JSX.Element {
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto min-h-full max-w-6xl bg-surface-page px-10 py-8">
+        <div className="mx-auto min-h-full max-w-6xl 2xl:max-w-[1728px] bg-surface-page px-10 py-8">
           {page === "workbook" && <WorkbookPage />}
           {page === "compose" && <ComposePage />}
           {page === "decisions" && <DecisionsPage />}

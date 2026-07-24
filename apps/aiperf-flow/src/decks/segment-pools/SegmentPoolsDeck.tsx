@@ -42,12 +42,12 @@ export function SegmentPoolsDeck(): React.JSX.Element {
     <div className="flex h-screen flex-col bg-surface-chrome">
       <TopBar section="Segment Pools" />
       <div className="border-b border-stroke-secondary bg-surface-page py-3">
-        <div className="mx-auto max-w-6xl px-10">
+        <div className="mx-auto max-w-6xl 2xl:max-w-[1728px] px-10">
           <PageTabs pages={PAGES} current={page} onChange={setPage} />
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto min-h-full max-w-6xl bg-surface-page px-10 py-8">
+        <div className="mx-auto min-h-full max-w-6xl 2xl:max-w-[1728px] bg-surface-page px-10 py-8">
           {page === "overview" && <OverviewPage />}
           {page === "pool" && <PoolPage />}
           {page === "payloads" && <PayloadsPage />}

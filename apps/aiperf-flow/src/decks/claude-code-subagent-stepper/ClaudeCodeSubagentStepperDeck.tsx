@@ -439,7 +439,7 @@ export function ClaudeCodeSubagentStepperDeck(): React.JSX.Element {
 
   return (
     <div className={`min-h-full p-6 ${surfaceClassName("page")}`}>
-      <Stack gap={20} className="mx-auto max-w-6xl">
+      <Stack gap={20} className="mx-auto max-w-6xl 2xl:max-w-[1728px]">
         <Stack gap={8}>
           <Row align="center" gap={10} wrap>
             <h1 className={`text-xl font-bold ${inkClassName("primary")}`}>

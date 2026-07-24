@@ -387,7 +387,7 @@ export function SlurmArchitectureDeck(): React.JSX.Element {
     <div className="flex h-screen flex-col bg-surface-chrome">
       <TopBar section="SLURM Cellular Architecture" />
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className={`mx-auto min-h-full max-w-6xl px-10 py-8 ${surfaceClassName("page")}`}>
+        <div className={`mx-auto min-h-full max-w-6xl 2xl:max-w-[1728px] px-10 py-8 ${surfaceClassName("page")}`}>
           <Stack gap={20}>
             <Row align="start" gap={18} wrap>
               <Stack gap={5} className="max-w-[900px]">

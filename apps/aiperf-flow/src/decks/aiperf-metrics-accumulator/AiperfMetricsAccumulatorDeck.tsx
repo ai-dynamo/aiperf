@@ -781,7 +781,7 @@ export function AiperfMetricsAccumulatorDeck(): React.JSX.Element {
     <div className={clsxLocal("flex h-screen flex-col", surfaceClassName("chrome"))}>
       <TopBar section="Metrics Accumulator" />
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className={clsxLocal("mx-auto min-h-full max-w-6xl px-10 py-8", surfaceClassName("page"))}>
+        <div className={clsxLocal("mx-auto min-h-full max-w-6xl 2xl:max-w-[1728px] px-10 py-8", surfaceClassName("page"))}>
           <Stack gap={28}>
             <Stack gap={8}>
               <h1 className={`text-2xl font-bold ${inkClassName("primary")}`}>AIPerf Metrics Accumulator</h1>

@@ -331,7 +331,7 @@ export function MockerClockInversionDeck(): React.JSX.Element {
   const frame = sim.current ?? FRAMES[0];
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 bg-surface-page px-10 py-8">
+    <div className="mx-auto flex max-w-6xl 2xl:max-w-[1728px] flex-col gap-6 bg-surface-page px-10 py-8">
       <Stack gap={8}>
         <Row gap={9} align="center" wrap>
           <CategoryPill category="green" label="AIPerf ajc/rust" />

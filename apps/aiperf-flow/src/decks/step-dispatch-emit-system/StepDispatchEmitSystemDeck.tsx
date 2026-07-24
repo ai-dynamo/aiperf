@@ -592,7 +592,7 @@ export function StepDispatchEmitSystemDeck(): React.JSX.Element {
     <div className="flex h-screen flex-col bg-surface-chrome">
       <TopBar section="Step / Dispatch / Emit" />
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto min-h-full max-w-6xl bg-surface-page px-10 py-8">
+        <div className="mx-auto min-h-full max-w-6xl 2xl:max-w-[1728px] bg-surface-page px-10 py-8">
           <Stack gap={28}>
             <Header />
             <Callout tone="info" title="Structural invariant (spec §0)">

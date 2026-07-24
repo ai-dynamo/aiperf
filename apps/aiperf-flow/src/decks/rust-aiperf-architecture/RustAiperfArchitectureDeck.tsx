@@ -64,7 +64,7 @@ export function RustAiperfArchitectureDeck(): React.JSX.Element {
     <div className="flex h-screen flex-col bg-surface-chrome">
       <TopBar section="Rust AIPerf Architecture" />
       <div className="border-b border-stroke-secondary bg-surface-page py-4">
-        <div className="mx-auto max-w-6xl px-10">
+        <div className="mx-auto max-w-6xl 2xl:max-w-[1728px] px-10">
           <h1 className="text-xl font-bold">Rust AIPerf architecture</h1>
           <p className={`mt-1 max-w-4xl text-sm ${inkClassName("secondary")}`}>
             Four zoom levels, from product boundaries to the hot-path seams. Grounded in the current workspace code
@@ -79,7 +79,7 @@ export function RustAiperfArchitectureDeck(): React.JSX.Element {
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto min-h-full max-w-6xl bg-surface-page px-10 py-8">
+        <div className="mx-auto min-h-full max-w-6xl 2xl:max-w-[1728px] bg-surface-page px-10 py-8">
           {page === "system" && <SystemPage />}
           {page === "processes" && <ProcessesPage />}
           {page === "runtime" && <RuntimePage />}
