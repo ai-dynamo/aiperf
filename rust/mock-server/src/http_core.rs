@@ -92,46 +92,52 @@ fn bad_request(e: &serde_json::Error, keep_alive: bool) -> Vec<u8> {
     http_response("422 Unprocessable Entity", "application/json", msg.as_bytes(), keep_alive)
 }
 
-/// Build the response bytes for one fully-received request.
-pub fn route(state: &AppState, head: &Head, buf: &[u8]) -> Vec<u8> {
+/// Fast path: serve the throughput-critical endpoints (chat/text completions,
+/// embeddings) with the hand-rolled synchronous renderers. Returns `None` for
+/// any other request so the caller can fall back to the full axum `Router`
+/// (`--blocking`) or a minimal handler (`--uring`).
+pub fn route_fast(state: &AppState, head: &Head, buf: &[u8]) -> Option<Vec<u8>> {
+    if !head.is_post {
+        return None;
+    }
     let path = &buf[head.path_start..head.path_end];
     let ka = head.keep_alive;
-    if head.is_post {
-        let body = &buf[head.head_len..head.head_len + head.body_len];
-        if CHAT_PATHS.iter().any(|p| path == p.as_bytes()) {
-            return match serde_json::from_slice::<crate::models::ChatCompletionRequest>(body) {
-                Ok(req) => {
-                    let (ct, out) = crate::handlers::render_chat_completion_fast(state, &req);
-                    http_response("200 OK", ct, &out, ka)
-                }
-                Err(e) => bad_request(&e, ka),
-            };
-        }
-        if TEXT_PATHS.iter().any(|p| path == p.as_bytes()) {
-            return match serde_json::from_slice::<crate::models::CompletionRequest>(body) {
-                Ok(req) => {
-                    let (ct, out) = crate::handlers::render_text_completion_fast(state, &req);
-                    http_response("200 OK", ct, &out, ka)
-                }
-                Err(e) => bad_request(&e, ka),
-            };
-        }
-        if EMBED_PATHS.iter().any(|p| path == p.as_bytes()) {
-            return match serde_json::from_slice::<crate::models::EmbeddingRequest>(body) {
-                Ok(req) => {
-                    let out = crate::handlers::render_embeddings_fast(state, &req);
-                    http_response("200 OK", "application/json", &out, ka)
-                }
-                Err(e) => bad_request(&e, ka),
-            };
-        }
-        return http_response(
-            "404 Not Found",
-            "application/json",
-            b"{\"error\":\"path not served by hand-rolled engine\"}",
-            ka,
-        );
+    let body = &buf[head.head_len..head.head_len + head.body_len];
+    if CHAT_PATHS.iter().any(|p| path == p.as_bytes()) {
+        return Some(match serde_json::from_slice::<crate::models::ChatCompletionRequest>(body) {
+            Ok(req) => {
+                let (ct, out) = crate::handlers::render_chat_completion_fast(state, &req);
+                http_response("200 OK", ct, &out, ka)
+            }
+            Err(e) => bad_request(&e, ka),
+        });
     }
+    if TEXT_PATHS.iter().any(|p| path == p.as_bytes()) {
+        return Some(match serde_json::from_slice::<crate::models::CompletionRequest>(body) {
+            Ok(req) => {
+                let (ct, out) = crate::handlers::render_text_completion_fast(state, &req);
+                http_response("200 OK", ct, &out, ka)
+            }
+            Err(e) => bad_request(&e, ka),
+        });
+    }
+    if EMBED_PATHS.iter().any(|p| path == p.as_bytes()) {
+        return Some(match serde_json::from_slice::<crate::models::EmbeddingRequest>(body) {
+            Ok(req) => {
+                let out = crate::handlers::render_embeddings_fast(state, &req);
+                http_response("200 OK", "application/json", &out, ka)
+            }
+            Err(e) => bad_request(&e, ka),
+        });
+    }
+    None
+}
+
+/// Minimal fallback for engines without an axum fallback (`--uring`): a few GET
+/// routes, otherwise 404.
+pub fn route_minimal(state: &AppState, head: &Head, buf: &[u8]) -> Vec<u8> {
+    let path = &buf[head.path_start..head.path_end];
+    let ka = head.keep_alive;
     match path {
         b"/health" => http_response("200 OK", "application/json", b"{\"status\":\"healthy\"}", ka),
         b"/v1/models" | b"/openai/v1/models" => http_response(
@@ -144,7 +150,12 @@ pub fn route(state: &AppState, head: &Head, buf: &[u8]) -> Vec<u8> {
             let body = crate::prom::encode(&state.recorder.metrics.aiperf.registry);
             http_response("200 OK", "text/plain; version=0.0.4", &body, ka)
         }
-        _ => http_response("404 Not Found", "application/json", b"{\"error\":\"not found\"}", ka),
+        _ => http_response(
+            "404 Not Found",
+            "application/json",
+            b"{\"error\":\"path not served by --uring engine (use --blocking for full endpoint coverage)\"}",
+            ka,
+        ),
     }
 }
 

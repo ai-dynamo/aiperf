@@ -15,7 +15,7 @@ use monoio::io::{AsyncReadRent, AsyncWriteRentExt};
 use monoio::net::{ListenerOpts, TcpListener, TcpStream};
 
 use crate::config::MockServerConfig;
-use crate::http_core::{build_engine_state, parse_head, route};
+use crate::http_core::{build_engine_state, parse_head, route_fast, route_minimal};
 use crate::state::AppState;
 
 /// Launch one io_uring runtime per core, each serving the shared `AppState`.
@@ -87,7 +87,8 @@ async fn handle_conn(mut stream: TcpStream, state: Arc<AppState>) {
             if acc.len() < total {
                 break;
             }
-            let resp = route(&state, &head, &acc);
+            let resp = route_fast(&state, &head, &acc)
+                .unwrap_or_else(|| route_minimal(&state, &head, &acc));
             let close = !head.keep_alive;
             let (wres, _) = stream.write_all(resp).await;
             if wres.is_err() || close {
