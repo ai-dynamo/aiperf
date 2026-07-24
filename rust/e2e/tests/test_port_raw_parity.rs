@@ -268,3 +268,83 @@ async fn port18_leading_system_turn_hoist_raw_parity() {
         "leading-system-turn hoist raw projection diverged between rust and python engines"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #31 — tool_calls extraction: assistant tool_calls counted once in ISL
+// ---------------------------------------------------------------------------
+
+/// Deterministic ISL projection from the records file (`profile_export.jsonl`):
+/// session/turn identity + input_sequence_length. The tool_calls double-count
+/// fix is observable only in ISL — the wire payload is unchanged (tool_calls are
+/// always sent), so this compares the tokenized `input_sequence_length` the
+/// chat-shape extraction produces, not the raw payload.
+fn isl_projection(records: &[Value]) -> Vec<String> {
+    sorted(
+        records
+            .iter()
+            .map(|r| {
+                json!({
+                    "conversation_id": r["metadata"]["conversation_id"],
+                    "turn_index": r["metadata"]["turn_index"],
+                    "input_sequence_length": r["metrics"]["input_sequence_length"],
+                })
+                .to_string()
+            })
+            .collect(),
+    )
+}
+
+#[tokio::test]
+async fn port31_assistant_tool_calls_isl_parity() {
+    let h = AIPerfHarness::new().await;
+    // A mooncake `messages`-mode row whose assistant turn replays tool_calls.
+    // The chat-shape extraction must count the tool-call name/arguments toward
+    // input_sequence_length exactly once (in `texts`, not double-counted via
+    // `tool_texts`), identically to the Python engine.
+    let traces = vec![
+        json!({
+            "timestamp": 0,
+            "messages": [
+                {"role": "user", "content": "What is the weather in New York City today?"},
+                {"role": "assistant", "content": null, "tool_calls": [
+                    {"id": "call_1", "type": "function", "function": {
+                        "name": "get_current_weather",
+                        "arguments": "{\"location\":\"New York City\",\"unit\":\"fahrenheit\"}"
+                    }}
+                ]},
+                {"role": "tool", "tool_call_id": "call_1", "content": "72F and sunny"},
+                {"role": "user", "content": "Thanks, and what about tomorrow?"}
+            ],
+            "output_length": 8
+        }),
+    ];
+    let trace_file = write_jsonl(h.artifact_dir.path(), "tool_calls_msgs.jsonl", &traces);
+    // Default export level so profile_export.jsonl (records + metrics) is written.
+    let args = format!(
+        "--model {DEFAULT_MODEL} --url {} --endpoint-type chat --streaming \
+         --input-file {} --custom-dataset-type mooncake_trace \
+         --request-count 1 --concurrency 1 --workers-max 1 --random-seed 42 \
+         --ui simple --tokenizer builtin",
+        h.mock.url,
+        trace_file.display()
+    );
+
+    let rust = h.run(&args);
+    assert!(rust.success(), "rust run failed:\n{}", rust.stderr);
+    let py = h.run_env(&args, &[("AIPERF_RUNTIME_ENGINE", "python")]);
+    assert!(py.success(), "python run failed:\n{}", py.stderr);
+
+    let rust_recs = rust.artifacts.jsonl();
+    let py_recs = py.artifacts.jsonl();
+    assert!(!rust_recs.is_empty(), "rust produced no records");
+    assert!(!py_recs.is_empty(), "python produced no records");
+
+    // Byte-identical ISL projection across engines. If the Rust fix double-counted
+    // (tool_texts) or dropped (never passed through) the tool_calls, its ISL would
+    // diverge from Python's.
+    assert_eq!(
+        isl_projection(&rust_recs),
+        isl_projection(&py_recs),
+        "assistant tool_calls ISL diverged between rust and python engines"
+    );
+}
