@@ -4,10 +4,12 @@
 import pytest
 from pydantic import BaseModel, Field, SerializeAsAny
 
-from aiperf.common.enums import SSEFieldType
+from aiperf.common.messages import InferenceResultsMessage
 from aiperf.common.models import (
     MetricResult,
     ProfileResults,
+    RequestRecord,
+    SSEField,
     SSEMessage,
     TimesliceResult,
 )
@@ -203,9 +205,11 @@ class TestSSEMessageDataclass:
         msg = SSEMessage.parse("data: hello\nevent: message", perf_ns=42)
         assert msg.perf_ns == 42
         assert len(msg.packets) == 2
-        assert msg.packets[0].name == SSEFieldType.DATA
+        assert msg.packets[0].name == "data"
+        assert type(msg.packets[0].name) is str
         assert msg.packets[0].value == "hello"
-        assert msg.packets[1].name == SSEFieldType.EVENT
+        assert msg.packets[1].name == "event"
+        assert type(msg.packets[1].name) is str
         assert msg.packets[1].value == "message"
 
     def test_parse_returns_sse_message_instance(self) -> None:
@@ -237,12 +241,46 @@ class TestSSEMessageDataclass:
         assert len(restored.responses[0].packets) == 2
         assert restored.responses[0].packets[0].value == "roundtrip"
 
+    def test_inference_results_message_roundtrip_preserves_string_names(self) -> None:
+        """SSE field names remain strings across the inference-results IPC boundary."""
+        message = InferenceResultsMessage(
+            service_id="worker",
+            record=RequestRecord(
+                responses=[
+                    SSEMessage(
+                        perf_ns=123,
+                        packets=[SSEField(name="data", value="roundtrip")],
+                    )
+                ]
+            ),
+        )
+
+        restored = InferenceResultsMessage.from_json(message.to_json_bytes())
+        response = restored.record.responses[0]
+
+        assert isinstance(response, SSEMessage)
+        field_name = response.packets[0].name
+        assert field_name == "data"
+        assert type(field_name) is str
+
     def test_parse_get_text_and_get_json(self) -> None:
         """Protocol methods work on dataclass instances."""
         msg = SSEMessage.parse('data: {"key": "value"}', perf_ns=1)
         assert msg.get_text() == '{"key": "value"}'
         json_obj = msg.get_json()
         assert json_obj == {"key": "value"}
+
+    def test_get_text_and_json_with_additional_field(self) -> None:
+        """Protocol methods retain the generic path for multi-field messages."""
+        msg = SSEMessage.parse('data: {"key": "value"}\nevent: message', perf_ns=1)
+        assert msg.get_text() == '{"key": "value"}'
+        assert msg.get_json() == {"key": "value"}
+
+    def test_extract_data_content_combines_multiple_data_fields(self) -> None:
+        """Multiple data fields remain newline-delimited in the generic path."""
+        msg = SSEMessage.parse("data: first\ndata: second", perf_ns=1)
+
+        assert msg.extract_data_content() == "first\nsecond"
 
 
 class TestMetricResultSumField:
