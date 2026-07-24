@@ -17,7 +17,7 @@
 //!    updates never get clobbered by (or clobber) the computed layout.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNodesInitialized, useReactFlow } from "@xyflow/react";
+import { useReactFlow, useStore } from "@xyflow/react";
 import type { Edge, Node, XYPosition } from "@xyflow/react";
 import { layoutGraph, fallbackLayout } from "./elkEngine.js";
 import type { ElkOptions } from "./elkEngine.js";
@@ -41,8 +41,17 @@ function positionMap(nodes: Node[]): Map<string, XYPosition> {
  * site) to avoid redundant relayouts.
  */
 export function useElkLayout(inputNodes: Node[], edges: Edge[], opts: ElkOptions = {}): UseElkLayoutResult {
-  const nodesInitialized = useNodesInitialized();
   const { getNodes, fitView } = useReactFlow();
+  // A signature of every node's measured footprint. It changes as React Flow measures the nodes
+  // (their real, text-wrapped sizes), which re-triggers layout so ELK reserves each box's true
+  // height/width — the fix for overlapping boxes when default sizes underestimated tall cards.
+  const sizeSignature = useStore((s) => {
+    let sig = "";
+    s.nodeLookup.forEach((n) => {
+      sig += `${n.id}:${Math.round(n.measured?.width ?? 0)}x${Math.round(n.measured?.height ?? 0)};`;
+    });
+    return sig;
+  });
   const [positions, setPositions] = useState<Map<string, XYPosition>>(new Map());
   const [laidOut, setLaidOut] = useState(false);
 
@@ -60,11 +69,10 @@ export function useElkLayout(inputNodes: Node[], edges: Edge[], opts: ElkOptions
     setLaidOut(false);
   }
 
-  // NOT gated on `nodesInitialized`: in practice it can stay false (nested/animated canvases), which
-  // would leave the diagram unlaid-out and hidden forever. Instead we lay out immediately with
-  // whatever sizes React Flow has measured so far (falling back to default box sizes when it has
-  // measured none) — that still yields a real ELK layout, never a blank canvas — and re-run when
-  // `nodesInitialized` flips true to refine with exact measured sizes.
+  // Driven by `sizeSignature`, NOT `useNodesInitialized` (which can stay false for nested/animated
+  // canvases, leaving the diagram unlaid-out and hidden forever). We lay out immediately with
+  // whatever sizes exist (default box sizes when unmeasured — still a real ELK layout, never blank)
+  // and re-run each time a measurement lands, so ELK ends up using every box's true footprint.
   useEffect(() => {
     let cancelled = false;
 
@@ -95,10 +103,11 @@ export function useElkLayout(inputNodes: Node[], edges: Edge[], opts: ElkOptions
     return () => {
       cancelled = true;
     };
-    // graphKey/optsKey are stable string identities; nodesInitialized re-triggers a refine pass
-    // once real measurements exist. Using optsKey (not the opts object) tolerates inline opts.
+    // graphKey/optsKey/sizeSignature are stable string identities. sizeSignature re-runs layout as
+    // measurements land (real sizes → no overlap). Using optsKey (not the opts object) tolerates
+    // an inline opts={} at the call site without an infinite relayout loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodesInitialized, graphKey, optsKey]);
+  }, [graphKey, optsKey, sizeSignature]);
 
   // Overlay computed positions onto the live input nodes so data updates always show through.
   const nodes = useMemo(

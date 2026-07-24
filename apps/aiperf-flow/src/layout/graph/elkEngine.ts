@@ -73,8 +73,8 @@ export async function layoutGraph(
     return nodes;
   }
   const direction = opts.direction ?? "RIGHT";
-  const nodeSpacing = opts.nodeSpacing ?? 40;
-  const layerSpacing = opts.layerSpacing ?? 90;
+  const nodeSpacing = opts.nodeSpacing ?? 56;
+  const layerSpacing = opts.layerSpacing ?? 120;
   const lanes = opts.laneOf ? partitionIndices(nodes, opts.laneOf) : undefined;
 
   const rootOptions: Record<string, string> = {
@@ -121,8 +121,8 @@ export async function layoutGraph(
  */
 export function fallbackLayout(nodes: Node[], edges: Edge[], opts: ElkOptions = {}): Node[] {
   const direction = opts.direction ?? "RIGHT";
-  const nodeSpacing = opts.nodeSpacing ?? 40;
-  const layerSpacing = opts.layerSpacing ?? 90;
+  const nodeSpacing = opts.nodeSpacing ?? 56;
+  const layerSpacing = opts.layerSpacing ?? 120;
 
   const incoming = new Map<string, string[]>();
   const ids = new Set(nodes.map((n) => n.id));

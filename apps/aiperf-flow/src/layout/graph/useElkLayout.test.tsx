@@ -10,15 +10,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Mock only React Flow's context hooks so the hook runs outside a live <ReactFlow>: report the
 // nodes as initialized and hand back measured sizes, exercising the real layoutGraph path.
 const fitView = vi.fn();
-let initialized = true;
 let measured: Node[] = [];
 
 vi.mock("@xyflow/react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@xyflow/react")>();
   return {
     ...actual,
-    useNodesInitialized: () => initialized,
     useReactFlow: () => ({ getNodes: () => measured, fitView }),
+    // Feed the store selector a nodeLookup Map built from the current `measured` nodes.
+    useStore: (selector: (s: { nodeLookup: Map<string, Node> }) => unknown) =>
+      selector({ nodeLookup: new Map(measured.map((n) => [n.id, n])) }),
   };
 });
 
@@ -32,7 +33,6 @@ const NODES: Node[] = [
 const EDGES: Edge[] = [{ id: "e-a-b", source: "a", target: "b" }];
 
 beforeEach(() => {
-  initialized = true;
   fitView.mockClear();
   measured = [
     { id: "a", position: { x: 0, y: 0 }, data: {}, measured: { width: 200, height: 80 } },
@@ -49,10 +49,10 @@ describe("useElkLayout", () => {
     expect(result.current.nodes).toHaveLength(2);
   });
 
-  it("lays out even when React Flow never reports nodes initialized", async () => {
-    // useNodesInitialized can stay false for nested/animated canvases; the layout must still run
-    // (with fallback/estimated sizes) so the diagram is never left blank.
-    initialized = false;
+  it("lays out even when React Flow has measured no nodes yet", async () => {
+    // Nested/animated canvases may never report measurements; the layout must still run (with
+    // fallback/estimated sizes) so the diagram is never left blank.
+    measured = [];
     const { result } = renderHook(() => useElkLayout(NODES, EDGES, {}));
     await waitFor(() => expect(result.current.laidOut).toBe(true));
     const map = Object.fromEntries(result.current.nodes.map((n) => [n.id, n]));
