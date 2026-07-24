@@ -10,11 +10,9 @@
 
 import { useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import clsx from "clsx";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
 import { Row } from "../../layout/Row.js";
 import { Button } from "../../prose/Button.js";
 import { categoryClassName, inkClassName } from "../../theme/tokens.js";
@@ -94,19 +92,7 @@ export function TreePage(): React.JSX.Element {
         </label>
       </Row>
 
-      <div style={{ height: 480 }}>
-        <ReactFlow
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodes={nodes}
-          edges={edges}
-          fitView
-          fitViewOptions={{ padding: 0.15 }}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-        </ReactFlow>
-      </div>
+      <AutoLayoutFlow nodes={nodes} edges={edges} layout={{ direction: "DOWN" }} height={480} />
 
       <p className={clsx("text-xs", categoryClassName("cyan"))}>
         {shape === "tree"
