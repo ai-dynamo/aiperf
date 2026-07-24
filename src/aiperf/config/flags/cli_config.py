@@ -2026,6 +2026,17 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    request_rate_series: Annotated[
+        Path | None,
+        Field(
+            description="JSON file containing request-rate points for piecewise-linear request-rate control.",
+        ),
+        CLIParameter(
+            name=("--request-rate-series",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
     ##############################################################################
     # Warmup
     ##############################################################################

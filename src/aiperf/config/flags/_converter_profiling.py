@@ -88,6 +88,23 @@ def _apply_profiling_rate_series(prof: dict[str, Any], cli: CLIConfig) -> None:
     prof["rate_series"] = series.model_dump(exclude_none=True, exclude={"path"})
 
 
+def _apply_profiling_rate_series(prof: dict[str, Any], cli: CLIConfig) -> None:
+    if "request_rate_series" not in cli.model_fields_set:
+        return
+    if "request_rate" in cli.model_fields_set:
+        raise ValueError(
+            "--request-rate and --request-rate-series are mutually exclusive."
+        )
+    if cli.user_centric_rate is not None:
+        raise ValueError(
+            "--request-rate-series is not supported with --user-centric-rate."
+        )
+    from aiperf.config.rate_series import RateSeriesConfig
+
+    series = RateSeriesConfig(path=str(cli.request_rate_series))
+    prof["rate_series"] = series.model_dump(exclude_none=True, exclude={"path"})
+
+
 def _reject_orphan_load_generator_flags(prof: dict[str, Any], cli: CLIConfig) -> None:
     """Reject CLI flags whose load-generator partner wasn't supplied.
 
