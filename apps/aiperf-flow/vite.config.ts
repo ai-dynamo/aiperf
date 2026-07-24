@@ -10,6 +10,12 @@ import tailwindcss from "@tailwindcss/vite";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   base: "./",
+  // elkjs is CommonJS with no ESM build; pin the exact entry the layout engine imports so Vite
+  // always pre-bundles it. Without this, adding the dep to a running dev server leaves it
+  // un-optimized and the browser import fails, blanking every diagram that uses the engine.
+  optimizeDeps: {
+    include: ["elkjs/lib/elk.bundled.js"],
+  },
   test: {
     environment: "jsdom",
     globals: true,
