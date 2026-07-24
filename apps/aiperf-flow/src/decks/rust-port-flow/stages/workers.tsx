@@ -22,7 +22,7 @@
 import type { Edge, Node } from "@xyflow/react";
 import { roleClassName } from "../stage.js";
 import type { StageDef } from "../stage.js";
-import { Diagram, NodeChip, RoundNode, DbNode, MiniArrow } from "../../../chalk/index.js";
+import { Diagram, NodeChip, RoundNode, DbNode, DiamondNode, MiniArrow, BiArrow, MiniBars } from "../../../chalk/index.js";
 
 /** The drillable level-1 sub-cell node id, which is ALSO the `leaves` key it zooms into. */
 const WORKER_LEAF_ID = "workers-thread";
@@ -41,8 +41,9 @@ const level1Nodes: Node[] = [
         <Diagram>
           <NodeChip accent>coord</NodeChip>
           <MiniArrow />
+          <DbNode>mpsc</DbNode>
+          <MiniArrow />
           <RoundNode>w₁</RoundNode>
-          <RoundNode>w₂</RoundNode>
           <RoundNode>wₙ</RoundNode>
         </Diagram>
       ),
@@ -58,10 +59,11 @@ const level1Nodes: Node[] = [
       detail: "One Copy monotonic origin; workers rebuild a local RealClock.",
       diagram: (
         <Diagram>
-          <NodeChip accent>t₀ origin</NodeChip>
+          <NodeChip accent>t₀ Copy</NodeChip>
           <MiniArrow />
           <RoundNode>w₁</RoundNode>
           <RoundNode>wₙ</RoundNode>
+          <NodeChip>1 ns line</NodeChip>
         </Diagram>
       ),
       className: roleClassName("control"),
@@ -78,8 +80,10 @@ const level1Nodes: Node[] = [
         <Diagram>
           <RoundNode>w₁</RoundNode>
           <RoundNode>wₙ</RoundNode>
+          <BiArrow />
+          <DbNode accent>SlotPool</DbNode>
           <MiniArrow />
-          <DbNode accent>Arc gate</DbNode>
+          <DiamondNode>cap</DiamondNode>
         </Diagram>
       ),
       className: roleClassName("control"),
@@ -96,9 +100,12 @@ const level1Nodes: Node[] = [
       diagram: (
         <Diagram>
           <RoundNode accent>rt</RoundNode>
+          <MiniArrow />
           <NodeChip>LocalSet</NodeChip>
           <MiniArrow />
           <NodeChip>sink</NodeChip>
+          <MiniArrow />
+          <NodeChip accent>shard</NodeChip>
         </Diagram>
       ),
       className: roleClassName("compute"),
@@ -117,7 +124,9 @@ const level1Nodes: Node[] = [
           <NodeChip>shard₁</NodeChip>
           <NodeChip>shardₙ</NodeChip>
           <MiniArrow />
-          <DbNode accent>sort idx</DbNode>
+          <DbNode>concat</DbNode>
+          <MiniArrow />
+          <NodeChip accent>sort idx</NodeChip>
         </Diagram>
       ),
       className: roleClassName("compute"),
@@ -161,9 +170,11 @@ const workerThreadNodes: Node[] = [
       detail: "Builder::new_current_thread().enable_all().build()",
       diagram: (
         <Diagram>
-          <RoundNode accent>rt</RoundNode>
+          <NodeChip>Builder</NodeChip>
           <MiniArrow />
           <NodeChip>1 thread</NodeChip>
+          <MiniArrow />
+          <RoundNode accent>rt</RoundNode>
         </Diagram>
       ),
       className: roleClassName("compute"),
@@ -178,7 +189,9 @@ const workerThreadNodes: Node[] = [
       detail: "block_on(local.run_until(execute_scheduled_shard(…)))",
       diagram: (
         <Diagram>
-          <NodeChip accent>local.run</NodeChip>
+          <NodeChip>block_on</NodeChip>
+          <MiniArrow />
+          <RoundNode accent>local</RoundNode>
           <MiniArrow />
           <NodeChip>!Send task</NodeChip>
         </Diagram>
@@ -197,7 +210,9 @@ const workerThreadNodes: Node[] = [
         <Diagram>
           <NodeChip>anchor t₀</NodeChip>
           <MiniArrow />
-          <RoundNode accent>Rc</RoundNode>
+          <RoundNode accent>Rc clock</RoundNode>
+          <MiniArrow />
+          <NodeChip>now_ns</NodeChip>
         </Diagram>
       ),
       className: roleClassName("control"),
@@ -215,6 +230,8 @@ const workerThreadNodes: Node[] = [
           <RoundNode>rt</RoundNode>
           <MiniArrow />
           <NodeChip accent>sink</NodeChip>
+          <BiArrow />
+          <NodeChip>turn</NodeChip>
         </Diagram>
       ),
       className: roleClassName("transport"),
@@ -230,7 +247,9 @@ const workerThreadNodes: Node[] = [
       detail: "Runs the shard, stamping globally-unique two-level ordinals.",
       diagram: (
         <Diagram>
-          <NodeChip>req</NodeChip>
+          <MiniBars heights={[50, 80, 65, 100]} />
+          <MiniArrow />
+          <NodeChip>exec</NodeChip>
           <MiniArrow />
           <NodeChip accent>(w, i) ord</NodeChip>
         </Diagram>

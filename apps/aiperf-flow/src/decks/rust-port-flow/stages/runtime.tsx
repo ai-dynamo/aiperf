@@ -15,7 +15,7 @@ import type { Edge, Node } from "@xyflow/react";
 import { roleClassName } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
 import type { StageDef } from "../stage.js";
-import { Diagram, NodeChip, DbNode, MiniArrow, MiniBars } from "../../../chalk/index.js";
+import { Diagram, NodeChip, RoundNode, DbNode, DiamondNode, MiniArrow, BiArrow, MiniBars } from "../../../chalk/index.js";
 
 // Node ids that double as level-2 leaf keys (a click on one of these drills a level deeper). Kept
 // stage-prefixed so they stay unique across every stage's leaves in the assembled ZoomTree.
@@ -36,6 +36,8 @@ const subgraphNodes: Node[] = [
         <Diagram>
           <NodeChip>argv</NodeChip>
           <MiniArrow />
+          <DiamondNode>parse</DiamondNode>
+          <MiniArrow />
           <NodeChip accent>Config v2</NodeChip>
         </Diagram>
       ),
@@ -52,7 +54,8 @@ const subgraphNodes: Node[] = [
       detail: "protocol_version + Execute op + BenchmarkRunWireV2.",
       diagram: (
         <Diagram>
-          <NodeChip>Config v2</NodeChip>
+          <NodeChip>ver</NodeChip>
+          <NodeChip>Execute</NodeChip>
           <MiniArrow />
           <NodeChip accent>Envelope</NodeChip>
         </Diagram>
@@ -72,7 +75,9 @@ const subgraphNodes: Node[] = [
         <Diagram>
           <NodeChip accent>current_exe</NodeChip>
           <MiniArrow />
-          <NodeChip>child</NodeChip>
+          <RoundNode>child</RoundNode>
+          <BiArrow />
+          <NodeChip>stdin</NodeChip>
         </Diagram>
       ),
       className: roleClassName("control"),
@@ -90,7 +95,9 @@ const subgraphNodes: Node[] = [
         <Diagram>
           <NodeChip>registries</NodeChip>
           <MiniArrow />
-          <NodeChip accent>RunContext</NodeChip>
+          <DiamondNode>meet</DiamondNode>
+          <MiniArrow />
+          <DbNode accent>RunContext</DbNode>
         </Diagram>
       ),
       className: roleClassName("control"),
@@ -108,7 +115,9 @@ const subgraphNodes: Node[] = [
         <Diagram>
           <NodeChip>child</NodeChip>
           <MiniArrow />
-          <NodeChip accent>stdout</NodeChip>
+          <DiamondNode accent>ok?</DiamondNode>
+          <MiniArrow />
+          <NodeChip>report_path</NodeChip>
         </Diagram>
       ),
       className: roleClassName("transport"),
@@ -124,7 +133,8 @@ const subgraphNodes: Node[] = [
       detail: "Wired once at the root; each varies independently.",
       diagram: (
         <Diagram>
-          <NodeChip accent>Time</NodeChip>
+          <DiamondNode accent>ctx</DiamondNode>
+          <NodeChip>Time</NodeChip>
           <NodeChip>Transport</NodeChip>
           <NodeChip>Workload</NodeChip>
         </Diagram>
@@ -156,6 +166,8 @@ const selfExecLeafNodes: Node[] = [
         <Diagram>
           <NodeChip accent>parent</NodeChip>
           <MiniArrow />
+          <RoundNode>child</RoundNode>
+          <BiArrow />
           <NodeChip>stdin</NodeChip>
         </Diagram>
       ),
@@ -173,6 +185,8 @@ const selfExecLeafNodes: Node[] = [
       diagram: (
         <Diagram>
           <NodeChip>stdin</NodeChip>
+          <MiniArrow />
+          <DiamondNode>MODE</DiamondNode>
           <MiniArrow />
           <NodeChip accent>BenchmarkRun</NodeChip>
         </Diagram>
@@ -192,7 +206,9 @@ const selfExecLeafNodes: Node[] = [
         <Diagram>
           <NodeChip>registries</NodeChip>
           <MiniArrow />
-          <NodeChip accent>RunContext</NodeChip>
+          <DiamondNode>meet</DiamondNode>
+          <MiniArrow />
+          <DbNode accent>RunContext</DbNode>
         </Diagram>
       ),
       className: roleClassName("control"),
@@ -208,6 +224,8 @@ const selfExecLeafNodes: Node[] = [
       diagram: (
         <Diagram>
           <NodeChip accent>Terminal</NodeChip>
+          <MiniArrow />
+          <DiamondNode>ok?</DiamondNode>
           <MiniArrow />
           <NodeChip>stdout</NodeChip>
         </Diagram>
@@ -238,7 +256,9 @@ const seamsLeafNodes: Node[] = [
         <Diagram>
           <DbNode accent>RunContext</DbNode>
           <MiniArrow />
-          <NodeChip>frozen</NodeChip>
+          <DiamondNode>freeze</DiamondNode>
+          <MiniArrow />
+          <NodeChip>3 seams</NodeChip>
         </Diagram>
       ),
       className: roleClassName("control"),
@@ -253,9 +273,10 @@ const seamsLeafNodes: Node[] = [
       detail: "RealClock (wall) vs SimClock (virtual ns).",
       diagram: (
         <Diagram>
-          <NodeChip accent>RealClock</NodeChip>
+          <DiamondNode accent>virtual?</DiamondNode>
           <MiniArrow />
-          <NodeChip>SimClock</NodeChip>
+          <NodeChip>Real</NodeChip>
+          <NodeChip>Sim</NodeChip>
         </Diagram>
       ),
       className: roleClassName("control"),
@@ -273,6 +294,8 @@ const seamsLeafNodes: Node[] = [
           <NodeChip>Builder</NodeChip>
           <MiniArrow />
           <NodeChip accent>Sink</NodeChip>
+          <BiArrow />
+          <NodeChip>turn</NodeChip>
         </Diagram>
       ),
       className: roleClassName("transport"),
@@ -287,7 +310,9 @@ const seamsLeafNodes: Node[] = [
       detail: "RequestRateWorkload & friends generate the schedule.",
       diagram: (
         <Diagram>
-          <NodeChip accent>schedule</NodeChip>
+          <NodeChip accent>Workload</NodeChip>
+          <MiniArrow />
+          <NodeChip>schedule</NodeChip>
           <MiniArrow />
           <MiniBars heights={[100, 60, 100, 60]} />
         </Diagram>

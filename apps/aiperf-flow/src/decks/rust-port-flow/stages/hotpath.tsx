@@ -23,7 +23,7 @@ import type { FlowStep } from "../../../interactive/index.js";
 import { Grid } from "../../../layout/Grid.js";
 import { Callout } from "../../../prose/Callout.js";
 import type { StageDef } from "../stage.js";
-import { Diagram, NodeChip, RoundNode, MiniArrow, MiniBars } from "../../../chalk/index.js";
+import { Diagram, NodeChip, RoundNode, DiamondNode, DbNode, MiniArrow, MiniBars } from "../../../chalk/index.js";
 
 /** A card node colored by semantic role, laid out at a fixed spine position. */
 function card(
@@ -77,7 +77,9 @@ const subgraphNodes: Node[] = [
     0,
     0,
     <Diagram>
-      <NodeChip accent>SCHEDULE</NodeChip>
+      <NodeChip accent>schedule</NodeChip>
+      <MiniArrow />
+      <DiamondNode>due?</DiamondNode>
       <MiniArrow />
       <NodeChip>turn</NodeChip>
     </Diagram>,
@@ -91,9 +93,10 @@ const subgraphNodes: Node[] = [
     COL,
     0,
     <Diagram>
-      <RoundNode accent>1</RoundNode>
-      <RoundNode>2</RoundNode>
-      <RoundNode>3</RoundNode>
+      <RoundNode accent>◍</RoundNode>
+      <RoundNode>◌</RoundNode>
+      <MiniArrow />
+      <DiamondNode>stop?</DiamondNode>
     </Diagram>,
   ),
   card(
@@ -108,6 +111,8 @@ const subgraphNodes: Node[] = [
       <NodeChip accent>PreparedTurn</NodeChip>
       <MiniArrow />
       <NodeChip>sink</NodeChip>
+      <MiniArrow />
+      <DiamondNode>1st?</DiamondNode>
     </Diagram>,
   ),
   card(
@@ -119,8 +124,11 @@ const subgraphNodes: Node[] = [
     COL * 3,
     0,
     <Diagram>
-      <NodeChip accent>HTTP</NodeChip>
-      <NodeChip>gRPC</NodeChip>
+      <NodeChip>turn</NodeChip>
+      <MiniArrow />
+      <DiamondNode accent>HTTP·gRPC</DiamondNode>
+      <MiniArrow />
+      <NodeChip>server</NodeChip>
     </Diagram>,
   ),
   card(
@@ -132,9 +140,11 @@ const subgraphNodes: Node[] = [
     COL * 4,
     0,
     <Diagram>
-      <NodeChip accent>TTFT</NodeChip>
+      <NodeChip>parsed</NodeChip>
       <MiniArrow />
-      <NodeChip>t₁·t₂·t₃</NodeChip>
+      <DiamondNode accent>1st?</DiamondNode>
+      <MiniArrow />
+      <MiniBars heights={[45, 72, 100]} />
     </Diagram>,
   ),
   card(
@@ -146,9 +156,11 @@ const subgraphNodes: Node[] = [
     COL * 5,
     0,
     <Diagram>
+      <NodeChip accent>terminal</NodeChip>
+      <MiniArrow />
       <MiniBars heights={[42, 68, 90, 100]} />
       <MiniArrow />
-      <NodeChip accent>record</NodeChip>
+      <DbNode>record</DbNode>
     </Diagram>,
   ),
 ];
@@ -168,14 +180,15 @@ const admissionLeafNodes: Node[] = [
     "hp-slotpool",
     "SlotPool",
     "runtime::timing::slots",
-    "Hands out concurrency credits (admit_ns); waits for a slot.",
+    "acquire() hands out a SlotGuard concurrency credit; waits for a slot.",
     "control",
     0,
     0,
     <Diagram>
       <RoundNode accent>◍</RoundNode>
+      <RoundNode>◌</RoundNode>
       <MiniArrow />
-      <NodeChip>admit_ns</NodeChip>
+      <NodeChip>SlotGuard</NodeChip>
     </Diagram>,
   ),
   card(
@@ -188,6 +201,9 @@ const admissionLeafNodes: Node[] = [
     0,
     <Diagram>
       <NodeChip accent>count</NodeChip>
+      <MiniArrow />
+      <DiamondNode>≥ N?</DiamondNode>
+      <MiniArrow />
       <NodeChip>duration</NodeChip>
     </Diagram>,
   ),
@@ -209,6 +225,8 @@ const dispatchLeafNodes: Node[] = [
     <Diagram>
       <NodeChip accent>PreparedTurn</NodeChip>
       <MiniArrow />
+      <NodeChip>run</NodeChip>
+      <MiniArrow />
       <NodeChip>terminal</NodeChip>
     </Diagram>,
   ),
@@ -221,9 +239,11 @@ const dispatchLeafNodes: Node[] = [
     COL,
     0,
     <Diagram>
-      <NodeChip accent>TTFT ns</NodeChip>
+      <NodeChip accent>1st token</NodeChip>
       <MiniArrow />
       <NodeChip>Fn(i64)</NodeChip>
+      <MiniArrow />
+      <NodeChip>TTFT ns</NodeChip>
     </Diagram>,
   ),
   card(
@@ -237,7 +257,9 @@ const dispatchLeafNodes: Node[] = [
     <Diagram>
       <NodeChip>false</NodeChip>
       <MiniArrow />
-      <NodeChip accent>latched</NodeChip>
+      <DiamondNode accent>1st?</DiamondNode>
+      <MiniArrow />
+      <NodeChip>latched</NodeChip>
     </Diagram>,
   ),
 ];
@@ -363,7 +385,7 @@ const HOT_PATH_CARDS: readonly HotPathCard[] = [
     title: "Admission gate",
     body: (
       <>
-        <code>SlotPool</code> hands out a concurrency credit (the <code>admit_ns</code> stamp) and{" "}
+        <code>SlotPool</code> hands out a <code>SlotGuard</code> concurrency credit and{" "}
         <code>StopChecker</code> enforces the request-count / duration bounds — both must pass before a
         turn dispatches.
       </>

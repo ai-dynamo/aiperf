@@ -25,7 +25,7 @@ import type { Edge, Node } from "@xyflow/react";
 import { roleClassName } from "../stage.js";
 import type { NodeRole, StageDef } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
-import { Diagram, NodeChip, DbNode, MiniArrow, RoundNode } from "../../../chalk/index.js";
+import { Diagram, NodeChip, DbNode, DiamondNode, MiniArrow, BiArrow, RoundNode } from "../../../chalk/index.js";
 
 /** A `card` node colored by semantic role — the emphasized boxes in this stage's subgraph. */
 function card(
@@ -100,6 +100,8 @@ const subgraphNodes: Node[] = [
       <Diagram>
         <DbNode accent>Segment[]</DbNode>
         <MiniArrow />
+        <DiamondNode>dedup</DiamondNode>
+        <MiniArrow />
         <NodeChip>bytes×1</NodeChip>
       </Diagram>
     ),
@@ -114,9 +116,11 @@ const subgraphNodes: Node[] = [
     "storage",
     (
       <Diagram>
+        <DbNode>store</DbNode>
+        <MiniArrow />
         <NodeChip accent>Arc</NodeChip>
         <MiniArrow />
-        <NodeChip>clone</NodeChip>
+        <NodeChip>×W</NodeChip>
       </Diagram>
     ),
   ),
@@ -133,6 +137,8 @@ const subgraphNodes: Node[] = [
         <NodeChip>Turn</NodeChip>
         <MiniArrow />
         <NodeChip accent>Handle</NodeChip>
+        <MiniArrow />
+        <DbNode>store</DbNode>
       </Diagram>
     ),
   ),
@@ -148,6 +154,8 @@ const subgraphNodes: Node[] = [
         <RoundNode accent>W0</RoundNode>
         <MiniArrow />
         <NodeChip>build_body</NodeChip>
+        <MiniArrow />
+        <NodeChip>bytes</NodeChip>
       </Diagram>
     ),
   ),
@@ -161,6 +169,8 @@ const subgraphNodes: Node[] = [
     (
       <Diagram>
         <RoundNode accent>W1</RoundNode>
+        <MiniArrow />
+        <NodeChip>clone</NodeChip>
         <MiniArrow />
         <DbNode>store</DbNode>
       </Diagram>
@@ -177,6 +187,8 @@ const subgraphNodes: Node[] = [
       <Diagram>
         <RoundNode accent>W-1</RoundNode>
         <MiniArrow />
+        <NodeChip>Send+Sync</NodeChip>
+        <BiArrow />
         <DbNode>arena</DbNode>
       </Diagram>
     ),
@@ -195,6 +207,8 @@ const subgraphNodes: Node[] = [
       <Diagram>
         <NodeChip accent>media</NodeChip>
         <MiniArrow />
+        <NodeChip>publish</NodeChip>
+        <MiniArrow />
         <NodeChip>URL</NodeChip>
       </Diagram>
     ),
@@ -211,7 +225,9 @@ const subgraphNodes: Node[] = [
       <Diagram>
         <NodeChip accent>HTTP</NodeChip>
         <MiniArrow />
-        <NodeChip>/media</NodeChip>
+        <DbNode>/media</DbNode>
+        <MiniArrow />
+        <NodeChip>URL</NodeChip>
       </Diagram>
     ),
   ),
@@ -240,6 +256,8 @@ const contentServerNodes: Node[] = [
       <Diagram>
         <NodeChip accent>cfg</NodeChip>
         <MiniArrow />
+        <DiamondNode>on?</DiamondNode>
+        <MiniArrow />
         <NodeChip>sidecar</NodeChip>
       </Diagram>
     ),
@@ -257,6 +275,8 @@ const contentServerNodes: Node[] = [
         <NodeChip accent>HTTP</NodeChip>
         <MiniArrow />
         <DbNode>dir</DbNode>
+        <MiniArrow />
+        <NodeChip>/healthz</NodeChip>
       </Diagram>
     ),
   ),
@@ -271,6 +291,8 @@ const contentServerNodes: Node[] = [
     (
       <Diagram>
         <NodeChip accent>image</NodeChip>
+        <MiniArrow />
+        <DbNode>disk</DbNode>
         <MiniArrow />
         <NodeChip>URL</NodeChip>
       </Diagram>
@@ -289,6 +311,8 @@ const contentServerNodes: Node[] = [
       <Diagram>
         <NodeChip accent>Handle</NodeChip>
         <MiniArrow />
+        <NodeChip>Arc</NodeChip>
+        <MiniArrow />
         <DbNode>arena</DbNode>
       </Diagram>
     ),
@@ -303,7 +327,9 @@ const contentServerNodes: Node[] = [
     "media",
     (
       <Diagram>
-        <NodeChip accent>HTTP</NodeChip>
+        <NodeChip accent>blob</NodeChip>
+        <MiniArrow />
+        <NodeChip>HTTP</NodeChip>
         <MiniArrow />
         <NodeChip>media URL</NodeChip>
       </Diagram>

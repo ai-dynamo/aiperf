@@ -20,7 +20,7 @@ import { roleClassName } from "../stage.js";
 import type { NodeRole } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
 import type { StageDef } from "../stage.js";
-import { Diagram, NodeChip, DbNode, MiniArrow } from "../../../chalk/index.js";
+import { Diagram, NodeChip, DbNode, DiamondNode, MiniArrow } from "../../../chalk/index.js";
 
 /** A tinted `card` node for a level-1/level-2 subgraph, colored by its semantic node role. */
 function card(
@@ -64,7 +64,8 @@ const subgraphNodes: Node[] = [
     "compute",
     (
       <Diagram>
-        <NodeChip accent>loader</NodeChip>
+        <NodeChip>HF</NodeChip>
+        <NodeChip accent>trace</NodeChip>
         <MiniArrow />
         <NodeChip>RawRows</NodeChip>
       </Diagram>
@@ -82,6 +83,8 @@ const subgraphNodes: Node[] = [
         <NodeChip>RawRows</NodeChip>
         <MiniArrow />
         <DbNode accent>arena</DbNode>
+        <MiniArrow />
+        <NodeChip>id→H</NodeChip>
       </Diagram>
     ),
   ),
@@ -95,6 +98,8 @@ const subgraphNodes: Node[] = [
     (
       <Diagram>
         <NodeChip>Payload</NodeChip>
+        <MiniArrow />
+        <DiamondNode>dedup?</DiamondNode>
         <MiniArrow />
         <NodeChip accent>Handle</NodeChip>
       </Diagram>
@@ -112,6 +117,8 @@ const subgraphNodes: Node[] = [
         <NodeChip accent>domain</NodeChip>
         <MiniArrow />
         <NodeChip>BLAKE3</NodeChip>
+        <MiniArrow />
+        <DbNode>6 sets</DbNode>
       </Diagram>
     ),
   ),
@@ -126,7 +133,9 @@ const subgraphNodes: Node[] = [
       <Diagram>
         <NodeChip>parent</NodeChip>
         <MiniArrow />
-        <NodeChip accent>payload_id</NodeChip>
+        <DiamondNode accent>fold</DiamondNode>
+        <MiniArrow />
+        <NodeChip>payload_id</NodeChip>
       </Diagram>
     ),
   ),
@@ -141,7 +150,9 @@ const subgraphNodes: Node[] = [
       <Diagram>
         <DbNode>pool</DbNode>
         <MiniArrow />
-        <DbNode accent>frozen</DbNode>
+        <DiamondNode accent>seal</DiamondNode>
+        <MiniArrow />
+        <DbNode>frozen</DbNode>
       </Diagram>
     ),
   ),
@@ -156,6 +167,8 @@ const subgraphNodes: Node[] = [
       <Diagram>
         <DbNode accent>Segment[]</DbNode>
         <MiniArrow />
+        <NodeChip>bytes×1</NodeChip>
+        <MiniArrow />
         <NodeChip>read-only</NodeChip>
       </Diagram>
     ),
@@ -169,6 +182,8 @@ const subgraphNodes: Node[] = [
     "storage",
     (
       <Diagram>
+        <NodeChip>Turn</NodeChip>
+        <MiniArrow />
         <NodeChip accent>Handle</NodeChip>
         <MiniArrow />
         <DbNode>store</DbNode>
@@ -193,22 +208,22 @@ const subgraphEdges: Edge[] = [
 
 const domainLeafNodes: Node[] = [
   card("dom-message", { x: 0, y: 0 }, "message", "SegmentDomain::Message", "Pre-serialized endpoint message; formats as an array.", "storage", (
-    <Diagram><NodeChip accent>message</NodeChip><MiniArrow /><NodeChip>[array]</NodeChip></Diagram>
+    <Diagram><NodeChip accent>message</NodeChip><MiniArrow /><DiamondNode>fmt</DiamondNode><MiniArrow /><NodeChip>[array]</NodeChip></Diagram>
   )),
   card("dom-text-only", { x: 300, y: 0 }, "text-only", "SegmentDomain::TextOnly", "Plain text field; spliced verbatim at dispatch.", "storage", (
-    <Diagram><NodeChip accent>text</NodeChip><MiniArrow /><NodeChip>splice</NodeChip></Diagram>
+    <Diagram><NodeChip accent>text</NodeChip><MiniArrow /><NodeChip>splice</NodeChip><MiniArrow /><NodeChip>body</NodeChip></Diagram>
   )),
   card("dom-raw", { x: 600, y: 0 }, "raw", "SegmentDomain::Raw", "Prebuilt body; leading raw handle bypasses formatting.", "storage", (
-    <Diagram><NodeChip accent>raw</NodeChip><MiniArrow /><NodeChip>body</NodeChip></Diagram>
+    <Diagram><NodeChip accent>raw</NodeChip><MiniArrow /><DiamondNode>bypass</DiamondNode><MiniArrow /><NodeChip>body</NodeChip></Diagram>
   )),
   card("dom-token-ids", { x: 0, y: 150 }, "token-ids", "SegmentDomain::TokenIds", "Pre-tokenized input IDs — token-native dispatch.", "storage", (
-    <Diagram><NodeChip accent>tokens</NodeChip><MiniArrow /><NodeChip>u32 ids</NodeChip></Diagram>
+    <Diagram><NodeChip accent>tokens</NodeChip><MiniArrow /><NodeChip>u32 ids</NodeChip><MiniArrow /><NodeChip>dispatch</NodeChip></Diagram>
   )),
   card("dom-media", { x: 300, y: 150 }, "media", "SegmentDomain::Media", "Binary/encoded multimodal content, folded into identity.", "media", (
-    <Diagram><NodeChip accent>media</NodeChip><MiniArrow /><DbNode>blob</DbNode></Diagram>
+    <Diagram><NodeChip accent>media</NodeChip><MiniArrow /><DbNode>blob</DbNode><MiniArrow /><NodeChip>id</NodeChip></Diagram>
   )),
   card("dom-trace-hash-ids", { x: 600, y: 150 }, "trace-hash-ids", "SegmentDomain::TraceHashIds", "Source-trace block ids on a Turn's trace_hash_ids.", "storage", (
-    <Diagram><NodeChip accent>trace</NodeChip><MiniArrow /><NodeChip>hash_ids</NodeChip></Diagram>
+    <Diagram><NodeChip accent>trace</NodeChip><MiniArrow /><NodeChip>hash_ids</NodeChip><MiniArrow /><NodeChip>Turn</NodeChip></Diagram>
   )),
 ];
 
@@ -228,7 +243,9 @@ const hashingLeafNodes: Node[] = [
       <Diagram>
         <NodeChip>parent</NodeChip>
         <MiniArrow />
-        <NodeChip accent>fold</NodeChip>
+        <DiamondNode accent>fold</DiamondNode>
+        <MiniArrow />
+        <NodeChip>prefix</NodeChip>
       </Diagram>
     ),
   ),
@@ -241,6 +258,8 @@ const hashingLeafNodes: Node[] = [
     "compute",
     (
       <Diagram>
+        <NodeChip>tag+payload</NodeChip>
+        <MiniArrow />
         <NodeChip>BLAKE3</NodeChip>
         <MiniArrow />
         <NodeChip accent>SegmentId</NodeChip>
@@ -258,7 +277,9 @@ const hashingLeafNodes: Node[] = [
       <Diagram>
         <NodeChip>SegmentId</NodeChip>
         <MiniArrow />
-        <DbNode accent>ids map</DbNode>
+        <DiamondNode accent>seen?</DiamondNode>
+        <MiniArrow />
+        <DbNode>ids map</DbNode>
       </Diagram>
     ),
   ),
@@ -274,6 +295,8 @@ const hashingLeafNodes: Node[] = [
         <NodeChip accent>Handle</NodeChip>
         <MiniArrow />
         <NodeChip>idx u32</NodeChip>
+        <MiniArrow />
+        <DbNode>arena</DbNode>
       </Diagram>
     ),
   ),

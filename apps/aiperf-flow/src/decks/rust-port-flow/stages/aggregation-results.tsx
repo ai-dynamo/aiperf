@@ -21,7 +21,7 @@ import type { Edge, Node } from "@xyflow/react";
 import { roleClassName } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
 import type { StageDef } from "../stage.js";
-import { Diagram, NodeChip, DbNode, MiniArrow, MiniBars } from "../../../chalk/index.js";
+import { Diagram, NodeChip, DbNode, DiamondNode, MiniArrow, MiniBars } from "../../../chalk/index.js";
 
 /** Leaf id: the clickable node that drills into the exact-fold vs t-digest-merge comparison. */
 const EXACT_VS_SKETCH_LEAF = "aggExactVsSketch";
@@ -42,7 +42,9 @@ function aggregationNodes(): Node[] {
         className: roleClassName("compute"),
         diagram: (
           <Diagram>
-            <NodeChip accent>observe</NodeChip>
+            <NodeChip accent>record</NodeChip>
+            <MiniArrow />
+            <NodeChip>observe</NodeChip>
             <MiniArrow />
             <DbNode>store</DbNode>
           </Diagram>
@@ -60,6 +62,8 @@ function aggregationNodes(): Node[] {
         className: roleClassName("storage"),
         diagram: (
           <Diagram>
+            <NodeChip>rows</NodeChip>
+            <MiniArrow />
             <MiniBars heights={[30, 100, 55, 80, 20]} />
             <MiniArrow />
             <DbNode accent>cols</DbNode>
@@ -78,9 +82,11 @@ function aggregationNodes(): Node[] {
         className: roleClassName("compute"),
         diagram: (
           <Diagram>
-            <NodeChip accent>exact</NodeChip>
+            <DbNode>parts</DbNode>
             <MiniArrow />
-            <NodeChip>global order</NodeChip>
+            <NodeChip accent>global order</NodeChip>
+            <MiniArrow />
+            <NodeChip>exact</NodeChip>
           </Diagram>
         ),
       },
@@ -96,7 +102,9 @@ function aggregationNodes(): Node[] {
         className: roleClassName("compute"),
         diagram: (
           <Diagram>
-            <NodeChip accent>p50·p90·p99</NodeChip>
+            <DbNode accent>t-digest</DbNode>
+            <MiniArrow />
+            <NodeChip>p50·p90·p99</NodeChip>
             <MiniArrow />
             <MiniBars heights={[50, 90, 99]} />
           </Diagram>
@@ -115,6 +123,9 @@ function aggregationNodes(): Node[] {
         diagram: (
           <Diagram>
             <NodeChip accent>exact</NodeChip>
+            <MiniArrow />
+            <DiamondNode>merge?</DiamondNode>
+            <MiniArrow />
             <NodeChip>sketch</NodeChip>
           </Diagram>
         ),
@@ -131,7 +142,8 @@ function aggregationNodes(): Node[] {
         className: roleClassName("compute"),
         diagram: (
           <Diagram>
-            <DbNode>shard</DbNode>
+            <DbNode>shard₁</DbNode>
+            <DbNode>shard₂</DbNode>
             <MiniArrow />
             <NodeChip accent>merge</NodeChip>
           </Diagram>
@@ -151,6 +163,8 @@ function aggregationNodes(): Node[] {
           <Diagram>
             <NodeChip>summary</NodeChip>
             <MiniArrow />
+            <NodeChip>metrics</NodeChip>
+            <MiniArrow />
             <NodeChip accent>NativeReport</NodeChip>
           </Diagram>
         ),
@@ -167,9 +181,11 @@ function aggregationNodes(): Node[] {
         className: roleClassName("media"),
         diagram: (
           <Diagram>
-            <NodeChip accent>JSON·CSV</NodeChip>
+            <NodeChip accent>report</NodeChip>
             <MiniArrow />
-            <NodeChip>9 sinks</NodeChip>
+            <NodeChip>JSON·CSV</NodeChip>
+            <MiniArrow />
+            <DbNode>9 sinks</DbNode>
           </Diagram>
         ),
       },
@@ -186,6 +202,8 @@ function aggregationNodes(): Node[] {
         diagram: (
           <Diagram>
             <DbNode accent>native-v2.json</DbNode>
+            <MiniArrow />
+            <NodeChip>terminal</NodeChip>
             <MiniArrow />
             <NodeChip>path</NodeChip>
           </Diagram>
@@ -224,7 +242,8 @@ function exactVsSketchLeafNodes(): Node[] {
         className: roleClassName("compute"),
         diagram: (
           <Diagram>
-            <DbNode>shard</DbNode>
+            <DbNode>shard₁</DbNode>
+            <DbNode>shard₂</DbNode>
             <MiniArrow />
             <NodeChip accent>bit-exact</NodeChip>
           </Diagram>
@@ -244,6 +263,8 @@ function exactVsSketchLeafNodes(): Node[] {
           <Diagram>
             <DbNode>records</DbNode>
             <MiniArrow />
+            <NodeChip>fold</NodeChip>
+            <MiniArrow />
             <NodeChip accent>report</NodeChip>
           </Diagram>
         ),
@@ -261,6 +282,8 @@ function exactVsSketchLeafNodes(): Node[] {
         diagram: (
           <Diagram>
             <MiniBars heights={[40, 85, 60, 95]} />
+            <MiniArrow />
+            <NodeChip>centroids</NodeChip>
             <MiniArrow />
             <NodeChip accent>compress</NodeChip>
           </Diagram>
@@ -280,7 +303,9 @@ function exactVsSketchLeafNodes(): Node[] {
           <Diagram>
             <NodeChip>♥</NodeChip>
             <MiniArrow />
-            <NodeChip accent>p* estimate</NodeChip>
+            <DbNode accent>t-digest</DbNode>
+            <MiniArrow />
+            <NodeChip>p* est</NodeChip>
           </Diagram>
         ),
       },
