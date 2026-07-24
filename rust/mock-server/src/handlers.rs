@@ -363,8 +363,7 @@ pub async fn chat_completions(
             prefill,
             decode: latency.saturating_sub(prefill),
         };
-        let body = build_chat_response(&ctx);
-        let json_body = serde_json::to_vec(&body).map_err(internal_error)?;
+        let json_body = write_chat_response(&ctx);
         let resp_bytes = json_body.len() as u64;
 
         state.recorder.complete_fast(
@@ -431,6 +430,214 @@ struct ChatResponse<'a> {
     model: &'a str,
     choices: [ChatResponseChoice<'a>; 1],
     usage: &'a Usage,
+}
+
+/// Serializes as a single JSON string equal to the concatenation of `tokens`,
+/// streamed straight into the output via `collect_str` — no intermediate
+/// concatenated `String`. serde_json's `collect_str` applies the identical
+/// string escaping it would to the joined `&str`, so output is byte-identical.
+struct TokenJoin<'a>(&'a [String]);
+
+impl std::fmt::Display for TokenJoin<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for t in self.0 {
+            f.write_str(t)?;
+        }
+        Ok(())
+    }
+}
+
+impl Serialize for TokenJoin<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+/// Hand-assembled equivalent of `serde_json::to_vec(&build_chat_response(ctx))`.
+///
+/// Structural keys and literal values (`object`, `role`, braces, the
+/// `assistant`/`function` constants) are written as raw bytes — serde would
+/// escape-scan every one of them on the hot path. Only the variable values
+/// (id, model, finish_reason, content, tool-call fields, usage) go through
+/// `serde_json::to_writer`, so their escaping and number formatting stay
+/// byte-identical to the derived-`Serialize` path. Verified by
+/// `write_chat_response_matches_serde`.
+fn write_chat_response(ctx: &RequestCtx) -> Vec<u8> {
+    write_chat_response_bytes(
+        &ctx.request_id,
+        &ctx.model,
+        now_secs(),
+        ctx.tokenized.finish_reason,
+        ctx.tool_call.as_ref(),
+        &ctx.tokenized.tokens,
+        &ctx.tokenized.reasoning_content_tokens,
+        &ctx.usage,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_chat_response_bytes(
+    id: &str,
+    model: &str,
+    created: i64,
+    base_finish_reason: &str,
+    tool_call: Option<&ToolCallSpec>,
+    content_tokens: &[String],
+    reasoning_tokens: &[String],
+    usage: &Usage,
+) -> Vec<u8> {
+    use std::io::Write as _;
+    let finish_reason = if tool_call.is_some() {
+        "tool_calls"
+    } else {
+        base_finish_reason
+    };
+    let mut buf = Vec::with_capacity(256);
+    buf.extend_from_slice(br#"{"id":"#);
+    serde_json::to_writer(&mut buf, id).unwrap();
+    buf.extend_from_slice(br#","object":"chat.completion","created":"#);
+    let _ = write!(&mut buf, "{created}");
+    buf.extend_from_slice(br#","model":"#);
+    serde_json::to_writer(&mut buf, model).unwrap();
+    buf.extend_from_slice(br#","choices":[{"index":0,"finish_reason":"#);
+    serde_json::to_writer(&mut buf, finish_reason).unwrap();
+    buf.extend_from_slice(br#","message":{"role":"assistant","content":"#);
+    serde_json::to_writer(&mut buf, &TokenJoin(content_tokens)).unwrap();
+    if !reasoning_tokens.is_empty() {
+        buf.extend_from_slice(br#","reasoning_content":"#);
+        serde_json::to_writer(&mut buf, &TokenJoin(reasoning_tokens)).unwrap();
+    }
+    if let Some(tc) = tool_call {
+        buf.extend_from_slice(br#","tool_calls":[{"id":"#);
+        serde_json::to_writer(&mut buf, &tc.id).unwrap();
+        buf.extend_from_slice(br#","type":"function","function":{"name":"#);
+        serde_json::to_writer(&mut buf, &tc.name).unwrap();
+        buf.extend_from_slice(br#","arguments":"#);
+        serde_json::to_writer(&mut buf, &tc.arguments).unwrap();
+        buf.extend_from_slice(br#"}}]"#);
+    }
+    buf.extend_from_slice(br#"}}],"usage":"#);
+    serde_json::to_writer(&mut buf, usage).unwrap();
+    buf.push(b'}');
+    buf
+}
+
+#[cfg(test)]
+mod chat_response_serialize_tests {
+    use super::*;
+    use crate::models::{PromptTokensDetails, Usage};
+
+    fn usage_sample() -> Usage {
+        Usage {
+            prompt_tokens: 2,
+            completion_tokens: 3,
+            total_tokens: 5,
+            completion_tokens_details: None,
+            prompt_tokens_details: Some(PromptTokensDetails {
+                cached_tokens: 1,
+                audio_tokens: None,
+            }),
+            cache_creation_input_tokens: None,
+            prompt_cache_miss_tokens: None,
+            tool_use_prompt_token_count: None,
+            prompt_audio_seconds: None,
+            cache_read_input_tokens: None,
+        }
+    }
+
+    // Reference: the exact bytes the derived-Serialize path produced.
+    fn reference(
+        id: &str,
+        model: &str,
+        created: i64,
+        base_fr: &str,
+        tool_call: Option<&ToolCallSpec>,
+        content_tokens: &[String],
+        reasoning_tokens: &[String],
+        usage: &Usage,
+    ) -> Vec<u8> {
+        let (finish_reason, tool_calls) = if let Some(tc) = tool_call {
+            (
+                "tool_calls",
+                Some([ChatResponseToolCall {
+                    id: &tc.id,
+                    call_type: "function",
+                    function: ChatResponseFunctionCall {
+                        name: &tc.name,
+                        arguments: &tc.arguments,
+                    },
+                }]),
+            )
+        } else {
+            (base_fr, None)
+        };
+        let reasoning_content = if reasoning_tokens.is_empty() {
+            None
+        } else {
+            Some(reasoning_tokens.concat())
+        };
+        let resp = ChatResponse {
+            id,
+            object: "chat.completion",
+            created,
+            model,
+            choices: [ChatResponseChoice {
+                index: 0,
+                finish_reason,
+                message: ChatResponseMessage {
+                    role: "assistant",
+                    content: content_tokens.concat(),
+                    reasoning_content,
+                    tool_calls,
+                },
+            }],
+            usage,
+        };
+        serde_json::to_vec(&resp).unwrap()
+    }
+
+    #[test]
+    fn write_chat_response_matches_serde() {
+        let usage = usage_sample();
+        // Include characters that force JSON escaping (quote, backslash, newline)
+        // in every user-influenced field, so escaping parity is exercised.
+        let content = vec![" he\"llo".to_string(), " wo\\rld\n".to_string()];
+        let reasoning = vec!["think ".to_string(), "hard".to_string()];
+        let cases: Vec<(&str, Option<ToolCallSpec>, &[String])> = vec![
+            ("plain", None, &[]),
+            ("reasoning", None, &reasoning),
+        ];
+        for (label, tc, rsn) in cases {
+            let got = write_chat_response_bytes(
+                "chatcmpl-x\"1", "mo\"del", 1234567890, "stop", tc.as_ref(), &content, rsn, &usage,
+            );
+            let exp = reference(
+                "chatcmpl-x\"1", "mo\"del", 1234567890, "stop", tc.as_ref(), &content, rsn, &usage,
+            );
+            assert_eq!(
+                got, exp,
+                "{label}:\n got={}\n exp={}",
+                String::from_utf8_lossy(&got),
+                String::from_utf8_lossy(&exp)
+            );
+        }
+        // Tool-call case (overrides finish_reason, appends tool_calls).
+        let tc = ToolCallSpec {
+            id: "call_1".to_string(),
+            name: "get\"weather".to_string(),
+            arguments: "{\"city\":\"x\"}".to_string(),
+        };
+        let got = write_chat_response_bytes(
+            "id1", "m", 42, "stop", Some(&tc), &content, &[], &usage,
+        );
+        let exp = reference("id1", "m", 42, "stop", Some(&tc), &content, &[], &usage);
+        assert_eq!(
+            got, exp,
+            "tool_call:\n got={}\n exp={}",
+            String::from_utf8_lossy(&got),
+            String::from_utf8_lossy(&exp)
+        );
+    }
 }
 
 fn build_chat_response(ctx: &RequestCtx) -> ChatResponse<'_> {
