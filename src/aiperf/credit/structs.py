@@ -37,8 +37,9 @@ class Credit(
         num_turns: Total number of turns in the conversation.
         start_turn_index: Index of the turn at which THIS session instance begins
                           (0-based). 0 for a normal session that runs from the start;
-                          k > 0 for a session seeded mid-conversation, whose turns
-                          [0, k) are reconstructed worker-side as synthetic history.
+                          k > 0 for a session seeded mid-conversation. Earlier delta
+                          turns are reconstructed worker-side; self-contained rows
+                          need no history hydration.
                           The session's "start turn" (slot acquisition, session-count
                           bump) is ``turn_index == start_turn_index``, not ``== 0``.
         issued_at_ns: Wall clock timestamp when issued (time.time_ns).
@@ -143,7 +144,7 @@ class TurnToSend(Struct, frozen=True):
         num_turns: The total number of turns in the conversation.
         start_turn_index: Turn index at which this session instance begins (0-based).
                           0 for a normal session; k > 0 seeds the session
-                          mid-conversation (turns [0, k) become synthetic history).
+                          mid-conversation.
         agent_depth: DAG nesting level (0 = root); copied into the issued Credit.
         parent_correlation_id: Parent session's x_correlation_id for DAG children;
                                None for root sessions.

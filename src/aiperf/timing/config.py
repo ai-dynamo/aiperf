@@ -205,7 +205,8 @@ class CreditPhaseConfig(AIPerfBaseModel):
         lt=1.0,
         description="Lower bound of the per-session start-ratio range for "
         "mid-conversation seeding. New sessions in this phase start at turn "
-        "floor(ratio * num_turns) where ratio ~ Uniform[min, max].",
+        "floor(ratio * num_turns) where ratio ~ Uniform[min, max]. Delta "
+        "history is reconstructed; self-contained rows require no hydration.",
     )
     trajectory_start_max_ratio: float = Field(
         default=0.0,

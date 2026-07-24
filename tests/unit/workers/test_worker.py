@@ -1,16 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from pytest import param
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import (
+    ConversationContextMode,
+    CreditPhase,
+    MemoryMapFormat,
+)
+from aiperf.common.messages import DatasetConfiguredNotification
 from aiperf.common.models import (
     Conversation,
+    DatasetMetadata,
     ErrorDetails,
+    MemoryMapClientMetadata,
     ParsedResponse,
     RequestRecord,
     SSEMessage,
@@ -19,6 +27,7 @@ from aiperf.common.models import (
 )
 from aiperf.config.phases import ConcurrencyPhase
 from aiperf.credit.structs import Credit, CreditContext
+from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.workers.worker import Worker, _phase_needs_first_token_callback
 from tests.harness.fake_communication import FakeCommunication as FakeCommunication
 from tests.harness.fake_service_manager import FakeServiceManager as FakeServiceManager
@@ -563,6 +572,79 @@ class TestRetrieveConversation:
 
 
 # --- Payload Bytes Fast Path Tests ---
+
+
+@pytest.mark.asyncio
+class TestUniqueSessionPrefixWorker:
+    async def test_full_context_requests_reuse_prefix_without_history_hydration(
+        self, mock_worker, sample_credit_context
+    ) -> None:
+        mock_worker._unique_session_prefix_length = 8
+        conversation = Conversation(
+            session_id="full-context",
+            context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+            turns=[
+                Turn(raw_messages=[{"role": "user", "content": "complete-0"}]),
+                Turn(raw_messages=[{"role": "user", "content": "complete-1"}]),
+            ],
+        )
+        session = mock_worker.session_manager.create_and_store(
+            "resampled-instance-1",
+            conversation,
+            num_turns=2,
+        )
+
+        session.hydrate_seed_history(1)
+        assert session.turn_list == []
+        session.advance_turn(0)
+        first = mock_worker._create_request_info(
+            x_request_id="request-0",
+            credit_context=sample_credit_context,
+            session=session,
+        )
+        session.advance_turn(1)
+        second = mock_worker._create_request_info(
+            x_request_id="request-1",
+            credit_context=sample_credit_context,
+            session=session,
+        )
+
+        assert first.user_context_message == second.user_context_message
+        assert first.user_context_message
+        assert second.turns == [conversation.turns[1]]
+
+    async def test_payload_bytes_rejects_unique_prefix(
+        self, monkeypatch, mock_worker, tmp_path: Path
+    ) -> None:
+        class FakeDatasetClient:
+            def __init__(self, *, client_metadata) -> None:
+                self.client_metadata = client_metadata
+
+            async def initialize(self) -> None:
+                return None
+
+            async def stop(self) -> None:
+                return None
+
+        monkeypatch.setattr(
+            "aiperf.workers.worker.plugins.get_class",
+            lambda *_args, **_kwargs: FakeDatasetClient,
+        )
+        mock_worker._unique_session_prefix_length = 8
+        notification = DatasetConfiguredNotification(
+            service_id="dataset-manager",
+            metadata=DatasetMetadata(
+                sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+            ),
+            client_metadata=MemoryMapClientMetadata(
+                format=MemoryMapFormat.PAYLOAD_BYTES,
+                data_file_path=tmp_path / "data.mmap",
+                index_file_path=tmp_path / "index.mmap",
+            ),
+        )
+
+        with pytest.raises(ValueError, match="payload_bytes dataset"):
+            await mock_worker._on_dataset_configured(notification)
 
 
 @pytest.mark.asyncio

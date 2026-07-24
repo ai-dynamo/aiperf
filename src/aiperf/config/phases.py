@@ -216,8 +216,9 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
             default=0.0,
             description="Lower bound of the per-session start-ratio range for "
             "mid-conversation seeding (ratio ~ Uniform[min, max]); the session "
-            "starts at turn floor(ratio * num_turns) with prior turns synthesized "
-            "as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+            "starts at turn floor(ratio * num_turns). Prior delta turns are "
+            "reconstructed as history; self-contained message-array turns start "
+            "directly at the selected row.",
         ),
     ]
 
@@ -227,7 +228,8 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
             ge=0.0,
             lt=1.0,
             default=0.0,
-            description="Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+            description="Upper bound of the start-ratio range (>= min); 0.0 "
+            "disables mid-conversation starts.",
         ),
     ]
 

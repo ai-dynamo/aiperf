@@ -4,15 +4,17 @@
 
 from unittest.mock import MagicMock
 
-from aiperf.common.enums import ModelSelectionStrategy
-from aiperf.common.models import Turn
+import pytest
+
+from aiperf.common.enums import ConversationContextMode, ModelSelectionStrategy
+from aiperf.common.models import Conversation, Turn
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.base import BaseDatasetComposer
 from tests.unit.dataset.composer.conftest import make_run
 
 
 class _Composer(BaseDatasetComposer):
-    def create_dataset(self):
+    def create_dataset(self) -> list[Conversation]:
         return []
 
 
@@ -29,14 +31,14 @@ def _composer() -> _Composer:
 
 
 class TestSeedResponseSynthesis:
-    def test_disabled_by_default(self):
+    def test_disabled_by_default(self) -> None:
         composer = _composer()
         assert composer._seed_enabled is False
         turn = Turn(max_tokens=50)
         composer._finalize_turn(turn)
         assert turn.seed_response is None
 
-    def test_set_seed_response_builds_assistant_placeholder(self):
+    def test_set_seed_response_builds_assistant_placeholder(self) -> None:
         composer = _composer()
         composer.prompt_generator = MagicMock()
         composer.prompt_generator.generate_prompt.return_value = "RESP"
@@ -52,7 +54,7 @@ class TestSeedResponseSynthesis:
             {"role": "assistant", "content": "RESP"}
         ]
 
-    def test_noop_without_max_tokens(self):
+    def test_noop_without_max_tokens(self) -> None:
         composer = _composer()
         composer.prompt_generator = MagicMock()
         turn = Turn()  # no max_tokens resolved
@@ -60,7 +62,7 @@ class TestSeedResponseSynthesis:
         assert turn.seed_response is None
         composer.prompt_generator.generate_prompt.assert_not_called()
 
-    def test_finalize_sets_seed_response_when_enabled(self):
+    def test_finalize_sets_seed_response_when_enabled(self) -> None:
         composer = _composer()
         composer._seed_enabled = True
         composer.prompt_generator = MagicMock()
@@ -71,3 +73,23 @@ class TestSeedResponseSynthesis:
 
         assert turn.seed_response is not None
         assert turn.seed_response.raw_messages[0]["content"] == "R"
+
+    @pytest.mark.parametrize(
+        "context_mode",
+        [
+            ConversationContextMode.DELTAS_WITH_RESPONSES,
+            ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+        ],
+    )
+    def test_finalize_skips_placeholder_when_context_already_has_responses(
+        self, context_mode: ConversationContextMode
+    ) -> None:
+        composer = _composer()
+        composer._seed_enabled = True
+        composer.prompt_generator = MagicMock()
+
+        turn = Turn(max_tokens=30, model="test-model")
+        composer._finalize_turn(turn, context_mode=context_mode)
+
+        assert turn.seed_response is None
+        composer.prompt_generator.generate_prompt.assert_not_called()

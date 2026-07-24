@@ -338,7 +338,9 @@ class CLIConfig(BaseConfig):
                 "id. Identical across a session's turns (keeps within-session prefix "
                 "caching) but unique per resampled instance, so sampling a finite dataset "
                 "with replacement under server prefix caching does not produce unrealistic "
-                "cross-resample cache hits that inflate throughput. 0 disables."
+                "cross-resample cache hits that inflate throughput. 0 disables. "
+                "Pre-encoded payload-bytes datasets are incompatible because their request "
+                "bodies cannot be modified."
             ),
         ),
         CLIParameter(
@@ -2077,10 +2079,10 @@ class CLIConfig(BaseConfig):
             description="Lower bound of the per-session start-ratio range for "
             "mid-conversation warmup seeding. Per warmup session a start ratio is "
             "sampled uniformly in [min, max] and the session begins at turn "
-            "floor(ratio * num_turns), with earlier turns reconstructed as "
-            "token-sized synthetic history. Defaults to 0.0 when only "
-            "--trajectory-start-max-ratio is set. Only valid for synthesized "
-            "multi-turn datasets.",
+            "floor(ratio * num_turns). Earlier delta turns are reconstructed as "
+            "history; self-contained message-array traces start directly at the "
+            "selected row. Defaults to 0.0 when only "
+            "--trajectory-start-max-ratio is set.",
         ),
         CLIParameter(
             name=("--trajectory-start-min-ratio",),
@@ -2097,7 +2099,7 @@ class CLIConfig(BaseConfig):
             "mid-conversation warmup seeding (see --trajectory-start-min-ratio). "
             "Setting this > 0 enables warmup-session seeding; requires a warmup "
             "trigger (--warmup-request-count / --warmup-num-sessions / "
-            "--warmup-duration). Only valid for synthesized multi-turn datasets.",
+            "--warmup-duration).",
         ),
         CLIParameter(
             name=("--trajectory-start-max-ratio",),

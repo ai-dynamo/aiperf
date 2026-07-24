@@ -121,8 +121,7 @@ class UserSession(AIPerfBaseModel):
         """
         if (
             up_to_turn_index <= 0
-            or self.context_mode
-            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+            or self.context_mode == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
         ):
             return
         if self.context_mode not in {
@@ -140,8 +139,7 @@ class UserSession(AIPerfBaseModel):
             turn = self.conversation.turns[i]
             seeded.append(turn)
             if (
-                self.context_mode
-                == ConversationContextMode.DELTAS_WITHOUT_RESPONSES
+                self.context_mode == ConversationContextMode.DELTAS_WITHOUT_RESPONSES
                 and turn.seed_response is not None
             ):
                 seeded.append(turn.seed_response)

@@ -289,7 +289,12 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             raw_messages=[{"role": "assistant", "content": text}],
         )
 
-    def _finalize_turn(self, turn: Turn) -> None:
+    def _finalize_turn(
+        self,
+        turn: Turn,
+        *,
+        context_mode: ConversationContextMode | None = None,
+    ) -> None:
         """Finalize a turn by populating all required metadata fields.
 
         This method handles:
@@ -300,11 +305,17 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         Args:
             turn: The turn object to finalize.
+            context_mode: Conversation context semantics for this turn. Full
+                message arrays and authored response deltas do not need a
+                synthetic assistant placeholder.
         """
         if turn.model is None:
             turn.model = self._select_model_name()
         self._set_max_tokens(turn)
-        if self._seed_enabled:
+        if self._seed_enabled and context_mode in {
+            None,
+            ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+        }:
             self._set_seed_response(turn)
 
         # Clear cached sequence lengths for this turn to free memory
@@ -376,7 +387,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             if shared_system_prompt:
                 conversation.system_message = shared_system_prompt
                 self.trace(
-                    lambda conv=conversation: f"Set system_message on conversation {conv.session_id}"
+                    lambda conv=conversation: (
+                        f"Set system_message on conversation {conv.session_id}"
+                    )
                 )
 
             # Set user context prompt (unique per session)
@@ -386,9 +399,10 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 )
                 conversation.user_context_message = user_context
                 self.trace(
-                    lambda idx=session_index,
-                    conv=conversation: f"Set user_context_message for session {idx} "
-                    f"(conversation {conv.session_id})"
+                    lambda idx=session_index, conv=conversation: (
+                        f"Set user_context_message for session {idx} "
+                        f"(conversation {conv.session_id})"
+                    )
                 )
 
     @staticmethod

@@ -25,7 +25,7 @@ def _make_user(loadgen: CLIConfig) -> CLIConfig:
 
 
 class TestWarmupTrajectorySeeding:
-    def test_max_ratio_with_trigger_resolves(self):
+    def test_max_ratio_with_trigger_resolves(self) -> None:
         loadgen = CLIConfig(warmup_duration=10.0, trajectory_start_max_ratio=0.7)
         warmup = build_warmup(_make_user(loadgen))
         assert warmup is not None
@@ -33,7 +33,7 @@ class TestWarmupTrajectorySeeding:
         # min not set -> left to the phase default (0.0), absent from the dict
         assert "trajectory_start_min_ratio" not in warmup
 
-    def test_min_and_max_resolve(self):
+    def test_min_and_max_resolve(self) -> None:
         loadgen = CLIConfig(
             warmup_duration=10.0,
             trajectory_start_min_ratio=0.3,
@@ -43,12 +43,12 @@ class TestWarmupTrajectorySeeding:
         assert warmup["trajectory_start_min_ratio"] == 0.3
         assert warmup["trajectory_start_max_ratio"] == 0.7
 
-    def test_trajectory_without_warmup_trigger_raises(self):
+    def test_trajectory_without_warmup_trigger_raises(self) -> None:
         loadgen = CLIConfig(trajectory_start_max_ratio=0.5)
         with pytest.raises(ValueError, match="without any warmup trigger"):
             build_warmup(_make_user(loadgen))
 
-    def test_no_trajectory_flags_omits_keys(self):
+    def test_no_trajectory_flags_omits_keys(self) -> None:
         loadgen = CLIConfig(warmup_duration=10.0)
         warmup = build_warmup(_make_user(loadgen))
         assert "trajectory_start_min_ratio" not in warmup
@@ -66,18 +66,32 @@ class TestPhaseTrajectoryValidation:
             trajectory_start_max_ratio=hi,
         )
 
-    def test_min_greater_than_max_raises(self):
+    def test_min_greater_than_max_raises(self) -> None:
         with pytest.raises(ValueError, match="must be <="):
             self._phase(0.7, 0.3)
 
-    def test_valid_range_ok(self):
+    def test_valid_range_ok(self) -> None:
         phase = self._phase(0.3, 0.7)
         assert phase.trajectory_start_min_ratio == 0.3
         assert phase.trajectory_start_max_ratio == 0.7
 
-    def test_default_disabled_ok(self):
+    def test_default_disabled_ok(self) -> None:
         phase = ConcurrencyPhase(
             name="warmup", type="concurrency", concurrency=4, duration=10
         )
         assert phase.trajectory_start_min_ratio == 0.0
         assert phase.trajectory_start_max_ratio == 0.0
+
+    def test_camel_case_yaml_contract_resolves(self) -> None:
+        phase = ConcurrencyPhase.model_validate(
+            {
+                "name": "warmup",
+                "type": "concurrency",
+                "concurrency": 4,
+                "duration": 10,
+                "trajectoryStartMinRatio": 0.3,
+                "trajectoryStartMaxRatio": 0.7,
+            }
+        )
+        assert phase.trajectory_start_min_ratio == 0.3
+        assert phase.trajectory_start_max_ratio == 0.7

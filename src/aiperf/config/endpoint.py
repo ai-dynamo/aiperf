@@ -252,7 +252,8 @@ class EndpointConfig(BaseConfig):
             "instances of the same conversation. Use when sampling a finite dataset with "
             "replacement under server prefix caching, to stop unrealistic cross-resample "
             "cache hits from inflating throughput. 0 disables. Prepended after any shared "
-            "system prompt.",
+            "system prompt. Requires structured conversation storage; pre-encoded "
+            "payload_bytes request bodies cannot be modified.",
         ),
     ]
 

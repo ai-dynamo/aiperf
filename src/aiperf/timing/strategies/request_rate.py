@@ -135,9 +135,9 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         set for this phase: a start ratio is sampled uniformly in
         ``[trajectory_start_min_ratio, trajectory_start_max_ratio]`` and the
         session begins at turn ``floor(ratio * num_turns)``, with the earlier
-        turns reconstructed as synthetic history worker-side. Falls back to a
-        normal turn-0 start when seeding is disabled or the ratio rounds down to
-        0 (short sessions).
+        delta turns reconstructed as history worker-side. Self-contained rows
+        start directly at the selected turn. Falls back to a normal turn-0 start
+        when seeding is disabled or the ratio rounds down to 0 (short sessions).
         """
         max_ratio = self._config.trajectory_start_max_ratio
         if max_ratio <= 0.0:

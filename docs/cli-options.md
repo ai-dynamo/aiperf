@@ -383,7 +383,7 @@ Use server-reported token counts from API usage fields instead of client-side to
 
 #### `--unique-session-prefix-length` `<int>`
 
-Prepend a unique per-session-instance prefix of approximately this many tokens to each session's first turn, derived from the session correlation id. Identical across a session's turns (keeps within-session prefix caching) but unique per resampled instance, so sampling a finite dataset with replacement under server prefix caching does not produce unrealistic cross-resample cache hits that inflate throughput. 0 disables.
+Prepend a unique per-session-instance prefix of approximately this many tokens to each session's first turn, derived from the session correlation id. Identical across a session's turns (keeps within-session prefix caching) but unique per resampled instance, so sampling a finite dataset with replacement under server prefix caching does not produce unrealistic cross-resample cache hits that inflate throughput. 0 disables. Pre-encoded payload-bytes datasets are incompatible because their request bodies cannot be modified.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `0`_
 
@@ -1027,12 +1027,12 @@ The concurrency value to use for the warmup phase. If not set, it will use the `
 
 #### `--trajectory-start-min-ratio` `<float>`
 
-Lower bound of the per-session start-ratio range for mid-conversation warmup seeding. Per warmup session a start ratio is sampled uniformly in [min, max] and the session begins at turn floor(ratio * num_turns), with earlier turns reconstructed as token-sized synthetic history. Defaults to 0.0 when only --trajectory-start-max-ratio is set. Only valid for synthesized multi-turn datasets.
+Lower bound of the per-session start-ratio range for mid-conversation warmup seeding. Per warmup session a start ratio is sampled uniformly in [min, max] and the session begins at turn floor(ratio * num_turns). Earlier delta turns are reconstructed as history; self-contained message-array traces start directly at the selected row. Defaults to 0.0 when only --trajectory-start-max-ratio is set.
 <br/>_Constraints: ≥ 0.0, &lt; 1.0_
 
 #### `--trajectory-start-max-ratio` `<float>`
 
-Upper bound of the per-session start-ratio range for mid-conversation warmup seeding (see --trajectory-start-min-ratio). Setting this > 0 enables warmup-session seeding; requires a warmup trigger (--warmup-request-count / --warmup-num-sessions / --warmup-duration). Only valid for synthesized multi-turn datasets.
+Upper bound of the per-session start-ratio range for mid-conversation warmup seeding (see --trajectory-start-min-ratio). Setting this > 0 enables warmup-session seeding; requires a warmup trigger (--warmup-request-count / --warmup-num-sessions / --warmup-duration).
 <br/>_Constraints: ≥ 0.0, &lt; 1.0_
 
 #### `--warmup-prefill-concurrency` `<int>`
@@ -1834,7 +1834,7 @@ Use server-reported token counts from API usage fields instead of client-side to
 
 #### `--unique-session-prefix-length` `<int>`
 
-Prepend a unique per-session-instance prefix of approximately this many tokens to each session's first turn, derived from the session correlation id. Identical across a session's turns (keeps within-session prefix caching) but unique per resampled instance, so sampling a finite dataset with replacement under server prefix caching does not produce unrealistic cross-resample cache hits that inflate throughput. 0 disables.
+Prepend a unique per-session-instance prefix of approximately this many tokens to each session's first turn, derived from the session correlation id. Identical across a session's turns (keeps within-session prefix caching) but unique per resampled instance, so sampling a finite dataset with replacement under server prefix caching does not produce unrealistic cross-resample cache hits that inflate throughput. 0 disables. Pre-encoded payload-bytes datasets are incompatible because their request bodies cannot be modified.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `0`_
 
@@ -2478,12 +2478,12 @@ The concurrency value to use for the warmup phase. If not set, it will use the `
 
 #### `--trajectory-start-min-ratio` `<float>`
 
-Lower bound of the per-session start-ratio range for mid-conversation warmup seeding. Per warmup session a start ratio is sampled uniformly in [min, max] and the session begins at turn floor(ratio * num_turns), with earlier turns reconstructed as token-sized synthetic history. Defaults to 0.0 when only --trajectory-start-max-ratio is set. Only valid for synthesized multi-turn datasets.
+Lower bound of the per-session start-ratio range for mid-conversation warmup seeding. Per warmup session a start ratio is sampled uniformly in [min, max] and the session begins at turn floor(ratio * num_turns). Earlier delta turns are reconstructed as history; self-contained message-array traces start directly at the selected row. Defaults to 0.0 when only --trajectory-start-max-ratio is set.
 <br/>_Constraints: ≥ 0.0, &lt; 1.0_
 
 #### `--trajectory-start-max-ratio` `<float>`
 
-Upper bound of the per-session start-ratio range for mid-conversation warmup seeding (see --trajectory-start-min-ratio). Setting this > 0 enables warmup-session seeding; requires a warmup trigger (--warmup-request-count / --warmup-num-sessions / --warmup-duration). Only valid for synthesized multi-turn datasets.
+Upper bound of the per-session start-ratio range for mid-conversation warmup seeding (see --trajectory-start-min-ratio). Setting this > 0 enables warmup-session seeding; requires a warmup trigger (--warmup-request-count / --warmup-num-sessions / --warmup-duration).
 <br/>_Constraints: ≥ 0.0, &lt; 1.0_
 
 #### `--warmup-prefill-concurrency` `<int>`

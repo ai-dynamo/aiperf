@@ -1179,7 +1179,7 @@
                     },
                     "trajectoryStartMinRatio": {
                       "default": 0.0,
-                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartminratio",
@@ -1187,7 +1187,7 @@
                     },
                     "trajectoryStartMaxRatio": {
                       "default": 0.0,
-                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartmaxratio",
@@ -1538,7 +1538,7 @@
                     },
                     "trajectoryStartMinRatio": {
                       "default": 0.0,
-                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartminratio",
@@ -1546,7 +1546,7 @@
                     },
                     "trajectoryStartMaxRatio": {
                       "default": 0.0,
-                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartmaxratio",
@@ -1965,7 +1965,7 @@
                     },
                     "trajectoryStartMinRatio": {
                       "default": 0.0,
-                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartminratio",
@@ -1973,7 +1973,7 @@
                     },
                     "trajectoryStartMaxRatio": {
                       "default": 0.0,
-                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartmaxratio",
@@ -2406,7 +2406,7 @@
                     },
                     "trajectoryStartMinRatio": {
                       "default": 0.0,
-                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartminratio",
@@ -2414,7 +2414,7 @@
                     },
                     "trajectoryStartMaxRatio": {
                       "default": 0.0,
-                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartmaxratio",
@@ -2833,7 +2833,7 @@
                     },
                     "trajectoryStartMinRatio": {
                       "default": 0.0,
-                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartminratio",
@@ -2841,7 +2841,7 @@
                     },
                     "trajectoryStartMaxRatio": {
                       "default": 0.0,
-                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartmaxratio",
@@ -3237,7 +3237,7 @@
                     },
                     "trajectoryStartMinRatio": {
                       "default": 0.0,
-                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartminratio",
@@ -3245,7 +3245,7 @@
                     },
                     "trajectoryStartMaxRatio": {
                       "default": 0.0,
-                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartmaxratio",
@@ -4316,7 +4316,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -4324,7 +4324,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.0,
-                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -4675,7 +4675,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -4683,7 +4683,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.0,
-                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -5102,7 +5102,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -5110,7 +5110,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.0,
-                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -5543,7 +5543,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -5551,7 +5551,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.0,
-                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -5970,7 +5970,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -5978,7 +5978,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.0,
-                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -6374,7 +6374,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -6382,7 +6382,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.0,
-                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -6773,7 +6773,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -6781,7 +6781,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.0,
-                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -7132,7 +7132,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -7140,7 +7140,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.0,
-                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -7559,7 +7559,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -7567,7 +7567,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.0,
-                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -8000,7 +8000,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -8008,7 +8008,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.0,
-                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -8427,7 +8427,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -8435,7 +8435,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.0,
-                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -8831,7 +8831,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -8839,7 +8839,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.0,
-                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -9546,12 +9546,12 @@
         },
         "trajectoryStartMinRatio": {
           "default": 0.0,
-          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
           "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartminratio",
@@ -9572,12 +9572,12 @@
         },
         "trajectoryStartMaxRatio": {
           "default": 0.0,
-          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
           "title": "Trajectorystartmaxratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartmaxratio",
@@ -10163,12 +10163,12 @@
         },
         "trajectoryStartMinRatio": {
           "default": 0.0,
-          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
           "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartminratio",
@@ -10189,12 +10189,12 @@
         },
         "trajectoryStartMaxRatio": {
           "default": 0.0,
-          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
           "title": "Trajectorystartmaxratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartmaxratio",
@@ -10929,12 +10929,12 @@
         },
         "uniqueSessionPrefixLength": {
           "default": 0,
-          "description": "Prepend a unique per-session-instance prefix of approximately this many tokens to each session's first turn, derived from the session's correlation id. The prefix is identical across that session's turns (preserving within-session prefix-cache reuse) but differs across resampled instances of the same conversation. Use when sampling a finite dataset with replacement under server prefix caching, to stop unrealistic cross-resample cache hits from inflating throughput. 0 disables. Prepended after any shared system prompt.",
+          "description": "Prepend a unique per-session-instance prefix of approximately this many tokens to each session's first turn, derived from the session's correlation id. The prefix is identical across that session's turns (preserving within-session prefix-cache reuse) but differs across resampled instances of the same conversation. Use when sampling a finite dataset with replacement under server prefix caching, to stop unrealistic cross-resample cache hits from inflating throughput. 0 disables. Prepended after any shared system prompt. Requires structured conversation storage; pre-encoded payload_bytes request bodies cannot be modified.",
           "title": "Uniquesessionprefixlength",
           "oneOf": [
             {
               "default": 0,
-              "description": "Prepend a unique per-session-instance prefix of approximately this many tokens to each session's first turn, derived from the session's correlation id. The prefix is identical across that session's turns (preserving within-session prefix-cache reuse) but differs across resampled instances of the same conversation. Use when sampling a finite dataset with replacement under server prefix caching, to stop unrealistic cross-resample cache hits from inflating throughput. 0 disables. Prepended after any shared system prompt.",
+              "description": "Prepend a unique per-session-instance prefix of approximately this many tokens to each session's first turn, derived from the session's correlation id. The prefix is identical across that session's turns (preserving within-session prefix-cache reuse) but differs across resampled instances of the same conversation. Use when sampling a finite dataset with replacement under server prefix caching, to stop unrealistic cross-resample cache hits from inflating throughput. 0 disables. Prepended after any shared system prompt. Requires structured conversation storage; pre-encoded payload_bytes request bodies cannot be modified.",
               "minimum": 0,
               "title": "Uniquesessionprefixlength",
               "type": "integer"
@@ -11981,12 +11981,12 @@
         },
         "trajectoryStartMinRatio": {
           "default": 0.0,
-          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
           "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartminratio",
@@ -12007,12 +12007,12 @@
         },
         "trajectoryStartMaxRatio": {
           "default": 0.0,
-          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
           "title": "Trajectorystartmaxratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartmaxratio",
@@ -12659,12 +12659,12 @@
         },
         "trajectoryStartMinRatio": {
           "default": 0.0,
-          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
           "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartminratio",
@@ -12685,12 +12685,12 @@
         },
         "trajectoryStartMaxRatio": {
           "default": 0.0,
-          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
           "title": "Trajectorystartmaxratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartmaxratio",
@@ -15134,12 +15134,12 @@
         },
         "trajectoryStartMinRatio": {
           "default": 0.0,
-          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
           "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartminratio",
@@ -15160,12 +15160,12 @@
         },
         "trajectoryStartMaxRatio": {
           "default": 0.0,
-          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
           "title": "Trajectorystartmaxratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartmaxratio",
@@ -18383,12 +18383,12 @@
         },
         "trajectoryStartMinRatio": {
           "default": 0.0,
-          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
           "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns). Prior delta turns are reconstructed as history; self-contained message-array turns start directly at the selected row.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartminratio",
@@ -18409,12 +18409,12 @@
         },
         "trajectoryStartMaxRatio": {
           "default": 0.0,
-          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
           "title": "Trajectorystartmaxratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables mid-conversation starts.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartmaxratio",

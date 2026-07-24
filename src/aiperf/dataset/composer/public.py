@@ -55,7 +55,10 @@ class PublicDatasetComposer(BaseDatasetComposer):
 
         for conversation in conversations:
             for turn in conversation.turns:
-                self._finalize_turn(turn)
+                self._finalize_turn(
+                    turn,
+                    context_mode=conversation.context_mode,
+                )
 
         self._finalize_conversations(conversations)
         return conversations

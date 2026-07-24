@@ -89,9 +89,9 @@ class SampledSession:
 
         The returned turn has ``turn_index == start_turn_index``; the session
         runs turns ``[start_turn_index, num_turns)`` on the wire while turns
-        ``[0, start_turn_index)`` are reconstructed worker-side as synthetic
-        history (so the session's accumulated context starts at its
-        steady-state depth without replaying the earlier turns).
+        ``[0, start_turn_index)`` are reconstructed worker-side when the dataset
+        uses delta semantics. Self-contained message-array datasets need no
+        reconstruction because the selected turn already carries its history.
 
         Falls back to a normal first turn when ``start_turn_index <= 0``.
 

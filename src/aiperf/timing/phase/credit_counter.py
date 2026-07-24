@@ -229,8 +229,7 @@ class CreditCounter:
         if turn_to_send.is_session_start:
             new_sent_sessions_count += 1
             # A seeded session (start_turn_index = k > 0) only sends turns
-            # [k, num_turns); turns [0, k) are reconstructed as synthetic
-            # history worker-side and never hit the wire.
+            # [k, num_turns); turns [0, k) never hit the wire.
             new_total_session_turns += (
                 turn_to_send.num_turns - turn_to_send.start_turn_index
             )

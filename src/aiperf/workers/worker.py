@@ -59,10 +59,10 @@ from aiperf.common.protocols import (
     StreamingDealerClientProtocol,
     StreamingPushClientProtocol,
 )
+from aiperf.common.session_prefix import prepend_unique_session_prefix
 from aiperf.config.adaptive_scale_phase import (
     sla_filters_require_first_token_observation,
 )
-from aiperf.common.session_prefix import prepend_unique_session_prefix
 from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
@@ -281,6 +281,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         if isinstance(msg.client_metadata, MemoryMapClientMetadata):
             self._is_payload_bytes = (
                 msg.client_metadata.format == MemoryMapFormat.PAYLOAD_BYTES
+            )
+        if self._is_payload_bytes and self._unique_session_prefix_length > 0:
+            raise ValueError(
+                "endpoint.unique_session_prefix_length cannot be used with a "
+                "payload_bytes dataset because pre-encoded request bodies are "
+                "immutable. Use structured conversation storage or disable the "
+                "unique session prefix."
             )
         self._dataset_configured_event.set()
         self.debug(
@@ -793,13 +800,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     def _hydrate_seed_history_if_seeded(
         self, credit: Credit, session: UserSession
     ) -> None:
-        """Reconstruct synthetic history for a session seeded mid-conversation.
+        """Prepare history for a session seeded mid-conversation.
 
         No-op for normal sessions (start_turn_index == 0). For start_turn_index
-        = k > 0, prepends synthetic (user, assistant) pairs for turns [0, k) so
-        the session's accumulated context starts at its turn-k depth without
-        replaying the earlier turns on the wire. Called once at session
-        creation, before the first ``advance_turn``.
+        = k > 0, hydrates prior delta turns as needed. Self-contained turns need
+        no hydration and begin directly at row k. Called once at session creation,
+        before the first ``advance_turn``.
         """
         if credit.start_turn_index > 0:
             session.hydrate_seed_history(credit.start_turn_index)
