@@ -150,9 +150,13 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
         total_rows = len(ds)
         dataset = self.run.cfg.get_default_dataset()
         cap = getattr(dataset, "entries", None)
-        explicit_cap = bool(getattr(dataset, "entries_explicit", False)) or (
-            "entries" in dataset.model_fields_set and cap is not None
-        )
+        # Key strictly off entries_explicit. --request-count / --num-conversations
+        # fallbacks populate `entries` (so it lands in model_fields_set) but the
+        # converter pins _entries_explicit=False for them; a direct YAML `entries`
+        # is promoted to entries_explicit=True by _resolve_entries_explicit. The
+        # old `or ("entries" in model_fields_set ...)` clause defeated that
+        # distinction and silently capped the corpus to the request-count prefix.
+        explicit_cap = bool(getattr(dataset, "entries_explicit", False))
         num_entries = cap if explicit_cap else None
         max_ctx = getattr(dataset, "max_context_length", None)
         synthesis = getattr(dataset, "synthesis", None)
