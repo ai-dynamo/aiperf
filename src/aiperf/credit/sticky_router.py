@@ -28,7 +28,7 @@ from aiperf.common.protocols import (
     StreamingPullClientProtocol,
     StreamingRouterClientProtocol,
 )
-from aiperf.config.comm import ZMQDualBindConfig
+from aiperf.config.comm import BaseZMQCommunicationConfig, ZMQDualBindConfig
 from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
@@ -217,7 +217,9 @@ class StickyCreditRouter(CommunicationMixin):
         - credit cancellation is O(n × k) where n = number of workers, k = average in-flight credits per worker
     """
 
-    def _init_credit_channels(self, comm_config) -> None:
+    def _init_credit_channels(
+        self, comm_config: BaseZMQCommunicationConfig | None
+    ) -> None:
         """Bind the credit dispatch ROUTER and the dedicated credit-return PULL.
 
         Dispatch (Credit/CancelCredits) goes router->worker over CREDIT_ROUTER;

@@ -25,7 +25,9 @@ class ReplayTurnKey:
     """Stable dataset identity for one replayed request."""
 
     conversation_id: str
+    """Template conversation ID this request belongs to."""
     turn_index: int
+    """Zero-based turn position within the conversation."""
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -33,7 +35,9 @@ class ReplayResumeBoundary:
     """Completed prefix of one replay stream at a phase boundary."""
 
     conversation_id: str
+    """Template conversation ID of the replay stream."""
     next_turn_index: int
+    """Index of the first turn not yet completed at the phase boundary."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,9 +45,13 @@ class RecordedTurnInterval:
     """One request interval on a logical replay stream."""
 
     key: ReplayTurnKey
+    """Dataset identity (conversation + turn) of this interval."""
     stream_id: str
+    """Logical stream this interval belongs to (root or subagent chain)."""
     start_ms: float | None
+    """Recorded wall-clock start offset in ms; None when unknown."""
     api_time_ms: float | None
+    """Recorded server processing duration in ms; None when unknown."""
 
     @property
     def normalized_interval(self) -> tuple[float, float] | None:
@@ -125,15 +133,24 @@ def infer_cross_stream_predecessors(
 
 @dataclass(slots=True)
 class _PendingDispatch:
+    """A dispatch held back until its recorded predecessors complete."""
+
     turn: TurnToSend
+    """The turn queued for dispatch once its barrier clears."""
     issue: Callable[[], Awaitable[bool]]
+    """Coroutine factory that issues the credit; returns True on acceptance."""
     on_refused: Callable[[], Awaitable[None]] | None
+    """Optional callback run when the dispatch is refused or cancelled."""
 
 
 @dataclass(slots=True)
 class _RootBarrierState:
+    """Per-tree completion frontier and the dispatches waiting on it."""
+
     completed: set[ReplayTurnKey]
+    """Keys of requests on this tree that have recorded completion."""
     pending: dict[ReplayTurnKey, _PendingDispatch]
+    """Dispatches keyed by request, waiting on their predecessors to complete."""
 
 
 class ReplayBarrierCoordinator:

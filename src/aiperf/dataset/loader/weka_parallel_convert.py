@@ -752,7 +752,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
 
 
 def _drive_reconstruction_pool(
-    pool, tasks: list[_WekaTraceTask]
+    pool: mp.pool.Pool, tasks: list[_WekaTraceTask]
 ) -> list[_WekaProcessTaskResult]:
     """Run ``_process_task`` across the pool with periodic progress logs.
 

@@ -43,21 +43,33 @@ class ConversationState:
     """One live conversation in a wall-clock trajectory snapshot."""
 
     conversation_id: str
+    """Template conversation ID for this live stream."""
     x_correlation_id: str
+    """Unique per-session correlation ID (sticky-routing key)."""
     next_turn_index: int
+    """Index of the next turn this stream will dispatch."""
     next_dispatch_offset_ms: float = 0.0
+    """Normalized wall-clock offset (ms) at which the next turn dispatches."""
     agent_depth: int = 0
+    """Static DAG nesting level (0 = root)."""
     parent_correlation_id: str | None = None
+    """Parent session's correlation ID for a DAG child; None for roots."""
     root_correlation_id: str | None = None
+    """Correlation ID of the depth-0 tree root; None when this is the root."""
     waiting_on_children: bool = False
+    """True while this stream is blocked awaiting spawned child completion."""
     join_target_turn_index: int | None = None
+    """Turn index resumed once gated children join; None when ungated."""
     branch_id: str | None = None
-    # Multi-consumer fan-in: every (branch_id, gated_turn_index) this child
-    # feeds. When non-empty, seed_snapshot registers all gates; ``branch_id`` /
-    # ``join_target_turn_index`` remain the first membership for single-gate
-    # callers.
+    """Identifier of the branch gate this child feeds; None when ungated."""
     join_gate_memberships: tuple[tuple[str, int], ...] = ()
+    """Every ``(branch_id, gated_turn_index)`` this child feeds (multi-consumer
+    fan-in). When non-empty, ``seed_snapshot`` registers all gates; ``branch_id``
+    / ``join_target_turn_index`` remain the first membership for single-gate
+    callers."""
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
+    """How a child relates to its parent (FORK inherits history; SPAWN fresh).
+    Ignored when ``parent_correlation_id`` is None."""
 
     @property
     def warmup_turn_index(self) -> int | None:
@@ -86,8 +98,11 @@ class TrajectorySnapshot:
     """Wall-clock state for one sampled root trace."""
 
     t_star_ms: float
+    """Wall-clock instant (ms) the trajectory is anchored to (the replay t*)."""
     states: tuple[ConversationState, ...]
+    """Per-stream live state for every conversation in this trajectory."""
     replay_resume_boundaries: tuple[ReplayResumeBoundary, ...] = ()
+    """Completed-prefix boundaries carried across the WARMUP -> PROFILING split."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -103,11 +118,15 @@ class Trajectory:
     """
 
     conversation_id: str
+    """Template conversation ID of the sampled root trace."""
     start_turn_index: int
+    """Turn index the lane begins at (timestamp-less datasets and older tests)."""
     snapshot: TrajectorySnapshot | None = None
+    """Wall-clock snapshot for timestamped traces; None for timestamp-less ones."""
     x_correlation_id: str = field(
         default_factory=lambda: str(uuid.uuid4()), compare=False
     )
+    """Persistent session identity across the WARMUP -> PROFILING boundary."""
 
 
 @dataclass(slots=True)

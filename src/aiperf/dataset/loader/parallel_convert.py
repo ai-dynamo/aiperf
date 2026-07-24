@@ -288,7 +288,9 @@ def _install_hard_exit_on_sigterm() -> None:
 _POOL_JOIN_TIMEOUT_S: float = 10.0
 
 
-def _shutdown_pool(pool, *, timeout_s: float = _POOL_JOIN_TIMEOUT_S) -> None:
+def _shutdown_pool(
+    pool: mp.pool.Pool, *, timeout_s: float = _POOL_JOIN_TIMEOUT_S
+) -> None:
     """Drain a ``multiprocessing.Pool`` without the SIGTERM teardown hang.
 
     The default ``with Pool(...) as pool:`` exit calls ``pool.terminate()``,
@@ -333,7 +335,7 @@ def parallel_convert(
     sessions: list[tuple[str, list[dict]]],
     *,
     tokenizer_name: str,
-    corpus,
+    corpus: np.ndarray,
     base_seed: int,
     block_size: int,
     sep_token: int | None,

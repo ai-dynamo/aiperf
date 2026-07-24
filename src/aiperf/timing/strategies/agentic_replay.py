@@ -88,10 +88,12 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.credit.issuer import CreditIssuer
     from aiperf.credit.structs import Credit
+    from aiperf.timing.branch_orchestrator import BranchOrchestrator
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
+    from aiperf.timing.session_tree import SessionTreeRegistry
 
 
 class AgenticReplayStrategy(AIPerfLoggerMixin):
@@ -112,8 +114,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         credit_issuer: CreditIssuer,
         lifecycle: PhaseLifecycle,
         run: BenchmarkRun | None = None,
-        branch_orchestrator=None,
-        session_tree_registry=None,
+        branch_orchestrator: BranchOrchestrator | None = None,
+        session_tree_registry: SessionTreeRegistry | None = None,
         **kwargs,
     ) -> None:
         super().__init__(logger_name="AgenticReplayTiming")
