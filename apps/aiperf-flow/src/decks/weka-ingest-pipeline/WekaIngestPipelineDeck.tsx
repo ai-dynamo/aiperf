@@ -4,10 +4,7 @@
  */
 
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
 import { Grid } from "../../layout/Grid.js";
@@ -166,19 +163,9 @@ export function WekaIngestPipelineDeck(): React.JSX.Element {
         <div className="border-b border-[var(--color-stroke-secondary)] px-4 py-2 text-sm font-semibold">
           Flow: input to worker
         </div>
-        <div style={{ height: 780 }}>
-          <ReactFlow
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            nodes={nodes}
-            edges={edges}
-            fitView
-            fitViewOptions={{ padding: 0.15 }}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-          </ReactFlow>
-        </div>
+        {/* Positions are computed by the shared ELK engine from graph structure + measured node
+            sizes (top-to-bottom, inputs -> worker); authored `position` fields are ignored. */}
+        <AutoLayoutFlow nodes={nodes} edges={edges} layout={{ direction: "DOWN" }} height={780} />
       </div>
 
       <Grid columns={2} gap={16}>

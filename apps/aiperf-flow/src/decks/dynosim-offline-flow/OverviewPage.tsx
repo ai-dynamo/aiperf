@@ -4,10 +4,7 @@
  */
 
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
 import { Stack } from "../../layout/Stack.js";
 import { Grid } from "../../layout/Grid.js";
 import { Callout } from "../../prose/Callout.js";
@@ -144,19 +141,7 @@ export function OverviewPage({ level }: { level: Level }): React.JSX.Element {
         </p>
       </div>
 
-      <div style={{ height: 700 }}>
-        <ReactFlow
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodes={nodes(maint)}
-          edges={edges}
-          fitView
-          fitViewOptions={{ padding: 0.15 }}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-        </ReactFlow>
-      </div>
+      <AutoLayoutFlow key={String(maint)} nodes={nodes(maint)} edges={edges} layout={{ direction: "DOWN" }} height={700} />
 
       <Grid columns={3} gap={12}>
         <Callout tone="info" title="Shared above the seam">

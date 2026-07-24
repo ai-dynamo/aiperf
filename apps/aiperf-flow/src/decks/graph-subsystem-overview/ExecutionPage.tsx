@@ -11,10 +11,12 @@
 import { useMemo, useState } from "react";
 import clsx from "clsx";
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
+import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { nodeTypes } from "../../nodes/nodeTypes.js";
 import { edgeTypes } from "../../edges/edgeTypes.js";
+import { useElkLayout } from "../../layout/graph/index.js";
+import type { ElkOptions } from "../../layout/graph/index.js";
 import { useStepSimulator } from "../../state/useStepSimulator.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
@@ -68,6 +70,37 @@ const TICK_NOTES = [
 ];
 const TICKS = [0, 1, 2, 3, 4, 5];
 
+// Top-to-bottom firing DAG. ELK computes the layout once from the (stable-id) structure; the
+// per-tick node `data` (firing/done tints) is overlaid onto those positions each render.
+const FIRING_LAYOUT: ElkOptions = { direction: "DOWN" };
+
+// The step simulator regenerates `nodes` (new tint/state) every tick under stable ids. `useElkLayout`
+// re-lays out only on id/edge changes, so its positions stay fixed; we merge them onto the live-data
+// nodes so the animation still shows the frontier advancing.
+function FiringCanvas({ nodes, edges }: { nodes: Node[]; edges: Edge[] }): React.JSX.Element {
+  const { nodes: laid, laidOut } = useElkLayout(nodes, edges, FIRING_LAYOUT);
+  const posById = useMemo(() => new Map(laid.map((n) => [n.id, n.position])), [laid]);
+  const positioned = useMemo(
+    () => nodes.map((n) => ({ ...n, position: posById.get(n.id) ?? n.position })),
+    [nodes, posById],
+  );
+  return (
+    <ReactFlow
+      nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
+      nodes={positioned}
+      edges={edges}
+      fitView
+      fitViewOptions={{ padding: 0.12 }}
+      nodesDraggable={false}
+      proOptions={{ hideAttribution: true }}
+      style={{ opacity: laidOut ? 1 : 0, transition: "opacity 150ms ease" }}
+    >
+      <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
+    </ReactFlow>
+  );
+}
+
 function ExecutorFiringDemo(): React.JSX.Element {
   const sim = useStepSimulator(TICKS, { autoPlayMs: 1200 });
   const tick = sim.index;
@@ -97,17 +130,9 @@ function ExecutorFiringDemo(): React.JSX.Element {
     <Stack gap={12}>
       <Row gap={16} align="start" wrap>
         <div style={{ width: 420, height: 560 }}>
-          <ReactFlow
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            nodes={nodes}
-            edges={TRACE_EDGES}
-            fitView
-            fitViewOptions={{ padding: 0.12 }}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-          </ReactFlow>
+          <ReactFlowProvider>
+            <FiringCanvas nodes={nodes} edges={TRACE_EDGES} />
+          </ReactFlowProvider>
         </div>
         <Stack gap={12} className="min-w-[240px] flex-1">
           <Row gap={8} align="center">

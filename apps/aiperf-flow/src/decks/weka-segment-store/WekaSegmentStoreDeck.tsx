@@ -4,11 +4,8 @@
  */
 
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
 import clsx from "clsx";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
 import { Grid } from "../../layout/Grid.js";
@@ -251,19 +248,14 @@ export function WekaSegmentStoreDeck(): React.JSX.Element {
                   <span className={clsx("text-sm font-semibold", inkClassName("primary"))}>On-disk layout</span>
                   <Badge>mmap ACCESS_READ</Badge>
                 </Row>
-                <div style={{ height: 320 }}>
-                  <ReactFlow
-                    nodeTypes={nodeTypes}
-                    edgeTypes={edgeTypes}
-                    nodes={unifiedStoreNodes}
-                    edges={unifiedStoreEdges}
-                    fitView
-                    fitViewOptions={{ padding: 0.2 }}
-                    proOptions={{ hideAttribution: true }}
-                  >
-                    <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-                  </ReactFlow>
-                </div>
+                {/* ELK lays out the idx -> blob columns top-to-bottom from measured sizes; the
+                    authored `position` fields on the nodes are ignored. */}
+                <AutoLayoutFlow
+                  nodes={unifiedStoreNodes}
+                  edges={unifiedStoreEdges}
+                  layout={{ direction: "DOWN" }}
+                  height={320}
+                />
               </div>
             </Stack>
 

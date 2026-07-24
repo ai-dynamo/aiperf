@@ -12,10 +12,12 @@
 
 import { useMemo, useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
+import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { nodeTypes } from "../../nodes/nodeTypes.js";
 import { edgeTypes } from "../../edges/edgeTypes.js";
+import { useElkLayout } from "../../layout/graph/index.js";
+import type { ElkOptions } from "../../layout/graph/index.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
 import { Grid } from "../../layout/Grid.js";
@@ -42,6 +44,34 @@ import { Pill, StatusLabel, Eyebrow, Framed } from "./ui.js";
 
 function actorLinkAliases(from: Actor, to: Actor): readonly string[] {
   return [`${from}->${to}`, `${from}:${to}`, `${from}-${to}`, `${from}/${to}`];
+}
+
+// The actor tape is a left→right chain; module-level so the ELK hook sees a stable options identity.
+const TAPE_LAYOUT: ElkOptions = { direction: "RIGHT" };
+
+/** ELK-laid-out actor tape. Runs inside the provider below so it can measure and place the nodes. */
+function StateTraceCanvas({ nodes: inputNodes, edges }: { nodes: Node[]; edges: Edge[] }): React.JSX.Element {
+  const { nodes, laidOut } = useElkLayout(inputNodes, edges, TAPE_LAYOUT);
+  return (
+    <ReactFlow
+      nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
+      nodes={nodes}
+      edges={edges}
+      fitView
+      fitViewOptions={{ padding: 0.18 }}
+      nodesDraggable={false}
+      nodesConnectable={false}
+      panOnDrag={false}
+      zoomOnScroll={false}
+      zoomOnPinch={false}
+      zoomOnDoubleClick={false}
+      proOptions={{ hideAttribution: true }}
+      style={{ opacity: laidOut ? 1 : 0, transition: "opacity 150ms ease" }}
+    >
+      <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-tertiary)" />
+    </ReactFlow>
+  );
 }
 
 /** The actor execution tape for one frame, drawn as a real React Flow graph. */
@@ -93,23 +123,9 @@ function StateTrace({
       style={{ height: 200 }}
       aria-label={`${algorithm.title}: ${frame.label}`}
     >
-      <ReactFlow
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        nodes={nodes}
-        edges={edges}
-        fitView
-        fitViewOptions={{ padding: 0.18 }}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        panOnDrag={false}
-        zoomOnScroll={false}
-        zoomOnPinch={false}
-        zoomOnDoubleClick={false}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-tertiary)" />
-      </ReactFlow>
+      <ReactFlowProvider>
+        <StateTraceCanvas nodes={nodes} edges={edges} />
+      </ReactFlowProvider>
     </div>
   );
 }

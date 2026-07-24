@@ -4,10 +4,7 @@
  */
 
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
 import { Stack } from "../../layout/Stack.js";
 import { Divider } from "../../layout/Divider.js";
 import { inkClassName } from "../../theme/tokens.js";
@@ -104,19 +101,7 @@ export function DispatchPage({ level }: { level: Level }): React.JSX.Element {
         </p>
       </div>
 
-      <div style={{ height: 320 }}>
-        <ReactFlow
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodes={diagramNodes(maint)}
-          edges={diagramEdges}
-          fitView
-          fitViewOptions={{ padding: 0.2 }}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-        </ReactFlow>
-      </div>
+      <AutoLayoutFlow key={String(maint)} nodes={diagramNodes(maint)} edges={diagramEdges} layout={{ direction: "RIGHT" }} height={320} />
 
       <Divider />
       <div>
@@ -126,20 +111,7 @@ export function DispatchPage({ level }: { level: Level }): React.JSX.Element {
           feeding the metrics accumulator.
         </p>
       </div>
-      <div style={{ height: 120 }}>
-        <ReactFlow
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodes={observerNodes(maint)}
-          edges={observerEdges()}
-          fitView
-          fitViewOptions={{ padding: 0.3 }}
-          proOptions={{ hideAttribution: true }}
-          nodesDraggable={false}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-        </ReactFlow>
-      </div>
+      <AutoLayoutFlow key={String(maint)} nodes={observerNodes(maint)} edges={observerEdges()} layout={{ direction: "RIGHT" }} height={120} />
       {maint && (
         <p className={`text-center text-xs ${inkClassName("quaternary")}`}>
           on_arrival from ScheduledRuntime · the rest from DynosimSink

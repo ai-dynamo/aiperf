@@ -14,10 +14,12 @@
 
 import { useMemo } from "react";
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
+import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { nodeTypes } from "../../nodes/nodeTypes.js";
 import { edgeTypes } from "../../edges/edgeTypes.js";
+import { useElkLayout } from "../../layout/graph/index.js";
+import type { ElkOptions } from "../../layout/graph/index.js";
 import { useStepSimulator } from "../../state/useStepSimulator.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
@@ -275,6 +277,32 @@ function buildDiagram(t: number): { nodes: Node[]; edges: Edge[] } {
   return { nodes, edges };
 }
 
+// Module-level (stable identity) so `useElkLayout` never re-lays-out from an inline options object.
+// The graph structure (node ids + edge ids) is fixed across steps — only node styling/data changes —
+// so ELK computes positions once and they hold while the step clock advances.
+const GRAPH_LAYOUT: ElkOptions = { direction: "RIGHT" };
+
+/** Auto-laid-out conversation graph. Runs the ELK hook inside its own provider (per-instance). */
+function ConversationGraph({ nodes: inputNodes, edges }: { nodes: Node[]; edges: Edge[] }): React.JSX.Element {
+  const { nodes, laidOut } = useElkLayout(inputNodes, edges, GRAPH_LAYOUT);
+  return (
+    <ReactFlow
+      nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
+      nodes={nodes}
+      edges={edges}
+      fitView
+      fitViewOptions={{ padding: 0.15 }}
+      nodesDraggable={false}
+      proOptions={{ hideAttribution: true }}
+      // Hide the pre-layout frame so nodes never flash at placeholder coordinates.
+      style={{ opacity: laidOut ? 1 : 0, transition: "opacity 150ms ease" }}
+    >
+      <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
+    </ReactFlow>
+  );
+}
+
 // --- in-flight request sidebar ---------------------------------------------
 
 function RequestLog({ t }: { t: number }): React.JSX.Element {
@@ -476,17 +504,9 @@ export function ClaudeCodeSubagentStepperDeck(): React.JSX.Element {
                 Conversation graph
               </div>
               <div style={{ height: 520 }}>
-                <ReactFlow
-                  nodeTypes={nodeTypes}
-                  edgeTypes={edgeTypes}
-                  nodes={nodes}
-                  edges={edges}
-                  fitView
-                  fitViewOptions={{ padding: 0.15 }}
-                  proOptions={{ hideAttribution: true }}
-                >
-                  <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-                </ReactFlow>
+                <ReactFlowProvider>
+                  <ConversationGraph nodes={nodes} edges={edges} />
+                </ReactFlowProvider>
               </div>
             </div>
 

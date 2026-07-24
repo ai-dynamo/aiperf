@@ -5,10 +5,7 @@
 
 import clsx from "clsx";
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
 import { useStepSimulator } from "../../state/useStepSimulator.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
@@ -159,19 +156,7 @@ export function InternalsPage(): React.JSX.Element {
       </div>
 
       {/* LAYERED INTERNALS — DEPENDENCY IS STRICTLY AIPERF -> MOCKER */}
-      <div style={{ height: 500 }}>
-        <ReactFlow
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodes={stackNodes}
-          edges={stackEdges}
-          fitView
-          fitViewOptions={{ padding: 0.15 }}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-        </ReactFlow>
-      </div>
+      <AutoLayoutFlow nodes={stackNodes} edges={stackEdges} layout={{ direction: "DOWN" }} height={500} />
       <p className={`text-xs ${inkClassName("tertiary")}`}>
         step_until(until_ms) · next_event_ms · submit — scheduler math unchanged; only driver loops
         inverted

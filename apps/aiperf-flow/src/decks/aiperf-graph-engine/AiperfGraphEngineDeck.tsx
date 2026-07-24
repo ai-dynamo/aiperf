@@ -5,11 +5,9 @@
 
 import { useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
 import clsx from "clsx";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
+import type { ElkOptions } from "../../layout/graph/index.js";
 import { TopBar } from "../../shell/TopBar.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
@@ -215,6 +213,10 @@ const flowEdges: Edge[] = GRAPH_EDGES.map((e) => ({
         data: { color: CATEGORY_CSS_VAR[EDGE_STYLE_CATEGORY[e.style]], speed: "normal" as const },
       }),
 }));
+
+// Top-to-bottom agentic DAG; ELK layers the spine and splits the spawned-critic arm, then
+// re-converges both at the compaction node — no hand-picked coordinates.
+const GRAPH_LAYOUT: ElkOptions = { direction: "DOWN" };
 
 const NODE_BY_ID = new Map(GRAPH_NODES.map((n) => [n.id, n]));
 
@@ -437,20 +439,14 @@ function GraphDiagram(): React.JSX.Element {
         ]}
       />
       <Row gap={16} align="start">
-        <div style={{ height: 620, flex: "1 1 auto", minWidth: 0 }}>
-          <ReactFlow
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            nodes={flowNodes}
-            edges={flowEdges}
-            onNodeClick={(_, node) => setSelectedId(node.id)}
-            fitView
-            fitViewOptions={{ padding: 0.1 }}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-          </ReactFlow>
-        </div>
+        <AutoLayoutFlow
+          className="min-w-0 flex-1"
+          nodes={flowNodes}
+          edges={flowEdges}
+          layout={GRAPH_LAYOUT}
+          height={620}
+          onNodeClick={setSelectedId}
+        />
         <div
           className={clsx(
             "flex flex-shrink-0 flex-col gap-2 rounded-lg border px-4 py-3 shadow-sm",

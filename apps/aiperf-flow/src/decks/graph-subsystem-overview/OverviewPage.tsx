@@ -10,10 +10,12 @@
 
 import { useMemo, useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
+import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { nodeTypes } from "../../nodes/nodeTypes.js";
 import { edgeTypes } from "../../edges/edgeTypes.js";
+import { useElkLayout } from "../../layout/graph/index.js";
+import type { ElkOptions } from "../../layout/graph/index.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
 import { Grid } from "../../layout/Grid.js";
@@ -160,6 +162,46 @@ const DETECT_ADAPTERS = [
   { id: "native", pr: 1 },
 ];
 
+// Left→right pipeline. ELK lays out the (stable-id) structure once — including the slow
+// worker→executor return edge as a back-edge — and the per-selection node tints are overlaid.
+const STAGE_FLOW_LAYOUT: ElkOptions = { direction: "RIGHT" };
+
+// Inner canvas (inside the provider): the selected-stage restyle changes node `data` under stable
+// ids, so `useElkLayout` keeps its computed positions fixed and we merge them onto the live nodes.
+function StageFlowCanvas({
+  nodes: dataNodes,
+  onSelect,
+}: {
+  nodes: Node[];
+  onSelect: (s: StageId) => void;
+}): React.JSX.Element {
+  const { nodes: laid, laidOut } = useElkLayout(dataNodes, FLOW_EDGES, STAGE_FLOW_LAYOUT);
+  const posById = useMemo(() => new Map(laid.map((n) => [n.id, n.position])), [laid]);
+  const positioned = useMemo(
+    () => dataNodes.map((n) => ({ ...n, position: posById.get(n.id) ?? n.position })),
+    [dataNodes, posById],
+  );
+  return (
+    <ReactFlow
+      nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
+      nodes={positioned}
+      edges={FLOW_EDGES}
+      onNodeClick={(_, node) => {
+        const meta = FLOW_NODES.find((n) => n.id === node.id);
+        if (meta) onSelect(meta.stage);
+      }}
+      fitView
+      fitViewOptions={{ padding: 0.12 }}
+      nodesDraggable={false}
+      proOptions={{ hideAttribution: true }}
+      style={{ opacity: laidOut ? 1 : 0, transition: "opacity 150ms ease" }}
+    >
+      <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
+    </ReactFlow>
+  );
+}
+
 function StageFlow({
   selected,
   onSelect,
@@ -188,21 +230,9 @@ function StageFlow({
 
   return (
     <div style={{ height: 340 }}>
-      <ReactFlow
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        nodes={nodes}
-        edges={FLOW_EDGES}
-        onNodeClick={(_, node) => {
-          const meta = FLOW_NODES.find((n) => n.id === node.id);
-          if (meta) onSelect(meta.stage);
-        }}
-        fitView
-        fitViewOptions={{ padding: 0.12 }}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-      </ReactFlow>
+      <ReactFlowProvider>
+        <StageFlowCanvas nodes={nodes} onSelect={onSelect} />
+      </ReactFlowProvider>
     </div>
   );
 }

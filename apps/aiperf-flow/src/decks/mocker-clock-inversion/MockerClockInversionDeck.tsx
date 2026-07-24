@@ -4,10 +4,7 @@
  */
 
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
 import { useStepSimulator } from "../../state/useStepSimulator.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
@@ -360,19 +357,7 @@ export function MockerClockInversionDeck(): React.JSX.Element {
             </h2>
             <CategoryPill category="gray" label="before" />
           </Row>
-          <div style={{ height: 380 }}>
-            <ReactFlow
-              nodeTypes={nodeTypes}
-              edgeTypes={edgeTypes}
-              nodes={legacyNodes}
-              edges={legacyEdges}
-              fitView
-              fitViewOptions={{ padding: 0.2 }}
-              proOptions={{ hideAttribution: true }}
-            >
-              <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-            </ReactFlow>
-          </div>
+          <AutoLayoutFlow nodes={legacyNodes} edges={legacyEdges} layout={{ direction: "DOWN" }} height={380} />
           <p className={`text-sm ${inkClassName("secondary")}`}>
             Mocker decides <strong>when</strong> arrivals become visible to its scheduler.
           </p>
@@ -383,19 +368,7 @@ export function MockerClockInversionDeck(): React.JSX.Element {
             <h2 className={`text-base font-semibold ${inkClassName("primary")}`}>AIPerf dynosim_offline</h2>
             <CategoryPill category="green" label="ajc/rust" />
           </Row>
-          <div style={{ height: 380 }}>
-            <ReactFlow
-              nodeTypes={nodeTypes}
-              edgeTypes={edgeTypes}
-              nodes={aiperfNodes}
-              edges={aiperfEdges}
-              fitView
-              fitViewOptions={{ padding: 0.2 }}
-              proOptions={{ hideAttribution: true }}
-            >
-              <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-            </ReactFlow>
-          </div>
+          <AutoLayoutFlow nodes={aiperfNodes} edges={aiperfEdges} layout={{ direction: "DOWN" }} height={380} />
           <p className={`text-sm ${inkClassName("secondary")}`}>
             AIPerf decides <strong>when</strong> the engine may observe each arrival or gate.
           </p>

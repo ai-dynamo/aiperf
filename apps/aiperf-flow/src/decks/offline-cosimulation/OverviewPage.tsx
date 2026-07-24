@@ -5,10 +5,7 @@
 
 import { useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
 import { Grid } from "../../layout/Grid.js";
@@ -212,19 +209,7 @@ export function OverviewPage(): React.JSX.Element {
 
       <ModeControl mode={mode} onChange={setMode} />
 
-      <div style={{ height: 680 }}>
-        <ReactFlow
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodes={nodes(mode)}
-          edges={edges}
-          fitView
-          fitViewOptions={{ padding: 0.15 }}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-        </ReactFlow>
-      </div>
+      <AutoLayoutFlow key={mode} nodes={nodes(mode)} edges={edges} layout={{ direction: "DOWN" }} height={680} />
 
       <div className={`rounded-lg border px-4 py-3 text-sm shadow-sm ${strokeClassName("secondary")}`}>
         <span className={inkClassName("secondary")}>

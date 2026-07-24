@@ -4,10 +4,7 @@
  */
 
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
 import { Stack } from "../../layout/Stack.js";
 import { Callout } from "../../prose/Callout.js";
 import { inkClassName } from "../../theme/tokens.js";
@@ -83,19 +80,7 @@ export function LaunchPage({ level }: { level: Level }): React.JSX.Element {
         </p>
       </div>
 
-      <div style={{ height: 260 }}>
-        <ReactFlow
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodes={nodes(maint)}
-          edges={edges}
-          fitView
-          fitViewOptions={{ padding: 0.2 }}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-        </ReactFlow>
-      </div>
+      <AutoLayoutFlow key={String(maint)} nodes={nodes(maint)} edges={edges} layout={{ direction: "RIGHT" }} height={260} />
 
       {dev && (
         <Callout tone="warning" title="What fails closed">

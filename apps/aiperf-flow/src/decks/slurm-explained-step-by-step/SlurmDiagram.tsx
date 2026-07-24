@@ -11,11 +11,12 @@
 //! animated `FlowEdge` dashes replace the canvas's SVG pulse/motion flourishes).
 
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
+import type { ElkOptions } from "../../layout/graph/index.js";
 import type { CategoryRole } from "../../theme/tokens.js";
+
+// Left→right pipelines / fan-out / fan-in scenes; module-level so the hook sees a stable identity.
+const STEP_LAYOUT: ElkOptions = { direction: "RIGHT" };
 
 // Accent border emphasis for a highlighted node. Kept as complete literal strings so Tailwind's
 // JIT scanner emits every class (see the aiperf-flow-diagrams SKILL "Tailwind JIT trap").
@@ -323,20 +324,12 @@ export const DIAGRAMS: readonly Diagram[] = [
 export function SlurmDiagram({ stepIndex }: { stepIndex: number }): React.JSX.Element {
   const diagram = DIAGRAMS[stepIndex] ?? DIAGRAMS[0];
   return (
-    <div style={{ height: 360 }} className="border border-stroke-secondary bg-surface-elevated">
-      <ReactFlow
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        nodes={diagram.nodes}
-        edges={diagram.edges}
-        fitView
-        fitViewOptions={{ padding: 0.18 }}
-        proOptions={{ hideAttribution: true }}
-        nodesDraggable={false}
-        nodesConnectable={false}
-      >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-      </ReactFlow>
-    </div>
+    <AutoLayoutFlow
+      nodes={diagram.nodes}
+      edges={diagram.edges}
+      layout={STEP_LAYOUT}
+      height={360}
+      className="border border-stroke-secondary bg-surface-elevated"
+    />
   );
 }

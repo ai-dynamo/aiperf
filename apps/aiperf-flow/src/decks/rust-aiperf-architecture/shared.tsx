@@ -8,6 +8,8 @@ import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant } from "@xy
 import "@xyflow/react/dist/style.css";
 import { nodeTypes } from "../../nodes/nodeTypes.js";
 import { edgeTypes } from "../../edges/edgeTypes.js";
+import { useElkLayout } from "../../layout/graph/index.js";
+import type { ElkOptions } from "../../layout/graph/index.js";
 import { Row } from "../../layout/Row.js";
 import { Eyebrow } from "../../prose/Eyebrow.js";
 import { inkClassName, strokeClassName } from "../../theme/tokens.js";
@@ -87,28 +89,68 @@ export function DeckDiagram({
   nodes,
   edges,
   height,
+  layout,
 }: {
   nodes: Node[];
   edges: Edge[];
   height: number;
+  /**
+   * Optional ELK auto-layout. When set, node positions are computed from graph structure and
+   * measured sizes (the authored `position` hints are ignored); omit it to keep the legacy
+   * manual-position behavior unchanged.
+   */
+  layout?: ElkOptions;
 }): React.JSX.Element {
   return (
     <div style={{ height }}>
       <ReactFlowProvider>
-        <ReactFlow
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodes={nodes}
-          edges={edges}
-          fitView
-          fitViewOptions={{ padding: 0.15 }}
-          nodesDraggable={false}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-        </ReactFlow>
+        {layout ? (
+          <DeckDiagramAutoLaid nodes={nodes} edges={edges} layout={layout} />
+        ) : (
+          <ReactFlow
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            nodes={nodes}
+            edges={edges}
+            fitView
+            fitViewOptions={{ padding: 0.15 }}
+            nodesDraggable={false}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
+          </ReactFlow>
+        )}
       </ReactFlowProvider>
     </div>
+  );
+}
+
+/** Inner canvas: runs the ELK hook (inside the provider) and renders the auto-laid-out nodes. */
+function DeckDiagramAutoLaid({
+  nodes: inputNodes,
+  edges,
+  layout,
+}: {
+  nodes: Node[];
+  edges: Edge[];
+  layout: ElkOptions;
+}): React.JSX.Element {
+  const { nodes, laidOut } = useElkLayout(inputNodes, edges, layout);
+  return (
+    <ReactFlow
+      nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
+      nodes={nodes}
+      edges={edges}
+      fitView
+      fitViewOptions={{ padding: 0.15 }}
+      nodesDraggable={false}
+      proOptions={{ hideAttribution: true }}
+      // Hide the pre-layout frame so nodes never flash at placeholder coordinates.
+      style={{ opacity: laidOut ? 1 : 0, transition: "opacity 150ms ease" }}
+    >
+      <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
+    </ReactFlow>
   );
 }
 

@@ -11,11 +11,13 @@
 
 import { useMemo } from "react";
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
+import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import clsx from "clsx";
 import { nodeTypes } from "../../nodes/nodeTypes.js";
 import { edgeTypes } from "../../edges/edgeTypes.js";
+import { useElkLayout } from "../../layout/graph/index.js";
+import type { ElkOptions } from "../../layout/graph/index.js";
 import { TopBar } from "../../shell/TopBar.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
@@ -40,6 +42,11 @@ import {
   strokeClassName,
   surfaceClassName,
 } from "../../theme/tokens.js";
+
+// Module-level (stable identity) ELK options — the frontier graph is a top-to-bottom DAG
+// (START -> A -> {B, C} fan-out -> D fan-in). Positions are computed from structure + measured
+// sizes; the placeholder `NODE_POSITIONS` below only satisfy the React Flow `Node` type.
+const FRONTIER_ELK_OPTS: ElkOptions = { direction: "DOWN" };
 
 const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
   START: { x: 150, y: 0 },
@@ -91,22 +98,43 @@ function buildGraphEdges(frame: Frame): Edge[] {
   });
 }
 
-function FrontierGraph({ frame }: { frame: Frame }): React.JSX.Element {
+// Runs the shared ELK layout for the frontier graph. The node/edge identity is stable across
+// steps (only per-node `data` recolors), so ELK lays out once; each step's fresh node `data` is
+// re-applied onto the ELK-computed positions so the recoloring stays live. Must be inside a
+// `ReactFlowProvider` (uses the layout hook's React Flow hooks).
+function FrontierGraphInner({ frame }: { frame: Frame }): React.JSX.Element {
   const nodes = useMemo(() => buildGraphNodes(frame), [frame]);
   const edges = useMemo(() => buildGraphEdges(frame), [frame]);
+  const { nodes: laid, laidOut } = useElkLayout(nodes, edges, FRONTIER_ELK_OPTS);
+  const posById = useMemo(() => new Map(laid.map((n) => [n.id, n.position])), [laid]);
+  const positioned = useMemo(
+    () => nodes.map((n) => ({ ...n, position: posById.get(n.id) ?? n.position })),
+    [nodes, posById],
+  );
+  return (
+    <ReactFlow
+      nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
+      nodes={positioned}
+      edges={edges}
+      fitView
+      fitViewOptions={{ padding: 0.2 }}
+      nodesDraggable={false}
+      proOptions={{ hideAttribution: true }}
+      // Hide the pre-layout frame so nodes never flash at placeholder coordinates.
+      style={{ opacity: laidOut ? 1 : 0, transition: "opacity 150ms ease" }}
+    >
+      <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
+    </ReactFlow>
+  );
+}
+
+function FrontierGraph({ frame }: { frame: Frame }): React.JSX.Element {
   return (
     <div style={{ height: 420 }}>
-      <ReactFlow
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        nodes={nodes}
-        edges={edges}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-      </ReactFlow>
+      <ReactFlowProvider>
+        <FrontierGraphInner frame={frame} />
+      </ReactFlowProvider>
     </div>
   );
 }

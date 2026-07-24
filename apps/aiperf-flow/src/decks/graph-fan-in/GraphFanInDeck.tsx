@@ -4,10 +4,8 @@
  */
 
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
+import type { ElkOptions } from "../../layout/graph/index.js";
 import { TopBar } from "../../shell/TopBar.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
@@ -109,6 +107,9 @@ const graphEdges: Edge[] = [
   { id: "e-reduce-fire", source: "reduce", target: "fire", type: "flow" },
 ];
 
+// Left→right fan-in: ELK layers the three producers into the channel/gate/reduce/fire spine.
+const GRAPH_LAYOUT: ElkOptions = { direction: "RIGHT" };
+
 const LIFECYCLE_STEPS: Array<{ n: string; title: string; note: string }> = [
   {
     n: "1",
@@ -198,19 +199,7 @@ function GraphSection(): React.JSX.Element {
             count=2 of 3
           </span>
         </div>
-        <div style={{ height: 360 }}>
-          <ReactFlow
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            nodes={graphNodes}
-            edges={graphEdges}
-            fitView
-            fitViewOptions={{ padding: 0.15 }}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-          </ReactFlow>
-        </div>
+        <AutoLayoutFlow nodes={graphNodes} edges={graphEdges} layout={GRAPH_LAYOUT} height={360} />
       </div>
       <p className={`text-sm ${inkClassName("tertiary")}`}>
         A and B write (arrival_count reaches 2), satisfying count=2, so the consumer wakes and captures the

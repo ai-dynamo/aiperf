@@ -11,10 +11,8 @@
 //! `step_emit_weka.py`, `step_emit_validate.py`, `src/aiperf/graph/executor.py`.
 
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
+import type { ElkOptions } from "../../layout/graph/index.js";
 import { TopBar } from "../../shell/TopBar.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
@@ -148,27 +146,20 @@ const objectModelEdges: Edge[] = [
   { id: "e-t-c", source: "t", target: "c", style: { strokeDasharray: "4 4" } },
 ];
 
-// This deck renders two independent React Flow diagrams in the same view (unlike the tabbed
-// segment-pools deck, where only one diagram mounts at a time). `<ReactFlow>` instances that
-// share one ancestor `<ReactFlowProvider>` collide on the same internal node/edge store, so each
-// diagram gets its own local provider here.
+// Top-to-bottom object-model tree; ELK layers Workload → Graph/Trace → Step/Edge/Channel → effects.
+const OBJECT_MODEL_LAYOUT: ElkOptions = { direction: "DOWN" };
+
+// Each diagram is a self-contained `AutoLayoutFlow` (its own `ReactFlowProvider`), so the two
+// React Flow instances on this view never collide on a shared store.
 function ObjectModelDiagram(): React.JSX.Element {
   return (
-    <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`} style={{ height: 480 }}>
-      <ReactFlowProvider>
-        <ReactFlow
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodes={objectModelNodes}
-          edges={objectModelEdges}
-          fitView
-          fitViewOptions={{ padding: 0.15 }}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-        </ReactFlow>
-      </ReactFlowProvider>
-    </div>
+    <AutoLayoutFlow
+      className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}
+      nodes={objectModelNodes}
+      edges={objectModelEdges}
+      layout={OBJECT_MODEL_LAYOUT}
+      height={480}
+    />
   );
 }
 
@@ -200,23 +191,18 @@ const projectionEdges: Edge[] = [
   { id: "e-workload-store", source: "workload2", target: "store", type: "flow", label: "mirrors interned builder" },
 ];
 
+// Left→right projection chain: ParsedGraph → projector → Workload → unified store.
+const PROJECTION_LAYOUT: ElkOptions = { direction: "RIGHT" };
+
 function ProjectionDiagram(): React.JSX.Element {
   return (
-    <div className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`} style={{ height: 220 }}>
-      <ReactFlowProvider>
-        <ReactFlow
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodes={projectionNodes}
-          edges={projectionEdges}
-          fitView
-          fitViewOptions={{ padding: 0.2 }}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-        </ReactFlow>
-      </ReactFlowProvider>
-    </div>
+    <AutoLayoutFlow
+      className={`rounded-lg border shadow-sm ${strokeClassName("secondary")}`}
+      nodes={projectionNodes}
+      edges={projectionEdges}
+      layout={PROJECTION_LAYOUT}
+      height={220}
+    />
   );
 }
 

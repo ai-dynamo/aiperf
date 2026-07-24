@@ -9,12 +9,14 @@
 //! shape React Flow's node/edge vocabulary is for: a chain of `panel` nodes joined by `flow`
 //! edges, clickable to select the active stage shown in the detail card below.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
+import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { nodeTypes } from "../../nodes/nodeTypes.js";
 import { edgeTypes } from "../../edges/edgeTypes.js";
+import { useElkLayout } from "../../layout/graph/index.js";
+import type { ElkOptions } from "../../layout/graph/index.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
 import { Code } from "../../prose/Code.js";
@@ -103,13 +105,15 @@ export const STAGES: Stage[] = [
   },
 ];
 
-const STAGE_GAP_X = 190;
+// Module-level (stable identity) ELK options — the stages form a left-to-right linear chain.
+const STAGE_ELK_OPTS: ElkOptions = { direction: "RIGHT" };
 
 function buildNodes(selected: string): Node[] {
-  return STAGES.map((stage, i) => ({
+  return STAGES.map((stage) => ({
     id: stage.id,
     type: "panel",
-    position: { x: i * STAGE_GAP_X, y: 0 },
+    // Placeholder position (ignored by ELK); satisfies the React Flow `Node` type only.
+    position: { x: 0, y: 0 },
     data: {
       title: stage.name,
       detail: stage.timing ? "timing transform" : "structural",
@@ -129,27 +133,52 @@ const FLOW_EDGES: Edge[] = STAGES.slice(1).map((stage, i) => ({
  * Nine-stage pipeline chain rendered as a real React Flow graph (`panel` nodes + `flow` edges).
  * Clicking a stage updates the detail card below with its symbol and description.
  */
+// Inner graph: runs the shared ELK layout and re-applies the ELK-computed positions onto the
+// live (per-selection) node `data` so the selected-stage highlight stays live. Must be inside a
+// `ReactFlowProvider`.
+function StageGraph({
+  sel,
+  onSelect,
+}: {
+  sel: string;
+  onSelect: (id: string) => void;
+}): React.JSX.Element {
+  const nodes = useMemo(() => buildNodes(sel), [sel]);
+  const { nodes: laid, laidOut } = useElkLayout(nodes, FLOW_EDGES, STAGE_ELK_OPTS);
+  const posById = useMemo(() => new Map(laid.map((n) => [n.id, n.position])), [laid]);
+  const positioned = useMemo(
+    () => nodes.map((n) => ({ ...n, position: posById.get(n.id) ?? n.position })),
+    [nodes, posById],
+  );
+  return (
+    <ReactFlow
+      nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
+      nodes={positioned}
+      edges={FLOW_EDGES}
+      onNodeClick={(_, node) => onSelect(node.id)}
+      nodesDraggable={false}
+      fitView
+      fitViewOptions={{ padding: 0.2 }}
+      proOptions={{ hideAttribution: true }}
+      // Hide the pre-layout frame so nodes never flash at placeholder coordinates.
+      style={{ opacity: laidOut ? 1 : 0, transition: "opacity 150ms ease" }}
+    >
+      <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
+    </ReactFlow>
+  );
+}
+
 export function StageExplorer(): React.JSX.Element {
   const [sel, setSel] = useState<string>("warp");
   const active = STAGES.find((s) => s.id === sel) ?? STAGES[0]!;
-  const nodes = buildNodes(sel);
 
   return (
     <Stack gap={12}>
       <div style={{ height: 140 }}>
-        <ReactFlow
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodes={nodes}
-          edges={FLOW_EDGES}
-          onNodeClick={(_, node) => setSel(node.id)}
-          nodesDraggable={false}
-          fitView
-          fitViewOptions={{ padding: 0.2 }}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-        </ReactFlow>
+        <ReactFlowProvider>
+          <StageGraph sel={sel} onSelect={setSel} />
+        </ReactFlowProvider>
       </div>
 
       <div>

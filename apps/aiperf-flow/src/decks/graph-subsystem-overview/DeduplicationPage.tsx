@@ -11,10 +11,8 @@
 import { useState } from "react";
 import clsx from "clsx";
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
+import type { ElkOptions } from "../../layout/graph/index.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
 import { Grid } from "../../layout/Grid.js";
@@ -126,22 +124,13 @@ const TRIE_EDGES: Edge[] = [
   { id: "e-r2-r4", source: "r2", target: "r4", type: "flow" },
 ];
 
+// Top-to-bottom content-parent trie: ELK layers each request under its longest-prefix parent.
+const TRIE_LAYOUT: ElkOptions = { direction: "DOWN" };
+
 function ContentTrie(): React.JSX.Element {
   return (
     <Stack gap={8}>
-      <div style={{ height: 460 }}>
-        <ReactFlow
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodes={TRIE_NODES}
-          edges={TRIE_EDGES}
-          fitView
-          fitViewOptions={{ padding: 0.15 }}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-        </ReactFlow>
-      </div>
+      <AutoLayoutFlow nodes={TRIE_NODES} edges={TRIE_EDGES} layout={TRIE_LAYOUT} height={460} />
       <p className={clsx("text-sm", inkClassName("secondary"))}>
         Each request&apos;s content parent is the earlier request whose block hashes are its longest full prefix
         (tie-break to the most recent). Shared prefixes merge into one trie path, so identical leading blocks produce

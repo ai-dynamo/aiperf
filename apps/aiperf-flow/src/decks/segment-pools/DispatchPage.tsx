@@ -4,10 +4,7 @@
  */
 
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
 
 // Ported from docs/canvases/segment-pools-and-body-plans.canvas.tsx `PageDispatch`
 // (rust/aiperf/src/dataset/model.rs, request.rs:288), with node shape and copy
@@ -96,19 +93,7 @@ export function DispatchPage(): React.JSX.Element {
         </p>
       </div>
 
-      <div style={{ height: 480 }}>
-        <ReactFlow
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodes={nodes}
-          edges={edges}
-          fitView
-          fitViewOptions={{ padding: 0.15 }}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-        </ReactFlow>
-      </div>
+      <AutoLayoutFlow nodes={nodes} edges={edges} layout={{ direction: "RIGHT" }} height={480} />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className="rounded-lg border border-[var(--color-stroke-secondary)] px-4 py-3 text-sm shadow-sm">

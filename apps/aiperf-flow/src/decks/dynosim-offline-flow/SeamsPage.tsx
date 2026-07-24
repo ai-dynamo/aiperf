@@ -5,10 +5,7 @@
 
 import { useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
 import { Stack } from "../../layout/Stack.js";
 import { Callout } from "../../prose/Callout.js";
 import { inkClassName } from "../../theme/tokens.js";
@@ -226,19 +223,7 @@ export function SeamsPage({ level }: { level: Level }): React.JSX.Element {
 
       <SegControl value={mode} onChange={setMode} options={MODE_OPTIONS} />
 
-      <div style={{ height: 780 }}>
-        <ReactFlow
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodes={nodes(mode, maint)}
-          edges={edges(mode)}
-          fitView
-          fitViewOptions={{ padding: 0.1 }}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-        </ReactFlow>
-      </div>
+      <AutoLayoutFlow key={`${mode}-${maint}`} nodes={nodes(mode, maint)} edges={edges(mode)} layout={{ direction: "DOWN" }} height={780} />
 
       <Callout tone={mode === "http" ? "info" : "success"} title={a.label}>
         {a.tag}. Above the seam nothing changes; the driver is <strong>{a.driver}</strong> and the

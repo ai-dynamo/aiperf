@@ -4,10 +4,8 @@
  */
 
 import type { Edge, Node } from "@xyflow/react";
-import { ReactFlow, Background, BackgroundVariant } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { nodeTypes } from "../../nodes/nodeTypes.js";
-import { edgeTypes } from "../../edges/edgeTypes.js";
+import { AutoLayoutFlow } from "../../layout/graph/index.js";
+import type { ElkOptions } from "../../layout/graph/index.js";
 import { TopBar } from "../../shell/TopBar.js";
 import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
@@ -135,6 +133,9 @@ const laneEdges: Edge[] = [
   { id: "e-lane-legacy-timing-session", source: "lane-legacy-timing", target: "lane-legacy-session", type: "flow" },
 ];
 
+// Two top-to-bottom lanes (graph vs legacy); ELK lays out each disconnected chain downward.
+const LANE_LAYOUT: ElkOptions = { direction: "DOWN" };
+
 function GoverningDecision(): React.JSX.Element {
   return (
     <Stack gap={10}>
@@ -150,19 +151,7 @@ function GoverningDecision(): React.JSX.Element {
         feasibility doc&apos;s &quot;consolidation spine&quot; (approach C), which is removed from
         the roadmap.
       </Callout>
-      <div style={{ height: 560 }}>
-        <ReactFlow
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodes={laneNodes}
-          edges={laneEdges}
-          fitView
-          fitViewOptions={{ padding: 0.15 }}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-stroke-secondary)" />
-        </ReactFlow>
-      </div>
+      <AutoLayoutFlow nodes={laneNodes} edges={laneEdges} layout={LANE_LAYOUT} height={560} />
       <Callout tone="info" title="Accepted tradeoff">
         Two lanes means permanently accepting the duplication the feasibility doc wanted to
         remove. Deliberate: the graph lane never inherits the{" "}
