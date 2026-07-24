@@ -183,6 +183,17 @@ def _stamp_scenario_submission_metadata(
             getattr(outcome, "submission_invalid_reasons", []) or []
         )
 
+    # Scenario + sweep only reaches aggregation under --unsafe-override: the
+    # envelope validator (_reject_scenario_with_sweep) hard-errors otherwise.
+    # apply_scenario above re-resolves a SINGLE expanded variation and cannot
+    # see the sweep, so it returns a clean per-variation outcome. Carry the
+    # envelope-level override violation forward here so a scenario sweep is
+    # never stamped as a valid submission. (scenario_name is non-None here.)
+    if getattr(plan, "is_sweep", False):
+        submission_valid = False
+        if "scenario_with_sweep" not in submission_invalid_reasons:
+            submission_invalid_reasons.append("scenario_with_sweep")
+
     total_responses, context_overflow_count = _sum_runtime_response_counts(results)
 
     aggregate.metadata["_scenario_name"] = scenario_name
