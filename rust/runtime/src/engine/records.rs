@@ -304,9 +304,12 @@ struct OutputRow<'a> {
 }
 
 const OUTPUT_METRICS: &[&str] = &[
+    "input_sequence_length",
     "output_token_count",
     "output_sequence_length",
     "request_latency",
+    "time_to_first_token",
+    "inter_token_latency",
 ];
 
 /// Serialize one record row (compact JSON + trailing newline) into `writer`,
