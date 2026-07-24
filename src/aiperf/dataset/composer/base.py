@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import bisect
 import inspect
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
@@ -10,10 +11,6 @@ from aiperf.common import random_generator as rng
 from aiperf.common.enums import ConversationContextMode, ModelSelectionStrategy
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
-from aiperf.common.models.sequence_distribution import (
-    SequenceLengthDistribution,
-    SequenceLengthPair,
-)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset import SyntheticDataset
 from aiperf.dataset.generator.audio import AudioGenerator
@@ -24,6 +21,7 @@ from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.generator.video import VideoGenerator
 
 if TYPE_CHECKING:
+    from aiperf.common.random_generator import RandomGenerator
     from aiperf.config.dataset import VideoConfig
     from aiperf.config.dataset.content import (
         AudioConfig,
@@ -33,6 +31,47 @@ if TYPE_CHECKING:
     )
     from aiperf.config.distributions import SamplingDistribution
     from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config.types import SequenceDistributionEntry
+
+
+class TypedSequenceDistribution:
+    """Runtime (ISL, OSL) distribution that preserves the typed sub-distributions.
+
+    Each ``SequenceDistributionEntry`` carries a typed ``SamplingDistribution``
+    for ISL and OSL (Fixed/Normal/LogNormal/Multimodal/Empirical). Selection
+    picks one entry by its probability weight; the chosen entry's ISL and OSL
+    are then drawn from their own distribution via ``sample_int`` using the
+    caller-supplied RNG.
+    """
+
+    def __init__(self, entries: list[SequenceDistributionEntry]) -> None:
+        if not entries:
+            raise ValueError(
+                "Distribution must contain at least one sequence length entry"
+            )
+        self._entries = tuple(entries)
+        self._cumulative = self.cumulative(self._entries)
+
+    @property
+    def entries(self) -> tuple[SequenceDistributionEntry, ...]:
+        return self._entries
+
+    def cumulative(self, entries: tuple[SequenceDistributionEntry, ...]) -> list[float]:
+        """Calculate cumulative probability"""
+        total = sum(entry.probability for entry in entries)
+        cumulative: list[float] = []
+        running = 0.0
+        for entry in entries:
+            running += entry.probability / total
+            cumulative.append(running)
+        return cumulative
+
+    def sample(self, rng: RandomGenerator) -> tuple[int, int]:
+        """Select an entry by weight, then sample its typed ISL/OSL with ``rng``."""
+        idx = bisect.bisect_right(self._cumulative, rng.random())
+        idx = min(idx, len(self._entries) - 1)
+        entry = self._entries[idx]
+        return entry.isl.sample_int(rng), entry.osl.sample_int(rng)
 
 
 _CHAT_TEMPLATE_PROBE_SAMPLES: tuple[str, ...] = (
@@ -164,15 +203,15 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         self._model_selector_rng = rng.derive("composer.turn.model_selection")
         self._max_tokens_rng = rng.derive("composer.turn.max_tokens")
+        self._length_rng = rng.derive("composer.turn.sequence_length")
 
         self.turn_count = 0
 
         # ``PromptConfig.sequence_distribution`` is a
         # ``list[SequenceDistributionEntry]`` of typed ``SamplingDistribution``
-        # objects. Convert each entry directly to a ``SequenceLengthPair``
-        # (extracting mean + stddev from the underlying distribution) and
-        # build the runtime distribution without re-serializing through
-        # ``DistributionParser.parse``, which only accepts strings.
+        # objects. Keep those typed distributions at runtime so each selected
+        # entry's ISL/OSL sample from their own shape per turn, rather than
+        # collapsing to mean + normal-only stddev.
         self._seq_distribution = self._build_sequence_distribution()
 
         # Cache for turn-level sequence lengths to ensure ISL/OSL pairing consistency
@@ -301,15 +340,15 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         """
         ...
 
-    def _build_sequence_distribution(self) -> SequenceLengthDistribution | None:
+    def _build_sequence_distribution(self) -> TypedSequenceDistribution | None:
         """Build a runtime sequence-length distribution from config entries.
 
         ``PromptConfig.sequence_distribution`` is a list of
         ``SequenceDistributionEntry`` carrying typed ``SamplingDistribution``
-        ISL/OSL fields (Fixed/Normal/LogNormal/...). Pull the mean and the
-        normal-distribution stddev (0 for non-normal types) off each entry to
-        construct ``SequenceLengthPair`` directly. ``DistributionParser.parse``
-        only accepts strings and would reject this list shape.
+        ISL/OSL fields (Fixed/Normal/LogNormal/Multimodal/Empirical). The typed
+        distributions are preserved as-is so each selected entry samples its own
+        shape per turn; flattening to mean + normal-only stddev would collapse
+        LogNormal/Multimodal/Empirical entries to a constant.
         """
         if self._synthetic_prompts is None:
             return None
@@ -317,17 +356,7 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         if not entries:
             return None
 
-        pairs = [
-            SequenceLengthPair(
-                input_seq_len=int(entry.isl.expected_value),
-                output_seq_len=int(entry.osl.expected_value),
-                probability=float(entry.probability),
-                input_seq_len_stddev=float(getattr(entry.isl, "stddev", 0.0) or 0.0),
-                output_seq_len_stddev=float(getattr(entry.osl, "stddev", 0.0) or 0.0),
-            )
-            for entry in entries
-        ]
-        return SequenceLengthDistribution(pairs)
+        return TypedSequenceDistribution(entries)
 
     def _osl_distribution(self) -> SamplingDistribution | None:
         """Resolve the OSL distribution to use as a fallback for max_tokens.
@@ -379,24 +408,27 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             return self._turn_sequence_cache[turn_id]
 
         if self._seq_distribution is None:
-            isl_mean = (
-                int(self._synthetic_prompts.isl.expected_value)
+            isl_dist = (
+                self._synthetic_prompts.isl
                 if self._synthetic_prompts is not None
-                and self._synthetic_prompts.isl is not None
-                else 0
-            )
-            osl_mean = (
-                int(self._synthetic_prompts.osl.expected_value)
-                if self._synthetic_prompts is not None
-                and self._synthetic_prompts.osl is not None
                 else None
             )
+            osl_dist = (
+                self._synthetic_prompts.osl
+                if self._synthetic_prompts is not None
+                else None
+            )
+            # Draw from the typed distribution itself (Fixed/Normal/LogNormal/
+            # Multimodal/Empirical) so non-Normal shapes actually vary per
+            # request.
+            isl_val = isl_dist.sample_int(self._length_rng) if isl_dist else 0
+            osl_val = osl_dist.sample_int(self._length_rng) if osl_dist else None
             seq_lengths = (
-                isl_mean,
-                osl_mean or max(128, isl_mean // 2),
+                isl_val,
+                osl_val or max(128, isl_val // 2),
             )
         else:
-            seq_lengths = self._seq_distribution.sample()
+            seq_lengths = self._seq_distribution.sample(self._length_rng)
 
         self._turn_sequence_cache[turn_id] = seq_lengths
         return seq_lengths
@@ -442,13 +474,14 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         else:
             osl_dist = self._osl_distribution()
             if osl_dist is not None:
-                osl_mean = int(osl_dist.expected_value)
-                if osl_mean <= 0:
+                if osl_dist.expected_value <= 0:
                     return
-                osl_stddev = int(getattr(osl_dist, "stddev", 0.0) or 0.0)
-                turn.max_tokens = self._max_tokens_rng.sample_positive_normal_integer(
-                    osl_mean, osl_stddev
-                )
+                # Draw from the typed distribution itself (Fixed/Normal/
+                # LogNormal/Multimodal/Empirical) so non-Normal OSL shapes vary
+                # per request, mirroring the ISL path.
+                # ``sample_positive_normal_integer`` only reads mean+stddev, so
+                # every non-Normal shape collapsed to its mean.
+                turn.max_tokens = osl_dist.sample_int(self._max_tokens_rng)
 
         if turn.max_tokens is not None and turn.max_tokens <= 0:
             self.warning(
@@ -541,7 +574,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             if shared_system_prompt:
                 conversation.system_message = shared_system_prompt
                 self.trace(
-                    lambda conv=conversation: f"Set system_message on conversation {conv.session_id}"
+                    lambda conv=conversation: (
+                        f"Set system_message on conversation {conv.session_id}"
+                    )
                 )
 
             # Set user context prompt (unique per session)
@@ -551,9 +586,10 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 )
                 conversation.user_context_message = user_context
                 self.trace(
-                    lambda idx=session_index,
-                    conv=conversation: f"Set user_context_message for session {idx} "
-                    f"(conversation {conv.session_id})"
+                    lambda idx=session_index, conv=conversation: (
+                        f"Set user_context_message for session {idx} "
+                        f"(conversation {conv.session_id})"
+                    )
                 )
 
     @staticmethod

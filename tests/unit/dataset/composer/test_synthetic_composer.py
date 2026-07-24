@@ -7,6 +7,10 @@ import pytest
 
 from aiperf.common import random_generator as rng
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn
+from aiperf.config.distributions import (
+    LogNormalDistribution,
+    MultimodalDistribution,
+)
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.synthetic import SyntheticDatasetComposer
 from tests.harness.optional_deps import HAS_SOUNDFILE
@@ -90,6 +94,47 @@ class TestSyntheticDatasetComposer:
     # ============================================================================
     # Create Dataset Method Tests
     # ============================================================================
+
+    @pytest.mark.parametrize(
+        "isl_dist",
+        [
+            LogNormalDistribution(mean=6000, median=2000, min=50, max=50000),
+            MultimodalDistribution(
+                peaks=[
+                    {
+                        "mean": 1500,
+                        "stddev": 300,
+                        "weight": 70,
+                        "min": 50,
+                        "max": 50000,
+                    },
+                    {
+                        "mean": 12000,
+                        "median": 6000,
+                        "weight": 30,
+                        "min": 50,
+                        "max": 50000,
+                    },
+                ]
+            ),
+        ],
+        ids=["lognormal", "multimodal"],
+    )
+    def test_non_normal_isl_varies_per_turn(
+        self, synthetic_config, mock_tokenizer, isl_dist
+    ):
+        """Regression: log-normal / multimodal ISL must vary per turn."""
+        composer = SyntheticDatasetComposer(
+            run=make_run(synthetic_config), tokenizer=mock_tokenizer
+        )
+        composer._synthetic_prompts.isl = isl_dist
+
+        isls = [composer._get_turn_sequence_lengths(t)[0] for t in range(200)]
+
+        assert len(set(isls)) > 50, "ISL collapsed to (near-)constant"
+        assert min(isls) >= 50 and max(isls) <= 50000, "clamp [50,50000] violated"
+        # A heavy right tail must actually appear, not just jitter around a point.
+        assert max(isls) > 3 * (sum(isls) / len(isls))
 
     def test_create_dataset_basic(self, synthetic_config, mock_tokenizer):
         """Test basic dataset creation with text-only conversations."""

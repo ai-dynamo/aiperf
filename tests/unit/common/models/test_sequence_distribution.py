@@ -23,6 +23,8 @@ from aiperf.common.models.sequence_distribution import (
     create_balanced_distribution,
     create_uniform_distribution,
 )
+from aiperf.config.types import SequenceDistributionEntry
+from aiperf.dataset.composer.base import TypedSequenceDistribution
 
 
 class TestSequenceLengthPair:
@@ -673,11 +675,14 @@ class TestSequenceCaching:
 
         # Set up composer with distribution
         composer = MockComposer.__new__(MockComposer)
-        dist = DistributionParser.parse("128,64:50;256,128:50")
-        composer._seq_distribution = dist
+        composer._seq_distribution = TypedSequenceDistribution(
+            [
+                SequenceDistributionEntry(isl=128, osl=64, probability=50),
+                SequenceDistributionEntry(isl=256, osl=128, probability=50),
+            ]
+        )
         composer._turn_sequence_cache = {}
-        # Use the global RNG instead of _seq_rng
-        composer._rng = rng.derive("test_composer")
+        composer._length_rng = rng.derive("test_composer")
 
         # Create a turn and get its ID
         turn = Turn()
@@ -716,13 +721,12 @@ class TestSequenceCaching:
 
         # Set up composer with distribution
         composer = MockComposer.__new__(MockComposer)
-        dist = DistributionParser.parse(
-            "100,50:100"
-        )  # Single pair for predictable results
-        composer._seq_distribution = dist
+        # Single entry for predictable results
+        composer._seq_distribution = TypedSequenceDistribution(
+            [SequenceDistributionEntry(isl=100, osl=50, probability=100)]
+        )
         composer._turn_sequence_cache = {}
-        # Use the global RNG instead of _seq_rng
-        composer._rng = rng.derive("test_composer2")
+        composer._length_rng = rng.derive("test_composer2")
 
         # Create two different turns
         turn1 = Turn()

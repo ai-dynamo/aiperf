@@ -66,9 +66,6 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         self._video_batch_size = (
             dataset.video.batch_size if dataset.video is not None else 1
         )
-        self._isl_stddev = _stddev_int(
-            dataset.prompts.isl if dataset.prompts is not None else None
-        )
 
         # Inclusion flags (computed once at init).
         self._include_prompt = (
@@ -204,12 +201,8 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         if adjustment > 0:
             isl = max(1, isl - adjustment)
 
-        # Preserve original variance unless sequence distribution is active
-        stddev = 0 if self._seq_distribution is not None else self._isl_stddev
-
         for _ in range(self._prompt_batch_size):
-            # Generate prompt content using the sampled input sequence length
-            content = self.prompt_generator.generate(mean=isl, stddev=stddev)
+            content = self.prompt_generator.generate(mean=isl, stddev=0)
 
             # Add prefix prompt if this is the first turn and prefix is enabled
             if is_first and self.prefix_prompt_enabled:
