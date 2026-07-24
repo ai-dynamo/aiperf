@@ -17,6 +17,7 @@ from aiperf.common.models import (
     ParsedResponse,
     ParsedResponseRecord,
     RequestRecord,
+    SpecDecodeAcceptanceRecord,
 )
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import (
@@ -305,7 +306,39 @@ class InferenceResultParser(CommunicationMixin):
             responses=resp,
             token_counts=token_counts,
             media_counts=media_counts or MediaCounts(),
+            spec_decode_acceptance=self._extract_spec_decode_acceptance(resp),
         )
+
+    @staticmethod
+    def _extract_spec_decode_acceptance(
+        responses: list[ParsedResponse],
+    ) -> SpecDecodeAcceptanceRecord | None:
+        """Build the engine-neutral acceptance record via adapter auto-detection.
+
+        Fast-paths out when no response carried a spec-decode payload (spec
+        decode off, or no verify steps) so the plugin walk only runs for records
+        that actually have stats. Otherwise walks registered adapters in
+        priority order and uses the first whose ``can_adapt`` recognizes the
+        payload -- mirroring custom-dataset-loader auto-detection.
+
+        Suppresses the record when more than one response carried stats (an
+        ``n > 1`` streaming request, where each sequence's stats ride its own
+        finish chunk): the per-request record can't attribute request-level
+        ``completion_tokens`` to a single sequence, so a mixed record is worse
+        than none. ``n > 1`` non-streaming is suppressed upstream in
+        ``BaseEndpoint.extract_spec_decode_stats``.
+
+        Counts payloads by truthiness (not ``is not None``) to match the
+        adapter's ``_find_spec_decode_payload``: an empty ``{}`` is treated as
+        absent at both sites, so it never spuriously trips the n > 1 guard.
+        """
+        with_stats = [r for r in responses if r.spec_decode_stats]
+        if len(with_stats) != 1:
+            return None
+        for _entry, AdapterClass in plugins.iter_all(PluginType.SPEC_DECODE_ADAPTER):
+            if AdapterClass.can_adapt(responses):
+                return AdapterClass.adapt(responses)
+        return None
 
     async def compute_input_token_count(
         self,
@@ -420,8 +453,10 @@ class InferenceResultParser(CommunicationMixin):
             )
         except Exception as exc:  # noqa: BLE001 - best-effort; fall back to bare encode
             self.debug(
-                lambda exc=exc: f"Chat-template tokenization unavailable, "
-                f"falling back to bare-text encode: {exc!r}"
+                lambda exc=exc: (
+                    f"Chat-template tokenization unavailable, "
+                    f"falling back to bare-text encode: {exc!r}"
+                )
             )
             return None
         if not isinstance(tokens, list):
