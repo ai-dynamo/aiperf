@@ -62,6 +62,19 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
             plan.workers = max_workers;
         }
     }
+    // Adaptive scale must observe the run's AGGREGATE load through ONE controller
+    // on ONE control knob. Under thread-per-core sharding each of W workers would
+    // run its own controller over a 1/W load slice — none reaching a coherent
+    // saturation decision — and all W would race the same adaptive artifact files.
+    // Pin adaptive runs to a single worker so the controller is global and its
+    // artifact writer is unique.
+    if plan
+        .phases
+        .iter()
+        .any(|phase| phase.common().adaptive_scale.is_some())
+    {
+        plan.workers = 1;
+    }
     let virtual_clock = plan
         .transport
         .as_ref()
