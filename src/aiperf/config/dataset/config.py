@@ -604,14 +604,20 @@ class FileDataset(BaseConfig):
 
     @model_validator(mode="after")
     def _validate_max_context_length_weka_only(self) -> FileDataset:
-        """Reject max_context_length on non-Weka file formats.
+        """Reject max_context_length on provably non-Weka file formats.
 
         Only weka_trace consumes this field (recorded peak filter-then-cap).
-        Other formats would silently store and ignore it.
+        File Weka traces are content-auto-detected (``WekaTraceLoader.can_load``)
+        and arrive with the default ``single_turn`` format, so ``single_turn`` is
+        ambiguous (may resolve to Weka) and must be allowed through -- the loader
+        ignores the field if it does not implement the filter. Only an explicit
+        non-Weka trace/pool format is provably unsupported. The CLI converter
+        (``_apply_max_context_length``) still loudly rejects an explicit non-Weka
+        ``--custom-dataset-type`` before construction.
         """
         if self.max_context_length is None:
             return self
-        if self.format != DatasetFormat.WEKA_TRACE:
+        if self.format not in (DatasetFormat.WEKA_TRACE, DatasetFormat.SINGLE_TURN):
             raise ValueError(
                 "max_context_length (--max-context-length) only applies to "
                 f"format weka_trace; got format {self.format}. It filters by "

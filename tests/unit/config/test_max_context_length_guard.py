@@ -65,6 +65,12 @@ class TestMaxContextLengthConverterGuard:
         )
         out = build_dataset(cli)
         assert out["max_context_length"] == 128000
+        # End-to-end: FileDataset construction defaults the absent format to
+        # single_turn, so the model validator must also accept the ambiguous
+        # auto-detect case (regression: it rejected single_turn, crashing this
+        # documented invocation even though build_dataset allowed it).
+        ds = convert_cli_to_aiperf(cli).benchmark.datasets[0]
+        assert ds.max_context_length == 128000
 
     @pytest.mark.parametrize(
         "fmt",
@@ -112,6 +118,19 @@ class TestMaxContextLengthModelValidators:
             name="m",
             path=trace_jsonl,
             format=DatasetFormat.WEKA_TRACE,
+            max_context_length=128000,
+        )
+        assert ds.max_context_length == 128000
+
+    def test_file_autodetect_single_turn_accepts(self, trace_jsonl: Path) -> None:
+        # File Weka is content-auto-detected and arrives with the default
+        # single_turn format, so the model must accept single_turn + the field
+        # (the loader ignores it if it does not implement the filter).
+        ds = FileDataset(
+            type="file",
+            name="m",
+            path=trace_jsonl,
+            format=DatasetFormat.SINGLE_TURN,
             max_context_length=128000,
         )
         assert ds.max_context_length == 128000
