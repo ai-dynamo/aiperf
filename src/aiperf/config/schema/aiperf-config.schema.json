@@ -3967,6 +3967,18 @@
                   "default": null,
                   "description": "Token block size for hash-based prompt reconstruction from `hash_ids` in trace datasets. Overrides the loader's `default_block_size` plugin metadata. Governs how the recorded `input_length` is partitioned into cache blocks (mooncake_trace and other hash-reconstructing loaders); it has no effect on loaders that replay literal recorded prompts (baseten_trace). Set this when a trace was recorded at a block size different from its loader default, e.g. a Mooncake-format trace recorded at block size 16. None uses the loader default.",
                   "title": "Blocksize"
+                },
+                "contextMode": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/ConversationContextMode"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Dataset-wide conversation accumulation mode. Only supported by mooncake_trace. Use message_array_with_responses when every row already describes the request's complete prompt context; this avoids rewriting large trace files to repeat context_mode on every row."
                 }
               },
               "required": [
@@ -10499,6 +10511,17 @@
       "title": "ConvergenceStat",
       "type": "string"
     },
+    "ConversationContextMode": {
+      "description": "Controls how prior turns are accumulated in multi-turn conversations.\n\nTwo dimensions determine behavior:\n\n- **Turn format**: ``DELTAS`` (incremental per-turn content) vs\n  ``MESSAGE_ARRAY`` (each turn carries its complete message list).\n- **Response inclusion**: ``WITH_RESPONSES`` (pre-canned assistant turns\n  are present in the dataset) vs ``WITHOUT_RESPONSES`` (only user content;\n  live inference responses are captured at runtime).",
+      "enum": [
+        "deltas_without_responses",
+        "deltas_with_responses",
+        "message_array_with_responses",
+        "message_array_without_responses"
+      ],
+      "title": "ConversationContextMode",
+      "type": "string"
+    },
     "DatasetFormat": {
       "enum": [
         "burst_gpt_trace",
@@ -11445,6 +11468,18 @@
           "description": "Token block size for hash-based prompt reconstruction from `hash_ids` in trace datasets. Overrides the loader's `default_block_size` plugin metadata. Governs how the recorded `input_length` is partitioned into cache blocks (mooncake_trace and other hash-reconstructing loaders); it has no effect on loaders that replay literal recorded prompts (baseten_trace). Set this when a trace was recorded at a block size different from its loader default, e.g. a Mooncake-format trace recorded at block size 16. None uses the loader default.",
           "title": "Blocksize",
           "x-jinja2-supported": true
+        },
+        "contextMode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConversationContextMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Dataset-wide conversation accumulation mode. Only supported by mooncake_trace. Use message_array_with_responses when every row already describes the request's complete prompt context; this avoids rewriting large trace files to repeat context_mode on every row."
         }
       },
       "required": [

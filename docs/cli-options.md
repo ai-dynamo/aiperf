@@ -492,6 +492,19 @@ Random seed for deterministic data generation. When set, makes synthetic prompts
 Fraction of trace sessions to keep for replay, sampled whole-session to preserve multi-turn integrity; deterministic when `--random-seed` is set. Only supported by the baseten_trace loader.
 <br/>_Constraints: > 0.0, ≤ 1.0_
 
+#### `--trace-context-mode` `<str>`
+
+Conversation accumulation mode for a Mooncake trace. Use message_array_with_responses when each row contains the complete prompt context (full block hashes), rather than a per-turn delta. This dataset-wide override avoids editing every JSONL row.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `deltas_without_responses` |  | Standard multi-turn chat. Each dataset turn is a user-only delta. AIPerf accumulates turns and threads live inference responses into the history. |
+| `deltas_with_responses` |  | Delta-compressed prompts. Each dataset turn is a delta that may include pre-canned assistant responses. AIPerf accumulates but discards live responses. |
+| `message_array_with_responses` |  | Self-contained prompts. Each turn carries a complete message array (including assistant responses) and is sent as-is. Default for Mooncake traces with pre-built ``messages`` arrays. |
+| `message_array_without_responses` |  | Reserved. Each turn would carry a complete user-only message array, requiring live response merging between turns. Not yet implemented. |
+
 #### `-f`, `--config` `<str>`
 
 Path to a YAML configuration file. CLI flags override values from the config file.
@@ -1942,6 +1955,19 @@ Random seed for deterministic data generation. When set, makes synthetic prompts
 
 Fraction of trace sessions to keep for replay, sampled whole-session to preserve multi-turn integrity; deterministic when `--random-seed` is set. Only supported by the baseten_trace loader.
 <br/>_Constraints: > 0.0, ≤ 1.0_
+
+#### `--trace-context-mode` `<str>`
+
+Conversation accumulation mode for a Mooncake trace. Use message_array_with_responses when each row contains the complete prompt context (full block hashes), rather than a per-turn delta. This dataset-wide override avoids editing every JSONL row.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `deltas_without_responses` |  | Standard multi-turn chat. Each dataset turn is a user-only delta. AIPerf accumulates turns and threads live inference responses into the history. |
+| `deltas_with_responses` |  | Delta-compressed prompts. Each dataset turn is a delta that may include pre-canned assistant responses. AIPerf accumulates but discards live responses. |
+| `message_array_with_responses` |  | Self-contained prompts. Each turn carries a complete message array (including assistant responses) and is sent as-is. Default for Mooncake traces with pre-built ``messages`` arrays. |
+| `message_array_without_responses` |  | Reserved. Each turn would carry a complete user-only message array, requiring live response merging between turns. Not yet implemented. |
 
 #### `-f`, `--config` `<str>`
 
