@@ -186,11 +186,6 @@ class PendingBranchJoin:
     outstanding: dict[str, PrereqState] = field(default_factory=dict)
     parent_branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
     parent_has_forks_on_gated_turn: bool = False
-    parent_has_branches_on_gated_turn: bool = False
-    """True iff the gated turn itself declares ANY branch (FORK or SPAWN) in its
-    ``branch_ids``. Superset of the FORK-only flag above; re-stamped onto the
-    join ``TurnToSend`` so finality stamping stays conservative when the
-    resumed turn will spawn further descendants."""
     is_blocked: bool = False
     created_at_ns: int = field(default_factory=time.monotonic_ns)
     # Cache-bust state captured from the credit that suspends the parent so
@@ -723,10 +718,8 @@ class BranchOrchestrator:
             return future
 
         has_forks = False
-        has_branches = False
         if 0 <= gated_idx < len(parent_meta.turns):
             has_forks = bool(getattr(parent_meta.turns[gated_idx], "has_forks", False))
-            has_branches = bool(parent_meta.turns[gated_idx].branch_ids)
 
         pending = PendingBranchJoin(
             parent_x_correlation_id=parent_corr,
@@ -737,7 +730,6 @@ class BranchOrchestrator:
             gated_turn_index=gated_idx,
             parent_branch_mode=parent_state.branch_mode,
             parent_has_forks_on_gated_turn=has_forks,
-            parent_has_branches_on_gated_turn=has_branches,
             parent_cache_bust_marker=cache_bust_marker,
             parent_cache_bust_target=self._cache_bust_target,
         )
@@ -1275,12 +1267,10 @@ class BranchOrchestrator:
         pending = gates_for_parent.get(gated_idx)
         if pending is None:
             has_forks = False
-            has_branches = False
             if 0 <= gated_idx < len(parent_meta.turns):
                 has_forks = bool(
                     getattr(parent_meta.turns[gated_idx], "has_forks", False)
                 )
-                has_branches = bool(parent_meta.turns[gated_idx].branch_ids)
             pending = PendingBranchJoin(
                 parent_x_correlation_id=parent_corr,
                 parent_conversation_id=credit.conversation_id,
@@ -1292,7 +1282,6 @@ class BranchOrchestrator:
                     credit, "branch_mode", ConversationBranchMode.FORK
                 ),
                 parent_has_forks_on_gated_turn=has_forks,
-                parent_has_branches_on_gated_turn=has_branches,
                 # Capture parent's cache-bust state from the suspending
                 # credit so the join turn (k+1) inherits the same marker
                 # as turns 0..k. The credit always has these fields

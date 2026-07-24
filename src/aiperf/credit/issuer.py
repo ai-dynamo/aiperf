@@ -569,7 +569,6 @@ class CreditIssuer:
             # the sampled root plan and counts.
             counts_toward_phase_target=pending.parent_agent_depth == 0,
             has_forks=pending.parent_has_forks_on_gated_turn,
-            has_branches=pending.parent_has_branches_on_gated_turn,
             branch_mode=pending.parent_branch_mode,
             cache_bust_marker=pending.parent_cache_bust_marker,
             cache_bust_target=pending.parent_cache_bust_target,
