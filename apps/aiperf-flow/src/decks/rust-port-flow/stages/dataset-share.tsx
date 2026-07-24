@@ -22,14 +22,11 @@
 //!   - `cli/src/model/telemetry.rs:229`      `pub struct ContentServerSidecar` (run-owned HTTP sidecar)
 
 import type { Edge, Node } from "@xyflow/react";
-import { categoryBgTintClassName } from "../../../theme/tokens.js";
-import type { CategoryRole } from "../../../theme/tokens.js";
+import { roleClassName } from "../stage.js";
+import type { NodeRole, StageDef } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
-import type { StageDef } from "../stage.js";
 
-const TONE: CategoryRole = "cyan";
-
-/** A `card` node tinted by a category role — the emphasized boxes in this stage's subgraph. */
+/** A `card` node colored by semantic role — the emphasized boxes in this stage's subgraph. */
 function card(
   id: string,
   title: string,
@@ -37,25 +34,25 @@ function card(
   detail: string,
   x: number,
   y: number,
-  tint: CategoryRole = TONE,
+  role: NodeRole,
 ): Node {
   return {
     id,
     type: "card",
     position: { x, y },
-    data: { title, subtitle, detail, className: categoryBgTintClassName(tint) },
+    data: { title, subtitle, detail, className: roleClassName(role) },
   };
 }
 
-/** A `panel` node — a plainer worker/step box. */
-function panel(id: string, title: string, detail: string, x: number, y: number): Node {
-  return { id, type: "panel", position: { x, y }, data: { title, detail } };
+/** A `panel` node — a plainer worker/step box, colored by semantic role. */
+function panel(id: string, title: string, detail: string, x: number, y: number, role: NodeRole): Node {
+  return { id, type: "panel", position: { x, y }, data: { title, detail, className: roleClassName(role) } };
 }
 
 
 /** A `header` node — a grouping heading. */
-function header(id: string, title: string, caption: string, x: number, y: number): Node {
-  return { id, type: "header", position: { x, y }, data: { title, caption } };
+function header(id: string, title: string, caption: string, x: number, y: number, role: NodeRole): Node {
+  return { id, type: "header", position: { x, y }, data: { title, caption, className: roleClassName(role) } };
 }
 
 /** A solid, animated primary-path edge. */
@@ -85,46 +82,52 @@ const subgraphNodes: Node[] = [
     "share-store",
     "InMemorySegmentStore",
     "frozen arena",
-    "Box<[Segment]> interned once — bytes live exactly once (content-addressed, prefix-folded, deduped).",
+    "Box<[Segment]> interned once — bytes live exactly once.",
     0,
     80,
+    "storage",
   ),
   card(
     "share-arc",
     "Arc<dyn SegmentStore>",
     "one shared owner",
-    "The Dataset holds a single Arc; each worker clones the pointer — zero-copy, never a byte copy.",
+    "One Arc, cloned per worker — zero-copy, never a byte copy.",
     300,
     80,
+    "storage",
   ),
   card(
     "share-turns",
     "Conversation · Turn",
     "carries Handles",
-    "Per-turn dispatch data: every potentially large value is a dense Handle (u32), not inline bytes.",
+    "Large values are a dense Handle (u32), not inline bytes.",
     600,
     80,
+    "storage",
   ),
   panel(
     "share-w0",
     "Worker thread 0",
-    "Turn { … : Handle } — resolves bytes on demand via build_body(handles) at dispatch.",
+    "Resolves bytes on demand via build_body(handles).",
     900,
     -30,
+    "compute",
   ),
   panel(
     "share-w1",
     "Worker thread 1",
-    "Same frozen store via Arc::clone — shared read-only, no per-worker copy.",
+    "Same frozen store via Arc::clone — read-only, shared.",
     900,
     80,
+    "compute",
   ),
   panel(
     "share-wn",
     "Worker thread W-1",
-    "SegmentStore is Send + Sync, so the one arena is safely shared across every sub-cell thread.",
+    "SegmentStore is Send + Sync — one arena, all threads.",
     900,
     190,
+    "compute",
   ),
   // A `card` (not a handleless `chip`): it is the source of the dashed edge to content_server, so
   // it must expose React Flow handles for the connection to resolve.
@@ -132,19 +135,19 @@ const subgraphNodes: Node[] = [
     "share-run",
     "Run-owned sidecar",
     "media, not text",
-    "The content_server sidecar is owned by the run — media URLs, separate from dataset-text sharing.",
+    "Run-owned content_server — media URLs, not dataset text.",
     300,
     320,
-    "orange",
+    "media",
   ),
   card(
     CONTENT_SERVER_LEAF,
     "content_server",
     "MEDIA sidecar — NOT dataset sharing",
-    "Separate run-owned HTTP server: streams generated images/videos as URLs. Dataset TEXT never flows here — click to compare.",
+    "Run-owned HTTP: streams media URLs, never dataset text.",
     600,
     320,
-    "orange",
+    "media",
   ),
 ];
 
@@ -163,46 +166,47 @@ const contentServerNodes: Node[] = [
   panel(
     "cs-cfg",
     "ContentServerSidecar",
-    "cfg.sidecars.content_server → a run-owned native HTTP endpoint (media URLs instead of inline base64).",
+    "cfg.sidecars.content_server → run-owned HTTP endpoint.",
     0,
     60,
+    "media",
   ),
   card(
     "cs-server",
     "ContentServerRuntime",
     "run-owned HTTP",
-    "One server streams a path-confined directory, exposes /healthz, and retains bounded request records.",
+    "Streams a path-confined dir; /healthz; bounded records.",
     0,
     180,
-    "orange",
+    "media",
   ),
   card(
     "cs-pub",
     "ContentServerMediaPublisher",
     "synthetic-media seam",
-    "Publishes generated images/videos to disk and rewrites payload media into small HTTP URLs; audio stays inline base64.",
+    "Writes images/videos to disk, rewrites media to URLs.",
     0,
     300,
-    "orange",
+    "media",
   ),
-  header("cs-vs", "Two disjoint concerns", "text sharing vs media delivery", 380, 0),
+  header("cs-vs", "Two disjoint concerns", "text sharing vs media delivery", 380, 0, "neutral"),
   card(
     "cs-text",
     "Dataset TEXT sharing",
     "in-process",
-    "SegmentStore Handles + Arc<dyn SegmentStore> — zero-copy across threads. No HTTP, no bytes copied.",
+    "Handles + Arc, zero-copy. No HTTP, no bytes copied.",
     380,
     90,
-    "cyan",
+    "storage",
   ),
   card(
     "cs-media",
     "MEDIA delivery",
     "out-of-band",
-    "content_server HTTP URLs — a delivery transport for large binary media, entirely separate from text.",
+    "HTTP URLs for binary media, entirely separate from text.",
     380,
     220,
-    "orange",
+    "media",
   ),
 ];
 
@@ -222,7 +226,7 @@ export const datasetShareStage: StageDef = {
   label: "Sharing the dataset",
   caption:
     "The frozen SegmentStore: bytes live exactly once; turns carry Handles not bytes for zero-copy sharing across worker threads (content_server is a separate media sidecar).",
-  tone: TONE,
+  tone: "cyan",
   // v2 timeline: zero-copy Handle sharing stays in the Dataset lane — bytes live once, turns carry Handles.
   lane: "dataset",
   events: [{ id: "sh-handles", label: "Handles", laneId: "dataset", atOrder: 4, realOffsetMs: 44 }],

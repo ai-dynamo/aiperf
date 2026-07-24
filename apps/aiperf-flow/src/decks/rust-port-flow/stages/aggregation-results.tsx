@@ -18,7 +18,7 @@
 //! `native-v2.json` and emits `RunTerminalV2` carrying its `report_path`.
 
 import type { Edge, Node } from "@xyflow/react";
-import { categoryBgTintClassName } from "../../../theme/tokens.js";
+import { roleClassName } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
 import type { StageDef } from "../stage.js";
 
@@ -37,8 +37,8 @@ function aggregationNodes(): Node[] {
       data: {
         title: "NativeMetricsObserver",
         subtitle: "worker-local",
-        detail: "Per-worker record accumulation sharing the runtime clock origin.",
-        className: categoryBgTintClassName("green"),
+        detail: "Per-worker record accumulation on the run clock origin.",
+        className: roleClassName("compute"),
       },
     },
     {
@@ -48,8 +48,8 @@ function aggregationNodes(): Node[] {
       data: {
         title: "NaN-sparse column store",
         subtitle: "metrics_core",
-        detail: "MetricsAccumulator ragged columns; NaN is a sparse-column sentinel, scrubbed at the reporting boundary.",
-        className: categoryBgTintClassName("gray"),
+        detail: "MetricsAccumulator ragged columns; NaN = sparse sentinel.",
+        className: roleClassName("storage"),
       },
     },
     {
@@ -59,8 +59,8 @@ function aggregationNodes(): Node[] {
       data: {
         title: "Exact record fold",
         subtitle: "authoritative",
-        detail: "Column-store partitions replayed in global order — the final report is exact from records.",
-        className: categoryBgTintClassName("green"),
+        detail: "Partitions replayed in global order — exact from records.",
+        className: roleClassName("compute"),
       },
     },
     {
@@ -70,8 +70,8 @@ function aggregationNodes(): Node[] {
       data: {
         title: "t-digest sketch",
         subtitle: "cellular::sketch::TDigest",
-        detail: "Mergeable percentile/stddev estimate (NOT DDSketch); counts/sums/extrema stay exact.",
-        className: categoryBgTintClassName("purple"),
+        detail: "Mergeable p*/stddev estimate (NOT DDSketch); extrema exact.",
+        className: roleClassName("compute"),
       },
     },
     {
@@ -81,8 +81,8 @@ function aggregationNodes(): Node[] {
       data: {
         title: "Exact vs sketch merge",
         subtitle: "click to compare",
-        detail: "Exact folds for final reports; t-digest sketches for mergeable heartbeats / cellular merge.",
-        className: categoryBgTintClassName("yellow"),
+        detail: "Exact folds for reports; sketches for mergeable heartbeats.",
+        className: roleClassName("compute"),
       },
     },
     {
@@ -92,8 +92,8 @@ function aggregationNodes(): Node[] {
       data: {
         title: "Deterministic boundary merge",
         subtitle: "order-independent",
-        detail: "Exact column-store replay + associative TDigest::merge — same result regardless of shard order.",
-        className: categoryBgTintClassName("orange"),
+        detail: "Column-store replay + associative TDigest::merge.",
+        className: roleClassName("compute"),
       },
     },
     {
@@ -103,8 +103,8 @@ function aggregationNodes(): Node[] {
       data: {
         title: "NativeReporter → NativeReport",
         subtitle: "metrics_core::report",
-        detail: "Metrics-first reporter builds the NativeReport (schema_version, summary, metric map) without IO.",
-        className: categoryBgTintClassName("cyan"),
+        detail: "Builds NativeReport (version, summary, metric map), no IO.",
+        className: roleClassName("compute"),
       },
     },
     {
@@ -114,8 +114,8 @@ function aggregationNodes(): Node[] {
       data: {
         title: "ExporterRegistry",
         subtitle: "nine sinks",
-        detail: "Ordered Exporter trait objects: local-file writers emit before network uploaders.",
-        className: categoryBgTintClassName("blue"),
+        detail: "Ordered Exporters: file writers before network uploaders.",
+        className: roleClassName("media"),
       },
     },
     {
@@ -125,8 +125,8 @@ function aggregationNodes(): Node[] {
       data: {
         title: "RunTerminalV2",
         subtitle: "report_path",
-        detail: "Runner writes native-v2.json and emits the terminal envelope carrying report_path.",
-        className: categoryBgTintClassName("green"),
+        detail: "Writes native-v2.json; emits terminal with report_path.",
+        className: roleClassName("control"),
       },
     },
   ];
@@ -157,8 +157,8 @@ function exactVsSketchLeafNodes(): Node[] {
       data: {
         title: "Exact: merge_records_in_global_order",
         subtitle: "column store",
-        detail: "Records shard partitions replayed in global order — bit-exact percentiles, sums, counts from the full record set.",
-        className: categoryBgTintClassName("green"),
+        detail: "Shard partitions replayed in order — bit-exact from records.",
+        className: roleClassName("compute"),
       },
     },
     {
@@ -168,8 +168,8 @@ function exactVsSketchLeafNodes(): Node[] {
       data: {
         title: "Final NativeReport = EXACT",
         subtitle: "from records",
-        detail: "Reported metrics are computed from retained records; no estimation on the terminal report.",
-        className: categoryBgTintClassName("green"),
+        detail: "Metrics from retained records; no terminal estimation.",
+        className: roleClassName("storage"),
       },
     },
     {
@@ -179,8 +179,8 @@ function exactVsSketchLeafNodes(): Node[] {
       data: {
         title: "t-digest: TDigest::merge",
         subtitle: "cellular::sketch",
-        detail: "Concatenate centroids + compress; min/max stay exact; associative & deterministic at fixed topology.",
-        className: categoryBgTintClassName("purple"),
+        detail: "Concat centroids + compress; min/max exact; associative.",
+        className: roleClassName("compute"),
       },
     },
     {
@@ -190,8 +190,8 @@ function exactVsSketchLeafNodes(): Node[] {
       data: {
         title: "Mergeable heartbeats / cellular merge",
         subtitle: "streaming estimate",
-        detail: "Percentiles + stddev become streaming estimates; counts, sums and extrema stay exact.",
-        className: categoryBgTintClassName("purple"),
+        detail: "Percentiles + stddev become streaming estimates; counts/sums/extrema exact.",
+        className: roleClassName("compute"),
       },
     },
   ];

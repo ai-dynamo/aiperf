@@ -11,6 +11,58 @@
 import type { Edge, Node } from "@xyflow/react";
 import { categoryBgTintClassName } from "../../theme/tokens.js";
 import type { CategoryRole } from "../../theme/tokens.js";
+
+// ────────────────────────────────────────────────────────────────────────────────────────────────
+// Semantic node roles: drill-down boxes are colored by WHAT THEY ARE, not by their stage, so the
+// same kind of thing reads the same everywhere. A stage tags each node with a `NodeRole`; the helper
+// paints a matching category tint + a colored left border (the `!` overrides Card's default accent).
+// ────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** What a drill-down box represents (drives its color). */
+export type NodeRole =
+  | "storage" // data at rest: stores, arenas, segments, handles
+  | "compute" // work/execution: workers, threads, hot path, reducers
+  | "transport" // network/IO: HTTP/gRPC, dispatch, sinks, the wire
+  | "control" // orchestration: scheduler, clock, phase, coordination, config
+  | "media" // out-of-band media: content_server, sidecars, publishers
+  | "server" // external inference server / endpoint
+  | "neutral"; // plain junctions/labels with no strong category
+
+const ROLE_COLOR: Record<NodeRole, CategoryRole> = {
+  storage: "blue",
+  compute: "green",
+  transport: "cyan",
+  control: "purple",
+  media: "orange",
+  server: "yellow",
+  neutral: "gray",
+};
+
+// Static literal map so Tailwind's scanner emits every class (never interpolate — see SKILL.md).
+const ROLE_BORDER_LEFT: Record<NodeRole, string> = {
+  storage: "!border-l-category-blue",
+  compute: "!border-l-category-green",
+  transport: "!border-l-category-cyan",
+  control: "!border-l-category-purple",
+  media: "!border-l-category-orange",
+  server: "!border-l-category-yellow",
+  neutral: "!border-l-category-gray",
+};
+
+/** Class string for a node of the given semantic role: category tint fill + colored left border. */
+export function roleClassName(role: NodeRole): string {
+  return `${categoryBgTintClassName(ROLE_COLOR[role])} ${ROLE_BORDER_LEFT[role]}`;
+}
+
+/** Legend rows for the deck to render a color key (order = display order). */
+export const NODE_ROLE_LEGEND: ReadonlyArray<{ role: NodeRole; label: string; color: CategoryRole }> = [
+  { role: "storage", label: "Storage / data", color: ROLE_COLOR.storage },
+  { role: "compute", label: "Compute / workers", color: ROLE_COLOR.compute },
+  { role: "transport", label: "Transport / network", color: ROLE_COLOR.transport },
+  { role: "control", label: "Control / orchestration", color: ROLE_COLOR.control },
+  { role: "media", label: "Media / sidecar", color: ROLE_COLOR.media },
+  { role: "server", label: "Inference server", color: ROLE_COLOR.server },
+];
 import type {
   Lane,
   LaneId,

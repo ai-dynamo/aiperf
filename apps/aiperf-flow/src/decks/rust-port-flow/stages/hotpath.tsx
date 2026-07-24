@@ -17,20 +17,20 @@
 //! composition can render alongside the canvas.
 
 import type { Edge, Node } from "@xyflow/react";
-import { categoryBgTintClassName } from "../../../theme/tokens.js";
-import type { CategoryRole } from "../../../theme/tokens.js";
+import { roleClassName } from "../stage.js";
+import type { NodeRole } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
 import { Grid } from "../../../layout/Grid.js";
 import { Callout } from "../../../prose/Callout.js";
 import type { StageDef } from "../stage.js";
 
-/** A card node tinted by category role, laid out at a fixed spine position. */
+/** A card node colored by semantic role, laid out at a fixed spine position. */
 function card(
   id: string,
   title: string,
   subtitle: string,
   detail: string,
-  tone: CategoryRole,
+  role: NodeRole,
   x: number,
   y = 0,
 ): Node {
@@ -38,7 +38,7 @@ function card(
     id,
     type: "card",
     position: { x, y },
-    data: { title, subtitle, detail, className: categoryBgTintClassName(tone) },
+    data: { title, subtitle, detail, className: roleClassName(role) },
   };
 }
 
@@ -70,8 +70,8 @@ const subgraphNodes: Node[] = [
     HP_WORKLOAD,
     "RequestRateWorkload",
     "impl Workload",
-    "Workload::execute drains scheduled work through Rc<ScheduledRuntime>.",
-    "red",
+    "execute() drains scheduled work via Rc<ScheduledRuntime>.",
+    "control",
     0,
   ),
   card(
@@ -79,7 +79,7 @@ const subgraphNodes: Node[] = [
     "Admission gate",
     "SlotPool · StopChecker",
     "Concurrency credit + run bounds — click to open.",
-    "orange",
+    "control",
     COL,
   ),
   card(
@@ -87,31 +87,31 @@ const subgraphNodes: Node[] = [
     "Rc<dyn Dispatcher>",
     "dispatch_collect",
     "One PreparedTurn to the chosen sink — click to open.",
-    "blue",
+    "transport",
     COL * 2,
   ),
   card(
     HP_SINK,
     "Chosen sink",
     "TransportSink / GrpcTransportSink",
-    "The only transport-specific step; everything downstream is shared.",
-    "cyan",
+    "The only transport-specific step; rest is shared.",
+    "transport",
     COL * 3,
   ),
   card(
     HP_REDUCE,
     "reduce_parsed_response",
     "transport::reduce",
-    "Folds each ParsedResponse into the accumulators; latches TTFT on the first token.",
-    "purple",
+    "Folds each ParsedResponse; latches TTFT on first token.",
+    "compute",
     COL * 4,
   ),
   card(
     HP_MEASURE,
     "measure_dispatch",
     "transport::measure",
-    "Wraps the dispatch and records one terminal into NativeMetricsObserver.",
-    "green",
+    "Records one terminal into NativeMetricsObserver.",
+    "compute",
     COL * 5,
   ),
 ];
@@ -131,16 +131,16 @@ const admissionLeafNodes: Node[] = [
     "hp-slotpool",
     "SlotPool",
     "runtime::timing::slots",
-    "Hands out concurrency credits (admit_ns); a turn waits for a free slot before issuance.",
-    "orange",
+    "Hands out concurrency credits (admit_ns); waits for a slot.",
+    "control",
     0,
   ),
   card(
     "hp-stopchecker",
     "StopChecker",
     "runtime::timing::stop",
-    "Enforces the request-count / duration stop bounds — the last gate before a turn dispatches.",
-    "yellow",
+    "Enforces request-count / duration stop bounds.",
+    "control",
     COL,
   ),
 ];
@@ -154,24 +154,24 @@ const dispatchLeafNodes: Node[] = [
     "hp-dispatch-collect",
     "dispatch_collect",
     "trait Dispatcher",
-    "Runs one owned PreparedTurn, retaining terminal response facts.",
-    "blue",
+    "Runs one owned PreparedTurn, retaining terminal facts.",
+    "transport",
     0,
   ),
   card(
     "hp-on-first-token",
     "on_first_token(TTFT)",
     "&dyn Fn(i64)",
-    "Invoked exactly once with TTFT in nanoseconds — the first-token observation.",
-    "cyan",
+    "Invoked once with TTFT in ns — the first-token observation.",
+    "compute",
     COL,
   ),
   card(
     "hp-first-token-latch",
     "first_token_released",
     "Cell<bool> latch",
-    "reduce_parsed_response fires on_first_token(at_ns - start_ns) the first time content lands.",
-    "purple",
+    "Fires on_first_token(at_ns - start_ns) on first content.",
+    "compute",
     COL * 2,
   ),
 ];

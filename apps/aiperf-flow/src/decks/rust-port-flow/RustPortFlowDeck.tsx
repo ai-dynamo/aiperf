@@ -21,6 +21,7 @@ import { Stack } from "../../layout/Stack.js";
 import { Row } from "../../layout/Row.js";
 import { Button } from "../../prose/Button.js";
 import { Callout } from "../../prose/Callout.js";
+import { Legend } from "../../prose/Legend.js";
 import { Eyebrow } from "../../prose/Eyebrow.js";
 import { inkClassName, strokeClassName, surfaceClassName } from "../../theme/tokens.js";
 import {
@@ -45,6 +46,7 @@ import type { ElkOptions } from "../../layout/graph/index.js";
 const STAGE_LAYOUT: ElkOptions = { direction: "RIGHT" };
 import {
   OVERVIEW_ID,
+  NODE_ROLE_LEGEND,
   buildTimelineModel,
   buildZoomTree,
   type StageDef,
@@ -319,6 +321,10 @@ export function RustPortFlowDeck(): React.JSX.Element {
                           heightClass="h-[68vh] min-h-[480px]"
                           onNodeClick={(id) => ctx.drill(id)}
                           layout={STAGE_LAYOUT}
+                        />
+                        {/* Color key: every box is tinted by what it IS (semantic role). */}
+                        <Legend
+                          entries={NODE_ROLE_LEGEND.map((r) => ({ color: r.color, label: r.label }))}
                         />
                         {stage && (
                           <Stack gap={12}>

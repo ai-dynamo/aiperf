@@ -16,25 +16,25 @@
 //! source (verified `file:line`, not the spec markdown).
 
 import type { Edge, Node } from "@xyflow/react";
-import { categoryBgTintClassName } from "../../../theme/tokens.js";
-import type { CategoryRole } from "../../../theme/tokens.js";
+import { roleClassName } from "../stage.js";
+import type { NodeRole } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
 import type { StageDef } from "../stage.js";
 
-/** A tinted `card` node for a level-1/level-2 subgraph, colored by a category role via the static helper. */
+/** A tinted `card` node for a level-1/level-2 subgraph, colored by its semantic node role. */
 function card(
   id: string,
   position: { x: number; y: number },
   title: string,
   subtitle: string,
   detail: string,
-  tone: CategoryRole,
+  role: NodeRole,
 ): Node {
   return {
     id,
     type: "card",
     position,
-    data: { title, subtitle, detail, className: categoryBgTintClassName(tone) },
+    data: { title, subtitle, detail, className: roleClassName(role) },
   };
 }
 
@@ -58,64 +58,64 @@ const subgraphNodes: Node[] = [
     { x: 0, y: 40 },
     "DatasetLoader::load",
     "loaders",
-    "Each loader (HF, trace, synthetic, raw-payload, …) reads RawRows from its source.",
-    "green",
+    "Each loader (HF, trace, synthetic, raw) reads RawRows.",
+    "compute",
   ),
   card(
     "pool",
     { x: 250, y: 40 },
     "SegmentPool",
     "mutable interner",
-    "The write side: arena Vec<Segment> plus a SegmentId→Handle map, filled as rows are lowered.",
-    "green",
+    "Write side: arena Vec<Segment> + SegmentId→Handle map.",
+    "storage",
   ),
   card(
     "intern",
     { x: 500, y: 40 },
     "intern(parent, payload)",
     "content-address",
-    "Interns one Payload under an optional prefix parent, returning a dense Handle.",
-    "green",
+    "Interns a Payload under a prefix parent → dense Handle.",
+    "compute",
   ),
   card(
     "domains",
     { x: 360, y: 210 },
     "Six BLAKE3 domains",
     "SegmentDomain",
-    "message · text-only · raw · token-ids · media · trace-hash-ids — disjoint content domains.",
-    "blue",
+    "message · text · raw · token-ids · media · trace-hash — disjoint.",
+    "storage",
   ),
   card(
     "hashing",
     { x: 620, y: 210 },
     "Prefix-folded hashing",
     "payload_id + dedup",
-    "A child hash folds the parent's content hash (not its index); a repeated SegmentId dedups.",
-    "purple",
+    "Child hash folds parent's content hash; repeats dedup.",
+    "compute",
   ),
   card(
     "freeze",
     { x: 760, y: 40 },
     "freeze()",
     "seal the arena",
-    "Drops the write-only SegmentId→Handle map and hands back an immutable store.",
-    "green",
+    "Drops the write map, hands back an immutable store.",
+    "compute",
   ),
   card(
     "store",
     { x: 1010, y: 40 },
     "InMemorySegmentStore",
     "frozen arena",
-    "The dense Box<[Segment]> arena — each unique segment's bytes live exactly once, shared read-only across workers.",
-    "cyan",
+    "Dense Box<[Segment]>; bytes live once, shared read-only.",
+    "storage",
   ),
   card(
     "turn",
     { x: 1010, y: 210 },
     "Turn",
     "body: SmallVec<[Handle; 1]>",
-    "Every potentially large per-turn value is a Handle into the store; turns carry dense indices, not bytes.",
-    "orange",
+    "Large values are Handles into the store — indices, not bytes.",
+    "storage",
   ),
 ];
 
@@ -134,12 +134,12 @@ const subgraphEdges: Edge[] = [
 // ---------------------------------------------------------------------------
 
 const domainLeafNodes: Node[] = [
-  card("dom-message", { x: 0, y: 0 }, "message", "SegmentDomain::Message", "A pre-serialized endpoint message object; these handles format as an array.", "blue"),
-  card("dom-text-only", { x: 300, y: 0 }, "text-only", "SegmentDomain::TextOnly", "Plain text for non-message endpoint fields; spliced verbatim at dispatch.", "blue"),
-  card("dom-raw", { x: 600, y: 0 }, "raw", "SegmentDomain::Raw", "A complete prebuilt request body — a leading raw handle bypasses endpoint formatting.", "blue"),
-  card("dom-token-ids", { x: 0, y: 150 }, "token-ids", "SegmentDomain::TokenIds", "Exact pre-tokenized input IDs — the token-native dispatch path.", "blue"),
-  card("dom-media", { x: 300, y: 150 }, "media", "SegmentDomain::Media", "Binary or encoded multimodal content, folded into the segment identity.", "blue"),
-  card("dom-trace-hash-ids", { x: 600, y: 150 }, "trace-hash-ids", "SegmentDomain::TraceHashIds", "Authored source-trace block identities carried by a Turn's trace_hash_ids.", "blue"),
+  card("dom-message", { x: 0, y: 0 }, "message", "SegmentDomain::Message", "Pre-serialized endpoint message; formats as an array.", "storage"),
+  card("dom-text-only", { x: 300, y: 0 }, "text-only", "SegmentDomain::TextOnly", "Plain text field; spliced verbatim at dispatch.", "storage"),
+  card("dom-raw", { x: 600, y: 0 }, "raw", "SegmentDomain::Raw", "Prebuilt body; leading raw handle bypasses formatting.", "storage"),
+  card("dom-token-ids", { x: 0, y: 150 }, "token-ids", "SegmentDomain::TokenIds", "Pre-tokenized input IDs — token-native dispatch.", "storage"),
+  card("dom-media", { x: 300, y: 150 }, "media", "SegmentDomain::Media", "Binary/encoded multimodal content, folded into identity.", "media"),
+  card("dom-trace-hash-ids", { x: 600, y: 150 }, "trace-hash-ids", "SegmentDomain::TraceHashIds", "Source-trace block ids on a Turn's trace_hash_ids.", "storage"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -152,32 +152,32 @@ const hashingLeafNodes: Node[] = [
     { x: 0, y: 40 },
     "hash_parent(parent)",
     "prefix fold",
-    "Feeds the parent segment's content hash into BLAKE3, so shared prefixes converge to shared ids.",
-    "purple",
+    "Folds parent's content hash in; shared prefixes → shared ids.",
+    "compute",
   ),
   card(
     "hash-payload",
     { x: 280, y: 40 },
     "payload_id(parent, payload)",
     "BLAKE3",
-    "Hashes HASH_VERSION + the domain tag + the folded parent hash + the payload content into a SegmentId.",
-    "purple",
+    "Hashes version + domain tag + parent hash + payload → SegmentId.",
+    "compute",
   ),
   card(
     "hash-dedup",
     { x: 560, y: 40 },
     "push_interned → ids map",
     "dedup",
-    "A SegmentId already in the map returns its existing Handle; otherwise a fresh dense index is appended.",
-    "purple",
+    "Known SegmentId returns its Handle; else append a dense index.",
+    "compute",
   ),
   card(
     "hash-handle",
     { x: 840, y: 40 },
     "Handle(u32)",
     "dense index",
-    "The public address is a dense arena index; the SegmentId→Handle map only exists until freeze().",
-    "green",
+    "Public address is a dense arena index; map lives until freeze().",
+    "storage",
   ),
 ];
 

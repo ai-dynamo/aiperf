@@ -12,7 +12,7 @@
 //! seams. `evidence` cites real `file:line` anchors verified against `rust/` (not the spec markdown).
 
 import type { Edge, Node } from "@xyflow/react";
-import { categoryBgTintClassName } from "../../../theme/tokens.js";
+import { roleClassName } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
 import type { StageDef } from "../stage.js";
 
@@ -30,8 +30,8 @@ const subgraphNodes: Node[] = [
     data: {
       title: "aiperf-cli",
       subtitle: "front door · cli/main.rs",
-      detail: "Parses argv. On the non-execute path it resolves Config v2 and drives one execution child.",
-      className: categoryBgTintClassName("blue"),
+      detail: "Parses argv, resolves Config v2, drives one exec child.",
+      className: roleClassName("control"),
     },
   },
   {
@@ -41,8 +41,8 @@ const subgraphNodes: Node[] = [
     data: {
       title: "EnvelopeV2",
       subtitle: "protocol-v2 · stdio",
-      detail: "protocol_version + OperationV2::Execute + a BenchmarkRunWireV2 (the exact Config v2 run).",
-      className: categoryBgTintClassName("blue"),
+      detail: "protocol_version + Execute op + BenchmarkRunWireV2.",
+      className: roleClassName("transport"),
     },
   },
   {
@@ -52,8 +52,8 @@ const subgraphNodes: Node[] = [
     data: {
       title: "aiperf --execute",
       subtitle: "re-exec of current_exe()",
-      detail: "exec_bin::resolve() picks this same binary; run_once spawns the child and feeds the envelope over stdin.",
-      className: categoryBgTintClassName("blue"),
+      detail: "Re-execs current_exe(); feeds the envelope over stdin.",
+      className: roleClassName("control"),
     },
   },
   {
@@ -63,8 +63,8 @@ const subgraphNodes: Node[] = [
     data: {
       title: "Coordinator",
       subtitle: "composition root",
-      detail: "handle(EnvelopeV2): concrete registries meet exactly once, then the frozen RunContext is handed to the transport/workload pair.",
-      className: categoryBgTintClassName("blue"),
+      detail: "handle(): registries meet once, RunContext frozen.",
+      className: roleClassName("control"),
     },
   },
   {
@@ -74,8 +74,8 @@ const subgraphNodes: Node[] = [
     data: {
       title: "RunTerminalV2",
       subtitle: "one-line stdout response",
-      detail: "success + report_path on success, or a typed DiagnosticV2 failure envelope.",
-      className: categoryBgTintClassName("blue"),
+      detail: "success + report_path, or a typed DiagnosticV2 failure.",
+      className: roleClassName("transport"),
     },
   },
   {
@@ -85,8 +85,8 @@ const subgraphNodes: Node[] = [
     data: {
       title: "Three orthogonal seams",
       subtitle: "Time · Transport · Workload",
-      detail: "Wired here at the composition root, each varies independently. Click to open the seam axes.",
-      className: categoryBgTintClassName("purple"),
+      detail: "Wired once at the root; each varies independently.",
+      className: roleClassName("control"),
     },
   },
 ];
@@ -108,8 +108,8 @@ const selfExecLeafNodes: Node[] = [
     data: {
       title: "execute::run_once",
       subtitle: "parent · cli/execute.rs",
-      detail: "Spawns the child with the --execute flag and writes the EnvelopeV2 JSON to its stdin.",
-      className: categoryBgTintClassName("blue"),
+      detail: "Spawns the --execute child, writes EnvelopeV2 to stdin.",
+      className: roleClassName("control"),
     },
   },
   {
@@ -119,8 +119,8 @@ const selfExecLeafNodes: Node[] = [
     data: {
       title: "aiperf --execute child",
       subtitle: "execute_mode::dispatch",
-      detail: "Reads one bare protocol-v2 BenchmarkRun from stdin; the operation is chosen by argv MODE, not a wire field.",
-      className: categoryBgTintClassName("blue"),
+      detail: "Reads a BenchmarkRun from stdin; op from argv MODE.",
+      className: roleClassName("control"),
     },
   },
   {
@@ -130,8 +130,8 @@ const selfExecLeafNodes: Node[] = [
     data: {
       title: "Coordinator::handle(EnvelopeV2)",
       subtitle: "composition root",
-      detail: "Concrete registries meet once; the frozen RunContext goes to the transport/workload pair adapters.",
-      className: categoryBgTintClassName("blue"),
+      detail: "Registries meet once; RunContext → pair adapters.",
+      className: roleClassName("control"),
     },
   },
   {
@@ -140,8 +140,8 @@ const selfExecLeafNodes: Node[] = [
     position: { x: 600, y: 210 },
     data: {
       title: "RunTerminalV2 → stdout",
-      detail: "Exactly one line back to the parent: success + report_path, or a typed failure envelope.",
-      className: categoryBgTintClassName("green"),
+      detail: "One line back: success + report_path, or a failure.",
+      className: roleClassName("transport"),
     },
   },
 ];
@@ -162,8 +162,8 @@ const seamsLeafNodes: Node[] = [
     data: {
       title: "RunContext (frozen)",
       subtitle: "handed to the pair adapters",
-      detail: "The composition root freezes it once; the three seams below then vary completely independently.",
-      className: categoryBgTintClassName("purple"),
+      detail: "Frozen once; the three seams below vary independently.",
+      className: roleClassName("control"),
     },
   },
   {
@@ -172,8 +172,8 @@ const seamsLeafNodes: Node[] = [
     position: { x: 340, y: 0 },
     data: {
       title: "Time · trait Clock",
-      detail: "RealClock (wall) vs SimClock (virtual ns). is_virtual() selects the real reactor vs the simulation driver.",
-      className: categoryBgTintClassName("green"),
+      detail: "RealClock (wall) vs SimClock (virtual ns).",
+      className: roleClassName("control"),
     },
   },
   {
@@ -182,8 +182,8 @@ const seamsLeafNodes: Node[] = [
     position: { x: 340, y: 120 },
     data: {
       title: "Transport · trait WorkerSink",
-      detail: "Plus ExecutionSinkBuilder. One of HTTP / gRPC / dry-run / dynosim; everything else is shared.",
-      className: categoryBgTintClassName("yellow"),
+      detail: "ExecutionSinkBuilder + one of HTTP/gRPC/dry-run/dynosim.",
+      className: roleClassName("transport"),
     },
   },
   {
@@ -192,8 +192,8 @@ const seamsLeafNodes: Node[] = [
     position: { x: 340, y: 240 },
     data: {
       title: "Workload · trait Workload",
-      detail: "RequestRateWorkload and friends generate the schedule the runtime drives.",
-      className: categoryBgTintClassName("orange"),
+      detail: "RequestRateWorkload & friends generate the schedule.",
+      className: roleClassName("control"),
     },
   },
 ];

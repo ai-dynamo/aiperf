@@ -23,7 +23,8 @@
 //!                                       runtime/src/dynosim.rs:122, :129
 
 import type { Edge, Node } from "@xyflow/react";
-import { categoryBgTintClassName } from "../../../theme/tokens.js";
+import { roleClassName } from "../stage.js";
+import type { NodeRole } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
 import type { StageDef } from "../stage.js";
 
@@ -44,7 +45,8 @@ const seamNodes: Node[] = [
     data: {
       title: "Rc<dyn Dispatcher>",
       subtitle: "shared upstream",
-      detail: "Same workload + SlotPool admission for every target; it just holds a sink.",
+      detail: "Shared workload + SlotPool admission; just holds a sink.",
+      className: roleClassName("transport"),
     },
   },
   {
@@ -54,8 +56,8 @@ const seamNodes: Node[] = [
     data: {
       title: "Two-trait seam",
       subtitle: "WorkerSink + ExecutionSinkBuilder",
-      detail: "Implement exactly these two traits — everything else is shared.",
-      className: categoryBgTintClassName("yellow"),
+      detail: "Implement these two traits; everything else is shared.",
+      className: roleClassName("transport"),
     },
   },
   {
@@ -65,8 +67,8 @@ const seamNodes: Node[] = [
     data: {
       title: "TransportSink",
       subtitle: "HTTP · hyper · streaming",
-      detail: "supports_response_streaming() = true — live SSE tokens.",
-      className: categoryBgTintClassName("blue"),
+      detail: "supports_response_streaming() = true — live SSE.",
+      className: roleClassName("transport"),
     },
   },
   {
@@ -76,8 +78,8 @@ const seamNodes: Node[] = [
     data: {
       title: "GrpcTransportSink",
       subtitle: "gRPC · Tonic · non-streaming",
-      detail: "supports_response_streaming() = false — one unary response.",
-      className: categoryBgTintClassName("cyan"),
+      detail: "supports_response_streaming() = false — unary.",
+      className: roleClassName("transport"),
     },
   },
   {
@@ -87,8 +89,8 @@ const seamNodes: Node[] = [
     data: {
       title: "DryRunTransportFactoryV2",
       subtitle: "dry-run · no I/O",
-      detail: "Always-built strict decoder; synthesizes timings offline.",
-      className: categoryBgTintClassName("gray"),
+      detail: "Strict decoder; synthesizes timings offline.",
+      className: roleClassName("transport"),
     },
   },
   {
@@ -98,8 +100,8 @@ const seamNodes: Node[] = [
     data: {
       title: "SteppableEngine",
       subtitle: "dynosim · offline co-sim",
-      detail: "In-process Dynamo mocker driven through SteppableReplay.",
-      className: categoryBgTintClassName("orange"),
+      detail: "In-process Dynamo mocker via SteppableReplay.",
+      className: roleClassName("server"),
     },
   },
 ];
@@ -115,28 +117,38 @@ const seamEdges: Edge[] = [
 /** A level-2 target subgraph: its `ExecutionSinkBuilder`, its `WorkerSink`, and its response shape. */
 function leafChain(
   prefix: string,
-  builder: { title: string; detail: string },
-  sink: { title: string; detail: string },
-  tail: { title: string; detail: string },
+  builder: { title: string; detail: string; role: NodeRole },
+  sink: { title: string; detail: string; role: NodeRole },
+  tail: { title: string; detail: string; role: NodeRole },
 ): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [
     {
       id: `${prefix}__builder`,
       type: "card",
       position: { x: 0, y: 80 },
-      data: { title: builder.title, subtitle: "ExecutionSinkBuilder", detail: builder.detail },
+      data: {
+        title: builder.title,
+        subtitle: "ExecutionSinkBuilder",
+        detail: builder.detail,
+        className: roleClassName(builder.role),
+      },
     },
     {
       id: `${prefix}__sink`,
       type: "card",
       position: { x: 280, y: 80 },
-      data: { title: sink.title, subtitle: "WorkerSink", detail: sink.detail },
+      data: {
+        title: sink.title,
+        subtitle: "WorkerSink",
+        detail: sink.detail,
+        className: roleClassName(sink.role),
+      },
     },
     {
       id: `${prefix}__tail`,
       type: "card",
       position: { x: 560, y: 80 },
-      data: { title: tail.title, detail: tail.detail },
+      data: { title: tail.title, detail: tail.detail, className: roleClassName(tail.role) },
     },
   ];
   const edges: Edge[] = [
@@ -173,15 +185,18 @@ export const transportStage: StageDef = {
         "http",
         {
           title: "HttpSinkBuilder",
-          detail: 'label() = "http"; build_sink(clock, worker_id) → TransportSink.',
+          detail: 'label()="http"; build_sink → TransportSink.',
+          role: "transport",
         },
         {
           title: "TransportSink",
-          detail: "hyper client; dispatch_measured streams intermediate parsed responses.",
+          detail: "hyper client; dispatch_measured streams responses.",
+          role: "transport",
         },
         {
           title: "SSE token stream",
-          detail: "First token fires on_first_token(ts) → TTFT; each token feeds shared reduce.",
+          detail: "First token → on_first_token(ts)=TTFT; feeds reduce.",
+          role: "transport",
         },
       ),
     },
@@ -191,15 +206,18 @@ export const transportStage: StageDef = {
         "grpc",
         {
           title: "GrpcSinkBuilder",
-          detail: 'label() = "grpc"; build_sink(clock, worker_id) → GrpcTransportSink.',
+          detail: 'label()="grpc"; build_sink → GrpcTransportSink.',
+          role: "transport",
         },
         {
           title: "GrpcTransportSink",
-          detail: "Tonic client; supports_response_streaming() = false.",
+          detail: "Tonic client; supports_response_streaming()=false.",
+          role: "transport",
         },
         {
           title: "Unary response",
-          detail: "One terminal response — no live token stream; still shares measure.",
+          detail: "One terminal response; still shares measure.",
+          role: "transport",
         },
       ),
     },
@@ -209,15 +227,18 @@ export const transportStage: StageDef = {
         "dryrun",
         {
           title: "DryRunTransportFactoryV2",
-          detail: "TransportFactory for the always-built dry_run strict decoder.",
+          detail: "TransportFactory for the dry_run strict decoder.",
+          role: "transport",
         },
         {
           title: "DryRunNativeExecution",
-          detail: "Synthesizes measured token timings offline (lognormal) — no server.",
+          detail: "Synthesizes token timings offline (lognormal).",
+          role: "compute",
         },
         {
           title: "Measured record",
-          detail: "Emits the same DispatchResult shape without any real request.",
+          detail: "Same DispatchResult shape, no real request.",
+          role: "storage",
         },
       ),
     },
@@ -227,15 +248,18 @@ export const transportStage: StageDef = {
         "dynosim",
         {
           title: "NativeDynamoEngineFactory",
-          detail: "OfflineEngineFactory: build() → Box<dyn SteppableReplay>.",
+          detail: "OfflineEngineFactory: build() → SteppableReplay.",
+          role: "transport",
         },
         {
           title: "SteppableEngine",
-          detail: "In-process Dynamo mocker; execute_pass single-runtime offline path.",
+          detail: "In-process Dynamo mocker; execute_pass offline.",
+          role: "server",
         },
         {
           title: "SteppableReplay contract",
-          detail: "Workload, clock pump, observers depend only on this — swap the simulator freely.",
+          detail: "Workload/clock/observers depend only on this.",
+          role: "server",
         },
       ),
     },

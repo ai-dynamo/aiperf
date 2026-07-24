@@ -18,7 +18,7 @@
 //! transport-timing consumer. The two backend nodes drill (level 2) into their internals.
 
 import type { Edge, Node } from "@xyflow/react";
-import { categoryBgTintClassName } from "../../../theme/tokens.js";
+import { roleClassName } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
 import type { StageDef } from "../stage.js";
 
@@ -31,8 +31,8 @@ const subgraphNodes: Node[] = [
     data: {
       title: "trait Clock",
       subtitle: "clock/clock.rs",
-      detail: "now_ns() · sleep() · is_virtual() · drive() — the one time source runtime depends on",
-      className: categoryBgTintClassName("orange"),
+      detail: "now_ns · sleep · is_virtual · drive — one time source",
+      className: roleClassName("control"),
     },
   },
   {
@@ -41,7 +41,7 @@ const subgraphNodes: Node[] = [
     position: { x: 268, y: 168 },
     data: {
       label: "is_virtual()?",
-      className: categoryBgTintClassName("orange"),
+      className: roleClassName("neutral"),
     },
   },
   {
@@ -51,8 +51,8 @@ const subgraphNodes: Node[] = [
     data: {
       title: "RealClock",
       subtitle: "false → real reactor",
-      detail: "monotonic Instant; timerfd ns-precision sleeps; drives on a current-thread tokio runtime",
-      className: categoryBgTintClassName("green"),
+      detail: "monotonic Instant + timerfd sleeps on current-thread tokio",
+      className: roleClassName("control"),
     },
   },
   {
@@ -62,8 +62,8 @@ const subgraphNodes: Node[] = [
     data: {
       title: "SimClock",
       subtitle: "true → simulation driver",
-      detail: "integer-ns virtual time; (at_ns, seq_no) deterministic ordering; drive() pumps events",
-      className: categoryBgTintClassName("purple"),
+      detail: "integer-ns virtual time, deterministic (at_ns, seq_no) order",
+      className: roleClassName("control"),
     },
   },
   {
@@ -73,8 +73,8 @@ const subgraphNodes: Node[] = [
     data: {
       title: "Transport timing",
       subtitle: "one nanosecond timeline",
-      detail: "now_ns · sleep · with_timeout — never Instant::now / SystemTime::now / tokio::time",
-      className: categoryBgTintClassName("cyan"),
+      detail: "now_ns · sleep · with_timeout — never Instant/SystemTime::now",
+      className: roleClassName("control"),
     },
   },
 ];
@@ -96,8 +96,8 @@ const realLeafNodes: Node[] = [
     position: { x: 0, y: 0 },
     data: {
       title: "RealClockAnchor",
-      detail: "Copy monotonic origin (Instant); one shared timeline across per-reactor clocks",
-      className: categoryBgTintClassName("green"),
+      detail: "Copy monotonic origin (Instant); one shared timeline",
+      className: roleClassName("control"),
     },
   },
   {
@@ -106,8 +106,8 @@ const realLeafNodes: Node[] = [
     position: { x: 0, y: 160 },
     data: {
       title: "now_ns()",
-      detail: "start.elapsed().as_nanos() as i64 — a monotonic reading, not a wall clock",
-      className: categoryBgTintClassName("green"),
+      detail: "start.elapsed().as_nanos() as i64 — monotonic, not wall",
+      className: roleClassName("control"),
     },
   },
   {
@@ -116,8 +116,8 @@ const realLeafNodes: Node[] = [
     position: { x: 330, y: 0 },
     data: {
       title: "timerfd_sleep_ns",
-      detail: "one-shot CLOCK_MONOTONIC timerfd awaited via AsyncFd on tokio's IO reactor (Linux)",
-      className: categoryBgTintClassName("green"),
+      detail: "one-shot CLOCK_MONOTONIC timerfd via AsyncFd (Linux)",
+      className: roleClassName("control"),
     },
   },
   {
@@ -126,8 +126,8 @@ const realLeafNodes: Node[] = [
     position: { x: 330, y: 160 },
     data: {
       title: "tokio::time fallback",
-      detail: "non-Linux, or a timerfd syscall failure, degrades to the coarser 1 ms wheel",
-      className: categoryBgTintClassName("gray"),
+      detail: "non-Linux / timerfd failure → coarser 1 ms wheel",
+      className: roleClassName("neutral"),
     },
   },
 ];
@@ -146,8 +146,8 @@ const simLeafNodes: Node[] = [
     position: { x: 0, y: 0 },
     data: {
       title: "now_ns · seq · heap",
-      detail: "Cell<i64> now_ns, Cell<u64> seq, BinaryHeap<Sleeper> of parked wakers",
-      className: categoryBgTintClassName("purple"),
+      detail: "Cell now_ns, Cell seq, BinaryHeap<Sleeper> of wakers",
+      className: roleClassName("control"),
     },
   },
   {
@@ -156,8 +156,8 @@ const simLeafNodes: Node[] = [
     position: { x: 0, y: 160 },
     data: {
       title: "schedule(at_ns, waker)",
-      detail: "park a Sleeper { at_ns, seq_no, waker }; seq_no stamps registration order",
-      className: categoryBgTintClassName("purple"),
+      detail: "park Sleeper { at_ns, seq_no, waker }; seq_no = reg order",
+      className: roleClassName("control"),
     },
   },
   {
@@ -166,8 +166,8 @@ const simLeafNodes: Node[] = [
     position: { x: 330, y: 160 },
     data: {
       title: "(at_ns, seq_no) order",
-      detail: "Sleeper Ord: earliest deadline first, ties broken by registration seq — fully deterministic",
-      className: categoryBgTintClassName("purple"),
+      detail: "Ord: earliest deadline first, ties by seq — deterministic",
+      className: roleClassName("control"),
     },
   },
   {
@@ -176,8 +176,8 @@ const simLeafNodes: Node[] = [
     position: { x: 330, y: 0 },
     data: {
       title: "advance_to(ns)",
-      detail: "fast-forward virtual time to the next event; drain_due wakes every crossed sleeper",
-      className: categoryBgTintClassName("purple"),
+      detail: "fast-forward to next event; drain_due wakes sleepers",
+      className: roleClassName("control"),
     },
   },
 ];

@@ -20,7 +20,7 @@
 //! spec): file:line pinned by reading each cited function.
 
 import type { Edge, Node } from "@xyflow/react";
-import { categoryBgTintClassName } from "../../../theme/tokens.js";
+import { roleClassName } from "../stage.js";
 import type { StageDef } from "../stage.js";
 
 /** The drillable level-1 sub-cell node id, which is ALSO the `leaves` key it zooms into. */
@@ -35,9 +35,8 @@ const level1Nodes: Node[] = [
     data: {
       title: "run_sharded_scheduled",
       subtitle: "coordinator · main thread",
-      detail:
-        "Spawns W thread-per-core sub-cells over an unbounded mpsc; sidecars and the final merge stay on the main thread.",
-      className: categoryBgTintClassName("purple"),
+      detail: "Spawns W sub-cells over an mpsc; merge stays on main.",
+      className: roleClassName("control"),
     },
   },
   {
@@ -46,8 +45,8 @@ const level1Nodes: Node[] = [
     position: { x: 340, y: 0 },
     data: {
       title: "RealClockAnchor",
-      detail:
-        "One Copy monotonic origin captured before spawn; each worker reactor rebuilds a reactor-local RealClock from it, so scheduler + transport share one nanosecond timeline.",
+      detail: "One Copy monotonic origin; workers rebuild a local RealClock.",
+      className: roleClassName("control"),
     },
   },
   {
@@ -56,8 +55,8 @@ const level1Nodes: Node[] = [
     position: { x: 340, y: 300 },
     data: {
       title: "GlobalAdmission",
-      detail:
-        "Per-cell shared Arc<GlobalSlotPool>/GlobalRateGate built once on the main thread; the W threads jointly enforce one cell-level concurrency cap and rate, not W independent 1/W slices.",
+      detail: "Shared Arc<GlobalSlotPool>/GlobalRateGate — one cell-level cap.",
+      className: roleClassName("control"),
     },
   },
   {
@@ -67,9 +66,8 @@ const level1Nodes: Node[] = [
     data: {
       title: "sub-cell worker × W",
       subtitle: "thread-per-core",
-      detail:
-        "Each worker OS thread: its own current_thread runtime + LocalSet, a reactor-local RealClock, and a co-located transport sink. Click to open the per-thread stack.",
-      className: categoryBgTintClassName("purple"),
+      detail: "Own current_thread runtime + LocalSet + sink. Click to open.",
+      className: roleClassName("compute"),
     },
   },
   {
@@ -79,8 +77,8 @@ const level1Nodes: Node[] = [
     data: {
       title: "merge_shards",
       subtitle: "sort, don't renumber",
-      detail:
-        "Absorbs each shard (globally-unique two-level ordinals), then sorts retained records by request_index and input sessions by session id — row order independent of racy thread completion.",
+      detail: "Concatenates shards, sorts by request_index — never renumbers.",
+      className: roleClassName("compute"),
     },
   },
 ];
@@ -118,7 +116,8 @@ const workerThreadNodes: Node[] = [
     position: { x: 0, y: 0 },
     data: {
       title: "current_thread runtime",
-      detail: "tokio::runtime::Builder::new_current_thread().enable_all().build()",
+      detail: "Builder::new_current_thread().enable_all().build()",
+      className: roleClassName("compute"),
     },
   },
   {
@@ -127,7 +126,8 @@ const workerThreadNodes: Node[] = [
     position: { x: 0, y: 160 },
     data: {
       title: "LocalSet",
-      detail: "runtime.block_on(local.run_until(execute_scheduled_shard(shared, worker_id)))",
+      detail: "block_on(local.run_until(execute_scheduled_shard(…)))",
+      className: roleClassName("compute"),
     },
   },
   {
@@ -136,8 +136,8 @@ const workerThreadNodes: Node[] = [
     position: { x: 340, y: 0 },
     data: {
       title: "reactor-local RealClock",
-      detail:
-        "Rebuilt from the shared RealClockAnchor — the !Send Rc<RealClock> lives on this reactor only; a virtual (Sim) clock cannot cross the spawn, so it forces workers == 1.",
+      detail: "!Send Rc<RealClock> from the anchor; Sim clock forces workers==1.",
+      className: roleClassName("control"),
     },
   },
   {
@@ -146,8 +146,8 @@ const workerThreadNodes: Node[] = [
     position: { x: 340, y: 160 },
     data: {
       title: "co-located transport sink",
-      detail:
-        "build_native workers == 1 keeps the sink on the caller's reactor — the byte-unchanged single-worker path every Sharded/Global sub-cell reuses.",
+      detail: "workers==1 keeps the sink on the caller's reactor — byte-unchanged.",
+      className: roleClassName("transport"),
     },
   },
   {
@@ -157,9 +157,8 @@ const workerThreadNodes: Node[] = [
     data: {
       title: "execute_scheduled_shard",
       subtitle: "worker_id",
-      detail:
-        "Runs this shard on the LocalSet, stamping globally-unique two-level ordinals that merge_shards later sorts — no renumber needed.",
-      className: categoryBgTintClassName("purple"),
+      detail: "Runs the shard, stamping globally-unique two-level ordinals.",
+      className: roleClassName("compute"),
     },
   },
 ];
