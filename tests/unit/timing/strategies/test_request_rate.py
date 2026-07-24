@@ -241,6 +241,61 @@ async def test_request_rate_update_wakes_pending_sleep() -> None:
     credit_issuer.try_issue_credit.assert_awaited_once()
 
 
+def _build_minimal_strategy() -> RequestRateStrategy:
+    class FakeIntervalGenerator:
+        def __init__(self, config):
+            self.rate = config.request_rate
+
+        def next_interval(self) -> float:
+            return 0.01
+
+    config = CreditPhaseConfig(
+        phase=CreditPhase.PROFILING,
+        timing_mode=TimingMode.REQUEST_RATE,
+        request_rate=100.0,
+        total_expected_requests=1,
+    )
+    with patch(
+        "aiperf.timing.strategies.request_rate.plugins.get_class",
+        return_value=FakeIntervalGenerator,
+    ):
+        return RequestRateStrategy(
+            config=config,
+            conversation_source=MagicMock(),
+            scheduler=MagicMock(),
+            stop_checker=MagicMock(),
+            credit_issuer=MagicMock(),
+            lifecycle=MagicMock(),
+        )
+
+
+class TestHighResPacerFactory:
+    """Tests for the high-resolution pacer selection factory."""
+
+    def test_returns_none_when_disabled(self) -> None:
+        """No pacer is created when HIGH_RES_TIMER is off."""
+        strategy = _build_minimal_strategy()
+        with patch(
+            "aiperf.timing.strategies.request_rate.Environment.TIMING.HIGH_RES_TIMER",
+            False,
+        ):
+            assert strategy._create_high_res_pacer() is None
+
+    async def test_returns_pacer_when_enabled(self) -> None:
+        """A pacer is created (and closes cleanly) when HIGH_RES_TIMER is on.
+
+        Must run inside an event loop: both pacers capture the running loop.
+        """
+        strategy = _build_minimal_strategy()
+        with patch(
+            "aiperf.timing.strategies.request_rate.Environment.TIMING.HIGH_RES_TIMER",
+            True,
+        ):
+            pacer = strategy._create_high_res_pacer()
+        assert pacer is not None
+        pacer.close()
+
+
 class TestConcurrencyBurstGenerator:
     def test_returns_zero(self) -> None:
         cfg = IntervalGeneratorConfig(

@@ -8,7 +8,8 @@ import asyncio
 import time
 from typing import TYPE_CHECKING
 
-from aiperf.common.constants import MILLIS_PER_SECOND, NANOS_PER_SECOND
+from aiperf.common.constants import IS_LINUX, MILLIS_PER_SECOND, NANOS_PER_SECOND
+from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.credit.structs import Credit, TurnToSend
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from aiperf.timing.branch_orchestrator import BranchOrchestrator
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource
+    from aiperf.timing.high_res_timer import ThreadPacer, TimerFdPacer
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
 
@@ -120,10 +122,42 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         )
         self._rate_generator = GeneratorClass(interval_config)
         self._rate_update_event = asyncio.Event()
+        # High-resolution pacer for sub-millisecond sleep precision; created
+        # lazily in execute_phase (requires a running event loop), closed on exit.
+        self._pacer: TimerFdPacer | ThreadPacer | None = None
 
     async def setup_phase(self) -> None:
         """Setup the phase."""
         pass  # Already setup in __init__
+
+    def _create_high_res_pacer(self) -> TimerFdPacer | ThreadPacer | None:
+        """Create the best available high-resolution pacer, else None.
+
+        Selection order: Linux timerfd (kernel hrtimer, in-loop fd) ->
+        dedicated sleep thread (all platforms) -> event-loop timers (None).
+        """
+        if not Environment.TIMING.HIGH_RES_TIMER:
+            return None
+        if IS_LINUX:
+            try:
+                from aiperf.timing.high_res_timer import TimerFdPacer
+
+                pacer = TimerFdPacer()
+                self.info("Rate loop pacing via timerfd (kernel hrtimer)")
+                return pacer
+            except OSError as e:
+                self.warning(f"timerfd unavailable ({e}); trying pacing thread")
+        try:
+            from aiperf.timing.high_res_timer import ThreadPacer
+
+            pacer = ThreadPacer()
+            self.info("Rate loop pacing via dedicated sleep thread")
+            return pacer
+        except (OSError, RuntimeError) as e:
+            self.warning(
+                f"high-res pacing unavailable ({e}); falling back to event-loop timers"
+            )
+            return None
 
     async def execute_phase(self) -> None:
         """Execute request rate main loop until stop condition reached.
@@ -132,10 +166,16 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         sleeping for relative intervals. This prevents drift accumulation over
         many iterations (relative sleeps compound small timing errors).
 
-        When falling behind (credit issuance took longer than the interval),
-        we reset to "now" rather than trying to catch up. This prioritizes
-        maintaining throughput (preventing bursts) over preserving the exact
-        arrival distribution.
+        When falling behind, we re-anchor to "now" only once the backlog
+        exceeds a bounded catch-up window (Environment.TIMING.MAX_CATCHUP_SECONDS)
+        rather than on every oversleep. Event-loop timers oversleep sub-ms waits
+        (~1ms under uvloop/libuv); unconditionally re-anchoring forfeits schedule
+        on every tick and silently under-delivers high request rates. Genuine
+        stalls beyond the window still re-anchor to avoid a burst storm.
+
+        A high-resolution pacer (Environment.TIMING.HIGH_RES_TIMER) sleeps to
+        absolute deadlines with ~50us precision (Linux timerfd, else a dedicated
+        sleep thread), bypassing the event-loop timer wheel entirely.
         """
         if self._lifecycle.started_at_perf_ns is None:
             raise RuntimeError("started_at_perf_ns is not set in the lifecycle")
@@ -146,90 +186,110 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         # The first turn of the next new session. Cached to avoid wasting samples from shuffle/sequential samplers.
         next_new_session_turn = self._conversation_source.next().build_first_turn()
 
-        while True:
-            now = time.perf_counter()
+        self._pacer = self._create_high_res_pacer()
+        try:
+            while True:
+                now = time.perf_counter()
 
-            # Behind schedule: reset to now instead of sending a burst to catch up.
-            # This sacrifices inter-arrival distribution accuracy for stable throughput.
-            if next_target_perf < now:
-                next_target_perf = now
+                # Behind schedule: re-anchor to now only past the bounded catch-up
+                # window, so sub-ms oversleeps stay on the original schedule.
+                if next_target_perf < now - Environment.TIMING.MAX_CATCHUP_SECONDS:
+                    next_target_perf = now
 
-            if self._rate_update_event.is_set():
-                self._rate_update_event.clear()
-                next_target_perf = min(
-                    next_target_perf,
-                    time.perf_counter() + self._rate_generator.next_interval(),
-                )
-                continue
-
-            sleep_duration = next_target_perf - now
-            if sleep_duration > 0:
-                try:
-                    await asyncio.wait_for(
-                        self._rate_update_event.wait(), timeout=sleep_duration
-                    )
-                except asyncio.TimeoutError:  # noqa: UP041 - distinct on Python 3.10
-                    pass
-                else:
+                if self._rate_update_event.is_set():
                     self._rate_update_event.clear()
                     next_target_perf = min(
                         next_target_perf,
                         time.perf_counter() + self._rate_generator.next_interval(),
                     )
                     continue
-            else:
-                # CRITICAL: Always yield to event loop to allow callbacks to run.
-                # Without this, CONCURRENCY_BURST mode (0 interval) busy-loops and
-                # starves credit return callbacks, causing deadlock.
-                await yield_to_event_loop()
 
-            # Schedule next interval BEFORE issuing credit. This way, variable
-            # credit issuance latency doesn't affect the timing of the next interval.
-            next_target_perf += self._rate_generator.next_interval()
+                sleep_duration = next_target_perf - now
+                if sleep_duration > 0:
+                    # Use the high-res pacer only for short sleeps: that is where
+                    # ~1ms event-loop timer quantization actually distorts the
+                    # rate, and where the loop re-checks for rate updates before
+                    # the next ramp tick anyway. Longer sleeps keep the event-wait
+                    # so mid-sleep rate updates (ramping, set_request_rate) wake
+                    # promptly; ~1ms precision is irrelevant at that timescale.
+                    if (
+                        self._pacer is not None
+                        and sleep_duration
+                        <= Environment.TIMING.RATE_RAMP_UPDATE_INTERVAL
+                    ):
+                        await self._pacer.sleep_until(next_target_perf)
+                    else:
+                        try:
+                            await asyncio.wait_for(
+                                self._rate_update_event.wait(), timeout=sleep_duration
+                            )
+                        except asyncio.TimeoutError:  # noqa: UP041 - distinct on Python 3.10
+                            pass
+                        else:
+                            self._rate_update_event.clear()
+                            next_target_perf = min(
+                                next_target_perf,
+                                time.perf_counter()
+                                + self._rate_generator.next_interval(),
+                            )
+                            continue
+                else:
+                    # CRITICAL: Always yield to event loop to allow callbacks to run.
+                    # Without this, CONCURRENCY_BURST mode (0 interval) busy-loops and
+                    # starves credit return callbacks, causing deadlock.
+                    await yield_to_event_loop()
 
-            # Priority 1: Queued continuation turns from completed previous turns.
-            # These already hold session slots, so we just need prefill slots.
-            if not self._continuation_turns.empty():
-                should_continue = await self._credit_issuer.issue_credit(
-                    self._continuation_turns.get_nowait()
-                )
-                if not should_continue:
-                    return
+                # Schedule next interval BEFORE issuing credit. This way, variable
+                # credit issuance latency doesn't affect the timing of the next interval.
+                next_target_perf += self._rate_generator.next_interval()
 
-            # Priority 2: Start new session if allowed and slots available.
-            # try_issue_credit returns None if no slot (skip interval), False if
-            # stop condition reached (exit loop), True if issued successfully.
-            elif self._stop_checker.can_start_new_session():
-                result = await self._credit_issuer.try_issue_credit(
-                    next_new_session_turn
-                )
-                match result:
-                    case True:  # Successfully issued credit
-                        # Re-sample the next new turn for the next interval.
-                        next_new_session_turn = (
-                            self._conversation_source.next().build_first_turn()
-                        )
-                    case False:  # Stop condition reached
-                        self.debug(
-                            "Exiting: stop condition reached after try_issue_credit"
-                        )
+                # Priority 1: Queued continuation turns from completed previous turns.
+                # These already hold session slots, so we just need prefill slots.
+                if not self._continuation_turns.empty():
+                    should_continue = await self._credit_issuer.issue_credit(
+                        self._continuation_turns.get_nowait()
+                    )
+                    if not should_continue:
                         return
-                    case None:  # No slot available, retry later
-                        # Always yield to event loop to allow callbacks to run.
-                        # This is especially critical to prevent deadlock in CONCURRENCY_BURST mode (0 interval).
-                        await yield_to_event_loop()
 
-            # Priority 3: No more sessions to start and queue is empty.
-            # Check if we're done sending entirely.
-            elif not self._stop_checker.can_send_any_turn():
-                return
-            else:
-                # Can still send turns but queue is empty and can't start new
-                # sessions (session limit reached). Skip this interval and wait for
-                # continuation turns to arrive from callbacks.
-                # Always yield to event loop to allow callbacks to run.
-                # This is especially critical to prevent deadlock in CONCURRENCY_BURST mode (0 interval).
-                await yield_to_event_loop()
+                # Priority 2: Start new session if allowed and slots available.
+                # try_issue_credit returns None if no slot (skip interval), False if
+                # stop condition reached (exit loop), True if issued successfully.
+                elif self._stop_checker.can_start_new_session():
+                    result = await self._credit_issuer.try_issue_credit(
+                        next_new_session_turn
+                    )
+                    match result:
+                        case True:  # Successfully issued credit
+                            # Re-sample the next new turn for the next interval.
+                            next_new_session_turn = (
+                                self._conversation_source.next().build_first_turn()
+                            )
+                        case False:  # Stop condition reached
+                            self.debug(
+                                "Exiting: stop condition reached after try_issue_credit"
+                            )
+                            return
+                        case None:  # No slot available, retry later
+                            # Always yield to event loop to allow callbacks to run.
+                            # This is especially critical to prevent deadlock in CONCURRENCY_BURST mode (0 interval).
+                            await yield_to_event_loop()
+
+                # Priority 3: No more sessions to start and queue is empty.
+                # Check if we're done sending entirely.
+                elif not self._stop_checker.can_send_any_turn():
+                    return
+                else:
+                    # Can still send turns but queue is empty and can't start new
+                    # sessions (session limit reached). Skip this interval and wait for
+                    # continuation turns to arrive from callbacks.
+                    # Always yield to event loop to allow callbacks to run.
+                    # This is especially critical to prevent deadlock in CONCURRENCY_BURST mode (0 interval).
+                    await yield_to_event_loop()
+        finally:
+            if self._pacer is not None:
+                self._pacer.close()
+                self._pacer = None
 
     async def handle_credit_return(self, credit: Credit) -> None:
         """Queue the next turn of this conversation for the main loop.
