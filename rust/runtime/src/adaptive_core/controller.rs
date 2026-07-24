@@ -14,7 +14,9 @@ use serde::Serialize;
 
 use crate::adaptive_core::actuator::{ControlActuator, ControlSnapshot};
 use crate::adaptive_core::error::AdaptiveError;
-use crate::adaptive_core::sla::{SlaEvaluator, SlaFilter, SlaValues};
+use crate::adaptive_core::sla::{
+    SlaEvaluator, SlaFilter, SlaValues, can_evaluate_without_successes,
+};
 use crate::adaptive_core::step::{StepPolicy, StepPolicySnapshot};
 use crate::adaptive_core::window::WindowStats;
 
@@ -304,7 +306,20 @@ impl RampUntilFailController {
         let candidate_value = self.actuator.current();
         let mut outcome = AssessmentOutcome::empty(iteration);
 
-        if stats.completed() == 0 && (stats.errors > 0 || stats.cancelled > 0) {
+        // A window with zero successful requests but a saturated failure mode
+        // (all errors or all cancellations) is normally discarded as
+        // inconclusive. When every SLA filter targets an error_rate/
+        // cancellation_rate metric, however, that window is exactly what the
+        // SLA is measuring — evaluate it instead of early-returning, so an
+        // error/cancellation-rate-only config can still converge.
+        let can_evaluate_zero_success = stats.completed() == 0
+            && (stats.errors > 0 || stats.cancelled > 0)
+            && can_evaluate_without_successes(&self.filters, &stats);
+
+        if stats.completed() == 0
+            && (stats.errors > 0 || stats.cancelled > 0)
+            && !can_evaluate_zero_success
+        {
             outcome.events.push(self.event(
                 ControllerEventKind::AdaptiveWindow,
                 "no successful requests in assessment window".to_string(),
@@ -327,7 +342,7 @@ impl RampUntilFailController {
             return Ok(outcome);
         }
 
-        if stats.completed() < self.options.min_completed_requests {
+        if stats.completed() < self.options.min_completed_requests && !can_evaluate_zero_success {
             outcome.events.push(self.event(
                 ControllerEventKind::AdaptiveWindow,
                 "inconclusive: completed request count below minimum".to_string(),
@@ -1027,6 +1042,54 @@ mod tests {
         assert_eq!(
             outcome.candidate.unwrap().rejection_reason,
             Some("error_threshold")
+        );
+    }
+
+    fn controller_with_filter(filter: SlaFilter, maximum: f64, sustain_ns: i64) -> RampUntilFailController {
+        let actuator = Rc::new(CellActuator {
+            current: Cell::new(2.0),
+            minimum: 2.0,
+            maximum,
+        });
+        RampUntilFailController::new(
+            actuator,
+            Box::new(DefaultSlaEvaluator),
+            Box::new(SlaMarginStep::new(2, 1).unwrap()),
+            vec![filter],
+            RampUntilFailOptions {
+                min_completed_requests: 1,
+                sustain_duration_ns: sustain_ns,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn zero_success_error_window_is_evaluated_under_error_rate_sla() {
+        // With an error_rate SLA, a window of all errors and zero successes
+        // must be EVALUATED as an SLA miss (error_rate=1.0 > 0.5), not
+        // discarded as "no successful requests" — the fix that lets an
+        // error-rate-only config converge.
+        let filter = SlaFilter::new("error_rate", SlaStat::Avg, SlaOp::Le, 0.5).unwrap();
+        let mut controller = controller_with_filter(filter, 8.0, 10);
+        let failed = WindowStats {
+            successful_requests: Vec::new(),
+            errors: 4,
+            cancelled: 0,
+            elapsed_sec: 1.0,
+            start_ns: 1,
+            end_ns: 2,
+        };
+        let outcome = controller.assess(failed, 1).unwrap();
+        let candidate = outcome.candidate.expect("candidate produced");
+        assert!(!candidate.accepted);
+        // sla_miss (evaluated), NOT error_threshold (early-returned/discarded).
+        assert_eq!(candidate.rejection_reason, Some("sla_miss"));
+        assert!(
+            outcome
+                .events
+                .iter()
+                .any(|event| event.reason == "SLA window evaluated")
         );
     }
 

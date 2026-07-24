@@ -27,6 +27,53 @@ const SUCCESS_RATE_METRICS: &[&str] = &["success_rate", "request_success_rate"];
 const ERROR_RATE_METRICS: &[&str] = &["error_rate", "request_error_rate"];
 const CANCELLATION_RATE_METRICS: &[&str] = &["cancellation_rate", "request_cancellation_rate"];
 
+/// Rate metrics that remain well-defined when a window produced zero successful
+/// requests: they are computed from terminal counts (errors/cancellations over
+/// the window total), not from latency/throughput samples. When every SLA
+/// filter targets one of these, an all-error / all-cancellation window is
+/// evaluable rather than discarded as inconclusive — otherwise an
+/// error_rate/cancellation_rate-only SLA config could never converge because
+/// the controller would early-return on every saturated window.
+const ZERO_SUCCESS_WINDOW_METRICS: &[&str] = &[
+    "error_rate",
+    "request_error_rate",
+    "cancellation_rate",
+    "request_cancellation_rate",
+];
+
+/// Return `true` when a zero-success window is nonetheless evaluable because its
+/// terminal states (errors and/or cancellations) are fully covered by the
+/// configured SLA filters. Mirrors Python
+/// `AdaptiveScaleSLAEvaluator.can_evaluate_without_successes`.
+///
+/// Requires that (a) every filter is a zero-success rate metric, (b) the window
+/// is not a mix of BOTH errors and cancellations (ambiguous which drove it),
+/// and (c) whichever terminal class is present has a matching rate filter.
+pub fn can_evaluate_without_successes(filters: &[SlaFilter], stats: &WindowStats) -> bool {
+    if filters.is_empty()
+        || !filters
+            .iter()
+            .all(|f| ZERO_SUCCESS_WINDOW_METRICS.contains(&f.metric_tag.as_str()))
+    {
+        return false;
+    }
+    // A window that is simultaneously erroring and cancelling is ambiguous:
+    // neither single rate filter can attribute the failure, so defer.
+    if stats.errors > 0 && stats.cancelled > 0 {
+        return false;
+    }
+    let has_error_rate_filter = filters
+        .iter()
+        .any(|f| ERROR_RATE_METRICS.contains(&f.metric_tag.as_str()));
+    if stats.errors > 0 && !has_error_rate_filter {
+        return false;
+    }
+    let has_cancellation_rate_filter = filters
+        .iter()
+        .any(|f| CANCELLATION_RATE_METRICS.contains(&f.metric_tag.as_str()));
+    !(stats.cancelled > 0 && !has_cancellation_rate_filter)
+}
+
 /// Statistic selected from an adaptive SLA metric.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -516,6 +563,77 @@ mod tests {
             inter_token_latency_ns: itl_ms.map(|value| value * 1_000_000.0),
             output_sequence_length: Some(8),
         }
+    }
+
+    fn zero_success_stats(errors: usize, cancelled: usize) -> WindowStats {
+        WindowStats {
+            successful_requests: vec![],
+            errors,
+            cancelled,
+            elapsed_sec: 1.0,
+            start_ns: 0,
+            end_ns: 1_000_000_000,
+        }
+    }
+
+    #[test]
+    fn zero_success_evaluable_for_error_rate_only_error_window() {
+        let filters = vec![filter("error_rate", SlaStat::Avg, SlaOp::Le, 0.5)];
+        assert!(can_evaluate_without_successes(
+            &filters,
+            &zero_success_stats(5, 0)
+        ));
+    }
+
+    #[test]
+    fn zero_success_evaluable_for_cancellation_rate_only_cancel_window() {
+        let filters = vec![filter("cancellation_rate", SlaStat::Avg, SlaOp::Le, 0.5)];
+        assert!(can_evaluate_without_successes(
+            &filters,
+            &zero_success_stats(0, 3)
+        ));
+    }
+
+    #[test]
+    fn zero_success_not_evaluable_when_latency_filter_present() {
+        // A latency SLA cannot be evaluated with no successful samples.
+        let filters = vec![
+            filter("error_rate", SlaStat::Avg, SlaOp::Le, 0.5),
+            filter("request_latency", SlaStat::Avg, SlaOp::Le, 100.0),
+        ];
+        assert!(!can_evaluate_without_successes(
+            &filters,
+            &zero_success_stats(5, 0)
+        ));
+    }
+
+    #[test]
+    fn zero_success_not_evaluable_for_mixed_error_and_cancel_window() {
+        // Ambiguous: both terminal classes present, neither single rate filter
+        // can attribute the failure.
+        let filters = vec![
+            filter("error_rate", SlaStat::Avg, SlaOp::Le, 0.5),
+            filter("cancellation_rate", SlaStat::Avg, SlaOp::Le, 0.5),
+        ];
+        assert!(!can_evaluate_without_successes(
+            &filters,
+            &zero_success_stats(2, 2)
+        ));
+    }
+
+    #[test]
+    fn zero_success_not_evaluable_when_terminal_class_lacks_matching_filter() {
+        // Errors present but only a cancellation_rate filter configured.
+        let filters = vec![filter("cancellation_rate", SlaStat::Avg, SlaOp::Le, 0.5)];
+        assert!(!can_evaluate_without_successes(
+            &filters,
+            &zero_success_stats(5, 0)
+        ));
+    }
+
+    #[test]
+    fn zero_success_not_evaluable_with_no_filters() {
+        assert!(!can_evaluate_without_successes(&[], &zero_success_stats(5, 0)));
     }
 
     #[test]

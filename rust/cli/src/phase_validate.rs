@@ -113,6 +113,21 @@ fn validate_phase_loadgen(phase: &Phase) -> anyhow::Result<()> {
         anyhow::bail!("user-centric phases do not support rate_series");
     }
 
+    if let Some(adaptive) = phase.common.adaptive_scale.as_ref() {
+        // Adaptive scale drives its own control axis; a fixed-schedule replay
+        // has no controllable knob to sweep, so the combination is rejected.
+        if matches!(phase.kind, PhaseKind::FixedSchedule { .. }) {
+            anyhow::bail!("adaptive_scale cannot be combined with fixed_schedule phases");
+        }
+        // A request_rate-controlled adaptive sweep and an authored rate_series
+        // both own the phase's request rate; they cannot coexist.
+        if adaptive.control_variable == "request_rate" && has_series {
+            anyhow::bail!(
+                "adaptive_scale control.variable=request_rate cannot be combined with rate_series"
+            );
+        }
+    }
+
     if has_series {
         let series = phase
             .common
