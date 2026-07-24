@@ -94,6 +94,44 @@ export function MiniArrow(): React.JSX.Element {
   );
 }
 
+/** A bidirectional dashed connector (⇄) for handshake / request-response pairs. */
+export function BiArrow(): React.JSX.Element {
+  return (
+    <span
+      className="relative block h-px w-8 opacity-80 before:absolute before:top-[-3px] before:left-[-1px] before:h-[6px] before:w-[6px] before:-rotate-[135deg] before:border-t before:border-r before:border-current before:content-[''] after:absolute after:top-[-3px] after:right-[-1px] after:h-[6px] after:w-[6px] after:rotate-45 after:border-t after:border-r after:border-current after:content-['']"
+      style={{
+        backgroundImage: "repeating-linear-gradient(90deg, currentColor 0 3px, transparent 3px 7px)",
+      }}
+      aria-hidden="true"
+    />
+  );
+}
+
+/** A small decision diamond (a rotated square) — a branch/predicate node. */
+export function DiamondNode({
+  children,
+  accent = false,
+}: {
+  children: React.ReactNode;
+  accent?: boolean;
+}): React.JSX.Element {
+  return (
+    <span className="relative inline-grid h-[30px] w-[30px] place-items-center">
+      <span
+        className="absolute inset-0 rotate-45 rounded-[3px] border"
+        style={accent ? { borderColor: "var(--accent, var(--color-accent-primary))" } : undefined}
+        aria-hidden="true"
+      />
+      <span
+        className="relative font-mono text-[8px] font-bold"
+        style={accent ? { color: "var(--accent, var(--color-accent-primary))" } : undefined}
+      >
+        {children}
+      </span>
+    </span>
+  );
+}
+
 /** A little bar chart (`.mini-bars`), bars colored with the card accent. Heights are 0–100 (%). */
 export function MiniBars({ heights }: { heights: readonly number[] }): React.JSX.Element {
   return (

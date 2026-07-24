@@ -14,6 +14,41 @@ export {
   NodeChip,
   RoundNode,
   DbNode,
+  DiamondNode,
   MiniArrow,
+  BiArrow,
   MiniBars,
 } from "./MiniDiagram.js";
+
+// Ready-made diagram templates (parameterized compositions) — see templates.tsx.
+export {
+  Pipeline,
+  Transform,
+  Store,
+  Lookup,
+  CacheProbe,
+  TokenStream,
+  Metrics,
+  Emit,
+  Reduce,
+  Queue,
+  Workers,
+  Spawn,
+  Merge,
+  FanOut,
+  FanIn,
+  Branch,
+  TwoTrait,
+  TraitImpl,
+  Handshake,
+  Sink,
+  Report,
+  Clock,
+  Frozen,
+  Retry,
+  Broadcast,
+} from "./templates.js";
+
+// 100+ more domain-organized templates (serialization/storage/concurrency/networking/scheduling/
+// metrics/graph/lifecycle). See templatesExtra.tsx.
+export * from "./templatesExtra.js";
