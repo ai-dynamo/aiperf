@@ -14,8 +14,25 @@ use serde::{Deserialize, Serialize};
 
 /// Aiperf-v1 export compatibility version, independent of the Rust crate version.
 pub const AIPERF_V1_VERSION: &str = "0.11.0";
-/// Fixed console render width.
+/// Default fixed console render width when unset.
 const CONSOLE_EXPORT_WIDTH: u16 = 140;
+/// Minimum authored console export width.
+const CONSOLE_EXPORT_WIDTH_MIN: u16 = 40;
+/// Maximum authored console export width.
+const CONSOLE_EXPORT_WIDTH_MAX: u16 = 10000;
+
+/// Resolve the fixed console-export render width from
+/// `AIPERF_UI_CONSOLE_EXPORT_WIDTH`, defaulting to [`CONSOLE_EXPORT_WIDTH`] and
+/// clamped to `[40, 10000]` to mirror Python's bounded `_UISettings` field. The
+/// width pins `profile_export_console.txt` (and the non-tty live console)
+/// independent of the terminal, so CI logs match the saved artifact.
+fn console_export_width() -> u16 {
+    std::env::var("AIPERF_UI_CONSOLE_EXPORT_WIDTH")
+        .ok()
+        .and_then(|value| value.trim().parse::<u16>().ok())
+        .map(|value| value.clamp(CONSOLE_EXPORT_WIDTH_MIN, CONSOLE_EXPORT_WIDTH_MAX))
+        .unwrap_or(CONSOLE_EXPORT_WIDTH)
+}
 
 /// Display metadata for one console metric.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -424,7 +441,7 @@ impl Export {
             },
             console_txt: ConsoleTxt {
                 enabled: true,
-                width: CONSOLE_EXPORT_WIDTH,
+                width: console_export_width(),
                 dev: false,
                 title: console_title(endpoint_type),
                 metrics: META.console_metrics.clone(),
