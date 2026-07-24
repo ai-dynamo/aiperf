@@ -60,6 +60,8 @@ pub enum Unit {
     TokensPerSecondPerUser,
     /// Images per second.
     ImagesPerSecond,
+    /// Images per second per user (concurrent request).
+    ImagesPerSecondPerUser,
     /// Milliseconds per image.
     MillisecondsPerImage,
     /// Videos per second.
@@ -159,6 +161,7 @@ impl Unit {
             | Self::TokensPerSecond
             | Self::TokensPerSecondPerUser
             | Self::ImagesPerSecond
+            | Self::ImagesPerSecondPerUser
             | Self::MillisecondsPerImage
             | Self::VideosPerSecond
             | Self::MillisecondsPerVideo
@@ -256,6 +259,7 @@ impl Unit {
             Self::TokensPerSecond => "tokens/sec",
             Self::TokensPerSecondPerUser => "tokens/sec/user",
             Self::ImagesPerSecond => "images/sec",
+            Self::ImagesPerSecondPerUser => "images/sec/user",
             Self::MillisecondsPerImage => "ms/image",
             Self::VideosPerSecond => "videos/sec",
             Self::MillisecondsPerVideo => "ms/video",

@@ -42,6 +42,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Image Samples Per Second](#image-samples-per-second)
     - [Effective Image Samples Per Second](#effective-image-samples-per-second)
     - [Active Image Samples Per Second](#active-image-samples-per-second)
+    - [Effective Image Samples Per Second Per User](#effective-image-samples-per-second-per-user)
   - [Video Metrics](#video-metrics)
     - [Video Inference Time](#video-inference-time)
     - [Video Peak Memory](#video-peak-memory)
@@ -669,6 +670,27 @@ reported = active_weighted_stats(sample_rate_curve, concurrency_mask) * 1e9
 **Notes:**
 - Always greater than or equal to [Effective Image Samples Per Second](#effective-image-samples-per-second), which in turn is greater than or equal to the aggregate [Image Samples Per Second](#image-samples-per-second) (`active >= effective >= aggregate`).
 - Use this to gauge steady-state serving rate independent of how long the run's idle head/tail were.
+- Absent when no image samples were captured.
+
+---
+
+### Effective Image Samples Per Second Per User
+
+**Type:** [Derived Metric](#derived-metrics) (sweep-line)
+
+The per-user image-sample rate: the [Effective Image Samples Per Second](#effective-image-samples-per-second) curve divided, point-by-point, by the overall request-concurrency curve. Where the effective metric answers "how many samples/sec is the system processing?", this answers "how many samples/sec is each concurrent request seeing?" — the image-sample analogue of the per-user token throughputs. Because image processing is modeled over the full request lifetime, the denominator is **overall** request concurrency (not a prefill/decode phase concurrency).
+
+**Formula:**
+```python
+# step-function division with a zero-concurrency guard
+effective_image_samples_per_second_per_user =
+    sample_rate_curve / overall_concurrency_curve   # samples/sec/user
+```
+
+**Notes:**
+- Never exceeds [Effective Image Samples Per Second](#effective-image-samples-per-second): dividing by a concurrency of at least 1 can only lower the rate.
+- With a single concurrent request it equals the aggregate effective rate.
+- Reported as a duration-weighted distribution (avg/p50/p90/p95/p99/std).
 - Absent when no image samples were captured.
 
 ---

@@ -125,6 +125,7 @@ fn display_unit(name: &str, description: &str) -> Option<&'static str> {
         Unit::TokensPerSecond => "tokens/s",
         Unit::TokensPerSecondPerUser => "tokens/s_per_user",
         Unit::ImagesPerSecond => "images/s",
+        Unit::ImagesPerSecondPerUser => "images/s_per_user",
         Unit::MillisecondsPerImage => "ms_per_image",
         Unit::VideosPerSecond => "videos/s",
         Unit::MillisecondsPerVideo => "ms_per_video",

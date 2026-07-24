@@ -118,4 +118,19 @@ async fn test_image_samples_per_second_exact() {
         active + 1e-6 >= effective,
         "active rate {active} should be >= effective rate {effective}",
     );
+
+    // Per-user sweep-line sibling (design 0006): sample throughput divided by
+    // overall concurrency. It is present, positive, and cannot exceed the
+    // aggregate effective rate (dividing by concurrency >= 1 only lowers it).
+    let per_user = json["effective_image_samples_per_second_per_user"]["avg"]
+        .as_f64()
+        .expect("effective_image_samples_per_second_per_user present");
+    assert!(
+        per_user > 0.0,
+        "per-user sample rate must be positive, got {per_user}",
+    );
+    assert!(
+        per_user <= effective + 1e-6,
+        "per-user rate {per_user} should be <= aggregate effective rate {effective}",
+    );
 }

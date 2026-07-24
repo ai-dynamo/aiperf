@@ -47,8 +47,10 @@ right-continuous step function, and the duration-weighted statistics
 (avg/min/max/p50/p90/p95/p99/std, scaled by `NANOS_PER_SECOND`) report the true
 time-varying sample rate the same way the effective token throughputs do; its
 active-masked sibling `active_image_samples_per_second` averages that rate only
-over intervals where image requests are in flight. All stay absent when no image
-samples are captured.
+over intervals where image requests are in flight, and
+`effective_image_samples_per_second_per_user` divides that curve by overall
+request concurrency for the per-user sample rate (design record `0006`). All stay
+absent when no image samples are captured.
 
 ### Exact vs sketch
 
