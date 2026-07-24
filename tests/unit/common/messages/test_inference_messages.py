@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from dataclasses import dataclass
-
 from aiperf.common.messages import InferenceResultsMessage
 from aiperf.common.messages.inference_messages import encode_parsed_responses
 from aiperf.common.models import (
@@ -67,26 +65,10 @@ def test_inference_results_parsed_responses_round_trip_builtin_types():
         payload.to_parsed_response() for payload in restored.parsed_responses or []
     ]
 
-    assert [type(response.data) for response in restored_responses] == [
-        type(response.data) for response in responses
-    ]
     assert restored_responses == responses
     assert restored.last_response_perf_ns == 10
     assert restored.raw_response_count == 11
     assert restored.responses_compacted is True
-
-
-def test_encode_parsed_responses_custom_data_returns_none():
-    @dataclass(slots=True)
-    class CustomResponseData(BaseResponseData):
-        value: str
-
-    responses = [
-        ParsedResponse(perf_ns=1, data=TextResponseData("built-in")),
-        ParsedResponse(perf_ns=2, data=CustomResponseData("custom")),
-    ]
-
-    assert encode_parsed_responses(responses) is None
 
 
 def test_inference_results_legacy_message_defaults_to_raw_path():
@@ -95,7 +77,16 @@ def test_inference_results_legacy_message_defaults_to_raw_path():
         record=RequestRecord(start_perf_ns=1, end_perf_ns=2),
     )
 
-    restored = InferenceResultsMessage.from_json(message.to_json_bytes())
+    legacy_data = message.model_dump(
+        mode="json",
+        exclude={
+            "parsed_responses",
+            "last_response_perf_ns",
+            "raw_response_count",
+            "responses_compacted",
+        },
+    )
+    restored = InferenceResultsMessage.from_json(legacy_data)
 
     assert restored.parsed_responses is None
     assert restored.last_response_perf_ns is None

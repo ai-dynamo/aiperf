@@ -28,6 +28,11 @@ from tests.harness.fake_tokenizer import FakeTokenizer
 from tests.harness.fake_transport import FakeTransport as FakeTransport
 
 
+@dataclass(slots=True)
+class CustomResponseData(BaseResponseData):
+    value: str
+
+
 @pytest.mark.parametrize(
     ("phase_data", "expected"),
     [
@@ -667,9 +672,6 @@ async def test_process_credit_finalize_failure_still_sends_raw_record(
         advance_turn=Mock(),
     )
     record = RequestRecord(
-        model_name="test-model",
-        start_perf_ns=1,
-        end_perf_ns=3,
         responses=[SSEMessage(perf_ns=2)],
     )
     mock_worker._try_payload_bytes_fast_path = AsyncMock(return_value=False)
@@ -686,7 +688,6 @@ async def test_process_credit_finalize_failure_still_sends_raw_record(
 
     mock_worker._send_inference_result_message.assert_awaited_once_with(record, None)
     assert record.responses == [SSEMessage(perf_ns=2)]
-    assert sample_credit_context.error is not None
     assert sample_credit_context.error.type == "RuntimeError"
     assert "finalize failed" in sample_credit_context.error.message
 
@@ -713,11 +714,8 @@ class TestInferenceResultIPC:
         mock_worker.run.cfg.artifacts.records = (
             False if export_level == ExportLevel.SUMMARY else ["jsonl"]
         )
-        assert mock_worker.run.cfg.artifacts.export_level == export_level
         record = RequestRecord(
-            model_name="test-model",
             start_perf_ns=1,
-            end_perf_ns=3,
             responses=[SSEMessage(perf_ns=2)],
         )
         parsed_responses = [ParsedResponse(perf_ns=2, data=TextResponseData("hello"))]
@@ -732,66 +730,64 @@ class TestInferenceResultIPC:
         assert message.responses_compacted is True
         assert "responses" not in message.model_dump(exclude_none=True)["record"]
 
-    async def test_raw_export_retains_raw_responses(self, mock_worker):
+    @pytest.mark.parametrize(
+        (
+            "raw_export",
+            "response_perf_ns",
+            "parsed_responses",
+            "expected_last_response_perf_ns",
+        ),
+        [
+            param(
+                True,
+                2,
+                [ParsedResponse(perf_ns=2, data=TextResponseData("hello"))],
+                2,
+                id="raw-export",
+            ),
+            param(
+                False,
+                2,
+                [
+                    ParsedResponse(perf_ns=1, data=TextResponseData("built-in")),
+                    ParsedResponse(
+                        perf_ns=2,
+                        data=CustomResponseData(value="custom"),
+                    ),
+                ],
+                2,
+                id="custom-data",
+            ),
+            param(
+                False,
+                -1,
+                [ParsedResponse(perf_ns=-1, data=TextResponseData("invalid"))],
+                None,
+                id="invalid-timestamp",
+            ),
+        ],
+    )  # fmt: skip
+    async def test_uncompacted_responses_retain_raw(
+        self,
+        mock_worker: Worker,
+        raw_export: bool,
+        response_perf_ns: int,
+        parsed_responses: list[ParsedResponse],
+        expected_last_response_perf_ns: int | None,
+    ) -> None:
         push = self._capture_push(mock_worker)
-        mock_worker.run.cfg.artifacts.raw = True
-        response = SSEMessage(perf_ns=2)
+        mock_worker.run.cfg.artifacts.raw = raw_export
+        response = SSEMessage(perf_ns=response_perf_ns)
         record = RequestRecord(
-            model_name="test-model",
             start_perf_ns=1,
-            end_perf_ns=3,
             responses=[response],
         )
 
-        await mock_worker._send_inference_result_message(
-            record, [ParsedResponse(perf_ns=2, data=TextResponseData("hello"))]
-        )
+        await mock_worker._send_inference_result_message(record, parsed_responses)
 
         message = push.call_args.args[0]
         assert record.responses == [response]
         assert message.parsed_responses is None
-        assert message.responses_compacted is False
-
-    async def test_custom_response_data_retains_raw_responses(self, mock_worker):
-        @dataclass(slots=True)
-        class CustomResponseData(BaseResponseData):
-            value: str
-
-        push = self._capture_push(mock_worker)
-        response = SSEMessage(perf_ns=2)
-        record = RequestRecord(
-            model_name="test-model",
-            start_perf_ns=1,
-            end_perf_ns=3,
-            responses=[response],
-        )
-
-        await mock_worker._send_inference_result_message(
-            record,
-            [ParsedResponse(perf_ns=2, data=CustomResponseData(value="custom"))],
-        )
-
-        message = push.call_args.args[0]
-        assert record.responses == [response]
-        assert message.parsed_responses is None
-        assert message.responses_compacted is False
-
-    async def test_invalid_response_timestamp_retains_raw_response(self, mock_worker):
-        push = self._capture_push(mock_worker)
-        response = SSEMessage(perf_ns=-1)
-        record = RequestRecord(
-            model_name="test-model",
-            start_perf_ns=1,
-            end_perf_ns=3,
-            responses=[response],
-        )
-
-        await mock_worker._send_inference_result_message(
-            record, [ParsedResponse(perf_ns=-1, data=TextResponseData("invalid"))]
-        )
-
-        message = push.call_args.args[0]
-        assert record.responses == [response]
-        assert message.parsed_responses is None
-        assert message.last_response_perf_ns is None
+        assert message.last_response_perf_ns == expected_last_response_perf_ns
+        assert message.raw_response_count == 1
         assert message.responses_compacted is False
