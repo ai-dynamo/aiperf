@@ -54,6 +54,7 @@ class PromptGenerator(BaseGenerator):
         self._length_rng = rng.derive("dataset.prompt.length")
         self._corpus_rng = rng.derive("dataset.prompt.corpus")
         self._prefix_rng = rng.derive("dataset.prompt.prefix")
+        self._context_len_rng = rng.derive("dataset.prompt.context_length")
 
         super().__init__(tokenizer=tokenizer, **kwargs)
 
@@ -371,14 +372,15 @@ class PromptGenerator(BaseGenerator):
         if self._tokenized_corpus is None:
             raise NotInitializedError("Tokenized corpus is not initialized.")
 
-        length = (
+        dist = (
             self.prefix_prompts.shared_system_length
             if self.prefix_prompts is not None
             else None
         )
-        if length is None:
+        if dist is None:
             return
 
+        length = dist.sample_int(self._context_len_rng)
         self._shared_system_prompt = self.generate_prompt(length)
         self.debug(lambda: f"Generated shared system prompt with {length} tokens")
 
@@ -417,12 +419,12 @@ class PromptGenerator(BaseGenerator):
         if self._tokenized_corpus is None:
             raise NotInitializedError("Tokenized corpus is not initialized.")
 
-        length = (
+        dist = (
             self.prefix_prompts.user_context_length
             if self.prefix_prompts is not None
             else None
         )
-        if length is None:
+        if dist is None:
             raise InvalidStateError(
                 "User context prompt length is not configured. "
                 "Ensure --user-context-prompt-length is specified."
@@ -430,6 +432,7 @@ class PromptGenerator(BaseGenerator):
 
         # Generate new prompts on-demand as needed
         while session_index >= len(self._user_context_prompts):
+            length = dist.sample_int(self._context_len_rng)
             new_prompt = self.generate_prompt(length)
             self._user_context_prompts.append(new_prompt)
             self.debug(

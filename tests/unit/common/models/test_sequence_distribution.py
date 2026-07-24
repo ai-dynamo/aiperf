@@ -14,6 +14,7 @@ This test suite covers all aspects of the sequence distribution feature includin
 
 import numpy as np
 import pytest
+from pytest import param
 
 from aiperf.common import random_generator as rng
 from aiperf.common.models.sequence_distribution import (
@@ -61,32 +62,64 @@ class TestSequenceLengthPair:
             SequenceLengthPair(256, -1, 50.0)
 
     def test_invalid_probability(self):
-        """Test validation of probability values."""
-        with pytest.raises(ValueError, match="Probability must be in \\[0,100\\]"):
+        """Negative weights are rejected; zero is a valid disabled-bucket weight."""
+        with pytest.raises(
+            ValueError, match="Probability weight must be finite and non-negative"
+        ):
             SequenceLengthPair(256, 128, -10.0)
 
-        with pytest.raises(ValueError):
-            SequenceLengthPair(256, 128, 110.0)
+        # Zero is a valid relative weight (disabled bucket); it must not raise.
+        SequenceLengthPair(256, 128, 0.0)
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            param(float("nan"), id="nan"),
+            param(float("inf"), id="inf"),
+            param(float("-inf"), id="neg-inf"),
+        ],
+    )  # fmt: skip
+    def test_non_finite_probability_rejected(self, bad):
+        """NaN/inf weights poison cumulative normalization; reject at construction."""
+        with pytest.raises(ValueError, match="Probability weight must be finite"):
+            SequenceLengthPair(256, 128, bad)
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            param(float("nan"), id="nan"),
+            param(float("inf"), id="inf"),
+        ],
+    )  # fmt: skip
+    def test_non_finite_stddev_rejected(self, bad):
+        """NaN/inf stddevs poison per-request length sampling; reject at construction."""
+        with pytest.raises(ValueError, match="stddev must be finite"):
+            SequenceLengthPair(256, 128, 50.0, input_seq_len_stddev=bad)
+        with pytest.raises(ValueError, match="stddev must be finite"):
+            SequenceLengthPair(256, 128, 50.0, output_seq_len_stddev=bad)
 
     def test_invalid_input_stddev(self):
         """Test validation of negative input sequence length standard deviation."""
         with pytest.raises(
-            ValueError, match="Input sequence length stddev must be non-negative"
+            ValueError,
+            match="Input sequence length stddev must be finite and non-negative",
         ):
             SequenceLengthPair(256, 128, 50.0, input_seq_len_stddev=-1.0)
 
     def test_invalid_output_stddev(self):
         """Test validation of negative output sequence length standard deviation."""
         with pytest.raises(
-            ValueError, match="Output sequence length stddev must be non-negative"
+            ValueError,
+            match="Output sequence length stddev must be finite and non-negative",
         ):
             SequenceLengthPair(256, 128, 50.0, output_seq_len_stddev=-2.0)
 
     def test_boundary_probabilities(self):
-        """Test boundary probability values."""
-        # Should work
-        SequenceLengthPair(256, 128, 0.0)
+        """Test boundary probability values (positive relative weights)."""
+        # Weights are relative: small and large positive values are both valid.
+        SequenceLengthPair(256, 128, 0.001)
         SequenceLengthPair(256, 128, 100.0)
+        SequenceLengthPair(256, 128, 250.0)
 
     def test_immutability(self):
         """Test that pairs are immutable."""
@@ -225,16 +258,17 @@ class TestSequenceLengthDistribution:
         with pytest.raises(ValueError, match="at least one sequence length pair"):
             SequenceLengthDistribution([])
 
-    def test_probability_sum_validation(self):
-        """Test validation of probability sum."""
-        # Probabilities don't sum to 100.0
-        invalid_pairs = [
+    def test_relative_weights_do_not_require_sum_100(self):
+        """Probabilities are relative weights; a non-100 sum is accepted."""
+        # Sum = 70.0 -> normalized to 30/70 and 40/70 at sampling time.
+        pairs = [
             SequenceLengthPair(256, 128, 30.0),
-            SequenceLengthPair(512, 256, 40.0),  # Sum = 70.0
+            SequenceLengthPair(512, 256, 40.0),
         ]
 
-        with pytest.raises(ValueError, match="must sum to 100.0"):
-            SequenceLengthDistribution(invalid_pairs)
+        dist = SequenceLengthDistribution(pairs)
+        for isl, osl in dist.sample_batch(100):
+            assert (isl, osl) in [(256, 128), (512, 256)]
 
     def test_probability_sum_tolerance(self):
         """Test that small floating-point errors are tolerated."""
@@ -247,6 +281,17 @@ class TestSequenceLengthDistribution:
         # Should not raise exception
         dist = SequenceLengthDistribution(pairs)
         assert dist is not None
+
+    def test_zero_weight_pair_never_sampled(self):
+        """A zero-weight pair forms a zero-width cumulative interval and is never
+        selected by np.searchsorted(side='right')."""
+        pairs = [
+            SequenceLengthPair(100, 10, 0.0),
+            SequenceLengthPair(4000, 200, 50.0),
+        ]
+        dist = SequenceLengthDistribution(pairs)
+        samples = dist.sample_batch(500)
+        assert all(isl == 4000 and osl == 200 for isl, osl in samples)
 
     def test_statistics_calculation(self):
         """Test distribution statistics calculation."""
@@ -261,6 +306,22 @@ class TestSequenceLengthDistribution:
 
         assert stats["num_pairs"] == 2
         assert abs(stats["total_probability"] - 100.0) < 1e-10
+
+    def test_statistics_normalizes_by_actual_total_not_100(self):
+        """Relative weights that do not sum to 100 normalize by their true total.
+
+        Weights 50 and 1 -> expected values weighted by 50/51 and 1/51, not /100.
+        """
+        pairs = [
+            SequenceLengthPair(1000, 200, 50.0),
+            SequenceLengthPair(2000, 400, 1.0),
+        ]
+        dist = SequenceLengthDistribution(pairs)
+        stats = dist.get_statistics()
+
+        assert stats["expected_isl"] == pytest.approx(1000 * 50 / 51 + 2000 * 1 / 51)
+        assert stats["expected_osl"] == pytest.approx(200 * 50 / 51 + 400 * 1 / 51)
+        assert stats["total_probability"] == pytest.approx(51.0)
 
     def test_string_representation(self):
         """Test string representation."""
@@ -359,11 +420,15 @@ class TestDistributionParser:
         assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0, 10.0, 0.0)
         assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0, 0.0, 15.0)
 
-    def test_semicolon_format_invalid_fractions(self):
-        """Test that fractions are properly rejected (percentage-only enforcement)."""
+    def test_semicolon_format_relative_weight_fractions(self):
+        """Fractional weights are accepted as relative weights (0.6:0.4 -> 60/40)."""
         dist_str = "256,128:0.6;512,256:0.4"
-        with pytest.raises(ValueError, match="Probabilities must sum to 100.0"):
-            DistributionParser.parse(dist_str)
+        dist = DistributionParser.parse(dist_str)
+
+        assert len(dist.pairs) == 2
+        samples = dist.sample_batch(2000)
+        small_frac = sum(1 for isl, _ in samples if isl == 256) / len(samples)
+        assert 0.5 < small_frac < 0.7
 
     def test_bracket_format_parsing(self):
         """Test parsing bracket format with percentages."""
@@ -401,6 +466,15 @@ class TestDistributionParser:
         assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0, 10.0, 5.0)
         assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0, 20.0, 15.0)
 
+    def test_zero_weight_pair_parses_and_never_sampled(self):
+        """A legacy string with a zero-weight pair is valid; the pair never samples."""
+        dist = DistributionParser.parse("100,10:0;4000,10:50")
+
+        assert len(dist.pairs) == 2
+        assert dist.pairs[0].probability == 0.0
+        samples = dist.sample_batch(500)
+        assert all(isl == 4000 for isl, _ in samples)
+
     def test_single_pair_parsing(self):
         """Test parsing single pair."""
         dist_str = "1024,512:100"
@@ -424,9 +498,9 @@ class TestDistributionParser:
             "256,128",  # Missing probability
             "256:50",  # Missing OSL
             "invalid",
-            "256,128:110",  # Invalid probability (>100)
-            "256,128:-10",  # Invalid probability (<0)
-            "256,128:0.6",  # Fraction not allowed (percentage-only)
+            "256,128:-10",  # Invalid probability weight (must be positive)
+            "256,128:inf",  # Non-finite probability weight
+            "256,128:nan",  # Non-finite probability weight
             '{"invalid": "json"}',  # Invalid JSON structure
             "256|,128:100",  # Empty stddev
             "256|-5,128:100",  # Negative stddev
@@ -671,13 +745,24 @@ class TestSequenceCaching:
             def create_dataset(self):
                 return []
 
-        # Set up composer with distribution
+        # Set up composer with distribution. The runtime _seq_distribution is a
+        # _TypedSequenceDistribution (fixed-scalar buckets here for determinism).
+        from aiperf.config.types import SequenceDistributionEntry
+        from aiperf.dataset.composer.base import _TypedSequenceDistribution
+
         composer = MockComposer.__new__(MockComposer)
-        dist = DistributionParser.parse("128,64:50;256,128:50")
-        composer._seq_distribution = dist
+        entries = [
+            SequenceDistributionEntry.model_validate(
+                {"isl": 128, "osl": 64, "probability": 50}
+            ),
+            SequenceDistributionEntry.model_validate(
+                {"isl": 256, "osl": 128, "probability": 50}
+            ),
+        ]
+        composer._seq_distribution = _TypedSequenceDistribution(
+            entries, rng.derive("test_composer")
+        )
         composer._turn_sequence_cache = {}
-        # Use the global RNG instead of _seq_rng
-        composer._rng = rng.derive("test_composer")
 
         # Create a turn and get its ID
         turn = Turn()
@@ -714,15 +799,20 @@ class TestSequenceCaching:
             def create_dataset(self):
                 return []
 
-        # Set up composer with distribution
+        # Set up composer with a single fixed bucket for predictable results.
+        from aiperf.config.types import SequenceDistributionEntry
+        from aiperf.dataset.composer.base import _TypedSequenceDistribution
+
         composer = MockComposer.__new__(MockComposer)
-        dist = DistributionParser.parse(
-            "100,50:100"
-        )  # Single pair for predictable results
-        composer._seq_distribution = dist
+        composer._seq_distribution = _TypedSequenceDistribution(
+            [
+                SequenceDistributionEntry.model_validate(
+                    {"isl": 100, "osl": 50, "probability": 100}
+                )
+            ],
+            rng.derive("test_composer2"),
+        )
         composer._turn_sequence_cache = {}
-        # Use the global RNG instead of _seq_rng
-        composer._rng = rng.derive("test_composer2")
 
         # Create two different turns
         turn1 = Turn()

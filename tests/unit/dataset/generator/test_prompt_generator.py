@@ -840,3 +840,35 @@ class TestPromptGeneratorComprehensive:
         # This should raise same error as _generate_cached_prompt
         with pytest.raises(ConfigurationError):
             generator._build_token_sequence(10, [1, 2, 3], 5)  # final_block_size = 0
+
+
+class TestPrefixLengthDistributionSampling:
+    def _make_generator(self, prefix_prompts: PrefixPromptConfig):
+        from aiperf.dataset.generator.prompt import PromptGenerator
+        from tests.harness.fake_tokenizer import FakeTokenizer
+
+        return PromptGenerator(
+            prompts=None, prefix_prompts=prefix_prompts, tokenizer=FakeTokenizer()
+        )
+
+    def test_shared_system_prompt_sampled_once_and_stable(self):
+        gen = self._make_generator(
+            PrefixPromptConfig.model_validate(
+                {"shared_system_length": {"mean": 500, "stddev": 100, "min": 50}}
+            )
+        )
+        first = gen.get_shared_system_prompt()
+        assert first == gen.get_shared_system_prompt()  # identical across calls
+        n_tokens = len(gen.tokenizer.encode(first))
+        assert 50 <= n_tokens <= 1200  # within the clamped distribution's support
+
+    def test_user_context_lengths_vary_across_sessions_and_are_stable_per_session(self):
+        gen = self._make_generator(
+            PrefixPromptConfig.model_validate(
+                {"user_context_length": {"mean": 400, "stddev": 150, "min": 20}}
+            )
+        )
+        prompts = [gen.generate_user_context_prompt(i) for i in range(30)]
+        lengths = [len(gen.tokenizer.encode(p)) for p in prompts]
+        assert len(set(lengths)) > 5  # sizes actually vary per session
+        assert gen.generate_user_context_prompt(7) == prompts[7]  # stable per index

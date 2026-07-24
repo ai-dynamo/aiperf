@@ -3,31 +3,42 @@
 
 """AIPerf Configuration - Sampling Distribution Types
 
-5 distribution types, auto-detected from field structure (no ``type:`` key needed):
+6 distribution types, auto-detected from field structure (no ``type:`` key needed):
 
     isl: 512                                                    # FixedDistribution
     isl: {mean: 512, stddev: 50}                                # NormalDistribution
     isl: {mean: 512, median: 400}                               # LogNormalDistribution
+    isl: {p50: 50000, p99: 400000, mean: 60000}                 # PercentileDistribution
     isl: {peaks: [{...}, {...}], split: 60}                     # MultimodalDistribution
     isl: {points: [{value: 128, weight: 40}, ...]}              # EmpiricalDistribution
 
 Discriminator rules (checked in order):
-    scalar int/float   -> FixedDistribution
-    "peaks" in dict    -> MultimodalDistribution
-    "points" in dict   -> EmpiricalDistribution
-    "median" in dict   -> LogNormalDistribution
-    "stddev" in dict   -> NormalDistribution
-    "value" in dict    -> FixedDistribution
-    "mean" alone       -> NormalDistribution (stddev defaults to 0)
-    anything else      -> ValueError
+    scalar int/float     -> FixedDistribution
+    "peaks" in dict      -> MultimodalDistribution
+    "points" in dict     -> EmpiricalDistribution
+    "p50"/"p99" in dict  -> PercentileDistribution
+    "median" in dict     -> LogNormalDistribution
+    "stddev" in dict     -> NormalDistribution
+    "value" in dict      -> FixedDistribution
+    "mean" alone         -> NormalDistribution (stddev defaults to 0)
+    anything else        -> ValueError
 """
 
 from __future__ import annotations
 
 import math
+import sys
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Any, Self
 
-from pydantic import ConfigDict, Discriminator, Field, Tag, model_validator
+from pydantic import (
+    ConfigDict,
+    Discriminator,
+    Field,
+    PrivateAttr,
+    Tag,
+    model_validator,
+)
 
 from aiperf.config.base import BaseConfig
 
@@ -105,6 +116,10 @@ class Distribution(BaseConfig):
     def __getattr__(self, name: str) -> Any:
         if name == "mean":
             return self.expected_value
+        # PrivateAttr reads (e.g. PercentileDistribution._solution) must resolve
+        # through Pydantic's machinery, which this override would otherwise shadow.
+        if name in object.__getattribute__(self, "__private_attributes__"):
+            return super().__getattr__(name)
         raise AttributeError(f"{type(self).__name__!r} has no attribute {name!r}")
 
     def sample(self, rng: RandomGenerator) -> float:
@@ -283,6 +298,255 @@ class LogNormalDistribution(Distribution):
         return f"lognormal(mean={self.mean:g}, median={self.median:g})"
 
 
+_Z99 = 2.3263478740408408
+"""Phi^-1(0.99): the z-score of the 99th percentile of a standard normal."""
+
+_SQRT2 = math.sqrt(2.0)
+
+_LOG_FLOAT_MAX = math.log(sys.float_info.max)
+"""Largest argument for which ``math.exp`` returns a finite value (~709.78).
+
+Used to reject PercentileDistribution targets whose p99/p50 ratio makes the
+fitted lognormal's mean or variance factor overflow to a non-finite value.
+"""
+
+
+def _phi(x: float) -> float:
+    """Standard normal CDF via math.erf (no scipy dependency)."""
+    return 0.5 * (1.0 + math.erf(x / _SQRT2))
+
+
+def _phi_inv(p: float) -> float:
+    """Standard normal inverse CDF via bisection.
+
+    Deterministic and dependency-free; 80 bisection rounds over [-10, 10]
+    give far more precision than the solver's 1e-3 fit tolerances need.
+    """
+    if not 0.0 < p < 1.0:
+        raise ValueError(f"phi_inv requires 0 < p < 1, got {p}")
+    lo, hi = -10.0, 10.0
+    for _ in range(80):
+        mid = (lo + hi) / 2.0
+        if _phi(mid) < p:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+
+@dataclass(frozen=True)
+class _PercentileSolution:
+    """Solved sampling parameters for a PercentileDistribution.
+
+    kind == "lognormal": sample exp(N(mu, sigma)).
+    kind == "mixture": with probability tail_weight sample
+    positive-normal(tail_mean, tail_stddev), else
+    positive-normal(body_mean, body_stddev).
+    """
+
+    kind: str
+    mu: float = 0.0
+    sigma: float = 0.0
+    body_mean: float = 0.0
+    body_stddev: float = 0.0
+    tail_mean: float = 0.0
+    tail_stddev: float = 0.0
+    tail_weight: float = 0.0
+
+
+def _try_mixture_weight(
+    p50: float, p99: float, mean: float, body_stddev: float, w: float
+) -> _PercentileSolution | None:
+    """Attempt an exact mixture fit at tail weight ``w``.
+
+    Fixed-point iteration on the two cross-CDF terms; each round solves
+    body_mean from the p50 equation, tail_mean from the mean equation, and
+    tail_stddev from the p99 equation. Returns None when this ``w`` cannot
+    satisfy the targets (caller tries the next weight).
+    """
+    f_tail_at_p50 = 0.0
+    f_body_at_p99 = 1.0
+    body_mean = tail_mean = tail_stddev = 0.0
+    for _ in range(25):
+        body_cdf_target = (0.5 - w * f_tail_at_p50) / (1.0 - w)
+        if not 0.0 < body_cdf_target < 1.0:
+            return None
+        body_mean = p50 - _phi_inv(body_cdf_target) * body_stddev
+        tail_mean = (mean - (1.0 - w) * body_mean) / w
+        tail_cdf_target = (0.99 - (1.0 - w) * f_body_at_p99) / w
+        if not 0.0 < tail_cdf_target < 1.0:
+            return None
+        z = _phi_inv(tail_cdf_target)
+        if abs(z) < 1e-9:
+            return None
+        tail_stddev = (p99 - tail_mean) / z
+        if tail_stddev <= 0.0:
+            return None
+        f_tail_at_p50 = _phi((p50 - tail_mean) / tail_stddev)
+        f_body_at_p99 = _phi((p99 - body_mean) / body_stddev)
+
+    # Truncation at 0 must be negligible or the sampled stats drift off target.
+    if body_mean <= 2.0 * body_stddev or tail_mean <= 2.0 * tail_stddev:
+        return None
+    achieved_p50 = (1.0 - w) * _phi((p50 - body_mean) / body_stddev) + w * _phi(
+        (p50 - tail_mean) / tail_stddev
+    )
+    achieved_p99 = (1.0 - w) * _phi((p99 - body_mean) / body_stddev) + w * _phi(
+        (p99 - tail_mean) / tail_stddev
+    )
+    achieved_mean = (1.0 - w) * body_mean + w * tail_mean
+    if abs(achieved_p50 - 0.5) > 0.005:
+        return None
+    if abs(achieved_p99 - 0.99) > 0.002:
+        return None
+    if abs(achieved_mean - mean) > 0.005 * mean:
+        return None
+    return _PercentileSolution(
+        kind="mixture",
+        body_mean=body_mean,
+        body_stddev=body_stddev,
+        tail_mean=tail_mean,
+        tail_stddev=tail_stddev,
+        tail_weight=w,
+    )
+
+
+def _solve_percentile(
+    p50: float, p99: float, mean: float | None
+) -> _PercentileSolution:
+    """Solve sampling parameters hitting the percentile targets exactly.
+
+    Without ``mean``: log-normal (2 params, 2 targets, closed form).
+    With ``mean``: log-normal if the mean already matches the implied one,
+    otherwise a two-component mixture searched over tail weights and body
+    spreads. Raises ValueError when no searched shape fits.
+    """
+    mu = math.log(p50)
+    try:
+        sigma = math.log(p99 / p50) / _Z99
+        implied_mean = p50 * math.exp(sigma**2 / 2.0)
+    except OverflowError as exc:
+        raise ValueError(
+            f"Percentile targets too extreme: p99/p50 ratio {p99 / p50:g} produces a "
+            f"non-finite mean or variance. Reduce the spread between p50 ({p50:g}) "
+            f"and p99 ({p99:g})."
+        ) from exc
+    # exp(sigma**2) is the lognormal's variance factor; when sigma**2 exceeds the
+    # largest finite math.exp argument the distribution's second moment is
+    # non-finite even though the mean may still be representable. Reject so
+    # downstream `expected_value > 0` gates never see a non-finite value.
+    if not math.isfinite(implied_mean) or sigma**2 > _LOG_FLOAT_MAX:
+        raise ValueError(
+            f"Percentile targets too extreme: p99/p50 ratio {p99 / p50:g} produces a "
+            f"non-finite mean or variance. Reduce the spread between p50 ({p50:g}) "
+            f"and p99 ({p99:g})."
+        )
+    if mean is None or abs(mean - implied_mean) <= 0.01 * implied_mean:
+        return _PercentileSolution(kind="lognormal", mu=mu, sigma=sigma)
+
+    for body_cv in (0.2, 0.1, 0.3):
+        body_stddev = body_cv * p50
+        for w in (0.03, 0.02, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.45):
+            solution = _try_mixture_weight(p50, p99, mean, body_stddev, w)
+            if solution is not None:
+                return solution
+    raise ValueError(
+        f"Percentile targets infeasible: no mixture found for p50={p50:g}, "
+        f"p99={p99:g}, mean={mean:g}. The mean must lie above p50 and not "
+        f"approach p99 (a log-normal with these percentiles implies mean~"
+        f"{implied_mean:g}; omit `mean` to use it). Adjust the targets or "
+        f"express the shape manually with a multimodal distribution."
+    )
+
+
+class PercentileDistribution(Distribution):
+    """Right-skewed distribution parameterized directly by percentile targets.
+
+    YAML:
+        isl: {p50: 50000, p99: 400000}                 # log-normal, exact p50/p99
+        isl: {p50: 50000, p99: 400000, mean: 60000}    # mixture, also pins the mean
+
+    With only p50 and p99, a log-normal fits both exactly. Adding ``mean``
+    covers shapes no 2-parameter distribution can express (e.g. p50=50k,
+    p99=400k, mean=60k): a body component carries the median while a small
+    heavy tail carries the p99, solved deterministically at config
+    validation time so infeasible targets fail fast in `aiperf config
+    validate` rather than mid-benchmark.
+    """
+
+    p50: Annotated[
+        float,
+        Field(gt=0.0, description="Target median (50th percentile) of the samples."),
+    ]
+
+    p99: Annotated[
+        float,
+        Field(
+            gt=0.0,
+            description="Target 99th percentile. Must be greater than p50.",
+        ),
+    ]
+
+    mean: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0.0,
+            description=(
+                "Optional target mean. Must be greater than p50. When omitted, "
+                "the mean implied by the p50/p99 log-normal fit applies."
+            ),
+        ),
+    ] = None
+
+    _solution: _PercentileSolution | None = PrivateAttr(default=None)
+
+    @model_validator(mode="after")
+    def validate_and_solve(self) -> Self:
+        for name, val in (("p50", self.p50), ("p99", self.p99), ("mean", self.mean)):
+            if val is not None and not math.isfinite(val):
+                raise ValueError(
+                    f"Percentile target `{name}` must be finite, got {val!r}"
+                )
+        if self.p99 <= self.p50:
+            raise ValueError(f"p99 ({self.p99}) must be greater than p50 ({self.p50}).")
+        if self.mean is not None and self.mean <= self.p50:
+            raise ValueError(
+                f"mean ({self.mean}) must be greater than p50 ({self.p50}); "
+                f"percentile distributions model right-skewed shapes. For "
+                f"left-heavy shapes use a multimodal or empirical distribution."
+            )
+        self._solution = _solve_percentile(self.p50, self.p99, self.mean)
+        return self
+
+    def _solved(self) -> _PercentileSolution:
+        if self._solution is None:
+            self._solution = _solve_percentile(self.p50, self.p99, self.mean)
+        return self._solution
+
+    def _sample_raw(self, rng: RandomGenerator) -> float:
+        s = self._solved()
+        if s.kind == "lognormal":
+            if s.sigma <= 0:
+                return self.p50
+            return math.exp(rng.sample_normal(s.mu, s.sigma))
+        if rng.random() < s.tail_weight:
+            return rng.sample_positive_normal(s.tail_mean, s.tail_stddev)
+        return rng.sample_positive_normal(s.body_mean, s.body_stddev)
+
+    @property
+    def expected_value(self) -> float:
+        if self.mean is not None:
+            return self.mean
+        sigma = math.log(self.p99 / self.p50) / _Z99
+        return self.p50 * math.exp(sigma**2 / 2.0)
+
+    def __repr__(self) -> str:
+        if self.mean is not None:
+            return f"percentile(p50={self.p50:g}, p99={self.p99:g}, mean={self.mean:g})"
+        return f"percentile(p50={self.p50:g}, p99={self.p99:g})"
+
+
 class PeakEntry(BaseConfig):
     """A weighted component in a multimodal distribution.
 
@@ -443,11 +707,19 @@ _TAG_MAP = {
     "FixedDistribution": "fixed",
     "NormalDistribution": "normal",
     "LogNormalDistribution": "lognormal",
+    "PercentileDistribution": "percentile",
     "MultimodalDistribution": "multimodal",
     "EmpiricalDistribution": "empirical",
 }
 
-_CANONICAL_TYPES = ("fixed", "normal", "lognormal", "multimodal", "empirical")
+_CANONICAL_TYPES = (
+    "fixed",
+    "normal",
+    "lognormal",
+    "percentile",
+    "multimodal",
+    "empirical",
+)
 
 
 def _distribution_discriminator(v: Any) -> str:
@@ -458,6 +730,7 @@ def _distribution_discriminator(v: Any) -> str:
         explicit "type:"    -> use it (must be one of _CANONICAL_TYPES)
         "peaks" in dict     -> "multimodal"
         "points" in dict    -> "empirical"
+        "p50"/"p99" in dict -> "percentile"
         "median" in dict    -> "lognormal"
         "stddev" in dict    -> "normal"
         "value" in dict     -> "fixed"
@@ -481,6 +754,8 @@ def _distribution_discriminator(v: Any) -> str:
             return "multimodal"
         if "points" in v:
             return "empirical"
+        if "p50" in v or "p99" in v:
+            return "percentile"
         if "median" in v:
             return "lognormal"
         if "stddev" in v:
@@ -491,7 +766,7 @@ def _distribution_discriminator(v: Any) -> str:
             return "normal"
         raise ValueError(
             "Cannot determine distribution type from keys. "
-            "Expected: scalar, {mean+stddev}, {mean+median}, "
+            "Expected: scalar, {mean+stddev}, {mean+median}, {p50, p99[, mean]}, "
             "{peaks:[distA, distB]}, or {points:[{value, weight}, ...]}."
         )
     tag = _TAG_MAP.get(type(v).__name__)
@@ -504,6 +779,7 @@ SamplingDistribution = Annotated[
     Annotated[FixedDistribution, Tag("fixed")]
     | Annotated[NormalDistribution, Tag("normal")]
     | Annotated[LogNormalDistribution, Tag("lognormal")]
+    | Annotated[PercentileDistribution, Tag("percentile")]
     | Annotated[MultimodalDistribution, Tag("multimodal")]
     | Annotated[EmpiricalDistribution, Tag("empirical")],
     Discriminator(
@@ -511,7 +787,8 @@ SamplingDistribution = Annotated[
         custom_error_type="invalid_distribution_type",
         custom_error_message=(
             "Invalid distribution. Expected: scalar, {mean+stddev}, {mean+median}, "
-            "{peaks:[{...weight:N}, ...]}, or {points:[{value, weight}, ...]}."
+            "{p50, p99[, mean]}, {peaks:[{...weight:N}, ...]}, or "
+            "{points:[{value, weight}, ...]}."
         ),
     ),
 ]
@@ -521,6 +798,7 @@ Accepts (no 'type' key required):
     512                                              -> FixedDistribution
     {mean: 512, stddev: 50}                          -> NormalDistribution
     {mean: 512, median: 400}                         -> LogNormalDistribution
+    {p50: 50000, p99: 400000, mean: 60000}           -> PercentileDistribution
     {peaks: [{mean:128, stddev:20, weight:60},
              {mean:2048, median:1800, weight:40}]}   -> MultimodalDistribution
     {points: [{value: 128, weight: 40}, ...]}        -> EmpiricalDistribution

@@ -370,6 +370,27 @@ def lognormal_distribution_inputs() -> st.SearchStrategy[dict]:
     )
 
 
+def percentile_distribution_inputs() -> st.SearchStrategy[dict]:
+    """Percentile dicts: p50 < p99, optional feasible mean between them."""
+
+    def _build(p50: float, ratio: float, mean_frac: float | None) -> dict:
+        p99 = p50 * ratio
+        d = {"p50": p50, "p99": p99}
+        if mean_frac is not None:
+            d["mean"] = p50 + mean_frac * (p99 - p50)
+        return d
+
+    return st.builds(
+        _build,
+        st.floats(min_value=10.0, max_value=1e6, allow_nan=False, allow_infinity=False),
+        # Ratio max is intentionally extreme (1e30) so the fuzzer drives the
+        # finite-mean/variance guard in _solve_percentile; the resulting
+        # ValueError is in the property test's ALLOWED set.
+        st.floats(min_value=1.5, max_value=1e30),
+        st.one_of(st.none(), st.floats(min_value=0.05, max_value=0.3)),
+    )
+
+
 def multimodal_distribution_inputs() -> st.SearchStrategy[dict]:
     peak = st.fixed_dictionaries(
         {"mean": adversarial_floats(), "stddev": adversarial_floats()},

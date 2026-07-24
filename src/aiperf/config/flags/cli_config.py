@@ -1170,7 +1170,8 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             description="Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulation. "
-            "Format: `ISL,OSL:prob;ISL,OSL:prob` (semicolons separate pairs, probabilities are percentages 0-100 that must sum to 100). "
+            "Format: `ISL,OSL:prob;ISL,OSL:prob` (semicolons separate pairs, probabilities are positive relative weights, "
+            "normalized across all pairs, that do NOT need to sum to 100). "
             "Supports optional stddev: `ISL|stddev,OSL|stddev:prob`. "
             "Examples: `128,64:25;512,128:50;1024,256:25` or with variance: `256|10,128|5:40;512|20,256|10:60`. "
             "Also supports bracket `[(256,128):40,(512,256):60]` and JSON formats.",

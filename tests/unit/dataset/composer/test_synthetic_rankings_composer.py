@@ -1,9 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
+import statistics
 
 from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.composer.synthetic_rankings import SyntheticRankingsDatasetComposer
+from tests.harness.fake_tokenizer import FakeTokenizer
+from tests.unit.conftest import make_benchmark_run
 from tests.unit.dataset.composer.conftest import make_run
 
 
@@ -77,6 +80,33 @@ def test_reproducibility_fixed_seed(synthetic_config, mock_tokenizer):
         t1, t2 = c1.turns[0], c2.turns[0]
         assert t1.texts[0].contents == t2.texts[0].contents
         assert t1.texts[1].contents == t2.texts[1].contents
+
+
+def _make_rankings_composer(entries: int, **rankings):
+    """Build a rankings composer whose rankings.* are typed distributions.
+
+    Uses the native BenchmarkConfig path (CLIConfig is flat and cannot express
+    lognormal/empirical distributions) with a FakeTokenizer.
+    """
+    dataset = {
+        "name": "default",
+        "type": "synthetic",
+        "entries": entries,
+        "rankings": rankings,
+    }
+    run = make_benchmark_run(extra={"datasets": [dataset]})
+    return SyntheticRankingsDatasetComposer(run=run, tokenizer=FakeTokenizer())
+
+
+class TestRankingsWiring:
+    def test_lognormal_passages_varies(self):
+        composer = _make_rankings_composer(
+            entries=300, passages={"mean": 8, "median": 5}
+        )
+        conversations = composer.create_dataset()
+        counts = [len(c.turns[0].texts[1].contents) for c in conversations]
+        assert len(set(counts)) > 3  # was: constant 8 (lognormal flattened)
+        assert statistics.median(counts) <= statistics.fmean(counts)  # right skew
 
 
 def test_rankings_specific_token_options(synthetic_config, mock_tokenizer):

@@ -19,6 +19,7 @@ from pydantic import TypeAdapter, ValidationError
 from pytest import param
 
 from aiperf.common import random_generator as rng
+from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
 from aiperf.config.distributions import (
     Distribution,
     EmpiricalDistribution,
@@ -30,7 +31,10 @@ from aiperf.config.distributions import (
     PeakEntry,
     SamplingDistribution,
 )
-from aiperf.config.types import SequenceDistributionEntry
+from aiperf.config.types import (
+    SequenceDistributionEntry,
+    validate_probability_distribution,
+)
 
 # TypeAdapter for the discriminated union
 _TA = TypeAdapter(SamplingDistribution)
@@ -538,3 +542,168 @@ class TestSequenceDistributionEntry:
         assert isinstance(entry.osl, NormalDistribution)
         assert entry.osl.mean == 256.0
         assert entry.osl.stddev == 25.0
+
+
+# ============================================================
+# 9. first_turn_isl + relative bucket weights
+# ============================================================
+
+
+def test_first_turn_isl_without_isl_raises():
+    with pytest.raises(ValidationError, match="first_turn_isl"):
+        PromptConfig(first_turn_isl={"mean": 20000, "stddev": 10})
+
+
+def test_sequence_distribution_relative_weights_accepted():
+    cfg = PromptConfig(
+        sequence_distribution=[
+            {"isl": 60000, "osl": 100, "probability": 50},
+            {"isl": 400000, "osl": 10, "probability": 1},
+        ]
+    )
+    assert len(cfg.sequence_distribution) == 2
+
+
+def test_sequence_distribution_zero_total_weight_rejected():
+    with pytest.raises(ValidationError):
+        PromptConfig(
+            sequence_distribution=[
+                {"isl": 100, "osl": 10, "probability": 0},
+            ]
+        )
+
+
+def test_legacy_string_parser_accepts_relative_weights():
+    from aiperf.common.models.sequence_distribution import DistributionParser
+
+    dist = DistributionParser.parse("100,10:50;4000,10:1")
+    samples = [dist.sample() for _ in range(2000)]
+    small = sum(1 for isl, _ in samples if isl == 100) / len(samples)
+    assert small > 0.94
+
+
+# ============================================================
+# 10. Per-bucket first_turn_isl + top-level exclusivity
+# ============================================================
+
+
+class TestSequenceDistributionEntryFiniteWeights:
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            param(float("nan"), id="nan"),
+            param(float("inf"), id="inf"),
+            param(float("-inf"), id="neg-inf"),
+        ],
+    )  # fmt: skip
+    def test_non_finite_probability_rejected(self, bad):
+        """inf/inf normalizes to NaN in _TypedSequenceDistribution; reject at config."""
+        with pytest.raises(ValidationError):
+            SequenceDistributionEntry.model_validate(
+                {"isl": 128, "osl": 64, "probability": bad}
+            )
+
+    def test_overflowing_total_rejected(self):
+        """Per-entry weights can be finite while their sum overflows to inf."""
+        entries = [
+            SequenceDistributionEntry.model_validate(
+                {"isl": 128, "osl": 64, "probability": 1e308}
+            )
+            for _ in range(2)
+        ]
+        with pytest.raises(ValueError, match="finite positive total"):
+            validate_probability_distribution(entries)
+
+
+class TestSequenceDistributionEntryFirstTurnIsl:
+    def test_entry_accepts_first_turn_isl_distribution(self):
+        entry = SequenceDistributionEntry.model_validate(
+            {
+                "first_turn_isl": {"p50": 20000, "p99": 100000, "mean": 30000},
+                "isl": {"mean": 300, "stddev": 100},
+                "osl": {"mean": 250, "stddev": 80},
+                "probability": 50,
+            }
+        )
+        assert entry.first_turn_isl is not None
+        assert entry.first_turn_isl.expected_value == pytest.approx(30000, rel=0.01)
+
+    def test_entry_first_turn_isl_defaults_to_none(self):
+        entry = SequenceDistributionEntry.model_validate(
+            {"isl": 128, "osl": 64, "probability": 100}
+        )
+        assert entry.first_turn_isl is None
+
+    def test_entry_first_turn_isl_scalar_coerces_to_fixed(self):
+        entry = SequenceDistributionEntry.model_validate(
+            {"first_turn_isl": 40000, "isl": 128, "osl": 64, "probability": 100}
+        )
+        assert entry.first_turn_isl.expected_value == 40000
+
+
+class TestPromptConfigFirstTurnIslSeqDistConflict:
+    def test_top_level_first_turn_isl_with_sequence_distribution_rejected(self):
+        with pytest.raises(
+            ValueError, match="cannot be combined with sequence_distribution"
+        ):
+            PromptConfig.model_validate(
+                {
+                    "first_turn_isl": {"mean": 20000, "stddev": 100},
+                    "isl": {"mean": 300, "stddev": 100},
+                    "sequence_distribution": [
+                        {"isl": 128, "osl": 64, "probability": 100}
+                    ],
+                }
+            )
+
+    def test_per_bucket_first_turn_isl_with_sequence_distribution_accepted(self):
+        cfg = PromptConfig.model_validate(
+            {
+                "sequence_distribution": [
+                    {
+                        "first_turn_isl": {"mean": 20000, "stddev": 100},
+                        "isl": 128,
+                        "osl": 64,
+                        "probability": 100,
+                    }
+                ]
+            }
+        )
+        assert cfg.sequence_distribution[0].first_turn_isl is not None
+
+    def test_first_turn_isl_without_isl_still_rejected(self):
+        with pytest.raises(ValueError, match="first_turn_isl requires isl"):
+            PromptConfig.model_validate(
+                {"first_turn_isl": {"mean": 20000, "stddev": 100}}
+            )
+
+
+class TestPrefixPromptLengthDistributions:
+    def test_scalar_lengths_still_parse_as_fixed(self):
+        cfg = PrefixPromptConfig.model_validate(
+            {"shared_system_length": 2048, "user_context_length": 512}
+        )
+        assert cfg.shared_system_length.expected_value == 2048
+        assert cfg.user_context_length.expected_value == 512
+
+    def test_distribution_lengths_accepted(self):
+        cfg = PrefixPromptConfig.model_validate(
+            {
+                "shared_system_length": {"mean": 2048, "stddev": 512, "min": 512},
+                "user_context_length": {"p50": 4000, "p99": 32000, "mean": 6000},
+            }
+        )
+        assert cfg.shared_system_length.expected_value == pytest.approx(2048, rel=0.01)
+        assert cfg.user_context_length.expected_value == pytest.approx(6000, rel=0.01)
+
+    def test_sub_one_expected_value_rejected(self):
+        with pytest.raises(ValueError, match="expected value >= 1"):
+            PrefixPromptConfig.model_validate(
+                {"user_context_length": {"mean": 0.2, "stddev": 0}}
+            )
+
+    def test_pool_fields_remain_ints(self):
+        with pytest.raises(ValueError):
+            PrefixPromptConfig.model_validate(
+                {"pool_size": 4, "length": {"mean": 100, "stddev": 10}}
+            )

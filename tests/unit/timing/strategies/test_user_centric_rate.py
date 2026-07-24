@@ -15,6 +15,7 @@ from tests.unit.timing.conftest import OrchestratorHarness, make_sampler
 
 TWO_TURN = [("c1", 2), ("c2", 2), ("c3", 2), ("c4", 2), ("c5", 2)]
 MULTI_TURN = [("c1", 3), ("c2", 3), ("c3", 3), ("c4", 3)]
+VARYING_TURNS = [("c1", 8), ("c2", 2), ("c3", 8), ("c4", 2)]
 
 
 class TestUserCentricInit:
@@ -84,6 +85,33 @@ class TestUserCentricExecution:
         )
         await h.run_with_auto_return()
         assert len(h.sent_credits) >= expected
+
+
+@pytest.mark.asyncio
+class TestVaryingTurnCounts:
+    async def test_max_turns_clamped_to_sampled_conversation_length(
+        self, create_orchestrator_harness
+    ) -> None:
+        """Virtual-history warm start derives turns_to_send from the dataset
+        AVERAGE turn count; a user who draws a conversation shorter than that
+        average must clamp to the conversation's real length. The worker-side
+        session manager rejects num_turns > len(conversation.turns), so an
+        unclamped credit errors every such session at benchmark start."""
+        h: OrchestratorHarness = create_orchestrator_harness(
+            conversations=VARYING_TURNS * 5,
+            user_centric_rate=20.0,
+            num_users=10,
+            request_count=40,
+        )
+        lengths = dict(VARYING_TURNS)
+        await h.run_with_auto_return()
+        assert h.sent_credits
+        for credit in h.sent_credits:
+            assert credit.num_turns <= lengths[credit.conversation_id], (
+                f"credit for {credit.conversation_id} carries "
+                f"num_turns={credit.num_turns} > conversation length "
+                f"{lengths[credit.conversation_id]}"
+            )
 
 
 @pytest.mark.asyncio

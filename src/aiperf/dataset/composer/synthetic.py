@@ -13,6 +13,7 @@ from aiperf.dataset.composer.base import BaseDatasetComposer
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config.types import SequenceDistributionEntry
 
 
 def _expected(distribution: object | None) -> float:
@@ -20,11 +21,6 @@ def _expected(distribution: object | None) -> float:
     if distribution is None:
         return 0.0
     return float(getattr(distribution, "expected_value", 0.0))
-
-
-def _stddev_int(distribution: object | None) -> int:
-    """Integer stddev of a distribution (Normal only) or 0."""
-    return int(getattr(distribution, "stddev", 0) or 0)
 
 
 class SyntheticDatasetComposer(BaseDatasetComposer):
@@ -49,10 +45,8 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         # user didn't configure them — apply the canonical defaults
         # (turn=1, batch=1, delay=0) explicitly here.
         self._num_entries = dataset.entries
-        self._turn_mean = max(1, int(_expected(dataset.turns)))
-        self._turn_stddev = _stddev_int(dataset.turns)
-        self._turn_delay_mean = _expected(dataset.turn_delay)
-        self._turn_delay_stddev = _stddev_int(dataset.turn_delay)
+        self._turns_dist = dataset.turns
+        self._turn_delay_dist = dataset.turn_delay
         self._turn_delay_ratio = dataset.turn_delay_ratio
         self._prompt_batch_size = (
             dataset.prompts.batch_size if dataset.prompts is not None else 1
@@ -66,13 +60,13 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         self._video_batch_size = (
             dataset.video.batch_size if dataset.video is not None else 1
         )
-        self._isl_stddev = _stddev_int(
-            dataset.prompts.isl if dataset.prompts is not None else None
-        )
 
         # Inclusion flags (computed once at init).
-        self._include_prompt = (
-            _expected(dataset.prompts.isl if dataset.prompts is not None else None) > 0
+        # A sequence_distribution drives ISL/OSL directly, so text is included
+        # even when prompts.isl is left unset (the isl field is ignored then).
+        self._include_prompt = dataset.prompts is not None and (
+            _expected(dataset.prompts.isl) > 0
+            or bool(dataset.prompts.sequence_distribution)
         )
         self._include_image = (
             dataset.images is not None
@@ -111,14 +105,22 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         for _ in range(self._num_entries):
             conversation = Conversation(session_id=self.session_id_generator.next())
 
-            num_turns = self._turn_sampler_rng.sample_positive_normal_integer(
-                self._turn_mean,
-                self._turn_stddev,
+            # The conversation's workload class: drawn once, kept for all turns.
+            bucket = (
+                self._seq_distribution.sample_bucket()
+                if self._seq_distribution is not None
+                else None
+            )
+
+            num_turns = (
+                self._turns_dist.sample_int(self._turn_sampler_rng)
+                if self._turns_dist is not None
+                else 1
             )
             self.logger.debug("Creating conversation with %d turns", num_turns)
 
             for turn_idx in range(num_turns):
-                turn = self._create_turn(is_first=(turn_idx == 0))
+                turn = self._create_turn(is_first=(turn_idx == 0), bucket=bucket)
                 conversation.turns.append(turn)
             conversations.append(conversation)
 
@@ -126,7 +128,9 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         self._finalize_conversations(conversations)
         return conversations
 
-    def _create_turn(self, is_first: bool) -> Turn:
+    def _create_turn(
+        self, is_first: bool, bucket: SequenceDistributionEntry | None = None
+    ) -> Turn:
         """Create a turn object that contains synthetic payloads to send.
 
         It generates multi-modal data (e.g. text, image, audio) using synthetic
@@ -134,6 +138,8 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         Args:
             is_first: Whether the turn is the first turn in the conversation.
+            bucket: The conversation's sticky sequence_distribution bucket
+                (None when no sequence_distribution is configured).
 
         Returns:
             Turn: A dataset representation of a single turn.
@@ -141,7 +147,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         turn = Turn()
 
         if self.include_prompt:
-            turn.texts.append(self._generate_text_payloads(turn, is_first))
+            turn.texts.append(self._generate_text_payloads(turn, is_first, bucket))
         if self.include_image:
             turn.images.append(self._generate_image_payloads())
         if self.include_audio:
@@ -149,12 +155,13 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         if self.include_video:
             turn.videos.append(self._generate_video_payloads())
 
-        if not is_first and self._turn_delay_mean > 0:
-            delay = self._delay_sampler_rng.sample_positive_normal_integer(
-                int(self._turn_delay_mean),
-                self._turn_delay_stddev,
-            )
-            turn.delay = delay * self._turn_delay_ratio
+        if (
+            not is_first
+            and self._turn_delay_dist is not None
+            and self._turn_delay_dist.expected_value > 0
+        ):
+            delay = self._turn_delay_dist.sample(self._delay_sampler_rng)
+            turn.delay = max(0.0, delay) * self._turn_delay_ratio
 
         if not turn.texts and not turn.images and not turn.audios and not turn.videos:
             self.logger.warning(
@@ -163,16 +170,23 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 "setting the mean to a positive value."
             )
 
-        self._finalize_turn(turn)
+        self._finalize_turn(turn, bucket)
 
         return turn
 
-    def _generate_text_payloads(self, turn: Turn, is_first: bool) -> Text:
+    def _generate_text_payloads(
+        self,
+        turn: Turn,
+        is_first: bool,
+        bucket: SequenceDistributionEntry | None = None,
+    ) -> Text:
         """Generate text payloads for a single turn.
 
         Args:
             turn: The turn object (used for caching sequence lengths)
             is_first: Whether the turn is the first turn in the conversation.
+            bucket: The conversation's sticky sequence_distribution bucket
+                (None when no sequence_distribution is configured).
 
         Returns:
             Text: A text payload object.
@@ -190,14 +204,18 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         # Sample ISL/OSL pair for this request (cached for consistency)
         turn_id = id(turn)
-        isl, _ = self._get_turn_sequence_lengths(turn_id)
+        isl, _ = self._get_turn_sequence_lengths(
+            turn_id, is_first=is_first, bucket=bucket
+        )
 
-        # Preserve original variance unless sequence distribution is active
-        stddev = 0 if self._seq_distribution is not None else self._isl_stddev
-
+        # `isl` was already drawn from the full typed distribution inside
+        # `_get_turn_sequence_lengths` via `sample_int(rng)`. Passing a
+        # stddev here would apply a SECOND normal sample around that draw,
+        # compounding the variance to stddev*sqrt(2). Per-turn variance
+        # belongs to the distribution; per-prompt generation is
+        # deterministic at the turn's target.
         for _ in range(self._prompt_batch_size):
-            # Generate prompt content using the sampled input sequence length
-            content = self.prompt_generator.generate(mean=isl, stddev=stddev)
+            content = self.prompt_generator.generate(mean=isl, stddev=0)
 
             # Add prefix prompt if this is the first turn and prefix is enabled
             if is_first and self.prefix_prompt_enabled:

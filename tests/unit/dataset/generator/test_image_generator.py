@@ -15,7 +15,11 @@ from aiperf.common.enums import (
     ImageSourceSamplingStrategy,
 )
 from aiperf.config.dataset.content import ImageConfig
-from aiperf.config.distributions import NormalDistribution
+from aiperf.config.distributions import (
+    EmpiricalDistribution,
+    EmpiricalPoint,
+    NormalDistribution,
+)
 from aiperf.dataset.generator import ImageGenerator
 
 # v1 had separate ImageWidthConfig / ImageHeightConfig dataclasses; v2 uses
@@ -363,6 +367,49 @@ class TestImageGenerator:
             return generator.generate()
 
         assert generate_with_seed(12345) == generate_with_seed(12345)
+
+
+class TestImageDimensionsWiring:
+    """Width/height sample from their full typed distribution, not a flattened mean."""
+
+    def test_empirical_image_dimensions_exact_values(self):
+        # Empirical width/height flatten to expected_value (640) under the old
+        # code; the typed path must draw only the configured discrete values.
+        config = ImageConfig(
+            batch_size=1,
+            width=EmpiricalDistribution(
+                points=[
+                    EmpiricalPoint(value=256, weight=50),
+                    EmpiricalPoint(value=1024, weight=50),
+                ]
+            ),
+            height=EmpiricalDistribution(
+                points=[
+                    EmpiricalPoint(value=256, weight=50),
+                    EmpiricalPoint(value=1024, weight=50),
+                ]
+            ),
+            format=ImageFormat.PNG,
+            source=ImageSource.NOISE,
+        )
+        generator = ImageGenerator(config)
+
+        captured: list[tuple[int, int]] = []
+        original = generator._create_source_image
+
+        def spy(width: int, height: int):
+            captured.append((width, height))
+            return original(width, height)
+
+        generator._create_source_image = spy
+        for _ in range(50):
+            generator.generate()
+
+        widths = {w for w, _ in captured}
+        heights = {h for _, h in captured}
+        assert widths <= {256, 1024}
+        assert heights <= {256, 1024}
+        assert widths == {256, 1024}  # both modes appear (was: constant 640)
 
 
 class TestImageGeneratorNoiseMode:

@@ -71,17 +71,15 @@ class TestBaseDatasetComposer:
             run=make_run(sequence_dist_config), tokenizer=mock_tokenizer
         )
 
-        # Distribution was built directly from the v2 entries (not via
-        # DistributionParser.parse, which only accepts strings).
-        assert composer._seq_distribution is not None
-        pairs = composer._seq_distribution.pairs
-        assert len(pairs) == 2
-        assert pairs[0].input_seq_len == 100
-        assert pairs[0].output_seq_len == 25
-        assert pairs[0].probability == 50.0
-        assert pairs[1].input_seq_len == 200
-        assert pairs[1].output_seq_len == 50
-        assert pairs[1].probability == 50.0
+        # The runtime sampler is built directly from the typed v2 entries (not
+        # via DistributionParser.parse, which only accepts strings). Each bucket
+        # has stddev 0, so sampling is deterministic per bucket: every draw must
+        # be one of the two configured (isl, osl) pairs and both must appear.
+        # Buckets are drawn per conversation (sticky), then lengths per turn.
+        dist = composer._seq_distribution
+        assert dist is not None
+        samples = {dist.sample_lengths(dist.sample_bucket()) for _ in range(100)}
+        assert samples == {(100, 25), (200, 50)}
 
     def test_model_selection_round_robin(self, base_config, mock_tokenizer):
         """Test round robin model selection."""
@@ -136,24 +134,23 @@ class TestBaseDatasetComposer:
     def test_get_turn_sequence_lengths_without_distribution(
         self, base_config, mock_tokenizer
     ):
-        """Test getting sequence lengths without distribution (fallback)."""
+        """Without a seq-dist, ISL/OSL are drawn per turn from the typed
+        distributions (not flattened to the distribution mean)."""
         composer = ConcreteBaseComposer(
             run=make_run(base_config), tokenizer=mock_tokenizer
         )
 
         turn_id = 12345
-        result = composer._get_turn_sequence_lengths(turn_id)
+        isl, osl = composer._get_turn_sequence_lengths(turn_id)
 
-        # Should use fallback values from config
-        expected = (
-            base_config.prompt_input_tokens_mean,
-            base_config.prompt_output_tokens_mean,
-        )
-        assert result == expected
+        # ISL ~ Normal(mean=100, stddev=10); OSL ~ Normal(mean=50, stddev=5).
+        # Sampled per turn, so they land near (not exactly at) the means.
+        assert 60 < isl < 140
+        assert 30 < osl < 70
 
-        # Should be cached
+        # Cached for reuse within the same turn (ISL/OSL pairing).
         assert turn_id in composer._turn_sequence_cache
-        assert composer._turn_sequence_cache[turn_id] == expected
+        assert composer._turn_sequence_cache[turn_id] == (isl, osl)
 
     def test_clear_turn_cache(self, sequence_dist_config, mock_tokenizer):
         """Test clearing turn cache."""

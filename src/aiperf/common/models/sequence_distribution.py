@@ -11,13 +11,13 @@ The sequence distribution feature allows users to specify multiple ISL/OSL pairs
 different probabilities, enabling simulation of mixed workloads that better represent
 production traffic patterns.
 
-        Supported formats (probabilities must be percentages 0-100):
+        Supported formats (probabilities are relative weights, normalized at sampling time):
         - Semicolon: "256,128:40;512,256:60" or "256|10,128|5:40;512|20,256|10:60"
         - Bracket: "[(256,128):40,(512,256):60]" or "[(256|10,128|5):40,(512|20,256|10):60]"
         - JSON: '{"pairs": [{"isl": 256, "isl_stddev": 10, "osl": 128, "osl_stddev": 5, "prob": 40}, ...]}'
 
-Note: Probabilities must be specified as percentages (0-100), not fractions (0-1).
-This prevents common errors from mixing different probability formats.
+Note: Probabilities are positive relative weights and do NOT need to sum to 100.
+They are normalized across all pairs at sampling time, so "50;1" yields ~98%/2%.
 
 Examples:
     Basic usage:
@@ -32,6 +32,7 @@ Examples:
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -49,9 +50,13 @@ if TYPE_CHECKING:
 logger = AIPerfLogger(__name__)
 
 
-def _validate_probability_sum(pairs: list[SequenceLengthPair]) -> None:
+def _validate_probability_weights(pairs: list[SequenceLengthPair]) -> None:
     """
-    Validate that probabilities sum to approximately 100.0.
+    Validate that the pairs carry a positive total relative weight.
+
+    Weights are relative and normalized at sampling time, so they do not need
+    to sum to 100. The downstream cumulative-probability computation divides by
+    the summed total, so a non-positive total is the one invalid case.
 
     This is a module-level helper used by both SequenceLengthDistribution
     and DistributionParser to avoid code duplication.
@@ -60,14 +65,13 @@ def _validate_probability_sum(pairs: list[SequenceLengthPair]) -> None:
         pairs: List of SequenceLengthPair objects to validate
 
     Raises:
-        ValueError: If probabilities don't sum to 100.0 (within floating-point tolerance)
+        ValueError: If the total probability weight is not positive
     """
     total_prob = sum(pair.probability for pair in pairs)
 
-    # Allow small floating-point errors
-    if not np.isclose(total_prob, 100.0, rtol=1e-6, atol=1e-6):
+    if not math.isfinite(total_prob) or total_prob <= 0:
         raise ValueError(
-            f"Probabilities must sum to 100.0, got {total_prob:.6f}. "
+            f"Probability weights must have a finite positive total, got {total_prob:.6f}. "
             f"Pairs: {[str(p) for p in pairs]}"
         )
 
@@ -92,15 +96,25 @@ class SequenceLengthPair:
             raise ValueError(
                 f"Output sequence length must be positive, got {self.output_seq_len}"
             )
-        if not 0.0 <= self.probability <= 100.0:
-            raise ValueError(f"Probability must be in [0,100], got {self.probability}")
-        if self.input_seq_len_stddev < 0.0:
+        if not math.isfinite(self.probability) or self.probability < 0.0:
             raise ValueError(
-                f"Input sequence length stddev must be non-negative, got {self.input_seq_len_stddev}"
+                f"Probability weight must be finite and non-negative, got {self.probability}"
             )
-        if self.output_seq_len_stddev < 0.0:
+        if (
+            not math.isfinite(self.input_seq_len_stddev)
+            or self.input_seq_len_stddev < 0.0
+        ):
             raise ValueError(
-                f"Output sequence length stddev must be non-negative, got {self.output_seq_len_stddev}"
+                f"Input sequence length stddev must be finite and non-negative, "
+                f"got {self.input_seq_len_stddev}"
+            )
+        if (
+            not math.isfinite(self.output_seq_len_stddev)
+            or self.output_seq_len_stddev < 0.0
+        ):
+            raise ValueError(
+                f"Output sequence length stddev must be finite and non-negative, "
+                f"got {self.output_seq_len_stddev}"
             )
 
     def __str__(self) -> str:
@@ -123,10 +137,11 @@ class SequenceLengthDistribution:
         Initialize distribution from list of sequence length pairs.
 
         Args:
-            pairs: List of SequenceLengthPair objects. Probabilities must sum to 100.0.
+            pairs: List of SequenceLengthPair objects. Probabilities are relative
+                weights normalized at sampling time and need not sum to 100.0.
 
         Raises:
-            ValueError: If pairs is empty or probabilities don't sum to 100.0.
+            ValueError: If pairs is empty or the total probability weight is not positive.
         """
         if not pairs:
             raise ValueError(
@@ -137,7 +152,7 @@ class SequenceLengthDistribution:
         # stays pure and works before bootstrap calls rng.init().
         self._rng: RandomGenerator | None = None
         self._pairs = tuple(pairs)  # Immutable copy
-        _validate_probability_sum(list(self._pairs))
+        _validate_probability_weights(list(self._pairs))
         self._cumulative_probs = self._compute_cumulative_probabilities()
 
         logger.debug(f"Created distribution with {len(self._pairs)} pairs: {self}")
@@ -150,8 +165,10 @@ class SequenceLengthDistribution:
 
     def _compute_cumulative_probabilities(self) -> np.ndarray:
         """Compute cumulative probability distribution for efficient sampling."""
-        # Convert percentages to fractions for internal calculation
-        probs = [pair.probability / 100.0 for pair in self._pairs]
+        # Normalize relative weights by their actual total (they need not
+        # sum to 100); _validate_probability_weights guarantees total > 0.
+        total = sum(pair.probability for pair in self._pairs)
+        probs = [pair.probability / total for pair in self._pairs]
         return np.cumsum(probs, dtype=np.float64)
 
     def sample(self) -> tuple[int, int]:
@@ -238,17 +255,18 @@ class SequenceLengthDistribution:
             Dictionary with distribution statistics including expected values,
             variance, and individual pair information.
         """
-        # Expected values (convert percentages to fractions for calculation)
-        exp_isl = sum(p.input_seq_len * (p.probability / 100.0) for p in self._pairs)
-        exp_osl = sum(p.output_seq_len * (p.probability / 100.0) for p in self._pairs)
+        # Normalize relative weights by their actual total (they need not sum
+        # to 100); _validate_probability_weights guarantees total > 0.
+        total = sum(p.probability for p in self._pairs)
+        exp_isl = sum(p.input_seq_len * (p.probability / total) for p in self._pairs)
+        exp_osl = sum(p.output_seq_len * (p.probability / total) for p in self._pairs)
 
-        # Variance calculations
         var_isl = sum(
-            (p.probability / 100.0) * (p.input_seq_len - exp_isl) ** 2
+            (p.probability / total) * (p.input_seq_len - exp_isl) ** 2
             for p in self._pairs
         )
         var_osl = sum(
-            (p.probability / 100.0) * (p.output_seq_len - exp_osl) ** 2
+            (p.probability / total) * (p.output_seq_len - exp_osl) ** 2
             for p in self._pairs
         )
 
@@ -322,8 +340,8 @@ class DistributionParser:
             else:
                 pairs = cls._validate_semicolon_format(dist_str)
 
-            # Validate probability sum without creating distribution object
-            _validate_probability_sum(pairs)
+            # Validate positive total weight without creating distribution object
+            _validate_probability_weights(pairs)
             return pairs
 
         except Exception as e:

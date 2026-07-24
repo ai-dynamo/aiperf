@@ -6,7 +6,7 @@ sidebar-title: Sampling Distributions in YAML Configs
 
 # Sampling Distributions in YAML Configs
 
-Several fields in an AIPerf YAML config — input/output token lengths, conversation turn counts, turn delays, image dimensions, audio length, and ranking passage counts — accept a *sampling distribution* instead of a single number. This tutorial covers all five distribution shapes AIPerf supports, the auto-detection rules that pick between them, and the optional `min:`/`max:` clamps that compose with any of them.
+Several fields in an AIPerf YAML config — input/output token lengths, conversation turn counts, turn delays, image dimensions, audio length, and ranking passage counts — accept a *sampling distribution* instead of a single number. This tutorial covers all six distribution shapes AIPerf supports, the auto-detection rules that pick between them, and the optional `min:`/`max:` clamps that compose with any of them.
 
 If you only ever write `isl: 512`, you've already used a distribution — that scalar is the shorthand for a `FixedDistribution`. Everything below extends from there.
 
@@ -17,26 +17,30 @@ Any field in a YAML config typed as a sampling distribution accepts the full set
 | Field | Section | What it controls |
 |---|---|---|
 | `isl` | `dataset.prompts` (and shorthand at `dataset.isl`) | Input sequence length, in tokens |
+| `first_turn_isl` | `dataset.prompts` | First-turn starting-context ISL for growing multi-turn conversations (requires `isl`) |
 | `osl` | `dataset.prompts` and `dataset.osl` shorthand; also on file datasets | Output sequence length, in tokens |
 | `turns` | `dataset` | Number of request/response turns per conversation |
 | `turn_delay` | `dataset` | Delay between turns, in milliseconds |
 | `width`, `height` | `dataset.images` | Synthetic image dimensions, in pixels |
 | `length` | `dataset.audio` | Synthetic audio duration, in seconds |
+| `shared_system_length` | `dataset.prefix_prompts` | Shared system prompt size, in tokens — sampled once per run (identical across sessions) |
+| `user_context_length` | `dataset.prefix_prompts` | Per-session user context size, in tokens — sampled once per session |
 | `passages`, `passage_tokens`, `query_tokens` | `dataset.rankings` | Rankings/reranking endpoint shapes |
 
 Wherever you see `{mean: ..., stddev: ...}` in a template, you can swap in any other shape from this page.
 
-## The five distribution types
+## The six distribution types
 
-AIPerf supports five distribution shapes, and **figures out which one you mean from the keys you wrote** — you don't have to add a `type:` key. The discriminator is purely structural:
+AIPerf supports six distribution shapes, and **figures out which one you mean from the keys you wrote** — you don't have to add a `type:` key. The discriminator is purely structural, and the keys are checked in a fixed order (`peaks` → `points` → `p50`/`p99` → `median` → `stddev` → `value` → `mean`):
 
 | What you wrote | Type | Why |
 |---|---|---|
 | `isl: 512` | Fixed | Bare scalar |
-| `isl: {mean: 512, stddev: 50}` | Normal | `stddev` present |
-| `isl: {mean: 512, median: 400}` | Log-normal | `median` present |
 | `isl: {peaks: [...]}` | Multimodal | `peaks` present |
 | `isl: {points: [...]}` | Empirical | `points` present |
+| `isl: {p50: 50000, p99: 400000}` | Percentile | `p50`/`p99` present (checked before `median`/`stddev`/`mean`) |
+| `isl: {mean: 512, median: 400}` | Log-normal | `median` present |
+| `isl: {mean: 512, stddev: 50}` | Normal | `stddev` present |
 
 You can override the inference with an explicit `type:` if you'd rather be loud:
 
@@ -44,7 +48,7 @@ You can override the inference with an explicit `type:` if you'd rather be loud:
 isl: {type: normal, mean: 512, stddev: 50}
 ```
 
-`type:` accepts one of `fixed`, `normal`, `lognormal`, `multimodal`, `empirical`. AIPerf strips it after dispatch, so the rest of the dict is parsed normally.
+`type:` accepts one of `fixed`, `normal`, `lognormal`, `percentile`, `multimodal`, `empirical`. AIPerf strips it after dispatch, so the rest of the dict is parsed normally.
 
 ### Fixed — a constant
 
@@ -92,6 +96,23 @@ Constraints:
 - `median` must be `<= mean`. (A log-normal with median > mean is mathematically impossible.)
 
 Use log-normal when modelling sizes that are bounded below by zero and have a long right tail — chat prompt lengths, retrieval-augmented context windows, "most requests are small but some are huge" workloads.
+
+### Percentile — target p50/p99 (and optionally the mean) directly
+
+Sometimes the workload is specified by its percentiles, not by distribution parameters: "median input is 50k tokens, p99 is 400k, average is 60k." No 2-parameter distribution can hit three targets like that (a normal is symmetric; a log-normal pins p50+p99 but then its mean is decided for you). The `percentile` shape takes the targets and solves the sampling parameters for you at config-validation time:
+
+```yaml
+prompts:
+  isl: {p50: 50000, p99: 400000}                # log-normal fit: p50 and p99 exact
+  osl: {p50: 200, p99: 2000, mean: 350}         # mixture fit: also pins the mean
+```
+
+- `p50` and `p99` are required; `p99` must be greater than `p50`.
+- `mean` is optional. Without it, the mean implied by the log-normal fit applies (for the 50k/400k example that is ~74.6k). With it, AIPerf solves a two-component mixture: a body carrying the median and a small far tail carrying the p99.
+- `mean` must be greater than `p50` — percentile models right-skewed shapes only. Infeasible targets (a `mean` below `p50`, or a `mean` too close to `p99`) fail fast in `aiperf config validate` with a message explaining the constraint — not mid-benchmark.
+- `min:`/`max:` clamps compose like with every other shape.
+
+Use percentile when you have production SLO-style numbers and want the synthetic workload to reproduce them without hand-calibrating a multimodal mixture.
 
 ### Multimodal — a mixture of N peaks
 
@@ -168,9 +189,36 @@ A few rules:
 - Bounds are *inclusive*: `min: 32` means values down to and including 32 are kept; below 32 is clamped up to 32.
 - `min:` and `max:` must be finite. NaN/inf are rejected at config-validation time so they can't silently disable clamping.
 - If both are set, `min <= max` is enforced.
-- Bounds compose with every shape — Fixed, Normal, Log-normal, Multimodal, and Empirical.
+- Bounds compose with every shape — Fixed, Normal, Log-normal, Percentile, Multimodal, and Empirical.
 
 For multimodal distributions, a top-level `min`/`max` applies to the *output* of the mixture. If you want different bounds per peak, set `min`/`max` on each peak's sub-distribution instead.
+
+## First-turn context — `first_turn_isl`
+
+Multi-turn benchmarks with *growing* context (e.g. user-centric mode, where each turn appends to the running conversation) often start with a large seed prompt and then add only small increments per turn. `first_turn_isl` lets you size that opening context separately from the follow-ups:
+
+```yaml
+prompts:
+  first_turn_isl: {p50: 20000, p99: 100000}   # starting context of each conversation
+  isl: {mean: 300, stddev: 100}               # each subsequent turn's new input
+```
+
+With `sequence_distribution`, put the seed context on the bucket instead — one bucket per conversation, first turn from its `first_turn_isl`, later turns from its `isl`:
+
+```yaml
+prompts:
+  sequence_distribution:
+    - first_turn_isl: {p50: 20000, p99: 100000, mean: 30000}
+      isl: {mean: 300, stddev: 100}
+      osl: {mean: 250, stddev: 80}
+      probability: 50
+```
+
+- The **first** turn of every conversation draws its ISL from `first_turn_isl`; **every subsequent** turn draws from `isl`.
+- Both fields accept any distribution shape on this page — the example pairs a percentile opener with a small normal follow-up.
+- `first_turn_isl` **requires `isl`** to be set (it only redefines the first turn; `isl` still sizes the rest). Setting it alone fails at config-validation time.
+- When `first_turn_isl` is unset, `isl` applies to all turns.
+- `first_turn_isl` cannot be combined with `sequence_distribution` (config error). Buckets carry their own seed context instead — each `sequence_distribution` entry accepts a per-bucket `first_turn_isl`; see [Sequence Length Distributions](sequence-distributions.md).
 
 ## Disambiguation cheat-sheet
 
@@ -182,7 +230,9 @@ If AIPerf can't figure out what shape you meant, it errors at config-load time w
 | `isl: {stddev: 50}` (no `mean`) | Error — Normal requires `mean`. |
 | `isl: {peaks: [...one entry...]}` | Error — Multimodal requires at least 2 peaks. |
 | `isl: {value: 512, mean: 600}` | Error — `value` selects Fixed, but `mean` is unknown to Fixed. |
-| Passing a string like `"128,64:50;512,128:50"` | Error — that's the legacy `sequence_distribution` string format (semicolon-separated `ISL,OSL:prob` pairs summing to 100), not a sampling distribution. See [Sequence Length Distributions](sequence-distributions.md). |
+| `isl: {p50: 50000, p99: 400000, mean: 40000}` | Error — a percentile `mean` must be greater than `p50` (right-skewed shapes only). |
+| Passing a string like `"128,64:50;512,128:50"` | Error — that's the legacy `sequence_distribution` string format (semicolon-separated relative-weight `ISL,OSL:prob` pairs), not a sampling distribution. See [Sequence Length Distributions](sequence-distributions.md). |
+| `first_turn_isl` next to `sequence_distribution` | Error — seed context lives on each bucket's own `first_turn_isl` when buckets are in play. |
 
 When in doubt, run:
 
