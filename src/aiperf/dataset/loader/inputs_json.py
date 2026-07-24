@@ -72,6 +72,16 @@ class InputsJsonPayloadLoader(BaseRawPayloadLoader):
 
         result: dict[str, list[InputsJsonSession]] = {}
         for idx, entry in enumerate(data_list):
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"{path}: data[{idx}] must be an object, got {type(entry).__name__}"
+                )
+            if "session_id" not in entry:
+                raise ValueError(
+                    f"{path}: data[{idx}] missing required key 'session_id'"
+                )
+            if "payloads" not in entry:
+                raise ValueError(f"{path}: data[{idx}] missing required key 'payloads'")
             session = InputsJsonSession(
                 session_id=entry["session_id"],
                 payloads=entry["payloads"],
