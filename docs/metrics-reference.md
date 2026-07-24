@@ -38,10 +38,6 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Number of Images](#number-of-images)
     - [Image Throughput](#image-throughput)
     - [Image Latency](#image-latency)
-    - [Total Number of Images](#total-number-of-images)
-    - [Image Samples Per Second](#image-samples-per-second)
-    - [Effective Image Samples Per Second](#effective-image-samples-per-second)
-    - [Active Image Samples Per Second](#active-image-samples-per-second)
   - [Video Metrics](#video-metrics)
     - [Video Inference Time](#video-inference-time)
     - [Video Peak Memory](#video-peak-memory)
@@ -545,7 +541,7 @@ total_token_throughput = (total_isl + total_osl) / benchmark_duration_seconds
 ## Image Metrics
 
 > [!NOTE]
-> All metrics in this section require image-capable endpoints (e.g., image generation, image edit, or image retrieval APIs). These metrics are not available for text-only or other non-image endpoints.
+> All metrics in this section require image-capable endpoints (e.g., image generation APIs). These metrics are not available for text-only or other non-image endpoints.
 
 ### Number of Images
 
@@ -595,81 +591,6 @@ image_latency = request_latency_ms / num_images
 
 **Notes:**
 - Lower values indicate faster per-image generation.
-
----
-
-### Total Number of Images
-
-**Type:** [Derived Metric](#derived-metrics)
-
-The total count of image samples processed across the entire benchmark, summed from every request's [Number of Images](#number-of-images). It is the numerator of [Image Samples Per Second](#image-samples-per-second), analogous to how [Total Input Sequence Length](#total-input-sequence-length) underlies the token throughputs.
-
-**Formula:**
-```python
-total_num_images = sum(num_images for each request)
-```
-
-**Notes:**
-- Higher values indicate more image samples served during the run.
-- Absent when no image samples were captured.
-
----
-
-### Image Samples Per Second
-
-**Type:** [Derived Metric](#derived-metrics)
-
-The aggregate image-sample throughput: the total number of image samples divided by the benchmark duration. This is the run-level "samples per second" reported alongside the token throughputs (e.g. [Output Token Throughput](#output-token-throughput)), and it divides the samples across the **entire** run, including any ramp-up and drain.
-
-**Formula:**
-```python
-image_samples_per_second = total_num_images / benchmark_duration_seconds
-```
-
-**Notes:**
-- Higher values indicate more image samples served per second.
-- Because the denominator is the full run duration, this is a lower bound on the instantaneous sample rate; see [Effective Image Samples Per Second](#effective-image-samples-per-second) for the duration-weighted view.
-- Absent when no image samples were captured.
-
----
-
-### Effective Image Samples Per Second
-
-**Type:** [Derived Metric](#derived-metrics) (sweep-line)
-
-The duration-weighted image-sample throughput computed from a sweep-line accumulator. Each request spreads its [Number of Images](#number-of-images) uniformly over its active `[start, end)` interval; the per-request rates accumulate into a right-continuous step function, and the full distribution (avg, min, max, p50, p90, p95, p99, std) is reported by weighting each rate by the time it was held. This is the image-sample analogue of the effective token throughputs and reveals the true time-varying sample rate rather than a single run-averaged number.
-
-**Formula:**
-```python
-# per request: rate = num_images / (end - start)   over [start, end)
-# curve(t)    = sum of active per-request rates at time t
-# reported    = duration_weighted_stats(curve) * 1e9   # samples/ns -> samples/sec
-```
-
-**Notes:**
-- The average equals [Image Samples Per Second](#image-samples-per-second) over the whole run (a mathematical identity), while the percentiles expose the instantaneous rate during active periods.
-- Reported as a distribution, so p50/p90/p95/p99 and std describe how the sample rate varied over the run.
-- Absent when no image samples were captured.
-
----
-
-### Active Image Samples Per Second
-
-**Type:** [Derived Metric](#derived-metrics) (sweep-line)
-
-The same sweep-line image-sample rate as [Effective Image Samples Per Second](#effective-image-samples-per-second), but averaged **only over intervals where image requests were in flight** — the ramp-up and drain gaps in which no request is active are excluded. This is the image-sample analogue of Active Total Throughput and answers "how fast were samples served while the system was actually busy."
-
-**Formula:**
-```python
-# same sample-rate curve as Effective Image Samples Per Second,
-# but time-weighted only where request concurrency > 0
-reported = active_weighted_stats(sample_rate_curve, concurrency_mask) * 1e9
-```
-
-**Notes:**
-- Always greater than or equal to [Effective Image Samples Per Second](#effective-image-samples-per-second), which in turn is greater than or equal to the aggregate [Image Samples Per Second](#image-samples-per-second) (`active >= effective >= aggregate`).
-- Use this to gauge steady-state serving rate independent of how long the run's idle head/tail were.
-- Absent when no image samples were captured.
 
 ---
 
