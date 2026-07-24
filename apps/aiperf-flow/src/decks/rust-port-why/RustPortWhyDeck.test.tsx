@@ -71,6 +71,13 @@ describe("RustPortWhyDeck (executive overview)", () => {
     ).toBeInTheDocument();
   });
 
+  it("preempts the free-threaded (no-GIL) Python objection honestly", () => {
+    renderDeck();
+    expect(screen.getByText(/no-GIL\) Python make this moot/i)).toBeInTheDocument();
+    // The killer honest point: free-threading gives parallelism but not memory safety.
+    expect(screen.getByText(/data races/i)).toBeInTheDocument();
+  });
+
   it("pitches fast startup as a quick edit-run-measure iteration win", () => {
     renderDeck();
     // Rendered twice by HubSpoke (ring + narrow fallback).

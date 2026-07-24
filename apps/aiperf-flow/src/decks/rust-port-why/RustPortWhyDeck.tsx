@@ -312,6 +312,38 @@ export function RustPortWhyDeck(): React.JSX.Element {
                 engages when a run genuinely exceeds one host's ~15–28k connection ceiling. The default
                 single-node path stays one process. Same word — “distributed” — opposite reason.
               </Callout>
+              <Callout tone="warning" title="“Won't free-threaded (no-GIL) Python make this moot?”">
+                <Stack gap={8}>
+                  <span>
+                    This is the strongest objection — and it dents one pillar, not the case. Free-threaded
+                    CPython is real and maturing, so we meet it directly:
+                  </span>
+                  <ul className={`ml-4 list-disc space-y-1 text-sm ${inkClassName("secondary")}`}>
+                    <li>
+                      It does <span className={inkClassName("primary")}>nothing for driver #1</span> — a
+                      shared Rust core with Dynamo. No-GIL Python gives zero code reuse with a Rust project.
+                    </li>
+                    <li>
+                      It removes <span className={inkClassName("primary")}>serialization, not slowness</span>.
+                      The ceiling gap is Rust being fast per-operation; CPython's per-request/per-token
+                      cost, asyncio, and GC remain. Free-threaded Python on N threads still pays the slow
+                      primitive N times.
+                    </li>
+                    <li>
+                      Collapsing the ~10-service mesh into one free-threaded process is a re-architecture
+                      of similar magnitude — and it buys{" "}
+                      <span className={inkClassName("primary")}>data races</span> (parallelism without
+                      safety), the exact bug class Rust rejects at compile time. If we rewrite the
+                      concurrency model, do it where it is provably correct.
+                    </li>
+                    <li>
+                      It is still maturing (single-thread penalty; a consolidating free-threaded
+                      C-extension ecosystem) and leaves startup, single-binary distribution, and the OS
+                      connection ceiling unchanged.
+                    </li>
+                  </ul>
+                </Stack>
+              </Callout>
             </Stack>
 
             {/* ── Honest performance ───────────────────────────────────────── */}
