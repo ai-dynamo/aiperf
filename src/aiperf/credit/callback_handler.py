@@ -369,10 +369,15 @@ class CreditCallbackHandler:
             credit_return.cancelled,
             errored=credit_return.error is not None,
             is_child=credit.agent_depth > 0,
+            no_request=credit.no_request,
         )
 
-        # 2. Track prefill release if TTFT never arrived
-        if not credit_return.first_token_sent:
+        # 2. Track prefill release if TTFT never arrived. A no_request virtual
+        # credit never bumps the billable sent counter (increment_sent), so its
+        # prefill-release must be skipped here too -- else the derived
+        # ``in_flight_prefills = sent - released`` diagnostic underflows by one
+        # per coordinator turn. The concurrency slot is still released below.
+        if not credit_return.first_token_sent and not credit.no_request:
             handler.progress.increment_prefill_released()
 
         # 3. Release concurrency slots

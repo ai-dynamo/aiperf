@@ -1066,3 +1066,40 @@ class TestMakeFirstTokenCallback:
         assert sent.credit_id == sample_credit_context.credit.id
         assert sent.phase_index == sample_credit_context.credit.phase_index
         assert sent.ttft_ns == 50_000_000
+
+
+# --- no_request (orchestrator) Credit Tests ---
+
+
+@pytest.mark.asyncio
+class TestNoRequestCredit:
+    """Worker short-circuits no_request credits without an HTTP POST."""
+
+    async def test_no_request_credit_skips_send_request_but_returns_credit(
+        self, mock_worker
+    ):
+        credit_context = CreditContext(
+            credit=Credit(
+                id=42,
+                phase=CreditPhase.PROFILING,
+                conversation_id="orch-conv",
+                x_correlation_id="orch-corr",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=1000000,
+                no_request=True,
+            ),
+            drop_perf_ns=2000000,
+        )
+        mock_worker.inference_client.send_request = AsyncMock()
+        mock_worker.credit_return_push_client.send = AsyncMock()
+
+        await mock_worker._on_credit_drop_message_task(credit_context)
+
+        mock_worker.inference_client.send_request.assert_not_called()
+        mock_worker.credit_return_push_client.send.assert_awaited_once()
+        credit_return = mock_worker.credit_return_push_client.send.call_args.args[0]
+        assert credit_return.cancelled is False
+        assert credit_return.error is None
+        assert credit_return.first_token_sent is False
+        assert credit_return.credit.id == 42

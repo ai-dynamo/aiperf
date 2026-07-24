@@ -477,3 +477,267 @@ def test_system_on_spawn_child_turn0_allowed(tmp_path):
     )
     # Must not raise.
     DagJsonlLoader(path).load()
+
+
+def test_orchestrator_line_synthesizes_no_request_turn(tmp_path):
+    """The loader synthesizes ONE no-op turn for an orchestrator conversation
+    from its conversation-level ``spawns``.
+
+    Drives the full ``.load()`` path, which also runs the v1 orchestrator
+    validator. The synthesized turn carries ``no_request=True`` and a
+    post-timing SPAWN branch referencing the fan-out child, so a request-less
+    orchestrator plus its spawned child loads end-to-end without raising.
+    """
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "start",
+                "orchestrator": True,
+                "spawns": ["fan-out-a"],
+            },
+            {
+                "session_id": "fan-out-a",
+                "turns": [{"messages": [{"role": "user", "content": "hi"}]}],
+            },
+        ],
+    )
+    by_id = {c.session_id: c for c in DagJsonlLoader(path).load()}
+    start = by_id["start"]
+    assert start.is_orchestrator is True
+    assert len(start.turns) == 1
+    assert start.turns[0].no_request is True
+    post_branches = [b for b in start.branches if b.dispatch_timing == "post"]
+    assert any("fan-out-a" in b.child_conversation_ids for b in post_branches)
+    # The synthesized turn declares the post-timing spawn branch.
+    assert start.turns[0].branch_ids
+    assert post_branches[0].branch_id in start.turns[0].branch_ids
+
+
+def test_orchestrator_spawn_child_must_exist(tmp_path):
+    """An orchestrator whose spawn child is absent from the dataset raises at
+    load time (child-existence is still enforced through the normal path)."""
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "start",
+                "orchestrator": True,
+                "spawns": ["missing-child"],
+            },
+        ],
+    )
+    with pytest.raises(DagLoadError):
+        DagJsonlLoader(path).load()
+
+
+def test_orchestrator_rounds_synthesizes_gated_spine(tmp_path):
+    """``rounds: N`` synthesizes a gated spine: N spawning request-free turns
+    (each AND-waiting its round before the next) plus a terminal gate turn, so
+    every round's branches complete before the next round fires."""
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "start",
+                "orchestrator": True,
+                "rounds": 2,
+                "spawns": ["a", "b"],
+            },
+            {
+                "session_id": "a",
+                "turns": [{"messages": [{"role": "user", "content": "hi"}]}],
+            },
+            {
+                "session_id": "b",
+                "turns": [{"messages": [{"role": "user", "content": "hi"}]}],
+            },
+        ],
+    )
+    by_id = {c.session_id: c for c in DagJsonlLoader(path).load()}
+    start = by_id["start"]
+    assert start.is_orchestrator is True
+    # N spawning turns + 1 terminal gate = N+1
+    assert len(start.turns) == 3
+    assert all(t.no_request is True for t in start.turns)
+    # The two spawning turns each declare a SPAWN branch; the terminal gate does not.
+    assert start.turns[0].branch_ids
+    assert start.turns[1].branch_ids
+    assert not start.turns[2].branch_ids
+
+
+def test_rounds_rejected_without_orchestrator(tmp_path):
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "start",
+                "rounds": 2,
+                "turns": [{"messages": [{"role": "user", "content": "hi"}]}],
+            },
+        ],
+    )
+    with pytest.raises(DagLoadError):
+        DagJsonlLoader(path).load()
+
+
+def test_orchestrator_think_time_ms_rides_spawning_turns_only(tmp_path):
+    """``think_time_ms`` is stamped as the per-round delay on the N spawning
+    spine turns (0..N-1), so the orchestrator applies it before each round. The
+    terminal gate turn (turn N) spawns no round and carries NO think-time, so it
+    does not delay session completion by a spurious extra interval."""
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "start",
+                "orchestrator": True,
+                "rounds": 2,
+                "think_time_ms": 50.0,
+                "spawns": ["a"],
+            },
+            {
+                "session_id": "a",
+                "turns": [{"messages": [{"role": "user", "content": "hi"}]}],
+            },
+        ],
+    )
+    by_id = {c.session_id: c for c in DagJsonlLoader(path).load()}
+    start = by_id["start"]
+    assert len(start.turns) == 3
+    # spawning turns (0..N-1) carry the per-round think; terminal gate does not.
+    assert [t.delay for t in start.turns[:-1]] == [50.0, 50.0]
+    assert not start.turns[-1].delay
+
+
+def test_think_time_ms_requires_rounds(tmp_path):
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "start",
+                "orchestrator": True,
+                "think_time_ms": 50.0,
+                "spawns": ["a"],
+            },
+            {
+                "session_id": "a",
+                "turns": [{"messages": [{"role": "user", "content": "hi"}]}],
+            },
+        ],
+    )
+    with pytest.raises(DagLoadError):
+        DagJsonlLoader(path).load()
+
+
+def test_orchestrator_think_time_sigma_sets_distribution(tmp_path):
+    """``think_time_sigma`` attaches a lognormal ThinkTimeSpec (median = the
+    per-round think_time_ms) to the synthesized orchestrator conversation."""
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "start",
+                "orchestrator": True,
+                "rounds": 2,
+                "think_time_ms": 200.0,
+                "think_time_sigma": 0.5,
+                "think_time_min_ms": 10.0,
+                "spawns": ["a"],
+            },
+            {
+                "session_id": "a",
+                "turns": [{"messages": [{"role": "user", "content": "hi"}]}],
+            },
+        ],
+    )
+    by_id = {c.session_id: c for c in DagJsonlLoader(path).load()}
+    start = by_id["start"]
+    assert start.think_time is not None
+    assert start.think_time.sigma == 0.5
+    assert start.think_time.min_ms == 10.0
+    # median rides the per-round delay on the spawning turns; terminal gate is 0.
+    assert [t.delay for t in start.turns[:-1]] == [200.0, 200.0]
+    assert not start.turns[-1].delay
+
+
+def test_think_time_sigma_requires_think_time_ms(tmp_path):
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "start",
+                "orchestrator": True,
+                "rounds": 2,
+                "think_time_sigma": 0.5,
+                "spawns": ["a"],
+            },
+            {
+                "session_id": "a",
+                "turns": [{"messages": [{"role": "user", "content": "hi"}]}],
+            },
+        ],
+    )
+    with pytest.raises(DagLoadError):
+        DagJsonlLoader(path).load()
+
+
+def _orch(**extra):
+    base = {
+        "session_id": "start",
+        "orchestrator": True,
+        "rounds": 2,
+        "think_time_ms": 100.0,
+        "spawns": ["a"],
+    }
+    base.update(extra)
+    return base
+
+
+def _child():
+    return {
+        "session_id": "a",
+        "turns": [{"messages": [{"role": "user", "content": "hi"}]}],
+    }
+
+
+def test_think_time_min_gt_max_rejected(tmp_path):
+    path = write_lines(
+        tmp_path,
+        [
+            _orch(
+                think_time_sigma=0.5, think_time_min_ms=500.0, think_time_max_ms=10.0
+            ),
+            _child(),
+        ],
+    )
+    with pytest.raises(DagLoadError, match=r"min_ms.*<=.*max_ms"):
+        DagJsonlLoader(path).load()
+
+
+def test_think_time_clamp_without_sigma_rejected(tmp_path):
+    path = write_lines(tmp_path, [_orch(think_time_min_ms=50.0), _child()])
+    with pytest.raises(DagLoadError, match=r"require 'think_time_sigma'"):
+        DagJsonlLoader(path).load()
+
+
+def test_think_time_fields_on_non_orchestrator_rejected(tmp_path):
+    path = write_lines(
+        tmp_path,
+        [
+            {
+                "session_id": "s",
+                "turns": [{"messages": [{"role": "user", "content": "hi"}]}],
+                "think_time_sigma": 0.5,
+            },
+        ],
+    )
+    with pytest.raises(DagLoadError, match=r"only valid on an orchestrator"):
+        DagJsonlLoader(path).load()
+
+
+def test_think_time_sigma_infinite_rejected(tmp_path):
+    # inf is JSON-illegal via orjson, but a huge finite sigma must be capped (le=10).
+    path = write_lines(tmp_path, [_orch(think_time_sigma=1e300), _child()])
+    with pytest.raises(DagLoadError):
+        DagJsonlLoader(path).load()

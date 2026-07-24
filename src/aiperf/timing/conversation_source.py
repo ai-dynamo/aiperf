@@ -117,6 +117,7 @@ class SampledSession:
             root_correlation_id=self.root_correlation_id,
             is_session_start=True,
             has_forks=first_meta.has_forks if first_meta is not None else False,
+            no_request=first_meta.no_request if first_meta is not None else False,
             branch_mode=self.branch_mode,
             cache_bust_marker=self.cache_bust_marker,
             cache_bust_target=self.cache_bust_target,

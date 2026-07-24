@@ -27,6 +27,15 @@ class CreditCounter:
         self._config = config
 
         # Progress counters
+        # Monotonic dispatch sequence: bumped for EVERY issued credit
+        # (roots, DAG children, and ``no_request`` orchestrator credits).
+        # Sources ``Credit.id``, which must be unique per dispatched credit
+        # because it keys live in-flight tracking (worker ``credit_tasks``,
+        # ``StickyCreditRouter.active_credit_ids``, adaptive-scale windows).
+        # Decoupled from ``_requests_sent`` so that ``no_request`` credits —
+        # which do NOT bump the billable request counter — still receive a
+        # distinct id from the next real credit.
+        self._dispatch_seq: int = 0
         self._requests_sent: int = 0
         self._root_requests_sent: int = 0
         self._requests_completed: int = 0
@@ -234,14 +243,20 @@ class CreditCounter:
 
         Lock-free: no async calls.
         """
-        credit_index = self._requests_sent
+        credit_index = self._dispatch_seq
+        self._dispatch_seq += 1
         new_sent_count = self._requests_sent + 1
 
         # The request-count cap is a global wire cap honored by every credit
         # (root or child), so it can flip is_final_credit even for a credit
-        # that does not count toward the sampled phase target.
+        # that does not count toward the sampled phase target. A ``no_request``
+        # virtual orchestrator credit issues no wire request, so it must NOT
+        # count toward the cap (mirrors the ``counts_as_request`` gate below
+        # that keeps ``_requests_sent`` unbumped for it); without this gate a
+        # spine's virtual credit could spuriously flip is_final_credit at-cap.
         hit_request_cap = (
-            self._config.total_expected_requests is not None
+            not turn_to_send.no_request
+            and self._config.total_expected_requests is not None
             and new_sent_count >= self._config.total_expected_requests
         )
 
@@ -270,6 +285,19 @@ class CreditCounter:
             new_sent_sessions_count += 1
             new_total_session_turns += turn_to_send.num_turns - turn_to_send.turn_index
 
+        # A ``no_request`` orchestrator credit is a virtual root session: it
+        # occupies a session slot and counts toward ``--num-conversations``
+        # (session + root-plan counters below), but fires no HTTP request, so
+        # it must NOT advance the wire-request counter or the
+        # ``--request-count`` cap. ``_root_requests_sent`` stays balanced with
+        # ``_total_session_turns`` (both bumped) so the session-completion
+        # predicate remains satisfiable.
+        counts_as_request = not turn_to_send.no_request
+        if counts_as_request:
+            self._requests_sent = new_sent_count
+        else:
+            new_sent_count = self._requests_sent
+
         # Use root-only wire count (not global ``new_sent_count``) for the
         # session-completion predicate: BG-fork parents continue running
         # turns AFTER children begin firing, so the global counter would
@@ -277,7 +305,8 @@ class CreditCounter:
         # lands and the strategy loop would exit before the parent's
         # remaining turns could dispatch. The session-target arm is gated on
         # ``counts_toward_phase_target`` so reactive (post-sampling) work does
-        # not satisfy the sampled plan; the global request-cap arm is not.
+        # not satisfy the sampled plan; the global request-cap arm (above) is
+        # not, and already excludes ``no_request`` virtual credits.
         hit_session_target = turn_to_send.counts_toward_phase_target and (
             self._config.expected_num_sessions is not None
             and new_sent_sessions_count >= self._config.expected_num_sessions
@@ -285,7 +314,6 @@ class CreditCounter:
         )
         is_final_credit = hit_request_cap or hit_session_target
 
-        self._requests_sent = new_sent_count
         self._root_requests_sent = new_root_sent
         self._sent_sessions = new_sent_sessions_count
         self._total_session_turns = new_total_session_turns
@@ -299,6 +327,7 @@ class CreditCounter:
         errored: bool = False,
         *,
         is_child: bool = False,
+        no_request: bool = False,
     ) -> bool:
         """Atomically increment returned count and check phase completion.
 
@@ -321,6 +350,17 @@ class CreditCounter:
             is_child: True when ``credit.agent_depth > 0``. Session-level
                 counters are skipped for children; request-level counters
                 still tick.
+            no_request: Whether the returned credit is a virtual ``no_request``
+                orchestrator credit. Such credits do NOT bump the billable
+                request counter (``_requests_completed``) — symmetric with
+                ``increment_sent``, which does not bump ``_requests_sent`` for
+                them. Without this symmetry ``final_requests_completed`` would
+                over-count and the records pipeline (which expects exactly one
+                record per completed wire request) would wait forever for
+                records that a virtual credit never produces. The virtual
+                credit still completes its session slot, so it bumps
+                ``_completed_sessions`` on its final turn. Orthogonal to
+                ``is_child`` (a no_request credit is a root, not a child).
 
         Returns:
             True if ALL sent credits have now been returned or cancelled
@@ -331,11 +371,17 @@ class CreditCounter:
             if is_final_turn and not is_child:
                 self._cancelled_sessions += 1
         else:
-            self._requests_completed += 1
+            # Request-level (completed/errors): every real wire request ticks,
+            # children included; a ``no_request`` virtual credit does not.
+            # Session-level (completed_sessions): gated on ``not is_child``
+            # (children inherit the parent's slot); a ``no_request`` root is
+            # NOT a child, so its final virtual turn still completes its slot.
+            if not no_request:
+                self._requests_completed += 1
+                if errored:
+                    self._request_errors += 1
             if is_final_turn and not is_child:
                 self._completed_sessions += 1
-            if errored:
-                self._request_errors += 1
 
         return self.check_all_returned_or_cancelled()
 

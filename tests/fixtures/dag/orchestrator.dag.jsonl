@@ -1,0 +1,3 @@
+{"session_id":"start","orchestrator":true,"spawns":["fan-out-a","fan-out-b"]}
+{"session_id":"fan-out-a","turns":[{"messages":[{"role":"user","content":"fan out child a please write a short reply"}],"max_tokens":16,"extra":{"min_tokens":16}}]}
+{"session_id":"fan-out-b","turns":[{"messages":[{"role":"user","content":"fan out child b please write a short reply"}],"max_tokens":16,"extra":{"min_tokens":16}}]}

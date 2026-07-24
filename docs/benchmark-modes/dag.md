@@ -91,6 +91,24 @@ Use `--custom-dataset-type dag_jsonl`. Each line of the input file is one conver
 
 **`pre_session_spawns`** is a list of child session ids dispatched as background SPAWN branches **before** this conversation's turn 0 is issued. It exists for trace-timing fidelity: if a captured trace shows a sub-agent's first request overlapping with the parent's turn 0 in-flight window, the literal "spawn after parent turn completes" rule would shift the child later than the trace records. Listing the child here issues it ahead of turn 0 instead. These children are fire-and-forget; each gets a fresh correlation id with `parent_correlation_id=None`, so no SPAWN_JOIN gate can reference them. Pre-session children must be SPAWN-mode (no parent context to inherit) — referencing a session as a `pre_session_spawns` target while it is also a FORK target is rejected at load time.
 
+### Orchestrator conversation
+
+An **orchestrator conversation** is a request-less driver whose only job is to fan out to a fixed set of children on every sampled iteration. Declare it with `orchestrator: true` plus conversation-level `spawns` (and **no** authored `turns`):
+
+```jsonc
+// orchestrator.dag.jsonl (see tests/fixtures/dag/orchestrator.dag.jsonl)
+{"session_id": "start", "orchestrator": true, "spawns": ["fan-out-a", "fan-out-b"]}
+{"session_id": "fan-out-a", "turns": [{"messages": [{"role": "user", "content": "..."}], "max_tokens": 16, "extra": {"min_tokens": 16}}]}
+{"session_id": "fan-out-b", "turns": [{"messages": [{"role": "user", "content": "..."}], "max_tokens": 16, "extra": {"min_tokens": 16}}]}
+```
+
+Semantics:
+
+- **Sends no request.** The loader synthesizes a single no-op turn (`no_request=True`); `StickyCreditRouter.send_credit()` short-circuits the credit in-process (no worker is selected) and synthesizes its return immediately. `BranchOrchestrator.intercept()` then fires the conversation-level `spawns` as real child wire requests.
+- **Re-fires every sampled iteration.** The orchestrator stays a sampleable root, so under `--concurrency`, `--request-count`, or duration limits it is re-sampled repeatedly and re-fans-out its children each time (fire-and-forget; children are SPAWN-mode with `parent_correlation_id=None`, so no SPAWN_JOIN gate can reference them).
+- **Counts as a conversation, not a request.** Each virtual firing takes a session slot and counts toward `--num-conversations`, but the request-less credit does **not** advance the `--request-count` cap — only the child wire requests do. So `--request-count N` caps the children; the orchestrator's own virtual credits are excluded.
+- **Empty `turns` required.** An `orchestrator: true` conversation must omit `turns`, must provide a non-empty `spawns`, and must not also set `pre_session_spawns`; violations are rejected at load time.
+
 ### Per-turn shape
 
 Each turn is a flat object validated against a strict schema (`DagTurn` in `src/aiperf/dataset/loader/dag_jsonl_models.py`). Top-level fields are limited to AIPerf-native Turn concepts plus DAG scheduling; every other OpenAI or vendor-specific parameter goes in `extra`, mirroring the CLI's `--extra-inputs` split. Unknown top-level keys are rejected at load time so typos surface immediately:
