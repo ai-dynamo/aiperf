@@ -203,7 +203,7 @@ impl RequestCtx {
             tokenized.count(),
             active_inflight,
             state.scheduler.clone(),
-            request_id.clone(),
+            &request_id,
             latency_cached,
         );
         Self {
@@ -715,7 +715,7 @@ pub async fn vllm_generate(
         osl,
         active_inflight,
         state.scheduler.clone(),
-        request_id.clone(),
+        &request_id,
         0,
     );
 
