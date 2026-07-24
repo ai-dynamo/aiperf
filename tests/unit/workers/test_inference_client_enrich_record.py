@@ -65,6 +65,12 @@ class TestEnrichRequestRecord:
         assert enriched.request_info.phase_name == "storm"
         assert enriched.request_info.phase_kind == "profiling"
 
+    def test_session_completion_field_propagates(self):
+        ri = _make_request_info(is_final_turn=False)
+        record = RequestRecord()
+        enriched = InferenceClient._enrich_request_record(record, ri)
+        assert enriched.request_info.is_final_turn is False
+
     def test_transport_extras_dropped(self):
         ri = _make_request_info()
         record = RequestRecord()

@@ -127,7 +127,7 @@ class MetricTimeUnitInfo(BaseMetricUnitInfo):
     """Information about a time unit for metrics."""
 
     long_name: str
-    per_second: int
+    per_second: float
 
 
 class MetricTimeUnit(BaseMetricUnit):
@@ -153,6 +153,11 @@ class MetricTimeUnit(BaseMetricUnit):
         long_name="seconds",
         per_second=1,
     )
+    HOURS = MetricTimeUnitInfo(
+        tag="hr",
+        long_name="hours",
+        per_second=1 / 3600,
+    )
 
     @cached_property
     def info(self) -> MetricTimeUnitInfo:
@@ -160,7 +165,7 @@ class MetricTimeUnit(BaseMetricUnit):
         return self._info  # type: ignore
 
     @cached_property
-    def per_second(self) -> int:
+    def per_second(self) -> float:
         """How many of these units there are in one second. Used as a common conversion factor to convert to other units."""
         return self.info.per_second
 
@@ -199,6 +204,7 @@ class GenericMetricUnit(BaseMetricUnit):
     RATIO = _unit("ratio")
     REQUESTS = _unit("requests")
     REQUESTS_PER_SECOND_PER_WATT = _unit("requests/sec/W")
+    SESSIONS = _unit("sessions")
     TOKENS = _unit("tokens")
     TOKENS_PER_SECOND_PER_WATT = _unit("tokens/sec/W")
     TOKENS_PER_JOULE = _unit("tokens/J")
@@ -355,6 +361,10 @@ class MetricOverTimeUnit(BaseMetricUnit):
     REQUESTS_PER_SECOND = MetricOverTimeUnitInfo(
         primary_unit=GenericMetricUnit.REQUESTS,
         time_unit=MetricTimeUnit.SECONDS,
+    )
+    SESSIONS_PER_HOUR = MetricOverTimeUnitInfo(
+        primary_unit=GenericMetricUnit.SESSIONS,
+        time_unit=MetricTimeUnit.HOURS,
     )
     TOKENS_PER_SECOND = MetricOverTimeUnitInfo(
         primary_unit=GenericMetricUnit.TOKENS,

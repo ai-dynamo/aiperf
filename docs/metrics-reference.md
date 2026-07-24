@@ -98,6 +98,8 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Request Latency](#request-latency)
     - [Request Throughput](#request-throughput)
     - [Request Count](#request-count)
+    - [Session Throughput](#session-throughput)
+    - [Session Count](#session-count)
     - [Error Request Count](#error-request-count)
     - [Minimum Request Timestamp](#minimum-request-timestamp)
     - [Maximum Response Timestamp](#maximum-response-timestamp)
@@ -1526,6 +1528,49 @@ The total number of **successfully completed** requests in the benchmark. This i
 ```python
 request_count = sum(1 for r in records if r.valid)
 ```
+
+---
+
+### Session Throughput
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sustained rate at which whole multi-turn sessions complete, expressed in
+sessions per hour. A session completes when the final turn of a root conversation
+returns successfully.
+
+**Formula:**
+```python
+session_throughput = session_count / benchmark_duration_hours
+```
+
+**Notes:**
+- Counts only root sessions (`agent_depth == 0`); DAG sub-agent children belong to
+  their root session.
+- For multi-turn datasets this is lower than [Request Throughput](#request-throughput),
+  which counts every turn. Single-turn datasets count the same completion events.
+- The duration is the active profiling window, including a time-slice window when
+  this metric is computed per slice.
+
+---
+
+### Session Count
+
+**Type:** [Aggregate Metric](#aggregate-metrics)
+
+The number of successfully completed root sessions. A record contributes when it
+is valid, is the final turn in its conversation, and has `agent_depth == 0`.
+
+**Formula:**
+```python
+session_count = sum(
+    1 for r in records
+    if r.valid and r.is_final_turn and r.agent_depth == 0
+)
+```
+
+Errored final turns do not count because their sessions did not complete
+successfully.
 
 ---
 

@@ -851,6 +851,12 @@ class RecordContext(AIPerfBaseModel):
         "without the full ``turns`` list on the wire. None for delay-scheduled "
         "continuation turns and non-fixed-schedule datasets.",
     )
+    is_final_turn: bool = Field(
+        default=True,
+        description="Whether this is the final turn in the conversation. Kept on the "
+        "slim record context so session-completion metrics survive the worker-to-record-"
+        "processor boundary.",
+    )
 
 
 class RequestInfo(RecordContext):
@@ -910,11 +916,6 @@ class RequestInfo(RecordContext):
         ge=0,
         description="The time in nanoseconds (perf_counter_ns) when the credit was dropped by the timing manager. "
         "This is used to calculate the credit drop latency.",
-    )
-    is_final_turn: bool = Field(
-        default=True,
-        description="Whether this is the final turn in the conversation. "
-        "Used by per-conversation connection strategy to release the connection lease.",
     )
     url_index: int | None = Field(
         default=None,
