@@ -39,6 +39,7 @@ export function PanelNode({ data }: NodeProps<PanelNodeType>): React.JSX.Element
           {data.title}
         </div>
       </div>
+      {data.diagram !== undefined && data.diagram}
       {data.detail !== undefined && (
         <div className={`mt-1.5 text-xs break-words ${inkClassName("secondary")}`}>{data.detail}</div>
       )}

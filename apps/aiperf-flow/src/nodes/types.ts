@@ -21,6 +21,8 @@ export type PanelNodeData = BaseNodeData & {
   detail?: string;
   surfaceRole?: SurfaceRole;
   strokeRole?: StrokeRole;
+  /** Optional in-card mini-diagram (compose `chalk` `Diagram`/`NodeChip`/… atoms). */
+  diagram?: React.ReactNode;
 };
 
 export type ChipNodeData = BaseNodeData & {
@@ -33,4 +35,6 @@ export type CardNodeData = BaseNodeData & {
   detail?: string;
   subtitle?: string;
   strokeRole?: StrokeRole;
+  /** Optional in-card mini-diagram (compose `chalk` `Diagram`/`NodeChip`/… atoms). */
+  diagram?: React.ReactNode;
 };

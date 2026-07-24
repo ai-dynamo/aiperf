@@ -27,6 +27,7 @@ import { roleClassName } from "../stage.js";
 import type { NodeRole } from "../stage.js";
 import type { FlowStep } from "../../../interactive/index.js";
 import type { StageDef } from "../stage.js";
+import { Diagram, NodeChip, DbNode, MiniArrow, MiniBars } from "../../../chalk/index.js";
 
 // Leaf (level-2) ids. Each is BOTH a level-1 target-node id (so a click drills) AND a key of
 // `leaves` (so `buildZoomTree` registers its subgraph). Namespaced to avoid any cross-stage
@@ -46,6 +47,13 @@ const seamNodes: Node[] = [
       title: "Rc<dyn Dispatcher>",
       subtitle: "shared upstream",
       detail: "Shared workload + SlotPool admission; just holds a sink.",
+      diagram: (
+        <Diagram>
+          <NodeChip>WORKLOAD</NodeChip>
+          <MiniArrow />
+          <NodeChip accent>SINK</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("transport"),
     },
   },
@@ -57,6 +65,13 @@ const seamNodes: Node[] = [
       title: "Two-trait seam",
       subtitle: "WorkerSink + ExecutionSinkBuilder",
       detail: "Implement these two traits; everything else is shared.",
+      diagram: (
+        <Diagram>
+          <NodeChip>BUILDER</NodeChip>
+          <MiniArrow />
+          <NodeChip accent>SINK</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("transport"),
     },
   },
@@ -68,6 +83,13 @@ const seamNodes: Node[] = [
       title: "TransportSink",
       subtitle: "HTTP · hyper · streaming",
       detail: "supports_response_streaming() = true — live SSE.",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>hyper</NodeChip>
+          <MiniArrow />
+          <NodeChip>t₁·t₂·t₃</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("transport"),
     },
   },
@@ -79,6 +101,13 @@ const seamNodes: Node[] = [
       title: "GrpcTransportSink",
       subtitle: "gRPC · Tonic · non-streaming",
       detail: "supports_response_streaming() = false — unary.",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>Tonic</NodeChip>
+          <MiniArrow />
+          <NodeChip>unary</NodeChip>
+        </Diagram>
+      ),
       className: roleClassName("transport"),
     },
   },
@@ -90,6 +119,13 @@ const seamNodes: Node[] = [
       title: "DryRunTransportFactoryV2",
       subtitle: "dry-run · no I/O",
       detail: "Strict decoder; synthesizes timings offline.",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>dry-run</NodeChip>
+          <MiniArrow />
+          <MiniBars heights={[40, 72, 100, 84]} />
+        </Diagram>
+      ),
       className: roleClassName("transport"),
     },
   },
@@ -101,6 +137,13 @@ const seamNodes: Node[] = [
       title: "SteppableEngine",
       subtitle: "dynosim · offline co-sim",
       detail: "In-process Dynamo mocker via SteppableReplay.",
+      diagram: (
+        <Diagram>
+          <NodeChip accent>dyno</NodeChip>
+          <MiniArrow />
+          <DbNode>replay</DbNode>
+        </Diagram>
+      ),
       className: roleClassName("server"),
     },
   },

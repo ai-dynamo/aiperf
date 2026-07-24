@@ -52,6 +52,7 @@ export function CardNode({ data }: NodeProps<CardNodeType>): React.JSX.Element {
           {data.subtitle}
         </div>
       )}
+      {data.diagram !== undefined && data.diagram}
       {data.detail !== undefined && (
         <div className={`mt-1.5 text-xs break-words ${inkClassName("secondary")}`}>{data.detail}</div>
       )}
