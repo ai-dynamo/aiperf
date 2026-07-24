@@ -257,3 +257,75 @@ class TestBaseEndpointAbstractMethods:
 
         with pytest.raises(TypeError):
             IncompleteEndpoint(model_endpoint=test_model_endpoint)
+
+
+class TestBuildMessagesResetContext:
+    """Byte-critical: build_messages must honor Turn.reset_context.
+
+    weka emits reset_context=True at a mid-segment LCP cut, where the prior
+    accumulated message array is discarded rather than extended. Main's model
+    has the field; this verifies build_messages acts on it.
+    """
+
+    @pytest.fixture
+    def endpoint(self):
+        model_endpoint = create_model_endpoint(
+            EndpointType.CHAT, base_url="http://localhost:8000/v1/test"
+        )
+        return create_endpoint_with_mock_transport(MockEndpoint, model_endpoint)
+
+    def test_extend_when_reset_context_false(self, endpoint):
+        from aiperf.common.models import Turn
+
+        turns = [
+            Turn(raw_messages=[{"role": "user", "content": "A"}]),
+            Turn(raw_messages=[{"role": "assistant", "content": "B"}]),
+            Turn(raw_messages=[{"role": "user", "content": "C"}]),
+        ]
+        messages = endpoint.build_messages(turns)
+        assert [m["content"] for m in messages] == ["A", "B", "C"]
+
+    def test_reset_context_discards_prior_messages(self, endpoint):
+        from aiperf.common.models import Turn
+
+        turns = [
+            Turn(raw_messages=[{"role": "user", "content": "A"}]),
+            Turn(raw_messages=[{"role": "assistant", "content": "B"}]),
+            Turn(
+                raw_messages=[{"role": "user", "content": "RESET"}],
+                reset_context=True,
+            ),
+        ]
+        messages = endpoint.build_messages(turns)
+        assert [m["content"] for m in messages] == ["RESET"]
+
+    def test_reset_context_resumes_accumulation_after_reset(self, endpoint):
+        """Mid-sequence reset [A, B, RESET, C] -> [RESET, C]: accumulation
+        resumes normally on turns following the reset, not just clears."""
+        from aiperf.common.models import Turn
+
+        turns = [
+            Turn(raw_messages=[{"role": "user", "content": "A"}]),
+            Turn(raw_messages=[{"role": "assistant", "content": "B"}]),
+            Turn(
+                raw_messages=[{"role": "user", "content": "RESET"}],
+                reset_context=True,
+            ),
+            Turn(raw_messages=[{"role": "assistant", "content": "C"}]),
+        ]
+        messages = endpoint.build_messages(turns)
+        assert [m["content"] for m in messages] == ["RESET", "C"]
+
+    def test_reset_context_without_raw_messages_is_noop(self, endpoint):
+        """reset_context only fires for turns carrying raw_messages. A synthetic
+        turn (raw_messages=None) with the flag set must NOT discard prior
+        turns; it renders and appends normally."""
+        from aiperf.common.models import Text, Turn
+
+        turns = [
+            Turn(raw_messages=[{"role": "user", "content": "A"}]),
+            Turn(raw_messages=[{"role": "assistant", "content": "B"}]),
+            Turn(role="user", texts=[Text(contents=["C"])], reset_context=True),
+        ]
+        messages = endpoint.build_messages(turns)
+        assert [m["content"] for m in messages] == ["A", "B", "C"]

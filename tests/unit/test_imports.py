@@ -147,7 +147,11 @@ _TEST_MODULES_WITH_DEPTH = discover_modules(
     REPO_ROOT,
     TESTS_DIR,
     exclude_names={"conftest.py", "test_imports.py"},
-    exclude_dirs={"ci"},
+    # aiperf_mock_amdsmi is the fake amdsmi bindings package; it raises OSError
+    # on import unless AIPERF_MOCK_AMDSMI is set (the dormancy gate), so it is
+    # intentionally non-importable here. It has dedicated coverage in
+    # tests/unit/gpu_telemetry/test_fake_amdsmi_module.py.
+    exclude_dirs={"ci", "aiperf_mock_amdsmi"},
 )
 
 AIPERF_MODULES = sorted_leaves_first(_AIPERF_MODULES_WITH_DEPTH)

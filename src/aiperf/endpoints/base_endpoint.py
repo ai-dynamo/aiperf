@@ -74,11 +74,35 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         Returns:
             List of successfully parsed responses
         """
-        return [
+        if record._parsed_responses_cache is not None:
+            return record._parsed_responses_cache
+
+        parsed_responses = [
             parsed
             for response in record.responses
             if (parsed := self.parse_response(response))
         ]
+        record._parsed_responses_cache = parsed_responses
+        return parsed_responses
+
+    def process_responses(
+        self,
+        record: RequestRecord,
+        *,
+        capture_assistant_turn: bool,
+    ) -> tuple[list[ParsedResponse], Turn | None]:
+        """Parse a completed response stream and optionally capture its replay turn.
+
+        The parsed responses are cached on the worker-local record so endpoint
+        replay logic and request timing calculations share the same objects.
+        Endpoint implementations that need raw structured response fields can
+        override this method to collect both representations in one pass.
+        """
+        parsed_responses = self.extract_response_data(record)
+        assistant_turn = (
+            self.build_assistant_turn(record) if capture_assistant_turn else None
+        )
+        return parsed_responses, assistant_turn
 
     def build_assistant_turn(self, record: RequestRecord) -> Turn | None:
         """Build a Turn representing the assistant response for context replay.
@@ -102,8 +126,17 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         Returns ``None`` when the record has no replayable assistant content
         (error response, empty body, etc.).
         """
+        return self._build_assistant_turn_from_parsed(
+            self.extract_response_data(record)
+        )
+
+    @staticmethod
+    def _build_assistant_turn_from_parsed(
+        parsed_responses: list[ParsedResponse],
+    ) -> Turn | None:
+        """Build the default text-only assistant turn from parsed responses."""
         output_texts: list[str] = []
-        for response in self.extract_response_data(record):
+        for response in parsed_responses:
             if not response.data:
                 continue
             if isinstance(response.data, ReasoningResponseData):
@@ -177,18 +210,54 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         ``payload["messages"]`` for chat endpoints, ``payload["input"]``
         for the Responses API, and any similar shape for plugins.
 
+        When a turn sets ``reset_context=True``, any messages already
+        accumulated from prior turns in this call are discarded before
+        that turn's ``raw_messages`` is applied. This expresses a
+        non-monotonic context change in delta-encoded conversations
+        (e.g. weka's mid-segment LCP cut). The flag only applies when the
+        turn carries ``raw_messages``.
+
         Does NOT prepend shared ``system_message`` or
         ``user_context_message`` - those live on ``RequestInfo`` and are
         placed wherever the endpoint's wire contract dictates (e.g. a
         leading ``system`` role in chat; a top-level ``instructions`` field
         in Responses). Callers handle that in their ``format_payload``.
         """
+        return self._flatten_turns(turns)
+
+    def _flatten_turns(
+        self,
+        turns: list[Turn],
+        *,
+        transform_raw_item: Callable[[dict[str, Any]], dict[str, Any] | None]
+        | None = None,
+        render_synthetic: Callable[[Turn], dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Shared flatten-and-merge skeleton for ``build_messages`` overrides.
+
+        ``transform_raw_item`` maps each ``raw_messages`` item to its wire form
+        or returns ``None`` to drop it; ``render_synthetic`` renders a turn with
+        no ``raw_messages``. Both default to identity / ``_render_turn_message``.
+        """
         messages: list[dict[str, Any]] = []
         for turn in turns:
             if turn.raw_messages:
-                messages.extend(turn.raw_messages)
+                if turn.reset_context:
+                    messages = []
+                for item in turn.raw_messages:
+                    wire_item = (
+                        transform_raw_item(item)
+                        if transform_raw_item is not None
+                        else item
+                    )
+                    if wire_item is not None:
+                        messages.append(wire_item)
                 continue
-            messages.append(self._render_turn_message(turn))
+            messages.append(
+                render_synthetic(turn)
+                if render_synthetic is not None
+                else self._render_turn_message(turn)
+            )
         return messages
 
     def _render_turn_message(self, turn: Turn) -> dict[str, Any]:
