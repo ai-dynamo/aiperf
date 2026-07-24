@@ -134,13 +134,20 @@ class CodegenGradingWorker:
         except asyncio.CancelledError:
             # Shutdown/cancellation while awaiting the worker: kill it (and its
             # sandbox group) so a pending request can't desync the next grade or
-            # leave orphaned children, then propagate the cancellation.
-            await self._handle_fault()
+            # leave orphaned children, then propagate. Not a worker failure.
+            await self._handle_fault(count_start_failure=False)
             raise
-        except (TimeoutError, ConnectionError, BrokenPipeError, ValueError) as exc:
-            # ValueError covers readline() overrunning the StreamReader limit
-            # (asyncio.LimitOverrunError); route it through the fault path so the
-            # worker is killed and counted rather than desyncing the next grade.
+        except TimeoutError as exc:
+            # The worker is alive but this grade is too slow — a per-grade fault,
+            # not a worker-startup failure. Kill+respawn, but do NOT count it
+            # toward the readiness cap, or a few slow problems at the start of a
+            # run would trip the cap and disable all grading.
+            await self._handle_fault(count_start_failure=False)
+            raise CodegenWorkerError(f"grading worker timed out: {exc!r}") from exc
+        except (ConnectionError, BrokenPipeError, ValueError) as exc:
+            # Transport broke, or the response overran the StreamReader limit
+            # (ValueError covers asyncio.LimitOverrunError): the worker died or
+            # desynced, so this counts toward the startup/readiness cap.
             await self._handle_fault()
             raise CodegenWorkerError(f"grading worker fault: {exc!r}") from exc
 
@@ -195,8 +202,12 @@ class CodegenGradingWorker:
         self._start_failures = 0
         return metrics
 
-    async def _handle_fault(self) -> None:
-        if not self._worker_proven:
+    async def _handle_fault(self, count_start_failure: bool = True) -> None:
+        # Only failures that mean the worker never became usable (it died or
+        # emitted garbage before ever succeeding) count toward the startup cap.
+        # Per-grade timeouts and shutdown cancellation pass count_start_failure=
+        # False so a slow grade never disables the whole run.
+        if count_start_failure and not self._worker_proven:
             self._start_failures += 1
         tail = await self._kill()
         _log.debug(

@@ -162,6 +162,22 @@ class TestTimeoutRestart:
         finally:
             await worker.aclose()
 
+    async def test_timeout_on_unproven_worker_does_not_count_as_start_failure(
+        self, tmp_path
+    ) -> None:
+        # Regression: a slow FIRST grade (worker never proven) is a per-grade
+        # timeout, not a worker-startup failure. Counting it would let a few slow
+        # problems at the start of a run trip the cap and disable all grading.
+        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _HANG_THEN_OK))
+        try:
+            with pytest.raises(CodegenWorkerError):
+                await worker.grade_codegen(
+                    [{"input_output": "{}"}], [["x"]], timeout=0.2
+                )
+            assert worker._start_failures == 0
+        finally:
+            await worker.aclose()
+
 
 class TestCancellation:
     async def test_cancellation_kills_worker_and_propagates(self, tmp_path) -> None:
