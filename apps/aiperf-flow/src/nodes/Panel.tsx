@@ -6,27 +6,38 @@
 import type { NodeProps, Node } from "@xyflow/react";
 import { Handle, Position } from "@xyflow/react";
 import clsx from "clsx";
-import { surfaceClassName, strokeClassName, inkClassName } from "../theme/tokens.js";
+import { surfaceClassName, inkClassName } from "../theme/tokens.js";
 import type { PanelNodeData } from "./types.js";
 
 export type PanelNodeType = Node<PanelNodeData, "panel">;
 
 const HANDLE_CLASS_NAME = "!rounded-full !border-stroke-primary !bg-accent-primary !h-2 !w-2";
 
+const ACCENT = "var(--accent, var(--color-accent-primary))";
+
+/** Systems Chalk panel: neutral softly-shadowed card, color carried by an accent badge dot + hover
+ * border (see `CardNode`). A role sets `--accent` via `data.className`. */
 export function PanelNode({ data }: NodeProps<PanelNodeType>): React.JSX.Element {
   return (
     <div
       className={clsx(
-        // Soft floating 3D card; full (non-strip) border. `roleClassName` upgrades to a role color.
-        "min-w-[150px] max-w-[260px] rounded-xl border px-4 py-3 shadow-md transition-shadow",
+        "min-w-[160px] max-w-[264px] rounded-[13px] border border-white/10 px-4 py-3.5",
+        "shadow-[0_12px_28px_rgba(0,0,0,0.28)] transition-[transform,border-color]",
+        "hover:-translate-y-0.5 hover:border-[color:var(--accent,var(--color-accent-primary))]",
         surfaceClassName(data.surfaceRole ?? "elevated"),
-        strokeClassName(data.strokeRole ?? "secondary"),
         data.className,
       )}
     >
       <Handle type="target" position={Position.Left} className={HANDLE_CLASS_NAME} />
-      <div className={`text-sm font-semibold tracking-tight break-words ${inkClassName("primary")}`}>
-        {data.title}
+      <div className="flex items-center gap-2.5">
+        <span
+          className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
+          style={{ backgroundColor: ACCENT }}
+          aria-hidden="true"
+        />
+        <div className={`text-sm font-semibold tracking-tight break-words ${inkClassName("primary")}`}>
+          {data.title}
+        </div>
       </div>
       {data.detail !== undefined && (
         <div className={`mt-1.5 text-xs break-words ${inkClassName("secondary")}`}>{data.detail}</div>

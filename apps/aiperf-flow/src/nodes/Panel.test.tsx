@@ -75,6 +75,6 @@ describe("PanelNode", () => {
     );
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toContain("extra-panel-class");
-    expect(root.className).toMatch(/rounded-(md|lg|xl)/);
+    expect(root.className).toMatch(/rounded-(md|lg|xl|\[13px\])/);
   });
 });
