@@ -386,3 +386,17 @@ class TestProcessGroup:
             assert os.getpgid(pid) == pid
         finally:
             await worker.aclose()
+
+
+class TestDeathPipe:
+    async def test_death_pipe_held_for_worker_life_then_closed(self, tmp_path) -> None:
+        # The client holds the death-pipe write end open for the worker's whole
+        # life (so the parent's exit — even os._exit — signals the worker to
+        # reap itself), and closes it on teardown.
+        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_OK))
+        try:
+            await worker.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
+            assert worker._death_w is not None
+        finally:
+            await worker.aclose()
+        assert worker._death_w is None

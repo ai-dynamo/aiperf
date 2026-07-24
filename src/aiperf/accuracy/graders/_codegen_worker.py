@@ -18,7 +18,9 @@ import contextlib
 import math
 import multiprocessing as mp
 import os
+import signal
 import sys
+import threading
 from collections.abc import Callable
 from typing import Any, BinaryIO
 
@@ -26,6 +28,11 @@ import orjson
 
 _LCB_PASS_AT_K = (1,)
 _LCB_NUM_PROCESSES = 8
+
+# The client passes the read end of a "death pipe" here; the write end stays open
+# in the client for the worker's whole life, so its close (even via the parent's
+# os._exit force-kill) signals the worker to reap itself. See _start_death_watcher.
+_DEATH_FD_ENV = "AIPERF_CODEGEN_DEATH_FD"
 
 # A pathological lighteval exception could stringify to megabytes; bound the
 # error so a single response line stays well under the client's stream limit.
@@ -148,8 +155,42 @@ def _install_stdout_guard() -> BinaryIO:
     return os.fdopen(protocol_fd, "wb", buffering=0)
 
 
+def _start_death_watcher() -> None:
+    """Reap this worker (and its lighteval sandbox children) if the parent dies
+    abruptly — the aiperf ``os._exit`` force-kill path, where the parent can't run
+    the client's ``aclose()`` and, because the worker has its own session
+    (``start_new_session``), receives no signal from the parent's exit.
+
+    The parent holds the write end of a pipe whose read end is passed here as
+    ``AIPERF_CODEGEN_DEATH_FD``. A dedicated thread blocks reading it; when the
+    parent exits the write end closes, the read returns EOF, and the thread
+    ``killpg``s this worker's process group so the worker and its forked sandbox
+    grandchildren die together. The thread stays blocked in ``os.read`` for its
+    whole life, holding no lock, so it does not reintroduce the multithreaded-fork
+    hazard when lighteval forks from the main thread.
+    """
+    fd_str = os.environ.get(_DEATH_FD_ENV)
+    if not fd_str:
+        return
+    death_fd = int(fd_str)
+
+    def _watch() -> None:
+        with contextlib.suppress(OSError):
+            while os.read(death_fd, 4096):
+                pass  # parent alive; ignore any bytes and wait for EOF
+        # EOF: the parent's write end closed (it exited). Kill our own process
+        # group (pgid 0 == this session, since the worker was start_new_session'd).
+        with contextlib.suppress(OSError):
+            os.killpg(0, signal.SIGKILL)
+
+    threading.Thread(target=_watch, daemon=True).start()
+
+
 def main() -> None:
     protocol_out = _install_stdout_guard()
+    # Start the death watcher before importing lighteval so an abrupt parent exit
+    # reaps the worker even if the (heavy) import is still in flight.
+    _start_death_watcher()
     _force_fork()
     from lighteval.tasks.tasks.lcb.codegen_metrics import codegen_metrics
 

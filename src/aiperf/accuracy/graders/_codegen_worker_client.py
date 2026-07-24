@@ -27,6 +27,13 @@ _log = AIPerfLogger(__name__)
 
 _DEFAULT_WORKER_CMD = [sys.executable, "-m", "aiperf.accuracy.graders._codegen_worker"]
 
+# Env var carrying the death-pipe read fd to the worker. The client holds the
+# write end open for the worker's life; its close (including via the parent's
+# os._exit force-kill, which the graceful aclose() path can't cover) tells the
+# worker's death watcher to reap itself and its sandbox children. Must match
+# _codegen_worker._DEATH_FD_ENV.
+_DEATH_FD_ENV = "AIPERF_CODEGEN_DEATH_FD"
+
 # asyncio's StreamReader defaults to a 64 KiB line limit; readline() raises
 # ValueError past it. A grading error string can legitimately be large, so give
 # the reader generous headroom while still bounding memory. The worker also caps
@@ -70,6 +77,7 @@ class CodegenGradingWorker:
         self._worker_proven = False
         self._stderr_tail: deque[str] = deque(maxlen=_STDERR_TAIL_LINES)
         self._stderr_task: asyncio.Task[None] | None = None
+        self._death_w: int | None = None
 
     async def grade_codegen(
         self,
@@ -96,6 +104,13 @@ class CodegenGradingWorker:
             return
         self._worker_proven = False
         self._stderr_tail.clear()
+        self._close_death_pipe()
+        # Death pipe: the child inherits the read end; we keep the write end open
+        # for the worker's life so its close (even via the parent's os._exit)
+        # tells the worker to reap itself. os.pipe fds are non-inheritable by
+        # default, so mark the read end inheritable before passing it through.
+        death_r, death_w = os.pipe()
+        os.set_inheritable(death_r, True)
         try:
             self._proc = await asyncio.create_subprocess_exec(
                 *self._cmd,
@@ -106,10 +121,16 @@ class CodegenGradingWorker:
                 # Own process group so _kill can reap lighteval's forked sandbox
                 # grandchildren, not just the worker (no-op on Windows).
                 start_new_session=True,
+                pass_fds=(death_r,),
+                env={**os.environ, _DEATH_FD_ENV: str(death_r)},
             )
         except Exception as exc:
+            os.close(death_r)
+            os.close(death_w)
             self._start_failures += 1
             raise CodegenWorkerError(f"failed to spawn grading worker: {exc}") from exc
+        os.close(death_r)  # the child holds it now; we keep only the write end
+        self._death_w = death_w
         # Drain stderr continuously so the pipe never fills (which would block the
         # worker) and the last output is retained to explain a fault.
         self._stderr_task = asyncio.create_task(self._drain_stderr(self._proc.stderr))
@@ -216,10 +237,17 @@ class CodegenGradingWorker:
             + (f"; stderr tail:\n{chr(10).join(tail)}" if tail else "")
         )
 
+    def _close_death_pipe(self) -> None:
+        if self._death_w is not None:
+            with contextlib.suppress(OSError):
+                os.close(self._death_w)
+            self._death_w = None
+
     async def _kill(self) -> list[str]:
         """Kill the worker and return its captured stderr tail (for diagnostics)."""
         proc, self._proc = self._proc, None
         task, self._stderr_task = self._stderr_task, None
+        self._close_death_pipe()
         if proc is not None and proc.returncode is None:
             _kill_process_group(proc)
             with contextlib.suppress(ProcessLookupError):

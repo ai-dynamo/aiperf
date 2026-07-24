@@ -76,3 +76,52 @@ async def test_timeout_kill_reaps_sandbox_grandchildren(tmp_path: Path) -> None:
         assert reaped, f"sandbox grandchild {gc_pid} still alive after worker kill"
     finally:
         await worker.aclose()
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "killpg"), reason="process groups unavailable on this platform"
+)
+@pytest.mark.asyncio
+async def test_death_watcher_reaps_session_when_parent_dies(tmp_path: Path) -> None:
+    # Abrupt-exit path: the real _start_death_watcher must reap the worker's whole
+    # session (worker + forked sandbox children) when the parent's death-pipe
+    # write end closes, even while the worker is busy and not reading stdin.
+    pidfile = tmp_path / "gc.pid"
+    script = tmp_path / "death_probe.py"
+    script.write_text(
+        textwrap.dedent(
+            f"""
+            import os, subprocess, sys, time
+            os.setsid()  # own session so killpg(0) can't touch the test runner
+            r, w = os.pipe()
+            os.environ["AIPERF_CODEGEN_DEATH_FD"] = str(r)
+            from aiperf.accuracy.graders import _codegen_worker as wkr
+            wkr._start_death_watcher()
+            child = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(300)"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            with open({str(pidfile)!r}, "w") as f:
+                f.write(str(child.pid))
+                f.flush()
+            os.close(w)  # simulate the parent's exit -> EOF -> watcher killpg(0)
+            time.sleep(300)  # busy; wait to be killed
+            """
+        )
+    )
+    proc = await asyncio.create_subprocess_exec(sys.executable, str(script))
+    rc = await asyncio.wait_for(proc.wait(), timeout=30)
+    assert rc < 0, f"probe should have been signal-killed, got rc={rc}"
+
+    gc_pid = int(pidfile.read_text().strip())
+    reaped = False
+    for _ in range(100):  # up to ~5s for the group-kill to reap the grandchild
+        try:
+            os.kill(gc_pid, 0)
+        except ProcessLookupError:
+            reaped = True
+            break
+        await asyncio.sleep(0.05)
+    assert reaped, f"sandbox grandchild {gc_pid} survived the parent's death"
