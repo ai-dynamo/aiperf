@@ -6,6 +6,7 @@
 //! `variation`, `artifact_dir`, and `random_seed = base + variation.index`.
 
 use crate::flags::ProfileFlags;
+use crate::load::Inputs;
 use crate::model::BenchmarkRun;
 use crate::sweep::artifact_dir::{self, IterationOrder};
 use crate::sweep::{Expansion, Variation};
@@ -40,8 +41,13 @@ pub struct Cell {
     pub trial: u32,
     /// Variation label (`"path=value, ..."`).
     pub label: String,
-    /// The built run (envelope stamped).
+    /// The built run (envelope stamped). Used for per-cell planning metadata, the
+    /// sweep aggregate (`variation`/`artifact_dir`), and the parity oracle.
     pub run: BenchmarkRun,
+    /// Authoring inputs the cell ships on the `--execute` wire so the runtime
+    /// resolves at execute time (`Some` for flag/YAML sweeps). `None` cells (recipe
+    /// sweeps, which override the resolved cfg directly) send the CLI-resolved `run`.
+    pub inputs: Option<Inputs>,
 }
 
 /// Build every `(variation, trial)` cell for a sweep plan.
@@ -67,6 +73,10 @@ pub fn plan_cells(
             if let Some(entries) = expansion.entries_override {
                 flags.num_dataset_entries = Some(entries.to_string());
             }
+            // Authoring inputs the cell ships on the wire (the runtime resolves at
+            // `--execute`), plus a CLI-side resolved run for planning metadata and the
+            // parity oracle. Both derive from the same per-variation flags.
+            let mut inputs = crate::load::resolve_inputs(&flags)?;
             let mut run = resolve(&flags)?;
             let base = run.artifact_dir.clone();
             let dir = artifact_dir::resolve(
@@ -78,14 +88,21 @@ pub fn plan_cells(
                 order,
             );
             stamp(&mut run, variation, trial, sweep_id, seed, &dir);
+            // Mirror the per-cell artifact dir + run seed onto the authoring inputs so
+            // the runtime's resolution reproduces the CLI-side run byte-for-byte.
+            inputs.artifact_dir = dir;
+            inputs.random_seed = seed.seed(variation.index);
             if trial > 0 && disable_warmup_after_first {
                 drop_warmup(&mut run);
+                // Match the resolved run's dropped warmup phase on the authoring side.
+                inputs.warmup = None;
             }
             cells.push(Cell {
                 index: variation.index,
                 trial,
                 label: variation.label.clone(),
                 run,
+                inputs: Some(inputs),
             });
         }
     }

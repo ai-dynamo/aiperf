@@ -32,24 +32,43 @@ fn run_benchmark_child(
     execute::run_once(runner, &payload, child_pid)
 }
 
-/// Authoring-tagged single-run `--execute` wire body.
+/// Authoring-tagged `--execute` wire body.
 ///
-/// The single-run path sends normalized authoring [`load::Inputs`] under an
-/// `authoring` tag so the runtime resolves them at `--execute` (matching the runtime
+/// The single-run and flag/YAML sweep paths send normalized authoring
+/// [`load::Inputs`] under an `authoring` tag so the runtime resolves them at
+/// `--execute` (matching the runtime
 /// [`decode_execute_wire`](aiperf_runtime::engine::protocol_v2::decode_execute_wire)
-/// union). The CLI single-run path therefore no longer resolves before the child
-/// launch — except that a configured `reset_kv_cache` / `server_profiler` endpoint
-/// control hook is a live pre-flight action that still needs the resolved endpoint,
-/// so that (rare) case resolves locally purely to run the hook.
+/// union). The sweep paths additionally carry the per-cell sweep envelope
+/// (`sweep_id`/`variation`/`trial`) so the runtime overlays it onto the resolved
+/// run (per-cell `artifact_dir`/`random_seed` ride inside the `Inputs`). The CLI
+/// therefore no longer resolves before the child launch — except that a configured
+/// `reset_kv_cache` / `server_profiler` endpoint control hook is a live pre-flight
+/// action that still needs the resolved endpoint, so that (rare) case resolves
+/// locally purely to run the hook.
 #[derive(serde::Serialize)]
 struct AuthoringWire<'a> {
     authoring: &'a load::Inputs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sweep_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variation: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "trial_is_zero")]
+    trial: u32,
 }
 
-/// Drive one single-run child from authoring [`load::Inputs`], sending the authoring
-/// wire body so the runtime performs the authoritative resolution at `--execute`.
+/// A zero trial is the single-run/base default; omit it from the wire so the
+/// single-run envelope stays `{"authoring": …}` exactly as before.
+fn trial_is_zero(trial: &u32) -> bool {
+    *trial == 0
+}
+
+/// Drive one child from authoring [`load::Inputs`], sending the authoring wire body
+/// so the runtime performs the authoritative resolution at `--execute`. `envelope`
+/// supplies the per-cell sweep coordinates (`sweep_id`/`variation`/`trial`) for the
+/// sweep paths; the single-run path passes `None` for a bare `{"authoring": …}` body.
 fn run_benchmark_child_authoring(
     inputs: &load::Inputs,
+    envelope: Option<&crate::model::BenchmarkRun>,
     runner: &Path,
     child_pid: &crate::signals::ChildPid,
 ) -> anyhow::Result<crate::execute::Terminal> {
@@ -60,7 +79,13 @@ fn run_benchmark_child_authoring(
         crate::control_hooks::run_reset_kv_cache_before_run(&run)?;
     }
     clear_prior_report(&inputs.artifact_dir);
-    let payload = serde_json::to_vec(&AuthoringWire { authoring: inputs })
+    let wire = AuthoringWire {
+        authoring: inputs,
+        sweep_id: envelope.and_then(|r| r.sweep_id.clone()),
+        variation: envelope.and_then(|r| r.variation.clone()),
+        trial: envelope.map(|r| r.trial).unwrap_or(0),
+    };
+    let payload = serde_json::to_vec(&wire)
         .map_err(|e| anyhow::anyhow!("failed to serialize the runner request: {e}"))?;
     execute::run_once(runner, &payload, child_pid)
 }
@@ -212,7 +237,7 @@ fn run_single(inputs: load::Inputs) -> anyhow::Result<i32> {
     tracing::info!("Starting native AIPerf run");
     let runner = exec_bin::resolve()?;
     let child_pid = crate::signals::install();
-    let terminal = run_benchmark_child_authoring(&inputs, &runner, &child_pid)?;
+    let terminal = run_benchmark_child_authoring(&inputs, None, &runner, &child_pid)?;
     if terminal.success {
         tracing::info!("Native AIPerf run completed");
         if let Some(path) = &terminal.report_path {
@@ -1002,6 +1027,9 @@ pub fn plan_recipe_cells(
             trial: 0,
             label: v.label.clone(),
             run,
+            // Recipe variations override the resolved cfg directly (no authoring-Inputs
+            // representation), so recipe cells send the CLI-resolved run.
+            inputs: None,
         });
     }
     Ok(cells)
@@ -1033,7 +1061,11 @@ pub fn plan_yaml_cells(
     let mut cells = Vec::with_capacity(variations.len());
     for v in &variations {
         let expanded = crate::expand::render_with_context(v.config.clone())?;
-        let mut run = yaml::resolve_expanded_value(expanded, artifact_dir.clone(), overrides)?;
+        // Build the authoring `Inputs` this cell ships on the wire (the runtime
+        // resolves at `--execute`), and resolve a CLI-side run purely for per-cell
+        // planning metadata (artifact dir base, sweep envelope, and the parity oracle).
+        let mut inputs = yaml::resolve_expanded_inputs(expanded, artifact_dir.clone(), overrides)?;
+        let mut run = load::build(inputs.clone())?;
         let dir = crate::sweep::artifact_dir::resolve(
             &run.artifact_dir,
             true,
@@ -1055,12 +1087,17 @@ pub fn plan_yaml_cells(
         }));
         run.random_seed = seed.seed(v.index);
         run.trial = 0;
-        run.artifact_dir = dir;
+        run.artifact_dir = dir.clone();
+        // Mirror the per-cell artifact dir + run seed onto the authoring inputs so the
+        // runtime's resolution reproduces the CLI-side run byte-for-byte.
+        inputs.artifact_dir = dir;
+        inputs.random_seed = seed.seed(v.index);
         cells.push(sweep_run::Cell {
             index: v.index,
             trial: 0,
             label: v.label.clone(),
             run,
+            inputs: Some(inputs),
         });
     }
     Ok(cells)
@@ -1155,7 +1192,15 @@ fn run_cells(
             total,
             cell.label,
         );
-        let terminal = run_benchmark_child(&cell.run, &runner, &child_pid)?;
+        // Flag-driven and YAML sweeps carry authoring `Inputs` per cell (the runtime
+        // resolves at `--execute`); recipe cells (which override the resolved cfg
+        // directly) carry no inputs and send the CLI-resolved run.
+        let terminal = match &cell.inputs {
+            Some(inputs) => {
+                run_benchmark_child_authoring(inputs, Some(&cell.run), &runner, &child_pid)?
+            }
+            None => run_benchmark_child(&cell.run, &runner, &child_pid)?,
+        };
         outcomes.push(sweep::aggregate::CellOutcome {
             label: cell.label.clone(),
             values: cell.run.variation.clone(),
@@ -1240,8 +1285,13 @@ mod authoring_wire_tests {
         // the single-run path now ships) originate from the same normalized inputs.
         let resolved = crate::load::build(inputs.clone()).expect("resolve run");
         let resolved_bytes = serde_json::to_vec(&resolved).expect("serialize resolved run");
-        let authoring_bytes = serde_json::to_vec(&super::AuthoringWire { authoring: &inputs })
-            .expect("serialize authoring wire");
+        let authoring_bytes = serde_json::to_vec(&super::AuthoringWire {
+            authoring: &inputs,
+            sweep_id: None,
+            variation: None,
+            trial: 0,
+        })
+        .expect("serialize authoring wire");
 
         let via_resolved = decode_execute_wire(&resolved_bytes)
             .expect("decode resolved wire")

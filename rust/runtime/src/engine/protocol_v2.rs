@@ -140,14 +140,29 @@ impl EnvelopeV2 {
 
 /// Authoring-tagged execute-mode stdin payload.
 ///
-/// The single-run profile path serializes normalized authoring [`Inputs`] under an
-/// `authoring` tag so the runtime performs the authoritative `Inputs -> BenchmarkRun`
-/// resolution at `--execute`, rather than the CLI resolving before the child launch.
+/// The single-run and sweep/YAML-sweep profile paths serialize normalized authoring
+/// [`Inputs`] under an `authoring` tag so the runtime performs the authoritative
+/// `Inputs -> BenchmarkRun` resolution at `--execute`, rather than the CLI resolving
+/// before the child launch. The sweep paths additionally carry the per-cell sweep
+/// envelope (`sweep_id`/`variation`/`trial`) alongside the inputs — the runtime
+/// overlays these onto the resolved run so the resolved wire the runner consumes is
+/// byte-identical to what the CLI-side resolution would have produced (per-cell
+/// `artifact_dir` and `random_seed` ride inside the `Inputs` themselves). Absent
+/// envelope fields (the single-run case) default to a bare run.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AuthoringWireV2 {
     /// Normalized profile inputs the runtime resolves through the shared `resolve`.
     authoring: crate::config::resolve::Inputs,
+    /// Outer sweep identifier (absent for a bare single run).
+    #[serde(default)]
+    sweep_id: Option<String>,
+    /// Sweep variation metadata (`{index,label,values}`); absent for a single run.
+    #[serde(default)]
+    variation: Option<Value>,
+    /// Zero-based trial number (`0` for a single run).
+    #[serde(default)]
+    trial: u32,
 }
 
 /// Decode the union execute-mode stdin payload into a resolved [`BenchmarkRunWireV2`].
@@ -171,7 +186,15 @@ pub fn decode_execute_wire(input: &[u8]) -> Result<BenchmarkRunWireV2> {
     if probe.get("authoring").is_some() {
         let envelope: AuthoringWireV2 = serde_json::from_slice(input)
             .map_err(|error| anyhow!("invalid authoring inputs: {error}"))?;
-        let run = crate::config::resolve::resolve(envelope.authoring)?;
+        let mut run = crate::config::resolve::resolve(envelope.authoring)?;
+        // Overlay the per-cell sweep envelope so the resolved run the runner
+        // consumes is byte-identical to the CLI-side resolution (the sweep/YAML-sweep
+        // paths carry these; a single run leaves them at their `None`/`0` defaults).
+        run.sweep_id = envelope.sweep_id;
+        run.trial = envelope.trial;
+        if envelope.variation.is_some() {
+            run.variation = envelope.variation;
+        }
         let bytes = serde_json::to_vec(&run)
             .map_err(|error| anyhow!("re-serializing the resolved run: {error}"))?;
         serde_json::from_slice(&bytes)
