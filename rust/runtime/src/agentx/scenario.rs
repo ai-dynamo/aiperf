@@ -85,6 +85,83 @@ pub fn inferencex_agentx_mvp() -> ScenarioSpec {
     }
 }
 
+/// A specific scenario-lock conflict (Python `ScenarioViolation`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioViolation {
+    /// The flag/field in conflict (e.g. `--streaming`).
+    pub flag: String,
+    /// The value the user provided.
+    pub current_value: String,
+    /// The value the scenario requires.
+    pub required_value: String,
+    /// Human-readable explanation.
+    pub message: String,
+}
+
+/// Outcome of applying one boolean invariant lock (Python `_apply_*` shape).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LockResult {
+    /// Already satisfied by the user's config.
+    Satisfied,
+    /// The scenario default was applied (the field was unset).
+    Applied,
+    /// The user explicitly set a conflicting value.
+    Violated(ScenarioViolation),
+}
+
+/// Apply a `require_<x> == true` lock (streaming / ignore-eos pattern): already
+/// true → satisfied; explicitly false → violation; unset false → apply default.
+pub fn apply_require_true(
+    current: bool,
+    explicitly_set: bool,
+    flag: &str,
+    message: &str,
+) -> LockResult {
+    if current {
+        LockResult::Satisfied
+    } else if explicitly_set {
+        LockResult::Violated(ScenarioViolation {
+            flag: flag.to_string(),
+            current_value: "false".to_string(),
+            required_value: "true".to_string(),
+            message: message.to_string(),
+        })
+    } else {
+        LockResult::Applied
+    }
+}
+
+/// Apply a `forbid_<x>` lock (`x` must be false): already false → satisfied;
+/// explicitly true → violation; unset true → apply default (force false).
+pub fn apply_forbid_true(
+    current: bool,
+    explicitly_set: bool,
+    flag: &str,
+    message: &str,
+) -> LockResult {
+    if !current {
+        LockResult::Satisfied
+    } else if explicitly_set {
+        LockResult::Violated(ScenarioViolation {
+            flag: flag.to_string(),
+            current_value: "true".to_string(),
+            required_value: "false".to_string(),
+            message: message.to_string(),
+        })
+    } else {
+        LockResult::Applied
+    }
+}
+
+/// True when `loader` is in the scenario's allowed set (Python
+/// `_apply_require_loader` membership). `None` loader is not allowed.
+pub fn loader_allowed(loader: Option<&str>, allowed: &[String]) -> bool {
+    match loader {
+        Some(l) => allowed.iter().any(|a| a == l),
+        None => false,
+    }
+}
+
 /// Look up a registered scenario by name (Python `get_scenario`). `None` when
 /// unknown.
 pub fn get_scenario(name: &str) -> Option<ScenarioSpec> {
@@ -149,6 +226,30 @@ mod tests {
 
     fn subs() -> Vec<String> {
         vec!["context length".into(), "maximum context".into()]
+    }
+
+    #[test]
+    fn invariant_lock_decisions() {
+        // require_streaming: already on -> satisfied.
+        assert_eq!(apply_require_true(true, false, "--streaming", "m"), LockResult::Satisfied);
+        // unset -> apply default.
+        assert_eq!(apply_require_true(false, false, "--streaming", "m"), LockResult::Applied);
+        // explicitly off -> violation.
+        assert!(matches!(
+            apply_require_true(false, true, "--streaming", "m"),
+            LockResult::Violated(_)
+        ));
+        // forbid_ignore_trace_delays: explicitly true -> violation.
+        assert!(matches!(
+            apply_forbid_true(true, true, "--ignore-trace-delays", "m"),
+            LockResult::Violated(_)
+        ));
+        assert_eq!(apply_forbid_true(false, false, "x", "m"), LockResult::Satisfied);
+        // loader allowlist.
+        let allowed = vec!["weka_trace".to_string(), "weka_hf".to_string()];
+        assert!(loader_allowed(Some("weka_trace"), &allowed));
+        assert!(!loader_allowed(Some("mooncake_trace"), &allowed));
+        assert!(!loader_allowed(None, &allowed));
     }
 
     #[test]
