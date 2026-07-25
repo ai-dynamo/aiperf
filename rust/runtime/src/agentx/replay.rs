@@ -126,6 +126,64 @@ where
         .collect())
 }
 
+/// One transport-ready dispatch: the exact wire request to send and the
+/// virtual-clock instant to send it at (the online transport consumes these,
+/// firing each `request_body` at `dispatch_ns` for `session_id`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DispatchItem {
+    /// Virtual-clock dispatch instant (ns from run start).
+    pub dispatch_ns: i64,
+    /// Conversation the request belongs to.
+    pub session_id: String,
+    /// Mapped model name.
+    pub model: String,
+    /// `max_tokens` for the request.
+    pub max_tokens: i64,
+    /// The OpenAI `/v1/chat/completions` request body.
+    pub request_body: Value,
+}
+
+/// Build the complete transport-ready dispatch plan for a reconstructed trace:
+/// clock-driven schedule (via [`run_replay_sim`]) crossed with the wire request
+/// body (via [`crate::agentx::wire::chat_request_body`]) per fired turn. The
+/// online transport fires each item's `request_body` at its `dispatch_ns`.
+pub fn build_dispatch_plan(
+    convs: &[ReconstructedConversation],
+    t_star_ms: f64,
+    burst: bool,
+    cap_ms: Option<f64>,
+    opts: &crate::agentx::wire::ChatRequestOptions,
+) -> Vec<DispatchItem> {
+    use crate::agentx::synth::ChatMessage;
+    let mut plan: Vec<DispatchItem> = Vec::new();
+    for conv in convs {
+        for (dispatch_ns, rec) in run_replay_sim(conv, t_star_ms, burst, cap_ms) {
+            let messages: Vec<ChatMessage> = rec["raw_messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|m| {
+                    ChatMessage::plain(
+                        m["role"].as_str().unwrap_or(""),
+                        m["content"].as_str().unwrap_or("").to_string(),
+                    )
+                })
+                .collect();
+            let model = rec["model"].as_str().unwrap_or("").to_string();
+            let max_tokens = rec["max_tokens"].as_i64().unwrap_or(1);
+            let body = crate::agentx::wire::chat_request_body(&model, &messages, max_tokens, opts);
+            plan.push(DispatchItem {
+                dispatch_ns,
+                session_id: rec["session_id"].as_str().unwrap_or("").to_string(),
+                model,
+                max_tokens,
+                request_body: body,
+            });
+        }
+    }
+    plan
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,5 +316,32 @@ mod tests {
         assert_eq!(fired[1].1["phase"], serde_json::json!("profiling"));
         // Real reconstructed content present on the fired records.
         assert!(!fired[1].1["raw_messages"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn dispatch_plan_pairs_wire_bodies_with_clock_instants() {
+        use crate::agentx::wire::ChatRequestOptions;
+        let conv = ReconstructedConversation {
+            session_id: "t".into(),
+            replay_scope_id: "t".into(),
+            parent_conversation_id: None,
+            turns: vec![turn(0.0, 0), turn(1000.0, 1)],
+        };
+        // t*=500: warmup turn0 @0, profiling turn1 @500ms.
+        let plan = build_dispatch_plan(
+            std::slice::from_ref(&conv),
+            500.0,
+            false,
+            None,
+            &ChatRequestOptions { streaming: true, ignore_eos: true, cache_bust_marker: None },
+        );
+        assert_eq!(plan.len(), 2);
+        assert_eq!(plan[0].dispatch_ns, 0);
+        assert_eq!(plan[1].dispatch_ns, 500 * NS_PER_MS);
+        // Each carries the exact wire body the transport sends.
+        assert_eq!(plan[0].request_body["stream"], serde_json::json!(true));
+        assert_eq!(plan[0].request_body["ignore_eos"], serde_json::json!(true));
+        assert_eq!(plan[1].request_body["messages"][0]["content"], serde_json::json!("turn1"));
+        assert_eq!(plan[0].session_id, "t");
     }
 }
