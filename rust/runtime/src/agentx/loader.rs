@@ -15,7 +15,7 @@
 //! via [`super::synth::TokenSynth`] (a [`super::corpus::CorpusTokenSynth`] in
 //! production; a stub in parity tests).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::agentx::prepass::{compute_shared_prefix_cache_metrics, MetricRecord, SortKey};
 use crate::agentx::synth::{
@@ -501,6 +501,85 @@ pub fn convert_trace_to_conversations(
     Ok(out)
 }
 
+/// Map trace-side model names to configured `endpoint.model_names` (Python
+/// `_build_model_map`).
+///
+/// The trace's main model (first parent request, falling back to the first
+/// subagent inner request) maps to `configured[0]`; other distinct trace models
+/// map to `configured[1..]` in first-appearance order with modulo wrap. Empty
+/// when `configured` is empty or no model is found.
+pub fn build_model_map(
+    trace: &crate::agentx::trace::WekaTrace,
+    configured: &[String],
+) -> HashMap<String, String> {
+    use crate::agentx::trace::{WekaInnerRequest, WekaRequest};
+    if configured.is_empty() {
+        return HashMap::new();
+    }
+
+    let inner_model = |r: &WekaInnerRequest| match r {
+        WekaInnerRequest::Normal(n) => n.model.clone(),
+        WekaInnerRequest::Streaming(s) => s.model.clone(),
+    };
+
+    // Main model: first top-level normal/streaming, else first subagent inner.
+    let mut main_model: Option<String> = None;
+    for req in &trace.requests {
+        match req {
+            WekaRequest::Normal(n) => {
+                main_model = Some(n.model.clone());
+                break;
+            }
+            WekaRequest::Streaming(s) => {
+                main_model = Some(s.model.clone());
+                break;
+            }
+            WekaRequest::Subagent(_) => {}
+        }
+    }
+    if main_model.is_none() {
+        for req in &trace.requests {
+            if let WekaRequest::Subagent(entry) = req {
+                if let Some(first) = entry.requests.first() {
+                    main_model = Some(inner_model(first));
+                    break;
+                }
+            }
+        }
+    }
+    let main_model = match main_model {
+        Some(m) => m,
+        None => return HashMap::new(),
+    };
+
+    let mut ordered: Vec<String> = vec![main_model.clone()];
+    let mut seen: HashSet<String> = HashSet::new();
+    seen.insert(main_model);
+    let mut push = |m: String, ordered: &mut Vec<String>, seen: &mut HashSet<String>| {
+        if seen.insert(m.clone()) {
+            ordered.push(m);
+        }
+    };
+    for req in &trace.requests {
+        match req {
+            WekaRequest::Normal(n) => push(n.model.clone(), &mut ordered, &mut seen),
+            WekaRequest::Streaming(s) => push(s.model.clone(), &mut ordered, &mut seen),
+            WekaRequest::Subagent(entry) => {
+                for inner in &entry.requests {
+                    push(inner_model(inner), &mut ordered, &mut seen);
+                }
+            }
+        }
+    }
+
+    let n = configured.len();
+    ordered
+        .into_iter()
+        .enumerate()
+        .map(|(i, m)| (m, configured[i % n].clone()))
+        .collect()
+}
+
 /// Build a [`NormalReq`] from a wire normal request.
 pub fn normal_req_from_normal(n: &crate::agentx::trace::WekaNormalRequest) -> NormalReq {
     NormalReq {
@@ -585,6 +664,42 @@ mod tests {
         fn decode_tokens_to_text(&self, tokens: &[u32]) -> String {
             tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(" ")
         }
+    }
+
+    #[test]
+    fn model_map_main_first_then_appearance_with_wrap() {
+        use crate::agentx::trace::{HashIdScope, WekaNormalRequest, WekaRequest, WekaTrace};
+        let norm = |model: &str| {
+            WekaRequest::Normal(WekaNormalRequest {
+                t: 0.0,
+                model: model.into(),
+                input_length: 4,
+                output_length: 4,
+                hash_ids: vec![1],
+                input_types: vec![],
+                output_types: vec![],
+                stop: String::new(),
+                api_time: None,
+                think_time: None,
+            })
+        };
+        let trace = WekaTrace {
+            id: "t".into(),
+            models: vec![],
+            block_size: 4,
+            hash_id_scope: HashIdScope::Local,
+            tool_tokens: 0,
+            system_tokens: 0,
+            requests: vec![norm("opus"), norm("haiku"), norm("sonnet"), norm("opus")],
+            totals: None,
+        };
+        // 3 distinct models, 2 configured -> wrap: opus->A, haiku->B, sonnet->A.
+        let m = build_model_map(&trace, &["A".to_string(), "B".to_string()]);
+        assert_eq!(m["opus"], "A");
+        assert_eq!(m["haiku"], "B");
+        assert_eq!(m["sonnet"], "A");
+        // Empty configured -> identity (empty map).
+        assert!(build_model_map(&trace, &[]).is_empty());
     }
 
     #[test]
