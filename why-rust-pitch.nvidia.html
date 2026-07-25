@@ -266,7 +266,7 @@
       <div class="notes" style="grid-template-columns:repeat(2,1fr);margin-top:40px;max-width:1088px;gap:28px;">
         <div class="note"><div class="h">Free, because it's one front-end</div>Every feature — arrival patterns, datasets, multi-turn, tokenization, metrics, exporters — runs <strong>unchanged</strong> in sim mode. Nothing to re-author per workload.</div>
         <div class="note"><div class="h">Runs in CI, not a GPU cluster</div>The virtual clock removes real waiting, so minutes of wall-clock collapse to seconds. Scheduler/timing regression tests and design-space sweeps run in continuous integration.</div>
-        <div class="note"><div class="h">Deterministic — structurally, not by luck</div>Rust drives the virtual clock from <strong>one single-threaded reactor</strong> (~80 lines). Python's co-simulation crossed a thread boundary <em>per event</em> (lock + marshal + wake) — slow — and leaned on asyncio's non-deterministic wake ordering, so bit-identical reruns were fragile. Rust gets the guarantee without the machinery.</div>
+        <div class="note" style="font-size:16px;"><div class="h">Deterministic — structurally, not by luck</div>Rust drives the clock from <strong>one single-threaded reactor</strong>. Python crossed a thread boundary <em>per event</em> and relied on non-deterministic asyncio wake ordering — slow and race-prone; Rust needs none of it.</div>
         <div class="note"><div class="h">Subsumes Dynamo Replay</div>This is what Replay does today — now available for the entire AIPerf workload surface, and it replaces that separate front-end.</div>
       </div>
     </div>
