@@ -61,13 +61,21 @@ with NO block-separation token; the graph-ir recorded path
 differ, so `agentx` must not reuse `content.rs` — it reuses only the tokenized
 corpus itself (a leaf util).
 
-Remaining Slice 1 (see below): `chains.rs` grouping helpers, `loader.rs` (the
-hub producing `ReconstructedConversation`s — the turn loop is understood; it wires
-the real Qwen corpus into `CorpusTokenSynth`, runs prepass + chains + subagent
-expansion + synth, and assembles per-turn `raw_messages` + timing), and the
-full-loader golden-diff A/B harness over the `tests/fixtures/weka_traces/` files.
-Gating dependency: wiring the real Qwen-tokenized corpus (reused from the runtime)
-so it byte-matches Python's `PromptGenerator._tokenized_corpus`.
+- `loader.rs` — the reconstruction hub. **Main-conversation path built and proven
+  byte-exact against the real Python `_reconstruct_serial`** by
+  `tools/agentx_loader_golden.py` + `rust/runtime/tests/agentx_loader_parity.rs`
+  (3 scenarios; every turn field diffed: timing, `raw_messages`, `reset_context`,
+  `input_kind`, prefix-cache tallies, `max_tokens`). Includes the loop helpers
+  (`classify_turn_input`, `end_to_start_delay_ms`, `api_time_ms`, `clamp_delay_ms`,
+  `cap_output`) and `ReconstructedConversation`/`ReconstructedTurn`.
+
+Remaining Slice 1 (see below): subagent expansion (child conversations +
+SPAWN/JOIN prerequisites) and flat-chain splitting in `loader.rs`; the idle-gap
+time-warp timing; `chains.rs` grouping helpers; model mapping; and — the gating
+dependency for a real fixture-level diff — wiring the real Qwen-tokenized corpus
+(reused from the runtime as a leaf util) into `CorpusTokenSynth` so it byte-matches
+Python's `PromptGenerator._tokenized_corpus`, then the full-loader golden-diff over
+`tests/fixtures/weka_traces/`.
 
 ## Future requirements
 
