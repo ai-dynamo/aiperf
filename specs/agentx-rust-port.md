@@ -142,11 +142,19 @@ level:** content via the real-corpus e2e (Qwen); timing via per-turn inter-turn
 delays (loader e2e) + the `replay_schedule` execution-order e2e (phase + offsets,
 t\* itself byte-exact).
 
-Remaining frontier — **live-runtime / IO wiring only** (no byte-exact algorithm
-work left): the async dispatch machinery that fires `replay_schedule` through the
-Clock/scheduler/credit pipeline; the `apply_scenario` config-resolver wiring into
-`BenchmarkRun`; and the HF network download. The `graph-ir` switch arm hands off to
-`graph::recorded` (a separate, already-present subsystem).
+**Clock-driven execution + online HTTP e2e (GREEN):** `replay::run_replay_sim` /
+`execute_legacy_replay` fire the schedule through the runtime's virtual `SimClock`
+(`drive_sim`), emitting export records in true clock-fired order.
+`wire::chat_request_body` + `replay::build_dispatch_plan` produce the transport-ready
+`(dispatch_ns, request_body)` plan. `rust/runtime/tests/agentx_online_e2e.rs` fires
+that plan over **real HTTP** at an in-process endpoint and asserts the server
+receives the **byte-exact** request bodies (streaming + ignore_eos + reconstructed
+content) in dispatch order — an actual online run landing content + timing on the wire.
+
+Remaining frontier: firing the plan through the runtime's *own* Hyper transport
+sink + credit pipeline (capturing observed response TTFT/ITL as records) rather than
+a raw client; the `apply_scenario` wiring into Config-v2 `BenchmarkRun`; the HF
+network download; and executing the `graph-ir` switch arm through `graph::recorded`.
 
 ## Future requirements
 
