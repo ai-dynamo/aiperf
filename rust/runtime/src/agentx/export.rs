@@ -105,6 +105,34 @@ pub fn raw_export_trace(convs: &[ReconstructedConversation], t_star_ms: Option<f
         .collect()
 }
 
+/// Emit a conversation's export records in **dispatch order** for an
+/// agentic-replay run at `t_star_ms`: warmup turn first, then profiling turns by
+/// ascending dispatch offset from t* (stable on ties), history turns omitted
+/// (back-seeded, not dispatched). This is the deterministic run-time emission
+/// order the async loop would produce, carrying byte-exact timing + content.
+pub fn dispatch_ordered_records(conv: &ReconstructedConversation, t_star_ms: f64) -> Vec<Value> {
+    let ts: Vec<Option<f64>> = conv.turns.iter().map(|t| t.timestamp_ms).collect();
+    let schedule = replay_schedule(&ts, t_star_ms);
+    let records = raw_export_records(conv, Some(t_star_ms));
+
+    // (dispatch rank, offset, original index) -> stable dispatch order.
+    let mut order: Vec<(u8, f64, usize)> = schedule
+        .iter()
+        .enumerate()
+        .filter_map(|(i, st)| match st.phase {
+            ReplayPhase::Warmup => Some((0u8, 0.0, i)),
+            ReplayPhase::Profiling => Some((1u8, st.offset_ms.unwrap_or(0.0), i)),
+            ReplayPhase::History => None,
+        })
+        .collect();
+    order.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then(a.1.partial_cmp(&b.1).unwrap())
+            .then(a.2.cmp(&b.2))
+    });
+    order.into_iter().map(|(_, _, i)| records[i].clone()).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,6 +189,32 @@ mod tests {
         assert_eq!(recs[1]["delay_ms"], json!(900.0));
         assert_eq!(recs[1]["reset_context"], json!(true));
         assert_eq!(recs[1]["input_kind"], json!("user_input"));
+    }
+
+    #[test]
+    fn dispatch_order_warmup_then_profiling_by_offset() {
+        // 4 turns at [0, 500, 300, 900] ms; t* = 250.
+        let mut c = conv();
+        c.turns[0].timestamp_ms = Some(0.0);
+        c.turns[1].timestamp_ms = Some(500.0);
+        c.turns.push(c.turns[1].clone());
+        c.turns.push(c.turns[1].clone());
+        c.turns[2].timestamp_ms = Some(300.0);
+        c.turns[2].source_outer_idx = 2;
+        c.turns[3].timestamp_ms = Some(900.0);
+        c.turns[3].source_outer_idx = 3;
+        // t*=250 -> resume 1 (t=500), warmup 0. Profiling turns: 1(500->250),
+        // 2(300->50), 3(900->650). Dispatch order: warmup(0), then by offset:
+        // turn2(50), turn1(250), turn3(650).
+        let recs = dispatch_ordered_records(&c, 250.0);
+        let outer: Vec<i64> = recs
+            .iter()
+            .map(|r| r["source_outer_idx"].as_i64().unwrap())
+            .collect();
+        assert_eq!(outer, vec![0, 2, 1, 3]);
+        assert_eq!(recs[0]["phase"], json!("warmup"));
+        assert_eq!(recs[1]["dispatch_offset_ms"], json!(50.0));
+        assert_eq!(recs[3]["dispatch_offset_ms"], json!(650.0));
     }
 
     #[test]
