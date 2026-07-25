@@ -1714,16 +1714,14 @@ fn apply_scenario_graph_locks(
     if is_graph_ir {
         let min = spec.default_trajectory_start_min_ratio.unwrap_or(0.0);
         let max = spec.default_trajectory_start_max_ratio.unwrap_or(1.0);
-        if std::env::var("AIPERF_GIR_NO_TSTAR").is_err() {
-            inputs.trajectory_start_min_ratio = min;
-            inputs.trajectory_start_max_ratio = max;
-            apply_scenario_synthesis(inputs, &spec, min, max)?;
-        }
+        inputs.trajectory_start_min_ratio = min;
+        inputs.trajectory_start_max_ratio = max;
+        apply_scenario_synthesis(inputs, &spec, min, max)?;
         // Author a prime-once/drain warmup barrier (excluded from results). With
         // no request/session/duration bound the graph runtime fires each trace's
         // `t*`-primed plan exactly once and drains, mirroring the legacy warmup
         // phase. Only synthesize when the user has not authored their own warmup.
-        if inputs.warmup.is_none() && std::env::var("AIPERF_GIR_NO_WARMUP").is_err() {
+        if inputs.warmup.is_none() {
             inputs.warmup = Some(Warmup {
                 concurrency: inputs.concurrency,
                 rate: None,
