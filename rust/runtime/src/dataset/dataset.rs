@@ -18,7 +18,7 @@ use crate::dataset::model::{
 use crate::dataset::request::{raw_body_handle, resolve_prompt, resolve_turn, token_ids_handle};
 use crate::dataset::segment::{Handle, Payload, Role, SegmentDomain, SegmentPool, SegmentStore};
 use crate::endpoints::{
-    CreditPhase, PreparedEndpoint, PreparedRequest, ShapeLowerer, Turn as EndpointTurn,
+    CreditPhase, PreparedEndpoint, PreparedRequest, Turn as EndpointTurn,
     TurnMessageLowerer,
 };
 use smallvec::SmallVec;
@@ -267,12 +267,16 @@ impl Dataset {
         endpoint: &dyn PreparedEndpoint,
         primary_model_name: &str,
     ) -> Result<()> {
-        // Endpoint-level gate: only precomputable message-array dialects qualify.
-        // A dialect that is not a per-turn message array has no shape lowerer and
-        // is left entirely on the live path.
-        if !endpoint.precomputable_body()
-            || ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).is_none()
-        {
+        // Endpoint-level gate: any dialect whose body can be precomputed qualifies.
+        // `precompute_body_plans` never invokes a `ShapeLowerer` itself — it resolves
+        // each static turn through `static_endpoint_turns` (the same `resolve_turn`
+        // path dispatch uses) and calls the endpoint's own `format_payload`. So
+        // non-message-array input-array dialects (image_retrieval, embeddings,
+        // rankings, …) cache their plan here too, moving the potentially large
+        // per-request `format_payload` serialization (e.g. a 32-image batch inlined
+        // as data URLs) out of the timed dispatch loop. Token-native dialects opt
+        // out via `precomputable_body() == false`.
+        if !endpoint.precomputable_body() {
             self.body_plans = Vec::new();
             return Ok(());
         }
@@ -289,8 +293,11 @@ impl Dataset {
                         | ConversationContextMode::DeltasWithResponses
                 );
                 // Graph/DAG conversations dispatch through a separate execution
-                // path; never cache their turns here.
-                if static_mode && conversation.dag.is_none() {
+                // path; never cache their turns here. Static modes precompute every
+                // turn; dynamic (WithoutResponses) modes precompute only the first
+                // turn, whose body carries no captured replies and so is identical
+                // to dispatch — later dynamic turns interleave live responses.
+                if conversation.dag.is_none() {
                     let system = resolve_prompt(store, conversation.system)?;
                     let user_context = resolve_prompt(store, conversation.user_context)?;
                     let conversation_id = conversation.session_id.as_str().to_string();
@@ -300,6 +307,10 @@ impl Dataset {
                         .zip(turn_plans.iter_mut())
                         .enumerate()
                     {
+                        // Dynamic continuation turns depend on live replies.
+                        if !static_mode && turn_index != 0 {
+                            continue;
+                        }
                         // Per-turn override, raw body, and token-native turns take
                         // the live path and dispatch fallback branches.
                         if turn.endpoint.is_some()
@@ -703,11 +714,20 @@ fn static_endpoint_turns(
             .iter()
             .map(|turn| resolve_turn(store, turn))
             .collect(),
-        // The dynamic modes interleave live replies and are never precomputed.
+        // The dynamic modes interleave live replies for continuation turns, but the
+        // first turn carries no prior responses, so its body is response-independent
+        // and identical to what dispatch emits — precompute it. Later turns still
+        // depend on captured replies and are never precomputed.
         ConversationContextMode::DeltasWithoutResponses
-        | ConversationContextMode::MessageArrayWithoutResponses => Err(DatasetError::Validation(
-            "static_endpoint_turns called for a dynamic context mode".into(),
-        )),
+        | ConversationContextMode::MessageArrayWithoutResponses => {
+            if current == 0 {
+                Ok(vec![resolve_turn(store, &conversation.turns[0])?])
+            } else {
+                Err(DatasetError::Validation(
+                    "static_endpoint_turns called for a dynamic continuation turn".into(),
+                ))
+            }
+        }
     }
 }
 
