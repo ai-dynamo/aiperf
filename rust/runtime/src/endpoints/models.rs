@@ -278,7 +278,8 @@ impl ResponseData {
         }
     }
 
-    /// Whether this value carries a generated token output even when it has no text.    pub fn has_token_output(&self) -> bool {
+    /// Whether this value carries a generated token output even when it has no text.
+    pub fn has_token_output(&self) -> bool {
         match self {
             Self::Text { text } => !text.is_empty(),
             Self::TokenIds { token_ids } => !token_ids.is_empty(),
