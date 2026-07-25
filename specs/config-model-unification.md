@@ -64,9 +64,8 @@ model crosses the parent→child boundary unchanged.
 
 ## Future requirements
 
-The convergence target and its migration. Steps 1 and 4 are built (branch
-`ajc/config-model-unification`); steps 2 and 3 are partially built with the
-structural remainder blocked as noted.
+The convergence target and its migration — all four steps are built on branch
+`ajc/config-model-unification`.
 
 **Target shape.** An `aiperf_runtime::config` module (an always-compiled module
 in the runtime crate — `aiperf-cli` consumes it through its existing
@@ -105,29 +104,27 @@ unknown tag.
    `workload_kind()`. Guard with wire round-trip tests (CLI serialize ==
    runtime deserialize, byte-identical). This step alone eliminates the
    `weka_semantics` bug class.
-2. **Collapse the producer front-end.** *(Resolved to its correct end-state, not a
-   one-deserialize collapse.)* Investigation (five deep passes + the Python
-   reference) established the Rust producer is **already** the same shape as
-   Python's: two authoring-surface constructors (CLI flags, YAML) → one typed
-   intermediate → one lowering — mirroring Python's `convert_cli_to_aiperf` +
-   `load_config` → one `model_validate`. Two input surfaces genuinely need two
-   constructors (Python keeps two), and the flag path performs CLI-only
-   byte-affecting derivations the YAML path does not (fixed-schedule
-   `request_count` from `count_schedule_entries(file)`, sentinel URLs, warmup
-   synthesis, a post-`into_inputs` `kv_block_size` mutation), so a single
-   flag∪YAML deep-merge cannot be byte-reconstructed. The achievable
-   improvements landed: `ProfileFlags` bools → `Option<bool>` (explicit-set
-   signal) and the flags↔YAML drift unification. A true single authoring model
-   would require moving resolution to the runtime (Python-style, runner-resolves),
-   which changes the wire representation — a separate phase, not this one.
-3. **One sweep plan.** *(Partial: typed `build_benchmark_plan` grid/zip/magic-list
-   seam built and tested. Retiring the live grid/recipe override mechanisms is
-   blocked by the same producer property — the grid path mutates `ProfileFlags` so
-   `count_schedule_entries`/count-pooling run in `load::resolve`, which the typed
-   post-resolution path cannot reproduce byte-exact; `sweep_parity` — which drives
-   `load::resolve` directly — is the proof.)* Replace the three override mechanisms
-   with `build_benchmark_plan` over the typed model (dotted-path apply, alpha-sorted
-   keys, `base+N` seed derivation). Adaptive search stays a runtime ask-tell loop.
+2. **Collapse the producer front-end.** *(Built via the no-lower architecture.)*
+   The CLI no longer lowers: `Inputs`, `build`, `phase_validate`, and `redact` moved
+   into `aiperf_runtime::config::resolve` (`pub fn resolve(Inputs) -> BenchmarkRun`).
+   The `--execute` wire carries the authoring `Inputs` (`{"authoring": <Inputs>}`);
+   `decode_execute_wire` resolves it in the runtime before `into_authored`. Every
+   profile path — single run, flag sweep, YAML sweep, the four adaptive search
+   loops, recipe sweeps — ships authoring `Inputs`; the resolved-wire sender and
+   branch were deleted. This mirrors Python (runner resolves; the two authoring
+   constructors, flags→`Inputs` and YAML→`Inputs`, remain, as Python keeps
+   `convert_cli_to_aiperf` + `load_config`). Behavioral A/B parity vs base was
+   proven byte-identical for single, sweep, recipe, and adaptive runs against the
+   mock server (only non-deterministic timing/ids differ); it also fixed a latent
+   bug where the resolved-cfg patch left the `input_config` echo stale.
+3. **One sweep plan.** *(Built.)* All sweep/search override mechanisms are unified
+   onto the authoring layer: `search::apply_override_inputs` sets the swept axis on
+   the authoring `Inputs` (correct pre-resolution — resolution then expands scalars
+   like `isl:128` to a Distribution), and every sweep/search path ships that
+   authoring `Inputs` for the runtime to resolve, retiring the three prior
+   `Value`/`ProfileFlags`/resolved-cfg mutation mechanisms. The typed
+   `build_benchmark_plan` grid/zip/magic-list seam remains available. Adaptive
+   search stays a runtime ask-tell loop.
 4. **Validators as offline passes.** *(Built: nine raise-only invariants ported to
    `config::validate` — the seven cross-field checks plus `cache_bust_compatibility`
    (full) and `agentic_cache_warmup` (no-scenario branch; the scenario branch needs a
