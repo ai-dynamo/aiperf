@@ -31,3 +31,4 @@ pub mod selection;
 pub mod session_tree;
 pub mod subagent;
 pub mod trace;
+pub mod trajectory_source;
