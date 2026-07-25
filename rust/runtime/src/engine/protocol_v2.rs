@@ -1276,6 +1276,48 @@ mod dispatch_mode_tests {
     }
 
     #[test]
+    fn wire_contract_pins_into_authored_component_selection() {
+        // Step-1 (config-model-unification) regression net: pin the observable
+        // shape `into_authored` projects from a representative CLI-serialized wire
+        // run, so the planned move to a shared typed BenchmarkRun stays byte-behavior
+        // identical. Asserts the component-selection contract: transport id
+        // (passthrough of `type`), workload id (derived from dataset), and the
+        // cellular-aware dispatch default.
+        fn project(dataset_type: &str, transport_type: &str, runtime: serde_json::Value) -> AuthoredRunSpecV2 {
+            let wire: BenchmarkRunWireV2 = serde_json::from_value(serde_json::json!({
+                "benchmark_id": "run-1",
+                "artifact_dir": "/tmp/not-created",
+                "cfg": {
+                    "models": {"items": [{"name": "model"}]},
+                    "endpoint": {"type": "chat", "urls": ["http://127.0.0.1:8000"]},
+                    "datasets": [{"type": dataset_type, "entries": 1}],
+                    "phases": [{"name": "profiling", "type": "concurrency", "concurrency": 1}],
+                    "transport": {"type": transport_type},
+                    "runtime": runtime,
+                }
+            }))
+            .unwrap();
+            wire.into_authored().unwrap()
+        }
+
+        // Synthetic dataset + http transport, single-process → scheduled/http/Global.
+        let a = project("synthetic", "http", serde_json::json!({"workers": 1}));
+        assert_eq!(a.workload.id.as_str(), "scheduled");
+        assert_eq!(a.transport.id.as_str(), "http");
+        assert_eq!(a.dispatch, DispatchMode::Global);
+
+        // Graph dataset → graph workload; grpc transport id passes through.
+        let b = project("dag_jsonl", "grpc", serde_json::json!({"workers": 4}));
+        assert_eq!(b.workload.id.as_str(), "graph");
+        assert_eq!(b.transport.id.as_str(), "grpc");
+        assert_eq!(b.dispatch, DispatchMode::Global);
+
+        // Cellular (cells>1) with absent dispatch → Sharded default.
+        let c = project("synthetic", "http", serde_json::json!({"workers": 4, "cells": 4}));
+        assert_eq!(c.dispatch, DispatchMode::Sharded);
+    }
+
+    #[test]
     fn scheduled_projection_omits_graph_only_weka_semantics() {
         // `weka_semantics` exists only on the graph workload's config DTO; the
         // scheduled DTO is strict (`deny_unknown_fields`). Emitting the key into
