@@ -62,4 +62,48 @@ mod tests {
         assert_eq!(meta.format, "sharegpt");
         assert_eq!(meta.source["type"], serde_json::json!("url"));
     }
+
+    /// Guard the stringly-typed YAML catalog: every entry must name a format that
+    /// the runtime can resolve — either a registered linear loader or a known
+    /// Graph-IR input format — and carry that format's required options, so a
+    /// typo'd format or a missing `prompt_column`/`conversation_column` fails here
+    /// instead of at runtime when a user selects the dataset.
+    #[test]
+    fn every_entry_has_a_resolvable_format_and_required_options() {
+        use aiperf_runtime::dataset::loader::LoaderRegistry;
+
+        // Formats resolved through the engine's graph-input path
+        // (`engine/graph_input.rs`) rather than the linear loader registry.
+        const GRAPH_INPUT_FORMATS: &[&str] = &[
+            "weka_trace",
+            "dag_jsonl",
+            "dynamo_trace",
+            "conditional_graph",
+        ];
+
+        let registry = LoaderRegistry::with_builtin_formats().expect("builtin formats register");
+        for (name, meta) in CATALOG.iter() {
+            let resolvable = registry.get(&meta.format).is_ok()
+                || GRAPH_INPUT_FORMATS.contains(&meta.format.as_str());
+            assert!(
+                resolvable,
+                "catalog entry {name:?} uses unresolvable format {:?} \
+                 (not a registered loader nor a known graph-input format)",
+                meta.format
+            );
+            match meta.format.as_str() {
+                "hf_instruction_response" => assert!(
+                    meta.options.contains_key("prompt_column")
+                        || meta.options.contains_key("prompt_template"),
+                    "catalog entry {name:?} (hf_instruction_response) needs a \
+                     `prompt_column` or `prompt_template` option"
+                ),
+                "hf_conversation" => assert!(
+                    meta.options.contains_key("conversation_column"),
+                    "catalog entry {name:?} (hf_conversation) needs a `conversation_column` option"
+                ),
+                _ => {}
+            }
+        }
+    }
 }
