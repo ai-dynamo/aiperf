@@ -482,8 +482,8 @@ impl Composer for HfAutoComposer {
         let first = rows
             .first()
             .ok_or_else(|| DatasetError::Validation("HF dataset returned zero rows".into()))?;
-        let override_col = string_option(config, "text_column")
-            .or_else(|| string_option(config, "prompt_column"));
+        let override_col =
+            string_option(config, "text_column").or_else(|| string_option(config, "prompt_column"));
         let output_override = string_option(config, "output_column");
         let layout = infer_row_layout(&first.value, override_col.as_deref())
             .map_err(DatasetError::Validation)?;
@@ -524,21 +524,31 @@ impl Composer for HfAutoComposer {
                     } else {
                         raw.and_then(Value::as_str).unwrap_or_default().to_string()
                     };
-                    let completion = output_override.as_ref().or(completion_field.as_ref()).and_then(|c| {
-                        obj.get(c.as_str()).and_then(|v| {
-                            v.as_array()
-                                .and_then(|a| a.first())
-                                .and_then(Value::as_str)
-                                .or_else(|| v.as_str())
-                                .map(str::to_string)
-                        })
-                    });
+                    let completion = output_override
+                        .as_ref()
+                        .or(completion_field.as_ref())
+                        .and_then(|c| {
+                            obj.get(c.as_str()).and_then(|v| {
+                                v.as_array()
+                                    .and_then(|a| a.first())
+                                    .and_then(Value::as_str)
+                                    .or_else(|| v.as_str())
+                                    .map(str::to_string)
+                            })
+                        });
                     (prompt, completion)
                 }
-                RowLayout::Joined { fields, completion_field } => {
+                RowLayout::Joined {
+                    fields,
+                    completion_field,
+                } => {
                     let parts: Vec<String> = fields
                         .iter()
-                        .filter_map(|c| obj.get(c.as_str()).and_then(Value::as_str).map(str::to_string))
+                        .filter_map(|c| {
+                            obj.get(c.as_str())
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        })
                         .collect();
                     if parts.is_empty() {
                         continue;
@@ -546,7 +556,11 @@ impl Composer for HfAutoComposer {
                     let completion = output_override
                         .as_ref()
                         .or(completion_field.as_ref())
-                        .and_then(|c| obj.get(c.as_str()).and_then(Value::as_str).map(str::to_string));
+                        .and_then(|c| {
+                            obj.get(c.as_str())
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        });
                     (parts.join("\n\n"), completion)
                 }
                 RowLayout::Messages(field) => {

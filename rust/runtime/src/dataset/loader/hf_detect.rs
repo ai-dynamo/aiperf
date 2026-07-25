@@ -18,11 +18,24 @@ use serde_json::Value;
 const MESSAGE_FIELDS: &[&str] = &["conversation", "conversations", "messages"];
 /// Flat prompt fields, most specific first. A row carrying several of these is
 /// read from the earliest match.
-const PROMPT_FIELDS: &[&str] =
-    &["prompt", "question", "problem", "input", "text", "content", "instruction"];
+const PROMPT_FIELDS: &[&str] = &[
+    "prompt",
+    "question",
+    "problem",
+    "input",
+    "text",
+    "content",
+    "instruction",
+];
 /// Fields that supply the reference completion used to size the output length.
-const COMPLETION_FIELDS: &[&str] =
-    &["completion", "response", "answer", "output", "solution", "answers"];
+const COMPLETION_FIELDS: &[&str] = &[
+    "completion",
+    "response",
+    "answer",
+    "output",
+    "solution",
+    "answers",
+];
 
 /// How a dataset row exposes its prompt (and optional completion).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,7 +69,9 @@ fn is_message_object(value: &Value) -> bool {
 
 /// Whether a JSON value is a non-empty array of chat messages.
 fn is_message_list(value: &Value) -> bool {
-    value.as_array().is_some_and(|items| !items.is_empty() && items.iter().all(is_message_object))
+    value
+        .as_array()
+        .is_some_and(|items| !items.is_empty() && items.iter().all(is_message_object))
 }
 
 /// Comma-joined field names of `entry`, for "available fields: …" diagnostics.
@@ -80,12 +95,18 @@ pub(crate) fn infer_row_layout(
         .ok_or_else(|| "Hugging Face row is not a JSON object".to_string())?;
 
     let completion_field = || -> Option<String> {
-        COMPLETION_FIELDS.iter().find(|field| entry.contains_key(**field)).map(|field| (*field).to_string())
+        COMPLETION_FIELDS
+            .iter()
+            .find(|field| entry.contains_key(**field))
+            .map(|field| (*field).to_string())
     };
 
     if let Some(field) = prompt_override {
         let value = entry.get(field).ok_or_else(|| {
-            format!("prompt field {field:?} is missing; available fields: {}", available_fields(entry))
+            format!(
+                "prompt field {field:?} is missing; available fields: {}",
+                available_fields(entry)
+            )
         })?;
         if is_message_list(value) {
             return Ok(RowLayout::Messages(field.to_string()));
@@ -155,18 +176,24 @@ fn message_text(message: &Value) -> Option<&str> {
 
 /// Text of the first requester turn (`user`/`human`) in a message array.
 pub(crate) fn first_user_message(messages: &[Value]) -> Option<String> {
-    messages.iter().find_map(|message| match (message_role(message), message_text(message)) {
-        (Some(role), Some(text)) if role == "user" || role == "human" => Some(text.to_string()),
-        _ => None,
-    })
+    messages.iter().find_map(
+        |message| match (message_role(message), message_text(message)) {
+            (Some(role), Some(text)) if role == "user" || role == "human" => Some(text.to_string()),
+            _ => None,
+        },
+    )
 }
 
 /// Text of the first responder turn (`assistant`/`gpt`) in a message array.
 pub(crate) fn first_assistant_message(messages: &[Value]) -> Option<String> {
-    messages.iter().find_map(|message| match (message_role(message), message_text(message)) {
-        (Some(role), Some(text)) if role == "assistant" || role == "gpt" => Some(text.to_string()),
-        _ => None,
-    })
+    messages.iter().find_map(
+        |message| match (message_role(message), message_text(message)) {
+            (Some(role), Some(text)) if role == "assistant" || role == "gpt" => {
+                Some(text.to_string())
+            }
+            _ => None,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -199,7 +226,10 @@ mod tests {
     fn flat_prompt_and_completion_pair() {
         let row = json!({"prompt": "Summarise the dispatch seam.", "completion": "It is transport-neutral."});
         match infer_row_layout(&row, None).unwrap() {
-            RowLayout::Prompt { prompt_field, completion_field } => {
+            RowLayout::Prompt {
+                prompt_field,
+                completion_field,
+            } => {
                 assert_eq!(prompt_field, "prompt");
                 assert_eq!(completion_field.as_deref(), Some("completion"));
             }
@@ -211,7 +241,10 @@ mod tests {
     fn question_field_maps_to_prompt_with_answer_completion() {
         let row = json!({"question": "What does SimClock provide?", "answer": "Virtual nanosecond time."});
         match infer_row_layout(&row, None).unwrap() {
-            RowLayout::Prompt { prompt_field, completion_field } => {
+            RowLayout::Prompt {
+                prompt_field,
+                completion_field,
+            } => {
                 assert_eq!(prompt_field, "question");
                 assert_eq!(completion_field.as_deref(), Some("answer"));
             }
@@ -227,7 +260,10 @@ mod tests {
             "answers": ["drive a request to terminal"]
         });
         match infer_row_layout(&row, None).unwrap() {
-            RowLayout::Joined { fields, completion_field } => {
+            RowLayout::Joined {
+                fields,
+                completion_field,
+            } => {
                 assert_eq!(fields, vec!["context".to_string(), "input".to_string()]);
                 assert_eq!(completion_field.as_deref(), Some("answers"));
             }
@@ -239,7 +275,10 @@ mod tests {
     fn override_forces_a_named_field() {
         let row = json!({"body": "custom prompt body", "answer": "reply"});
         match infer_row_layout(&row, Some("body")).unwrap() {
-            RowLayout::Prompt { prompt_field, completion_field } => {
+            RowLayout::Prompt {
+                prompt_field,
+                completion_field,
+            } => {
                 assert_eq!(prompt_field, "body");
                 assert_eq!(completion_field.as_deref(), Some("answer"));
             }
@@ -275,14 +314,22 @@ mod tests {
             json!({"role": "user", "content": "define TTFT"}),
             json!({"role": "assistant", "content": "first token observation"}),
         ];
-        assert_eq!(first_user_message(&messages), Some("define TTFT".to_string()));
-        assert_eq!(first_assistant_message(&messages), Some("first token observation".to_string()));
+        assert_eq!(
+            first_user_message(&messages),
+            Some("define TTFT".to_string())
+        );
+        assert_eq!(
+            first_assistant_message(&messages),
+            Some("first token observation".to_string())
+        );
     }
 
     #[test]
     fn requester_and_responder_under_from_value() {
-        let messages =
-            vec![json!({"from": "human", "value": "ping"}), json!({"from": "gpt", "value": "pong"})];
+        let messages = vec![
+            json!({"from": "human", "value": "ping"}),
+            json!({"from": "gpt", "value": "pong"}),
+        ];
         assert_eq!(first_user_message(&messages), Some("ping".to_string()));
         assert_eq!(first_assistant_message(&messages), Some("pong".to_string()));
     }

@@ -134,7 +134,10 @@ async fn hf_auto_detect_text_column_over_local_jsonl() {
     let r = run_hf(&h, &fixture);
 
     let (isl, osl) = sole_isl_osl(&r);
-    assert_eq!(isl, TEXT_ISL, "text-column ISL should match the tokenized prompt");
+    assert_eq!(
+        isl, TEXT_ISL,
+        "text-column ISL should match the tokenized prompt"
+    );
     assert_eq!(
         osl, TEXT_OSL,
         "text-column OSL should be the completion-derived length"
