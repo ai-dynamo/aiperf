@@ -28,6 +28,7 @@ read the record for the subsystem you are touching.
 | [repository-layout.md](repository-layout.md) | Cargo workspace topology, package identity, and the naming rules for any new package, enforced by `tools/check_crate_layout.py`. |
 | [extension-registry.md](extension-registry.md) | Static link-time extensibility: the `AIPerfRegistry`/`AIPerfExtension` composition seam, its capability categories, and the frozen bootstrap object graph. |
 | [runner-protocol.md](runner-protocol.md) | The Config-v2 front end ↔ execution boundary: the protocol-v2 stdio envelope, the `BenchmarkRun` vocabulary, dataset/transport path selection, and the in-process linked-capability catalog. |
+| [config-model-unification.md](config-model-unification.md) | Planned convergence of the Config-v2 front end onto one typed `BenchmarkConfig`/`BenchmarkRun` shared by CLI producer and runtime consumer (mirroring the Python `AIPerfConfig`→`build_benchmark_plan`→`BenchmarkRun` pipeline), retiring the untyped projection seam and the per-workload `*WorkloadConfigV2` DTOs. |
 | [loadgen-core-merge.md](loadgen-core-merge.md) | Planned retirement of `loadgen-core` as a standalone crate: its dispatch/collector/observer contract folds into `aiperf-runtime::dispatch` as a module, and the AI-Dynamo Mocker cross-repo reuse plan is retired. |
 
 ### Execution and scheduling

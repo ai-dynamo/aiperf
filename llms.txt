@@ -401,6 +401,11 @@ Whole system:
   execution boundary: the protocol-v2 stdio envelope, the `BenchmarkRun`
   vocabulary, dataset/transport path selection, and the in-process
   linked-capability catalog.
+- [`docs/specs/config-model-unification.md`](docs/specs/config-model-unification.md)
+  — planned convergence of the Config-v2 front end onto one typed
+  `BenchmarkConfig`/`BenchmarkRun` shared by the CLI producer and runtime consumer
+  (mirroring Python's `AIPerfConfig`→`build_benchmark_plan`→`BenchmarkRun`),
+  retiring the untyped projection seam and the per-workload `*WorkloadConfigV2` DTOs.
 - [`docs/specs/2026-07-24-rust-port-flow-deck-design.md`](docs/specs/2026-07-24-rust-port-flow-deck-design.md)
   — design for the `apps/aiperf-flow` `rust-port-flow` deck: an interactive,
   zoomable, playable request-lifecycle explainer of the whole Rust port, plus
