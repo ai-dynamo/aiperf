@@ -245,7 +245,10 @@ mod tests {
     fn definition_lookup_by_namespaced_id_and_alias() {
         use crate::metrics_core::MetricTag;
         let d = definition("aiperf.request_latency").expect("known id");
-        assert_eq!(d.header, metric_definition(MetricTag::RequestLatency).header);
+        assert_eq!(
+            d.header,
+            metric_definition(MetricTag::RequestLatency).header
+        );
         assert!(definition("does.not.exist").is_none());
     }
 

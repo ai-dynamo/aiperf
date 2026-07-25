@@ -2198,7 +2198,11 @@ pub fn record_metric_columns() -> Vec<RecordMetricColumn> {
         .map(|spec| RecordMetricColumn {
             tag: spec.tag.as_str().to_string(),
             header: spec.header().to_string(),
-            unit: spec.display_unit().unwrap_or(spec.unit()).as_str().to_string(),
+            unit: spec
+                .display_unit()
+                .unwrap_or(spec.unit())
+                .as_str()
+                .to_string(),
         })
         .collect()
 }
@@ -2269,10 +2273,16 @@ mod tests {
             );
             feed(&mut hash, format!("{:?}", spec.def.unit).as_bytes());
             feed(&mut hash, format!("{:?}", spec.def.display_unit).as_bytes());
-            feed(&mut hash, format!("{:?}", spec.def.display_order).as_bytes());
+            feed(
+                &mut hash,
+                format!("{:?}", spec.def.display_order).as_bytes(),
+            );
             feed(&mut hash, spec.flags.bits().to_string().as_bytes());
             feed(&mut hash, format!("{:?}", spec.console_group).as_bytes());
-            feed(&mut hash, format!("{:?}", spec.def.larger_is_better).as_bytes());
+            feed(
+                &mut hash,
+                format!("{:?}", spec.def.larger_is_better).as_bytes(),
+            );
             for dependency in spec.required {
                 feed(&mut hash, dependency.as_str().as_bytes());
             }
