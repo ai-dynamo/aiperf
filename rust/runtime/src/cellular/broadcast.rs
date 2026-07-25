@@ -67,6 +67,27 @@ impl<T: Clone> Subscription<T> {
         }
         out
     }
+
+    /// Drains the whole subscription — replay then live — invoking `f` on each item in
+    /// producer order and stopping at (and including) the terminal `Finalized`, without
+    /// buffering the stream into a `Vec` first. Lets a consumer discard items it does not
+    /// keep as they arrive, so peak residency is the consumer's retained set plus one
+    /// in-flight item rather than the whole stream. Requires the producer to eventually
+    /// `finalize` (else the live half blocks forever).
+    pub async fn for_each_until_finalized(mut self, mut f: impl FnMut(T)) {
+        for event in self.replay.drain(..) {
+            match event {
+                BroadcastEvent::Item(item) => f(item),
+                BroadcastEvent::Finalized => return,
+            }
+        }
+        while let Some(event) = self.live.recv().await {
+            match event {
+                BroadcastEvent::Item(item) => f(item),
+                BroadcastEvent::Finalized => break,
+            }
+        }
+    }
 }
 
 struct Inner<T> {
@@ -170,6 +191,22 @@ impl<T: Clone> Broadcast<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The streaming drain visits every item in producer order across the replay/live
+    // seam and stops at the terminal, without buffering the whole stream first.
+    #[tokio::test]
+    async fn for_each_until_finalized_visits_replay_then_live_in_order() {
+        let b = Broadcast::<u32>::new();
+        let sub = b.attach();
+        b.add(0);
+        b.add(1);
+        b.add(2);
+        b.finalize();
+
+        let mut seen = Vec::new();
+        sub.for_each_until_finalized(|item| seen.push(item)).await;
+        assert_eq!(seen, vec![0, 1, 2]);
+    }
 
     // Every consumer's (replay ⊎ live) equals the producer's full `add` order,
     // regardless of when it attached — the core contract.

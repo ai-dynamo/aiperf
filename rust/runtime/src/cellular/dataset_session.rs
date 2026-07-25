@@ -93,22 +93,23 @@ pub struct DatasetIndex<R> {
 
 impl<R: Clone> DatasetIndex<R> {
     /// Drain the dataset broadcast subscription to finalize, indexing only the requests
-    /// this cell owns (`owns(request_id)` true). Every non-owned request is observed but
-    /// dropped, so peak RAM is O(owned) — the cell's ~1/N shard — not O(dataset).
+    /// this cell owns (`owns(request_id)` true). Each chunk is filtered as it streams and
+    /// non-owned requests are dropped immediately, so the index's peak RAM is O(owned) —
+    /// the cell's ~1/N shard — plus one in-flight chunk, not O(dataset).
     /// Requires the producer to `finalize` (else the live tail blocks forever).
     pub async fn build_owned(
         sub: Subscription<DatasetChunk<R>>,
         owns: impl Fn(u64) -> bool,
     ) -> Self {
-        let chunks = sub.collect_until_finalized().await;
         let mut owned = HashMap::new();
-        for chunk in chunks {
+        sub.for_each_until_finalized(|chunk| {
             for request in chunk.requests {
                 if owns(request.request_id) {
                     owned.insert(request.request_id, request.payload);
                 }
             }
-        }
+        })
+        .await;
         Self { owned }
     }
 
