@@ -282,6 +282,15 @@ impl Workload for AgenticReplayWorkload {
         };
         let anchor_ns = runtime.now_ns().saturating_add(lead_ns);
         let source = Rc::clone(&self.source);
+        // Subagent-join gate. The tree specs are not yet threaded from lowering
+        // (a following task), so today's run derives no trees: the gate is a
+        // pass-through (`None`) that never defers and recycles as before. The
+        // gating path itself is fully wired and covered by `join_gating` tests.
+        let tree_specs: Vec<TreeSpec> = Vec::new();
+        let gate: Option<Rc<TreeGate>> = (!tree_specs.is_empty())
+            .then(|| Rc::new(TreeGate::new(&tree_specs)));
+        // Per-run deferral queue for gated join turns (drained on child terminal).
+        let defer_queue: Rc<RefCell<Vec<PendingJoin>>> = Rc::new(RefCell::new(Vec::new()));
         // Profiling recycles exhausted trajectories to sustain a duration run;
         // warmup is a one-shot prime with no recycle.
         let recycle = (cfg.phase == AgenticPhase::Profiling).then(|| {
@@ -331,15 +340,60 @@ impl Workload for AgenticReplayWorkload {
                 target_ns,
                 chain,
                 recycle.clone(),
+                gate.clone(),
+                defer_queue.clone(),
             );
         }
         Ok(())
     }
 }
 
+/// A join turn deferred because its awaited children are not yet terminal.
+///
+/// Held in the per-run deferral queue (`Rc<RefCell<Vec<PendingJoin>>>`) until a
+/// child's terminal callback clears the gate and re-dispatches it at `now_ns`.
+struct PendingJoin {
+    /// The gated parent turn to re-issue once its children have drained.
+    turn: crate::multiturn::TurnToSend,
+    /// Whether the re-dispatched turn chains its continuation on completion.
+    chain: bool,
+}
+
+/// Drain the deferral `queue` of every entry whose gate join is now satisfied.
+///
+/// `key` projects a queued item to its `(conversation_id, turn_index)` join
+/// coordinate; an item is returned (removed) exactly when
+/// [`TreeGate::is_waiting`] no longer holds for that coordinate. Generic over
+/// the item type so the decision logic is unit-testable without a full
+/// [`TurnToSend`](crate::multiturn::TurnToSend).
+fn take_ready<T>(
+    queue: &RefCell<Vec<T>>,
+    gate: &TreeGate,
+    key: impl Fn(&T) -> (&str, usize),
+) -> Vec<T> {
+    let mut q = queue.borrow_mut();
+    let mut ready = Vec::new();
+    let mut i = 0;
+    while i < q.len() {
+        let (conv, idx) = key(&q[i]);
+        if gate.is_waiting(conv, idx) {
+            i += 1;
+        } else {
+            ready.push(q.remove(i));
+        }
+    }
+    ready
+}
+
 /// Schedule one lane turn at `target_ns`, then (when `chain`) recursively schedule
 /// its continuation on completion at the recorded inter-turn `delay_ms` from the
 /// prior turn's end — Python's per-stream sequential continuation.
+///
+/// `gate`/`defer_queue` implement subagent-join gating: a turn whose
+/// `(conversation_id, turn_index)` is a waiting join point is parked in
+/// `defer_queue` instead of issued, and re-dispatched from a child's terminal
+/// callback once [`TreeGate::is_waiting`] clears. A `None` gate (the no-tree
+/// degenerate case) never defers and recycles exactly as before.
 #[allow(clippy::too_many_arguments)]
 fn schedule_agentic_turn(
     runtime: Rc<ScheduledRuntime>,
@@ -348,13 +402,31 @@ fn schedule_agentic_turn(
     target_ns: i64,
     chain: bool,
     recycle: Option<Rc<RecycleState>>,
+    gate: Option<Rc<TreeGate>>,
+    defer_queue: Rc<RefCell<Vec<PendingJoin>>>,
 ) {
+    // Defer a gated join turn until its awaited children terminate. The child
+    // terminal callbacks (below) drain the queue and re-dispatch at `now_ns`.
+    // The phase lifecycle cancels pending scheduled tasks at phase end, so a
+    // never-satisfied join is bounded by the phase, not an ad-hoc timeout.
+    if let Some(g) = &gate
+        && g.is_waiting(&turn.conversation_id, turn.turn_index)
+    {
+        defer_queue.borrow_mut().push(PendingJoin { turn, chain });
+        return;
+    }
+
+    // Captured for the terminal callback's gate accounting (the turn itself is
+    // moved into `issue_turn`).
+    let conv_id = turn.conversation_id.clone();
     let scheduler = runtime.scheduler();
     scheduler.schedule_at_ns(
         target_ns,
         Box::pin(async move {
             let runtime_c = runtime.clone();
             let source_c = source.clone();
+            let gate_c = gate.clone();
+            let defer_c = defer_queue.clone();
             runtime.issue_turn(
                 turn,
                 target_ns,
@@ -362,9 +434,36 @@ fn schedule_agentic_turn(
                 Box::new(move |credit, outcome| {
                     Box::pin(async move {
                         if credit.is_final_turn() {
-                            // The stream is done. Recycle a fresh trajectory to
-                            // sustain the run while the phase budget permits.
-                            if let Some(recycle) = &recycle
+                            // This conversation reached terminal. Release any
+                            // parent join turn waiting on it (a child terminal
+                            // FAILURE still counts as done — no success gating),
+                            // then dispatch the now-unblocked joins at `now_ns`.
+                            if let Some(g) = &gate_c {
+                                g.on_child_terminal(&conv_id);
+                                let ready = take_ready(&defer_c, g, |pj| {
+                                    (pj.turn.conversation_id.as_str(), pj.turn.turn_index)
+                                });
+                                for pj in ready {
+                                    schedule_agentic_turn(
+                                        runtime_c.clone(),
+                                        source_c.clone(),
+                                        pj.turn,
+                                        runtime_c.now_ns(),
+                                        pj.chain,
+                                        recycle.clone(),
+                                        gate_c.clone(),
+                                        defer_c.clone(),
+                                    );
+                                }
+                            }
+                            // Recycle only when the whole tree has drained. A
+                            // no-tree gate reports drained immediately, so the
+                            // recycle behaves exactly as before.
+                            let drained = gate_c
+                                .as_ref()
+                                .map_or(true, |g| g.on_lane_terminal(&conv_id));
+                            if drained
+                                && let Some(recycle) = &recycle
                                 && runtime_c.can_issue(true)
                                 && let Some(draw) = recycle.next_draw()
                             {
@@ -386,6 +485,8 @@ fn schedule_agentic_turn(
                                         now,
                                         true,
                                         Some(recycle.clone()),
+                                        gate_c,
+                                        defer_c,
                                     );
                                 }
                             }
@@ -410,7 +511,8 @@ fn schedule_agentic_turn(
                             .end_ns
                             .saturating_add((delay_ms.max(0.0) * NS_PER_MS) as i64);
                         schedule_agentic_turn(
-                            runtime_c, source_c, next_turn, next_target, true, recycle,
+                            runtime_c, source_c, next_turn, next_target, true, recycle, gate_c,
+                            defer_c,
                         );
                     })
                 }),
@@ -567,8 +669,14 @@ impl TreeGate {
             if first_time {
                 return self.registry.borrow_mut().on_descendant_done(&root);
             }
+            // A repeat child terminal (e.g. already folded by `on_child_terminal`)
+            // is not itself a fresh drain event.
+            return false;
         }
-        false
+        // An unknown conversation — not a tracked root and not a registered
+        // child — is a lone conversation and thus its own trivially-drained
+        // tree, so recycle behaves as it does with no gate.
+        true
     }
 }
 
@@ -589,6 +697,38 @@ mod tree_gate_tests {
         assert!(!gate.is_waiting("t", 2));
         assert!(!gate.on_lane_terminal("t::sa:a"));
         assert!(gate.on_lane_terminal("t")); // whole tree drained
+    }
+
+    #[test]
+    fn join_gating_defers_and_releases_parent() {
+        // One tree: root "t" has a join at turn 1 waiting on child "t::sa:a".
+        let spec = TreeSpec {
+            root: "t".into(),
+            children: vec!["t::sa:a".into()],
+            join_turns: vec![(1usize, vec!["t::sa:a".into()])],
+        };
+        let gate = TreeGate::new(&[spec]);
+
+        // The deferral queue is keyed by `(conversation_id, turn_index)`; a
+        // `(String, usize)` stand-in exercises the real `take_ready` decision
+        // without a full `TurnToSend`.
+        let queue: RefCell<Vec<(String, usize)>> = RefCell::new(Vec::new());
+        let key = |x: &(String, usize)| (x.0.as_str(), x.1);
+
+        // The parent join turn is waiting: it is deferred (queued), not issued.
+        assert!(gate.is_waiting("t", 1));
+        queue.borrow_mut().push(("t".to_string(), 1));
+
+        // While the child is live, `take_ready` leaves the join parked.
+        assert!(take_ready(&queue, &gate, key).is_empty());
+        assert_eq!(queue.borrow().len(), 1);
+
+        // The child terminal clears the gate and drains the parent join.
+        gate.on_child_terminal("t::sa:a");
+        assert!(!gate.is_waiting("t", 1));
+        let ready = take_ready(&queue, &gate, key);
+        assert_eq!(ready, vec![("t".to_string(), 1)]);
+        assert!(queue.borrow().is_empty());
     }
 
     #[test]
