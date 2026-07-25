@@ -848,6 +848,31 @@ mod tests {
                 &MainReconstructOptions::default(),
             )
             .unwrap();
+            // Produce the export-level raw records from the real-corpus
+            // reconstruction and confirm every turn's content+timing survives
+            // serialization byte-for-byte (the export.records raw artifact).
+            let export_records = crate::agentx::export::raw_export_trace(&convs, None);
+            let total_turns: usize = convs.iter().map(|c| c.turns.len()).sum();
+            assert_eq!(export_records.len(), total_turns, "export record count");
+            for ((c, t), rec) in convs
+                .iter()
+                .flat_map(|c| c.turns.iter().map(move |t| (c, t)))
+                .zip(&export_records)
+            {
+                // The export record reproduces the (real-corpus-proven) turn
+                // timing and content exactly.
+                assert_eq!(rec["session_id"], serde_json::json!(c.session_id));
+                assert_eq!(rec["timestamp_ms"].as_f64(), t.timestamp_ms);
+                assert_eq!(rec["delay_ms"].as_f64(), t.delay_ms);
+                assert_eq!(rec["max_tokens"].as_i64(), Some(t.max_tokens));
+                let msgs = rec["raw_messages"].as_array().unwrap();
+                assert_eq!(msgs.len(), t.raw_messages.len());
+                for (mj, m) in msgs.iter().zip(&t.raw_messages) {
+                    assert_eq!(mj["role"], serde_json::json!(m.role));
+                    assert_eq!(mj["content"], serde_json::json!(m.content));
+                }
+            }
+
             let by_sid: HashMap<&str, &ReconstructedConversation> =
                 convs.iter().map(|c| (c.session_id.as_str(), c)).collect();
 
