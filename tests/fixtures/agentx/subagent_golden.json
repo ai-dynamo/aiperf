@@ -1,0 +1,258 @@
+[
+ {
+  "name": "single_chain",
+  "trace_id": "t0",
+  "sa_index": 0,
+  "source_outer_idx": 5,
+  "block_size": 4,
+  "agent_id": "agent_001",
+  "entry_t": 10.0,
+  "tool_tokens": 0,
+  "system_tokens": 0,
+  "requests": [
+   {
+    "t": 10.0,
+    "model": "m",
+    "hash_ids": [
+     1
+    ],
+    "in": 4,
+    "out": 4,
+    "api_time": 0.1
+   },
+   {
+    "t": 11.0,
+    "model": "m",
+    "hash_ids": [
+     1,
+     2
+    ],
+    "in": 8,
+    "out": 4,
+    "api_time": 0.1
+   }
+  ],
+  "plans": [
+   {
+    "session_id": "t0::sa:agent_001",
+    "chain_index": 0,
+    "request_inner_indices": [
+     0,
+     1
+    ],
+    "request_ts": [
+     10.0,
+     11.0
+    ],
+    "init_tool_tokens": 0,
+    "init_system_tokens": 0,
+    "is_aux": false
+   }
+  ]
+ },
+ {
+  "name": "spawn_worker",
+  "trace_id": "t0",
+  "sa_index": 1,
+  "source_outer_idx": 7,
+  "block_size": 4,
+  "agent_id": "agent_002",
+  "entry_t": 0.0,
+  "tool_tokens": 0,
+  "system_tokens": 0,
+  "requests": [
+   {
+    "t": 0.0,
+    "model": "m",
+    "hash_ids": [
+     1,
+     2
+    ],
+    "in": 8,
+    "out": 8,
+    "api_time": 0.1
+   },
+   {
+    "t": 1.0,
+    "model": "m",
+    "hash_ids": [
+     1,
+     9
+    ],
+    "in": 8,
+    "out": 4,
+    "api_time": 0.1
+   },
+   {
+    "t": 2.0,
+    "model": "m",
+    "hash_ids": [
+     1,
+     2,
+     3
+    ],
+    "in": 12,
+    "out": 4,
+    "api_time": 0.1
+   }
+  ],
+  "plans": [
+   {
+    "session_id": "t0::sa:agent_002",
+    "chain_index": 0,
+    "request_inner_indices": [
+     0,
+     2
+    ],
+    "request_ts": [
+     0.0,
+     2.0
+    ],
+    "init_tool_tokens": 0,
+    "init_system_tokens": 0,
+    "is_aux": false
+   },
+   {
+    "session_id": "t0::sa:agent_002:aux:000",
+    "chain_index": 1,
+    "request_inner_indices": [
+     1
+    ],
+    "request_ts": [
+     1.0
+    ],
+    "init_tool_tokens": 0,
+    "init_system_tokens": 0,
+    "is_aux": true
+   }
+  ]
+ },
+ {
+  "name": "cross_model_aux",
+  "trace_id": "t0",
+  "sa_index": 2,
+  "source_outer_idx": 9,
+  "block_size": 4,
+  "agent_id": "agent_003",
+  "entry_t": 0.0,
+  "tool_tokens": 0,
+  "system_tokens": 0,
+  "requests": [
+   {
+    "t": 0.0,
+    "model": "opus",
+    "hash_ids": [
+     1,
+     2
+    ],
+    "in": 8,
+    "out": 8,
+    "api_time": 0.1
+   },
+   {
+    "t": 1.0,
+    "model": "haiku",
+    "hash_ids": [
+     1,
+     9
+    ],
+    "in": 8,
+    "out": 4,
+    "api_time": 0.1
+   },
+   {
+    "t": 2.0,
+    "model": "opus",
+    "hash_ids": [
+     1,
+     2,
+     3
+    ],
+    "in": 12,
+    "out": 4,
+    "api_time": 0.1
+   }
+  ],
+  "plans": [
+   {
+    "session_id": "t0::sa:agent_003",
+    "chain_index": 0,
+    "request_inner_indices": [
+     0,
+     2
+    ],
+    "request_ts": [
+     0.0,
+     2.0
+    ],
+    "init_tool_tokens": 0,
+    "init_system_tokens": 0,
+    "is_aux": false
+   },
+   {
+    "session_id": "t0::sa:agent_003:aux:000",
+    "chain_index": 1,
+    "request_inner_indices": [
+     1
+    ],
+    "request_ts": [
+     1.0
+    ],
+    "init_tool_tokens": 0,
+    "init_system_tokens": 0,
+    "is_aux": true
+   }
+  ]
+ },
+ {
+  "name": "relative_ts",
+  "trace_id": "t0",
+  "sa_index": 3,
+  "source_outer_idx": 11,
+  "block_size": 4,
+  "agent_id": "agent_004",
+  "entry_t": 100.0,
+  "tool_tokens": 0,
+  "system_tokens": 0,
+  "requests": [
+   {
+    "t": 0.5,
+    "model": "m",
+    "hash_ids": [
+     1
+    ],
+    "in": 4,
+    "out": 4,
+    "api_time": 0.1
+   },
+   {
+    "t": 1.5,
+    "model": "m",
+    "hash_ids": [
+     1,
+     2
+    ],
+    "in": 8,
+    "out": 4,
+    "api_time": 0.1
+   }
+  ],
+  "plans": [
+   {
+    "session_id": "t0::sa:agent_004",
+    "chain_index": 0,
+    "request_inner_indices": [
+     0,
+     1
+    ],
+    "request_ts": [
+     100.5,
+     101.5
+    ],
+    "init_tool_tokens": 0,
+    "init_system_tokens": 0,
+    "is_aux": false
+   }
+  ]
+ }
+]
