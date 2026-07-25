@@ -10,6 +10,7 @@
 pub mod artifacts;
 pub mod config;
 pub mod dataset;
+pub mod dispatch;
 pub mod endpoint;
 pub mod export;
 pub mod metrics;
@@ -25,5 +26,6 @@ pub mod tokenizer;
 pub mod transport;
 
 pub use config::BenchmarkConfig;
+pub use dispatch::DispatchMode;
 pub use resolved::Resolved;
 pub use run::BenchmarkRun;

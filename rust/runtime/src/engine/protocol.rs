@@ -31,14 +31,12 @@ use crate::extensions::AIPerfRegistry;
 /// match a single global limiter; `Sharded` retains the static `1/workers`
 /// per-thread partition. `workers==1` and the single-thread coordinator path
 /// have no cross-thread admission concern, so the mode is inert there.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum DispatchMode {
-    Sharded,
-    #[default]
-    Global,
-    GlobalHop,
-}
+///
+/// The enum itself is defined in the leaf `aiperf-config` crate (so the typed
+/// config model and runtime share one serde-stable type without a cycle) and
+/// re-exported here to keep `crate::engine::protocol::DispatchMode` call sites
+/// unchanged.
+pub use aiperf_config::model::DispatchMode;
 
 /// Worker-assignment policy applied at the single [`DispatchMode::GlobalHop`]
 /// pick site (`ThreadPerCoreExecutor::execute_command`) when `workers > 1`.

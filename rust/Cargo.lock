@@ -109,7 +109,6 @@ dependencies = [
 name = "aiperf-config"
 version = "0.0.0"
 dependencies = [
- "aiperf-runtime",
  "anyhow",
  "serde",
  "serde_json",
@@ -191,6 +190,7 @@ name = "aiperf-runtime"
 version = "0.0.0"
 dependencies = [
  "aiconfigurator-core",
+ "aiperf-config",
  "anyhow",
  "arrow",
  "async-trait",
