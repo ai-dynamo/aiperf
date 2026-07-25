@@ -683,6 +683,40 @@ pub fn hf_select_traces(
     crate::agentx::selection::filter_then_cap(candidates, num_dataset_entries, max_context_length)
 }
 
+/// Parse HF dataset rows into `WekaTrace`s and apply filter-then-cap selection
+/// (Python `SemiAnalysisCCTracesWekaLoader._validate_rows`). Each row is a JSON
+/// object validated as a `WekaTrace`; invalid rows error. The literal HuggingFace
+/// download is the only piece not here — it is a thin adapter that yields these
+/// rows (a `Vec<serde_json::Value>`), so the parse + select + delegate logic is
+/// fully implemented and testable without the network.
+pub fn load_hf_traces_from_rows(
+    rows: Vec<serde_json::Value>,
+    hf_dataset_name: &str,
+    num_dataset_entries: Option<usize>,
+    max_context_length: Option<i64>,
+    max_osl: Option<i64>,
+) -> Result<
+    (
+        Vec<(String, crate::agentx::trace::WekaTrace)>,
+        crate::agentx::selection::SelectionStats,
+    ),
+    String,
+> {
+    let mut traces: Vec<(String, crate::agentx::trace::WekaTrace)> = Vec::with_capacity(rows.len());
+    for (i, row) in rows.into_iter().enumerate() {
+        let bytes = serde_json::to_vec(&row).map_err(|e| e.to_string())?;
+        let trace = crate::agentx::trace::WekaTrace::from_json_bytes(&bytes)
+            .map_err(|e| format!("row {i} of {hf_dataset_name} failed WekaTrace validation: {e}"))?;
+        traces.push((trace.id.clone(), trace));
+    }
+    Ok(hf_select_traces(
+        traces,
+        num_dataset_entries,
+        max_context_length,
+        max_osl,
+    ))
+}
+
 /// Build a [`NormalReq`] from a wire normal request.
 pub fn normal_req_from_normal(n: &crate::agentx::trace::WekaNormalRequest) -> NormalReq {
     NormalReq {
@@ -911,6 +945,27 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn hf_rows_parse_validate_select() {
+        let row = |id: &str, in_len: i64, out_len: i64| {
+            serde_json::json!({
+                "id": id, "models": ["m"], "block_size": 4, "hash_id_scope": "local",
+                "requests": [{"t": 0.0, "type": "n", "model": "m", "in": in_len, "out": out_len, "hash_ids": [1]}]
+            })
+        };
+        let rows = vec![row("a", 100, 4), row("b", 900, 50), row("c", 200, 4)];
+        // max_context 500 drops b (peak 950); cap 2 keeps a, c.
+        let (kept, stats) =
+            load_hf_traces_from_rows(rows, "semianalysis_cc_traces_weka_062126", Some(2), Some(500), None)
+                .unwrap();
+        assert_eq!(kept.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), vec!["a", "c"]);
+        assert_eq!(stats.rejected_by_maxctx, 1);
+        // Invalid row (unknown field) errors with dataset name context.
+        let bad = vec![serde_json::json!({"id": "x", "bogus": 1})];
+        let err = load_hf_traces_from_rows(bad, "ds", None, None, None).unwrap_err();
+        assert!(err.contains("failed WekaTrace validation"));
     }
 
     #[test]
