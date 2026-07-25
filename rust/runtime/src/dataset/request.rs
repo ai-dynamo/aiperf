@@ -60,6 +60,11 @@ pub struct MaterializedRequest {
     pub raw_token_ids: Option<Handle>,
     /// Audio duration used by ASR metrics.
     pub audio_duration_seconds: Option<f64>,
+    /// Exact wire image count known from the composed turn content, when it is
+    /// sound to trust without re-parsing the serialized body (see
+    /// [`known_image_count`]). `None` means "unknown here — derive it at dispatch",
+    /// so raw payloads and history-accumulating continuation turns stay correct.
+    pub image_count: Option<u32>,
     /// Opaque evaluator association propagated without positional matching.
     pub accuracy: Option<AccuracyAssociation>,
     /// Zero-based authored turn index.
@@ -413,6 +418,14 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             input_tokens: session.input_tokens(store)?,
             raw_token_ids: None,
             audio_duration_seconds: current.audio_duration_seconds,
+            // Raw payloads have no structured content groups, so trust the
+            // authored count only for non-raw bodies; dispatch parses otherwise.
+            image_count: raw_body_handle(current, store)
+                .ok()
+                .flatten()
+                .is_none()
+                .then(|| known_image_count(current, turn_index))
+                .flatten(),
             accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
@@ -523,6 +536,14 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 None
             },
             audio_duration_seconds: current.audio_duration_seconds,
+            // Raw payloads have no structured content groups, so trust the
+            // authored count only for non-raw bodies; dispatch parses otherwise.
+            image_count: raw_body_handle(current, store)
+                .ok()
+                .flatten()
+                .is_none()
+                .then(|| known_image_count(current, turn_index))
+                .flatten(),
             accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
@@ -599,6 +620,14 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
             input_tokens: session.input_tokens(store)?,
             raw_token_ids: None,
             audio_duration_seconds: current.audio_duration_seconds,
+            // Raw payloads have no structured content groups, so trust the
+            // authored count only for non-raw bodies; dispatch parses otherwise.
+            image_count: raw_body_handle(current, store)
+                .ok()
+                .flatten()
+                .is_none()
+                .then(|| known_image_count(current, turn_index))
+                .flatten(),
             accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
@@ -667,6 +696,14 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
                 None
             },
             audio_duration_seconds: current.audio_duration_seconds,
+            // Raw payloads have no structured content groups, so trust the
+            // authored count only for non-raw bodies; dispatch parses otherwise.
+            image_count: raw_body_handle(current, store)
+                .ok()
+                .flatten()
+                .is_none()
+                .then(|| known_image_count(current, turn_index))
+                .flatten(),
             accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
@@ -1154,6 +1191,27 @@ pub(crate) fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<Endp
         }
     }
     Ok(resolved)
+}
+
+/// Wire image count derivable from the composed turn content without re-parsing
+/// the serialized body.
+///
+/// Sound only for the first turn of a conversation: later turns may carry
+/// accumulated history images on the wire that `current.content` (this turn's
+/// authored content) does not enumerate, so those return `None` and let dispatch
+/// fall back to parsing the body. Raw payloads are handled by the caller (they
+/// have no structured content groups) and also stay `None`.
+fn known_image_count(current: &Turn, turn_index: usize) -> Option<u32> {
+    if turn_index != 0 {
+        return None;
+    }
+    let count: usize = current
+        .content
+        .iter()
+        .filter(|group| group.kind == MediaKind::Image)
+        .map(|group| group.handles.len())
+        .sum();
+    u32::try_from(count).ok()
 }
 
 fn raw_token_ids(store: &dyn SegmentStore, handle: Option<Handle>) -> Result<Option<Vec<u32>>> {

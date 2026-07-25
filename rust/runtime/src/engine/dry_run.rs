@@ -859,6 +859,7 @@ mod tests {
                 is_final_turn: true,
                 cancel_after_ns: None,
                 url_index: None,
+                image_count: None,
             },
             model: "fixture-model".to_string(),
             endpoint: PreparedEndpointBinding::Prepared(PreparedEndpointReference {

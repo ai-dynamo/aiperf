@@ -209,6 +209,7 @@ impl TransportSink {
             is_final_turn,
             cancel_after_ns,
             url_index,
+            image_count: known_image_count,
             ..
         } = req;
         obs.on_admit(uuid, self.ms(self.clock.now_ns()), 0);
@@ -240,11 +241,27 @@ impl TransportSink {
             }
             None => (body, None),
         };
-        let payload = parsed.or_else(|| serde_json::from_slice::<Value>(&body).ok());
+        // `num_images` is the only consumer of the parsed body here. When
+        // composition already established the exact wire image count, trust it and
+        // skip re-parsing the (potentially multi-MB multimodal) body on the hot
+        // path — the full deserialize otherwise dominates dispatch for large image
+        // batches. Fall back to parsing only when the count is unknown (raw
+        // payloads, history-accumulating turns) or content-server tagging already
+        // produced the value for free.
+        let payload = parsed.or_else(|| {
+            known_image_count
+                .is_none()
+                .then(|| serde_json::from_slice::<Value>(&body).ok())
+                .flatten()
+        });
         let mut endpoint_metrics = ObservedEndpointMetrics {
-            num_images: payload
-                .as_ref()
-                .map(|payload| endpoint.extract_payload_inputs(payload).image_count as usize)
+            num_images: known_image_count
+                .map(|count| count as usize)
+                .or_else(|| {
+                    payload
+                        .as_ref()
+                        .map(|payload| endpoint.extract_payload_inputs(payload).image_count as usize)
+                })
                 .filter(|count| *count > 0),
             ..ObservedEndpointMetrics::default()
         };

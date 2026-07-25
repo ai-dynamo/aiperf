@@ -494,6 +494,7 @@ impl GraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
             is_final_turn: input.is_final_turn,
             cancel_after_ns: input.cancel_after_ns,
             url_index: Some(session_url_index(input.session_num, profile.url_count)),
+            image_count: None,
         };
         Ok(GraphEndpointDispatch {
             transport: profile.transport.clone(),

@@ -655,6 +655,9 @@ pub struct TurnToSend {
     pub streaming: bool,
     /// Audio duration propagated into ASR metrics.
     pub audio_duration_seconds: Option<f64>,
+    /// Exact wire image count from composition, letting dispatch skip a
+    /// full-body re-parse for the `num_images` metric. `None` when unknown.
+    pub image_count: Option<u32>,
     /// Absolute trace timestamp for this turn, if any.
     pub timestamp_ms: Option<f64>,
     /// Relative delay for this turn, if any.
@@ -1013,6 +1016,7 @@ impl NativeSessionBackend {
             endpoint: turn_endpoint,
             streaming: materialized.streaming,
             audio_duration_seconds: materialized.audio_duration_seconds,
+            image_count: materialized.image_count,
             timestamp_ms: timing.timestamp_ms,
             delay_ms: timing.delay_ms,
             trace_hash_ids: timing

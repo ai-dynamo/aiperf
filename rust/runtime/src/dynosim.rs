@@ -2365,6 +2365,7 @@ impl TurnDispatcher for DynosimSink {
                     is_final_turn,
                     cancel_after_ns: turn.cancel_after_ns,
                     url_index: turn.url_index,
+                    image_count: None,
                 },
                 observer,
                 on_first_token,

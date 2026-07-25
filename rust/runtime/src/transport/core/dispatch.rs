@@ -56,6 +56,10 @@ pub struct Request {
     pub cancel_after_ns: Option<i64>,
     /// Effective endpoint index for this request.
     pub url_index: Option<u32>,
+    /// Wire image count known from composition, when trustworthy without
+    /// re-parsing the body. `None` means the dispatch path derives `num_images`
+    /// by parsing the serialized body (raw payloads, history-accumulating turns).
+    pub image_count: Option<u32>,
 }
 
 impl fmt::Debug for Request {
@@ -79,6 +83,7 @@ impl fmt::Debug for Request {
             .field("is_final_turn", &self.is_final_turn)
             .field("cancel_after_ns", &self.cancel_after_ns)
             .field("url_index", &self.url_index)
+            .field("image_count", &self.image_count)
             .finish()
     }
 }
@@ -228,6 +233,7 @@ impl PreparedTurn {
                 is_final_turn,
                 cancel_after_ns: turn.cancel_after_ns,
                 url_index: turn.url_index,
+                image_count: turn.image_count,
             },
             model,
             endpoint,
