@@ -132,6 +132,24 @@ fn rewrite_first_turn_marker(turn: &mut crate::multiturn::TurnToSend, marker: &s
     }
 }
 
+/// Resolve the requested output-token count for an issued turn under the
+/// accelerated cache-warmup pressure override. `Some(n)` forces `n` (Python's
+/// `_WARMUP_MAX_TOKENS=1` on every credit), overriding whatever the recorded
+/// turn carried; `None` leaves the recorded `recorded` value untouched.
+fn effective_max_output_tokens(recorded: usize, max_tokens_override: Option<u32>) -> usize {
+    max_tokens_override.map_or(recorded, |n| n as usize)
+}
+
+/// Apply [`AgenticReplayConfig::max_tokens_override`] to a freshly built turn:
+/// when set, the turn's requested output tokens are forced to the override,
+/// mirroring Python's per-credit `max_tokens=1` cache-pressure warmup.
+fn apply_max_tokens_override(
+    turn: &mut crate::multiturn::TurnToSend,
+    max_tokens_override: Option<u32>,
+) {
+    turn.max_output_tokens = effective_max_output_tokens(turn.max_output_tokens, max_tokens_override);
+}
+
 /// Strip a leading `[rid:<12hex>]\n\n` cache-bust marker, if present.
 fn strip_rid_prefix(content: &str) -> &str {
     if let Some(rest) = content.strip_prefix("[rid:")
@@ -336,13 +354,16 @@ impl Workload for AgenticReplayWorkload {
                     continue;
                 }
             };
-            let first = match session.build_first_turn(None) {
+            let mut first = match session.build_first_turn(None) {
                 Ok(turn) => turn,
                 Err(error) => {
                     tracing::warn!(error = %error, lane = %lane.conversation_id, "agentic first turn failed");
                     continue;
                 }
             };
+            // Accelerated cache-warmup forces `max_tokens` on every issued credit
+            // (Python `_WARMUP_MAX_TOKENS=1`); a `None` override is a no-op.
+            apply_max_tokens_override(&mut first, cfg.max_tokens_override);
             let target_ns = anchor_ns.saturating_add((offset_ms_val.max(0.0) * NS_PER_MS) as i64);
             // Profiling chains continuations on response; warmup fires one turn.
             let chain = cfg.phase == AgenticPhase::Profiling;
@@ -964,6 +985,21 @@ mod tree_gate_tests {
             children,
             vec!["t::sa:a".to_string(), "t::sa:a:fa:0".to_string()]
         );
+    }
+
+    #[test]
+    fn max_tokens_override_some_forces_value_over_recorded() {
+        // A `Some(1)` override forces the built turn's requested output tokens to
+        // 1 regardless of the recorded cap (Python's `_WARMUP_MAX_TOKENS=1`).
+        assert_eq!(effective_max_output_tokens(128, Some(1)), 1);
+        assert_eq!(effective_max_output_tokens(0, Some(7)), 7);
+    }
+
+    #[test]
+    fn max_tokens_override_none_leaves_recorded_unchanged() {
+        // The default (`None`) preserves each turn's recorded output-token cap.
+        assert_eq!(effective_max_output_tokens(128, None), 128);
+        assert_eq!(effective_max_output_tokens(0, None), 0);
     }
 
     #[test]
