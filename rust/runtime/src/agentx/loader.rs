@@ -531,6 +531,88 @@ mod tests {
         assert_eq!(classify_turn_input(&bare, None), None);
     }
 
+    struct StubSynth {
+        bs: i64,
+    }
+    impl TokenSynth for StubSynth {
+        fn decode_block_tokens(&mut self, hash_ids: &[i64]) -> Vec<u32> {
+            hash_ids
+                .iter()
+                .flat_map(|&h| (0..self.bs).map(move |i| (h as u32) * 1000 + i as u32))
+                .collect()
+        }
+        fn sample_partial_tail_tokens(&mut self, n: usize, _seed: &str) -> Vec<u32> {
+            (0..n as u32).map(|i| 900_000 + i).collect()
+        }
+        fn decode_tokens_to_text(&self, tokens: &[u32]) -> String {
+            tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(" ")
+        }
+    }
+
+    #[test]
+    fn convert_trace_emits_root_and_child_conversations() {
+        use crate::agentx::config::WekaConfig;
+        use crate::agentx::trace::{
+            WekaInnerRequest, WekaNormalRequest, WekaRequest, WekaSubagentEntry, WekaTrace,
+            HashIdScope,
+        };
+        let norm = |t: f64, hs: &[i64], in_len: i64| WekaNormalRequest {
+            t,
+            model: "m".into(),
+            input_length: in_len,
+            output_length: 4,
+            hash_ids: hs.to_vec(),
+            input_types: vec![],
+            output_types: vec![],
+            stop: String::new(),
+            api_time: Some(0.1),
+            think_time: None,
+        };
+        let trace = WekaTrace {
+            id: "t".into(),
+            models: vec!["m".into()],
+            block_size: 4,
+            hash_id_scope: HashIdScope::Local,
+            tool_tokens: 0,
+            system_tokens: 0,
+            requests: vec![
+                WekaRequest::Normal(norm(0.0, &[1, 2], 8)),
+                WekaRequest::Subagent(WekaSubagentEntry {
+                    t: 1.0,
+                    agent_id: "a1".into(),
+                    subagent_type: "Explore".into(),
+                    duration_ms: Some(500),
+                    total_tokens: None,
+                    tool_use_count: None,
+                    status: "completed".into(),
+                    requests: vec![WekaInnerRequest::Normal(norm(1.0, &[5, 6], 8))],
+                    models: vec!["m".into()],
+                    tool_tokens: 0,
+                    system_tokens: 0,
+                }),
+                WekaRequest::Normal(norm(2.0, &[1, 2, 3], 12)),
+            ],
+        };
+        let mut synth = StubSynth { bs: 4 };
+        let convs = convert_trace_to_conversations(
+            "t",
+            &trace,
+            &mut synth,
+            &HashMap::new(),
+            &WekaConfig::default(),
+            &MainReconstructOptions::default(),
+        )
+        .unwrap();
+        // Root + one active subagent child.
+        assert_eq!(convs.len(), 2);
+        assert_eq!(convs[0].session_id, "t");
+        assert_eq!(convs[0].parent_conversation_id, None);
+        assert_eq!(convs[0].turns.len(), 2); // two top-level normals
+        assert_eq!(convs[1].session_id, "t::sa:a1");
+        assert_eq!(convs[1].parent_conversation_id.as_deref(), Some("t"));
+        assert_eq!(convs[1].turns[0].source_kind, "weka_subagent");
+    }
+
     #[test]
     fn delay_and_cap_helpers() {
         // end-to-start subtracts prev api time (0.1s = 100ms) from the 1000ms gap.
