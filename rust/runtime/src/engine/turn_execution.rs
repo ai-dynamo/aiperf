@@ -61,6 +61,9 @@ pub struct ExecutionBackendConfig {
     ///
     /// Each worker receives an independent dense-key table.
     pub prepared_endpoints: Option<Arc<dyn PreparedEndpointTableFactory>>,
+    /// Worker-assignment policy applied by the `workers > 1` hop executor. Inert
+    /// for `workers == 1` (co-located sink, no hop).
+    pub hop_routing: HopRouting,
 }
 
 /// Constructs worker-local prepared endpoint tables.
@@ -215,6 +218,7 @@ pub(crate) fn build_native<B: ExecutionSinkBuilder>(
     workers: usize,
     coordinator_clock: Rc<dyn Clock>,
     real_clock_anchor: RealClockAnchor,
+    hop_routing: HopRouting,
 ) -> Result<Rc<dyn RequestExecutor>> {
     ensure!(workers > 0, "execution workers must be positive");
     if workers == 1 {
@@ -225,7 +229,7 @@ pub(crate) fn build_native<B: ExecutionSinkBuilder>(
         workers,
         coordinator_clock,
         real_clock_anchor,
-        HopRouting::RoundRobin,
+        hop_routing,
     )?))
 }
 
@@ -238,11 +242,13 @@ impl RequestExecutorFactory for HttpExecutionFactory {
         let workers = config.workers;
         let coordinator_clock = config.coordinator_clock.clone();
         let anchor = config.real_clock_anchor;
+        let hop_routing = config.hop_routing;
         build_native(
             HttpSinkBuilder::from_config(&config),
             workers,
             coordinator_clock,
             anchor,
+            hop_routing,
         )
     }
 }
@@ -424,7 +430,7 @@ fn pick_worker(
     routing: HopRouting,
     workers: usize,
     correlation: Option<&str>,
-    inflight: &[usize],
+    inflight: &[Cell<usize>],
     sticky: &mut HashMap<String, usize>,
     rr_cursor: &mut usize,
 ) -> usize {
@@ -458,11 +464,11 @@ fn round_robin(workers: usize, rr_cursor: &mut usize) -> usize {
 }
 
 /// Index of the shallowest in-flight worker; ties resolve to the lowest index.
-fn argmin(inflight: &[usize]) -> usize {
+fn argmin(inflight: &[Cell<usize>]) -> usize {
     inflight
         .iter()
         .enumerate()
-        .min_by_key(|&(index, &depth)| (depth, index))
+        .min_by_key(|(index, cell)| (cell.get(), *index))
         .map(|(index, _)| index)
         .unwrap_or(0)
 }
@@ -720,13 +726,15 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             let senders = senders
                 .as_ref()
                 .ok_or_else(|| anyhow!("execution backend is shut down"))?;
-            let inflight: Vec<usize> = self.inflight.iter().map(Cell::get).collect();
             let mut rr_cursor = self.next_worker.get();
+            // Pass the live `Cell` slice, not an eager snapshot: only `LeastLoaded`
+            // reads worker depths, so RoundRobin/Sticky avoid a per-request W-sized
+            // heap allocation on the coordinator hot path.
             let index = pick_worker(
                 self.routing,
                 senders.len(),
                 context.metadata.correlation_id.as_deref(),
-                &inflight,
+                &self.inflight,
                 &mut self.sticky.borrow_mut(),
                 &mut rr_cursor,
             );
@@ -834,7 +842,7 @@ fn run_worker_thread<B: ExecutionSinkBuilder>(
         return Ok(());
     }
     let local = tokio::task::LocalSet::new();
-    local.block_on(&runtime, run_worker(receiver, sink, clock));
+    local.block_on(&runtime, run_worker(receiver, sink, clock, worker_id));
     Ok(())
 }
 
@@ -842,6 +850,7 @@ async fn run_worker<S: WorkerSink + 'static>(
     mut receiver: mpsc::Receiver<WorkerMessage>,
     sink: Rc<S>,
     clock: Rc<dyn Clock>,
+    worker_id: usize,
 ) {
     let mut jobs = JoinSet::new();
     let mut accepting = true;
@@ -903,7 +912,7 @@ async fn run_worker<S: WorkerSink + 'static>(
         }
     }
     if let Some((end_ns, reply)) = pending_drain {
-        let records = observer
+        let mut records = observer
             .map(|observer| {
                 observer
                     .take_finalizer_at(end_ns)
@@ -911,6 +920,16 @@ async fn run_worker<S: WorkerSink + 'static>(
                     .records
             })
             .unwrap_or_default();
+        // Stamp the executing worker identity into records the coordinator did
+        // not already attribute. In the hop path the worker-local observer holds
+        // exactly this thread's requests, so `worker_id` here is authoritative:
+        // it makes per-worker routing (e.g. `HopRouting::Sticky` session
+        // affinity) observable at the record boundary.
+        for (_uuid, ingest) in &mut records {
+            if ingest.worker_id.is_none() {
+                ingest.worker_id = Some(worker_id.to_string());
+            }
+        }
         let _ = reply.send(records);
     }
 }
@@ -1057,7 +1076,7 @@ mod tests {
 
     #[test]
     fn pick_worker_round_robin_cycles_in_issue_order() {
-        let inflight = [0usize; 3];
+        let inflight = [Cell::new(0usize), Cell::new(0), Cell::new(0)];
         let mut sticky = HashMap::new();
         let mut cursor = 0usize;
         let picks: Vec<usize> = (0..7)
@@ -1078,7 +1097,7 @@ mod tests {
 
     #[test]
     fn pick_worker_sticky_maps_correlation_stably() {
-        let inflight = [0usize; 3];
+        let inflight = [Cell::new(0usize), Cell::new(0), Cell::new(0)];
         let mut sticky = HashMap::new();
         let mut cursor = 0usize;
         // Pin the concrete FNV-1a placement so a hash change is caught.
@@ -1112,7 +1131,7 @@ mod tests {
 
     #[test]
     fn pick_worker_sticky_falls_back_to_round_robin_without_correlation() {
-        let inflight = [0usize; 3];
+        let inflight = [Cell::new(0usize), Cell::new(0), Cell::new(0)];
         let mut sticky = HashMap::new();
         let mut cursor = 0usize;
         let picks: Vec<usize> = (0..4)
@@ -1139,7 +1158,7 @@ mod tests {
             HopRouting::LeastLoaded,
             3,
             Some("conv-A"),
-            &[2, 0, 1],
+            &[Cell::new(2), Cell::new(0), Cell::new(1)],
             &mut sticky,
             &mut cursor,
         );
@@ -1149,7 +1168,7 @@ mod tests {
             HopRouting::LeastLoaded,
             3,
             Some("conv-A"),
-            &[0, 3, 0],
+            &[Cell::new(0), Cell::new(3), Cell::new(0)],
             &mut sticky,
             &mut cursor,
         );
@@ -1231,6 +1250,7 @@ mod tests {
                 transport: TransportSinkConfig::default(),
                 raw_enabled: false,
                 prepared_endpoints: Some(table_factory),
+                hop_routing: HopRouting::RoundRobin,
             })
             .unwrap();
         let origin_ns = clock.now_ns();

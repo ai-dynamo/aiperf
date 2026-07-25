@@ -835,6 +835,7 @@ mod tests {
                 transport: TransportSinkConfig::default(),
                 raw_enabled: false,
                 prepared_endpoints: None,
+                hop_routing: crate::engine::protocol::HopRouting::RoundRobin,
             })
             .expect("build fake executor");
         let origin_ns = clock.now_ns();

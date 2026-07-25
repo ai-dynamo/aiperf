@@ -251,6 +251,8 @@ pub(crate) async fn execute_native_inner(
             transport: transport_config,
             raw_enabled: request.artifacts.raw_path.is_some(),
             prepared_endpoints,
+            // `workers == 1` co-located sink: no hop, so routing is inert.
+            hop_routing: crate::engine::protocol::HopRouting::RoundRobin,
         })?;
         let start_ns = crate::engine::cell_origin::run_origin_now_ns(&clock);
         // Env-gated single-process cellular heartbeat lane; the controller merges
@@ -652,6 +654,7 @@ pub(crate) async fn execute_native_inner(
             workers: request.workers as u32,
             phase_ordinal_bases,
             dispatch_mode: request.dispatch_mode,
+            hop_routing: request.hop_routing.unwrap_or_default(),
             global_admission,
         });
         // Build the once-per-cell profiling-phase side-channel sidecars on the main

@@ -159,6 +159,10 @@ pub(crate) struct ShardedShared {
     pub(crate) phase_ordinal_bases: HashMap<MetricsPhase, usize>,
     /// Selected admission strategy for this cell's worker threads.
     pub(crate) dispatch_mode: DispatchMode,
+    /// Resolved worker-assignment policy applied by the [`DispatchMode::GlobalHop`]
+    /// hop executor when `workers > 1`. `RoundRobin` for every other mode and for
+    /// `workers == 1` (where it is inert).
+    pub(crate) hop_routing: crate::engine::protocol::HopRouting,
     /// Per-phase shared admission gates for `Global`/`GlobalHop` dispatch,
     /// built once on the main thread from this cell's (already cell-level-sliced,
     /// not thread-level-sliced) phase budgets. `None` under `Sharded`.
@@ -298,6 +302,8 @@ pub(crate) async fn execute_scheduled_shard(
         transport: shared.transport_config.clone(),
         raw_enabled: shared.raw_enabled,
         prepared_endpoints: Some(prepared_endpoints),
+        // `workers == 1` co-located sink: no hop, so routing is inert.
+        hop_routing: crate::engine::protocol::HopRouting::RoundRobin,
     })?;
     // Each `Sharded`/`Global` worker thread slices the authored phases into its
     // own `1/W` share (see `slice_phase_for_thread`); the pipeline below is shared

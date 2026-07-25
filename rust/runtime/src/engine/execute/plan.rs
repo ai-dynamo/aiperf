@@ -172,6 +172,11 @@ pub(crate) struct NativeRunSpec {
     /// ([`ShardedShared::dispatch_mode`]); the single-thread coordinator path
     /// has no cross-thread admission concern regardless of this value.
     pub(crate) dispatch_mode: DispatchMode,
+    /// Worker-assignment policy for the [`DispatchMode::GlobalHop`] hop executor
+    /// (`runtime.hop_routing`). `None` leaves the hop executor on its
+    /// [`crate::engine::protocol::HopRouting::default`] (`RoundRobin`) placement.
+    /// Inert under any other dispatch mode or `workers == 1`.
+    pub(crate) hop_routing: Option<crate::engine::protocol::HopRouting>,
 }
 
 /// Protocol-neutral retention of one run's already decoded sidecar inputs.

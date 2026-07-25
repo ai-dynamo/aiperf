@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use aiperf_runtime::engine::protocol::DispatchMode;
+use aiperf_runtime::engine::protocol::{DispatchMode, HopRouting};
 use clap::Parser;
 
 /// Parsed `aiperf profile` flags.
@@ -119,6 +119,17 @@ pub struct ProfileFlags {
     /// materially faster than `global`, which runs faster than `global-hop`.
     #[arg(long = "dispatch")]
     pub dispatch: Option<String>,
+
+    /// Worker-assignment policy for `--dispatch global-hop` with `workers > 1`
+    /// (`--hop-routing`): `round-robin` (default; deterministic, load-even, but
+    /// fragments a session's worker-local connection pool), `sticky` (each
+    /// conversation hashed to one worker so its sticky connection pool reuses
+    /// one connection per session), or `least-loaded` (a new session goes to the
+    /// shallowest-in-flight worker, then binds sticky). Absent, this resolves to
+    /// `sticky` when `--conn-reuse sticky-user-sessions` is selected, else
+    /// `round-robin`. Inert under any other dispatch mode or `workers == 1`.
+    #[arg(long = "hop-routing")]
+    pub hop_routing: Option<String>,
 
     /// Mixed ISL/OSL sequence distribution (`--seq-dist` / `--sequence-distribution`),
     /// e.g. `256,128:60;512,256:40` (optional stddev: `256|10,128|5:60`).
@@ -1264,6 +1275,23 @@ impl ProfileFlags {
                 }),
         }
     }
+
+    /// Resolve `--hop-routing` into an optional [`HopRouting`]. Absent yields
+    /// `None` (the caller applies the auto-from-connection-reuse default); an
+    /// unrecognized value is a hard error.
+    pub fn hop_routing(&self) -> anyhow::Result<Option<HopRouting>> {
+        match self.hop_routing.as_deref() {
+            None => Ok(None),
+            Some(value) => serde_json::from_value(serde_json::Value::String(value.to_owned()))
+                .map(Some)
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "--hop-routing {value:?} is not a recognized routing policy; expected \
+                         \"round-robin\", \"sticky\", or \"least-loaded\""
+                    )
+                }),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1325,6 +1353,40 @@ mod tests {
         on_big_stack(|| {
             let flags = parse(&["--dispatch", "bogus"]);
             assert!(flags.dispatch_mode().is_err());
+        });
+    }
+
+    #[test]
+    fn hop_routing_flag_parses_every_variant() {
+        on_big_stack(|| {
+            assert_eq!(
+                parse(&["--hop-routing", "round-robin"]).hop_routing().unwrap(),
+                Some(HopRouting::RoundRobin)
+            );
+            assert_eq!(
+                parse(&["--hop-routing", "sticky"]).hop_routing().unwrap(),
+                Some(HopRouting::Sticky)
+            );
+            assert_eq!(
+                parse(&["--hop-routing", "least-loaded"])
+                    .hop_routing()
+                    .unwrap(),
+                Some(HopRouting::LeastLoaded)
+            );
+        });
+    }
+
+    #[test]
+    fn hop_routing_flag_absent_is_none() {
+        on_big_stack(|| {
+            assert_eq!(parse(&[]).hop_routing().unwrap(), None);
+        });
+    }
+
+    #[test]
+    fn hop_routing_flag_rejects_unknown_value() {
+        on_big_stack(|| {
+            assert!(parse(&["--hop-routing", "bogus"]).hop_routing().is_err());
         });
     }
 
