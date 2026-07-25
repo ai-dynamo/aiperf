@@ -280,6 +280,64 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
                 None,
             )
         }
+        PhaseSpec::AgenticReplay {
+            start_min_ratio,
+            start_max_ratio,
+            idle_gap_cap_seconds,
+            burst_phase_starts,
+            ..
+        } => {
+            ensure!(
+                phase.common().concurrency_ramp.is_none()
+                    && phase.common().prefill_ramp.is_none()
+                    && phase.common().rate_ramp.is_none(),
+                "agentic_replay phases own their dispatch timing and do not accept ramps"
+            );
+            #[cfg(feature = "agentx")]
+            {
+                use crate::agentic_replay::{
+                    AgenticPhase, AgenticReplayConfig, AgenticReplayWorkload,
+                };
+                let agentic_phase = match phase.common().semantic_role() {
+                    crate::engine::protocol::PhaseRoleSpec::Warmup => AgenticPhase::Warmup,
+                    crate::engine::protocol::PhaseRoleSpec::Profiling => AgenticPhase::Profiling,
+                };
+                let config = AgenticReplayConfig {
+                    phase: agentic_phase,
+                    start_min_ratio: *start_min_ratio,
+                    start_max_ratio: *start_max_ratio,
+                    idle_gap_cap_ms: idle_gap_cap_seconds.map(|s| s * 1000.0),
+                    burst_phase_starts: *burst_phase_starts,
+                    // Base t\* seed is dataset-level (phase-independent) so the
+                    // WARMUP and PROFILING instances sample the SAME t\* per lane.
+                    random_seed: dataset_rng_root
+                        .derive_seed_or_entropy("agentic_replay.tstar_base"),
+                    benchmark_id: benchmark_id.to_string(),
+                    cache_bust_target: crate::agentx::cache_bust::CacheBustTarget::FirstTurnPrefix,
+                };
+                let workload =
+                    Rc::new(AgenticReplayWorkload::new(source, config)?) as Rc<dyn Workload>;
+                let intervals = Rc::new(RefCell::new(make_interval_generator(
+                    crate::timing::ArrivalPattern::ConcurrencyBurst,
+                    None,
+                    None,
+                    arrival_seed,
+                )));
+                (
+                    workload,
+                    intervals,
+                    None,
+                    None,
+                    false,
+                    Rc::new(crate::phase_runtime::NoopScheduledPhaseResources),
+                    None,
+                )
+            }
+            #[cfg(not(feature = "agentx"))]
+            {
+                anyhow::bail!("agentic_replay timing mode requires the `agentx` feature");
+            }
+        }
     };
     let policies = ancillary_policies(
         phase,

@@ -472,7 +472,7 @@ pub(crate) async fn execute_scheduled_pipeline(
                 capture: capture.clone(),
                 phase: metrics_phase(phase)?,
                 identity,
-                has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. }),
+                has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. } | PhaseSpec::AgenticReplay { .. }),
                 // Once-per-cell on the main thread; a worker never feeds them.
                 live_sink: None,
                 heartbeat: None,

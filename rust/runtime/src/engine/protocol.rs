@@ -372,10 +372,35 @@ pub enum PhaseSpec {
         #[serde(default)]
         end_offset: Option<f64>,
     },
+    /// AgentX agentic-replay: per-trajectory t\*-sampled warmup→profiling dispatch
+    /// with byte-exact cache-bust. The mode owns its own timing (t\*, warmup leads,
+    /// profiling offsets) and reuses the scheduled runtime for transport/metrics.
+    AgenticReplay {
+        /// Shared phase policy.
+        #[serde(flatten)]
+        common: PhaseCommonSpec,
+        /// Trajectory-start window lower ratio (`--trajectory-start-min-ratio`).
+        #[serde(default)]
+        start_min_ratio: f64,
+        /// Trajectory-start window upper ratio (`--trajectory-start-max-ratio`).
+        #[serde(default = "one_value")]
+        start_max_ratio: f64,
+        /// Idle-gap cap in seconds for warmup-lead / leading-idle capping.
+        #[serde(default)]
+        idle_gap_cap_seconds: Option<f64>,
+        /// Anchor each phase-start burst at the earliest post-t\* request
+        /// (`--burst-phase-starts`) instead of spreading by recorded offset.
+        #[serde(default)]
+        burst_phase_starts: bool,
+    },
 }
 
 const fn true_value() -> bool {
     true
+}
+
+const fn one_value() -> f64 {
+    1.0
 }
 
 /// Policy shared by every phase scheduling variant.
@@ -601,7 +626,8 @@ impl PhaseSpec {
             | Self::Gamma { common, .. }
             | Self::Constant { common, .. }
             | Self::UserCentric { common, .. }
-            | Self::FixedSchedule { common, .. } => common,
+            | Self::FixedSchedule { common, .. }
+            | Self::AgenticReplay { common, .. } => common,
         }
     }
 
@@ -613,7 +639,7 @@ impl PhaseSpec {
             | Self::Gamma { concurrency, .. }
             | Self::Constant { concurrency, .. }
             | Self::UserCentric { concurrency, .. } => *concurrency,
-            Self::FixedSchedule { .. } => None,
+            Self::FixedSchedule { .. } | Self::AgenticReplay { .. } => None,
         }
     }
 
@@ -638,7 +664,9 @@ impl PhaseSpec {
             Self::Constant { rate, .. } => {
                 Some((crate::timing::ArrivalPattern::Constant, Some(*rate), None))
             }
-            Self::UserCentric { .. } | Self::FixedSchedule { .. } => None,
+            Self::UserCentric { .. }
+            | Self::FixedSchedule { .. }
+            | Self::AgenticReplay { .. } => None,
         }
     }
 
@@ -649,7 +677,9 @@ impl PhaseSpec {
             | Self::Gamma { rate, .. }
             | Self::Constant { rate, .. }
             | Self::UserCentric { rate, .. } => Some(*rate),
-            Self::Concurrency { .. } | Self::FixedSchedule { .. } => None,
+            Self::Concurrency { .. }
+            | Self::FixedSchedule { .. }
+            | Self::AgenticReplay { .. } => None,
         }
     }
 }

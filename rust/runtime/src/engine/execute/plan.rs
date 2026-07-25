@@ -555,7 +555,7 @@ pub(crate) fn validate_plan(request: &NativeRunSpec) -> Result<()> {
             ensure!(
                 !matches!(
                     phase,
-                    PhaseSpec::UserCentric { .. } | PhaseSpec::FixedSchedule { .. }
+                    PhaseSpec::UserCentric { .. } | PhaseSpec::FixedSchedule { .. } | PhaseSpec::AgenticReplay { .. }
                 ),
                 "accuracy evaluator datasets are single-turn and require a concurrency or request-rate phase"
             );

@@ -1101,7 +1101,7 @@ fn validate_offline_scheduled_phases(phases: &[PhaseSpec]) -> Result<()> {
                 );
                 ensure!(*users > 0, "user_centric users must be positive");
             }
-            PhaseSpec::FixedSchedule { .. } => {}
+            PhaseSpec::FixedSchedule { .. } | PhaseSpec::AgenticReplay { .. } => {}
         }
     }
     Ok(())

@@ -189,7 +189,12 @@ pub(crate) async fn execute_native_inner(
         && !request
             .phases
             .iter()
-            .any(|phase| matches!(phase, PhaseSpec::FixedSchedule { .. }));
+            .any(|phase| {
+                matches!(
+                    phase,
+                    PhaseSpec::FixedSchedule { .. } | PhaseSpec::AgenticReplay { .. }
+                )
+            });
     let inputs_need_retain = request.artifacts.inputs_path.is_some() && !inputs_up_front_ok;
     let exact_fold = exact_fold_enabled_by_env()
         && exact_fold_eligible(ExactFoldInputs {
@@ -328,7 +333,7 @@ pub(crate) async fn execute_native_inner(
                 && request.phases.iter().any(|phase| {
                     matches!(
                         phase,
-                        PhaseSpec::UserCentric { .. } | PhaseSpec::FixedSchedule { .. }
+                        PhaseSpec::UserCentric { .. } | PhaseSpec::FixedSchedule { .. } | PhaseSpec::AgenticReplay { .. }
                     )
                 })
             {
@@ -376,7 +381,7 @@ pub(crate) async fn execute_native_inner(
                         capture: capture.clone(),
                         phase: metrics_phase(phase)?,
                         identity,
-                        has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. }),
+                        has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. } | PhaseSpec::AgenticReplay { .. }),
                         live_sink: live_sink.clone(),
                         heartbeat: heartbeat_lane.clone(),
                     });

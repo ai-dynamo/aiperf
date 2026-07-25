@@ -168,7 +168,9 @@ pub(crate) fn validate_graph_phases(phases: &[PhaseSpec]) -> Result<()> {
                 );
             }
             PhaseSpec::Concurrency { .. } => {}
-            PhaseSpec::UserCentric { .. } | PhaseSpec::FixedSchedule { .. } => unreachable!(),
+            PhaseSpec::UserCentric { .. }
+            | PhaseSpec::FixedSchedule { .. }
+            | PhaseSpec::AgenticReplay { .. } => unreachable!(),
         }
         if let Some(cancellation) = common.cancellation {
             ensure!(
@@ -1902,7 +1904,9 @@ fn prepare_graph_phase(
         PhaseSpec::Poisson { .. } | PhaseSpec::Gamma { .. } | PhaseSpec::Constant { .. } => {
             Rc::new(IntervalGraphArrival::new(intervals.clone()))
         }
-        PhaseSpec::UserCentric { .. } | PhaseSpec::FixedSchedule { .. } => {
+        PhaseSpec::UserCentric { .. }
+        | PhaseSpec::FixedSchedule { .. }
+        | PhaseSpec::AgenticReplay { .. } => {
             unreachable!("unsupported graph phase rejected before input acquisition")
         }
     };
