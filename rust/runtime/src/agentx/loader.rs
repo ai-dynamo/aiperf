@@ -361,6 +361,138 @@ pub fn reconstruct_conversation(
     })
 }
 
+/// Convert a parsed `WekaTrace` into its reconstructed conversations (the root
+/// `weka_main` conversation plus one `weka_subagent` child per active subagent
+/// chain). Ports the no-flat-chain, no-idle-warp path of
+/// `WekaTraceLoader.convert_to_conversations`.
+///
+/// `synth` must be freshly scoped to `trace_id` (its per-scope block cache is
+/// shared across the trace's conversations under the `local` hash namespace).
+/// Flat-chain splitting and the idle-gap time-warp are not yet applied.
+pub fn convert_trace_to_conversations(
+    trace_id: &str,
+    trace: &crate::agentx::trace::WekaTrace,
+    synth: &mut dyn TokenSynth,
+    model_map: &HashMap<String, String>,
+    cfg: &crate::agentx::config::WekaConfig,
+    opts: &MainReconstructOptions,
+) -> Result<Vec<ReconstructedConversation>, PrefixTooTruncated> {
+    use crate::agentx::plan::{build_shared_metric_values, dropped_subagent_indices, ParentPlan};
+    use crate::agentx::subagent::expand_subagent_to_child_plans;
+    use crate::agentx::trace::WekaRequest;
+
+    let block_size = trace.block_size;
+
+    // Split top-level requests into normals + subagents; expand each subagent.
+    let mut normals: Vec<(i64, NormalReq)> = Vec::new();
+    let mut subagent_outer_indices: Vec<i64> = Vec::new();
+    let mut children: Vec<crate::agentx::subagent::ChildPlan> = Vec::new();
+    for (outer_idx, req) in trace.requests.iter().enumerate() {
+        let outer_idx = outer_idx as i64;
+        match req {
+            WekaRequest::Normal(n) => normals.push((outer_idx, normal_req_from_normal(n))),
+            WekaRequest::Streaming(s) => normals.push((outer_idx, normal_req_from_streaming(s))),
+            WekaRequest::Subagent(entry) => {
+                let sa_index = subagent_outer_indices.len();
+                subagent_outer_indices.push(outer_idx);
+                children.extend(expand_subagent_to_child_plans(
+                    trace_id, sa_index, outer_idx, entry, block_size, cfg,
+                ));
+            }
+        }
+    }
+
+    let parent = ParentPlan {
+        trace_id: trace_id.to_string(),
+        normals: normals.clone(),
+        subagent_outer_indices,
+        block_size,
+    };
+    let dropped = dropped_subagent_indices(&parent);
+    let metrics_by_trace = build_shared_metric_values(std::slice::from_ref(&parent), &children);
+    let metric_values = metrics_by_trace
+        .get(trace_id)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut out: Vec<ReconstructedConversation> = Vec::new();
+    // Root conversation.
+    out.push(reconstruct_conversation(
+        trace_id,
+        trace_id,
+        None,
+        trace_id,
+        "weka_main",
+        block_size,
+        trace.tool_tokens,
+        trace.system_tokens,
+        &normals,
+        synth,
+        model_map,
+        &metric_values,
+        opts,
+    )?);
+
+    // Active child conversations.
+    for cp in &children {
+        if dropped.contains(&cp.subagent_index) {
+            continue;
+        }
+        let child_requests: Vec<(i64, NormalReq)> = cp
+            .requests
+            .iter()
+            .cloned()
+            .map(|r| (cp.source_outer_idx, r))
+            .collect();
+        out.push(reconstruct_conversation(
+            &cp.session_id,
+            trace_id,
+            Some(trace_id),
+            trace_id,
+            "weka_subagent",
+            cp.block_size,
+            cp.init_tool_tokens,
+            cp.init_system_tokens,
+            &child_requests,
+            synth,
+            model_map,
+            &metric_values,
+            opts,
+        )?);
+    }
+    Ok(out)
+}
+
+/// Build a [`NormalReq`] from a wire normal request.
+pub fn normal_req_from_normal(n: &crate::agentx::trace::WekaNormalRequest) -> NormalReq {
+    NormalReq {
+        t: n.t,
+        api_time: n.api_time,
+        think_time: n.think_time,
+        model: n.model.clone(),
+        hash_ids: n.hash_ids.clone(),
+        input_length: n.input_length,
+        output_length: n.output_length,
+        input_types: n.input_types.clone(),
+        stop: n.stop.clone(),
+    }
+}
+
+/// Build a [`NormalReq`] from a wire streaming request.
+pub fn normal_req_from_streaming(s: &crate::agentx::trace::WekaStreamingRequest) -> NormalReq {
+    NormalReq {
+        t: s.t,
+        api_time: s.api_time,
+        think_time: s.think_time,
+        model: s.model.clone(),
+        hash_ids: s.hash_ids.clone(),
+        input_length: s.input_length,
+        output_length: s.output_length,
+        input_types: s.input_types.clone(),
+        stop: s.stop.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
