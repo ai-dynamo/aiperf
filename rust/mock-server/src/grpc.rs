@@ -382,20 +382,33 @@ fn text_output_tensor(name: &str, text: &str) -> InferOutputTensor {
     }
 }
 
-fn build_infer_response(
+/// Wrap a single output `tensor` in a `ModelInferResponse` envelope. Every
+/// KServe output variant (text, embedding, scores, image) shares this identical
+/// envelope and differs only in the tensor-builder helper that produced
+/// `tensor`, so the per-variant `build_*_response` functions are one-liners over
+/// this.
+fn build_infer_response_from_tensor(
     id: &str,
     model: &str,
-    output_name: &str,
-    text: &str,
+    tensor: InferOutputTensor,
 ) -> ModelInferResponse {
     ModelInferResponse {
         model_name: model.to_string(),
         model_version: String::new(),
         id: id.to_string(),
         parameters: Default::default(),
-        outputs: vec![text_output_tensor(output_name, text)],
+        outputs: vec![tensor],
         raw_output_contents: Vec::new(),
     }
+}
+
+fn build_infer_response(
+    id: &str,
+    model: &str,
+    output_name: &str,
+    text: &str,
+) -> ModelInferResponse {
+    build_infer_response_from_tensor(id, model, text_output_tensor(output_name, text))
 }
 
 /// An `FP32` embedding output tensor of shape `[1, dim]` using the Triton
@@ -421,14 +434,7 @@ fn build_embedding_response(
     output_name: &str,
     embedding: &[f32],
 ) -> ModelInferResponse {
-    ModelInferResponse {
-        model_name: model.to_string(),
-        model_version: String::new(),
-        id: id.to_string(),
-        parameters: Default::default(),
-        outputs: vec![embedding_output_tensor(output_name, embedding)],
-        raw_output_contents: Vec::new(),
-    }
+    build_infer_response_from_tensor(id, model, embedding_output_tensor(output_name, embedding))
 }
 
 /// An `FP32` numeric output tensor of shape `[len]`, carrying one relevance
@@ -454,14 +460,7 @@ fn build_scores_response(
     output_name: &str,
     scores: &[f32],
 ) -> ModelInferResponse {
-    ModelInferResponse {
-        model_name: model.to_string(),
-        model_version: String::new(),
-        id: id.to_string(),
-        parameters: Default::default(),
-        outputs: vec![scores_output_tensor(output_name, scores)],
-        raw_output_contents: Vec::new(),
-    }
+    build_infer_response_from_tensor(id, model, scores_output_tensor(output_name, scores))
 }
 
 /// A `generated_image` BYTES output tensor carrying one base64-encoded mock
@@ -486,14 +485,7 @@ fn build_image_response(
     output_name: &str,
     b64_image: &str,
 ) -> ModelInferResponse {
-    ModelInferResponse {
-        model_name: model.to_string(),
-        model_version: String::new(),
-        id: id.to_string(),
-        parameters: Default::default(),
-        outputs: vec![image_output_tensor(output_name, b64_image)],
-        raw_output_contents: Vec::new(),
-    }
+    build_infer_response_from_tensor(id, model, image_output_tensor(output_name, b64_image))
 }
 
 /// The full generated token sequence for a KServe `text_output`: reasoning

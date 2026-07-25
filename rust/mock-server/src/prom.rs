@@ -10,6 +10,23 @@ use prometheus::{
 
 use crate::sharded::ShardedHistogram;
 
+/// Register every listed collector on `$registry`, cloning each into the boxed
+/// `dyn Collector` the `prometheus` registry stores.
+///
+/// Driving registration from one comma-separated list — rather than a
+/// hand-written `register(Box::new(...)).unwrap()` statement per field — means a
+/// newly added metric is registered in the same edit that lists it. A forgotten
+/// collector can no longer silently leave a gap in the `/metrics` exposition.
+macro_rules! register_all {
+    ($registry:expr, $($collector:expr),+ $(,)?) => {
+        $(
+            $registry
+                .register(Box::new($collector.clone()))
+                .unwrap();
+        )+
+    };
+}
+
 #[allow(non_snake_case)]
 pub struct AIPerfMockMetrics {
     pub registry: Registry,
@@ -216,66 +233,29 @@ impl AIPerfMockMetrics {
             .unwrap(),
             registry,
         };
-        m.registry
-            .register(Box::new(m.REQUESTS_TOTAL.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.REQUESTS_IN_PROGRESS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.REQUEST_LATENCY_SECONDS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.PROMPT_TOKENS_TOTAL.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.COMPLETION_TOKENS_TOTAL.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.TOKENS_PER_REQUEST.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.STREAMING_REQUESTS_TOTAL.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.TOKENS_STREAMED_TOTAL.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.TIME_TO_FIRST_TOKEN_SECONDS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.INTER_TOKEN_LATENCY_SECONDS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.ERRORS_TOTAL.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.REQUESTS_BY_MODEL.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.EMBEDDINGS_GENERATED_TOTAL.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.RANKINGS_GENERATED_TOTAL.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.PASSAGES_RANKED_TOTAL.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.IMAGES_PROCESSED_TOTAL.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.CONTENT_BYTES_FETCHED_TOTAL.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.SERVER_UPTIME_SECONDS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.REQUEST_BYTES_TOTAL.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.RESPONSE_BYTES_TOTAL.clone()))
-            .unwrap();
+        register_all!(
+            m.registry,
+            m.REQUESTS_TOTAL,
+            m.REQUESTS_IN_PROGRESS,
+            m.REQUEST_LATENCY_SECONDS,
+            m.PROMPT_TOKENS_TOTAL,
+            m.COMPLETION_TOKENS_TOTAL,
+            m.TOKENS_PER_REQUEST,
+            m.STREAMING_REQUESTS_TOTAL,
+            m.TOKENS_STREAMED_TOTAL,
+            m.TIME_TO_FIRST_TOKEN_SECONDS,
+            m.INTER_TOKEN_LATENCY_SECONDS,
+            m.ERRORS_TOTAL,
+            m.REQUESTS_BY_MODEL,
+            m.EMBEDDINGS_GENERATED_TOTAL,
+            m.RANKINGS_GENERATED_TOTAL,
+            m.PASSAGES_RANKED_TOTAL,
+            m.IMAGES_PROCESSED_TOTAL,
+            m.CONTENT_BYTES_FETCHED_TOTAL,
+            m.SERVER_UPTIME_SECONDS,
+            m.REQUEST_BYTES_TOTAL,
+            m.RESPONSE_BYTES_TOTAL,
+        );
         m
     }
 }
@@ -421,57 +401,26 @@ impl VllmMetrics {
             .unwrap(),
             registry,
         };
-        m.registry
-            .register(Box::new(m.E2E_REQUEST_LATENCY_SECONDS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.TIME_TO_FIRST_TOKEN_SECONDS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.INTER_TOKEN_LATENCY_SECONDS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.PROMPT_TOKENS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.GENERATION_TOKENS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.REQUEST_QUEUE_TIME_SECONDS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.REQUEST_SUCCESS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.NUM_REQUESTS_RUNNING.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.NUM_REQUESTS_WAITING.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.KV_CACHE_USAGE.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.NUM_PREEMPTIONS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.PREFIX_CACHE_HITS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.PREFIX_CACHE_QUERIES.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.EXTERNAL_PREFIX_CACHE_HITS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.EXTERNAL_PREFIX_CACHE_QUERIES.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.CPU_CACHE_USAGE.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.ITERATION_TOKENS_TOTAL.clone()))
-            .unwrap();
+        register_all!(
+            m.registry,
+            m.E2E_REQUEST_LATENCY_SECONDS,
+            m.TIME_TO_FIRST_TOKEN_SECONDS,
+            m.INTER_TOKEN_LATENCY_SECONDS,
+            m.PROMPT_TOKENS,
+            m.GENERATION_TOKENS,
+            m.REQUEST_QUEUE_TIME_SECONDS,
+            m.REQUEST_SUCCESS,
+            m.NUM_REQUESTS_RUNNING,
+            m.NUM_REQUESTS_WAITING,
+            m.KV_CACHE_USAGE,
+            m.NUM_PREEMPTIONS,
+            m.PREFIX_CACHE_HITS,
+            m.PREFIX_CACHE_QUERIES,
+            m.EXTERNAL_PREFIX_CACHE_HITS,
+            m.EXTERNAL_PREFIX_CACHE_QUERIES,
+            m.CPU_CACHE_USAGE,
+            m.ITERATION_TOKENS_TOTAL,
+        );
         m
     }
 }
@@ -581,45 +530,22 @@ impl SglangMetrics {
             .unwrap(),
             registry,
         };
-        m.registry
-            .register(Box::new(m.GEN_THROUGHPUT.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.NUM_QUEUE_REQS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.NUM_RUNNING_REQS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.CACHE_HIT_RATE.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.NUM_USED_TOKENS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.TOKEN_USAGE.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.CACHED_TOKENS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.PROMPT_TOKENS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.GENERATION_TOKENS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.NUM_RETRACTED_REQS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.QUEUE_TIME_SECONDS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.E2E_REQUEST_LATENCY_SECONDS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.TIME_TO_FIRST_TOKEN_SECONDS.clone()))
-            .unwrap();
+        register_all!(
+            m.registry,
+            m.GEN_THROUGHPUT,
+            m.NUM_QUEUE_REQS,
+            m.NUM_RUNNING_REQS,
+            m.CACHE_HIT_RATE,
+            m.NUM_USED_TOKENS,
+            m.TOKEN_USAGE,
+            m.CACHED_TOKENS,
+            m.PROMPT_TOKENS,
+            m.GENERATION_TOKENS,
+            m.NUM_RETRACTED_REQS,
+            m.QUEUE_TIME_SECONDS,
+            m.E2E_REQUEST_LATENCY_SECONDS,
+            m.TIME_TO_FIRST_TOKEN_SECONDS,
+        );
         m
     }
 }
@@ -689,21 +615,14 @@ impl TrtllmMetrics {
             .unwrap(),
             registry,
         };
-        m.registry
-            .register(Box::new(m.E2E_REQUEST_LATENCY_SECONDS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.TIME_TO_FIRST_TOKEN_SECONDS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.TIME_PER_OUTPUT_TOKEN_SECONDS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.REQUEST_QUEUE_TIME_SECONDS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.REQUEST_SUCCESS.clone()))
-            .unwrap();
+        register_all!(
+            m.registry,
+            m.E2E_REQUEST_LATENCY_SECONDS,
+            m.TIME_TO_FIRST_TOKEN_SECONDS,
+            m.TIME_PER_OUTPUT_TOKEN_SECONDS,
+            m.REQUEST_QUEUE_TIME_SECONDS,
+            m.REQUEST_SUCCESS,
+        );
         m
     }
 }
@@ -843,43 +762,22 @@ impl DynamoFrontendMetrics {
             .unwrap(),
             registry,
         };
-        m.registry
-            .register(Box::new(m.REQUEST_DURATION_SECONDS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.TIME_TO_FIRST_TOKEN_SECONDS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.INTER_TOKEN_LATENCY_SECONDS.clone()))
-            .unwrap();
-        m.registry.register(Box::new(m.REQUESTS.clone())).unwrap();
-        m.registry
-            .register(Box::new(m.INPUT_SEQUENCE_TOKENS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.OUTPUT_SEQUENCE_TOKENS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.OUTPUT_TOKENS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.QUEUED_REQUESTS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.INFLIGHT_REQUESTS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.DISCONNECTED_CLIENTS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.MODEL_CONTEXT_LENGTH.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.MODEL_KV_CACHE_BLOCK_SIZE.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.MODEL_TOTAL_KV_BLOCKS.clone()))
-            .unwrap();
+        register_all!(
+            m.registry,
+            m.REQUEST_DURATION_SECONDS,
+            m.TIME_TO_FIRST_TOKEN_SECONDS,
+            m.INTER_TOKEN_LATENCY_SECONDS,
+            m.REQUESTS,
+            m.INPUT_SEQUENCE_TOKENS,
+            m.OUTPUT_SEQUENCE_TOKENS,
+            m.OUTPUT_TOKENS,
+            m.QUEUED_REQUESTS,
+            m.INFLIGHT_REQUESTS,
+            m.DISCONNECTED_CLIENTS,
+            m.MODEL_CONTEXT_LENGTH,
+            m.MODEL_KV_CACHE_BLOCK_SIZE,
+            m.MODEL_TOTAL_KV_BLOCKS,
+        );
         m
     }
 }
@@ -944,22 +842,15 @@ impl DynamoComponentMetrics {
             .unwrap(),
             registry,
         };
-        m.registry
-            .register(Box::new(m.REQUEST_DURATION_SECONDS.clone()))
-            .unwrap();
-        m.registry.register(Box::new(m.REQUESTS.clone())).unwrap();
-        m.registry
-            .register(Box::new(m.INFLIGHT_REQUESTS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.KVSTATS_ACTIVE_BLOCKS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.KVSTATS_TOTAL_BLOCKS.clone()))
-            .unwrap();
-        m.registry
-            .register(Box::new(m.KVSTATS_GPU_CACHE_USAGE_PERCENT.clone()))
-            .unwrap();
+        register_all!(
+            m.registry,
+            m.REQUEST_DURATION_SECONDS,
+            m.REQUESTS,
+            m.INFLIGHT_REQUESTS,
+            m.KVSTATS_ACTIVE_BLOCKS,
+            m.KVSTATS_TOTAL_BLOCKS,
+            m.KVSTATS_GPU_CACHE_USAGE_PERCENT,
+        );
         m
     }
 }

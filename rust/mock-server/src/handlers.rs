@@ -403,6 +403,51 @@ pub async fn chat_completions(
     }
 }
 
+/// Authoritative `--fast` streaming metric sequence shared by the chat and text
+/// completion renderers.
+///
+/// Both renderers must emit the *identical* ordered metric sequence for a
+/// zero-latency streamed response; keeping it in one place removes the drift
+/// hazard of two hand-copied sequences. The order is: streaming/request/inflight
+/// start, then (for a non-empty response) a zero TTFT plus `total_tokens - 1`
+/// zero ITLs and the streamed-token count, then — after `render_body` produces
+/// the SSE bytes — the terminal `llm_success` / inflight-end / request-end. The
+/// rendered body is returned to the caller.
+fn record_streaming_fast(
+    state: &AppState,
+    endpoint: &str,
+    ctx: &RequestCtx,
+    labeled: &crate::metrics::LabeledMetrics,
+    total_tokens: usize,
+    start: Instant,
+    render_body: impl FnOnce() -> Bytes,
+) -> Bytes {
+    state.recorder.record_streaming_start(endpoint, &ctx.model);
+    state.recorder.record_request_start(endpoint, &ctx.model);
+    state.recorder.record_llm_inflight_start(&ctx.model);
+    if total_tokens > 0 {
+        state
+            .recorder
+            .record_zero_ttft_and_itls(labeled, total_tokens - 1);
+        state
+            .recorder
+            .record_streamed_tokens_fast(labeled, total_tokens as u64);
+    }
+    let body = render_body();
+    let latency = start.elapsed();
+    let info = LLMLatencyInfo {
+        e2e: latency,
+        prefill: std::time::Duration::ZERO,
+        decode: latency,
+    };
+    state
+        .recorder
+        .record_llm_success(endpoint, &ctx.model, latency.as_secs_f64(), &ctx.usage, &info);
+    state.recorder.record_llm_inflight_end(&ctx.model);
+    state.recorder.record_request_end(endpoint);
+    body
+}
+
 /// Chat-completion generation for the hand-rolled `--blocking`/`--uring`
 /// engines, without the tokio/axum request machinery. Handles both streaming
 /// (SSE, one pre-rendered body) and non-streaming, under `--fast` semantics
@@ -428,33 +473,20 @@ pub(crate) fn render_chat_completion_fast(
     let labeled = state.recorder.labeled(endpoint, &ctx.model);
 
     if req.stream {
-        // Mirror the axum fast streaming path's metric sequence exactly.
+        // Mirror the axum fast streaming path's metric sequence exactly, via
+        // the shared authoritative `record_streaming_fast`.
         let include_usage = req.include_usage();
-        state.recorder.record_streaming_start(endpoint, &ctx.model);
-        state.recorder.record_request_start(endpoint, &ctx.model);
-        state.recorder.record_llm_inflight_start(&ctx.model);
         let total_tokens =
             ctx.tokenized.reasoning_content_tokens.len() + ctx.tokenized.tokens.len();
-        if total_tokens > 0 {
-            state
-                .recorder
-                .record_zero_ttft_and_itls(&labeled, total_tokens - 1);
-            state
-                .recorder
-                .record_streamed_tokens_fast(&labeled, total_tokens as u64);
-        }
-        let body = render_chat_fast_body(&ctx, include_usage);
-        let latency = start.elapsed();
-        let info = LLMLatencyInfo {
-            e2e: latency,
-            prefill: std::time::Duration::ZERO,
-            decode: latency,
-        };
-        state
-            .recorder
-            .record_llm_success(endpoint, &ctx.model, latency.as_secs_f64(), &ctx.usage, &info);
-        state.recorder.record_llm_inflight_end(&ctx.model);
-        state.recorder.record_request_end(endpoint);
+        let body = record_streaming_fast(
+            state,
+            endpoint,
+            &ctx,
+            &labeled,
+            total_tokens,
+            start,
+            || render_chat_fast_body(&ctx, include_usage),
+        );
         return ("text/event-stream", body.to_vec());
     }
 
@@ -504,23 +536,16 @@ pub(crate) fn render_text_completion_fast(
 
     if req.stream {
         let include_usage = req.include_usage();
-        state.recorder.record_streaming_start(endpoint, &ctx.model);
-        state.recorder.record_request_start(endpoint, &ctx.model);
-        state.recorder.record_llm_inflight_start(&ctx.model);
-        let count = ctx.tokenized.tokens.len();
-        if count > 0 {
-            state.recorder.record_zero_ttft_and_itls(&labeled, count - 1);
-            state
-                .recorder
-                .record_streamed_tokens_fast(&labeled, count as u64);
-        }
-        let body = render_text_fast_body(&ctx, include_usage);
-        let (latency, info) = latency_info();
-        state
-            .recorder
-            .record_llm_success(endpoint, &ctx.model, latency.as_secs_f64(), &ctx.usage, &info);
-        state.recorder.record_llm_inflight_end(&ctx.model);
-        state.recorder.record_request_end(endpoint);
+        let total_tokens = ctx.tokenized.tokens.len();
+        let body = record_streaming_fast(
+            state,
+            endpoint,
+            &ctx,
+            &labeled,
+            total_tokens,
+            start,
+            || render_text_fast_body(&ctx, include_usage),
+        );
         return ("text/event-stream", body.to_vec());
     }
 
@@ -1728,6 +1753,34 @@ pub async fn nim_ranking(
     .into_response())
 }
 
+/// Shared `{ "results": [ { "index": i, "<score_key>": score }, ... ] }` rerank
+/// envelope for the HF TEI (`/rerank`, `score`) and Cohere (`/v2/rerank`,
+/// `relevance_score`) endpoints, which are byte-identical apart from the
+/// per-result score key. Runs the common ranking pipeline
+/// ([`handle_ranking_common`]) then projects the sorted scores into the envelope.
+async fn rerank_results_response(
+    state: Arc<AppState>,
+    endpoint: &str,
+    model: &str,
+    query: &str,
+    passages: Vec<&str>,
+    prompt_tokens: usize,
+    score_key: &str,
+) -> Response {
+    let (_, scores, _) =
+        handle_ranking_common(state, endpoint, model, query, passages, prompt_tokens).await;
+    let results: Vec<Value> = scores
+        .into_iter()
+        .map(|(i, s)| {
+            let mut obj = serde_json::Map::new();
+            obj.insert("index".to_string(), json!(i));
+            obj.insert(score_key.to_string(), json!(s));
+            Value::Object(obj)
+        })
+        .collect();
+    Json(json!({ "results": results })).into_response()
+}
+
 pub async fn hf_tei_rerank(
     State(state): State<Arc<AppState>>,
     Json(req): Json<HFTEIRerankRequest>,
@@ -1738,21 +1791,16 @@ pub async fn hf_tei_rerank(
     let endpoint = "/rerank";
     let req_gen = GenRequest::HFTEIRerank(&req);
     let tokenized = tokenize_request(&req_gen);
-    let passages = req.passage_texts();
-    let (_, scores, _) = handle_ranking_common(
+    Ok(rerank_results_response(
         state.clone(),
         endpoint,
         &req.model,
         req.query_text(),
-        passages,
+        req.passage_texts(),
         tokenized.prompt_token_count,
+        "score",
     )
-    .await;
-    let results: Vec<Value> = scores
-        .into_iter()
-        .map(|(i, s)| json!({"index": i, "score": s}))
-        .collect();
-    Ok(Json(json!({ "results": results })).into_response())
+    .await)
 }
 
 pub async fn cohere_rerank(
@@ -1765,21 +1813,16 @@ pub async fn cohere_rerank(
     let endpoint = "/v2/rerank";
     let req_gen = GenRequest::CohereRerank(&req);
     let tokenized = tokenize_request(&req_gen);
-    let passages = req.passage_texts();
-    let (_, scores, _) = handle_ranking_common(
+    Ok(rerank_results_response(
         state.clone(),
         endpoint,
         &req.model,
         req.query_text(),
-        passages,
+        req.passage_texts(),
         tokenized.prompt_token_count,
+        "relevance_score",
     )
-    .await;
-    let results: Vec<Value> = scores
-        .into_iter()
-        .map(|(i, s)| json!({"index": i, "relevance_score": s}))
-        .collect();
-    Ok(Json(json!({ "results": results })).into_response())
+    .await)
 }
 
 const BOUNDING_BOX_CATEGORIES: &[&str] = &["title", "table", "figure", "text", "header", "footer"];
