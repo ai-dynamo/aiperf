@@ -617,6 +617,12 @@ pub struct ProfileFlags {
     #[arg(long = "download-video-content", default_value_t = false)]
     pub download_video_content: bool,
 
+    /// Fetch remote image URLs and inline them as data URLs at dataset
+    /// generation time (`--prefetch-media-urls`), for file/public datasets whose
+    /// server cannot resolve URLs itself. Default sends authored URLs unchanged.
+    #[arg(long = "prefetch-media-urls", default_value_t = false)]
+    pub prefetch_media_urls: bool,
+
     /// Extra request-body inputs `key:value` (`--extra-inputs`), repeatable.
     #[arg(long = "extra-inputs", num_args = 1..)]
     pub extra_inputs: Vec<String>,

@@ -274,6 +274,9 @@ pub(crate) struct Inputs {
     pub hf_format: Option<String>,
     /// Inter-turn delay cap, seconds (file datasets).
     pub inter_turn_delay_cap_seconds: Option<f64>,
+    /// Fetch remote image URLs and inline them as data URLs at dataset
+    /// generation (`--prefetch-media-urls`); file/public datasets only.
+    pub prefetch_media_urls: bool,
     /// Strip repeated image content once observed within a session
     /// (`--uuid-and-strip`), single_turn only.
     pub uuid_and_strip: bool,
@@ -726,6 +729,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         hf_output_len: flags.hf_output_len,
         hf_format: flags.hf_format.clone(),
         inter_turn_delay_cap_seconds: flags.inter_turn_delay_cap_seconds,
+        prefetch_media_urls: flags.prefetch_media_urls,
         uuid_and_strip: flags.uuid_and_strip,
         replay_speedup: flags.replay_speedup,
         max_idle_gap_cap_seconds: flags.max_idle_gap_cap_seconds,
@@ -987,6 +991,7 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             entries: inputs.dataset_entries,
             random_seed: inputs.dataset_random_seed,
             prompts: authored_prompt_selection(inputs.prompt_corpus.as_deref()),
+            prefetch_media_urls: inputs.prefetch_media_urls,
         })
     } else if let Some(name) = &inputs.public_dataset {
         let meta = crate::model::public_catalog::lookup(name)
@@ -1025,6 +1030,7 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             entries: inputs.dataset_entries,
             random_seed: inputs.dataset_random_seed,
             prompts: authored_prompt_selection(inputs.prompt_corpus.as_deref()),
+            prefetch_media_urls: inputs.prefetch_media_urls,
         })
     } else if inputs.input_file.is_some() || inputs.inline_records.is_some() {
         if inputs.uuid_and_strip && endpoint_type_for_dataset_validation != "chat" {
@@ -1104,6 +1110,7 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             prompts: authored_prompt_selection(inputs.prompt_corpus.as_deref()),
             records: inputs.inline_records.clone(),
             synthesis: inputs.synthesis.clone(),
+            prefetch_media_urls: inputs.prefetch_media_urls,
         })
     } else {
         Dataset::Synthetic(Synthetic {

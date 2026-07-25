@@ -634,6 +634,10 @@ struct DatasetSection {
     /// Inter-turn delay cap, seconds (file/trace datasets).
     #[serde(default, alias = "interTurnDelayCapSeconds")]
     inter_turn_delay_cap_seconds: Option<f64>,
+    /// Fetch remote image URLs and inline them at dataset generation time
+    /// (`--prefetch-media-urls`); file/public datasets only.
+    #[serde(default, alias = "prefetchMediaUrls")]
+    prefetch_media_urls: Option<bool>,
     /// Strip repeated image content once observed within a session
     /// (`--uuid-and-strip`), single_turn only.
     #[serde(default, alias = "uuidAndStrip")]
@@ -1166,6 +1170,10 @@ impl Benchmark {
         let inter_turn_delay_cap_seconds = dataset
             .as_ref()
             .and_then(|d| d.inter_turn_delay_cap_seconds);
+        let prefetch_media_urls = dataset
+            .as_ref()
+            .and_then(|d| d.prefetch_media_urls)
+            .unwrap_or(false);
         let uuid_and_strip = dataset
             .as_ref()
             .and_then(|d| d.uuid_and_strip)
@@ -1739,6 +1747,7 @@ impl Benchmark {
             hf_output_len,
             hf_format,
             inter_turn_delay_cap_seconds,
+            prefetch_media_urls,
             uuid_and_strip,
             replay_speedup,
             max_idle_gap_cap_seconds,

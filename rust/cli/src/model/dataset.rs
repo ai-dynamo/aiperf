@@ -274,6 +274,10 @@ pub struct FileDataset {
     /// Recorded-graph synthesis block set by `--synthesis-*` flags.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub synthesis: Option<serde_json::Value>,
+    /// Fetch remote image URLs at generation time and inline them as data URLs
+    /// (`--prefetch-media-urls`). Omitted when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prefetch_media_urls: bool,
 }
 
 /// A named public dataset with explicit source coordinates.
@@ -298,6 +302,10 @@ pub struct PublicDataset {
     /// Shared prompt-source selection (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompts: Option<PromptSelection>,
+    /// Fetch remote image URLs at generation time and inline them as data URLs
+    /// (`--prefetch-media-urls`). Omitted when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prefetch_media_urls: bool,
 }
 
 /// One typed dataset (discriminated by `type`).

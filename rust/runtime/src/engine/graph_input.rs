@@ -1286,6 +1286,7 @@ mod tests {
                 prompts: Some(PromptSelectionSpec {
                     corpus: Some("random".into()),
                 }),
+                prefetch_media_urls: false,
             },
             "weka_trace",
             &GraphInputContext {
