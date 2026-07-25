@@ -96,12 +96,12 @@ mod tests {
         acc.add("profiling", 3, 4);
         acc.add("profiling", 9, 4); // hit clamped to 4
         acc.add("profiling", 0, 0); // skipped (total 0)
-        // profiling: (4 + 4) / (4 + 4) = 100%.
-        assert_eq!(acc.hit_rate_pct(Some("profiling")), Some(100.0));
+        // profiling: (3 + 4) / (4 + 4) = 7/8 = 87.5%.
+        assert_eq!(acc.hit_rate_pct(Some("profiling")), Some(87.5));
         // warmup: 1/2 = 50%.
         assert_eq!(acc.hit_rate_pct(Some("warmup")), Some(50.0));
-        // all phases: (1+4+4)/(2+4+4) = 9/10 = 90%.
-        assert_eq!(acc.hit_rate_pct(None), Some(90.0));
+        // all phases: (1+3+4)/(2+4+4) = 8/10 = 80%.
+        assert_eq!(acc.hit_rate_pct(None), Some(80.0));
         // unknown phase / no data.
         assert_eq!(acc.hit_rate_pct(Some("missing")), None);
     }
