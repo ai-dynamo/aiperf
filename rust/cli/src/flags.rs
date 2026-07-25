@@ -778,8 +778,8 @@ pub struct ProfileFlags {
     #[arg(long = "custom-dataset-type")]
     pub custom_dataset_type: Option<String>,
 
-    /// HuggingFace subset for `--public-dataset` (`--hf-subset`).
-    #[arg(long = "hf-subset")]
+    /// HuggingFace subset/config for `--public-dataset` or `--hf-dataset`.
+    #[arg(long = "hf-subset", visible_alias = "hf-config")]
     pub hf_subset: Option<String>,
 
     /// Benchmark an arbitrary Hugging Face dataset by repository ID (e.g.
@@ -796,11 +796,11 @@ pub struct ProfileFlags {
     pub hf_revision: Option<String>,
 
     /// Force the prompt column instead of auto-detecting it.
-    #[arg(long = "hf-text-column")]
+    #[arg(long = "hf-text-column", visible_alias = "hf-prompt-column")]
     pub hf_text_column: Option<String>,
 
     /// Force the completion/output column instead of auto-detecting it.
-    #[arg(long = "hf-output-column")]
+    #[arg(long = "hf-output-column", visible_alias = "hf-completion-column")]
     pub hf_output_column: Option<String>,
 
     /// Fixed output length for every request (overrides completion-derived length).
