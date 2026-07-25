@@ -1732,6 +1732,9 @@ impl Benchmark {
             prefix_prompts,
             // Authored via `benchmark.scenario` / `.trajectoryStart*` / `.unsafeOverride`.
             scenario: self.scenario.clone(),
+            // The YAML config path selects semantics via the scenario (derived in
+            // `build`); the explicit override is the `--weka-semantics` CLI flag.
+            weka_semantics: None,
             trajectory_start_min_ratio: self.trajectory_start_min_ratio.unwrap_or(0.0),
             trajectory_start_max_ratio: self.trajectory_start_max_ratio.unwrap_or(0.0),
             unsafe_override: self.unsafe_override.unwrap_or(false),

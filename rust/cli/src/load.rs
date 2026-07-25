@@ -866,6 +866,8 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // whole (later lowering partially moves it). A no-op without the `agentx`
     // feature. A hard scenario-lock conflict fails resolution here.
     let scenario_outcome = resolve_scenario_outcome(&inputs)?;
+    // Effective weka semantics, resolved while `inputs` is still whole.
+    let weka_semantics = resolve_weka_semantics(&inputs);
     let loadgen_overlay = crate::phase_validate::LoadgenOverlay::from_inputs(&inputs);
     if let Some(ref mut phases) = inputs.phases_override {
         apply_cli_loadgen_overlays(phases, &loadgen_overlay)?;
@@ -1361,7 +1363,7 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         endpoint_profiles: serde_json::Map::new(),
         failure_policy: None,
         scenario: inputs.scenario.clone(),
-        weka_semantics: resolve_weka_semantics(&inputs),
+        weka_semantics,
         trajectory_start_max_ratio: inputs.trajectory_start_max_ratio,
         trajectory_start_min_ratio: inputs.trajectory_start_min_ratio,
         unsafe_override: inputs.unsafe_override,
