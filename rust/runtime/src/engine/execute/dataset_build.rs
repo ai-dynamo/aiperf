@@ -1062,8 +1062,21 @@ pub(crate) fn phase_config(spec: &PhaseSpec, seamless_to_next: bool) -> Result<P
     } else {
         PhaseKind::Profiling
     };
+    // The accelerated cache-warmup phase (`--agentic-cache-warmup-duration`) is
+    // duration-driven: its own `execute` arms a Clock drain timer and self-drains,
+    // issuing MANY pressure turns (live-trajectory replay under compression), not a
+    // fixed count. Its `common.requests` carries the static-prime count SOLELY to
+    // offset the following PROFILING phase's ordinal base (see
+    // `compute_phase_ordinal_bases`), NOT as a send bound. Passing it through as
+    // `total_expected_requests` would freeze the phase's progress tracker after that
+    // many sends (independent of `enforce_stop`), and the next pressure turn would
+    // hit `record a send after sending complete`. Drop the count bound for this phase
+    // (the ordinal reservation still reads `common.requests`).
+    let accelerated_warmup = matches!(spec, PhaseSpec::AgenticReplay { .. })
+        && common.is_warmup()
+        && common.agentic_cache_warmup_duration.is_some();
     let stop = StopConfig {
-        total_expected_requests: common.requests,
+        total_expected_requests: if accelerated_warmup { None } else { common.requests },
         expected_num_sessions: common.sessions,
         expected_duration_ns: common.duration.map(seconds_to_ns).transpose()?,
     };
