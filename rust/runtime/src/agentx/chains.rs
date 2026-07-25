@@ -560,6 +560,234 @@ pub fn is_reduction_chain(requests: &[ChainReq], osl_max: i64, ratio: f64, isl_f
     first.input_length as f64 > ratio * osl as f64
 }
 
+// ---------------------------------------------------------------------------
+// Parallel-fan-out grouping + setup-prefix helpers (Python: worker_group_*,
+// compute_chain_prefix_blocks, _overlap_components, _observed_group_prefix).
+// ---------------------------------------------------------------------------
+
+/// `(t0, t1, first_outer, chain_index)` interval candidate.
+type IntervalCand = (f64, f64, i64, usize);
+
+/// Total order on `f64` for the active-interval min-heap.
+#[derive(PartialEq)]
+struct HeapEnd(f64, usize);
+impl Eq for HeapEnd {}
+impl Ord for HeapEnd {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0
+            .total_cmp(&other.0)
+            .then(self.1.cmp(&other.1))
+    }
+}
+impl PartialOrd for HeapEnd {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Connected components of `[t0, t1)` interval overlap (sweep + union-find).
+/// Touching intervals (`end == start`) do not overlap. Component order and
+/// within-component order are not defined here; callers re-sort.
+fn overlap_components(cands: &[IntervalCand]) -> Vec<Vec<IntervalCand>> {
+    if cands.is_empty() {
+        return Vec::new();
+    }
+    let n = cands.len();
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| {
+        (cands[a].0, cands[a].2)
+            .partial_cmp(&(cands[b].0, cands[b].2))
+            .unwrap()
+    });
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn find(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        x
+    }
+    let mut active: std::collections::BinaryHeap<std::cmp::Reverse<HeapEnd>> =
+        std::collections::BinaryHeap::new();
+    for &i in &order {
+        let t0 = cands[i].0;
+        while let Some(std::cmp::Reverse(HeapEnd(end, _))) = active.peek() {
+            if *end <= t0 {
+                active.pop();
+            } else {
+                break;
+            }
+        }
+        if let Some(std::cmp::Reverse(HeapEnd(_, top_idx))) = active.peek() {
+            let a = find(&mut parent, i);
+            let b = find(&mut parent, *top_idx);
+            parent[a] = b;
+        }
+        active.push(std::cmp::Reverse(HeapEnd(cands[i].1, i)));
+    }
+    let mut comps: HashMap<usize, Vec<IntervalCand>> = HashMap::new();
+    // Deterministic grouping: iterate in index order, key by component root.
+    let mut roots_in_order: Vec<usize> = Vec::new();
+    for i in 0..n {
+        let r = find(&mut parent, i);
+        if !comps.contains_key(&r) {
+            roots_in_order.push(r);
+        }
+        comps.entry(r).or_default().push(cands[i]);
+    }
+    roots_in_order
+        .into_iter()
+        .map(|r| comps.remove(&r).unwrap())
+        .collect()
+}
+
+/// Assign each worker-group member a `(group, member)` coordinate (Python
+/// `worker_group_assignment`). Empty when `group_min <= 0`.
+pub fn worker_group_assignment(
+    result: &ChainDetectionResult,
+    group_min: i64,
+) -> HashMap<usize, (i64, i64)> {
+    let mut out: HashMap<usize, (i64, i64)> = HashMap::new();
+    if group_min <= 0 {
+        return out;
+    }
+    // Bucket workers by fork point (parent_chain, fork_outer_idx).
+    let mut buckets: HashMap<(usize, i64), Vec<IntervalCand>> = HashMap::new();
+    let mut bucket_order: Vec<(usize, i64)> = Vec::new();
+    for &ci in &result.worker_indices {
+        let chain = &result.chains[ci];
+        let fork = match &chain.fork {
+            Some(f) => f,
+            None => continue,
+        };
+        if fork.depth <= 0 || fork.parent_chain.is_none() || fork.fork_outer_idx.is_none()
+            || chain.requests.is_empty()
+        {
+            continue;
+        }
+        let t0 = chain.requests[0].1.t;
+        let t1 = chain
+            .requests
+            .iter()
+            .map(|(_, r)| req_end(r))
+            .fold(f64::NEG_INFINITY, f64::max);
+        let key = (fork.parent_chain.unwrap(), fork.fork_outer_idx.unwrap());
+        if !buckets.contains_key(&key) {
+            bucket_order.push(key);
+        }
+        buckets
+            .entry(key)
+            .or_default()
+            .push((t0, t1, chain.requests[0].0, ci));
+    }
+
+    let mut components: Vec<Vec<IntervalCand>> = Vec::new();
+    for key in &bucket_order {
+        components.extend(overlap_components(&buckets[key]));
+    }
+
+    let mut groups: Vec<Vec<IntervalCand>> = components
+        .into_iter()
+        .filter(|c| c.len() as i64 >= group_min)
+        .collect();
+    // Sort groups by min (t0, first_outer).
+    groups.sort_by(|a, b| {
+        let ka = a
+            .iter()
+            .map(|c| (c.0, c.2))
+            .min_by(|x, y| x.partial_cmp(y).unwrap())
+            .unwrap();
+        let kb = b
+            .iter()
+            .map(|c| (c.0, c.2))
+            .min_by(|x, y| x.partial_cmp(y).unwrap())
+            .unwrap();
+        ka.partial_cmp(&kb).unwrap()
+    });
+
+    for (group, mut comp) in groups.into_iter().enumerate() {
+        comp.sort_by(|a, b| (a.0, a.2).partial_cmp(&(b.0, b.2)).unwrap());
+        for (member, (_, _, _, ci)) in comp.into_iter().enumerate() {
+            out.insert(ci, (group as i64, member as i64));
+        }
+    }
+    out
+}
+
+/// LCP over the group members' first-request hash lists (0 if fewer than 2
+/// non-empty).
+fn observed_group_prefix(result: &ChainDetectionResult, members: &[usize]) -> i64 {
+    let firsts: Vec<&Vec<i64>> = members
+        .iter()
+        .map(|&ci| &result.chains[ci].requests[0].1.hash_ids)
+        .filter(|h| !h.is_empty())
+        .collect();
+    if firsts.len() < 2 {
+        return 0;
+    }
+    let mut observed = firsts[0].len() as i64;
+    for other in &firsts[1..] {
+        let prefix = &firsts[0][..observed as usize];
+        observed = observed.min(np_lcp(prefix, other));
+    }
+    observed
+}
+
+/// Effective setup-prefix block count per live chain (Python
+/// `compute_chain_prefix_blocks`, spec §5.4).
+pub fn compute_chain_prefix_blocks(
+    result: &ChainDetectionResult,
+    declared_prefix_blocks: i64,
+) -> HashMap<usize, i64> {
+    let live: Vec<usize> = result
+        .chains
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.spliced_into.is_none())
+        .map(|(i, _)| i)
+        .collect();
+    let mut prefixes: HashMap<usize, i64> = HashMap::new();
+    if live.is_empty() {
+        return prefixes;
+    }
+
+    let group_root = |mut ci: usize| -> usize {
+        loop {
+            let c = &result.chains[ci];
+            match &c.fork {
+                Some(f) if f.parent_chain.is_some() && f.depth != 0 => {
+                    ci = f.parent_chain.unwrap();
+                }
+                _ => return ci,
+            }
+        }
+    };
+
+    let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut group_order: Vec<usize> = Vec::new();
+    for &ci in &live {
+        let root = group_root(ci);
+        if !groups.contains_key(&root) {
+            group_order.push(root);
+        }
+        groups.entry(root).or_default().push(ci);
+    }
+
+    for root in &group_order {
+        let members = &groups[root];
+        let observed = observed_group_prefix(result, members);
+        for &ci in members {
+            let value = if ci == result.main_index {
+                declared_prefix_blocks.max(observed)
+            } else {
+                observed
+            };
+            prefixes.insert(ci, value);
+        }
+    }
+    prefixes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

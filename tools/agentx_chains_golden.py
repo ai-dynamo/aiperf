@@ -16,8 +16,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from aiperf.dataset.loader.weka_agent_chains import detect_agent_chains
+from aiperf.dataset.loader.weka_agent_chains import (
+    compute_chain_prefix_blocks,
+    detect_agent_chains,
+    worker_group_assignment,
+)
 from aiperf.dataset.loader.weka_trace_models import WekaNormalRequest
+
+GROUP_MIN = 2
+DECLARED_PREFIX_BLOCKS = 1
 
 
 def req(outer, t, model, hash_ids, in_len=None, out_len=4, api_time=0.1):
@@ -80,12 +87,17 @@ def dump_result(res):
             },
         }
 
+    wg = worker_group_assignment(res, group_min=GROUP_MIN)
+    prefixes = compute_chain_prefix_blocks(res, declared_prefix_blocks=DECLARED_PREFIX_BLOCKS)
     return {
         "main_index": res.main_index,
         "worker_indices": list(res.worker_indices),
         "seams_merged": res.seams_merged,
         "unclassified_empty_hash": res.unclassified_empty_hash,
         "chains": [dump_chain(c) for c in res.chains],
+        # {chain_index: [group, member]} and {chain_index: prefix_blocks}
+        "worker_group_assignment": {str(k): list(v) for k, v in sorted(wg.items())},
+        "chain_prefix_blocks": {str(k): v for k, v in sorted(prefixes.items())},
     }
 
 

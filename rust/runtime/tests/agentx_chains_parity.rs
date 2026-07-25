@@ -10,7 +10,10 @@
 
 #![cfg(feature = "agentx")]
 
-use aiperf_runtime::agentx::chains::{detect_agent_chains, ChainReq};
+use aiperf_runtime::agentx::chains::{
+    compute_chain_prefix_blocks, detect_agent_chains, worker_group_assignment, ChainReq,
+};
+use std::collections::HashMap;
 use serde_json::Value;
 use std::path::PathBuf;
 
@@ -128,5 +131,25 @@ fn detect_agent_chains_matches_python_golden() {
                 _ => panic!("{name} chain {i}: fork presence mismatch"),
             }
         }
+
+        // worker_group_assignment (group_min=2): {chain: [group, member]}.
+        let wg = worker_group_assignment(&r, 2);
+        let want_wg = want["worker_group_assignment"].as_object().unwrap();
+        assert_eq!(wg.len(), want_wg.len(), "{name}: wg size");
+        for (k, v) in want_wg {
+            let ci: usize = k.parse().unwrap();
+            let pair = v.as_array().unwrap();
+            let want_coord = (pair[0].as_i64().unwrap(), pair[1].as_i64().unwrap());
+            assert_eq!(wg.get(&ci).copied(), Some(want_coord), "{name}: wg[{ci}]");
+        }
+
+        // compute_chain_prefix_blocks(declared=1): {chain: blocks}.
+        let pfx = compute_chain_prefix_blocks(&r, 1);
+        let want_pfx = want["chain_prefix_blocks"].as_object().unwrap();
+        let want_pfx_map: HashMap<usize, i64> = want_pfx
+            .iter()
+            .map(|(k, v)| (k.parse().unwrap(), v.as_i64().unwrap()))
+            .collect();
+        assert_eq!(pfx, want_pfx_map, "{name}: chain_prefix_blocks");
     }
 }

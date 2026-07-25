@@ -54,7 +54,11 @@
      "spliced_into": null,
      "fork": null
     }
-   ]
+   ],
+   "worker_group_assignment": {},
+   "chain_prefix_blocks": {
+    "0": 1
+   }
   }
  },
  {
@@ -110,7 +114,11 @@
       "depth": 1
      }
     }
-   ]
+   ],
+   "worker_group_assignment": {},
+   "chain_prefix_blocks": {
+    "0": 1
+   }
   }
  },
  {
@@ -181,7 +189,12 @@
       "depth": 1
      }
     }
-   ]
+   ],
+   "worker_group_assignment": {},
+   "chain_prefix_blocks": {
+    "0": 1,
+    "1": 1
+   }
   }
  },
  {
@@ -239,7 +252,12 @@
       "depth": 2
      }
     }
-   ]
+   ],
+   "worker_group_assignment": {},
+   "chain_prefix_blocks": {
+    "0": 2,
+    "1": 2
+   }
   }
  },
  {
@@ -293,7 +311,11 @@
      "spliced_into": null,
      "fork": null
     }
-   ]
+   ],
+   "worker_group_assignment": {},
+   "chain_prefix_blocks": {
+    "0": 1
+   }
   }
  },
  {
@@ -419,7 +441,11 @@
       "depth": 3
      }
     }
-   ]
+   ],
+   "worker_group_assignment": {},
+   "chain_prefix_blocks": {
+    "0": 1
+   }
   }
  }
 ]
