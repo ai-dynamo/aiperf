@@ -59,6 +59,36 @@
   },
   "streaming": false
  },
+ "alpaca": {
+  "default_subset": null,
+  "entries_first": false,
+  "format": "hf_instruction_response",
+  "options": {
+   "prompt_column": "instruction"
+  },
+  "source": {
+   "dataset": "tatsu-lab/alpaca",
+   "split": "train",
+   "subset": "default",
+   "type": "hugging_face"
+  },
+  "streaming": true
+ },
+ "alpaca_cleaned": {
+  "default_subset": null,
+  "entries_first": false,
+  "format": "hf_instruction_response",
+  "options": {
+   "prompt_column": "instruction"
+  },
+  "source": {
+   "dataset": "yahma/alpaca-cleaned",
+   "split": "train",
+   "subset": "default",
+   "type": "hugging_face"
+  },
+  "streaming": true
+ },
  "ami": {
   "default_subset": "ihm",
   "entries_first": false,
@@ -105,6 +135,21 @@
    "type": "hugging_face"
   },
   "streaming": false
+ },
+ "dolly": {
+  "default_subset": null,
+  "entries_first": false,
+  "format": "hf_instruction_response",
+  "options": {
+   "prompt_column": "instruction"
+  },
+  "source": {
+   "dataset": "databricks/databricks-dolly-15k",
+   "split": "train",
+   "subset": "default",
+   "type": "hugging_face"
+  },
+  "streaming": true
  },
  "exgentic": {
   "default_subset": null,
@@ -196,6 +241,21 @@
   },
   "streaming": true
  },
+ "mmlu": {
+  "default_subset": null,
+  "entries_first": false,
+  "format": "hf_instruction_response",
+  "options": {
+   "prompt_column": "question"
+  },
+  "source": {
+   "dataset": "cais/mmlu",
+   "split": "test",
+   "subset": "all",
+   "type": "hugging_face"
+  },
+  "streaming": true
+ },
  "mmstar": {
   "default_subset": null,
   "entries_first": false,
@@ -237,6 +297,19 @@
    "url": "https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"
   },
   "streaming": false
+ },
+ "sharegpt_vicuna": {
+  "default_subset": null,
+  "entries_first": false,
+  "format": "sharegpt",
+  "options": {},
+  "source": {
+   "dataset": "Aeala/ShareGPT_Vicuna_unfiltered",
+   "split": "train",
+   "subset": "default",
+   "type": "hugging_face"
+  },
+  "streaming": true
  },
  "spec_al_gsm8k": {
   "default_subset": "main",
@@ -333,6 +406,22 @@
    "dataset": "kensho/spgispeech",
    "split": "test",
    "subset": "test",
+   "type": "hugging_face"
+  },
+  "streaming": true
+ },
+ "ultrachat": {
+  "default_subset": null,
+  "entries_first": false,
+  "format": "hf_conversation",
+  "options": {
+   "conversation_column": "messages",
+   "message_content_key": "content"
+  },
+  "source": {
+   "dataset": "HuggingFaceH4/ultrachat_200k",
+   "split": "train_sft",
+   "subset": "default",
    "type": "hugging_face"
   },
   "streaming": true
