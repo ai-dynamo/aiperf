@@ -212,6 +212,8 @@ mod tests {
             theoretical_prefix_cache_hit_blocks: 0,
             theoretical_prefix_cache_total_blocks: 1,
             input_kind: None,
+            spawn_branch: None,
+            join_prerequisite: None,
         }
     }
 

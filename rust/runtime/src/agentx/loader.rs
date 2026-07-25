@@ -65,6 +65,28 @@ pub struct NormalReq {
     pub stop: String,
 }
 
+/// A parent turn's subagent spawn branch (surfaced from `agentx::subagent`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpawnBranch {
+    /// Branch identifier (`br:{agent_id}`).
+    pub branch_id: String,
+    /// Reconstructed child conversation session ids in this branch.
+    pub child_session_ids: Vec<String>,
+    /// True for a background (`async_launched`) spawn that does not gate the parent.
+    pub background: bool,
+    /// True for a context-fork spawn; false for a fresh-context spawn.
+    pub mode_fork: bool,
+}
+
+/// A parent turn's join prerequisite: it waits for these children to terminate.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JoinPrerequisite {
+    /// Branch identifier the join resolves (`br:{agent_id}`).
+    pub branch_id: String,
+    /// Child conversation session ids that must reach terminal before dispatch.
+    pub child_session_ids: Vec<String>,
+}
+
 /// One reconstructed turn (a projection of AIPerf `Turn` limited to the fields
 /// the byte-exact raw export compares).
 #[derive(Debug, Clone, PartialEq)]
@@ -95,6 +117,11 @@ pub struct ReconstructedTurn {
     pub theoretical_prefix_cache_total_blocks: i64,
     /// Classified input kind (None for legacy traces with no signal).
     pub input_kind: Option<TurnInputKind>,
+    /// Subagent spawn branch emitted on this turn (parent spawn turns only).
+    pub spawn_branch: Option<SpawnBranch>,
+    /// Join prerequisite gating this turn on subagent completion (parent join
+    /// turns only; absent for `background` branches).
+    pub join_prerequisite: Option<JoinPrerequisite>,
 }
 
 /// A reconstructed conversation (projection of AIPerf `Conversation`).
@@ -350,6 +377,8 @@ pub fn reconstruct_conversation(
             theoretical_prefix_cache_hit_blocks: hit,
             theoretical_prefix_cache_total_blocks: total,
             input_kind,
+            spawn_branch: None,
+            join_prerequisite: None,
         });
     }
 
@@ -369,6 +398,21 @@ pub fn reconstruct_conversation(
 /// `synth` must be freshly scoped to `trace_id` (its per-scope block cache is
 /// shared across the trace's conversations under the `local` hash namespace).
 /// Flat-chain splitting and the idle-gap time-warp are not yet applied.
+/// Detected spawn/join structure for one subagent entry, used to surface
+/// [`SpawnBranch`]/[`JoinPrerequisite`] onto the root conversation's turns.
+struct SubagentSpawn {
+    subagent_index: usize,
+    agent_id: String,
+    /// Spawn timestamp in seconds (the subagent marker's `t`).
+    spawn_t: f64,
+    /// Child-tree completion timestamp in seconds.
+    completion_t: f64,
+    /// True for a background (`async_launched`) spawn (no join gating).
+    background: bool,
+    /// Reconstructed child conversation session ids for this branch.
+    child_session_ids: Vec<String>,
+}
+
 pub fn convert_trace_to_conversations(
     trace_id: &str,
     trace: &crate::agentx::trace::WekaTrace,
@@ -390,6 +434,8 @@ pub fn convert_trace_to_conversations(
     let mut normals: Vec<(i64, NormalReq)> = Vec::new();
     let mut subagent_outer_indices: Vec<i64> = Vec::new();
     let mut children: Vec<crate::agentx::subagent::ChildPlan> = Vec::new();
+    // Per-subagent spawn/join structure, surfaced onto the root turns below.
+    let mut spawns: Vec<SubagentSpawn> = Vec::new();
     for (outer_idx, req) in trace.requests.iter().enumerate() {
         let outer_idx = outer_idx as i64;
         match req {
@@ -398,9 +444,28 @@ pub fn convert_trace_to_conversations(
             WekaRequest::Subagent(entry) => {
                 let sa_index = subagent_outer_indices.len();
                 subagent_outer_indices.push(outer_idx);
-                children.extend(expand_subagent_to_child_plans(
+                let new_children = expand_subagent_to_child_plans(
                     trace_id, sa_index, outer_idx, entry, block_size, cfg,
-                ));
+                );
+                // Child completion time: prefer the recorded subagent duration
+                // (entry.t + duration_ms), else the last inner request's end.
+                let completion_t = match entry.duration_ms {
+                    Some(d) => entry.t + (d as f64) / 1000.0,
+                    None => new_children
+                        .iter()
+                        .flat_map(|c| c.requests.iter())
+                        .map(|r| r.t + r.api_time.unwrap_or(0.0))
+                        .fold(entry.t, f64::max),
+                };
+                spawns.push(SubagentSpawn {
+                    subagent_index: sa_index,
+                    agent_id: entry.agent_id.clone(),
+                    spawn_t: entry.t,
+                    completion_t,
+                    background: entry.status == "async_launched",
+                    child_session_ids: new_children.iter().map(|c| c.session_id.clone()).collect(),
+                });
+                children.extend(new_children);
             }
         }
     }
@@ -436,7 +501,7 @@ pub fn convert_trace_to_conversations(
 
     let mut out: Vec<ReconstructedConversation> = Vec::new();
     // Root conversation.
-    out.push(reconstruct_conversation(
+    let mut root = reconstruct_conversation(
         trace_id,
         trace_id,
         None,
@@ -450,7 +515,45 @@ pub fn convert_trace_to_conversations(
         model_map,
         &metric_values,
         opts,
-    )?);
+    )?;
+
+    // Surface subagent spawn/join structure onto the root's parent turns.
+    // The spawn turn is the last root turn at/before the spawn timestamp; the
+    // join turn is the first root turn at/after the child-tree completion time.
+    for spawn in &spawns {
+        if dropped.contains(&spawn.subagent_index) || spawn.child_session_ids.is_empty() {
+            continue;
+        }
+        let branch_id = format!("br:{}", spawn.agent_id);
+        let spawn_ms = spawn.spawn_t * 1000.0;
+        let spawn_idx = root
+            .turns
+            .iter()
+            .rposition(|t| t.timestamp_ms.is_some_and(|ts| ts <= spawn_ms))
+            .unwrap_or(0);
+        if spawn_idx < root.turns.len() {
+            root.turns[spawn_idx].spawn_branch = Some(SpawnBranch {
+                branch_id: branch_id.clone(),
+                child_session_ids: spawn.child_session_ids.clone(),
+                background: spawn.background,
+                mode_fork: false,
+            });
+        }
+        if !spawn.background {
+            let comp_ms = spawn.completion_t * 1000.0;
+            if let Some(join_idx) = root
+                .turns
+                .iter()
+                .position(|t| t.timestamp_ms.is_some_and(|ts| ts >= comp_ms))
+            {
+                root.turns[join_idx].join_prerequisite = Some(JoinPrerequisite {
+                    branch_id,
+                    child_session_ids: spawn.child_session_ids.clone(),
+                });
+            }
+        }
+    }
+    out.push(root);
 
     // Flat worker-chain conversations.
     for fp in &flat_plans {
@@ -1163,6 +1266,86 @@ mod tests {
         assert_eq!(convs[1].session_id, "t::sa:a1");
         assert_eq!(convs[1].parent_conversation_id.as_deref(), Some("t"));
         assert_eq!(convs[1].turns[0].source_kind, "weka_subagent");
+    }
+
+    #[test]
+    fn reconstruction_emits_spawn_and_join_metadata() {
+        use crate::agentx::config::WekaConfig;
+        use crate::agentx::trace::{
+            HashIdScope, WekaInnerRequest, WekaNormalRequest, WekaRequest, WekaSubagentEntry,
+            WekaTrace,
+        };
+        let norm = |t: f64, hs: &[i64], in_len: i64| WekaNormalRequest {
+            t,
+            model: "m".into(),
+            input_length: in_len,
+            output_length: 4,
+            hash_ids: hs.to_vec(),
+            input_types: vec![],
+            output_types: vec![],
+            stop: String::new(),
+            api_time: Some(0.1),
+            think_time: None,
+        };
+        // Parent turns at t=0 (spawn) and t=2 (join). Subagent "a" spawns at
+        // t=0.5 with duration 1000ms -> completes at t=1.5. The join turn is the
+        // first parent turn at/after 1.5s (t=2).
+        let trace = WekaTrace {
+            id: "t".into(),
+            models: vec!["m".into()],
+            block_size: 4,
+            hash_id_scope: HashIdScope::Local,
+            tool_tokens: 0,
+            system_tokens: 0,
+            requests: vec![
+                WekaRequest::Normal(norm(0.0, &[1, 2], 8)),
+                WekaRequest::Subagent(WekaSubagentEntry {
+                    t: 0.5,
+                    agent_id: "a".into(),
+                    subagent_type: "Explore".into(),
+                    duration_ms: Some(1000),
+                    total_tokens: None,
+                    tool_use_count: None,
+                    status: "completed".into(),
+                    requests: vec![WekaInnerRequest::Normal(norm(0.5, &[5, 6], 8))],
+                    models: vec!["m".into()],
+                    tool_tokens: 0,
+                    system_tokens: 0,
+                }),
+                WekaRequest::Normal(norm(2.0, &[1, 2, 3], 12)),
+            ],
+            totals: None,
+        };
+        let mut synth = StubSynth { bs: 4 };
+        let convs = convert_trace_to_conversations(
+            "t",
+            &trace,
+            &mut synth,
+            &HashMap::new(),
+            &WekaConfig {
+                split_flattened_agents: false,
+                ..WekaConfig::default()
+            },
+            &MainReconstructOptions::default(),
+        )
+        .unwrap();
+        let root = convs.iter().find(|c| c.session_id == "t").unwrap();
+        let spawn = root.turns.iter().find_map(|t| t.spawn_branch.as_ref()).unwrap();
+        assert_eq!(spawn.child_session_ids, vec!["t::sa:a".to_string()]);
+        assert!(!spawn.background);
+        let join = root
+            .turns
+            .iter()
+            .find_map(|t| t.join_prerequisite.as_ref())
+            .unwrap();
+        assert_eq!(join.child_session_ids, vec!["t::sa:a".to_string()]);
+        // The join turn is at/after the child's completion time (1.5s = 1500ms).
+        let join_turn = root
+            .turns
+            .iter()
+            .find(|t| t.join_prerequisite.is_some())
+            .unwrap();
+        assert!(join_turn.timestamp_ms.unwrap() >= 1500.0);
     }
 
     #[test]

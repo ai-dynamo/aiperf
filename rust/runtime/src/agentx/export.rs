@@ -159,6 +159,8 @@ mod tests {
                     theoretical_prefix_cache_hit_blocks: 0,
                     theoretical_prefix_cache_total_blocks: 2,
                     input_kind: None,
+                    spawn_branch: None,
+                    join_prerequisite: None,
                 },
                 ReconstructedTurn {
                     timestamp_ms: Some(1000.0),
@@ -174,6 +176,8 @@ mod tests {
                     theoretical_prefix_cache_hit_blocks: 2,
                     theoretical_prefix_cache_total_blocks: 2,
                     input_kind: Some(TurnInputKind::UserInput),
+                    spawn_branch: None,
+                    join_prerequisite: None,
                 },
             ],
         }
