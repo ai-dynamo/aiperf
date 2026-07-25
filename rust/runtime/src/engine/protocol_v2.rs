@@ -331,16 +331,23 @@ impl BenchmarkRunWireV2 {
             "run.cfg.runtime.workers must be a positive usize"
         );
         let dispatch = parse_dispatch_mode(&self.cfg.runtime)?;
+        let mut workload_config = serde_json::json!({
+            "worker_count": worker_count,
+            "dataset": dataset,
+            "tokenizer": self.cfg.tokenizer.unwrap_or_else(|| serde_json::json!({})),
+            "phases": self.cfg.phases,
+            "failure_policy": self.cfg.failure_policy,
+        });
+        // `weka_semantics` selects the graph reconstruction pipeline and exists
+        // only on the graph workload's config DTO. The scheduled workload DTO is
+        // strict (`deny_unknown_fields`), so emitting the field there — even as
+        // `null` — fails decode. Only attach it to the graph workload.
+        if workload_id == "graph" {
+            workload_config["weka_semantics"] = serde_json::json!(self.cfg.weka_semantics);
+        }
         let workload = NamedRunnerComponentSpecV2 {
             id: workload_id.parse().expect("built-in workload ID is valid"),
-            config: raw_value(serde_json::json!({
-                "worker_count": worker_count,
-                "dataset": dataset,
-                "tokenizer": self.cfg.tokenizer.unwrap_or_else(|| serde_json::json!({})),
-                "phases": self.cfg.phases,
-                "failure_policy": self.cfg.failure_policy,
-                "weka_semantics": self.cfg.weka_semantics,
-            }))?,
+            config: raw_value(workload_config)?,
         };
         let (sidecars, sidecars_present) = if !self.cfg.sidecars.is_null()
             && self
@@ -1269,8 +1276,25 @@ mod dispatch_mode_tests {
     }
 
     #[test]
-    fn runtime_dispatch_defaults_to_global_when_absent() {
-        let runtime = serde_json::json!({"workers": 4, "cells": 1});
+    fn scheduled_projection_omits_graph_only_weka_semantics() {
+        use crate::engine::registry::{ScheduledWorkloadConfigV2, strict_decode};
+        // A synthetic dataset projects to the `scheduled` workload, whose strict
+        // config DTO has no `weka_semantics` field (it is graph-only). The
+        // projection must not leak that field into the scheduled config, or the
+        // run fails at decode with "unknown field `weka_semantics`".
+        let authored = minimal_wire(serde_json::json!({"workers": 1}))
+            .into_authored()
+            .unwrap();
+        assert_eq!(authored.workload.id.as_str(), "scheduled");
+        strict_decode::<ScheduledWorkloadConfigV2>(
+            &authored.workload.config,
+            "scheduled workload config",
+        )
+        .expect("scheduled workload config must strict-decode without graph-only fields");
+    }
+
+    #[test]
+    fn runtime_dispatch_defaults_to_global_when_absent() {        let runtime = serde_json::json!({"workers": 4, "cells": 1});
         assert_eq!(parse_dispatch_mode(&runtime).unwrap(), DispatchMode::Global);
 
         let authored = minimal_wire(runtime).into_authored().unwrap();
