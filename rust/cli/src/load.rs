@@ -86,6 +86,7 @@ fn authored_prompt_selection(corpus: Option<&str>) -> Option<PromptSelection> {
 }
 
 /// A leading warmup phase's axes.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Warmup {
     /// Warmup concurrency (inherits profiling concurrency when `None`).
     pub concurrency: Option<u32>,
@@ -112,6 +113,7 @@ pub(crate) struct Warmup {
 }
 
 /// Normalized profile inputs.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Inputs {
     pub model_names: Vec<String>,
     pub urls: Vec<String>,
@@ -341,6 +343,7 @@ pub(crate) struct Inputs {
 
 /// Dry-run dataset-analysis knobs projected from the `--kv-*` /
 /// `--dataset-analysis-*` flags into `artifacts.dataset_analysis_*`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct DatasetAnalysisInputs {
     /// KV-cache block size (tokens) for the cache-reuse analysis.
     pub block_size: u32,

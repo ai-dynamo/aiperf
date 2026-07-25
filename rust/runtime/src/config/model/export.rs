@@ -344,6 +344,7 @@ impl ParquetExport {
 }
 
 /// Parameters for building the optional MLflow sink.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MlflowParams {
     /// Tracking server URI (the enable signal).
     pub tracking_uri: Option<String>,
@@ -362,6 +363,7 @@ pub struct MlflowParams {
 }
 
 /// Parameters for building the optional W&B sink.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WandbParams {
     /// Project (the enable signal).
     pub project: Option<String>,
