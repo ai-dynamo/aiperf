@@ -1254,6 +1254,8 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
                             None,
                             // Co-simulation uses its configured resilient failure policy.
                             OnFailure::for_scheduled_default(),
+                            // Dynamo co-simulation is never agentic: no join trees.
+                            std::sync::Arc::default(),
                         )?
                         .with_metrics_config(metrics.clone())
                         .with_performance_record_capture(false)

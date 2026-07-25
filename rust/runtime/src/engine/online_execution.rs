@@ -1384,10 +1384,19 @@ fn lower_legacy_agentic(
             cache_bust_target: crate::agentx::cache_bust::CacheBustTarget::FirstTurnPrefix,
         },
     )?;
+    // Build the DAG-free subagent join-gate side channel from the SLICED
+    // profiling conversations: the slice preserves each surviving turn's
+    // `join_prerequisite` and reindexes turn indices to their profiling
+    // (post-t\*, history-excluded) position, so `build_tree_specs` reads the
+    // exact index the workload gate consults — no manual remap needed. Empty
+    // for a root-only run (the workload gate then stays a pass-through).
+    let agentic_trees = std::sync::Arc::new(crate::agentic_replay::build_tree_specs(&convs));
+
     let prepared = crate::engine::dataset_input::PreparedDatasetInput {
         dataset,
         random_seed: run.identity.random_seed,
         default_output_tokens: 1,
+        agentic_trees,
     };
 
     // Translate each authored phase to the agentic_replay timing mode, and

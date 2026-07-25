@@ -11,6 +11,9 @@
 
 pub mod accuracy;
 pub mod adaptive;
+/// Always-compiled subagent tree-spec side channel (`TreeSpec`) for the
+/// `agentic_replay` timing mode.
+pub mod agentic_tree;
 /// AgentX agentic-replay timing mode (scheduled-runtime Workload). Requires the
 /// `agentx` feature.
 #[cfg(feature = "agentx")]

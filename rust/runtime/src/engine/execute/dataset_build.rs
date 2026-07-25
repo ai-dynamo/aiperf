@@ -111,7 +111,13 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
     shared: &NativeScheduledResources,
     adaptive_record_source: Option<Rc<dyn AdaptiveTerminalRecordSource>>,
     on_failure: OnFailure,
+    // Side-channel subagent join-gate specs (empty for every non-agentic run).
+    // Consumed only by the `agentic_replay` phase branch below.
+    agentic_trees: std::sync::Arc<Vec<crate::agentic_tree::TreeSpec>>,
 ) -> Result<ScheduledPhasePlan> {
+    // Silence the unused-binding warning on builds without the `agentx` feature
+    // (the only consumer is the feature-gated agentic_replay branch below).
+    let _ = &agentic_trees;
     let phase_rng =
         RngRoot::new(dataset_rng_root.derive_seed(&format!("runner.phase.{phase_index}.dataset")));
     let phase_dataset = match phase {
@@ -314,6 +320,12 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
                         .derive_seed_or_entropy("agentic_replay.tstar_base"),
                     benchmark_id: benchmark_id.to_string(),
                     cache_bust_target: crate::agentx::cache_bust::CacheBustTarget::FirstTurnPrefix,
+                    // Gating is a profiling concern; the warmup instance carries
+                    // no trees (it primes turn n-1 and drains, never joins).
+                    trees: match agentic_phase {
+                        AgenticPhase::Profiling => Rc::new(agentic_trees.as_ref().clone()),
+                        AgenticPhase::Warmup => Rc::new(Vec::new()),
+                    },
                 };
                 let workload =
                     Rc::new(AgenticReplayWorkload::new(source, config)?) as Rc<dyn Workload>;

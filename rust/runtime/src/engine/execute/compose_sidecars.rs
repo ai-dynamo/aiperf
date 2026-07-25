@@ -115,6 +115,13 @@ pub(crate) async fn execute_native_inner(
             }
         }
     };
+    // Side-channel subagent join-gate specs (empty for every non-agentic run),
+    // carried alongside the composed dataset and threaded into the agentic phase
+    // plan below.
+    let agentic_trees = match &request.dataset {
+        NativeDatasetPlan::PreparedLinear(dataset) => dataset.agentic_trees.clone(),
+        _ => std::sync::Arc::default(),
+    };
     let default_output_tokens = if accuracy.is_some() {
         dataset_default_output_tokens(&dataset)?
     } else {
@@ -367,6 +374,7 @@ pub(crate) async fn execute_native_inner(
                     wants_adaptive_record
                         .then(|| capture.clone() as Rc<dyn AdaptiveTerminalRecordSource>),
                     on_failure,
+                    agentic_trees.clone(),
                 )?;
                 let profiling_idx = if phase.common().exclude_from_results {
                     None
@@ -595,6 +603,7 @@ pub(crate) async fn execute_native_inner(
             table_factory,
             samplers: registry.samplers().clone(),
             dataset: dataset.clone(),
+            agentic_trees: agentic_trees.clone(),
             primary_model: primary_model.clone(),
             metrics_config: metrics_config.clone(),
             tokenizer: tokenizer.clone(),

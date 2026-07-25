@@ -188,6 +188,10 @@ pub struct AgenticReplayConfig {
     pub benchmark_id: String,
     /// Cache-bust placement (scenario-locked to first-turn-prefix for the MVP).
     pub cache_bust_target: CacheBustTarget,
+    /// Side-channel subagent join-gate specs built from the reconstruction. Empty
+    /// for a run with no subagent trees — the workload's join gate then stays a
+    /// pass-through (never defers, recycles as before).
+    pub trees: Rc<Vec<TreeSpec>>,
 }
 
 /// The agentic-replay workload: drives one phase's dispatch over a
@@ -282,13 +286,13 @@ impl Workload for AgenticReplayWorkload {
         };
         let anchor_ns = runtime.now_ns().saturating_add(lead_ns);
         let source = Rc::clone(&self.source);
-        // Subagent-join gate. The tree specs are not yet threaded from lowering
-        // (a following task), so today's run derives no trees: the gate is a
-        // pass-through (`None`) that never defers and recycles as before. The
-        // gating path itself is fully wired and covered by `join_gating` tests.
-        let tree_specs: Vec<TreeSpec> = Vec::new();
+        // Subagent-join gate. The tree specs are threaded from lowering
+        // (`build_tree_specs` over the sliced profiling conversations). A run
+        // with no subagent trees carries an empty `Vec`, so the gate is a
+        // pass-through (`None`) that never defers and recycles as before.
+        let tree_specs = &cfg.trees;
         let gate: Option<Rc<TreeGate>> = (!tree_specs.is_empty())
-            .then(|| Rc::new(TreeGate::new(&tree_specs)));
+            .then(|| Rc::new(TreeGate::new(tree_specs)));
         // Per-run deferral queue for gated join turns (drained on child terminal).
         let defer_queue: Rc<RefCell<Vec<PendingJoin>>> = Rc::new(RefCell::new(Vec::new()));
         // Profiling recycles exhausted trajectories to sustain a duration run;
@@ -521,23 +525,79 @@ fn schedule_agentic_turn(
     );
 }
 
-/// Declarative description of one session tree used to build a [`TreeGate`].
+pub use crate::agentic_tree::TreeSpec;
+
+/// Build the side `Vec<TreeSpec>` join-gate description from reconstructed
+/// conversations, grouping each root with its subagent children and its join
+/// turns.
 ///
-/// - `root` is the depth-0 root conversation/correlation id.
-/// - `children` are the recursive descendant (subagent/spawn) correlation ids
-///   owned by this tree.
-/// - `join_turns` are the root turn indices that must block until a specified
-///   set of children have terminated (a "join"): each entry pairs a
-///   `turn_index` with the child ids required to be terminal before that turn
-///   may dispatch.
-#[derive(Debug, Clone)]
-pub struct TreeSpec {
-    /// Depth-0 root correlation id.
-    pub root: String,
-    /// Recursive descendant correlation ids owned by this tree.
-    pub children: Vec<String>,
-    /// Root join points: `(turn_index, required_child_ids)`.
-    pub join_turns: Vec<(usize, Vec<String>)>,
+/// A root is a conversation with `parent_conversation_id == None`; its children
+/// are conversations whose `parent_conversation_id` names that root. WARMUP
+/// conversations (the `::warmup` turn-(n-1) primes, which also carry a parent
+/// id) are excluded — they are dispatch primes, not tree members. A root with
+/// no surviving children yields no spec (the gate stays a pass-through).
+///
+/// `join_turns` are read from each surviving root turn's `join_prerequisite`.
+/// **Callers must pass the already-sliced profiling conversations**
+/// ([`crate::agentx::weka_dataset::slice_trajectories_at_tstar`]) so the
+/// enumerate index is the profiling (post-t\*, history-excluded) turn index the
+/// workload gate consults; a join whose turn fell in the dropped history is
+/// simply absent. Required child ids are intersected with the tree's surviving
+/// children so a child that did not survive slicing cannot form a dangling join
+/// (which would otherwise fail [`TreeGate::try_new`] closed).
+pub fn build_tree_specs(
+    convs: &[crate::agentx::loader::ReconstructedConversation],
+) -> Vec<TreeSpec> {
+    let is_warmup = |id: &str| id.ends_with(crate::agentx::weka_dataset::WARMUP_SUFFIX);
+
+    // Group surviving (non-warmup) children by their parent conversation id.
+    let mut children_by_parent: HashMap<String, Vec<String>> = HashMap::new();
+    for conv in convs {
+        if is_warmup(&conv.session_id) {
+            continue;
+        }
+        if let Some(parent) = &conv.parent_conversation_id {
+            children_by_parent
+                .entry(parent.clone())
+                .or_default()
+                .push(conv.session_id.clone());
+        }
+    }
+
+    let mut specs = Vec::new();
+    for conv in convs {
+        if is_warmup(&conv.session_id) || conv.parent_conversation_id.is_some() {
+            continue; // roots only
+        }
+        let Some(children) = children_by_parent.get(&conv.session_id).cloned() else {
+            continue; // no subagent children → no tree/gate
+        };
+        if children.is_empty() {
+            continue;
+        }
+        let child_set: HashSet<&str> = children.iter().map(String::as_str).collect();
+        let join_turns: Vec<(usize, Vec<String>)> = conv
+            .turns
+            .iter()
+            .enumerate()
+            .filter_map(|(turn_index, turn)| {
+                let join = turn.join_prerequisite.as_ref()?;
+                let required: Vec<String> = join
+                    .child_session_ids
+                    .iter()
+                    .filter(|c| child_set.contains(c.as_str()))
+                    .cloned()
+                    .collect();
+                (!required.is_empty()).then_some((turn_index, required))
+            })
+            .collect();
+        specs.push(TreeSpec {
+            root: conv.session_id.clone(),
+            children,
+            join_turns,
+        });
+    }
+    specs
 }
 
 /// No-op [`SlotReleaser`]: the [`TreeGate`] uses [`SessionTreeRegistry`] purely
@@ -728,6 +788,52 @@ mod tree_gate_tests {
         let ready = take_ready(&queue, &gate, |x| (x.0.as_str(), x.1));
         assert_eq!(ready, vec![("t".to_string(), 1)]);
         assert!(queue.borrow().is_empty());
+    }
+
+    #[test]
+    fn build_tree_specs_groups_root_and_children() {
+        use crate::agentx::loader::{JoinPrerequisite, ReconstructedConversation, ReconstructedTurn};
+
+        // A bare reconstructed turn; `join` optionally hangs a join prerequisite
+        // on it (the only field `build_tree_specs` reads besides ordering).
+        let turn = |join: Option<Vec<String>>| ReconstructedTurn {
+            timestamp_ms: Some(0.0),
+            delay_ms: None,
+            api_time_ms: None,
+            source_trace_id: "t".into(),
+            source_outer_idx: 0,
+            source_kind: "weka_main".into(),
+            model: "m".into(),
+            max_tokens: 1,
+            raw_messages: vec![],
+            reset_context: false,
+            theoretical_prefix_cache_hit_blocks: 0,
+            theoretical_prefix_cache_total_blocks: 0,
+            input_kind: None,
+            spawn_branch: None,
+            join_prerequisite: join.map(|child_session_ids| JoinPrerequisite {
+                branch_id: "br:a".into(),
+                child_session_ids,
+            }),
+        };
+        // Root "t": turns 0,1 plain; turn 2 joins on child "t::sa:a".
+        let root = ReconstructedConversation {
+            session_id: "t".into(),
+            replay_scope_id: "t".into(),
+            parent_conversation_id: None,
+            turns: vec![turn(None), turn(None), turn(Some(vec!["t::sa:a".into()]))],
+        };
+        let child = ReconstructedConversation {
+            session_id: "t::sa:a".into(),
+            replay_scope_id: "t".into(),
+            parent_conversation_id: Some("t".into()),
+            turns: vec![turn(None)],
+        };
+        let specs = build_tree_specs(&[root, child]);
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].root, "t");
+        assert_eq!(specs[0].children, vec!["t::sa:a".to_string()]);
+        assert_eq!(specs[0].join_turns, vec![(2usize, vec!["t::sa:a".to_string()])]);
     }
 
     #[test]
