@@ -43,7 +43,7 @@ impl TurnInputKind {
 
 /// A normalized top-level request view (projection of `WekaNormalRequest` /
 /// `WekaStreamingRequest`) carrying every field the loader loop reads.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NormalReq {
     /// Request timestamp in seconds from conversation start.
     pub t: f64,
