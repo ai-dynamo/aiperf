@@ -11,7 +11,8 @@ use std::sync::{Arc, Mutex};
 
 use aiperf_runtime::clock::{Clock, RealClock};
 use aiperf_runtime::dataset::{
-    ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, TiktokenTokenizer,
+    ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, MediaResolver,
+    PrefetchMediaResolver, TiktokenTokenizer,
 };
 use aiperf_runtime::dispatch::collector::ReplayTerminalStatus;
 use aiperf_runtime::endpoints::{
@@ -222,6 +223,38 @@ async fn single_turn_source(
             Some("single_turn"),
             &LoadConfig::new(DatasetSource::Inline(rows)),
             &ComposeConfig::new("fixture-model", RngRoot::new(Some(7))),
+            &TiktokenTokenizer::builtin(),
+        )
+        .await
+        .unwrap();
+    let (table, resolver) = dialect_table(endpoint_config);
+    let source = Box::new(
+        NativeDatasetConversationSource::sequential_with_prepared_resolver(
+            dataset,
+            "fixture-model",
+            16,
+            resolver,
+        )
+        .unwrap(),
+    );
+    (source, table)
+}
+
+/// Like [`single_turn_source`] but composes with an injected media resolver, so
+/// tests can exercise the `--prefetch-media-urls` gen-time fetch-and-inline path.
+async fn single_turn_source_with_resolver(
+    rows: Value,
+    endpoint_config: EndpointConfig,
+    media_resolver: Arc<dyn MediaResolver>,
+) -> (Box<dyn ConversationSource>, Rc<PreparedEndpointTable>) {
+    let mut compose = ComposeConfig::new("fixture-model", RngRoot::new(Some(7)));
+    compose.media_resolver = media_resolver;
+    let dataset = LoaderRegistry::with_builtin_formats()
+        .unwrap()
+        .build_dataset(
+            Some("single_turn"),
+            &LoadConfig::new(DatasetSource::Inline(rows)),
+            &compose,
             &TiktokenTokenizer::builtin(),
         )
         .await
@@ -614,6 +647,74 @@ async fn image_edit_is_multipart_and_retrieval_sends_urls_by_default() {
     assert_eq!(urls.len(), 2);
     assert_eq!(urls[0], urls[1]);
     assert_eq!(urls[0], asset_url);
+}
+
+/// Serve `app` on a dedicated OS thread with its own multi-thread runtime and
+/// return the bound address. Required when the calling test's current-thread
+/// runtime will block synchronously (the prefetch resolver waits on its fetcher
+/// thread), which would otherwise starve a same-runtime `tokio::spawn`ed server
+/// and deadlock.
+fn spawn_on_thread(app: Router) -> SocketAddr {
+    let (address_tx, address_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            address_tx.send(listener.local_addr().unwrap()).unwrap();
+            axum::serve(listener, app).await.unwrap();
+        });
+    });
+    address_rx.recv().unwrap()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn image_retrieval_prefetch_inlines_urls_at_generation() {
+    let state = MediaState::default();
+    let app = Router::new()
+        .route("/asset.png", get(media_asset))
+        .route("/v1/infer", post(media_inference))
+        .with_state(state.clone());
+    // The server runs on its own thread: the prefetch resolver blocks this
+    // test's current-thread runtime while fetching, so a co-located server
+    // would deadlock.
+    let address = spawn_on_thread(app);
+    let asset_url = format!("http://{address}/asset.png");
+    let (source, table) = single_turn_source_with_resolver(
+        json!([
+            {
+                "session_id":"image-retrieval",
+                "endpoint":"image_retrieval",
+                "images":[asset_url, asset_url],
+                "streaming":false
+            }
+        ]),
+        EndpointConfig::default(),
+        Arc::new(PrefetchMediaResolver::new()),
+    )
+    .await;
+    let report = run(address, source, table).await;
+    assert_completed(&report, 1);
+
+    // Opt-in prefetch fetched the asset exactly once (deduped) at generation
+    // time — before any credits — not on the dispatch path.
+    assert_eq!(state.asset_hits.load(Ordering::SeqCst), 1);
+
+    // The wire body now carries inline data URLs, not the original http URLs:
+    // the old download-and-inline behavior, made opt-in and moved to gen time.
+    let requests = state.captured.by_path();
+    let retrieval: Value = serde_json::from_slice(&requests["/v1/infer"].body).unwrap();
+    let urls = retrieval["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["url"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(urls.len(), 2);
+    assert_eq!(urls[0], urls[1]);
+    assert!(urls[0].starts_with("data:image/png;base64,"));
 }
 
 #[derive(Clone, Default)]
