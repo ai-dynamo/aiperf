@@ -713,20 +713,19 @@ mod tree_gate_tests {
         // `(String, usize)` stand-in exercises the real `take_ready` decision
         // without a full `TurnToSend`.
         let queue: RefCell<Vec<(String, usize)>> = RefCell::new(Vec::new());
-        let key = |x: &(String, usize)| (x.0.as_str(), x.1);
 
         // The parent join turn is waiting: it is deferred (queued), not issued.
         assert!(gate.is_waiting("t", 1));
         queue.borrow_mut().push(("t".to_string(), 1));
 
         // While the child is live, `take_ready` leaves the join parked.
-        assert!(take_ready(&queue, &gate, key).is_empty());
+        assert!(take_ready(&queue, &gate, |x| (x.0.as_str(), x.1)).is_empty());
         assert_eq!(queue.borrow().len(), 1);
 
         // The child terminal clears the gate and drains the parent join.
         gate.on_child_terminal("t::sa:a");
         assert!(!gate.is_waiting("t", 1));
-        let ready = take_ready(&queue, &gate, key);
+        let ready = take_ready(&queue, &gate, |x| (x.0.as_str(), x.1));
         assert_eq!(ready, vec![("t".to_string(), 1)]);
         assert!(queue.borrow().is_empty());
     }
