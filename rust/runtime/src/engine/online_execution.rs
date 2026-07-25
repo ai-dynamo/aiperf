@@ -1493,10 +1493,16 @@ fn lower_legacy_agentic(
             burst_phase_starts: false,
         };
     let mut agentic_phases: Vec<PhaseSpec> = vec![agentic_replay_phase(warmup_common)];
+    // Extend with the authored PROFILING phases only. `--agentic-cache-warmup-duration`
+    // makes the CLI author its own warmup phase (named "warmup"); the synthesized
+    // warmup above already represents the warmup barrier and carries the recovered
+    // duration, so re-emitting an authored warmup here would produce a duplicate
+    // phase id "warmup". Drop any authored warmup-role phase; keep profiling.
     agentic_phases.extend(
         workload
             .phases
             .iter()
+            .filter(|p| !p.common().is_warmup())
             .map(|p| agentic_replay_phase(p.common().clone())),
     );
 
