@@ -1,142 +1,170 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Structural column/format detection for arbitrary Hugging Face dataset rows.
+//! Structural layout inference for arbitrary Hugging Face dataset rows.
 //!
-//! A port of vLLM's `detect_column_format`: given the first row of an unknown
-//! dataset, decide whether prompts live in a chat-message column, a combined
-//! context+input pair, or a single text column, and which column (if any) holds
-//! the reference completion. This module is pure `serde_json` logic with no
-//! dependency on the loader/compose plane so it can be exhaustively unit-tested.
+//! Public datasets on the Hub do not share a schema: some carry a chat-message
+//! array, some a flat prompt/answer pair, some split a task into a context field
+//! plus a question field. When a run points at a dataset by id without naming its
+//! columns, [`infer_row_layout`] inspects one representative row and decides which
+//! field supplies the prompt, whether that field is a message array, and which
+//! field (if any) supplies the reference completion. The logic is intentionally
+//! pure `serde_json` — it holds no loader or compose state — so every branch is
+//! covered by unit tests below.
 
 use serde_json::Value;
 
-/// Chat-array column names, in priority order.
-const CHAT_COLUMNS: &[&str] = &["conversation", "conversations", "messages"];
-/// Single-text prompt column names, in priority order.
-const TEXT_COLUMNS: &[&str] =
+/// Fields that, when present, hold a chat-message array. Checked before the flat
+/// prompt fields so a conversational dataset is never mistaken for plain text.
+const MESSAGE_FIELDS: &[&str] = &["conversation", "conversations", "messages"];
+/// Flat prompt fields, most specific first. A row carrying several of these is
+/// read from the earliest match.
+const PROMPT_FIELDS: &[&str] =
     &["prompt", "question", "problem", "input", "text", "content", "instruction"];
-/// Reference-output column names, in priority order.
-const OUTPUT_COLUMNS: &[&str] =
+/// Fields that supply the reference completion used to size the output length.
+const COMPLETION_FIELDS: &[&str] =
     &["completion", "response", "answer", "output", "solution", "answers"];
 
-/// Detected shape of an HF dataset row's prompt/output columns.
+/// How a dataset row exposes its prompt (and optional completion).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ColumnFormat {
-    /// A chat-message array column (`{role,content}` or `{from,value}`).
-    Chat(String),
-    /// A single prompt column plus an optional output column.
-    Text {
-        /// Column holding the prompt text.
-        prompt_col: String,
-        /// Column holding the reference completion, when detected.
-        output_col: Option<String>,
+pub(crate) enum RowLayout {
+    /// A chat-message array field (`{role,content}` or `{from,value}` entries).
+    Messages(String),
+    /// A single prompt field, optionally paired with a completion field.
+    Prompt {
+        /// Field holding the prompt text.
+        prompt_field: String,
+        /// Field holding the reference completion, when one was found.
+        completion_field: Option<String>,
     },
-    /// Multiple text columns joined with `\n\n` plus an optional output column.
-    Combined {
-        /// Columns joined to form the prompt.
-        cols: Vec<String>,
-        /// Column holding the reference completion, when detected.
-        output_col: Option<String>,
+    /// Several fields concatenated (blank-line separated) into one prompt.
+    Joined {
+        /// Fields concatenated, in order, to form the prompt.
+        fields: Vec<String>,
+        /// Field holding the reference completion, when one was found.
+        completion_field: Option<String>,
     },
 }
 
-fn is_chat_message(val: &Value) -> bool {
-    val.as_object().is_some_and(|obj| {
-        (obj.contains_key("role") && obj.contains_key("content"))
-            || (obj.contains_key("from") && obj.contains_key("value"))
+/// Whether a JSON value is a single chat message (either role/content or the
+/// ShareGPT-style from/value shape).
+fn is_message_object(value: &Value) -> bool {
+    value.as_object().is_some_and(|entry| {
+        (entry.contains_key("role") && entry.contains_key("content"))
+            || (entry.contains_key("from") && entry.contains_key("value"))
     })
 }
 
-fn is_chat_array(val: &Value) -> bool {
-    val.as_array().is_some_and(|arr| !arr.is_empty() && arr.iter().all(is_chat_message))
+/// Whether a JSON value is a non-empty array of chat messages.
+fn is_message_list(value: &Value) -> bool {
+    value.as_array().is_some_and(|items| !items.is_empty() && items.iter().all(is_message_object))
 }
 
-/// Detect the prompt/output column layout from one row. `text_column_override`
-/// forces the prompt column (still auto-detecting chat vs text for it).
-pub(crate) fn detect_column_format(
-    row: &Value,
-    text_column_override: Option<&str>,
-) -> Result<ColumnFormat, String> {
-    let obj = row.as_object().ok_or_else(|| "HF dataset row is not a JSON object".to_string())?;
+/// Comma-joined field names of `entry`, for "available fields: …" diagnostics.
+fn available_fields(entry: &serde_json::Map<String, Value>) -> String {
+    entry.keys().cloned().collect::<Vec<_>>().join(", ")
+}
 
-    let find_output_col = || -> Option<String> {
-        OUTPUT_COLUMNS.iter().find(|c| obj.contains_key(**c)).map(|c| (*c).to_string())
+/// Infer the prompt/completion layout of a dataset from one sample row.
+///
+/// When `prompt_override` names a field, that field is used as the prompt (still
+/// recognising a message array there); otherwise message fields win over the
+/// flat prompt fields, with a `context` + `input` pair recognised as a joined
+/// prompt. Returns a caller-facing message (listing the row's fields) when no
+/// prompt field can be found.
+pub(crate) fn infer_row_layout(
+    row: &Value,
+    prompt_override: Option<&str>,
+) -> Result<RowLayout, String> {
+    let entry = row
+        .as_object()
+        .ok_or_else(|| "Hugging Face row is not a JSON object".to_string())?;
+
+    let completion_field = || -> Option<String> {
+        COMPLETION_FIELDS.iter().find(|field| entry.contains_key(**field)).map(|field| (*field).to_string())
     };
 
-    if let Some(name) = text_column_override {
-        let val = obj.get(name).ok_or_else(|| {
-            format!(
-                "column {name:?} not found; available columns: {}",
-                obj.keys().cloned().collect::<Vec<_>>().join(", ")
-            )
+    if let Some(field) = prompt_override {
+        let value = entry.get(field).ok_or_else(|| {
+            format!("prompt field {field:?} is missing; available fields: {}", available_fields(entry))
         })?;
-        if is_chat_array(val) {
-            return Ok(ColumnFormat::Chat(name.to_string()));
+        if is_message_list(value) {
+            return Ok(RowLayout::Messages(field.to_string()));
         }
-        return Ok(ColumnFormat::Text {
-            prompt_col: name.to_string(),
-            output_col: find_output_col(),
+        return Ok(RowLayout::Prompt {
+            prompt_field: field.to_string(),
+            completion_field: completion_field(),
         });
     }
 
-    for col in CHAT_COLUMNS {
-        if obj.get(*col).is_some_and(is_chat_array) {
-            return Ok(ColumnFormat::Chat((*col).to_string()));
+    for field in MESSAGE_FIELDS {
+        if entry.get(*field).is_some_and(is_message_list) {
+            return Ok(RowLayout::Messages((*field).to_string()));
         }
     }
 
-    if obj
+    // A `turns` array of strings is a multi-turn prompt; the first turn seeds the
+    // single-turn request the composer builds.
+    if entry
         .get("turns")
         .and_then(Value::as_array)
-        .is_some_and(|a| a.first().is_some_and(Value::is_string))
+        .is_some_and(|items| items.first().is_some_and(Value::is_string))
     {
-        return Ok(ColumnFormat::Text {
-            prompt_col: "turns".to_string(),
-            output_col: find_output_col(),
+        return Ok(RowLayout::Prompt {
+            prompt_field: "turns".to_string(),
+            completion_field: completion_field(),
         });
     }
 
-    if obj.contains_key("context") && obj.contains_key("input") {
-        return Ok(ColumnFormat::Combined {
-            cols: vec!["context".to_string(), "input".to_string()],
-            output_col: find_output_col(),
+    if entry.contains_key("context") && entry.contains_key("input") {
+        return Ok(RowLayout::Joined {
+            fields: vec!["context".to_string(), "input".to_string()],
+            completion_field: completion_field(),
         });
     }
 
-    for col in TEXT_COLUMNS {
-        if obj.contains_key(*col) {
-            return Ok(ColumnFormat::Text {
-                prompt_col: (*col).to_string(),
-                output_col: find_output_col(),
+    for field in PROMPT_FIELDS {
+        if entry.contains_key(*field) {
+            return Ok(RowLayout::Prompt {
+                prompt_field: (*field).to_string(),
+                completion_field: completion_field(),
             });
         }
     }
 
     Err(format!(
-        "could not auto-detect a prompt column; available columns: {}. Use --hf-text-column to pick one.",
-        obj.keys().cloned().collect::<Vec<_>>().join(", ")
+        "could not infer a prompt field; available fields: {}. Pass --hf-text-column to name it.",
+        available_fields(entry)
     ))
 }
 
-fn role_of(msg: &Value) -> Option<&str> {
-    msg.get("role").and_then(Value::as_str).or_else(|| msg.get("from").and_then(Value::as_str))
-}
-fn content_of(msg: &Value) -> Option<&str> {
-    msg.get("content").and_then(Value::as_str).or_else(|| msg.get("value").and_then(Value::as_str))
+/// The role label of a message, under either the role/content or from/value shape.
+fn message_role(message: &Value) -> Option<&str> {
+    message
+        .get("role")
+        .and_then(Value::as_str)
+        .or_else(|| message.get("from").and_then(Value::as_str))
 }
 
-/// First `user`/`human` message content in a chat array.
-pub(crate) fn extract_chat_prompt(messages: &[Value]) -> Option<String> {
-    messages.iter().find_map(|m| match (role_of(m), content_of(m)) {
-        (Some(r), Some(c)) if r == "user" || r == "human" => Some(c.to_string()),
+/// The text of a message, under either the role/content or from/value shape.
+fn message_text(message: &Value) -> Option<&str> {
+    message
+        .get("content")
+        .and_then(Value::as_str)
+        .or_else(|| message.get("value").and_then(Value::as_str))
+}
+
+/// Text of the first requester turn (`user`/`human`) in a message array.
+pub(crate) fn first_user_message(messages: &[Value]) -> Option<String> {
+    messages.iter().find_map(|message| match (message_role(message), message_text(message)) {
+        (Some(role), Some(text)) if role == "user" || role == "human" => Some(text.to_string()),
         _ => None,
     })
 }
 
-/// First `assistant`/`gpt` message content in a chat array.
-pub(crate) fn extract_chat_completion(messages: &[Value]) -> Option<String> {
-    messages.iter().find_map(|m| match (role_of(m), content_of(m)) {
-        (Some(r), Some(c)) if r == "assistant" || r == "gpt" => Some(c.to_string()),
+/// Text of the first responder turn (`assistant`/`gpt`) in a message array.
+pub(crate) fn first_assistant_message(messages: &[Value]) -> Option<String> {
+    messages.iter().find_map(|message| match (message_role(message), message_text(message)) {
+        (Some(role), Some(text)) if role == "assistant" || role == "gpt" => Some(text.to_string()),
         _ => None,
     })
 }
@@ -147,105 +175,122 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn detects_chat_conversation_column() {
-        let row = json!({"conversation": [
-            {"role": "user", "content": "Hello there friend"},
-            {"role": "assistant", "content": "Hi"}]});
-        assert!(matches!(detect_column_format(&row, None).unwrap(),
-            ColumnFormat::Chat(c) if c == "conversation"));
+    fn message_array_field_wins_over_flat_fields() {
+        let row = json!({
+            "id": 7,
+            "conversation": [
+                {"role": "user", "content": "Which crate owns the clock seam?"},
+                {"role": "assistant", "content": "aiperf_runtime::clock"}
+            ]
+        });
+        assert!(matches!(infer_row_layout(&row, None).unwrap(),
+            RowLayout::Messages(field) if field == "conversation"));
     }
 
     #[test]
-    fn detects_sharegpt_from_value_chat() {
+    fn sharegpt_from_value_array_is_messages() {
         let row = json!({"conversations": [
-            {"from": "human", "value": "Hello"}, {"from": "gpt", "value": "Hi"}]});
-        assert!(matches!(detect_column_format(&row, None).unwrap(),
-            ColumnFormat::Chat(c) if c == "conversations"));
+            {"from": "human", "value": "ping"}, {"from": "gpt", "value": "pong"}]});
+        assert!(matches!(infer_row_layout(&row, None).unwrap(),
+            RowLayout::Messages(field) if field == "conversations"));
     }
 
     #[test]
-    fn detects_plain_prompt_completion() {
-        let row = json!({"prompt": "What is 2+2?", "completion": "4"});
-        match detect_column_format(&row, None).unwrap() {
-            ColumnFormat::Text { prompt_col, output_col } => {
-                assert_eq!(prompt_col, "prompt");
-                assert_eq!(output_col.as_deref(), Some("completion"));
+    fn flat_prompt_and_completion_pair() {
+        let row = json!({"prompt": "Summarise the dispatch seam.", "completion": "It is transport-neutral."});
+        match infer_row_layout(&row, None).unwrap() {
+            RowLayout::Prompt { prompt_field, completion_field } => {
+                assert_eq!(prompt_field, "prompt");
+                assert_eq!(completion_field.as_deref(), Some("completion"));
             }
-            _ => panic!("expected Text"),
+            other => panic!("expected Prompt, got {other:?}"),
         }
     }
 
     #[test]
-    fn detects_question_answer() {
-        let row = json!({"question": "What is AI?", "answer": "Artificial intelligence"});
-        match detect_column_format(&row, None).unwrap() {
-            ColumnFormat::Text { prompt_col, output_col } => {
-                assert_eq!(prompt_col, "question");
-                assert_eq!(output_col.as_deref(), Some("answer"));
+    fn question_field_maps_to_prompt_with_answer_completion() {
+        let row = json!({"question": "What does SimClock provide?", "answer": "Virtual nanosecond time."});
+        match infer_row_layout(&row, None).unwrap() {
+            RowLayout::Prompt { prompt_field, completion_field } => {
+                assert_eq!(prompt_field, "question");
+                assert_eq!(completion_field.as_deref(), Some("answer"));
             }
-            _ => panic!("expected Text"),
+            other => panic!("expected Prompt, got {other:?}"),
         }
     }
 
     #[test]
-    fn detects_combined_context_input() {
-        let row = json!({"context": "The fox", "input": "what animal?", "answers": ["fox"]});
-        match detect_column_format(&row, None).unwrap() {
-            ColumnFormat::Combined { cols, output_col } => {
-                assert_eq!(cols, vec!["context".to_string(), "input".to_string()]);
-                assert_eq!(output_col.as_deref(), Some("answers"));
+    fn context_plus_input_joins_into_one_prompt() {
+        let row = json!({
+            "context": "The worker sink drives one request to terminal.",
+            "input": "What does the worker sink do?",
+            "answers": ["drive a request to terminal"]
+        });
+        match infer_row_layout(&row, None).unwrap() {
+            RowLayout::Joined { fields, completion_field } => {
+                assert_eq!(fields, vec!["context".to_string(), "input".to_string()]);
+                assert_eq!(completion_field.as_deref(), Some("answers"));
             }
-            _ => panic!("expected Combined"),
+            other => panic!("expected Joined, got {other:?}"),
         }
     }
 
     #[test]
-    fn override_selects_named_text_column() {
-        let row = json!({"my_col": "Hello world", "answer": "resp"});
-        match detect_column_format(&row, Some("my_col")).unwrap() {
-            ColumnFormat::Text { prompt_col, output_col } => {
-                assert_eq!(prompt_col, "my_col");
-                assert_eq!(output_col.as_deref(), Some("answer"));
+    fn override_forces_a_named_field() {
+        let row = json!({"body": "custom prompt body", "answer": "reply"});
+        match infer_row_layout(&row, Some("body")).unwrap() {
+            RowLayout::Prompt { prompt_field, completion_field } => {
+                assert_eq!(prompt_field, "body");
+                assert_eq!(completion_field.as_deref(), Some("answer"));
             }
-            _ => panic!("expected Text"),
+            other => panic!("expected Prompt, got {other:?}"),
         }
     }
 
     #[test]
-    fn override_missing_column_errors() {
+    fn override_on_message_field_is_messages() {
+        let row = json!({"dialog": [
+            {"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]});
+        assert!(matches!(infer_row_layout(&row, Some("dialog")).unwrap(),
+            RowLayout::Messages(field) if field == "dialog"));
+    }
+
+    #[test]
+    fn override_naming_absent_field_errors() {
         let row = json!({"text": "hello"});
-        assert!(detect_column_format(&row, Some("nope")).is_err());
+        assert!(infer_row_layout(&row, Some("absent")).is_err());
     }
 
     #[test]
-    fn no_known_columns_errors_listing_available() {
-        let row = json!({"id": 1, "label": "positive"});
-        let err = detect_column_format(&row, None).unwrap_err();
-        assert!(err.contains("id") && err.contains("label"));
+    fn unrecognised_row_lists_its_fields() {
+        let row = json!({"identifier": 1, "sentiment": "positive"});
+        let message = infer_row_layout(&row, None).unwrap_err();
+        assert!(message.contains("identifier") && message.contains("sentiment"));
     }
 
     #[test]
-    fn extracts_first_user_and_assistant() {
-        let msgs = vec![
-            json!({"role": "system", "content": "be nice"}),
-            json!({"role": "user", "content": "joke?"}),
-            json!({"role": "assistant", "content": "haha"}),
+    fn picks_first_requester_and_responder_turns() {
+        let messages = vec![
+            json!({"role": "system", "content": "stay terse"}),
+            json!({"role": "user", "content": "define TTFT"}),
+            json!({"role": "assistant", "content": "first token observation"}),
         ];
-        assert_eq!(extract_chat_prompt(&msgs), Some("joke?".to_string()));
-        assert_eq!(extract_chat_completion(&msgs), Some("haha".to_string()));
+        assert_eq!(first_user_message(&messages), Some("define TTFT".to_string()));
+        assert_eq!(first_assistant_message(&messages), Some("first token observation".to_string()));
     }
 
     #[test]
-    fn extracts_from_value_style() {
-        let msgs = vec![json!({"from": "human", "value": "Hi"}), json!({"from": "gpt", "value": "Yo"})];
-        assert_eq!(extract_chat_prompt(&msgs), Some("Hi".to_string()));
-        assert_eq!(extract_chat_completion(&msgs), Some("Yo".to_string()));
+    fn requester_and_responder_under_from_value() {
+        let messages =
+            vec![json!({"from": "human", "value": "ping"}), json!({"from": "gpt", "value": "pong"})];
+        assert_eq!(first_user_message(&messages), Some("ping".to_string()));
+        assert_eq!(first_assistant_message(&messages), Some("pong".to_string()));
     }
 
     #[test]
-    fn model_role_is_not_user_or_assistant() {
-        let msgs = vec![json!({"role": "model", "content": "x"})];
-        assert_eq!(extract_chat_prompt(&msgs), None);
-        assert_eq!(extract_chat_completion(&msgs), None);
+    fn unknown_roles_match_neither_side() {
+        let messages = vec![json!({"role": "model", "content": "n/a"})];
+        assert_eq!(first_user_message(&messages), None);
+        assert_eq!(first_assistant_message(&messages), None);
     }
 }

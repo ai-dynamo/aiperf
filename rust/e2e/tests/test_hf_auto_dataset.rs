@@ -10,13 +10,13 @@
 //! local JSONL file exercises the full compose -> request -> record path with NO
 //! network.
 //!
-//! Column format is auto-detected from the FIRST row and applied to the whole
+//! Row layout is inferred from the FIRST row and applied to the whole
 //! dataset, so the two detection paths are exercised as two separate homogeneous
-//! runs rather than one mixed file (a mixed file would detect `Text` from row 0
-//! and silently drop the chat row):
-//!   * a `prompt`/`completion` text row  -> `ColumnFormat::Text`
+//! runs rather than one mixed file (a mixed file would infer a flat prompt from
+//! row 0 and silently drop the chat row):
+//!   * a `prompt`/`completion` text row  -> `RowLayout::Prompt`
 //!   * a `conversation` chat row (first user message -> prompt, first assistant
-//!     message -> completion) -> `ColumnFormat::Chat`
+//!     message -> completion) -> `RowLayout::Messages`
 //!
 //! Per record we assert:
 //!   * `input_sequence_length` == the tokenized prompt (distinct per fixture:

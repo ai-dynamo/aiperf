@@ -462,10 +462,10 @@ impl DatasetLoader for HfAutoDatasetLoader {
     }
 }
 
-/// Column-auto-detecting composer for arbitrary HF datasets. Handles the
-/// text/combined/chat prompt shapes detected by [`super::hf_detect`], deriving
-/// output length from the reference completion (or a fixed `output_len`
-/// override) and filtering rows by token budget.
+/// Layout-inferring composer for arbitrary HF datasets. Handles the flat,
+/// joined, and message prompt shapes reported by [`super::hf_detect`], sizing
+/// the output from the reference completion (or a fixed `output_len` override)
+/// and filtering rows by token budget.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HfAutoComposer;
 
@@ -477,7 +477,7 @@ impl Composer for HfAutoComposer {
         tokenizer: &dyn TextTokenizer,
         segments: &mut SegmentPool,
     ) -> Result<Vec<Conversation>> {
-        use super::hf_detect::{ColumnFormat, detect_column_format};
+        use super::hf_detect::{RowLayout, infer_row_layout};
 
         let first = rows
             .first()
@@ -485,7 +485,7 @@ impl Composer for HfAutoComposer {
         let override_col = string_option(config, "text_column")
             .or_else(|| string_option(config, "prompt_column"));
         let output_override = string_option(config, "output_column");
-        let format = detect_column_format(&first.value, override_col.as_deref())
+        let layout = infer_row_layout(&first.value, override_col.as_deref())
             .map_err(DatasetError::Validation)?;
 
         // `output_len` accepts either a JSON number or a numeric string.
@@ -509,13 +509,13 @@ impl Composer for HfAutoComposer {
             let Some(obj) = row.value.as_object() else {
                 continue;
             };
-            let (prompt, completion): (String, Option<String>) = match &format {
-                ColumnFormat::Text {
-                    prompt_col,
-                    output_col,
+            let (prompt, completion): (String, Option<String>) = match &layout {
+                RowLayout::Prompt {
+                    prompt_field,
+                    completion_field,
                 } => {
-                    let raw = obj.get(prompt_col.as_str());
-                    let prompt = if prompt_col == "turns" {
+                    let raw = obj.get(prompt_field.as_str());
+                    let prompt = if prompt_field == "turns" {
                         raw.and_then(Value::as_array)
                             .and_then(|a| a.first())
                             .and_then(Value::as_str)
@@ -524,7 +524,7 @@ impl Composer for HfAutoComposer {
                     } else {
                         raw.and_then(Value::as_str).unwrap_or_default().to_string()
                     };
-                    let completion = output_override.as_ref().or(output_col.as_ref()).and_then(|c| {
+                    let completion = output_override.as_ref().or(completion_field.as_ref()).and_then(|c| {
                         obj.get(c.as_str()).and_then(|v| {
                             v.as_array()
                                 .and_then(|a| a.first())
@@ -535,8 +535,8 @@ impl Composer for HfAutoComposer {
                     });
                     (prompt, completion)
                 }
-                ColumnFormat::Combined { cols, output_col } => {
-                    let parts: Vec<String> = cols
+                RowLayout::Joined { fields, completion_field } => {
+                    let parts: Vec<String> = fields
                         .iter()
                         .filter_map(|c| obj.get(c.as_str()).and_then(Value::as_str).map(str::to_string))
                         .collect();
@@ -545,18 +545,18 @@ impl Composer for HfAutoComposer {
                     }
                     let completion = output_override
                         .as_ref()
-                        .or(output_col.as_ref())
+                        .or(completion_field.as_ref())
                         .and_then(|c| obj.get(c.as_str()).and_then(Value::as_str).map(str::to_string));
                     (parts.join("\n\n"), completion)
                 }
-                ColumnFormat::Chat(col) => {
+                RowLayout::Messages(field) => {
                     let msgs = obj
-                        .get(col.as_str())
+                        .get(field.as_str())
                         .and_then(Value::as_array)
                         .cloned()
                         .unwrap_or_default();
-                    match super::hf_detect::extract_chat_prompt(&msgs) {
-                        Some(p) => (p, super::hf_detect::extract_chat_completion(&msgs)),
+                    match super::hf_detect::first_user_message(&msgs) {
+                        Some(p) => (p, super::hf_detect::first_assistant_message(&msgs)),
                         None => continue,
                     }
                 }
