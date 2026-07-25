@@ -154,6 +154,7 @@ async fn post_send_disconnect_is_reported_as_a_canceled_terminal() {
                         is_final_turn: true,
                         cancel_after_ns: Some(0),
                         url_index: None,
+                        image_count: None,
                     },
                     &observer,
                     |_| {},
