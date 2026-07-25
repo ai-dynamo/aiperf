@@ -165,44 +165,33 @@ struct AuthoringWireV2 {
     trial: u32,
 }
 
-/// Decode the union execute-mode stdin payload into a resolved [`BenchmarkRunWireV2`].
+/// Decode the authoring execute-mode stdin payload into a resolved
+/// [`BenchmarkRunWireV2`].
 ///
-/// Two payload shapes are accepted:
-/// - an authoring envelope `{"authoring": <Inputs>}` (the single-run profile path):
-///   the runtime resolves it here through the shared
-///   [`crate::config::resolve::resolve`] and re-projects the resolved
-///   [`crate::config::model::BenchmarkRun`] onto the wire shape, and
-/// - a bare resolved [`BenchmarkRunWireV2`] (the sweep/search paths): decoded
-///   directly, exactly as before.
-///
-/// The two are disjoint by construction — a resolved run never carries a top-level
-/// `authoring` key — so detection is a single key probe. The authoring branch
-/// re-projects by round-tripping the resolved run through bytes, which mirrors the
-/// CLI sweep-path serialization and preserves factory-owned [`RawValue`] config that
-/// `serde_json::from_value` cannot reconstruct.
+/// The payload is always an authoring envelope `{"authoring": <Inputs>}` (single
+/// runs, flag/YAML sweeps, and adaptive-search / recipe sweeps alike): the runtime
+/// resolves it here through the shared [`crate::config::resolve::resolve`] and
+/// re-projects the resolved [`crate::config::model::BenchmarkRun`] onto the wire
+/// shape. The CLI never lowers before the child launch — every path ships authoring
+/// and the runtime performs the sole authoritative resolution. The re-projection
+/// round-trips the resolved run through bytes, which preserves factory-owned
+/// [`RawValue`] config that `serde_json::from_value` cannot reconstruct.
 pub fn decode_execute_wire(input: &[u8]) -> Result<BenchmarkRunWireV2> {
-    let probe: Value = serde_json::from_slice(input)
-        .map_err(|error| anyhow!("invalid protocol-v2 request: {error}"))?;
-    if probe.get("authoring").is_some() {
-        let envelope: AuthoringWireV2 = serde_json::from_slice(input)
-            .map_err(|error| anyhow!("invalid authoring inputs: {error}"))?;
-        let mut run = crate::config::resolve::resolve(envelope.authoring)?;
-        // Overlay the per-cell sweep envelope so the resolved run the runner
-        // consumes is byte-identical to the CLI-side resolution (the sweep/YAML-sweep
-        // paths carry these; a single run leaves them at their `None`/`0` defaults).
-        run.sweep_id = envelope.sweep_id;
-        run.trial = envelope.trial;
-        if envelope.variation.is_some() {
-            run.variation = envelope.variation;
-        }
-        let bytes = serde_json::to_vec(&run)
-            .map_err(|error| anyhow!("re-serializing the resolved run: {error}"))?;
-        serde_json::from_slice(&bytes)
-            .map_err(|error| anyhow!("resolved run failed the wire contract: {error}"))
-    } else {
-        serde_json::from_slice(input)
-            .map_err(|error| anyhow!("invalid protocol-v2 request: {error}"))
+    let envelope: AuthoringWireV2 = serde_json::from_slice(input)
+        .map_err(|error| anyhow!("invalid authoring inputs: {error}"))?;
+    let mut run = crate::config::resolve::resolve(envelope.authoring)?;
+    // Overlay the per-cell sweep envelope so the resolved run the runner consumes is
+    // byte-identical to the CLI-side resolution (the sweep/search paths carry these;
+    // a single run leaves them at their `None`/`0` defaults).
+    run.sweep_id = envelope.sweep_id;
+    run.trial = envelope.trial;
+    if envelope.variation.is_some() {
+        run.variation = envelope.variation;
     }
+    let bytes = serde_json::to_vec(&run)
+        .map_err(|error| anyhow!("re-serializing the resolved run: {error}"))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| anyhow!("resolved run failed the wire contract: {error}"))
 }
 
 /// Default thread-per-core worker count when `runtime.workers` is unset: the

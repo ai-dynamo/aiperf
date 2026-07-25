@@ -431,10 +431,11 @@ fn configure_dynosim_process_defaults(input: &[u8]) {
 
 /// Drive one bare-run request to its terminal or validation envelope.
 ///
-/// The stdin payload is the union execute wire decoded by
+/// The stdin payload is the authoring execute wire decoded by
 /// [`decode_execute_wire`](aiperf_runtime::engine::protocol_v2::decode_execute_wire):
-/// either an authoring `{"authoring": <Inputs>}` envelope (single-run path, resolved
-/// here) or a bare resolved run (sweep/search paths). The `operation` is
+/// an authoring `{"authoring": <Inputs>}` envelope the runtime resolves here (every
+/// profile path — single run, sweeps, and adaptive search — ships authoring). The
+/// `operation` is
 /// selected by the re-exec mode (`--execute` or `--validate`), not carried on the
 /// wire. A malformed run produces a typed v2 protocol failure.
 fn run_v2(input: &[u8], operation: OperationV2, application: &Application) -> ! {

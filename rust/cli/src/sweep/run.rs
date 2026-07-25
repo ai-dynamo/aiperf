@@ -45,8 +45,9 @@ pub struct Cell {
     /// sweep aggregate (`variation`/`artifact_dir`), and the parity oracle.
     pub run: BenchmarkRun,
     /// Authoring inputs the cell ships on the `--execute` wire so the runtime
-    /// resolves at execute time (`Some` for flag/YAML sweeps). `None` cells (recipe
-    /// sweeps, which override the resolved cfg directly) send the CLI-resolved `run`.
+    /// resolves at execute time. Every planned cell (flag/YAML sweeps, multi-run
+    /// trials, and recipe sweeps) carries `Some`; the CLI never lowers before the
+    /// child launch.
     pub inputs: Option<Inputs>,
 }
 

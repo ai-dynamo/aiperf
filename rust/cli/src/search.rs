@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::flags::ProfileFlags;
+use crate::load::Inputs;
+use crate::model::dataset::Distribution;
 
 pub mod curve;
 pub mod degradation;
@@ -24,7 +26,7 @@ pub use degradation::DegradationKneeSpec;
 pub use surface::SurfaceSpec;
 
 /// How a recipe axis value maps onto the built `cfg`.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AxisKind {
     /// Set the `profiling` phase's `concurrency` (integer).
     PhaseConcurrency,
@@ -463,6 +465,32 @@ pub fn apply_override(cfg: &mut Value, kind: AxisKind, value: i64) {
             {
                 prompts.insert(field.into(), serde_json::json!({ "value": value as f64 }));
             }
+        }
+    }
+}
+
+/// Apply one recipe/search override to authoring [`Inputs`]: concurrency sets the
+/// pre-resolution profiling concurrency scalar; isl/osl set the pre-resolution
+/// prompt-length scalar distribution. Runtime resolution then expands each swept
+/// scalar exactly as an authored value would, so the resolved run is byte-identical
+/// to the old resolved-cfg override ([`apply_override`]) — but the whole path now
+/// ships authoring `Inputs` on the wire and the CLI never lowers.
+pub fn apply_override_inputs(inputs: &mut Inputs, kind: AxisKind, value: i64) {
+    match kind {
+        AxisKind::PhaseConcurrency => {
+            inputs.concurrency = Some(value as u32);
+        }
+        AxisKind::IslScalar => {
+            inputs.isl = Distribution {
+                value: Some(value as f64),
+                ..Default::default()
+            };
+        }
+        AxisKind::OslScalar => {
+            inputs.osl = Some(Distribution {
+                value: Some(value as f64),
+                ..Default::default()
+            });
         }
     }
 }
