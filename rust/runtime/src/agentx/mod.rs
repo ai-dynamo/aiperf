@@ -17,6 +17,7 @@
 
 pub mod chains;
 pub mod corpus;
+pub mod loader;
 pub mod prepass;
 pub mod prompt;
 pub mod rng;
