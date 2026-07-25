@@ -93,7 +93,7 @@ describe("RustPortWhyDeck (executive overview)", () => {
     // Rendered twice by HubSpoke (ring + narrow fallback).
     expect(screen.getAllByText(/Cold start in a blink/i).length).toBeGreaterThan(0);
     expect(
-      screen.getAllByText(/edit-run-measure iteration is tight/i).length,
+      screen.getAllByText(/~40s of fixed startup before the first request/i).length,
     ).toBeGreaterThan(0);
   });
 
