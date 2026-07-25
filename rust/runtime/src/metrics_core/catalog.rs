@@ -2116,9 +2116,19 @@ pub static CATALOG: [MetricSpec; MetricTag::COUNT] = [
     ),
 ];
 
-/// Looks up a catalog spec.
-pub fn spec_for(tag: MetricTag) -> Option<&'static MetricSpec> {
-    CATALOG.iter().find(|spec| spec.tag == tag)
+/// Returns the [`Definition`] for `tag` in O(1).
+///
+/// `CATALOG` is ordered by declaration discriminant (guarded by the
+/// `catalog_is_discriminant_ordered` test), so `tag.index()` is the tag's own
+/// row. The `[MetricSpec; MetricTag::COUNT]` array length makes a variant added
+/// without a row a compile error, so this lookup is total.
+pub const fn metric_definition(tag: MetricTag) -> &'static Definition {
+    &CATALOG[tag.index()].def
+}
+
+/// Looks up a catalog spec in O(1).
+pub const fn spec_for(tag: MetricTag) -> Option<&'static MetricSpec> {
+    Some(&CATALOG[tag.index()])
 }
 
 /// One per-request metric exposed as a column in a per-record artifact (the
@@ -2215,7 +2225,7 @@ pub fn validate_catalog() -> Result<Vec<MetricTag>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CATALOG, MetricFlags, MetricTag, spec_for, validate_catalog};
+    use super::{CATALOG, MetricFlags, MetricTag, metric_definition, spec_for, validate_catalog};
 
     fn catalog_fingerprint() -> u64 {
         fn feed(hash: &mut u64, bytes: &[u8]) {
@@ -2280,6 +2290,24 @@ mod tests {
             CATALOG
                 .iter()
                 .any(|spec| spec.tag == MetricTag::GoodRequestFraction)
+        );
+    }
+
+    #[test]
+    fn catalog_is_discriminant_ordered() {
+        for (i, s) in CATALOG.iter().enumerate() {
+            assert_eq!(s.tag as usize, i, "row {i} is {:?}", s.tag);
+        }
+    }
+
+    #[test]
+    fn metric_definition_matches_catalog() {
+        for s in CATALOG.iter() {
+            assert!(std::ptr::eq(metric_definition(s.tag), &s.def));
+        }
+        assert_eq!(
+            metric_definition(MetricTag::RequestLatency).id,
+            MetricTag::RequestLatency.as_str()
         );
     }
 
