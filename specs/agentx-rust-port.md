@@ -78,8 +78,25 @@ corpus itself (a leaf util).
   (`tools/agentx_subagent_golden.py` + `agentx_subagent_parity.rs`, 4 scenarios:
   single-chain / spawn-worker / cross-model-aux / relative-timestamp).
 
-Remaining Slice 1 (see below): child-conversation reconstruction (drive the synth
-per child plan with SPAWN/JOIN prerequisites); flat-chain splitting; the idle-gap
+- `plan.rs` / `loader.rs` — trace orchestration: `build_shared_metric_values`
+  (trace-wide prefix-cache over parent + children + flat chains),
+  `detect_and_split_flat_chains` (`FlatChainPlan`), `reconstruct_conversation`
+  (shared main/child/flat loop), `convert_trace_to_conversations` (root
+  `weka_main` + `weka_subagent` children + `weka_flat` chains), and
+  `build_model_map`. Composed from byte-exact-proven pieces; unit-tested.
+
+**Corpus-generator finding (blocks the real-fixture e2e):** Python's
+`PromptGenerator` corpus for weka (`coding`) comes from the AgentX-added
+`dataset/generator/coding_content.py`; the runtime's `dataset::coding::build_coding_corpus`
+is the *graph-ir* procedural corpus. Whether they are byte-identical is unverified —
+the real-fixture golden diff must first establish that `build_coding_corpus`
+reproduces `PromptGenerator._tokenized_corpus` for `coding`, or port
+`coding_content.py` separately. Token-level sampling (`CorpusTokenSynth`) is already
+proven byte-exact given an identical corpus.
+
+Remaining Slice 1 (see below): idle-gap time-warp timing; SPAWN/JOIN branch
+metadata; and the real-corpus e2e (pending the corpus-generator match above). The
+child-conversation reconstruction and flat-chain paths are now composed; flat-chain splitting; the idle-gap
 time-warp timing; model mapping; and — the gating
 dependency for a real fixture-level diff — wiring the real Qwen-tokenized corpus
 (reused from the runtime as a leaf util) into `CorpusTokenSynth` so it byte-matches
