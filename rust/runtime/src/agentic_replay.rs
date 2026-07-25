@@ -29,6 +29,7 @@ use crate::agentx::trajectory_source::{
 };
 use crate::multiturn::ConversationSource;
 use crate::scheduled::{ScheduledRuntime, Workload};
+use crate::scheduler::LocalTaskScheduler;
 
 /// Nanoseconds per millisecond.
 const NS_PER_MS: f64 = 1_000_000.0;
