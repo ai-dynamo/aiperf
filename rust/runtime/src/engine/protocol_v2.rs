@@ -147,11 +147,30 @@ fn default_worker_count() -> u64 {
 
 /// Decode the optional `runtime.dispatch` admission-strategy selector.
 ///
-/// Absent `dispatch` resolves to [`DispatchMode::default`] (`Global`); an
-/// unrecognized string is a hard decode error rather than a silent fallback.
+/// An explicit `runtime.dispatch` always wins. When it is absent, the default is
+/// **cellular-aware**:
+/// - single-process (`cells <= 1`) → [`DispatchMode::Global`] (the byte-exact,
+///   parity-preserving default), and
+/// - cellular (`cells > 1`) → [`DispatchMode::Sharded`].
+///
+/// The cellular default is `Sharded` because a cellular run has *already* forfeited
+/// single-process byte-exact determinism: each cell partitions its slice of the
+/// dispatch stream autonomously and the per-cell records merge at the end, so
+/// `Global`'s shared cross-thread admission gate *inside* a cell buys parity that is
+/// already gone — pure cross-thread overhead (measured ~7-8x slower than `Sharded`
+/// in cellular mode on a c4-144). Cell subprocesses see the same `runtime.cells > 1`
+/// in their envelope, so they resolve `Sharded` here too. An unrecognized string is a
+/// hard decode error rather than a silent fallback.
 fn parse_dispatch_mode(runtime: &Value) -> Result<DispatchMode> {
     match runtime.get("dispatch") {
-        None | Some(Value::Null) => Ok(DispatchMode::default()),
+        None | Some(Value::Null) => {
+            let cells = runtime.get("cells").and_then(Value::as_u64).unwrap_or(1);
+            if cells > 1 {
+                Ok(DispatchMode::Sharded)
+            } else {
+                Ok(DispatchMode::default())
+            }
+        }
         Some(value) => serde_json::from_value(value.clone())
             .map_err(|error| anyhow!("run.cfg.runtime.dispatch: {error}")),
     }
@@ -1250,6 +1269,30 @@ mod dispatch_mode_tests {
 
         let authored = minimal_wire(runtime).into_authored().unwrap();
         assert_eq!(authored.dispatch, DispatchMode::Global);
+    }
+
+    #[test]
+    fn runtime_dispatch_defaults_to_sharded_for_cellular() {
+        // Absent dispatch + cells > 1 defaults to Sharded (cellular already forfeits the
+        // byte-exact single-process guarantee, so Global's shared gate is pure overhead).
+        let runtime = serde_json::json!({"workers": 4, "cells": 4});
+        assert_eq!(
+            parse_dispatch_mode(&runtime).unwrap(),
+            DispatchMode::Sharded
+        );
+        let authored = minimal_wire(runtime).into_authored().unwrap();
+        assert_eq!(authored.dispatch, DispatchMode::Sharded);
+    }
+
+    #[test]
+    fn runtime_explicit_dispatch_wins_over_cellular_default() {
+        // An explicit dispatch always wins, even in cellular mode.
+        let runtime = serde_json::json!({"workers": 4, "cells": 4, "dispatch": "global"});
+        assert_eq!(parse_dispatch_mode(&runtime).unwrap(), DispatchMode::Global);
+
+        // And absent cells (treated as single-process) keeps the Global default.
+        let runtime = serde_json::json!({"workers": 4});
+        assert_eq!(parse_dispatch_mode(&runtime).unwrap(), DispatchMode::Global);
     }
 
     #[test]
