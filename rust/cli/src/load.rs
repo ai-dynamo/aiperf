@@ -776,7 +776,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         agentic_cache_warmup_duration: flags.agentic_cache_warmup_duration,
         rankings: build_rankings(flags),
         accuracy: build_accuracy(flags),
-        synthesis: build_synthesis(flags),
+        synthesis: build_synthesis(flags)?,
         dataset_filters: parse_dataset_filters(flags)?,
         // Dry-run emits the dataset-analysis artifact family unless suppressed.
         dataset_analysis: (flags.dry_run && !flags.no_dataset_analysis).then(|| {
@@ -1936,7 +1936,7 @@ fn parse_dataset_filters(
 }
 
 /// Build recorded-graph synthesis configuration when any synthesis flag is set.
-fn build_synthesis(flags: &ProfileFlags) -> Option<serde_json::Value> {
+fn build_synthesis(flags: &ProfileFlags) -> anyhow::Result<Option<serde_json::Value>> {
     let any = flags.synthesis_speedup_ratio.is_some()
         || flags.synthesis_prefix_len_multiplier.is_some()
         || flags.synthesis_prefix_root_multiplier.is_some()
@@ -1946,21 +1946,23 @@ fn build_synthesis(flags: &ProfileFlags) -> Option<serde_json::Value> {
         || flags.synthesis_max_osl.is_some()
         || flags.synthesis_idle_gap_cap.is_some();
     if !any {
-        return None;
+        return Ok(None);
     }
-    let f = |v: f64| {
+    // clap's f64 parser accepts `nan`/`inf`; JSON has no non-finite numbers, so reject
+    // them with a clean error instead of panicking in `Number::from_f64`.
+    let f = |v: f64| -> anyhow::Result<serde_json::Value> {
         serde_json::Number::from_f64(v)
             .map(serde_json::Value::Number)
-            .unwrap()
+            .ok_or_else(|| anyhow::anyhow!("synthesis numeric flag value must be finite, got {v}"))
     };
     let mut m = serde_json::Map::new();
     m.insert(
         "speedup_ratio".into(),
-        f(flags.synthesis_speedup_ratio.unwrap_or(1.0)),
+        f(flags.synthesis_speedup_ratio.unwrap_or(1.0))?,
     );
     m.insert(
         "prefix_len_multiplier".into(),
-        f(flags.synthesis_prefix_len_multiplier.unwrap_or(1.0)),
+        f(flags.synthesis_prefix_len_multiplier.unwrap_or(1.0))?,
     );
     m.insert(
         "prefix_root_multiplier".into(),
@@ -1968,11 +1970,11 @@ fn build_synthesis(flags: &ProfileFlags) -> Option<serde_json::Value> {
     );
     m.insert(
         "prompt_len_multiplier".into(),
-        f(flags.synthesis_prompt_len_multiplier.unwrap_or(1.0)),
+        f(flags.synthesis_prompt_len_multiplier.unwrap_or(1.0))?,
     );
     m.insert(
         "output_len_multiplier".into(),
-        f(flags.synthesis_output_len_multiplier.unwrap_or(1.0)),
+        f(flags.synthesis_output_len_multiplier.unwrap_or(1.0))?,
     );
     // `max_isl`/`max_osl` are `None`-default (excluded when unset).
     if let Some(v) = flags.synthesis_max_isl {
@@ -1983,7 +1985,7 @@ fn build_synthesis(flags: &ProfileFlags) -> Option<serde_json::Value> {
     }
     m.insert(
         "idle_gap_cap_seconds".into(),
-        f(flags.synthesis_idle_gap_cap.unwrap_or(60.0)),
+        f(flags.synthesis_idle_gap_cap.unwrap_or(60.0))?,
     );
     m.insert(
         "dataset_sampling_strategy".into(),
@@ -1996,17 +1998,17 @@ fn build_synthesis(flags: &ProfileFlags) -> Option<serde_json::Value> {
     );
     m.insert(
         "trajectory_start_min_ratio".into(),
-        f(flags.trajectory_start_min_ratio.unwrap_or(0.0)),
+        f(flags.trajectory_start_min_ratio.unwrap_or(0.0))?,
     );
     m.insert(
         "trajectory_start_max_ratio".into(),
-        f(flags.trajectory_start_max_ratio.unwrap_or(0.0)),
+        f(flags.trajectory_start_max_ratio.unwrap_or(0.0))?,
     );
     m.insert(
         "t_star_random_seed".into(),
         serde_json::Value::from(flags.random_seed.unwrap_or(0)),
     );
-    Some(serde_json::Value::Object(m))
+    Ok(Some(serde_json::Value::Object(m)))
 }
 
 /// Build accuracy configuration when `--accuracy-benchmark` is set.
@@ -2399,6 +2401,37 @@ where
 #[cfg(test)]
 mod tests {
     use super::{is_fake_model_name, is_truthy_env};
+
+    #[test]
+    fn synthesis_rejects_non_finite_value() {
+        use crate::flags::ProfileFlags;
+        use clap::Parser;
+
+        for bad in ["nan", "inf", "-inf"] {
+            let flags =
+                ProfileFlags::try_parse_from(["profile", &format!("--synthesis-speedup-ratio={bad}")])
+                    .expect("flags parse");
+            let err = super::build_synthesis(&flags)
+                .expect_err("non-finite synthesis value must be a clean error, not a panic");
+            assert!(
+                err.to_string().contains("finite"),
+                "expected a finiteness error for {bad:?}, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn synthesis_accepts_finite_values() {
+        use crate::flags::ProfileFlags;
+        use clap::Parser;
+
+        let flags = ProfileFlags::try_parse_from(["profile", "--synthesis-speedup-ratio", "2.5"])
+            .expect("flags parse");
+        let value = super::build_synthesis(&flags)
+            .expect("finite value builds")
+            .expect("synthesis flag set yields Some");
+        assert_eq!(value["speedup_ratio"], serde_json::json!(2.5));
+    }
 
     #[test]
     fn fake_model_name_is_classified() {
