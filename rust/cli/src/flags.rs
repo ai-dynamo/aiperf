@@ -812,6 +812,18 @@ pub struct ProfileFlags {
     #[arg(long = "hf-format")]
     pub hf_format: Option<String>,
 
+    /// Route benchmark traffic through this forward proxy (HTTP `CONNECT`
+    /// tunnel), e.g. `http://user:pass@proxy:3128`. Applied to the endpoint as
+    /// authored, including loopback. Adds the proxy hop to connection setup;
+    /// steady-state per-request latency over a warm tunnel is unaffected.
+    #[arg(long = "proxy")]
+    pub proxy: Option<String>,
+
+    /// Honor the ambient proxy environment (`HTTPS_PROXY`/`NO_PROXY`, loopback
+    /// excluded) for benchmark traffic. Ignored when `--proxy` is set.
+    #[arg(long = "proxy-from-env", default_value_t = false)]
+    pub proxy_from_env: bool,
+
     /// Dataset sampling strategy (`--dataset-sampling-strategy`).
     #[arg(long = "dataset-sampling-strategy")]
     pub dataset_sampling_strategy: Option<String>,

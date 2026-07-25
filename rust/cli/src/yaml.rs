@@ -562,6 +562,12 @@ struct EndpointSection {
     request_content_type: Option<String>,
     #[serde(default, alias = "sessionHeader")]
     session_header: Option<String>,
+    /// Explicit forward-proxy URL for benchmark traffic.
+    #[serde(default)]
+    proxy: Option<String>,
+    /// Honor the ambient proxy environment for benchmark traffic.
+    #[serde(default, alias = "proxyFromEnv")]
+    proxy_from_env: Option<bool>,
     /// Custom request path appended to the endpoint URL (`endpoint.path`).
     path: Option<String>,
     #[serde(default, alias = "resetKvCache")]
@@ -1658,6 +1664,8 @@ impl Benchmark {
             turn_delay_ratio,
             turn_delay_ms,
             session_header: self.endpoint.session_header,
+            proxy: self.endpoint.proxy,
+            proxy_from_env: self.endpoint.proxy_from_env.unwrap_or(false),
             endpoint_path: self.endpoint.path,
             reset_kv_cache,
             server_profiler,
@@ -2208,7 +2216,10 @@ mod tests {
         assert_eq!(ds["name"], serde_json::json!("allenai/WildChat"));
         assert_eq!(ds["format"], serde_json::json!("hf"));
         assert_eq!(ds["source"]["type"], serde_json::json!("hugging_face"));
-        assert_eq!(ds["source"]["dataset"], serde_json::json!("allenai/WildChat"));
+        assert_eq!(
+            ds["source"]["dataset"],
+            serde_json::json!("allenai/WildChat")
+        );
         assert_eq!(ds["source"]["split"], serde_json::json!("train"));
     }
 

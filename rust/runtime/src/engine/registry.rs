@@ -989,6 +989,17 @@ struct EndpointProfileConfigV2 {
     /// default) retries with no wait.
     #[serde(default)]
     connect_retry_backoff_seconds: f64,
+    /// Explicit forward-proxy URL for benchmark traffic. When set, HTTP CONNECT
+    /// tunnels every connection to this endpoint through the proxy (applied as
+    /// authored, including for loopback). Adds the proxy hop to connection
+    /// establishment; steady-state per-request latency over a warm tunnel is
+    /// unaffected.
+    #[serde(default)]
+    proxy: Option<String>,
+    /// Honor the ambient proxy environment (`HTTPS_PROXY`/`NO_PROXY`, loopback
+    /// excluded) for benchmark traffic. Ignored when `proxy` is set.
+    #[serde(default)]
+    proxy_from_env: bool,
 }
 
 /// One statically validated endpoint profile and its normalized policy.
@@ -1304,6 +1315,20 @@ pub fn validate_endpoint_profiles_v2(
             }
         }
         let effective = prepared.config().to_raw();
+        let proxy_target = effective.urls.first().and_then(|u| url::Url::parse(u).ok());
+        let proxy = crate::transport::http::client::proxy::resolve(
+            config.proxy.as_deref(),
+            config.proxy_from_env,
+            proxy_target.as_ref(),
+        )
+        .map_err(|e| anyhow!("endpoint profile {index}: {e}"))?;
+        if proxy.is_some() {
+            tracing::warn!(
+                profile = %config.id,
+                "benchmark traffic is routed through a proxy; connection-establishment \
+                 latency includes the proxy hop (per-request latency over a warm tunnel is not)"
+            );
+        }
         let client = ClientConfig {
             total_timeout_ns: seconds_to_optional_ns(
                 effective.timeout_seconds,
@@ -1331,6 +1356,7 @@ pub fn validate_endpoint_profiles_v2(
                 config.connect_retry_backoff_seconds,
                 &format!("endpoint profile {index}.connect_retry_backoff_seconds"),
             )?,
+            proxy,
             ..ClientConfig::default()
         };
         validated.push(ValidatedEndpointProfileV2 {

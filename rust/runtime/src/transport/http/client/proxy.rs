@@ -49,7 +49,7 @@ impl ProxyConfig {
     }
 
     /// Parse a `scheme://[user:pass@]host:port` proxy URL.
-    fn parse(raw: &str) -> Option<Self> {
+    pub fn parse(raw: &str) -> Option<Self> {
         let url = Url::parse(raw).ok()?;
         let host = url.host_str()?.to_string();
         let port = url.port_or_known_default()?;
@@ -64,6 +64,27 @@ impl ProxyConfig {
             auth_header,
         })
     }
+}
+
+/// Resolve a benchmark-path proxy. An explicit URL wins and is applied as
+/// authored (the user asked for it); otherwise `from_env` opts into the ambient
+/// proxy environment for `target` (honoring `NO_PROXY` and loopback). Returns
+/// `Err` only when an explicit URL fails to parse.
+pub fn resolve(
+    explicit: Option<&str>,
+    from_env: bool,
+    target: Option<&Url>,
+) -> Result<Option<ProxyConfig>, String> {
+    if let Some(raw) = explicit.map(str::trim).filter(|s| !s.is_empty()) {
+        return match ProxyConfig::parse(raw) {
+            Some(proxy) => Ok(Some(proxy)),
+            None => Err(format!("invalid proxy URL {raw:?}")),
+        };
+    }
+    if from_env {
+        return Ok(target.and_then(ProxyConfig::from_env_for));
+    }
+    Ok(None)
 }
 
 /// Open a TCP tunnel to `origin_host:origin_port` through `proxy` using HTTP

@@ -173,6 +173,11 @@ pub(crate) struct Inputs {
     pub turn_delay_ms: Option<Distribution>,
     /// Per-session affinity header name (`endpoint.session_header`).
     pub session_header: Option<String>,
+    /// Explicit forward-proxy URL for benchmark traffic (`--proxy`).
+    pub proxy: Option<String>,
+    /// Honor the ambient proxy environment for benchmark traffic
+    /// (`--proxy-from-env`).
+    pub proxy_from_env: bool,
     /// Custom request path appended to the endpoint URL (`endpoint.path`).
     pub endpoint_path: Option<String>,
     /// Optional reset-KV-cache hook policy (`endpoint.reset_kv_cache`).
@@ -661,6 +666,8 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         turn_delay_ratio: flags.session_delay_ratio.unwrap_or(1.0),
         turn_delay_ms,
         session_header: flags.session_header.clone(),
+        proxy: flags.proxy.clone(),
+        proxy_from_env: flags.proxy_from_env,
         endpoint_path: flags.custom_endpoint.clone(),
         reset_kv_cache: reset_kv_cache_from_flags(flags),
         server_profiler: server_profiler_from_flags(flags),
@@ -933,6 +940,8 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         response_field: None,
         reset_kv_cache: inputs.reset_kv_cache,
         server_profiler: inputs.server_profiler,
+        proxy: inputs.proxy,
+        proxy_from_env: inputs.proxy_from_env,
     };
 
     // Placeholder-only model sets use the offline builtin tokenizer unless overridden.
@@ -2522,6 +2531,51 @@ mod tests {
             assert_eq!(
                 value["cfg"]["datasets"][0]["prompts"]["corpus"],
                 serde_json::json!("coding")
+            );
+        });
+    }
+
+    #[test]
+    fn proxy_flag_projects_onto_endpoint() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "-u",
+                "http://remote:8000",
+                "--proxy",
+                "http://user:pass@proxy:3128",
+            ]);
+            let run = super::resolve(&flags).expect("resolve run");
+            let value = serde_json::to_value(&run).expect("serialize run");
+            assert_eq!(
+                value["cfg"]["endpoint"]["proxy"],
+                serde_json::json!("http://user:pass@proxy:3128")
+            );
+        });
+    }
+
+    #[test]
+    fn proxy_from_env_flag_projects_onto_endpoint() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "-u",
+                "http://remote:8000",
+                "--proxy-from-env",
+            ]);
+            let run = super::resolve(&flags).expect("resolve run");
+            let value = serde_json::to_value(&run).expect("serialize run");
+            assert_eq!(
+                value["cfg"]["endpoint"]["proxy_from_env"],
+                serde_json::json!(true)
             );
         });
     }

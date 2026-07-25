@@ -10,14 +10,15 @@
 
 use std::rc::Rc;
 
-use anyhow::{Context, Result, bail};
 use aiperf_runtime::clock::{Clock, RealClock, RealClockAnchor};
 use aiperf_runtime::engine::control_hooks::{
     prepare_endpoint_control_hooks_from_profile_value, run_reset_kv_cache,
 };
 use aiperf_runtime::engine::control_plane_http::{
-    ControlPlaneClientPolicy, ControlPlaneHttpProviderFactory, NativeControlPlaneHttpProviderFactory,
+    ControlPlaneClientPolicy, ControlPlaneHttpProviderFactory,
+    NativeControlPlaneHttpProviderFactory,
 };
+use anyhow::{Context, Result, bail};
 
 use crate::model::BenchmarkRun;
 use crate::model::transport::Transport;
@@ -59,8 +60,12 @@ pub(crate) fn run_reset_kv_cache_before_run(run: &BenchmarkRun) -> Result<()> {
     let clock: Rc<dyn Clock> = RealClock::from_anchor(RealClockAnchor::now());
     let provider = NativeControlPlaneHttpProviderFactory::default()
         .prepare(clock.clone(), ControlPlaneClientPolicy::default());
-    let hooks = prepare_endpoint_control_hooks_from_profile_value(clock, provider.as_ref(), &endpoint_value)
-        .context("preparing endpoint-local control hooks")?;
+    let hooks = prepare_endpoint_control_hooks_from_profile_value(
+        clock,
+        provider.as_ref(),
+        &endpoint_value,
+    )
+    .context("preparing endpoint-local control hooks")?;
     if let Some(reset) = hooks.reset_kv_cache.as_ref() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -142,6 +147,8 @@ mod tests {
                 start_path: None,
                 stop_path: None,
             }),
+            proxy: None,
+            proxy_from_env: false,
         }
     }
 

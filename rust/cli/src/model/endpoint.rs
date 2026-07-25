@@ -139,6 +139,13 @@ pub struct Endpoint {
     /// Optional server-profiler hook policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_profiler: Option<ServerProfilerConfig>,
+    /// Optional forward-proxy URL for benchmark traffic (explicit opt-in).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<String>,
+    /// Honor the ambient proxy environment for benchmark traffic. Ignored when
+    /// `proxy` is set.
+    #[serde(default)]
+    pub proxy_from_env: bool,
 }
 
 #[cfg(test)]
