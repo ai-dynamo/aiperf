@@ -1453,14 +1453,18 @@ fn resolve_scenario_outcome(inputs: &Inputs) -> anyhow::Result<Option<serde_json
         .extra
         .get("ignore_eos")
         .and_then(serde_json::Value::as_bool);
-    // The detected loader is the custom/public dataset identifier (a synthetic
-    // default has neither, and is flagged so `require_loader` can reject it).
-    let loader = inputs
-        .custom_dataset_type
-        .clone()
-        .or_else(|| inputs.public_dataset.clone());
+    // The detected loader is the dataset *format* (`weka_trace`, ...), which is
+    // what `require_loader` keys off — not the catalog entry name. A public
+    // dataset resolves through the catalog to its format; a file/inline dataset
+    // uses its explicit `custom_dataset_type`. A synthetic default has neither
+    // (flagged so `require_loader` can reject it).
+    let loader = if let Some(name) = inputs.public_dataset.as_deref() {
+        crate::model::public_catalog::lookup(name).map(|meta| meta.format.clone())
+    } else {
+        inputs.custom_dataset_type.clone()
+    };
     let synthetic_default_dataset =
-        loader.is_none() && inputs.input_file.is_none();
+        loader.is_none() && inputs.public_dataset.is_none() && inputs.input_file.is_none();
 
     let lock_inputs = RunLockInputs {
         streaming: inputs.streaming,
