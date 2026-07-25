@@ -64,6 +64,13 @@ struct Deferred {
     arrival_ns: i64,
 }
 
+/// Project a queued join to its `(conversation_id, turn_index)` coordinate — a
+/// free fn (not a closure) so it carries the higher-ranked lifetime `take_ready`
+/// requires.
+fn key(d: &Deferred) -> (&str, usize) {
+    (d.conv.as_str(), d.idx)
+}
+
 /// Root "t" reaches a join at turn `k` awaiting subagent child "t::sa:a". The
 /// child response is *slow*: its terminal lands well after the parent arrived at
 /// the join. We assert the parent join is parked for the whole live child
@@ -95,7 +102,6 @@ fn parent_join_dispatch_follows_live_child_terminal() {
 
     let gate = TreeGate::new(&specs);
     let queue: RefCell<Vec<Deferred>> = RefCell::new(Vec::new());
-    let key = |d: &Deferred| (d.conv.as_str(), d.idx);
 
     // Monotonic simulated clock (ns). The parent lane reaches its join turn at
     // t=100ms; its *recorded* offset would have dispatched it right here.
@@ -191,7 +197,6 @@ fn parent_join_waits_for_last_of_multiple_live_children() {
     let specs = build_tree_specs(&[root, child_a, child_b]);
     let gate = TreeGate::new(&specs);
     let queue: RefCell<Vec<Deferred>> = RefCell::new(Vec::new());
-    let key = |d: &Deferred| (d.conv.as_str(), d.idx);
 
     assert!(gate.is_waiting("t", join_turn));
     queue.borrow_mut().push(Deferred {
