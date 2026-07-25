@@ -105,21 +105,36 @@ unknown tag.
    `workload_kind()`. Guard with wire round-trip tests (CLI serialize ==
    runtime deserialize, byte-identical). This step alone eliminates the
    `weka_semantics` bug class.
-2. **Collapse the producer front-end.** *(Partial: flags↔YAML drift unified and the
-   YAML→typed contract locked by tests; the full `Inputs`/`load::build` deletion
-   remains, blocked on the `BenchmarkConfig`-serde vs YAML-shorthand mismatch.)*
-   Delete `Inputs` and the two mappers +
-   imperative `build`. YAML deserializes directly into `BenchmarkConfig`; flags
-   become an override partial deep-merged then validated once. Hardcoded defaults
-   become serde model defaults.
+2. **Collapse the producer front-end.** *(Resolved to its correct end-state, not a
+   one-deserialize collapse.)* Investigation (five deep passes + the Python
+   reference) established the Rust producer is **already** the same shape as
+   Python's: two authoring-surface constructors (CLI flags, YAML) → one typed
+   intermediate → one lowering — mirroring Python's `convert_cli_to_aiperf` +
+   `load_config` → one `model_validate`. Two input surfaces genuinely need two
+   constructors (Python keeps two), and the flag path performs CLI-only
+   byte-affecting derivations the YAML path does not (fixed-schedule
+   `request_count` from `count_schedule_entries(file)`, sentinel URLs, warmup
+   synthesis, a post-`into_inputs` `kv_block_size` mutation), so a single
+   flag∪YAML deep-merge cannot be byte-reconstructed. The achievable
+   improvements landed: `ProfileFlags` bools → `Option<bool>` (explicit-set
+   signal) and the flags↔YAML drift unification. A true single authoring model
+   would require moving resolution to the runtime (Python-style, runner-resolves),
+   which changes the wire representation — a separate phase, not this one.
 3. **One sweep plan.** *(Partial: typed `build_benchmark_plan` grid/zip/magic-list
-   seam built and tested; retiring the live override mechanisms remains, sequenced
-   after the producer collapse.)* Replace the three override mechanisms with
-   `build_benchmark_plan` over the typed model (dotted-path apply, alpha-sorted
+   seam built and tested. Retiring the live grid/recipe override mechanisms is
+   blocked by the same producer property — the grid path mutates `ProfileFlags` so
+   `count_schedule_entries`/count-pooling run in `load::resolve`, which the typed
+   post-resolution path cannot reproduce byte-exact; `sweep_parity` — which drives
+   `load::resolve` directly — is the proof.)* Replace the three override mechanisms
+   with `build_benchmark_plan` over the typed model (dotted-path apply, alpha-sorted
    keys, `base+N` seed derivation). Adaptive search stays a runtime ask-tell loop.
-4. **Validators as offline passes.** *(Built: the seven raise-only invariants ported
-   to `config::validate`; two scenario/timing-mode-dependent invariants noted as
-   not portable until that infra exists on the typed model.)* Port the raise-only
+4. **Validators as offline passes.** *(Built: nine raise-only invariants ported to
+   `config::validate` — the seven cross-field checks plus `cache_bust_compatibility`
+   (full) and `agentic_cache_warmup` (no-scenario branch; the scenario branch needs a
+   runtime scenario-registry `timing_mode` lookup with no config-time representation,
+   as in Python, so it defers). The authored `timing_mode`/`cache_bust` fields were
+   added to the typed model, skip-serialized so the wire stays byte-identical.)*
+   Port the raise-only
    cross-field invariants
    (phase↔dataset compatibility, prefill⇒streaming, cache-bust, agentic-warmup) as
    validate-time functions; keep the mutating ones (tokenizer/seed defaults) as
