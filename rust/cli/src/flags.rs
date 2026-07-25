@@ -776,6 +776,36 @@ pub struct ProfileFlags {
     #[arg(long = "hf-subset")]
     pub hf_subset: Option<String>,
 
+    /// Benchmark an arbitrary Hugging Face dataset by repository ID (e.g.
+    /// `allenai/WildChat`). Prompt/completion columns are auto-detected.
+    #[arg(long = "hf-dataset")]
+    pub hf_dataset: Option<String>,
+
+    /// Hugging Face dataset split (train/test/validation/…). Auto-resolved if omitted.
+    #[arg(long = "hf-split")]
+    pub hf_split: Option<String>,
+
+    /// Pin a Hugging Face dataset git revision (commit/branch/tag).
+    #[arg(long = "hf-revision")]
+    pub hf_revision: Option<String>,
+
+    /// Force the prompt column instead of auto-detecting it.
+    #[arg(long = "hf-text-column")]
+    pub hf_text_column: Option<String>,
+
+    /// Force the completion/output column instead of auto-detecting it.
+    #[arg(long = "hf-output-column")]
+    pub hf_output_column: Option<String>,
+
+    /// Fixed output length for every request (overrides completion-derived length).
+    #[arg(long = "hf-output-len")]
+    pub hf_output_len: Option<u32>,
+
+    /// Force a specific loader format for `--hf-dataset` (e.g. hf_conversation,
+    /// hf_instruction_response) instead of the auto-detecting `hf` format.
+    #[arg(long = "hf-format")]
+    pub hf_format: Option<String>,
+
     /// Dataset sampling strategy (`--dataset-sampling-strategy`).
     #[arg(long = "dataset-sampling-strategy")]
     pub dataset_sampling_strategy: Option<String>,

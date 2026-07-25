@@ -258,6 +258,20 @@ pub(crate) struct Inputs {
     pub public_dataset: Option<String>,
     /// HuggingFace subset override for the public dataset.
     pub hf_subset: Option<String>,
+    /// Arbitrary Hugging Face dataset repository ID (`--hf-dataset`); bypasses the catalog.
+    pub hf_dataset: Option<String>,
+    /// Hugging Face dataset split (`--hf-split`); auto-resolved if omitted.
+    pub hf_split: Option<String>,
+    /// Hugging Face dataset git revision (`--hf-revision`).
+    pub hf_revision: Option<String>,
+    /// Forced prompt column for `--hf-dataset` (`--hf-text-column`).
+    pub hf_text_column: Option<String>,
+    /// Forced completion/output column for `--hf-dataset` (`--hf-output-column`).
+    pub hf_output_column: Option<String>,
+    /// Fixed output length for `--hf-dataset` (`--hf-output-len`).
+    pub hf_output_len: Option<u32>,
+    /// Forced loader format for `--hf-dataset` (`--hf-format`); default `hf`.
+    pub hf_format: Option<String>,
     /// Inter-turn delay cap, seconds (file datasets).
     pub inter_turn_delay_cap_seconds: Option<f64>,
     /// Strip repeated image content once observed within a session
@@ -704,6 +718,13 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         custom_dataset_type: flags.custom_dataset_type.clone(),
         public_dataset: flags.public_dataset.clone(),
         hf_subset: flags.hf_subset.clone(),
+        hf_dataset: flags.hf_dataset.clone(),
+        hf_split: flags.hf_split.clone(),
+        hf_revision: flags.hf_revision.clone(),
+        hf_text_column: flags.hf_text_column.clone(),
+        hf_output_column: flags.hf_output_column.clone(),
+        hf_output_len: flags.hf_output_len,
+        hf_format: flags.hf_format.clone(),
         inter_turn_delay_cap_seconds: flags.inter_turn_delay_cap_seconds,
         uuid_and_strip: flags.uuid_and_strip,
         replay_speedup: flags.replay_speedup,
@@ -928,7 +949,46 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         server_url: inputs.server_tokenizer_url.clone(),
     };
 
-    let dataset = if let Some(name) = &inputs.public_dataset {
+    let dataset = if let Some(id) = &inputs.hf_dataset {
+        anyhow::ensure!(
+            inputs.public_dataset.is_none(),
+            "--hf-dataset and --public-dataset are mutually exclusive"
+        );
+        let mut options = inputs.dataset_filters.clone().unwrap_or_default();
+        if let Some(c) = &inputs.hf_text_column {
+            options.insert("text_column".to_string(), serde_json::json!(c));
+        }
+        if let Some(c) = &inputs.hf_output_column {
+            options.insert("output_column".to_string(), serde_json::json!(c));
+        }
+        if let Some(n) = inputs.hf_output_len {
+            options.insert("output_len".to_string(), serde_json::json!(n.to_string()));
+        }
+        let mut source = serde_json::Map::new();
+        source.insert("type".to_string(), serde_json::json!("hugging_face"));
+        source.insert("dataset".to_string(), serde_json::json!(id));
+        source.insert(
+            "subset".to_string(),
+            serde_json::json!(inputs.hf_subset.clone().unwrap_or_default()),
+        );
+        source.insert(
+            "split".to_string(),
+            serde_json::json!(inputs.hf_split.clone().unwrap_or_default()),
+        );
+        if let Some(rev) = &inputs.hf_revision {
+            source.insert("revision".to_string(), serde_json::json!(rev));
+        }
+        Dataset::Public(crate::model::dataset::PublicDataset {
+            name: id.clone(),
+            format: inputs.hf_format.clone().unwrap_or_else(|| "hf".to_string()),
+            source: serde_json::Value::Object(source),
+            options,
+            sampling: Sampling(inputs.sampling.clone()),
+            entries: inputs.dataset_entries,
+            random_seed: inputs.dataset_random_seed,
+            prompts: authored_prompt_selection(inputs.prompt_corpus.as_deref()),
+        })
+    } else if let Some(name) = &inputs.public_dataset {
         let meta = crate::model::public_catalog::lookup(name)
             .ok_or_else(|| anyhow::anyhow!("unknown public dataset {name:?}"))?;
         let mut options = meta.options.clone();
@@ -1685,8 +1745,8 @@ fn parse_dataset_filters(
         return Ok(None);
     };
     anyhow::ensure!(
-        flags.public_dataset.is_some(),
-        "--dataset-filter requires --public-dataset"
+        flags.public_dataset.is_some() || flags.hf_dataset.is_some(),
+        "--dataset-filter requires --public-dataset or --hf-dataset"
     );
     let mut map = serde_json::Map::new();
     for entry in entries {
@@ -2456,6 +2516,35 @@ mod tests {
                 value["cfg"]["datasets"][0]["prompts"]["corpus"],
                 serde_json::json!("coding")
             );
+        });
+    }
+
+    #[test]
+    fn hf_dataset_flag_builds_public_without_catalog() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--hf-dataset",
+                "allenai/WildChat",
+                "--hf-split",
+                "train",
+                "--hf-output-len",
+                "128",
+            ]);
+            let run = super::resolve(&flags).expect("resolve run");
+            let value = serde_json::to_value(&run).expect("serialize run");
+            let ds = &value["cfg"]["datasets"][0];
+            assert_eq!(ds["type"], serde_json::json!("public"));
+            assert_eq!(ds["name"], serde_json::json!("allenai/WildChat"));
+            assert_eq!(ds["format"], serde_json::json!("hf"));
+            assert_eq!(ds["source"]["type"], serde_json::json!("hugging_face"));
+            assert_eq!(ds["source"]["dataset"], serde_json::json!("allenai/WildChat"));
+            assert_eq!(ds["source"]["split"], serde_json::json!("train"));
+            assert_eq!(ds["options"]["output_len"], serde_json::json!("128"));
         });
     }
 
