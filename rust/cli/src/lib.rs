@@ -28,6 +28,7 @@ pub mod jsonnum;
 pub mod k8s;
 pub mod load;
 pub mod logging;
+pub mod metrics_list;
 pub mod model;
 pub mod phase_validate;
 pub mod profile;
