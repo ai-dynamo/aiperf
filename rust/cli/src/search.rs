@@ -160,8 +160,10 @@ pub fn logspace_int_steps(lo: f64, hi: f64, steps: i64) -> anyhow::Result<Vec<i6
     Ok(vals)
 }
 
-/// Round half to even.
-fn python_round(v: f64) -> f64 {
+/// Round half to even (Python's `round`/banker's rounding). Shared by the
+/// log-spaced grid stepper and the isotonic planner so their integer probe
+/// sequences stay byte-exact.
+pub fn python_round(v: f64) -> f64 {
     let floor = v.floor();
     let diff = v - floor;
     if diff < 0.5 {
@@ -567,7 +569,31 @@ pub fn build_sla_filters(flags: &ProfileFlags) -> Vec<SlaFilter> {
     filters
 }
 
-/// Per-value pass/fail tally; a verdict requires `required` agreeing trials.
+/// Resolve the concurrency search bounds and SLA filters shared by the
+/// `max-concurrency-under-sla` planner constructors.
+///
+/// Validates `--concurrency-min/max` (default `[1, 1000]`; lower must be `>= 1`,
+/// upper must exceed lower) and requires at least one SLA target. Returns
+/// `(lo, hi, sla_filters)`.
+pub fn resolve_bounds_and_sla_filters(
+    flags: &ProfileFlags,
+) -> anyhow::Result<(i64, i64, Vec<SlaFilter>)> {
+    let lo = flags.concurrency_min.unwrap_or(1);
+    let hi = flags.concurrency_max.unwrap_or(1000);
+    anyhow::ensure!(lo >= 1, "concurrency lower bound must be >= 1 (got {lo})");
+    anyhow::ensure!(
+        hi > lo,
+        "concurrency upper bound ({hi}) must be > lower ({lo})"
+    );
+    let sla_filters = build_sla_filters(flags);
+    anyhow::ensure!(
+        !sla_filters.is_empty(),
+        "recipe 'max-concurrency-under-sla' requires at least one of \
+         --ttft-sla-ms / --tpot-sla-ms / --itl-sla-ms / --e2e-sla-ms / --error-rate-sla"
+    );
+    Ok((lo, hi, sla_filters))
+}
+
 struct PointLog {
     required: i64,
     passes: i64,

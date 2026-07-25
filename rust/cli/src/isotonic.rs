@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 use crate::pyfit;
-use crate::search::{SlaFilter, SlaOp};
+use crate::search::{SlaFilter, op_str, python_round, resolve_bounds_and_sla_filters};
 
 /// Relative boundary-precision target.
 const SLA_PRECISION_DEFAULT: f64 = 0.05;
@@ -100,19 +100,7 @@ impl IsotonicSpec {
     /// `[1,1000]`), `--search-max-iterations` (default 30), SLA filters, and
     /// `--sla-replicates`.
     pub fn from_flags(flags: &crate::flags::ProfileFlags) -> anyhow::Result<Self> {
-        let lo = flags.concurrency_min.unwrap_or(1);
-        let hi = flags.concurrency_max.unwrap_or(1000);
-        anyhow::ensure!(lo >= 1, "concurrency lower bound must be >= 1 (got {lo})");
-        anyhow::ensure!(
-            hi > lo,
-            "concurrency upper bound ({hi}) must be > lower ({lo})"
-        );
-        let sla_filters = crate::search::build_sla_filters(flags);
-        anyhow::ensure!(
-            !sla_filters.is_empty(),
-            "recipe 'max-concurrency-under-sla' requires at least one of \
-             --ttft-sla-ms / --tpot-sla-ms / --itl-sla-ms / --e2e-sla-ms / --error-rate-sla"
-        );
+        let (lo, hi, sla_filters) = resolve_bounds_and_sla_filters(flags)?;
         Ok(Self {
             lo,
             hi,
@@ -380,6 +368,27 @@ impl SmoothIsotonicPlanner {
         (ys.len() == xs.len()).then_some(ys)
     }
 
+    /// Per-x averaged margin series for the binding constraint `key` over sorted
+    /// probed xs, skipping any x with no sample of `key`. Returns the parallel
+    /// `(xs, ys)` (a partial curve, unlike [`Self::full_series`]).
+    fn binding_series(&self, key: &str) -> (Vec<i64>, Vec<f64>) {
+        let mut xs: Vec<i64> = self.raw_probes.keys().copied().collect();
+        xs.sort_unstable();
+        let mut cxs = Vec::new();
+        let mut ys = Vec::new();
+        for &x in &xs {
+            let samples: Vec<f64> = self.raw_probes[&x]
+                .iter()
+                .filter_map(|m| m.get(key).copied())
+                .collect();
+            if !samples.is_empty() {
+                cxs.push(x);
+                ys.push(samples.iter().sum::<f64>() / samples.len() as f64);
+            }
+        }
+        (cxs, ys)
+    }
+
     fn fit_and_solve(&mut self) -> anyhow::Result<Option<i64>> {
         let mut xs: Vec<i64> = self.raw_probes.keys().copied().collect();
         xs.sort_unstable();
@@ -436,18 +445,7 @@ impl SmoothIsotonicPlanner {
         let Some(binding) = &self.binding_constraint else {
             return Ok(false);
         };
-        let mut xs: Vec<i64> = self.raw_probes.keys().copied().collect();
-        xs.sort_unstable();
-        let mut ys = Vec::new();
-        for &x in &xs {
-            let samples: Vec<f64> = self.raw_probes[&x]
-                .iter()
-                .filter_map(|m| m.get(binding).copied())
-                .collect();
-            if !samples.is_empty() {
-                ys.push(samples.iter().sum::<f64>() / samples.len() as f64);
-            }
-        }
+        let (_, ys) = self.binding_series(binding);
         if ys.len() < 4 {
             return Ok(true);
         }
@@ -584,20 +582,7 @@ impl SmoothIsotonicPlanner {
         let Some(binding) = &self.binding_constraint else {
             return Ok(false);
         };
-        let mut xs: Vec<i64> = self.raw_probes.keys().copied().collect();
-        xs.sort_unstable();
-        let mut cxs = Vec::new();
-        let mut ys = Vec::new();
-        for &x in &xs {
-            let samples: Vec<f64> = self.raw_probes[&x]
-                .iter()
-                .filter_map(|m| m.get(binding).copied())
-                .collect();
-            if !samples.is_empty() {
-                cxs.push(x);
-                ys.push(samples.iter().sum::<f64>() / samples.len() as f64);
-            }
-        }
+        let (cxs, ys) = self.binding_series(binding);
         if ys.len() < 2 {
             return Ok(false);
         }
@@ -654,15 +639,6 @@ impl SmoothIsotonicPlanner {
     }
 }
 
-fn op_str(op: SlaOp) -> &'static str {
-    match op {
-        SlaOp::Lt => "lt",
-        SlaOp::Le => "le",
-        SlaOp::Gt => "gt",
-        SlaOp::Ge => "ge",
-    }
-}
-
 /// Sample standard deviation (Bessel's correction); 0.0 for < 2 samples.
 fn sample_std(samples: &[f64]) -> f64 {
     if samples.len() < 2 {
@@ -671,19 +647,4 @@ fn sample_std(samples: &[f64]) -> f64 {
     let mean = samples.iter().sum::<f64>() / samples.len() as f64;
     let var = samples.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / (samples.len() - 1) as f64;
     var.sqrt()
-}
-
-/// Round half to even.
-fn python_round(v: f64) -> f64 {
-    let floor = v.floor();
-    let diff = v - floor;
-    if diff < 0.5 {
-        floor
-    } else if diff > 0.5 {
-        floor + 1.0
-    } else if (floor as i64) % 2 == 0 {
-        floor
-    } else {
-        floor + 1.0
-    }
 }

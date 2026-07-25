@@ -150,8 +150,4 @@ pub fn int_or_float(x: f64) -> Value {
 }
 
 /// A finite `f64` as a JSON number, else JSON `null`.
-pub fn num(v: f64) -> Value {
-    serde_json::Number::from_f64(v)
-        .map(Value::Number)
-        .unwrap_or(Value::Null)
-}
+pub use crate::jsonnum::num;

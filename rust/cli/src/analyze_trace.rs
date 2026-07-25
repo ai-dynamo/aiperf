@@ -10,6 +10,8 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::stats::percentile_linear as percentile;
+
 #[derive(Serialize)]
 struct MetricStats {
     mean: f64,
@@ -50,18 +52,6 @@ struct TraceRecord {
     output_length: i64,
     #[serde(default)]
     hash_ids: Vec<i64>,
-}
-
-fn percentile(sorted: &[f64], q: f64) -> f64 {
-    let n = sorted.len();
-    if n == 1 {
-        return sorted[0];
-    }
-    let idx = q / 100.0 * (n - 1) as f64;
-    let lo = idx.floor() as usize;
-    let hi = idx.ceil() as usize;
-    let frac = idx - lo as f64;
-    sorted[lo] * (1.0 - frac) + sorted[hi] * frac
 }
 
 fn metric_stats(values: &[f64]) -> Option<MetricStats> {

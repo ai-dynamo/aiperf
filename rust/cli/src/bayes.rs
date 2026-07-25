@@ -8,7 +8,7 @@
 //! not guaranteed to be reproducible across processes.
 
 use crate::pyopt::OptunaStudy;
-use crate::search::{SlaFilter, SlaOp};
+use crate::search::{SlaFilter, SlaOp, op_str, resolve_bounds_and_sla_filters};
 
 /// Minimum mean magnitude for the plateau-CV test.
 const PLATEAU_MEAN_EPSILON: f64 = 1e-9;
@@ -44,19 +44,7 @@ impl BayesSpec {
     /// The default sampler is BoTorch; `--optuna-sampler` overrides it.
     /// An absent `--search-random-seed` leaves sampling nondeterministic.
     pub fn from_flags(flags: &crate::flags::ProfileFlags) -> anyhow::Result<Self> {
-        let lo = flags.concurrency_min.unwrap_or(1);
-        let hi = flags.concurrency_max.unwrap_or(1000);
-        anyhow::ensure!(lo >= 1, "concurrency lower bound must be >= 1 (got {lo})");
-        anyhow::ensure!(
-            hi > lo,
-            "concurrency upper bound ({hi}) must be > lower ({lo})"
-        );
-        let sla_filters = crate::search::build_sla_filters(flags);
-        anyhow::ensure!(
-            !sla_filters.is_empty(),
-            "recipe 'max-concurrency-under-sla' requires at least one of \
-             --ttft-sla-ms / --tpot-sla-ms / --itl-sla-ms / --e2e-sla-ms / --error-rate-sla"
-        );
+        let (lo, hi, sla_filters) = resolve_bounds_and_sla_filters(flags)?;
         let sampler = flags
             .optuna_sampler
             .clone()
@@ -362,13 +350,4 @@ impl OptunaPlanner {
 fn optuna_has_botorch() -> bool {
     use pyo3::prelude::*;
     Python::with_gil(|py| py.import("optuna_integration").is_ok() && py.import("botorch").is_ok())
-}
-
-fn op_str(op: SlaOp) -> &'static str {
-    match op {
-        SlaOp::Lt => "lt",
-        SlaOp::Le => "le",
-        SlaOp::Gt => "gt",
-        SlaOp::Ge => "ge",
-    }
 }
