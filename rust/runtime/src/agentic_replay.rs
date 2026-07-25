@@ -45,14 +45,28 @@ struct RecycleState {
     ids: Vec<String>,
     /// Next index to draw.
     cursor: Cell<usize>,
+    /// Per-base-trace recycle pass (Python `CacheBustLedger.recycle_pass`): the
+    /// baked dataset marker is pass 0, so each recycle mints the next pass.
+    recycle_pass: RefCell<std::collections::HashMap<String, i64>>,
+    /// Benchmark id for the cache-bust digest.
+    benchmark_id: String,
+    /// Cache-bust placement.
+    cache_bust_target: CacheBustTarget,
+}
+
+/// One drawn recycle instance: which template to replay, its fresh correlation
+/// id, and the fresh cache-bust marker to swap into the first turn's body.
+struct RecycleDraw {
+    template: String,
+    correlation: String,
+    marker: Option<String>,
 }
 
 impl RecycleState {
-    /// Draw the next `(template_id, fresh_correlation_id)`. The correlation is
-    /// unique per recycle instance (Python's double-recycle guard) so a lane that
-    /// recycles while a prior instance is still in flight does not collide on
-    /// sticky routing / record correlation.
-    fn next_draw(&self) -> Option<(String, String)> {
+    /// Draw the next recycle instance: round-robin template, a unique correlation
+    /// (Python's double-recycle guard), and a freshly-minted cache-bust marker at
+    /// the next `recycle_pass` for that base trace.
+    fn next_draw(&self) -> Option<RecycleDraw> {
         if self.ids.is_empty() {
             return None;
         }
@@ -60,8 +74,72 @@ impl RecycleState {
         self.cursor.set(i + 1);
         let template = self.ids[i % self.ids.len()].clone();
         let correlation = format!("{template}#r{i}");
-        Some((template, correlation))
+        let base = crate::agentx::cache_bust::base_trace_id(&template).to_string();
+        let pass = {
+            let mut passes = self.recycle_pass.borrow_mut();
+            let entry = passes.entry(base.clone()).or_insert(0);
+            *entry += 1; // baked dataset marker is pass 0
+            *entry
+        };
+        let marker = crate::agentx::cache_bust::build_cache_bust_marker(
+            &self.benchmark_id,
+            pass,
+            i as i64,
+            &base,
+            self.cache_bust_target,
+        );
+        Some(RecycleDraw {
+            template,
+            correlation,
+            marker,
+        })
     }
+}
+
+/// Rewrite the first message's content in a chat `request_body`, swapping any
+/// existing `[rid:<hex>]\n\n` cache-bust prefix for `marker` (Python mints a
+/// fresh marker per recycle at request-build time). No-op if the body cannot be
+/// parsed or `marker` is `None`.
+fn rewrite_first_turn_marker(turn: &mut crate::multiturn::TurnToSend, marker: &str) {
+    let Some(body) = &turn.request_body else {
+        return;
+    };
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return;
+    };
+    let Some(content) = value
+        .get_mut("messages")
+        .and_then(|m| m.get_mut(0))
+        .and_then(|m| m.get_mut("content"))
+        .and_then(|c| c.as_str().map(str::to_string))
+    else {
+        return;
+    };
+    // Strip an existing `[rid:<12hex>]\n\n` prefix (the baked pass-0 marker).
+    let stripped = strip_rid_prefix(&content);
+    let new_content = format!("{marker}{stripped}");
+    if let Some(msg) = value
+        .get_mut("messages")
+        .and_then(|m| m.get_mut(0))
+        .and_then(|m| m.as_object_mut())
+    {
+        msg.insert("content".into(), serde_json::Value::String(new_content));
+        if let Ok(bytes) = serde_json::to_vec(&value) {
+            turn.request_body = Some(bytes.into());
+        }
+    }
+}
+
+/// Strip a leading `[rid:<12hex>]\n\n` cache-bust marker, if present.
+fn strip_rid_prefix(content: &str) -> &str {
+    if let Some(rest) = content.strip_prefix("[rid:")
+        && let Some(close) = rest.find(']')
+        && rest[..close].len() == 12
+        && rest[..close].bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return rest[close + 1..].strip_prefix("\n\n").unwrap_or(&rest[close + 1..]);
+    }
+    content
 }
 
 /// Per-lane dispatch decision computed from the trajectory's recorded timestamps.
@@ -208,6 +286,9 @@ impl Workload for AgenticReplayWorkload {
             Rc::new(RecycleState {
                 ids: lanes.iter().map(|l| l.conversation_id.clone()).collect(),
                 cursor: Cell::new(0),
+                recycle_pass: RefCell::new(std::collections::HashMap::new()),
+                benchmark_id: cfg.benchmark_id.clone(),
+                cache_bust_target: cfg.cache_bust_target,
             })
         });
         for (lane, offset_ms_val) in lanes.iter().zip(offsets_ms.iter()) {
@@ -283,14 +364,18 @@ fn schedule_agentic_turn(
                             // sustain the run while the phase budget permits.
                             if let Some(recycle) = &recycle
                                 && runtime_c.can_issue(true)
-                                && let Some((template, correlation)) = recycle.next_draw()
+                                && let Some(draw) = recycle.next_draw()
                             {
                                 let session = source_c
                                     .borrow()
-                                    .session_for(&template, correlation);
+                                    .session_for(&draw.template, draw.correlation);
                                 if let Ok(session) = session
-                                    && let Ok(first) = session.build_first_turn(None)
+                                    && let Ok(mut first) = session.build_first_turn(None)
                                 {
+                                    // Fresh cache-bust marker for the recycled tree.
+                                    if let Some(marker) = &draw.marker {
+                                        rewrite_first_turn_marker(&mut first, marker);
+                                    }
                                     let now = runtime_c.now_ns();
                                     schedule_agentic_turn(
                                         runtime_c,
