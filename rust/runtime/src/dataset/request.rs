@@ -1585,14 +1585,22 @@ mod tests {
         // The reconstructed context contains the recorded prior turns 0..=1.
         let body: Value = serde_json::from_slice(&jump_turn1.body).unwrap();
         let messages = body["messages"].to_string();
-        assert!(messages.contains("q0"), "context carries turn 0: {messages}");
-        assert!(messages.contains("a0"), "context carries reply 0: {messages}");
-        assert!(messages.contains("q1"), "context carries turn 1: {messages}");
+        assert!(
+            messages.contains("q0"),
+            "context carries turn 0: {messages}"
+        );
+        assert!(
+            messages.contains("a0"),
+            "context carries reply 0: {messages}"
+        );
+        assert!(
+            messages.contains("q1"),
+            "context carries turn 1: {messages}"
+        );
         assert_eq!(body["messages"].as_array().unwrap().len(), 3);
 
         // seek_to(0) is identical to advance_to(0): the sequential contract is intact.
-        let mut seek0 =
-            ConversationSession::new(build_data(), SessionId::from("session")).unwrap();
+        let mut seek0 = ConversationSession::new(build_data(), SessionId::from("session")).unwrap();
         seek0.seek_to(0).unwrap();
         let mut adv0 = ConversationSession::new(build_data(), SessionId::from("session")).unwrap();
         adv0.advance_to(0).unwrap();

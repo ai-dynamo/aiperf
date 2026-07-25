@@ -338,7 +338,11 @@ impl SampledSession {
     /// live-reply-capture modes fail closed. This is the primitive the
     /// accelerated-cache-warmup workload uses to start a lane at a runtime-determined
     /// drained frontier without replaying every prior turn's dispatch.
-    pub fn build_turn_at(&self, start_index: usize, max_turns: Option<usize>) -> Result<TurnToSend> {
+    pub fn build_turn_at(
+        &self,
+        start_index: usize,
+        max_turns: Option<usize>,
+    ) -> Result<TurnToSend> {
         self.backend.build_turn_at(self, start_index, max_turns)
     }
 
@@ -1836,7 +1840,10 @@ mod tests {
         let jump_body: Value =
             serde_json::from_slice(jump_turn1.request_body.as_deref().unwrap()).unwrap();
         let messages = jump_body["messages"].to_string();
-        assert!(messages.contains("q1"), "turn-1 context carries q1: {messages}");
+        assert!(
+            messages.contains("q1"),
+            "turn-1 context carries q1: {messages}"
+        );
         assert_ne!(
             jump_turn1.request_body.as_deref().unwrap(),
             seq_turn0.request_body.as_deref().unwrap(),
