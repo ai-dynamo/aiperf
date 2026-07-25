@@ -111,6 +111,13 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # One-shot latch for the mid-run "enable cache reporting" server-knob hint.
         self._warned_missing_cache_reporting: bool = False
 
+        # Pooled speculative-decoding acceptance histogram, keyed by phase so the
+        # phase-scoped export (warmup vs profiling) pools exactly the same record
+        # set the masked scalar totals do -- keeping the pooled counts reconciled
+        # with ``total_spec_decode_steps``. Dict aggregation has no home in the
+        # numpy columnar store, so it lives here as the one dedicated reducer.
+        self._acceptance_pool_by_phase: dict[str, dict[int, int]] = {}
+
         # Derive functions for DERIVED metrics
         # _setup_metrics includes transitive dependencies (RECORD/AGGREGATE),
         # so filter to only metrics that actually have derive_value.
@@ -169,6 +176,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
     async def process_record(self, record: MetricRecordsData) -> None:
         """Ingest a single ``MetricRecordsData`` into columnar storage."""
         self._maybe_hint_missing_cache_reporting(record)
+        self._pool_spec_decode_record(record)
         idx = self._next_record_idx
         self._next_record_idx += 1
         meta = record.metadata
@@ -229,6 +237,50 @@ class MetricsAccumulator(BaseMetricsProcessor):
         if usage_without_cache_in_record(record.metrics):
             self._warned_missing_cache_reporting = True
             self.warning(CACHE_REPORTING_HINT)
+
+    def _pool_spec_decode_record(self, record: MetricRecordsData) -> None:
+        """Sum a request's accepted-draft histogram into its phase's pool.
+
+        Skips records with no spec-decode stats and error records -- the latter
+        never contribute the ``spec_decode_steps`` metric either, so excluding
+        them here keeps the pooled counts reconciled with the masked scalar
+        ``total_spec_decode_steps``.
+        """
+        spec = record.spec_decode_acceptance
+        if spec is None or record.error is not None:
+            return
+        pool = self._acceptance_pool_by_phase.setdefault(
+            str(record.metadata.benchmark_phase), {}
+        )
+        for accepted_draft_count, steps in spec.acceptance_histogram.items():
+            pool[accepted_draft_count] = pool.get(accepted_draft_count, 0) + steps
+
+    def _pooled_acceptance_histogram(
+        self, ctx: ExportContext | None
+    ) -> dict[int, int] | None:
+        """Return the pooled histogram for the exported phase, key-sorted.
+
+        Phase-scoped exports return that phase's pool (matching the scalar
+        mask). Windowed (realtime/timeslice) exports return None -- the pooled
+        histogram is a run-level artifact, not defined per rolling window. A
+        fully-unbounded export pools every phase.
+        """
+        if not self._acceptance_pool_by_phase:
+            return None
+        if ctx is not None and ctx.phase is not None:
+            pool = self._acceptance_pool_by_phase.get(str(ctx.phase))
+        elif ctx is not None and (ctx.start_ns is not None or ctx.end_ns is not None):
+            return None
+        else:
+            pool = {}
+            for phase_pool in self._acceptance_pool_by_phase.values():
+                for accepted_draft_count, steps in phase_pool.items():
+                    pool[accepted_draft_count] = (
+                        pool.get(accepted_draft_count, 0) + steps
+                    )
+        if not pool:
+            return None
+        return {j: pool[j] for j in sorted(pool)}
 
     def query_time_range(self, start_ns: int, end_ns: int) -> BoolArray:
         """Return a boolean mask where True marks records in [start_ns, end_ns)."""
@@ -623,6 +675,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
         return AccumulatorMetricsSummary(
             results=overall_results,
             timeslices=timeslices,
+            pooled_spec_decode_acceptance_histogram=self._pooled_acceptance_histogram(
+                ctx
+            ),
         )
 
     async def export_results(self, ctx: ExportContext) -> AccumulatorMetricsSummary:

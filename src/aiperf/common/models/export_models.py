@@ -352,3 +352,13 @@ class JsonExportData(AIPerfBaseModel):
         description="Metrics computed from warmup-phase requests only. Profiling "
         "metrics remain in the top-level metric fields.",
     )
+    pooled_spec_decode_acceptance_histogram: dict[int, int] | None = Field(
+        default=None,
+        description=(
+            "Run-level pooled speculative-decoding acceptance histogram: "
+            "accepted-draft count j mapped to the total number of verify steps "
+            "that accepted exactly j draft tokens, summed across every request. "
+            "Its counts sum to total_spec_decode_steps. Present only when spec "
+            "decode was active; absent otherwise."
+        ),
+    )

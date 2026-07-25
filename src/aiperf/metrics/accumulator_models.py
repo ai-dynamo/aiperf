@@ -25,6 +25,11 @@ class AccumulatorMetricsSummary:
 
     results: dict[MetricTagT, MetricResult]
     timeslices: list[TimesliceResult] | None = field(default=None)
+    pooled_spec_decode_acceptance_histogram: dict[int, int] | None = field(default=None)
+    """Run-level pooled accepted-draft histogram ({j: total_steps}) for the
+    exported phase/window, or None when no request carried spec-decode stats.
+    Dict aggregation lives outside the numpy columnar store, so it rides here
+    rather than in ``results``."""
 
     def to_json(self) -> dict[str, Any]:
         data: dict[str, Any] = {

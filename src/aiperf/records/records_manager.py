@@ -395,6 +395,26 @@ class ErrorTrackingState:
     )
 
 
+def _pooled_spec_decode_histogram(
+    summary_ctx: SummaryContext,
+) -> dict[int, int] | None:
+    """Pull the pooled acceptance histogram off the metric_records summary.
+
+    The dict rides on ``AccumulatorMetricsSummary`` (not in ``records``) because
+    it is a dict aggregate outside the scalar/list metric machinery. Returns the
+    first populated histogram found; None when spec decode was off for the
+    exported phase. A module-level function (not a method) so mocked
+    RecordsManager instances in unit tests cannot shadow it with an auto-mock.
+    """
+    for summary in summary_ctx.accumulator_outputs.values():
+        if (
+            isinstance(summary, AccumulatorMetricsSummary)
+            and summary.pooled_spec_decode_acceptance_histogram
+        ):
+            return summary.pooled_spec_decode_acceptance_histogram
+    return None
+
+
 class RecordsManager(PullClientMixin, BaseComponentService):
     """Collects and processes benchmark results from workers.
 
@@ -1953,6 +1973,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     phase, 0
                 ),
                 phase_records=phase_records,
+                pooled_spec_decode_acceptance_histogram=_pooled_spec_decode_histogram(
+                    summary_ctx
+                ),
             ),
             errors=error_results,
         )

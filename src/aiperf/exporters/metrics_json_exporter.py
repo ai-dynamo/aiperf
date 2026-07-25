@@ -129,13 +129,64 @@ class MetricsJsonExporter(MetricsBaseExporter):
         for metric_tag, json_result in prepared_json_metrics.items():
             setattr(export_data, metric_tag, json_result)
 
-        # Splice DAG branch orchestration counters when present. Non-DAG
-        # runs leave ``branch_stats`` unset on ProfileResults so the
-        # section is omitted entirely (model_dump_json with
-        # ``exclude_none=True`` drops it).
-        branch_stats = getattr(self._results, "branch_stats", None)
-        if branch_stats is not None:
-            export_data.branch_stats = branch_stats
+        # Attach optional run-level aggregates (branch_stats, pooled spec-decode
+        # histogram) that live on ProfileResults outside the metric dict.
+        self._splice_run_level_aggregates(export_data)
+
+        # Stamp scenario submission metadata for single-run exports. Mirrors the
+        # carrier-key contract used by AggregateConfidenceJsonExporter: the
+        # validator outcome lives on ``run.resolved.scenario_outcome`` (set by
+        # ScenarioResolver) and runtime totals are summed from the prepared
+        # metric results. No-ops (metadata omitted) when no --scenario was set
+        # or the outcome is absent.
+        scenario_name = getattr(self._cfg, "scenario", None)
+        resolved = self._run.resolved if self._run is not None else None
+        outcome = getattr(resolved, "scenario_outcome", None)
+        if scenario_name is not None and outcome is not None:
+            from aiperf.exporters.aggregate.aggregate_base_exporter import (
+                _build_run_metadata_dict,
+                compute_submission_outcome,
+            )
+
+            validator_submission_valid = outcome.submission_valid
+            validator_reasons = list(outcome.submission_invalid_reasons)
+
+            def _metric_avg(tag: str) -> int:
+                m = prepared_json_metrics.get(tag)
+                if m is None or not is_finite_value(m.avg):
+                    return 0
+                return int(m.avg)
+
+            # Numerator: all overflows (metric-path + skip-path, after merge above).
+            # Denominator: successes + errors + skip-path-only overflows.
+            # Metric-path overflows are already inside error_request_count
+            # (ContextOverflowCountMetric is ERROR_ONLY); adding the merged
+            # context_overflow_count again would double-count them.
+            context_overflow_count = _metric_avg("context_overflow_count")
+            total_responses = (
+                _metric_avg("request_count")
+                + _metric_avg("error_request_count")
+                + skipped_context_overflow_count
+            )
+
+            submission_valid, submission_invalid_reasons = compute_submission_outcome(
+                scenario_name=scenario_name,
+                validator_submission_valid=validator_submission_valid,
+                validator_reasons=validator_reasons,
+                total_responses=total_responses,
+                context_overflow_count=context_overflow_count,
+                was_cancelled=bool(self._results.was_cancelled),
+            )
+            run_metadata.update(
+                _build_run_metadata_dict(
+                    scenario_name=scenario_name,
+                    submission_valid=submission_valid,
+                    submission_invalid_reasons=submission_invalid_reasons,
+                )
+            )
+
+        if run_metadata:
+            export_data.metadata = run_metadata
 
         # Stamp scenario submission metadata for single-run exports. Mirrors the
         # carrier-key contract used by AggregateConfidenceJsonExporter: the
@@ -207,6 +258,22 @@ class MetricsJsonExporter(MetricsBaseExporter):
         return orjson.dumps(
             scrub_non_finite(payload), option=orjson.OPT_INDENT_2
         ).decode("utf-8")
+
+    def _splice_run_level_aggregates(self, export_data: JsonExportData) -> None:
+        """Attach optional run-level aggregates that live on ``ProfileResults``
+        outside the metric dict. Each is omitted from the export (``exclude_none``)
+        when absent: ``branch_stats`` on non-DAG runs, the pooled spec-decode
+        acceptance histogram when spec decode is off.
+        """
+        branch_stats = getattr(self._results, "branch_stats", None)
+        if branch_stats is not None:
+            export_data.branch_stats = branch_stats
+
+        spec_decode_histogram = getattr(
+            self._results, "pooled_spec_decode_acceptance_histogram", None
+        )
+        if spec_decode_histogram is not None:
+            export_data.pooled_spec_decode_acceptance_histogram = spec_decode_histogram
 
     def _prepare_metrics_for_json(
         self, metric_results: Iterable[MetricResult]

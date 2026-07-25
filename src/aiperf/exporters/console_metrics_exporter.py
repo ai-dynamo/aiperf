@@ -60,6 +60,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         MetricConsoleGroup.PREDICTION,
         MetricConsoleGroup.AUDIO,
         MetricConsoleGroup.REASONING,
+        MetricConsoleGroup.SPEC_DECODE,
         MetricConsoleGroup.DEFAULT,
     )
     """Groups to include. `None` means no group filter (every record that
@@ -249,4 +250,6 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         """
         if group == MetricConsoleGroup.DEFAULT:
             return self._get_title()
+        if group == MetricConsoleGroup.SPEC_DECODE:
+            return f"{self._get_title()}: Spec Decode"
         return f"{self._get_title()}: {group.name.title()}"
