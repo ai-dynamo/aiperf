@@ -169,7 +169,28 @@ Hugging Face token file. A gated/private dataset without a valid token fails wit
 
 ---
 
-## 8. Config-v2 YAML
+## 8. Behind a forward proxy
+
+If the machine only reaches the internet through a proxy, the dataset download
+honors the proxy environment automatically — set `HTTPS_PROXY` (and `NO_PROXY` for
+hosts to exclude) and run as usual:
+
+```bash
+export HTTPS_PROXY=http://proxy.corp:3128
+aiperf profile --hf-dataset openai/gsm8k --hf-subset main --hf-split test \
+  --model ... --url http://localhost:8000 --endpoint-type chat --tokenizer ...
+```
+
+The download tunnels through the proxy via HTTP `CONNECT`; the proxy resolves the
+Hugging Face host. Loopback (your local inference server) is never proxied.
+
+If the **inference endpoint** itself is only reachable through a proxy, opt in
+explicitly with `--proxy` (see the CLI `--proxy`/`--proxy-from-env` flags) — that is
+separate from dataset downloads and applies to the benchmark traffic.
+
+---
+
+## 9. Config-v2 YAML
 
 The same capability is available from a config file. Under `dataset.type: public`,
 supply `hf_dataset` instead of a catalog name:
@@ -195,7 +216,7 @@ aiperf profile --config benchmark.yaml
 
 ---
 
-## 9. Forcing a specific loader (advanced)
+## 10. Forcing a specific loader (advanced)
 
 The auto-detecting `hf` format handles the common shapes. If you need one of AIPerf's
 purpose-built public loaders instead — for example the multi-turn conversation loader
@@ -214,7 +235,7 @@ aiperf profile --hf-dataset lmms-lab/LLaVA-OneVision-Data \
 
 ---
 
-## 10. Trying it on a local file first
+## 11. Trying it on a local file first
 
 The `hf` layout inference is source-agnostic — it reads fields from rows regardless
 of where they came from. That means you can validate detection on a **local** JSONL
@@ -238,7 +259,7 @@ your own data before pointing at a large Hub dataset.
 
 ---
 
-## 11. Notes and gotchas
+## 12. Notes and gotchas
 
 - **`--hf-dataset` and `--public-dataset` are mutually exclusive** — use one or the
   other. `--hf-dataset` deliberately bypasses the curated public-dataset catalog.
