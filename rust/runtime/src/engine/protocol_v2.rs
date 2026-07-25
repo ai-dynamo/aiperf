@@ -1277,20 +1277,47 @@ mod dispatch_mode_tests {
 
     #[test]
     fn scheduled_projection_omits_graph_only_weka_semantics() {
-        use crate::engine::registry::{ScheduledWorkloadConfigV2, strict_decode};
-        // A synthetic dataset projects to the `scheduled` workload, whose strict
-        // config DTO has no `weka_semantics` field (it is graph-only). The
-        // projection must not leak that field into the scheduled config, or the
-        // run fails at decode with "unknown field `weka_semantics`".
-        let authored = minimal_wire(serde_json::json!({"workers": 1}))
-            .into_authored()
+        // `weka_semantics` exists only on the graph workload's config DTO; the
+        // scheduled DTO is strict (`deny_unknown_fields`). Emitting the key into
+        // a scheduled config — even as `null` — fails decode with "unknown field
+        // `weka_semantics`". The projection must attach it only for graph runs.
+        fn project(dataset_type: &str) -> (String, serde_json::Value) {
+            let wire: BenchmarkRunWireV2 = serde_json::from_value(serde_json::json!({
+                "benchmark_id": "run-1",
+                "artifact_dir": "/tmp/not-created",
+                "cfg": {
+                    "models": {"items": [{"name": "model"}]},
+                    "endpoint": {"type": "future_endpoint"},
+                    "datasets": [{"type": dataset_type, "entries": 1}],
+                    "phases": [{"name": "profiling", "type": "concurrency", "concurrency": 1}],
+                    "transport": {"type": "future_transport"},
+                    "runtime": {"workers": 1},
+                    "weka_semantics": "legacy",
+                }
+            }))
             .unwrap();
-        assert_eq!(authored.workload.id.as_str(), "scheduled");
-        strict_decode::<ScheduledWorkloadConfigV2>(
-            &authored.workload.config,
-            "scheduled workload config",
-        )
-        .expect("scheduled workload config must strict-decode without graph-only fields");
+            let authored = wire.into_authored().unwrap();
+            let config: serde_json::Value =
+                serde_json::from_str(authored.workload.config.get()).unwrap();
+            (authored.workload.id.as_str().to_owned(), config)
+        }
+
+        // Synthetic → scheduled workload: the key must be absent entirely.
+        let (id, scheduled_config) = project("synthetic");
+        assert_eq!(id, "scheduled");
+        assert!(
+            scheduled_config.get("weka_semantics").is_none(),
+            "scheduled config must not carry graph-only weka_semantics: {scheduled_config}"
+        );
+
+        // A graph dataset → graph workload: the key still round-trips (unchanged).
+        let (id, graph_config) = project("dag_jsonl");
+        assert_eq!(id, "graph");
+        assert_eq!(
+            graph_config.get("weka_semantics").and_then(|v| v.as_str()),
+            Some("legacy"),
+            "graph config must still carry weka_semantics: {graph_config}"
+        );
     }
 
     #[test]
