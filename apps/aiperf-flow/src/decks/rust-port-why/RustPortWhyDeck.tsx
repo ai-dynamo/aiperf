@@ -12,12 +12,14 @@
 //!   - Two primary drivers: (1) a SHARED CORE with Dynamo enabling bidirectional code reuse, and
 //!     (2) collapsing the ~10-service ZeroMQ multiprocess control plane that exists ONLY to escape
 //!     Python's GIL — an accidental burden, not a benchmarking feature.
-//!   - Performance is presented HONESTLY: on a normal, server-bound LLM run the two clients are
-//!     statistically indistinguishable (250-concurrency live A-B, 2026-07-19); the Rust win is real
-//!     only at the throughput ceiling against a fast target (~13.7k vs ~4.5k req/s over 100k
-//!     requests, 2026-07-20; ~40k req/s single-process, 2026-07-13).
-//!   - It explicitly refuses to overclaim: the single-node ~15-28k connection ceiling is an OS/TCP
-//!     ephemeral-port fact, not a language advantage.
+//!   - Performance is presented HONESTLY and from MEASUREMENT (GCP c4-standard-144, Granite Rapids,
+//!     optimized AVX-512 build, realistic ISL550/OSL150 streaming, 0 errors, 2026-07-25): on a normal
+//!     server-bound LLM run the two clients are statistically indistinguishable (250-conc live A-B);
+//!     the Rust win is only at the client ceiling — ~45k req/s byte-exact (`global` dispatch, ~2×
+//!     Python's ~21k) using under half the node's cores, with an opt-in ~61k `sharded` mode (~3×)
+//!     that trades byte-exact parity for throughput.
+//!   - It explicitly refuses to overclaim: the single-node ~64k connection ceiling (HTTP/1.1 4-tuple)
+//!     is an OS/TCP ephemeral-port fact, not a language advantage.
 
 import { TopBar } from "../../shell/TopBar.js";
 import { Stack } from "../../layout/Stack.js";
@@ -84,7 +86,7 @@ const REASONS: ReadonlyArray<ChalkCardProps> = [
       </Diagram>
     ),
     children:
-      "Measured on a 144-core node: one Rust process sustains ~43k req/s byte-exact (~2× Python) using under half the cores — not even CPU-bound. An opt-in sharded mode reaches ~61k (~3×) when reproducible parity isn't required. Python must spin up multiprocessing + ZMQ just to under-perform it.",
+      "Measured on a 144-core node: one Rust process sustains ~45k req/s byte-exact (~2× Python) using under half the cores — not even CPU-bound. An opt-in sharded mode reaches ~61k (~3×) when reproducible parity isn't required. Python must spin up multiprocessing + ZMQ just to under-perform it.",
   },
   {
     accent: "cyan",
@@ -140,7 +142,7 @@ const REASONS: ReadonlyArray<ChalkCardProps> = [
       </Diagram>
     ),
     children:
-      "A native binary launches instantly. Python must start the interpreter, import heavy ML dependencies (tokenizers, pydantic, …), and hand-shake the multi-service ZMQ mesh before the first request — seconds of fixed overhead on every run. Rust is ready in milliseconds, so edit-run-measure iteration is tight.",
+      "Measured: Python paid ~40s of fixed startup before the first request — spawning ~97 processes and, dominantly, generating the synthetic dataset in the Python dataset generator — every run. The native Rust binary did the same setup (same 4k-conversation dataset) in ~1s. That ~40× gap is brutal on iterative / CI / offline-sim loops where you pay it each time.",
   },
   {
     accent: "cyan",
@@ -184,7 +186,7 @@ const PERF_ROWS = [
   },
   {
     scenario: "Fast target, c4-144 — byte-exact ceiling (default)",
-    rust: "~43,000 req/s",
+    rust: "~45,000 req/s",
     python: "~21,000 req/s",
     read: "~2× — parity preserved (global dispatch). Measured, 0 errors.",
     tone: "success" as const,
@@ -272,7 +274,7 @@ export function RustPortWhyDeck(): React.JSX.Element {
 
             {/* ── Headline numbers (recent, honest) ────────────────────────── */}
             <Grid columns={4} gap={16}>
-              <Stat label="Byte-exact ceiling" value="~43k" trend="~2× Python · 61k opt-in" tone="positive" />
+              <Stat label="Byte-exact ceiling" value="~45k" trend="~2× Python · 61k opt-in" tone="positive" />
               <Stat label="Metric drift @ 250 conc." value="±0.3%" trend="indistinguishable" tone="neutral" />
               <Stat label="Processes for a single-node run" value="1" trend="was ~10 services" tone="positive" />
               <Stat label="Execution modes, one front-end" value="3" trend="online · mock · offline" tone="positive" />

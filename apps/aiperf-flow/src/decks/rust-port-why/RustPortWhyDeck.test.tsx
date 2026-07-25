@@ -39,7 +39,7 @@ describe("RustPortWhyDeck (executive overview)", () => {
     // Parity at server-bound 250 concurrency.
     expect(screen.getAllByText(/statistically indistinguishable/i).length).toBeGreaterThan(0);
     // Byte-exact ceiling (default global dispatch) and the opt-in sharded figure, both measured.
-    expect(screen.getAllByText(/~43,000 req\/s/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/~45,000 req\/s/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/~61,000 req\/s/).length).toBeGreaterThan(0);
   });
 
