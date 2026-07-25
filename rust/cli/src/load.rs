@@ -883,16 +883,24 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 inputs.runtime_cells
             );
         }
-        // Non-global admission (`--dispatch sharded`) statically partitions
-        // conversations per thread, which would split a trajectory tree's root and
-        // subagent children across shards and break join gating. Require global
-        // (shared) admission; `global`/`global-hop` are fine, `sharded` is not.
-        if inputs.runtime_dispatch == Some(DispatchMode::Sharded) {
-            anyhow::bail!(
-                "the agentic_replay (legacy weka) timing mode requires global admission; \
-                 --dispatch sharded is not supported (it partitions trajectory trees \
-                 across worker threads). Use --dispatch global (the default) or global-hop."
-            );
+        // agentic_replay mirrors Python's `1 strategy : 1 router : N workers`: ONE
+        // central driver computes the whole dispatch schedule (t*, warmup, profiling
+        // offsets, recycle, join-gating) and issues each request to a shared worker
+        // pool. `global-hop` is that model in the Rust runtime — one coordinator
+        // scheduling loop hops each request round-robin to a pool of worker transport
+        // threads. `sharded`/`global` instead run N independent per-worker pipelines
+        // (each with its own conversation partition + metrics slot space), which
+        // splits trajectory trees and collides slots. Force `global-hop`; reject an
+        // explicit conflicting mode so the choice is visible.
+        match inputs.runtime_dispatch {
+            None | Some(DispatchMode::GlobalHop) => {
+                inputs.runtime_dispatch = Some(DispatchMode::GlobalHop);
+            }
+            Some(other) => anyhow::bail!(
+                "the agentic_replay (legacy weka) timing mode requires --dispatch global-hop \
+                 (a single central issuer over a shared worker pool); got {other:?}. Omit \
+                 --dispatch (it defaults to global-hop here) or pass --dispatch global-hop."
+            ),
         }
     }
     let loadgen_overlay = crate::phase_validate::LoadgenOverlay::from_inputs(&inputs);

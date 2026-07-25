@@ -1361,17 +1361,6 @@ fn lower_legacy_agentic(
         !convs.is_empty(),
         "legacy weka reconstruction produced no conversations"
     );
-    // The sampleable pool is the ROOT trajectories (subagent children are spawned,
-    // not independently sampled; warmup conversations are non-root). A worker shard
-    // with zero sampleable roots trips "partition owns no sampleable sessions", so
-    // cap workers to the root-trajectory count — this supports multiple workers
-    // (up to that count) without empty shards, and keeps each whole tree on one
-    // worker so the join gate + recycle stay coherent.
-    let num_root_trajectories = convs
-        .iter()
-        .filter(|c| c.parent_conversation_id.is_none())
-        .count()
-        .max(1);
     // Apply the per-lane t\* snapshot slice (Python `AgenticReplayStrategy`): sample
     // t\* once over each lane's full recorded span, EXCLUDE history (turns before
     // the profiling resume point), and rebase each retained turn's `timestamp_ms`
@@ -1434,11 +1423,10 @@ fn lower_legacy_agentic(
             .map(|p| agentic_replay_phase(p.common().clone())),
     );
 
-    // Multiple workers are supported under global admission (which shares the
-    // conversation pool rather than statically sharding it). Cellular (`cells > 1`)
-    // and non-global admission (`--dispatch sharded`) are rejected at CLI
-    // resolution because they would split a trajectory tree across partitions.
-    let _ = num_root_trajectories;
+    // agentic_replay runs under `global-hop` (forced at CLI resolution): ONE
+    // coordinator scheduling loop is the single central driver, and `worker_count`
+    // is the size of the transport-thread pool it hops requests to. Cellular
+    // (`cells > 1`) and non-global-hop dispatch are rejected at CLI resolution.
     build_common_plan(
         run,
         workload.worker_count,
