@@ -485,7 +485,7 @@ fn pending_turn_handoff_state(
     root_correlation_id: &str,
     turn: &PendingHandoffTurn,
     seen: &BTreeSet<(String, String, i64)>,
-    root_to_lane: &BTreeMap<String, usize>,
+    root_to_lane: &mut BTreeMap<String, usize>,
     correlation_to_lane: &BTreeMap<String, usize>,
 ) -> Option<(usize, (String, String, i64), HandoffConversationState)> {
     let lane = handoff_lane_for_turn(root_correlation_id, turn, root_to_lane, correlation_to_lane)?;
@@ -497,6 +497,11 @@ fn pending_turn_handoff_state(
     if seen.contains(&key) || turn.turn_index >= turn.num_turns {
         return None;
     }
+    // Mirror Python `_pending_turn_handoff_state` line 923: record this turn's
+    // effective-root -> lane so a LATER pending turn in the same finalize whose
+    // effective-root matches resolves its lane via this write. Dropping it would
+    // silently strand such turns (Finding 1).
+    root_to_lane.insert(turn.effective_root_correlation_id().to_string(), lane);
     let state = HandoffConversationState {
         conversation_id: turn.conversation_id.clone(),
         x_correlation_id: turn.x_correlation_id.clone(),
@@ -585,13 +590,19 @@ where
     let mut states_by_lane: Vec<Vec<HandoffConversationState>> = vec![Vec::new(); inputs.num_lanes];
     let mut seen: BTreeSet<(String, String, i64)> = BTreeSet::new();
 
+    // Python mutates `self._root_to_lane` in place across the pending loop (an
+    // earlier pending turn's effective-root -> lane write is visible to later
+    // pending turns). Clone the caller's map so those intra-finalize writes are
+    // threaded through the pending loop without mutating the caller's input.
+    let mut root_to_lane = inputs.root_to_lane.clone();
+
     // Returned mid-flight credits (recorder map is sorted by correlation id).
     for credit in inputs.handoff_credits.values() {
         let base = base_delay_ms(&(inputs.base_delay_inputs)(credit));
         let returned = inputs.return_wall_ns.get(&credit.x_correlation_id).copied();
         if let Some((lane, state)) = returned_credit_handoff_state(
             credit,
-            inputs.root_to_lane,
+            &root_to_lane,
             returned,
             base,
             inputs.finalized_ns,
@@ -615,7 +626,7 @@ where
                 root_correlation_id,
                 turn,
                 &seen,
-                inputs.root_to_lane,
+                &mut root_to_lane,
                 inputs.correlation_to_lane,
             ) {
                 seen.insert(key);
@@ -810,6 +821,48 @@ mod tests {
         assert_eq!(lane1.states[0].x_correlation_id, "recycle-corr");
         assert_eq!(lane1.states[0].next_turn_index, 0);
         assert!(lane1.boundaries.is_empty());
+    }
+
+    #[test]
+    fn finalize_empty_lane_without_recycle_emits_empty_lane() {
+        // Consumer contract (Finding 3 / Task 6): when a lane drains empty AND
+        // no recycle draw is available, Python appends the *previous* trajectory
+        // unchanged; the Rust carrier instead records an EMPTY `LaneHandoff` and
+        // PROFILING falls back to the prior lane identity via `prev_lanes`. This
+        // pins that empty-lane/no-recycle shape so a future consumer relying on
+        // the `prev_lanes` fallback is not silently handed a recycled root.
+        let handoff_credits = BTreeMap::new();
+        let return_wall_ns = BTreeMap::new();
+        let pending_by_root = BTreeMap::new();
+        let root_to_lane = BTreeMap::new();
+        let correlation_to_lane = BTreeMap::new();
+        let prev_lanes = vec![PrevLaneTrajectory {
+            conversation_id: "prev-conv".into(),
+            x_correlation_id: "prev-corr".into(),
+        }];
+
+        let handoff = finalize(FinalizeInputs {
+            handoff_credits: &handoff_credits,
+            return_wall_ns: &return_wall_ns,
+            pending_by_root: &pending_by_root,
+            root_to_lane: &root_to_lane,
+            correlation_to_lane: &correlation_to_lane,
+            num_lanes: 1,
+            finalized_ns: 0,
+            cap_ms: None,
+            base_delay_inputs: |_c: &HandoffCredit| HandoffBaseDelayInputs::default(),
+            completed_prefixes: |_root: &str| Vec::new(),
+            // No recycle available.
+            recycle_draw: || None,
+            prev_lanes: &prev_lanes,
+        });
+
+        let lane0 = &handoff.lanes[&0];
+        assert!(
+            lane0.states.is_empty(),
+            "no-recycle empty lane must stay empty (prev_lanes fallback owns the identity)"
+        );
+        assert!(lane0.boundaries.is_empty());
     }
 
     #[test]
