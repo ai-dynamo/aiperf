@@ -171,6 +171,166 @@ pub fn get_scenario(name: &str) -> Option<ScenarioSpec> {
     }
 }
 
+/// Result of applying a scenario's invariant locks (Python `ScenarioOutcome`).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ScenarioOutcome {
+    /// The applied scenario name (`None` for a no-op / no scenario).
+    pub scenario_name: Option<String>,
+    /// Locks auto-filled or already satisfied.
+    pub applied_locks: Vec<String>,
+    /// Conflicts (empty on success; populated only under `unsafe_override`).
+    pub violations: Vec<ScenarioViolation>,
+    /// Submission validity (`Some(false)` under override, `Some(true)` on clean
+    /// apply, `None` for the no-op outcome).
+    pub submission_valid: Option<bool>,
+    /// Reasons submission is invalid.
+    pub submission_invalid_reasons: Vec<String>,
+}
+
+/// A hard scenario-lock failure (Python `ScenarioLockError`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioLockError {
+    /// The conflicting violations.
+    pub violations: Vec<ScenarioViolation>,
+    /// Whether `--unsafe-override` could bypass it.
+    pub bypassable: bool,
+}
+
+/// The run config fields the scenario invariants read (a projection of
+/// `BenchmarkRun.cfg`), with explicit-set flags where the check distinguishes
+/// user-set from default.
+#[derive(Debug, Clone, Default)]
+pub struct RunLockInputs {
+    /// `endpoint.streaming` + whether the user set it.
+    pub streaming: bool,
+    /// Whether `--streaming` was explicitly set.
+    pub streaming_explicit: bool,
+    /// `extra_inputs.ignore_eos`: `None` absent, `Some(false/true)`.
+    pub ignore_eos: Option<bool>,
+    /// `dataset.ignore_trace_delays` + explicit flag.
+    pub ignore_trace_delays: bool,
+    /// Whether `--ignore-trace-delays` was explicitly set.
+    pub ignore_trace_delays_explicit: bool,
+    /// The detected loader identifier.
+    pub loader: Option<String>,
+    /// The user's cache-bust target (`None` = unset).
+    pub cache_bust: Option<CacheBustTarget>,
+    /// Whether cache-bust was explicitly set.
+    pub cache_bust_explicit: bool,
+    /// `--unsafe-override`.
+    pub unsafe_override: bool,
+    /// Whether the dataset is the synthetic CLI default (non-overridable under
+    /// `require_loader`).
+    pub synthetic_default_dataset: bool,
+}
+
+/// Apply a scenario's invariant locks to `inputs`, composing the decision core
+/// (Python `apply_scenario`, config-projection). Returns the outcome, or a hard
+/// `ScenarioLockError` when a non-overridable violation exists or violations
+/// remain without `unsafe_override`.
+pub fn apply_scenario_locks(
+    spec: &ScenarioSpec,
+    inputs: &RunLockInputs,
+) -> Result<ScenarioOutcome, ScenarioLockError> {
+    let mut violations: Vec<ScenarioViolation> = Vec::new();
+    let mut applied: Vec<String> = Vec::new();
+    let mut record = |r: LockResult, lock: &str, v: &mut Vec<ScenarioViolation>, a: &mut Vec<String>| {
+        match r {
+            LockResult::Satisfied | LockResult::Applied => a.push(lock.to_string()),
+            LockResult::Violated(viol) => v.push(viol),
+        }
+    };
+
+    if spec.require_streaming {
+        let r = apply_require_true(
+            inputs.streaming,
+            inputs.streaming_explicit,
+            "--streaming",
+            &format!("scenario {:?} requires --streaming", spec.name),
+        );
+        record(r, "streaming", &mut violations, &mut applied);
+    }
+    if spec.require_ignore_eos {
+        // None -> inject (applied); Some(false) -> violation; Some(true) -> applied.
+        match inputs.ignore_eos {
+            None | Some(true) => applied.push("ignore_eos".to_string()),
+            Some(false) => violations.push(ScenarioViolation {
+                flag: "extra_inputs.ignore_eos".into(),
+                current_value: "false".into(),
+                required_value: "true".into(),
+                message: format!("scenario {:?} requires ignore_eos=true", spec.name),
+            }),
+        }
+    }
+    if spec.forbid_ignore_trace_delays {
+        let r = apply_forbid_true(
+            inputs.ignore_trace_delays,
+            inputs.ignore_trace_delays_explicit,
+            "--ignore-trace-delays",
+            &format!("scenario {:?} forbids --ignore-trace-delays", spec.name),
+        );
+        record(r, "forbid_ignore_trace_delays", &mut violations, &mut applied);
+    }
+    if !spec.require_loader.is_empty() {
+        if loader_allowed(inputs.loader.as_deref(), &spec.require_loader) {
+            applied.push("require_loader".to_string());
+        } else {
+            violations.push(ScenarioViolation {
+                flag: "--input-file/--public-dataset".into(),
+                current_value: inputs.loader.clone().unwrap_or_else(|| "<none>".into()),
+                required_value: spec.require_loader.join(" | "),
+                message: format!("scenario {:?} requires an allowed weka loader", spec.name),
+            });
+        }
+    }
+    if let Some(required) = spec.require_cache_bust {
+        match inputs.cache_bust {
+            Some(cb) if cb == required => applied.push("require_cache_bust".to_string()),
+            None => applied.push("require_cache_bust".to_string()), // auto-filled
+            Some(cb) if inputs.cache_bust_explicit => violations.push(ScenarioViolation {
+                flag: "--cache-bust".into(),
+                current_value: format!("{cb:?}"),
+                required_value: format!("{required:?}"),
+                message: format!("scenario {:?} requires a specific cache-bust", spec.name),
+            }),
+            Some(_) => applied.push("require_cache_bust".to_string()),
+        }
+    }
+
+    // Non-overridable: a synthetic default dataset under require_loader always fails.
+    let hard = !spec.require_loader.is_empty()
+        && inputs.synthetic_default_dataset
+        && violations.iter().any(|v| v.flag.contains("input-file"));
+    if hard {
+        return Err(ScenarioLockError {
+            violations,
+            bypassable: false,
+        });
+    }
+    if !violations.is_empty() && !inputs.unsafe_override {
+        return Err(ScenarioLockError {
+            violations,
+            bypassable: true,
+        });
+    }
+    if !violations.is_empty() {
+        return Ok(ScenarioOutcome {
+            scenario_name: Some(spec.name.clone()),
+            applied_locks: applied,
+            violations,
+            submission_valid: Some(false),
+            submission_invalid_reasons: vec!["unsafe_override".to_string()],
+        });
+    }
+    Ok(ScenarioOutcome {
+        scenario_name: Some(spec.name.clone()),
+        applied_locks: applied,
+        violations: Vec::new(),
+        submission_valid: Some(true),
+        submission_invalid_reasons: Vec::new(),
+    })
+}
+
 /// Classify whether an error response indicates a context-overflow (Python
 /// `is_context_overflow_response`).
 ///
@@ -226,6 +386,47 @@ mod tests {
 
     fn subs() -> Vec<String> {
         vec!["context length".into(), "maximum context".into()]
+    }
+
+    #[test]
+    fn apply_scenario_resolver_outcomes() {
+        let spec = inferencex_agentx_mvp();
+        // Clean config: streaming on, ignore_eos set, no trace-delay-ignore,
+        // allowed loader, correct cache-bust -> submission_valid true.
+        let ok = RunLockInputs {
+            streaming: true,
+            ignore_eos: Some(true),
+            ignore_trace_delays: false,
+            loader: Some("weka_trace".into()),
+            cache_bust: Some(CacheBustTarget::FirstTurnPrefix),
+            ..Default::default()
+        };
+        let out = apply_scenario_locks(&spec, &ok).unwrap();
+        assert_eq!(out.submission_valid, Some(true));
+        assert!(out.violations.is_empty());
+        assert!(out.applied_locks.contains(&"streaming".to_string()));
+
+        // Explicit --no-streaming -> hard lock error (bypassable).
+        let bad = RunLockInputs {
+            streaming: false,
+            streaming_explicit: true,
+            ignore_eos: Some(true),
+            loader: Some("weka_trace".into()),
+            cache_bust: Some(CacheBustTarget::FirstTurnPrefix),
+            ..Default::default()
+        };
+        let err = apply_scenario_locks(&spec, &bad).unwrap_err();
+        assert!(err.bypassable);
+        assert!(!err.violations.is_empty());
+
+        // Same conflict + unsafe_override -> outcome with submission_valid false.
+        let overridden = RunLockInputs {
+            unsafe_override: true,
+            ..bad
+        };
+        let out = apply_scenario_locks(&spec, &overridden).unwrap();
+        assert_eq!(out.submission_valid, Some(false));
+        assert_eq!(out.submission_invalid_reasons, vec!["unsafe_override".to_string()]);
     }
 
     #[test]
