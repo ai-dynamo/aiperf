@@ -164,6 +164,38 @@ pub fn offset_ms(timestamp_ms: Option<f64>, t_star_ms: f64) -> f64 {
     }
 }
 
+/// A WARMUP turn's lead — how far before t* its recorded turn sits — capped at
+/// the idle-gap cap (Python `_capped_warmup_lead_ms`, AR:416-431). `lead` is
+/// `t* - warm_turn_ts`; the cap bounds priming spacing (which carries no replay
+/// meaning). No cap → uncapped lead.
+pub fn capped_warmup_lead_ms(lead_ms: f64, cap_ms: Option<f64>) -> f64 {
+    match cap_ms {
+        Some(cap) => lead_ms.min(cap),
+        None => lead_ms,
+    }
+}
+
+/// Per-stream WARMUP dispatch offsets from warmup-phase start under the SPREAD
+/// policy (Python `_execute_warmup`, AR:565-583): global t*-alignment — the turn
+/// with the largest (capped) lead fires at 0, every stream's t* lands at the
+/// common `max_lead`, so a stream's offset is `max_lead - lead`. A leadless
+/// stream (`None`, e.g. a subagent with no pre-t* turn) fires at 0. The total
+/// spread is `(max_lead - min_lead)`. Returns offsets in ms, index-aligned to
+/// `leads`.
+pub fn warmup_dispatch_offsets_ms(leads: &[Option<f64>]) -> Vec<f64> {
+    let max_lead = leads
+        .iter()
+        .filter_map(|l| *l)
+        .fold(0.0_f64, f64::max);
+    leads
+        .iter()
+        .map(|l| match l {
+            Some(lead) => (max_lead - lead).max(0.0),
+            None => 0.0,
+        })
+        .collect()
+}
+
 /// Excess to subtract uniformly from every PROFILING dispatch offset so a
 /// trajectory's leading idle (t* → its earliest post-t* request) is capped
 /// (Python `_leading_idle_shift_ms`). `max(0, min(offsets) - cap)`; 0 when no cap
@@ -362,6 +394,20 @@ mod tests {
         assert!(legacy_start_turn_candidates(1, 0.25, 0.75).is_empty());
         // n=3: k_min=min(0,1)=0, k_max=min(2,1)=1 -> [0,1].
         assert_eq!(legacy_start_turn_candidates(3, 0.25, 0.75), vec![0, 1]);
+    }
+
+    #[test]
+    fn warmup_lead_capping_and_global_alignment() {
+        // Cap bounds the lead; no cap leaves it; under cap is unchanged.
+        assert_eq!(capped_warmup_lead_ms(5000.0, Some(10000.0)), 5000.0);
+        assert_eq!(capped_warmup_lead_ms(15000.0, Some(10000.0)), 10000.0);
+        assert_eq!(capped_warmup_lead_ms(5000.0, None), 5000.0);
+        // Global t*-alignment: largest lead fires at 0, others offset by
+        // (max_lead - lead); a leadless stream (None) fires at 0.
+        let offsets = warmup_dispatch_offsets_ms(&[Some(2000.0), Some(5000.0), None, Some(0.0)]);
+        assert_eq!(offsets, vec![3000.0, 0.0, 0.0, 5000.0]);
+        // All-leadless (e.g. every warmup turn missing a timestamp) -> all 0.
+        assert_eq!(warmup_dispatch_offsets_ms(&[None, None]), vec![0.0, 0.0]);
     }
 
     #[test]
