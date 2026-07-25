@@ -1131,6 +1131,39 @@ mod tests {
         serde_json::from_value(value).unwrap()
     }
 
+    fn agentic_warmup_spec(cache_warmup_duration: Option<f64>) -> PhaseSpec {
+        let common: crate::engine::protocol::PhaseCommonSpec = serde_json::from_value(json!({
+            "name": "warmup",
+            "kind": "warmup",
+            "exclude_from_results": true,
+            "requests": 8,
+            "agentic_cache_warmup_duration": cache_warmup_duration,
+        }))
+        .unwrap();
+        PhaseSpec::AgenticReplay {
+            common,
+            start_min_ratio: 0.0,
+            start_max_ratio: 1.0,
+            idle_gap_cap_seconds: Some(10.0),
+            burst_phase_starts: false,
+        }
+    }
+
+    #[test]
+    fn accelerated_warmup_phase_drops_the_count_stop_bound() {
+        // Accelerated cache-warmup is duration-driven and emits many pressure turns;
+        // its `requests` reserves ordinal space only, so `phase_config` must NOT turn
+        // it into a send bound (which would freeze the tracker mid-pressure).
+        let accel = phase_config(&agentic_warmup_spec(Some(3.0)), false).unwrap();
+        assert_eq!(
+            accel.stop.total_expected_requests, None,
+            "accelerated warmup must not carry a request stop bound"
+        );
+        // A non-accelerated agentic warmup keeps its authored request bound.
+        let plain = phase_config(&agentic_warmup_spec(None), false).unwrap();
+        assert_eq!(plain.stop.total_expected_requests, Some(8));
+    }
+
     fn models() -> ModelsSpec {
         serde_json::from_value(json!({
             "strategy": "round_robin",
