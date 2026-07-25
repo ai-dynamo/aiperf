@@ -20,6 +20,10 @@ pub mod chains;
 pub mod config;
 pub mod corpus;
 pub mod export;
+/// HuggingFace-hosted WEKA trace dataset download (Parquet-backed). Requires the
+/// `parquet` feature for the arrow/parquet reader.
+#[cfg(feature = "parquet")]
+pub mod hf_dataset;
 pub mod loader;
 pub mod metrics;
 pub mod plan;
