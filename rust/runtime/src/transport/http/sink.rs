@@ -1349,6 +1349,7 @@ mod tests {
                     input_length: 4,
                     max_output_tokens: 2,
                     prompt_text: Some("hello world".to_string()),
+                    image_count: None,
                     request_body: None,
                     request_body_bytes: None,
                     headers: BTreeMap::new(),
