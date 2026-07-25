@@ -48,7 +48,10 @@ counterparts with unit tests (golden values captured from CPython where relevant
   build + seam splicing, `is_aux_chain`/`is_reduction_chain`). **Proven byte-exact
   against Python** by `tools/agentx_chains_golden.py` +
   `rust/runtime/tests/agentx_chains_parity.rs` (6 scenarios, full partition diff).
-  Grouping helpers (`worker_group_assignment`, `compute_chain_prefix_blocks`) pending.
+  Grouping helpers (`worker_group_assignment`, `compute_chain_prefix_blocks`,
+  `overlap_components`, `observed_group_prefix`) now built and **byte-exact**
+  (chains golden + parity extended to diff worker-group coordinates and per-chain
+  setup-prefix blocks). `chains.rs` is complete.
 
 - `corpus.rs` — `CorpusTokenSynth`, the token-generation bridge (rng → corpus →
   synth): per-hash-id `randrange(corpus_size)` block window (no separator token,
