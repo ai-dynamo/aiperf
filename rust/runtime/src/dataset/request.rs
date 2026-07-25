@@ -860,6 +860,43 @@ impl ConversationSession {
         Ok(turn)
     }
 
+    /// Jump-resume to an arbitrary authored turn, reconstructing the recorded
+    /// 0..=`turn_index` context directly from the dataset.
+    ///
+    /// Unlike [`advance_to`](Self::advance_to), which enforces strictly sequential
+    /// `current + 1` stepping, this seeks straight to `turn_index` so a lane can
+    /// resume at a runtime-determined frontier without replaying every prior turn's
+    /// dispatch. It is only faithful for context modes whose materialized context is
+    /// self-contained in the recorded conversation DTO
+    /// ([`MessageArrayWithResponses`](ConversationContextMode::MessageArrayWithResponses)
+    /// and [`DeltasWithResponses`](ConversationContextMode::DeltasWithResponses),
+    /// where [`endpoint_turns`](Self::endpoint_turns) reads the recorded turns
+    /// directly). Modes that splice live captured replies
+    /// ([`should_capture_response`](Self::should_capture_response) is `true`) cannot
+    /// reconstruct a non-zero turn's context without those replies, so a jump past
+    /// turn 0 fails closed. Seeking to turn 0 is always permitted and is identical to
+    /// `advance_to(0)`.
+    pub fn seek_to(&mut self, turn_index: usize) -> Result<&Turn> {
+        let conversation = self.dataset.get(&self.conversation_id)?;
+        let turn = conversation.turns.get(turn_index).ok_or_else(|| {
+            DatasetError::Validation(format!(
+                "turn {turn_index} is out of range for conversation {:?} with {} turns",
+                self.conversation_id.as_str(),
+                conversation.turns.len()
+            ))
+        })?;
+        if turn_index > 0 && self.should_capture_response() {
+            return Err(DatasetError::Validation(format!(
+                "context mode {:?} reconstructs context from live captured replies; \
+                 jump-resume to turn {turn_index} for conversation {:?} is unsupported",
+                self.context_mode,
+                self.conversation_id.as_str()
+            )));
+        }
+        self.current_turn = Some(turn_index);
+        Ok(turn)
+    }
+
     /// Whether a successful response must be retained for later context.
     pub const fn should_capture_response(&self) -> bool {
         matches!(
@@ -1477,6 +1514,144 @@ mod tests {
             request.endpoint_path.as_deref(),
             Some("/v1/chat/completions")
         );
+    }
+
+    #[test]
+    fn seek_to_jump_resume_equals_sequential_advance_for_message_array_responses() {
+        // A recorded MessageArrayWithResponses conversation carries the full context
+        // for each turn inside that turn's own message array (turn k embeds turns
+        // 0..=k). Jump-resuming to turn k with `seek_to` must therefore reconstruct
+        // byte-identical context to sequentially advancing 0 -> ... -> k.
+        let build_data = || {
+            let mut pool = SegmentPool::new();
+            let q0 = message(&mut pool, None, "user", "q0");
+            let a0 = message(&mut pool, Some(q0), "assistant", "a0");
+            let q1 = message(&mut pool, Some(a0), "user", "q1");
+            dataset(
+                ConversationContextMode::MessageArrayWithResponses,
+                vec![
+                    Turn {
+                        body: smallvec![q0],
+                        input_tokens: Some(2),
+                        max_tokens: Some(4),
+                        ..Turn::default()
+                    },
+                    Turn {
+                        body: smallvec![q0, a0, q1],
+                        input_tokens: Some(5),
+                        max_tokens: Some(4),
+                        ..Turn::default()
+                    },
+                ],
+                pool,
+            )
+        };
+
+        // Sequential oracle: advance 0 -> 1 (no captured live reply is needed for a
+        // with-responses mode) and materialize turn 1.
+        let mut seq = ConversationSession::new(build_data(), SessionId::from("session")).unwrap();
+        seq.advance_to(0).unwrap();
+        seq.advance_to(1).unwrap();
+        let seq_turn1 = seq
+            .materialize(
+                &EndpointRequestMaterializer,
+                &ChatEndpoint,
+                &model_endpoint(),
+                CreditPhase::Profiling,
+                &Overrides::new(),
+            )
+            .unwrap();
+
+        // Jump-resume: a fresh session seeks straight to turn 1.
+        let mut jump = ConversationSession::new(build_data(), SessionId::from("session")).unwrap();
+        jump.seek_to(1).unwrap();
+        let jump_turn1 = jump
+            .materialize(
+                &EndpointRequestMaterializer,
+                &ChatEndpoint,
+                &model_endpoint(),
+                CreditPhase::Profiling,
+                &Overrides::new(),
+            )
+            .unwrap();
+
+        assert_eq!(jump_turn1.turn_index, 1);
+        assert_eq!(
+            jump_turn1.body, seq_turn1.body,
+            "jump-resume to turn 1 is byte-identical to sequential advance to turn 1"
+        );
+        assert_eq!(jump_turn1.input_tokens, seq_turn1.input_tokens);
+
+        // The reconstructed context contains the recorded prior turns 0..=1.
+        let body: Value = serde_json::from_slice(&jump_turn1.body).unwrap();
+        let messages = body["messages"].to_string();
+        assert!(messages.contains("q0"), "context carries turn 0: {messages}");
+        assert!(messages.contains("a0"), "context carries reply 0: {messages}");
+        assert!(messages.contains("q1"), "context carries turn 1: {messages}");
+        assert_eq!(body["messages"].as_array().unwrap().len(), 3);
+
+        // seek_to(0) is identical to advance_to(0): the sequential contract is intact.
+        let mut seek0 =
+            ConversationSession::new(build_data(), SessionId::from("session")).unwrap();
+        seek0.seek_to(0).unwrap();
+        let mut adv0 = ConversationSession::new(build_data(), SessionId::from("session")).unwrap();
+        adv0.advance_to(0).unwrap();
+        let ov = Overrides::new();
+        let seek0_body = seek0
+            .materialize(
+                &EndpointRequestMaterializer,
+                &ChatEndpoint,
+                &model_endpoint(),
+                CreditPhase::Profiling,
+                &ov,
+            )
+            .unwrap()
+            .body;
+        let adv0_body = adv0
+            .materialize(
+                &EndpointRequestMaterializer,
+                &ChatEndpoint,
+                &model_endpoint(),
+                CreditPhase::Profiling,
+                &ov,
+            )
+            .unwrap()
+            .body;
+        assert_eq!(seek0_body, adv0_body);
+    }
+
+    #[test]
+    fn seek_to_rejects_jump_for_capture_dependent_context_modes() {
+        // A without-responses mode reconstructs context from live captured replies,
+        // which a jump cannot supply; seeking past turn 0 must fail closed rather than
+        // silently drop the missing prior responses.
+        let mut pool = SegmentPool::new();
+        let q0 = message(&mut pool, None, "user", "q0");
+        let q1 = message(&mut pool, Some(q0), "user", "q1");
+        let data = dataset(
+            ConversationContextMode::DeltasWithoutResponses,
+            vec![
+                Turn {
+                    body: smallvec![q0],
+                    input_tokens: Some(2),
+                    ..Turn::default()
+                },
+                Turn {
+                    body: smallvec![q1],
+                    input_tokens: Some(3),
+                    ..Turn::default()
+                },
+            ],
+            pool,
+        );
+        let mut session = ConversationSession::new(data, SessionId::from("session")).unwrap();
+        let error = session.seek_to(1).unwrap_err().to_string();
+        assert!(
+            error.contains("jump-resume"),
+            "expected a jump-resume rejection, got: {error}"
+        );
+        // Seeking to turn 0 is still allowed for every mode.
+        session.seek_to(0).unwrap();
     }
 
     #[test]

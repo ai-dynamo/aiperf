@@ -281,6 +281,12 @@ trait RuntimeSessionBackend: fmt::Debug {
         owner: &SampledSession,
         max_turns: Option<usize>,
     ) -> Result<TurnToSend>;
+    fn build_turn_at(
+        &self,
+        owner: &SampledSession,
+        start_index: usize,
+        max_turns: Option<usize>,
+    ) -> Result<TurnToSend>;
     fn next_metadata(&self, turn_index: usize) -> Result<TurnMetadata>;
     fn build_next_turn(
         &self,
@@ -319,6 +325,21 @@ impl SampledSession {
     /// Build the first turn, clamping virtual history to the sampled template.
     pub fn build_first_turn(&self, max_turns: Option<usize>) -> Result<TurnToSend> {
         self.backend.build_first_turn(self, max_turns)
+    }
+
+    /// Jump-resume the session at `start_index`, reconstructing the recorded
+    /// 0..=`start_index` context directly from the dataset, and materialize that turn
+    /// with `turn_index == start_index`.
+    ///
+    /// `build_turn_at(0, max_turns)` is identical to
+    /// [`build_first_turn`](Self::build_first_turn). Non-zero resume is only faithful
+    /// for context modes whose context is self-contained in the recorded conversation
+    /// (see [`ConversationSession::seek_to`](crate::dataset::ConversationSession::seek_to));
+    /// live-reply-capture modes fail closed. This is the primitive the
+    /// accelerated-cache-warmup workload uses to start a lane at a runtime-determined
+    /// drained frontier without replaying every prior turn's dispatch.
+    pub fn build_turn_at(&self, start_index: usize, max_turns: Option<usize>) -> Result<TurnToSend> {
+        self.backend.build_turn_at(self, start_index, max_turns)
     }
 
     fn next_metadata(&self, turn_index: usize) -> Result<TurnMetadata> {
@@ -847,6 +868,15 @@ impl RuntimeSessionBackend for NativeSessionBackend {
         owner: &SampledSession,
         max_turns: Option<usize>,
     ) -> Result<TurnToSend> {
+        self.build_turn_at(owner, 0, max_turns)
+    }
+
+    fn build_turn_at(
+        &self,
+        owner: &SampledSession,
+        start_index: usize,
+        max_turns: Option<usize>,
+    ) -> Result<TurnToSend> {
         if self.metadata.turns.is_empty() {
             bail!("conversation {} has no turns", owner.conversation_id);
         }
@@ -854,7 +884,9 @@ impl RuntimeSessionBackend for NativeSessionBackend {
             .unwrap_or(self.metadata.turns.len())
             .min(self.metadata.turns.len())
             .max(1);
-        self.materialize(owner, 0, num_turns)
+        // Turn 0 uses the strictly sequential advance so the existing first-turn path
+        // is unchanged; a non-zero frontier jump-resumes via `seek_to`.
+        self.materialize(owner, start_index, num_turns, start_index != 0)
     }
 
     fn next_metadata(&self, turn_index: usize) -> Result<TurnMetadata> {
@@ -910,7 +942,7 @@ impl RuntimeSessionBackend for NativeSessionBackend {
                 session.capture_response(reply, tokens)?;
             }
         }
-        self.materialize(owner, current.turn_index + 1, current.num_turns)
+        self.materialize(owner, current.turn_index + 1, current.num_turns, false)
     }
 }
 
@@ -920,9 +952,14 @@ impl NativeSessionBackend {
         owner: &SampledSession,
         turn_index: usize,
         num_turns: usize,
+        jump: bool,
     ) -> Result<TurnToSend> {
         let mut session = self.session.borrow_mut();
-        session.advance_to(turn_index)?;
+        if jump {
+            session.seek_to(turn_index)?;
+        } else {
+            session.advance_to(turn_index)?;
+        }
         let endpoint_name = session.endpoint_override()?.map(str::to_string);
         let (materialized, turn_endpoint, prepared_endpoint) = match &self.endpoint {
             NativeSessionEndpoint::Prepared {
@@ -1756,6 +1793,66 @@ mod tests {
         assert_eq!(
             sessions[0].payloads[0].as_ref(),
             dispatch_turn0.request_body.as_deref().unwrap()
+        );
+    }
+
+    /// Jump-resume: `build_turn_at(k)` on a fresh session yields the turn at `k`
+    /// with the recorded 0..=k context reconstructed, byte-identical to sequentially
+    /// advancing the same conversation from 0 to k. This is the resume primitive the
+    /// accelerated-cache-warmup workload needs to start a lane at a non-zero drained
+    /// frontier without replaying every prior turn's dispatch.
+    #[tokio::test]
+    async fn build_turn_at_jump_resume_equals_sequential_advance() {
+        let dataset = inline_static_multi_turn_dataset("test-model").await;
+        let source = prepared_chat_source(dataset, "test-model", 4);
+        let no_capture_reply = || TurnResponse {
+            text: String::new(),
+            assistant_message: None,
+            completion_tokens: None,
+            terminal: ReplayTerminalStatus::Completed,
+        };
+
+        // Oracle: sequentially advance a fresh session 0 -> 1.
+        let seq_session = source.session_for("s", "corr-0".into()).unwrap();
+        let seq_turn0 = seq_session.build_first_turn(None).unwrap();
+        let seq_turn1 = seq_session
+            .build_next_turn(&seq_turn0, no_capture_reply())
+            .unwrap();
+
+        // Jump: resume a fresh session directly at turn 1.
+        let jump_session = source.session_for("s", "corr-0".into()).unwrap();
+        let jump_turn1 = jump_session.build_turn_at(1, None).unwrap();
+
+        assert_eq!(jump_turn1.turn_index, 1);
+        assert_eq!(jump_turn1.num_turns, seq_turn1.num_turns);
+        assert_eq!(
+            jump_turn1.request_body.as_deref().unwrap(),
+            seq_turn1.request_body.as_deref().unwrap(),
+            "jump-resume to turn 1 is byte-identical to sequential advance to turn 1"
+        );
+
+        // The reconstructed context reflects turns 0..=1: the recorded message array
+        // carries the current turn's content (q1) and is distinct from turn 0 (q0).
+        let jump_body: Value =
+            serde_json::from_slice(jump_turn1.request_body.as_deref().unwrap()).unwrap();
+        let messages = jump_body["messages"].to_string();
+        assert!(messages.contains("q1"), "turn-1 context carries q1: {messages}");
+        assert_ne!(
+            jump_turn1.request_body.as_deref().unwrap(),
+            seq_turn0.request_body.as_deref().unwrap(),
+            "turn-1 body differs from turn-0 body"
+        );
+
+        // build_turn_at(0) is identical to build_first_turn (sequential path unchanged).
+        let jump_turn0 = source
+            .session_for("s", "corr-0".into())
+            .unwrap()
+            .build_turn_at(0, None)
+            .unwrap();
+        assert_eq!(jump_turn0.turn_index, 0);
+        assert_eq!(
+            jump_turn0.request_body.as_deref().unwrap(),
+            seq_turn0.request_body.as_deref().unwrap(),
         );
     }
 
