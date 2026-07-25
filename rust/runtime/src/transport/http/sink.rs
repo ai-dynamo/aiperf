@@ -17,7 +17,6 @@ use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -1059,14 +1058,6 @@ impl TransportSink {
             record,
         })
     }
-}
-
-/// Wall-clock nanoseconds since the Unix epoch (0 if the clock predates it).
-fn wall_now_ns() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos() as u64)
-        .unwrap_or(0)
 }
 
 /// Tag content-server media URLs in `body` with `?rid&mi&td`, returning the

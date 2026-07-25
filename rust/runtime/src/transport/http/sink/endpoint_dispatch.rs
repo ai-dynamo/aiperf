@@ -237,7 +237,12 @@ impl TransportSink {
         // bodies are untouched. The parse is shared with image counting below.
         let (body, parsed) = match self.content_server_base.as_deref() {
             Some(base) => {
-                super::tag_content_urls(body, base, &uuid.to_string(), super::wall_now_ns())
+                super::tag_content_urls(
+                    body,
+                    base,
+                    &uuid.to_string(),
+                    crate::content_server::dispatch_wall_ns(),
+                )
             }
             None => (body, None),
         };

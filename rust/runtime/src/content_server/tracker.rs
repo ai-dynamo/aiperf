@@ -23,6 +23,20 @@ pub trait ContentServerClock: fmt::Debug + Send + Sync {
     fn monotonic_ns(&self) -> u64;
 }
 
+/// Wall-clock nanoseconds since the Unix epoch for the content-server dispatch
+/// tag (`td`).
+///
+/// Lives in this module — not the clock-injected HTTP transport — so the served
+/// media latency in [`media_metrics`](crate::content_server) can subtract it
+/// against arrivals stamped from the same `SystemTime` epoch.
+pub fn dispatch_wall_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .min(u128::from(u64::MAX)) as u64
+}
+
 /// System wall time paired with an [`Instant`]-based monotonic origin.
 #[derive(Debug)]
 pub struct SystemContentServerClock {

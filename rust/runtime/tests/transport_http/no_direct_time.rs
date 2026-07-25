@@ -39,7 +39,7 @@ fn no_direct_time_access_in_src() {
     // Other runtime modules legitimately use wall-clock APIs, so scope this
     // constraint to the HTTP transport.
     let mut hits = Vec::new();
-    scan(Path::new("src/transport::http"), &mut hits);
+    scan(Path::new("src/transport/http"), &mut hits);
     assert!(
         hits.is_empty(),
         "direct time access found (use Clock):\n{}",
