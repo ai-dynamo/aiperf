@@ -7,6 +7,7 @@ pub mod accumulator;
 pub mod accuracy;
 pub mod catalog;
 pub mod counter;
+pub mod definition;
 pub mod derived;
 pub mod ingest;
 pub mod kernel;
