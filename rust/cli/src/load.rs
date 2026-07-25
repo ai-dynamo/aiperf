@@ -1403,6 +1403,14 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     export.parquet = crate::model::export::ParquetExport::build(&sm_formats, server_enabled);
     cfg.export = Some(export);
 
+    // Resolve the legacy AgentX scenario locks (`--scenario`) into the run's
+    // resolved projection. A no-op unless the `agentx` feature is compiled in.
+    let scenario_outcome = resolve_scenario_outcome(&inputs)?;
+    let resolved = Resolved {
+        scenario_outcome,
+        ..Resolved::default()
+    };
+
     Ok(BenchmarkRun {
         benchmark_id,
         artifact_dir: inputs.artifact_dir,
@@ -1413,9 +1421,67 @@ pub(crate) fn build(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         sweep_id: None,
         trial: 0,
         variation: None,
-        resolved: Resolved::default(),
+        resolved,
         variables: serde_json::Map::new(),
     })
+}
+
+/// Resolve the legacy-AgentX submission scenario locks (`--scenario`) against the
+/// resolved run config, returning the serialized [`ScenarioOutcome`] for the
+/// run's `resolved` projection.
+///
+/// Compiled only under the `agentx` feature; a hard [`ScenarioLockError`]
+/// (non-overridable conflict, or violations without `--unsafe-override`) fails
+/// the resolution. Without the feature this is a no-op returning `None`, so a
+/// lean build silently ignores `--scenario`.
+#[cfg(feature = "agentx")]
+fn resolve_scenario_outcome(inputs: &Inputs) -> anyhow::Result<Option<serde_json::Value>> {
+    use aiperf_runtime::agentx::scenario::{apply_scenario_locks, get_scenario, RunLockInputs};
+
+    let Some(name) = inputs.scenario.as_deref() else {
+        return Ok(None);
+    };
+    let spec = get_scenario(name)
+        .ok_or_else(|| anyhow::anyhow!("unknown --scenario {name:?}"))?;
+
+    // Project the resolved run config onto the fields the invariants read. The
+    // CLI does not track per-flag "explicitly set" state, so an unset field is
+    // reported as non-explicit — the resolver then auto-applies the scenario
+    // default rather than raising a (spurious) violation.
+    let ignore_eos = inputs
+        .extra
+        .get("ignore_eos")
+        .and_then(serde_json::Value::as_bool);
+    // The detected loader is the custom/public dataset identifier (a synthetic
+    // default has neither, and is flagged so `require_loader` can reject it).
+    let loader = inputs
+        .custom_dataset_type
+        .clone()
+        .or_else(|| inputs.public_dataset.clone());
+    let synthetic_default_dataset =
+        loader.is_none() && inputs.input_file.is_none();
+
+    let lock_inputs = RunLockInputs {
+        streaming: inputs.streaming,
+        streaming_explicit: inputs.streaming,
+        ignore_eos,
+        ignore_trace_delays: false,
+        ignore_trace_delays_explicit: false,
+        loader,
+        cache_bust: None,
+        cache_bust_explicit: false,
+        unsafe_override: inputs.unsafe_override,
+        synthetic_default_dataset,
+    };
+
+    let outcome = apply_scenario_locks(&spec, &lock_inputs)?;
+    Ok(Some(serde_json::to_value(&outcome)?))
+}
+
+/// No-op scenario resolution for lean builds without the `agentx` feature.
+#[cfg(not(feature = "agentx"))]
+fn resolve_scenario_outcome(_inputs: &Inputs) -> anyhow::Result<Option<serde_json::Value>> {
+    Ok(None)
 }
 
 /// Build one phase from resolved axes. A request rate selects a Poisson arrival

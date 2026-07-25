@@ -86,7 +86,7 @@ pub fn inferencex_agentx_mvp() -> ScenarioSpec {
 }
 
 /// A specific scenario-lock conflict (Python `ScenarioViolation`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ScenarioViolation {
     /// The flag/field in conflict (e.g. `--streaming`).
     pub flag: String,
@@ -172,7 +172,7 @@ pub fn get_scenario(name: &str) -> Option<ScenarioSpec> {
 }
 
 /// Result of applying a scenario's invariant locks (Python `ScenarioOutcome`).
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
 pub struct ScenarioOutcome {
     /// The applied scenario name (`None` for a no-op / no scenario).
     pub scenario_name: Option<String>,
@@ -195,6 +195,28 @@ pub struct ScenarioLockError {
     /// Whether `--unsafe-override` could bypass it.
     pub bypassable: bool,
 }
+
+impl std::fmt::Display for ScenarioLockError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "scenario lock failure ({} violation(s){}): {}",
+            self.violations.len(),
+            if self.bypassable {
+                ", bypassable with --unsafe-override"
+            } else {
+                ""
+            },
+            self.violations
+                .iter()
+                .map(|v| v.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; ")
+        )
+    }
+}
+
+impl std::error::Error for ScenarioLockError {}
 
 /// The run config fields the scenario invariants read (a projection of
 /// `BenchmarkRun.cfg`), with explicit-set flags where the check distinguishes
