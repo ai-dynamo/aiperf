@@ -1088,7 +1088,7 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                     outcome.model_response.reasoning.as_deref(),
                 ),
                 raw: self.raw_enabled.then_some(CapturedHttpExchange {
-                    request_payload: collected.request_payload.to_vec(),
+                    request_payload: collected.request_payload.clone(),
                     record: collected.record,
                 }),
                 ingest,

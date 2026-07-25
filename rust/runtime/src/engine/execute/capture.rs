@@ -531,10 +531,10 @@ impl RunCapture {
         request_payload: bytes::Bytes,
         record: crate::transport::core::RequestRecord,
     ) -> Result<()> {
-        // Copy the (potentially multi-MB) body into an owned buffer ONLY when a
-        // raw artifact will consume it. On the default path this returns before
-        // touching the bytes, so a 24 MB image body stays a shared refcount and
-        // is never duplicated per request.
+        // Retain the raw exchange ONLY when an artifact will consume it. The body
+        // is kept as a shared `Bytes` handle (a refcount to the immutable prebuilt
+        // buffer on the fast path), so neither the default drop nor the raw-artifact
+        // retention ever copies a multi-MB image body per request.
         if !self.raw_enabled {
             return Ok(());
         }
@@ -544,7 +544,7 @@ impl RunCapture {
                 .insert(
                     uuid,
                     CapturedHttpExchange {
-                        request_payload: request_payload.to_vec(),
+                        request_payload,
                         record,
                     },
                 )

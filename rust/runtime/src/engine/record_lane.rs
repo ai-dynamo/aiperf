@@ -374,7 +374,7 @@ mod tests {
             x_correlation_id: "session-7".into(),
             output: CapturedModelOutput::from_parts("hi", None, None),
             raw: Some(CapturedHttpExchange {
-                request_payload: payload,
+                request_payload: payload.clone().into(),
                 record: transport,
             }),
             ingest: ok,

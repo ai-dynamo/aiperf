@@ -88,7 +88,9 @@ fn non_empty_text(text: &str) -> Option<String> {
 /// Exact HTTP facts retained only when Config v2 requests raw artifacts.
 pub struct CapturedHttpExchange {
     /// Canonical JSON payload before multipart/media transport preparation.
-    pub request_payload: Vec<u8>,
+    /// A shared `Bytes` handle: on the prebuilt-body fast path this refcounts the
+    /// immutable body buffer, so retaining a raw exchange never copies it.
+    pub request_payload: bytes::Bytes,
     /// Exact terminal transport record.
     pub record: RequestRecord,
 }
@@ -1444,7 +1446,7 @@ mod tests {
             x_correlation_id: "session-9".into(),
             output: CapturedModelOutput::from_parts("hi", None, None),
             raw: Some(CapturedHttpExchange {
-                request_payload: payload.clone(),
+                request_payload: payload.clone().into(),
                 record: transport_record,
             }),
             ingest: RecordIngest::minimal(2_000_000, 12_000_000, Phase::Profiling),
