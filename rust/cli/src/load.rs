@@ -2613,4 +2613,69 @@ mod tests {
             assert_eq!(server_profiler.stop_path.as_deref(), Some("/stop_profile"));
         });
     }
+
+    /// Without `--scenario`, resolution leaves `resolved.scenario_outcome` unset.
+    #[cfg(feature = "agentx")]
+    #[test]
+    fn no_scenario_leaves_outcome_unset() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "-u",
+                "http://localhost:8000",
+            ]);
+            let run = super::resolve(&flags).expect("resolve run");
+            assert!(run.resolved.scenario_outcome.is_none());
+        });
+    }
+
+    /// `--scenario inferencex-agentx-mvp` on the synthetic-default dataset is a
+    /// non-overridable lock failure (`require_loader` forbids the synthetic
+    /// default), so resolution fails — proving the scenario resolver is wired
+    /// into the CLI Config-v2 pipeline.
+    #[cfg(feature = "agentx")]
+    #[test]
+    fn scenario_hard_fails_on_synthetic_default_dataset() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "-u",
+                "http://localhost:8000",
+                "--streaming",
+                "--scenario",
+                "inferencex-agentx-mvp",
+            ]);
+            let err = super::resolve(&flags).expect_err("scenario lock must fail");
+            assert!(
+                err.to_string().contains("scenario lock failure"),
+                "unexpected error: {err}"
+            );
+        });
+    }
+
+    /// An unknown `--scenario` name is rejected during resolution.
+    #[cfg(feature = "agentx")]
+    #[test]
+    fn unknown_scenario_rejected() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "-u",
+                "http://localhost:8000",
+                "--scenario",
+                "does-not-exist",
+            ]);
+            let err = super::resolve(&flags).expect_err("unknown scenario must fail");
+            assert!(err.to_string().contains("unknown --scenario"), "got: {err}");
+        });
+    }
 }
