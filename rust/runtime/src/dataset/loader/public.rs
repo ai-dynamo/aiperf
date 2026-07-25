@@ -439,6 +439,182 @@ impl Composer for HfInstructionComposer {
     }
 }
 
+/// Arbitrary-Hugging-Face auto-detecting loader (format id `hf`). Fetches rows
+/// via the shared public path; the paired [`HfAutoComposer`] does the column
+/// inference. `can_load` never matches (HF sources present an empty probe), so
+/// this format is only ever reached by an explicit `format: "hf"`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HfAutoDatasetLoader;
+
+#[async_trait]
+impl DatasetLoader for HfAutoDatasetLoader {
+    fn name(&self) -> &str {
+        "hf"
+    }
+    fn can_load(&self, _probe: &DatasetProbe) -> bool {
+        false
+    }
+    async fn load(&self, config: &LoadConfig) -> Result<Vec<RawRow>> {
+        load_public_rows(config).await
+    }
+    fn preferred_sampling_strategy(&self) -> &str {
+        "sequential"
+    }
+}
+
+/// Column-auto-detecting composer for arbitrary HF datasets. Handles the
+/// text/combined/chat prompt shapes detected by [`super::hf_detect`], deriving
+/// output length from the reference completion (or a fixed `output_len`
+/// override) and filtering rows by token budget.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HfAutoComposer;
+
+impl Composer for HfAutoComposer {
+    fn compose(
+        &self,
+        rows: Vec<RawRow>,
+        config: &ComposeConfig,
+        tokenizer: &dyn TextTokenizer,
+        segments: &mut SegmentPool,
+    ) -> Result<Vec<Conversation>> {
+        use super::hf_detect::{ColumnFormat, detect_column_format};
+
+        let first = rows
+            .first()
+            .ok_or_else(|| DatasetError::Validation("HF dataset returned zero rows".into()))?;
+        let override_col = string_option(config, "text_column")
+            .or_else(|| string_option(config, "prompt_column"));
+        let output_override = string_option(config, "output_column");
+        let format = detect_column_format(&first.value, override_col.as_deref())
+            .map_err(DatasetError::Validation)?;
+
+        // `output_len` accepts either a JSON number or a numeric string.
+        let fixed_output = string_option(config, "output_len")
+            .and_then(|s| s.parse::<u32>().ok())
+            .or_else(|| {
+                usize_option(config, "output_len", 0)
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .map(|n| n as u32)
+            });
+        let min_length = usize_option(config, "min_sequence_tokens", 4)?;
+        let max_prompt = usize_option(config, "max_prompt_tokens", 1024)?;
+        let max_total = usize_option(config, "max_total_tokens", 2048)?;
+
+        let mut ids = SessionIdGenerator::new(config.rng_root.seed(), "session");
+        let mut finalizer = config.finalizer()?;
+        let mut conversations = Vec::new();
+
+        for row in &rows {
+            let Some(obj) = row.value.as_object() else {
+                continue;
+            };
+            let (prompt, completion): (String, Option<String>) = match &format {
+                ColumnFormat::Text {
+                    prompt_col,
+                    output_col,
+                } => {
+                    let raw = obj.get(prompt_col.as_str());
+                    let prompt = if prompt_col == "turns" {
+                        raw.and_then(Value::as_array)
+                            .and_then(|a| a.first())
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string()
+                    } else {
+                        raw.and_then(Value::as_str).unwrap_or_default().to_string()
+                    };
+                    let completion = output_override.as_ref().or(output_col.as_ref()).and_then(|c| {
+                        obj.get(c.as_str()).and_then(|v| {
+                            v.as_array()
+                                .and_then(|a| a.first())
+                                .and_then(Value::as_str)
+                                .or_else(|| v.as_str())
+                                .map(str::to_string)
+                        })
+                    });
+                    (prompt, completion)
+                }
+                ColumnFormat::Combined { cols, output_col } => {
+                    let parts: Vec<String> = cols
+                        .iter()
+                        .filter_map(|c| obj.get(c.as_str()).and_then(Value::as_str).map(str::to_string))
+                        .collect();
+                    if parts.is_empty() {
+                        continue;
+                    }
+                    let completion = output_override
+                        .as_ref()
+                        .or(output_col.as_ref())
+                        .and_then(|c| obj.get(c.as_str()).and_then(Value::as_str).map(str::to_string));
+                    (parts.join("\n\n"), completion)
+                }
+                ColumnFormat::Chat(col) => {
+                    let msgs = obj
+                        .get(col.as_str())
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    match super::hf_detect::extract_chat_prompt(&msgs) {
+                        Some(p) => (p, super::hf_detect::extract_chat_completion(&msgs)),
+                        None => continue,
+                    }
+                }
+            };
+
+            if prompt.trim().is_empty() {
+                continue;
+            }
+            let prompt_tokens = tokenizer.encode(&prompt)?;
+            if prompt_tokens.len() < min_length || prompt_tokens.len() > max_prompt {
+                continue;
+            }
+
+            let output_tokens: u32 = if let Some(n) = fixed_output {
+                n
+            } else if let Some(comp) = &completion {
+                let c = tokenizer.encode(comp)?.len();
+                if c == 0 { 128 } else { c as u32 }
+            } else {
+                128
+            };
+            if prompt_tokens.len() + output_tokens as usize > max_total {
+                continue;
+            }
+
+            let input_tokens = Some(prompt_tokens.len() as u64);
+            let handle = segments.intern_text(
+                None,
+                "user",
+                Bytes::from(prompt),
+                prompt_tokens.into_boxed_slice(),
+            )?;
+            let mut turn = Turn {
+                max_tokens: Some(output_tokens.max(1)),
+                input_tokens,
+                content: smallvec![ContentGroup {
+                    kind: MediaKind::Text,
+                    name: String::new(),
+                    handles: smallvec![handle],
+                    uuids: smallvec![],
+                }],
+                ..Turn::default()
+            };
+            finalizer.finalize_turn(&mut turn)?;
+            let mut conversation = Conversation::new(ids.next_id());
+            conversation.turns.push(turn);
+            conversations.push(conversation);
+        }
+
+        if conversations.is_empty() {
+            return Err(DatasetError::Validation(
+                "no valid samples after processing HF dataset; try --hf-text-column or a different subset/split".into(),
+            ));
+        }
+        Ok(conversations)
+    }
+}
+
 impl Composer for HfConversationComposer {
     fn compose(
         &self,
@@ -763,10 +939,101 @@ pub(crate) async fn load_public_rows(config: &LoadConfig) -> Result<Vec<RawRow>>
                 load_hugging_face_revision_rows(config, dataset, subset, split, *max_rows, revision)
                     .await
             }
-            None => load_hugging_face_rows(config, dataset, subset, split, *max_rows).await,
+            None => {
+                let (subset, split) =
+                    resolve_hf_coordinates(config, dataset, subset, split).await?;
+                load_hugging_face_rows(config, dataset, &subset, &split, *max_rows).await
+            }
         },
         source => jsonl_or_json_rows(source),
     }
+}
+
+/// Pick concrete (config, split) from a parsed `/info` `dataset_info` map,
+/// resolving empty user inputs. Config: explicit if present (else `default`, else
+/// first key). Split: explicit if present (else train > test > validation > first).
+fn pick_hf_coordinates(
+    dataset_info: &serde_json::Map<String, Value>,
+    want_subset: &str,
+    want_split: &str,
+) -> Result<(String, String)> {
+    let config = if !want_subset.is_empty() {
+        if !dataset_info.contains_key(want_subset) {
+            return Err(DatasetError::Validation(format!(
+                "config {want_subset:?} not found; available: {}",
+                dataset_info.keys().cloned().collect::<Vec<_>>().join(", ")
+            )));
+        }
+        want_subset.to_string()
+    } else if dataset_info.contains_key("default") {
+        "default".to_string()
+    } else {
+        dataset_info
+            .keys()
+            .next()
+            .cloned()
+            .ok_or_else(|| DatasetError::Validation("dataset has no configs".into()))?
+    };
+
+    let splits = dataset_info
+        .get(&config)
+        .and_then(|c| c.get("splits"))
+        .and_then(Value::as_object);
+    let split = if !want_split.is_empty() {
+        if let Some(s) = splits
+            && !s.contains_key(want_split)
+        {
+            return Err(DatasetError::Validation(format!(
+                "split {want_split:?} not found in config {config:?}; available: {}",
+                s.keys().cloned().collect::<Vec<_>>().join(", ")
+            )));
+        }
+        want_split.to_string()
+    } else if let Some(s) = splits {
+        ["train", "test", "validation"]
+            .iter()
+            .find(|p| s.contains_key(**p))
+            .map(|p| (*p).to_string())
+            .or_else(|| s.keys().next().cloned())
+            .unwrap_or_else(|| "train".to_string())
+    } else {
+        "train".to_string()
+    };
+    Ok((config, split))
+}
+
+/// Resolve HF coordinates, calling the Dataset Viewer `/info` endpoint only when
+/// subset or split is empty. Pinned revisions never reach this path.
+async fn resolve_hf_coordinates(
+    config: &LoadConfig,
+    dataset: &str,
+    subset: &str,
+    split: &str,
+) -> Result<(String, String)> {
+    if !subset.is_empty() && !split.is_empty() {
+        return Ok((subset.to_string(), split.to_string()));
+    }
+    let encoded: String = url::form_urlencoded::byte_serialize(dataset.as_bytes()).collect();
+    let info_url = format!("https://datasets-server.huggingface.co/info?dataset={encoded}");
+    let bytes = config
+        .fetcher
+        .fetch(
+            &info_url,
+            &format!("hf-info:{dataset}"),
+            config.bearer_token.as_deref(),
+        )
+        .await?;
+    let info: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| DatasetError::Validation(format!("HF /info for {dataset} is invalid: {e}")))?;
+    let dataset_info = info
+        .get("dataset_info")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            DatasetError::Validation(format!(
+                "HF /info for {dataset} has no dataset_info (missing/gated?)"
+            ))
+        })?;
+    pick_hf_coordinates(dataset_info, subset, split)
 }
 
 async fn load_hugging_face_revision_rows(
@@ -2160,6 +2427,95 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(dataset.conversations()[0].turns.len(), 2);
+    }
+
+    fn hf_auto_options(value: Value) -> Map<String, Value> {
+        value.as_object().cloned().unwrap_or_default()
+    }
+
+    #[test]
+    fn pick_hf_coordinates_picks_default_config_and_train_split() {
+        let info = json!({"default": {"splits": {"train": {}, "test": {}}}});
+        let (c, s) = pick_hf_coordinates(info.as_object().unwrap(), "", "").unwrap();
+        assert_eq!((c.as_str(), s.as_str()), ("default", "train"));
+    }
+
+    #[test]
+    fn pick_hf_coordinates_falls_back_to_test_when_no_train() {
+        let info = json!({"main": {"splits": {"validation": {}, "test": {}}}});
+        let (c, s) = pick_hf_coordinates(info.as_object().unwrap(), "", "").unwrap();
+        assert_eq!((c.as_str(), s.as_str()), ("main", "test"));
+    }
+
+    #[test]
+    fn pick_hf_coordinates_honors_explicit_subset_and_split() {
+        let info = json!({"a": {"splits": {"train": {}}}, "b": {"splits": {"x": {}}}});
+        let (c, s) = pick_hf_coordinates(info.as_object().unwrap(), "b", "x").unwrap();
+        assert_eq!((c.as_str(), s.as_str()), ("b", "x"));
+    }
+
+    #[test]
+    fn pick_hf_coordinates_unknown_explicit_subset_errors() {
+        let info = json!({"a": {"splits": {"train": {}}}});
+        assert!(pick_hf_coordinates(info.as_object().unwrap(), "missing", "").is_err());
+    }
+
+    #[tokio::test]
+    async fn hf_auto_composer_text_format_single_turn() {
+        let dataset = build(
+            Arc::new(HfAutoDatasetLoader),
+            Arc::new(HfAutoComposer),
+            json!([
+                {"prompt": "Explain how photosynthesis converts sunlight into chemical energy in plants.",
+                 "completion": "Plants use chlorophyll to capture light."},
+                {"prompt": "Describe the structure of DNA and how genetic information is encoded within it.",
+                 "completion": "DNA is a double helix of base pairs."}
+            ]),
+            hf_auto_options(json!({})),
+        )
+        .await
+        .unwrap();
+        let convos = dataset.conversations();
+        assert_eq!(convos.len(), 2);
+        assert!(convos.iter().all(|c| c.turns.len() == 1));
+        assert!(convos.iter().all(|c| c.turns[0].max_tokens.unwrap() > 0));
+    }
+
+    #[tokio::test]
+    async fn hf_auto_composer_output_len_override() {
+        let dataset = build(
+            Arc::new(HfAutoDatasetLoader),
+            Arc::new(HfAutoComposer),
+            json!([{
+                "question": "What are the key differences between supervised and unsupervised learning here?",
+                "answer": "Supervised uses labels."
+            }]),
+            hf_auto_options(json!({"output_len": 77})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(dataset.conversations()[0].turns[0].max_tokens, Some(77));
+    }
+
+    #[tokio::test]
+    async fn hf_auto_composer_chat_format_uses_user_and_assistant() {
+        let dataset = build(
+            Arc::new(HfAutoDatasetLoader),
+            Arc::new(HfAutoComposer),
+            json!([{
+                "conversation": [
+                    {"role": "user", "content": "What is the meaning of life, the universe, and everything today?"},
+                    {"role": "assistant", "content": "42, per Douglas Adams and his famous novel."}
+                ]
+            }]),
+            hf_auto_options(json!({})),
+        )
+        .await
+        .unwrap();
+        let convos = dataset.conversations();
+        assert_eq!(convos.len(), 1);
+        assert_eq!(convos[0].turns.len(), 1);
+        assert!(convos[0].turns[0].max_tokens.unwrap() > 0);
     }
 
     #[tokio::test]

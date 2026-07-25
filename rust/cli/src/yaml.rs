@@ -587,6 +587,24 @@ struct DatasetSection {
     /// HuggingFace subset override for the public dataset.
     #[serde(default, alias = "hfSubset")]
     hf_subset: Option<String>,
+    /// Arbitrary Hugging Face dataset repository ID (bypasses the catalog).
+    #[serde(default, alias = "hfDataset")]
+    hf_dataset: Option<String>,
+    /// Hugging Face dataset split (auto-resolved if omitted).
+    #[serde(default, alias = "hfSplit")]
+    hf_split: Option<String>,
+    /// Hugging Face dataset git revision.
+    #[serde(default, alias = "hfRevision")]
+    hf_revision: Option<String>,
+    /// Forced prompt column for the auto-detecting `hf` format.
+    #[serde(default, alias = "hfTextColumn")]
+    hf_text_column: Option<String>,
+    /// Forced completion/output column for the auto-detecting `hf` format.
+    #[serde(default, alias = "hfOutputColumn")]
+    hf_output_column: Option<String>,
+    /// Fixed output length for `hf_dataset`.
+    #[serde(default, alias = "hfOutputLen")]
+    hf_output_len: Option<u32>,
     /// File-dataset path (trace/replay).
     path: Option<String>,
     /// Inline file-dataset records authored in the config (instead of `path:`).
@@ -1274,11 +1292,20 @@ impl Benchmark {
         let public_dataset = (dataset_type == Some("public"))
             .then(|| dataset.as_ref().and_then(|d| d.public_name.clone()))
             .flatten();
+        let hf_dataset = dataset.as_ref().and_then(|d| d.hf_dataset.clone());
         anyhow::ensure!(
-            dataset_type != Some("public") || public_dataset.is_some(),
-            "dataset.type=public requires a `dataset:` catalog name"
+            dataset_type != Some("public") || public_dataset.is_some() || hf_dataset.is_some(),
+            "dataset.type=public requires a `dataset:` catalog name or `hf_dataset:`"
         );
         let hf_subset = dataset.as_ref().and_then(|d| d.hf_subset.clone());
+        let hf_split = dataset.as_ref().and_then(|d| d.hf_split.clone());
+        let hf_revision = dataset.as_ref().and_then(|d| d.hf_revision.clone());
+        let hf_text_column = dataset.as_ref().and_then(|d| d.hf_text_column.clone());
+        let hf_output_column = dataset.as_ref().and_then(|d| d.hf_output_column.clone());
+        let hf_output_len = dataset.as_ref().and_then(|d| d.hf_output_len);
+        let hf_format = (dataset_type == Some("public"))
+            .then(|| dataset.as_ref().and_then(|d| d.format.clone()))
+            .flatten();
         let is_file = dataset_type == Some("file");
         let (input_file, inline_records, custom_dataset_type) = if is_file {
             let d = dataset.as_ref().expect("file dataset present");
@@ -1704,6 +1731,13 @@ impl Benchmark {
             custom_dataset_type,
             public_dataset,
             hf_subset,
+            hf_dataset,
+            hf_split,
+            hf_revision,
+            hf_text_column,
+            hf_output_column,
+            hf_output_len,
+            hf_format,
             inter_turn_delay_cap_seconds,
             uuid_and_strip,
             replay_speedup,
@@ -2148,6 +2182,25 @@ mod tests {
             "  dataset: {type: public}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
         );
         assert!(e.contains("requires a `dataset:` catalog name"), "{e}");
+    }
+
+    #[test]
+    fn accepts_public_type_with_hf_dataset_and_no_catalog_name() {
+        let run = resolve_str(
+            &cfg(
+                "  dataset: {type: public, hf_dataset: allenai/WildChat, hf_split: train}\n  phases: {type: concurrency, requests: 2, concurrency: 1}\n",
+            ),
+            Some("/tmp/x".into()),
+        )
+        .expect("valid hf public config resolves");
+        let v = serde_json::to_value(&run).unwrap();
+        let ds = &v["cfg"]["datasets"][0];
+        assert_eq!(ds["type"], serde_json::json!("public"));
+        assert_eq!(ds["name"], serde_json::json!("allenai/WildChat"));
+        assert_eq!(ds["format"], serde_json::json!("hf"));
+        assert_eq!(ds["source"]["type"], serde_json::json!("hugging_face"));
+        assert_eq!(ds["source"]["dataset"], serde_json::json!("allenai/WildChat"));
+        assert_eq!(ds["source"]["split"], serde_json::json!("train"));
     }
 
     #[test]
